@@ -8,7 +8,7 @@
 //! `"undefined"` and `ToNumber(Null)` is `NaN`; nested `null`s still print as
 //! `null` in `JSON.stringify`.
 
-use serde_json::{Number, Value};
+use serde_json::{Map, Number, Value};
 
 /// JS `\s` / `trim` whitespace: WhiteSpace plus LineTerminator code points.
 pub fn is_space(c: char) -> bool {
@@ -49,7 +49,8 @@ pub fn truthy(v: &Value) -> bool {
     }
 }
 
-/// JS `Number.prototype.toString()` for finite values in the usual range.
+/// JS `Number.prototype.toString()` (shortest round-trip digits, exponent
+/// form below 1e-6 and from 1e21).
 pub fn number_to_string(n: &Number) -> String {
     if let Some(i) = n.as_i64() {
         return i.to_string();
@@ -57,16 +58,39 @@ pub fn number_to_string(n: &Number) -> String {
     if let Some(u) = n.as_u64() {
         return u.to_string();
     }
-    let f = number_f64(n);
+    f64_to_string(number_f64(n))
+}
+
+/// `Number.prototype.toString()` for any f64.
+pub fn f64_to_string(f: f64) -> String {
     if f.is_nan() {
-        "NaN".into()
-    } else if f.is_infinite() {
-        if f > 0.0 { "Infinity".into() } else { "-Infinity".into() }
-    } else if f == f.trunc() && f.abs() < 1e21 {
-        format!("{f:.0}")
-    } else {
-        format!("{f}")
+        return "NaN".into();
     }
+    if f.is_infinite() {
+        return if f > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+    }
+    if f == 0.0 {
+        return "0".into();
+    }
+    let sign = if f < 0.0 { "-" } else { "" };
+    // `{:e}` gives the shortest round-trip mantissa: "d.ddde±x".
+    let sci = format!("{:e}", f.abs());
+    let (mantissa, exponent) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let k = digits.len() as i64;
+    let n = exponent.parse::<i64>().unwrap_or(0) + 1;
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let e = n - 1;
+        let e = if e >= 0 { format!("+{e}") } else { e.to_string() };
+        if k == 1 { format!("{digits}e{e}") } else { format!("{}.{}e{e}", &digits[..1], &digits[1..]) }
+    };
+    format!("{sign}{body}")
 }
 
 /// JS `String(value)` (`undefined` → "undefined"; arrays join with `,`).
@@ -95,13 +119,27 @@ pub fn json_stringify(v: &Value) -> String {
         Value::Array(items) => format!("[{}]", items.iter().map(json_stringify).collect::<Vec<_>>().join(",")),
         Value::Object(map) => format!(
             "{{{}}}",
-            map.iter()
+            entries(map)
+                .into_iter()
                 .map(|(k, v)| format!("{}:{}", Value::String(k.clone()), json_stringify(v)))
                 .collect::<Vec<_>>()
                 .join(",")
         ),
         other => other.to_string(),
     }
+}
+
+/// Canonical array index key (`"0"` … `"4294967294"`).
+fn index_key(key: &str) -> Option<u32> {
+    key.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == key)
+}
+
+/// JS own-key order: array-index keys ascending, then the rest in insertion order.
+pub fn entries(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
+    let mut indexed: Vec<(u32, (&String, &Value))> =
+        map.iter().filter_map(|(k, v)| index_key(k).map(|i| (i, (k, v)))).collect();
+    indexed.sort_by_key(|(i, _)| *i);
+    indexed.into_iter().map(|(_, kv)| kv).chain(map.iter().filter(|(k, _)| index_key(k).is_none())).collect()
 }
 
 /// JS `===` for primitives; distinct objects/arrays are never identical.
@@ -207,12 +245,14 @@ pub fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// A JSON number from an f64, integral values as integers.
+/// A JSON number from an f64, integral values as integers. JSON has no
+/// `NaN`/`Infinity`: those become their `String()` text, which renders the
+/// same (but is truthy where `NaN` is not).
 pub fn number(f: f64) -> Value {
     if f == f.trunc() && f.abs() < 9.0e15 {
         Value::Number(Number::from(f as i64))
     } else {
-        Number::from_f64(f).map_or(Value::Null, Value::Number)
+        Number::from_f64(f).map_or_else(|| Value::String(f64_to_string(f)), Value::Number)
     }
 }
 
@@ -234,6 +274,21 @@ mod tests {
         assert_eq!(to_number(&json!(".5e1")), 5.0);
         assert_eq!(to_string(&json!(2.0)), "2");
         assert_eq!(to_string(&json!(1.5)), "1.5");
+        for (f, text) in [
+            (1e21, "1e+21"),
+            (1e-7, "1e-7"),
+            (1.5e-7, "1.5e-7"),
+            (123456789012345680000.0, "123456789012345680000"),
+            (0.000001, "0.000001"),
+            (-0.5, "-0.5"),
+            (1.2345e25, "1.2345e+25"),
+            (0.1 + 0.2, "0.30000000000000004"),
+        ] {
+            assert_eq!(f64_to_string(f), text);
+        }
+        assert_eq!(number(f64::NAN), json!("NaN"));
+        let map = json!({"b": 1, "10": 2, "2": 3, "01": 4}).as_object().unwrap().clone();
+        assert_eq!(entries(&map).into_iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["2", "10", "b", "01"]);
         assert_eq!(json_stringify(&json!({"a": [1, 2.0, "x"], "b": null})), r#"{"a":[1,2,"x"],"b":null}"#);
         assert!(strict_eq(&json!(1), &json!(1.0)) && !strict_eq(&json!([]), &json!([])));
         use std::cmp::Ordering::*;

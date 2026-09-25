@@ -403,7 +403,12 @@ fn helper_list(h: &HelperCall<'_>) -> HelperResult {
     let Value::Array(items) = h.arg(0) else { return text("") };
     let prefix = string_or(h.hash.get("prefix"), "");
     let suffix = string_or(h.hash.get("suffix"), "");
-    let separator = unescape_separator(&string_or(h.hash.get("join"), "\n"));
+    // Upstream calls `.replace` on the value, which throws for a non-string.
+    let separator = match h.hash.get("join") {
+        None | Some(Value::Null) => "\n".to_string(),
+        Some(Value::String(s)) => unescape_separator(s),
+        Some(_) => return Err(TemplateError("list: `join` must be a string".into())),
+    };
     let rendered = items
         .iter()
         .map(|item| Ok(format!("{prefix}{}{suffix}", h.render(item)?)))
@@ -442,7 +447,9 @@ fn helper_table(h: &HelperCall<'_>) -> HelperResult {
     }
     let headers: Vec<String> = match h.hash.get("headers") {
         None | Some(Value::Null) => Vec::new(),
-        Some(v) => js::to_string(v).split('|').map(str::to_string).collect(),
+        Some(Value::String(s)) => s.split('|').map(str::to_string).collect(),
+        // Upstream calls `.split` on the value, which throws for a non-string.
+        Some(_) => return Err(TemplateError("table: `headers` must be a string".into())),
     };
     let header_row = if headers.is_empty() {
         String::new()
@@ -539,11 +546,19 @@ fn builtin_engine() -> Engine {
     engine
 }
 
-static ENGINE: LazyLock<RwLock<Engine>> = LazyLock::new(|| RwLock::new(builtin_engine()));
+/// The shared engine. Renders take an `Arc` snapshot and hold no lock, so a
+/// helper may render or register re-entrantly; registering clones the
+/// engine when a render still holds the old snapshot.
+static ENGINE: LazyLock<RwLock<Arc<Engine>>> = LazyLock::new(|| RwLock::new(Arc::new(builtin_engine())));
 static CACHE: LazyLock<Mutex<HashMap<String, Arc<Template>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn engine() -> std::sync::RwLockReadGuard<'static, Engine> {
-    ENGINE.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+fn engine() -> Arc<Engine> {
+    Arc::clone(&ENGINE.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+fn update_engine(f: impl FnOnce(&mut Engine)) {
+    let mut guard = ENGINE.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    f(Arc::make_mut(&mut guard));
 }
 
 /// Register a helper on the shared prompt engine.
@@ -551,24 +566,23 @@ pub fn register_helper(
     name: &str,
     helper: impl Fn(&HelperCall<'_>) -> std::result::Result<Output, TemplateError> + Send + Sync + 'static,
 ) {
-    ENGINE.write().unwrap_or_else(std::sync::PoisonError::into_inner).register_helper(name, helper);
+    update_engine(|engine| engine.register_helper(name, helper));
 }
 
 /// Register a partial on the shared prompt engine.
 pub fn register_partial(name: &str, source: &str) {
-    ENGINE.write().unwrap_or_else(std::sync::PoisonError::into_inner).register_partial(name, source);
+    update_engine(|engine| engine.register_partial(name, source));
 }
 
 /// Compile through the shared engine; repeat compiles of the same source
 /// return the same cached template.
 pub fn compile(source: &str) -> std::result::Result<Arc<Template>, TemplateError> {
-    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(template) = cache.get(source) {
+    if let Some(template) = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(source) {
         return Ok(Arc::clone(template));
     }
     let template = Arc::new(engine().compile(source)?);
-    cache.insert(source.to_string(), Arc::clone(&template));
-    Ok(template)
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(Arc::clone(cache.entry(source.to_string()).or_insert(template)))
 }
 
 /// Render a prompt template (no HTML escaping) and post-render `format` it.

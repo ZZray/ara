@@ -6,6 +6,7 @@
 pub mod js;
 pub mod prompt;
 pub mod template;
+pub use template::MAX_NESTING;
 
 pub use prompt::{FormatOptions, RenderPhase, compile, format, register_helper, register_partial, render};
 pub use template::{CompileOptions, Engine, HelperCall, Output, Template, TemplateError, escape_expression};

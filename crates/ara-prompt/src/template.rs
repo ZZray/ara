@@ -15,10 +15,21 @@
 //! Intentional difference: a `{{#if}}…{{else if}}…{{/if}}` chain closes with
 //! one `{{/if}}`, as in Handlebars. Upstream's parser leaves the outer block
 //! open and reports "Parse error: unclosed block if"; no upstream prompt uses
-//! `else if`.
+//! `else if`. The double-closed form upstream accepts
+//! (`{{#if a}}…{{else if b}}…{{/if}}{{/if}}`) is a parse error here.
+//!
+//! Intentional difference: nesting (blocks, subexpressions, partials) is
+//! capped at [`MAX_NESTING`] levels and fails with a [`TemplateError`];
+//! upstream recurses until the JS stack overflows (~10^5 levels).
+//!
+//! Partials render like upstream's string partials: through a registry
+//! holding only the built-ins (upstream compiles them with the module-global
+//! registry, which prompt code never populates), so helpers and other
+//! partials are not visible inside a partial.
 
 use crate::js;
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
@@ -112,6 +123,7 @@ pub struct HelperCall<'a> {
     inverse: &'a [Node],
     frame: &'a Rc<Frame>,
     engine: &'a Engine,
+    depth: usize,
 }
 
 impl HelperCall<'_> {
@@ -127,13 +139,13 @@ impl HelperCall<'_> {
     /// Render the block body with `context` (`options.fn`).
     pub fn render(&self, context: &Value) -> Result<String> {
         let frame = child(self.frame, Rc::new(context.clone()), None);
-        self.engine.render_nodes(self.body, &frame)
+        self.engine.render_nodes(self.body, &frame, self.depth + 1)
     }
 
     /// Render the `{{else}}` part with `context` (`options.inverse`).
     pub fn inverse(&self, context: &Value) -> Result<String> {
         let frame = child(self.frame, Rc::new(context.clone()), None);
-        self.engine.render_nodes(self.inverse, &frame)
+        self.engine.render_nodes(self.inverse, &frame, self.depth + 1)
     }
 }
 
@@ -153,10 +165,21 @@ fn child(frame: &Rc<Frame>, context: Rc<Value>, data: Option<Map<String, Value>>
 // Parsing
 // ---------------------------------------------------------------------------
 
-static BLOCK_TAG: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^\s*\{\{(?:#|/|\^|else\b|!)").unwrap());
+/// Maximum nesting of blocks, subexpressions and partials.
+pub const MAX_NESTING: usize = 100;
+
+/// JavaScript's `\s` set, for regexes that must not use Rust's Unicode `\s`.
+const JS_SPACE: &str =
+    r"\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}";
+
+fn js_regex(pattern: &str) -> regex::Regex {
+    regex::Regex::new(&pattern.replace("\\s", &format!("[{JS_SPACE}]"))).unwrap()
+}
+
+static BLOCK_TAG: LazyLock<regex::Regex> = LazyLock::new(|| js_regex(r"^\s*\{\{(?:#|/|\^|else(?-u:\b)|!)"));
 static STANDALONE_TAG: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"^\s*\{\{(?:#|/|\^|else\b|!)[^{}]*\}\}\s*$").unwrap());
-static COMMENT_OPEN: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^\s*\{\{!--").unwrap());
+    LazyLock::new(|| js_regex(r"^\s*\{\{(?:#|/|\^|else(?-u:\b)|!)[^{}]*\}\}\s*$"));
+static COMMENT_OPEN: LazyLock<regex::Regex> = LazyLock::new(|| js_regex(r"^\s*\{\{!--"));
 static NUMBER: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^-?(?:[0-9]+\.?[0-9]*|\.[0-9]+)$").unwrap());
 
@@ -266,20 +289,20 @@ fn parse_string(token: &str) -> String {
     out
 }
 
-fn parse_atom(token: &str) -> Expr {
+fn parse_atom(token: &str, depth: usize) -> Result<Expr> {
     if token.len() >= 2 && token.starts_with('(') && token.ends_with(')') {
-        return Expr::Call(parse_call(&token[1..token.len() - 1]));
+        return Ok(Expr::Call(parse_call(&token[1..token.len() - 1], depth + 1)?));
     }
     if (token.starts_with('"') && token.ends_with('"')) || (token.starts_with('\'') && token.ends_with('\'')) {
-        return Expr::Literal(Value::String(if token.len() < 2 { String::new() } else { parse_string(token) }));
+        return Ok(Expr::Literal(Value::String(if token.len() < 2 { String::new() } else { parse_string(token) })));
     }
-    match token {
+    Ok(match token {
         "true" => Expr::Literal(Value::Bool(true)),
         "false" => Expr::Literal(Value::Bool(false)),
         "null" | "undefined" => Expr::Literal(Value::Null),
         t if NUMBER.is_match(t) => Expr::Literal(js::number(t.parse::<f64>().unwrap_or(f64::NAN))),
         t => Expr::Path(t.to_string()),
-    }
+    })
 }
 
 fn hash_separator(token: &str) -> Option<usize> {
@@ -306,18 +329,25 @@ fn hash_separator(token: &str) -> Option<usize> {
     None
 }
 
-fn parse_call(source: &str) -> Call {
+fn parse_call(source: &str, depth: usize) -> Result<Call> {
+    if depth > MAX_NESTING {
+        return err(nesting_error());
+    }
     let mut tokens = tokenize(js::trim(source)).into_iter();
     let name = tokens.next().unwrap_or_default().to_string();
     let mut args = Vec::new();
     let mut hash = Vec::new();
     for token in tokens {
         match hash_separator(token).filter(|&i| i > 0) {
-            Some(i) => hash.push((token[..i].to_string(), parse_atom(&token[i + 1..]))),
-            None => args.push(parse_atom(token)),
+            Some(i) => hash.push((token[..i].to_string(), parse_atom(&token[i + 1..], depth)?)),
+            None => args.push(parse_atom(token, depth)?),
         }
     }
-    Call { name, args, hash }
+    Ok(Call { name, args, hash })
+}
+
+fn nesting_error() -> String {
+    format!("Template nesting exceeds {MAX_NESTING} levels")
 }
 
 fn find_tag_end(source: &str, start: usize, triple: bool) -> Result<usize> {
@@ -408,8 +438,11 @@ fn parse_template(source: &str) -> Result<Vec<Node>> {
             let Some(current) = stack.last_mut() else { return err("Parse error: unexpected else") };
             current.in_inverse = true;
             if raw.len() > 4 {
+                if stack.len() >= MAX_NESTING {
+                    return err(nesting_error());
+                }
                 stack.push(Open {
-                    call: parse_call(&raw[5..]),
+                    call: parse_call(&raw[5..], 0)?,
                     body: Vec::new(),
                     inverse: Vec::new(),
                     in_inverse: false,
@@ -420,8 +453,11 @@ fn parse_template(source: &str) -> Result<Vec<Node>> {
             continue;
         }
         if let Some(rest) = raw.strip_prefix('#').or_else(|| raw.strip_prefix('^')) {
+            if stack.len() >= MAX_NESTING {
+                return err(nesting_error());
+            }
             stack.push(Open {
-                call: parse_call(rest),
+                call: parse_call(rest, 0)?,
                 body: Vec::new(),
                 inverse: Vec::new(),
                 in_inverse: false,
@@ -442,13 +478,13 @@ fn parse_template(source: &str) -> Result<Vec<Node>> {
             continue;
         }
         let node = if let Some(rest) = raw.strip_prefix('>') {
-            Node::Partial(parse_call(rest))
+            Node::Partial(parse_call(rest, 0)?)
         } else {
             let (expr, amp) = match raw.strip_prefix('&') {
                 Some(rest) => (rest, true),
                 None => (raw, false),
             };
-            Node::Output { call: parse_call(expr), escaped: !triple && !amp }
+            Node::Output { call: parse_call(expr, 0)?, escaped: !triple && !amp }
         };
         target(&mut root, &mut stack).push(node);
     }
@@ -500,17 +536,34 @@ fn array_index(key: &str) -> Option<usize> {
     key.parse::<usize>().ok().filter(|i| i.to_string() == key)
 }
 
-/// Proto-safe own-property lookup (upstream `property`).
-pub(crate) fn property(parent: &Value, key: &str) -> Value {
+/// Proto-safe own-property lookup (upstream `property`), by reference.
+fn property_ref<'v>(parent: &'v Value, key: &str) -> Cow<'v, Value> {
+    let missing = || Cow::Owned(Value::Null);
     match parent {
-        Value::String(s) if key == "length" => js::number(js::utf16_len(s) as f64),
-        Value::Array(items) if key == "length" => js::number(items.len() as f64),
-        Value::Array(items) => array_index(key).and_then(|i| items.get(i)).cloned().unwrap_or(Value::Null),
+        Value::String(s) if key == "length" => Cow::Owned(js::number(js::utf16_len(s) as f64)),
+        Value::Array(items) if key == "length" => Cow::Owned(js::number(items.len() as f64)),
+        Value::Array(items) => array_index(key).and_then(|i| items.get(i)).map_or_else(missing, Cow::Borrowed),
         Value::Object(map) if !matches!(key, "__proto__" | "prototype" | "constructor") => {
-            map.get(key).cloned().unwrap_or(Value::Null)
+            map.get(key).map_or_else(missing, Cow::Borrowed)
         }
-        _ => Value::Null,
+        _ => missing(),
     }
+}
+
+pub(crate) fn property(parent: &Value, key: &str) -> Value {
+    property_ref(parent, key).into_owned()
+}
+
+/// Follow `parts` from `start`, cloning only the value reached.
+fn walk<S: AsRef<str>>(start: &Value, parts: &[S]) -> Value {
+    let mut current = Cow::Borrowed(start);
+    for part in parts {
+        current = match current {
+            Cow::Borrowed(v) => property_ref(v, part.as_ref()),
+            Cow::Owned(v) => Cow::Owned(property(&v, part.as_ref())),
+        };
+    }
+    current.into_owned()
 }
 
 fn resolve_path(path: &str, frame: &Rc<Frame>) -> Value {
@@ -533,15 +586,14 @@ fn resolve_path(path: &str, frame: &Rc<Frame>) -> Value {
         return (*current.root).clone();
     }
     if let Some(rest) = path.strip_prefix("@root.") {
-        return path_parts(rest).iter().fold((*current.root).clone(), |v, p| property(&v, p));
+        return walk(&current.root, &path_parts(rest));
     }
     if let Some(rest) = path.strip_prefix('@') {
-        let mut parts = path_parts(rest).into_iter();
-        let first = parts.next().unwrap_or_default();
-        let start = current.data.get(&first).cloned().unwrap_or(Value::Null);
-        return parts.fold(start, |v, p| property(&v, &p));
+        let parts = path_parts(rest);
+        let Some((first, rest)) = parts.split_first() else { return Value::Null };
+        return current.data.get(first).map_or(Value::Null, |start| walk(start, rest));
     }
-    path_parts(path).iter().fold((*current.context).clone(), |v, p| property(&v, p))
+    walk(&current.context, &path_parts(path))
 }
 
 fn conditional_truthy(value: &Value, include_zero: bool) -> bool {
@@ -635,43 +687,48 @@ impl Engine {
     pub fn render_template(&self, template: &Template, context: &Value) -> Result<String> {
         // `context ?? {}`
         let root = Rc::new(if context.is_null() { Value::Object(Map::new()) } else { context.clone() });
-        let mut data = Map::new();
-        data.insert("root".into(), (*root).clone());
-        let frame = Rc::new(Frame { context: Rc::clone(&root), parents: Vec::new(), root, data: Rc::new(data) });
-        self.render_nodes(&template.nodes, &frame)
+        // `@root` resolves through `Frame::root`; the data map holds only
+        // iteration variables so `each` copies stay small.
+        let frame = Rc::new(Frame { context: Rc::clone(&root), parents: Vec::new(), root, data: Rc::new(Map::new()) });
+        self.render_nodes(&template.nodes, &frame, 0)
     }
 
-    fn render_nodes(&self, nodes: &[Node], frame: &Rc<Frame>) -> Result<String> {
+    fn render_nodes(&self, nodes: &[Node], frame: &Rc<Frame>, depth: usize) -> Result<String> {
+        if depth > MAX_NESTING {
+            return err(nesting_error());
+        }
         let mut out = String::new();
         for node in nodes {
             match node {
                 Node::Text(t) => out.push_str(t),
                 Node::Output { call, escaped } => {
-                    let value = self.eval_call(call, frame, false, &[], &[])?;
+                    let value = self.eval_call(call, frame, false, &[], &[], depth)?;
                     out.push_str(&stringify(value, *escaped && !self.options.no_escape));
                 }
-                Node::Partial(call) => out.push_str(&self.render_partial(call, frame)?),
-                Node::Block { call, body, inverse } => out.push_str(&self.eval_block(call, body, inverse, frame)?),
+                Node::Partial(call) => out.push_str(&self.render_partial(call, frame, depth)?),
+                Node::Block { call, body, inverse } => {
+                    out.push_str(&self.eval_block(call, body, inverse, frame, depth)?)
+                }
             }
         }
         Ok(out)
     }
 
-    fn eval_expr(&self, expr: &Expr, frame: &Rc<Frame>) -> Result<Value> {
+    fn eval_expr(&self, expr: &Expr, frame: &Rc<Frame>, depth: usize) -> Result<Value> {
         match expr {
             Expr::Literal(v) => Ok(v.clone()),
             Expr::Path(p) => Ok(resolve_path(p, frame)),
-            Expr::Call(call) => Ok(match self.eval_call(call, frame, false, &[], &[])? {
+            Expr::Call(call) => Ok(match self.eval_call(call, frame, false, &[], &[], depth)? {
                 Output::Value(v) => v,
                 Output::Safe(s) => Value::String(s),
             }),
         }
     }
 
-    fn eval_hash(&self, call: &Call, frame: &Rc<Frame>) -> Result<Map<String, Value>> {
+    fn eval_hash(&self, call: &Call, frame: &Rc<Frame>, depth: usize) -> Result<Map<String, Value>> {
         let mut hash = Map::new();
         for (key, expr) in &call.hash {
-            hash.insert(key.clone(), self.eval_expr(expr, frame)?);
+            hash.insert(key.clone(), self.eval_expr(expr, frame, depth)?);
         }
         Ok(hash)
     }
@@ -683,11 +740,12 @@ impl Engine {
         force_helper: bool,
         body: &[Node],
         inverse: &[Node],
+        depth: usize,
     ) -> Result<Output> {
-        let args = call.args.iter().map(|a| self.eval_expr(a, frame)).collect::<Result<Vec<_>>>()?;
-        let hash = self.eval_hash(call, frame)?;
+        let args = call.args.iter().map(|a| self.eval_expr(a, frame, depth)).collect::<Result<Vec<_>>>()?;
+        let hash = self.eval_hash(call, frame, depth)?;
         if let Some(helper) = self.helpers.get(&call.name) {
-            let helper_call = HelperCall { name: &call.name, args, hash, body, inverse, frame, engine: self };
+            let helper_call = HelperCall { name: &call.name, args, hash, body, inverse, frame, engine: self, depth };
             return helper(&helper_call);
         }
         if call.name == "lookup" && args.len() >= 2 {
@@ -699,33 +757,43 @@ impl Engine {
         Ok(Output::Value(resolve_path(&call.name, frame)))
     }
 
-    fn eval_block(&self, call: &Call, body: &[Node], inverse: &[Node], frame: &Rc<Frame>) -> Result<String> {
+    fn eval_block(
+        &self,
+        call: &Call,
+        body: &[Node],
+        inverse: &[Node],
+        frame: &Rc<Frame>,
+        depth: usize,
+    ) -> Result<String> {
         let name = call.name.as_str();
         if self.helpers.contains_key(name) {
-            return Ok(stringify(self.eval_call(call, frame, true, body, inverse)?, false));
+            return Ok(stringify(self.eval_call(call, frame, true, body, inverse, depth)?, false));
         }
-        let args = call.args.iter().map(|a| self.eval_expr(a, frame)).collect::<Result<Vec<_>>>()?;
+        let depth = depth + 1;
+        let args = call.args.iter().map(|a| self.eval_expr(a, frame, depth)).collect::<Result<Vec<_>>>()?;
         let value = match args.first() {
             Some(v) => v.clone(),
             None => resolve_path(name, frame),
         };
-        let hash = self.eval_hash(call, frame)?;
+        let hash = self.eval_hash(call, frame, depth)?;
         match name {
             "if" | "unless" => {
                 let truthy = conditional_truthy(&value, hash.get("includeZero") == Some(&Value::Bool(true)));
                 let branch = if name == "if" { truthy } else { !truthy };
-                self.render_nodes(if branch { body } else { inverse }, frame)
+                self.render_nodes(if branch { body } else { inverse }, frame, depth)
             }
             "each" => {
                 let entries: Vec<(Value, Value)> = match &value {
                     Value::Array(items) => {
                         items.iter().enumerate().map(|(i, v)| (js::number(i as f64), v.clone())).collect()
                     }
-                    Value::Object(map) => map.iter().map(|(k, v)| (Value::String(k.clone()), v.clone())).collect(),
+                    Value::Object(map) => {
+                        js::entries(map).into_iter().map(|(k, v)| (Value::String(k.clone()), v.clone())).collect()
+                    }
                     _ => Vec::new(),
                 };
                 if entries.is_empty() {
-                    return self.render_nodes(inverse, frame);
+                    return self.render_nodes(inverse, frame, depth);
                 }
                 let last = entries.len() - 1;
                 let mut out = String::new();
@@ -735,15 +803,15 @@ impl Engine {
                     data.insert("key".into(), key);
                     data.insert("first".into(), Value::Bool(index == 0));
                     data.insert("last".into(), Value::Bool(index == last));
-                    out.push_str(&self.render_nodes(body, &child(frame, Rc::new(item), Some(data)))?);
+                    out.push_str(&self.render_nodes(body, &child(frame, Rc::new(item), Some(data)), depth)?);
                 }
                 Ok(out)
             }
             "with" => {
                 if conditional_truthy(&value, false) {
-                    self.render_nodes(body, &child(frame, Rc::new(value), None))
+                    self.render_nodes(body, &child(frame, Rc::new(value), None), depth)
                 } else {
-                    self.render_nodes(inverse, frame)
+                    self.render_nodes(inverse, frame, depth)
                 }
             }
             _ => {
@@ -752,26 +820,26 @@ impl Engine {
                     Value::Array(items) => {
                         let mut out = String::new();
                         for item in items {
-                            out.push_str(&self.render_nodes(body, &child(frame, Rc::new(item), None))?);
+                            out.push_str(&self.render_nodes(body, &child(frame, Rc::new(item), None), depth)?);
                         }
-                        if out.is_empty() { self.render_nodes(inverse, frame) } else { Ok(out) }
+                        if out.is_empty() { self.render_nodes(inverse, frame, depth) } else { Ok(out) }
                     }
-                    Value::Bool(false) | Value::Null => self.render_nodes(inverse, frame),
-                    other => self.render_nodes(body, &child(frame, Rc::new(other), None)),
+                    Value::Bool(false) | Value::Null => self.render_nodes(inverse, frame, depth),
+                    other => self.render_nodes(body, &child(frame, Rc::new(other), None), depth),
                 }
             }
         }
     }
 
-    fn render_partial(&self, call: &Call, frame: &Rc<Frame>) -> Result<String> {
+    fn render_partial(&self, call: &Call, frame: &Rc<Frame>, depth: usize) -> Result<String> {
         let Some(source) = self.partials.get(&call.name) else {
             return err(format!("The partial {} could not be found", call.name));
         };
         let context = match call.args.first() {
-            Some(arg) => self.eval_expr(arg, frame)?,
+            Some(arg) => self.eval_expr(arg, frame, depth)?,
             None => (*frame.context).clone(),
         };
-        let hash = self.eval_hash(call, frame)?;
+        let hash = self.eval_hash(call, frame, depth)?;
         // `{ ...context, ...hash }` for any object context (an array spreads its indices).
         let merged = match context {
             Value::Object(mut map) => {
@@ -786,7 +854,13 @@ impl Engine {
             }
             other => other,
         };
-        self.render(source, &merged)
+        // Upstream compiles string partials with the module-global registry:
+        // built-ins only.
+        let inner = Engine::with_options(self.options);
+        let template = inner.compile(source)?;
+        let root = Rc::new(if merged.is_null() { Value::Object(Map::new()) } else { merged });
+        let frame = Rc::new(Frame { context: Rc::clone(&root), parents: Vec::new(), root, data: Rc::new(Map::new()) });
+        inner.render_nodes(&template.nodes, &frame, depth + 1)
     }
 }
 
