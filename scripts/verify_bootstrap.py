@@ -21,6 +21,7 @@ REQUIRED = (
     "docs/knowledge/architecture.md",
     "docs/knowledge/upstream.md",
     "docs/knowledge/context.md",
+    "docs/knowledge/agent-evolution.md",
     "docs/knowledge/integrations.md",
     "docs/knowledge/verification.md",
     "docs/roadmap.md",
