@@ -13,3 +13,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/verify_bootstrap.py
+      - run: python scripts/omp_inventory.py check

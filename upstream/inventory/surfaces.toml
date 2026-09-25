@@ -1,0 +1,1419 @@
+# OMP source surface map for the pinned baseline.
+#
+# Every tracked file at `baseline_commit` must match exactly one surface (first
+# matching rule wins, in file order). `scripts/omp_inventory.py` fails when a
+# file is unassigned or a surface has no files. Upstream test cases found in a
+# surface's test files become that surface's behavior items.
+#
+# scope:  core      shared Rust Agent Core (no product state)
+#         provider  model wire/protocol adapter or catalog policy
+#         host      host adapter or transport (CLI, RPC, ACP, MCP, LSP, DAP, SSH)
+#         host-ui   interactive terminal/web presentation owned by a host/product
+#         service   optional Agent capability behind an explicit port
+#         native    existing OMP Rust crate or native binding
+#         repo      build, CI, docs, benchmark or package metadata (no runtime port)
+# gate:   roadmap gate that first needs the surface (P1, P2, P3); `repo` rows use "-".
+# owner:  planned ARA Rust owner; "tbd" until the surface is taken up.
+# status: open | implementing | tested | audited | accepted | intentional-difference
+#         (surface status only advances when all of its behavior items do).
+
+schema_version = 1
+
+# ---------------------------------------------------------------- repo-wide
+[[surface]]
+id = "REPO-PKG-META"
+title = "Package manifests, changelogs, READMEs, licenses, tsconfig"
+scope = "repo"
+gate = "-"
+owner = "none"
+status = "open"
+match = [
+  '^packages/[^/]+/(README\.md|CHANGELOG\.md|DEVELOPMENT\.md|LICENSE|package\.json|tsconfig[^/]*\.json|bunfig\.toml|\.gitignore|\.npmignore|BUILD\.bazel|biome\.json)$',
+]
+behavior = "Publishing metadata and release notes; CHANGELOG entries are read as behavior hints only."
+
+# ------------------------------------------------------------ packages/agent
+[[surface]]
+id = "AGT-LOOP"
+title = "Agent loop: turns, streaming assistant messages, tool execution, abort"
+scope = "core"
+gate = "P1"
+owner = "ara-agent::agent_loop"
+status = "open"
+match = [
+  '^packages/agent/src/(agent-loop|replay-policy|thinking)\.ts$',
+  '^packages/agent/src/utils/yield\.ts$',
+  '^packages/agent/test/(agent-loop|prompt-tools-loop|soft-tool-requirement|arg-stream|continue-empty-transcript|yield|normalize-tools-prune|agent-side-request-context)\.test\.ts$',
+  '^packages/agent/test/(helpers\.ts|utils/)',
+]
+behavior = "agentLoop/agentLoopContinue event sequence, tool call validation and execution, steering/follow-up queues, abort and synthetic tool results, provider message normalization."
+
+[[surface]]
+id = "AGT-AGENT"
+title = "Stateful Agent: prompt/continue, subscriptions, queues, pause gate"
+scope = "core"
+gate = "P1"
+owner = "ara-agent::agent"
+status = "open"
+match = [
+  '^packages/agent/src/(agent|pause|types|index)\.ts$',
+  '^packages/agent/test/(agent|pause-gate)\.test\.ts$',
+]
+behavior = "Agent state, busy errors, prompt/continue/abort, event subscription, steering and follow-up message modes, pause gate."
+
+[[surface]]
+id = "AGT-APPEND-CTX"
+title = "Append-only context mode"
+scope = "core"
+gate = "P1"
+owner = "ara-agent::context"
+status = "open"
+match = ['^packages/agent/src/append-only-context\.ts$', '^packages/agent/test/append-only-context\.test\.ts$']
+behavior = "Prefix-stable append-only context for provider cache reuse."
+
+[[surface]]
+id = "AGT-COMPACTION"
+title = "Compaction, branch summaries, pruning, handoff, shake"
+scope = "core"
+gate = "P1"
+owner = "ara-agent::compaction"
+status = "open"
+match = [
+  '^packages/agent/src/compaction(\.ts|/)',
+  '^packages/agent/test/(compaction-[^/]+|branch-summarization|handoff|message-cache|remote-compaction|shake|supersede-prune|tool-protection|transcript-tokens|serialize-conversation|snapcompact-frames|compact-reset-boundary)\.test\.ts$',
+]
+behavior = "Token-threshold compaction, summaries with file operations, remote/OpenAI compaction, pruning and tool-output protection, handoff documents."
+
+[[surface]]
+id = "AGT-PROXY"
+title = "Proxy stream function (remote agent transport)"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/agent/src/proxy\.ts$', '^packages/agent/test/proxy-[^/]+\.test\.ts$']
+behavior = "Proxy-backed stream with partial JSON tool-call reassembly and disconnect handling."
+
+[[surface]]
+id = "AGT-TELEMETRY"
+title = "Agent telemetry and run collector"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/agent/src/(telemetry|run-collector)\.ts$',
+  '^packages/agent/test/(otel|run-summary|instrumented-oneshot-retry)\.test\.ts$',
+]
+behavior = "OpenTelemetry spans/metrics and run summary collection."
+
+[[surface]]
+id = "AGT-TOKENIZER"
+title = "Token estimation"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/agent/src/tokenizer\.ts$',
+  '^packages/agent/test/(tokenizer|context-tokens-orchestration)\.test\.ts$',
+]
+behavior = "Token counting/estimation used for context budgets."
+
+# --------------------------------------------------------------- packages/ai
+[[surface]]
+id = "AI-STREAM-CORE"
+title = "Message model, stream contract, event stream"
+scope = "core"
+gate = "P1"
+owner = "ara-ai::types, ara-ai::stream"
+status = "open"
+match = [
+  '^packages/ai/test/handoff\.test\.ts$',
+  '^packages/ai/test/(provider-response|provider-inflight|provider-fetch-override|proxy|tokens|total-tokens|resolve-used-fraction|unicode-surrogate)\.test\.ts$',
+  '^packages/ai/test/helpers/',
+  '^packages/ai/src/(types|index|stream|utils)\.ts$',
+  '^packages/ai/src/utils/(event-stream|deterministic-id|provider-response|proxy|foundry)\.ts$',
+  '^packages/ai/test/(event-stream|stream|types)[^/]*\.test\.ts$',
+]
+behavior = "User/assistant/toolResult messages, content blocks, usage and stop reasons, AssistantMessageEvent stream protocol."
+
+[[surface]]
+id = "AI-OPENAI-CHAT"
+title = "OpenAI-compatible Chat Completions adapter"
+scope = "provider"
+gate = "P1"
+owner = "ara-ai::providers::openai_completions"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(1203|1207|1227|1776|1838|2080|2315|2996|3434|3528|3593|5983|827|8854|883|911|945|955|959|969|9433|2883)-[^/]*\.test\.ts$',
+  '^packages/ai/test/openai-(tool-strict|stream|output-token|max-output|first-event|configuration|daybreak)[^/]*\.test\.ts$',
+  '^packages/ai/src/providers/(openai-completions|openai-chat-wire|openai-shared|openai-data-uri|openai-reasoning-fallback|openai-configuration-update)\.ts$',
+  '^packages/ai/src/utils/(openai-http|openrouter-headers)\.ts$',
+  '^packages/ai/test/(openai-completions|openai-compat|openai-chat|openrouter|null-max-tokens|deepseek-reasoning|openai-data|duplicate-tool-results|openai-reasoning)[^/]*\.test\.ts$',
+]
+behavior = "Chat Completions request shaping, SSE parsing, tool-call deltas, reasoning fields, usage, finish reasons, compat flags."
+
+[[surface]]
+id = "AI-OPENAI-RESPONSES"
+title = "OpenAI Responses, Azure Responses and Codex adapters"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(10690|8248|931|1701)-[^/]*\.test\.ts$',
+  '^packages/ai/test/(openai-computer-contract|utils-responses-id)\.test\.ts$',
+  '^packages/ai/test/providers/openai-codex',
+  '^packages/ai/src/providers/(openai-responses[^/]*|azure-openai-responses|openai-codex[^/]*)\.ts$',
+  '^packages/ai/src/providers/openai-codex/',
+  '^packages/ai/src/usage/openai-codex[^/]*\.ts$',
+  '^packages/ai/test/(openai-responses|openai-codex|azure-|codex-|issue-8789)[^/]*\.test\.ts$',
+]
+behavior = "Responses API items, reasoning items, encrypted content replay, Codex transport and usage."
+
+[[surface]]
+id = "AI-ANTHROPIC"
+title = "Anthropic Messages adapter"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(2123|4679|6510|814|826)-[^/]*\.test\.ts$',
+  '^packages/ai/src/providers/(anthropic[^/]*|claude-code-fingerprint|openai-anthropic-shim)\.ts$',
+  '^packages/ai/src/utils/anthropic-auth\.ts$',
+  '^packages/ai/src/usage/claude\.ts$',
+  '^packages/ai/test/(anthropic|claude)-[^/]*\.test\.ts$',
+]
+behavior = "Messages API SSE, thinking signatures, cache control, tool schema, retries."
+
+[[surface]]
+id = "AI-GOOGLE"
+title = "Google Gemini, Vertex, Gemini CLI, Antigravity adapters"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(1270|976)-[^/]*\.test\.ts$',
+  '^packages/ai/test/providers/google-',
+  '^packages/ai/src/providers/google[^/]*\.ts$',
+  '^packages/ai/src/utils/google-validation\.ts$',
+  '^packages/ai/src/usage/(gemini|google-antigravity)\.ts$',
+  '^packages/ai/test/(google|gemini)-[^/]*\.test\.ts$',
+]
+behavior = "Gemini generateContent streaming, function calls, thought signatures."
+
+[[surface]]
+id = "AI-BEDROCK"
+title = "Amazon Bedrock and Mantle adapters, AWS signing"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(1373|3124|6276)-[^/]*\.test\.ts$',
+  '^packages/ai/src/providers/(amazon-bedrock|aws-[^/]*|bedrock-mantle)\.ts$',
+  '^packages/ai/src/registry/(amazon-bedrock|aws|bedrock-mantle)\.ts$',
+  '^packages/ai/src/utils/aws-profile\.ts$',
+  '^packages/ai/test/(aws|bedrock)-[^/]*\.test\.ts$',
+]
+behavior = "Converse stream, event-stream framing, SigV4, credentials."
+
+[[surface]]
+id = "AI-CURSOR"
+title = "Cursor provider"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/fixtures/cursor-','^packages/ai/src/providers/cursor', '^packages/ai/src/usage/cursor\.ts$', '^packages/ai/test/cursor-[^/]*\.test\.ts$']
+behavior = "Cursor agent transport, exec handlers, tool bridges."
+
+[[surface]]
+id = "AI-DEVIN"
+title = "Devin provider"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/ai/src/providers/devin', '^packages/ai/src/usage/devin\.ts$', '^packages/ai/test/devin-[^/]*\.test\.ts$']
+behavior = "Devin transport, framing and history."
+
+[[surface]]
+id = "AI-GITLAB"
+title = "GitLab Duo providers"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/ai/src/providers/gitlab-duo', '^packages/ai/test/gitlab-[^/]*\.test\.ts$']
+behavior = "GitLab Duo chat/workflow transport."
+
+[[surface]]
+id = "AI-COPILOT"
+title = "GitHub Copilot routing and headers"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(912)-[^/]*\.test\.ts$','^packages/ai/src/providers/github-copilot-headers\.ts$', '^packages/ai/src/usage/github-copilot\.ts$', '^packages/ai/test/github-copilot-[^/]*\.test\.ts$']
+behavior = "Copilot headers, base URL, reasoning routing."
+
+[[surface]]
+id = "AI-OLLAMA"
+title = "Ollama provider"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(3555)-[^/]*\.test\.ts$','^packages/ai/src/providers/ollama\.ts$', '^packages/ai/src/usage/ollama\.ts$', '^packages/ai/test/ollama-[^/]*\.test\.ts$']
+behavior = "Ollama chat transport and thinking control."
+
+[[surface]]
+id = "AI-KIMI"
+title = "Kimi provider"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/providers/kimi-','^packages/ai/src/providers/kimi\.ts$', '^packages/ai/src/usage/kimi\.ts$', '^packages/ai/test/kimi-[^/]*\.test\.ts$']
+behavior = "Kimi transport and multi-account usage."
+
+[[surface]]
+id = "AI-PROVIDERS-MISC"
+title = "Other provider transports and shared request helpers"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/(xhigh|requires-effort|yolo-auto-thinking|service-tier-premium|vercel-gateway|opencode-session|sakana|deepinfra|alibaba-|pi-native-client|providers/keyless)[^/]*\.(test|live)\.ts$',
+  '^packages/ai/test/wafer\.live\.ts$',
+  '^packages/ai/src/providers/(synthetic|cowork-fetch|grammar|inference-headers|pi-native-client|pi-native-server|error-message|connect-error-detail)\.ts$',
+  '^packages/ai/src/providers/[^/]+\.md$',
+  '^packages/ai/test/(cowork-|connect-error|synthetic|cline-pass|firepass|coreweave|cloudflare|max-effort|abliteration)[^/]*\.(test|live)\.ts$',
+]
+behavior = "Synthetic, cowork, pi-native, grammar-constrained and header helpers."
+
+[[surface]]
+id = "AI-MOCK"
+title = "Mock provider"
+scope = "core"
+gate = "P1"
+owner = "ara-testkit"
+status = "open"
+match = ['^packages/ai/src/providers/mock\.ts$', '^packages/ai/test/mock-provider\.test\.ts$']
+behavior = "Deterministic scripted provider for tests."
+
+[[surface]]
+id = "AI-TRANSFORM"
+title = "Cross-provider message transform and vision guard"
+scope = "core"
+gate = "P1"
+owner = "ara-ai::transform"
+status = "open"
+match = [
+  '^packages/ai/test/(tool-call-without-result|transcript-render)\.test\.ts$',
+  '^packages/ai/test/data/',
+  '^packages/ai/src/providers/(transform-messages|vision-guard)\.ts$',
+  '^packages/ai/test/(transform|image-|issue-967-vision)[^/]*\.test\.ts$',
+]
+behavior = "Replay of foreign-provider history, orphaned tool calls, images for non-vision models."
+
+[[surface]]
+id = "AI-REGISTRY"
+title = "API/provider registry"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/(provider-registry|register-builtins)\.test\.ts$',
+  '^packages/ai/src/(api-registry|provider-details)\.ts$',
+  '^packages/ai/src/providers/register-builtins\.ts$',
+  '^packages/ai/test/(api-registry|meta-provider|models-|model-cache)[^/]*\.test\.ts$',
+]
+behavior = "Registration and dispatch of wire APIs to providers."
+
+[[surface]]
+id = "AI-SERVERS"
+title = "Wire-protocol servers and auth gateway"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/src/providers/[^/]*-server(-schema)?\.ts$',
+  '^packages/ai/src/auth-gateway/',
+  '^packages/ai/test/auth-gateway-[^/]*\.test\.ts$',
+]
+behavior = "Local OpenAI/Anthropic/pi-native compatible servers fronting providers."
+
+[[surface]]
+id = "AI-AUTH"
+title = "Credential storage, OAuth/API-key login, auth broker"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(2424|4085|8328|957|1417)-[^/]*\.test\.ts$',
+  '^packages/ai/test/(remote-auth-store|[a-z-]*-oauth[^/]*)\.test\.ts$',
+  '^packages/ai/test/registry/',
+  '^packages/ai/test/fixtures/oauth-',
+  '^packages/ai/test/oauth\.ts$',
+  '^packages/ai/src/(auth-storage|auth-retry)\.ts$',
+  '^packages/ai/src/(auth|auth-broker|registry)/',
+  '^packages/ai/test/(auth-|oauth|callback-server|api-key-validation|[a-z0-9-]+-login|google-oauth|anthropic-oauth)[^/]*\.(test\.)?ts$',
+]
+behavior = "Credential stores, OAuth flows and refresh, broker, provider auth hooks. Hosts own identity and grants."
+
+[[surface]]
+id = "AI-DIALECT"
+title = "In-band tool-call dialects"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/owned-stream-',
+  '^packages/ai/src/dialect/',
+  '^packages/ai/test/(dialect|harmony|gemini-gemma|inband|glm-|issue-6913)[^/]*\.test\.ts$',
+]
+behavior = "Text-encoded tool calls and thinking fences for models without native tools."
+
+[[surface]]
+id = "AI-ERROR"
+title = "Provider error classification"
+scope = "core"
+gate = "P1"
+owner = "ara-ai::error"
+status = "open"
+match = [
+  '^packages/ai/test/(rate-limit-utils|overflow-utils)\.test\.ts$','^packages/ai/src/error/', '^packages/ai/test/(error-|context-overflow|abort)[^/]*\.test\.ts$']
+behavior = "Retryable/auth/rate-limit/overflow classification, abort errors, formatting."
+
+[[surface]]
+id = "AI-RETRY"
+title = "Retry, timeouts, empty completion recovery"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/issue-(4593)-[^/]*\.test\.ts$',
+  '^packages/ai/test/pre-response-timeout',
+  '^packages/ai/src/oneshot-retry\.ts$',
+  '^packages/ai/src/utils/(empty-completion-retry|retry-after|sdk-stream-timeout|idle-iterator|abort)\.ts$',
+  '^packages/ai/test/(oneshot-retry|empty-completion|retry|idle|abort-source)[^/]*\.test\.ts$',
+]
+behavior = "Retry-After parsing, one-shot retries, idle stream timeouts, abort source tracking."
+
+[[surface]]
+id = "AI-STREAM-GUARDS"
+title = "Stream healing and loop guards"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/fixtures/harmony-leak',
+  '^packages/ai/src/utils/(harmony-leak|leaked-thinking-stream|stream-markup-healing|thinking-loop|tool-call-loop-guard|glyph-codec|glyph-notice|block-symbols)\.(ts|md)$',
+  '^packages/ai/test/(leaked-thinking|glyph|stream-markup|thinking-loop|tool-call-loop)[^/]*\.test\.ts$',
+]
+behavior = "Leaked thinking/harmony markup repair, repeated tool-call and thinking loop detection."
+
+[[surface]]
+id = "AI-TOOLSCHEMA"
+title = "Tool schema normalization and argument validation"
+scope = "core"
+gate = "P1"
+owner = "ara-ai::validation"
+status = "open"
+match = [
+  '^packages/ai/test/todo-op-whitespace\.test\.ts$',
+  '^packages/ai/test/(tool-argument-coercion|tool-examples|tool-inventory)\.test\.ts$',
+  '^packages/ai/src/utils/(schema/|validation\.ts|tool-choice\.ts|parse-bind\.ts)',
+  '^packages/ai/test/(json-schema|flattened-array|schema|validation|tool-choice|apply-patch-freeform|eval-language)[^/]*\.test\.ts$',
+]
+behavior = "JSON Schema normalization per provider, argument validation and coercion, tool choice mapping."
+
+[[surface]]
+id = "AI-USAGE"
+title = "Provider usage/quota reporting"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/ai/src/usage(\.ts|/)', '^packages/ai/test/[a-z0-9-]*usage[^/]*\.test\.ts$']
+behavior = "Account usage/quota queries per provider."
+
+[[surface]]
+id = "AI-HTTP-DEBUG"
+title = "HTTP/SSE inspection and request debugging"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/ai/test/(request-debug|sse-debug|raw-sse-sdk-capture)\.test\.ts$','^packages/ai/src/utils/(http-inspector|request-debug|sse-debug)\.ts$', '^packages/ai/test/http-inspector\.test\.ts$']
+behavior = "Request/response capture for diagnostics (credential redaction required)."
+
+[[surface]]
+id = "AI-TEST-TRIAGE"
+title = "packages/ai debug scripts and unowned test support"
+scope = "provider"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/ai/(test|scripts)/']
+behavior = "Fallback for packages/ai tests/scripts not owned by a feature surface (currently only debug scripts); new unowned files land here and must be reassigned."
+
+# ------------------------------------------------------ packages/coding-agent
+[[surface]]
+id = "CA-SESSION-JOURNAL"
+title = "Session JSONL journal, entries, loader, migrations, listing"
+scope = "core"
+gate = "P1"
+owner = "ara-session"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/(blob-store|session-dump|session-history|session-manager-fork|recent-sessions|peek-session|session-status)',
+  '^packages/coding-agent/test/fixtures/(before-compaction|large-session)\.jsonl$',
+  '^packages/coding-agent/src/session/(session-manager|session-entries|session-storage|session-persistence|session-loader|session-migrations|session-paths|session-listing|session-metadata|session-maintenance|session-pins|title-index|checkpoint-entries|session-dump-format|session-history-format|artifacts|blob-store)\.ts$',
+  '^packages/coding-agent/test/(session-manager/|session-(manager|paths|pins|listing|storage|loader|messages|persistence|bare|ranking|selector|exit|fork|color|focus|stop|code)|artifacts-|turn-persistence|storage-exit)',
+]
+behavior = "Append-only session tree with ids/parents, header, message/model/compaction entries, atomic persistence, resume, listing."
+
+[[surface]]
+id = "CA-SESSION-BACKENDS"
+title = "Alternative session storage backends"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/(redis|sql)-',
+  '^packages/coding-agent/src/session/(sql-session-storage|redis-session-storage|indexed-session-storage|history-storage|agent-storage)\.ts$',
+  '^packages/coding-agent/test/(history-storage|agent-storage)-[^/]*\.test\.ts$',
+]
+behavior = "SQLite/Redis/indexed storage and prompt history; hosts choose storage location."
+
+[[surface]]
+id = "CA-SESSION-FOREIGN"
+title = "Foreign session import (Claude Code, Codex)"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/session/(foreign-session[^/]*|claude-session-store|codex-session-store)\.ts$',
+  '^packages/coding-agent/test/foreign-session[^/]*\.test\.ts$',
+]
+behavior = "Import of other agents' session logs."
+
+[[surface]]
+id = "CA-AGENT-SESSION"
+title = "AgentSession orchestration over Agent + Session"
+scope = "core"
+gate = "P1"
+owner = "ara-cli::run (slice 1), later ara-runtime"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/(agent-session|emit-listener|session-context|messages|thinking-display)',
+  '^packages/coding-agent/test/helpers/agent-session-setup',
+  '^packages/coding-agent/src/session/(agent-session[^/]*|session-context|messages|session-tools|settings-stream-fn|session-provider-boundary)\.ts$',
+  '^packages/coding-agent/test/(agent-session-[^/]+|settings-stream-fn|event-)[^/]*\.test\.ts$',
+]
+behavior = "Binding Agent events to session persistence, model/tool selection, retries, compaction triggers, branching, steering, disposal."
+
+[[surface]]
+id = "CA-TURN-RECOVERY"
+title = "Turn persistence, recovery, unexpected-stop and retry fallback"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/(empty-error-turn|inline-edit-recovery|interrupted-thinking)',
+  '^packages/coding-agent/src/session/(turn-persistence|turn-recovery|unexpected-stop-classifier|retry-fallback-chains|stream-guards|streaming-output|exit-diagnostics|inline-edit-recovery|launch-completion|codex-auto-reset)\.ts$',
+  '^packages/coding-agent/test/(turn-recovery|unexpected-stop|retry-fallback|streaming-output|codex-auto-reset|repro-issue-|issue-interrupt)[^/]*\.test\.ts$',
+]
+behavior = "Crash/interrupt recovery without replaying unsafe tools, stop classification, fallback chains."
+
+[[surface]]
+id = "CA-QUEUE"
+title = "Queued, steering, yield and tool-choice queues"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/yield-queue',
+  '^packages/coding-agent/src/session/(queued-messages|yield-queue|tool-choice-queue|tool-call-loop-redirect|async-job-delivery)\.ts$',
+  '^packages/coding-agent/test/(tool-choice-queue|async-yield-queue|steering)[^/]*\.test\.ts$',
+]
+behavior = "Message queueing semantics during a running turn."
+
+[[surface]]
+id = "CA-MODEL-CONTROLS"
+title = "Model controls, roles, credential pinning"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/provider-image-budget',
+  '^packages/coding-agent/src/session/(model-controls|role-models|credential-pin|auth-storage|auth-broker-config|provider-image-budget)\.ts$',
+  '^packages/coding-agent/test/(credential-pin|role-|provider-|fast-mode|service-tier|nonvision|default-model|active-oauth|auth-)[^/]*\.test\.ts$',
+]
+behavior = "Model switching, role models, thinking levels, provider image budget."
+
+[[surface]]
+id = "CA-COMPACTION-HOST"
+title = "Session-level compaction methods, snapcompact, handoff"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/session/(compaction-methods|compact-modes|snapcompact-[^/]*|shake-types|session-handoff)\.ts$',
+  '^packages/coding-agent/test/(compaction|compact-modes|snapcompact|shake|context-consolidation)[^/]*\.test\.ts$',
+]
+behavior = "Choosing and persisting compaction outcomes in the session."
+
+[[surface]]
+id = "CA-SESSION-EXTRAS"
+title = "Session reminders, stats, advisors, todos, workspace and bridges"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/session/',
+  '^packages/coding-agent/src/session/',
+  '^packages/coding-agent/test/(date-cwd|todo|workspace-|prewalk|title-generator|ttsr|loop-limit)[^/]*\.test\.ts$',
+]
+behavior = "Date/cwd reminders, session stats, todo tracker, TTSR, worktree/workspace helpers, IRC/client bridges, code/eval runners."
+
+[[surface]]
+id = "CA-TOOL-FRAMEWORK"
+title = "Tool registry, results, errors, approval, rendering contract"
+scope = "core"
+gate = "P1"
+owner = "ara-tools::registry"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(approval|index|output-|json-tree|jtd-|render-utils|resolve|tool-|path-|schema-validation|provider-schema|root-path|windows-drive|strip-output|split-internal|path-literal)',
+  '^packages/coding-agent/src/tools/(index|builtin-names|essential-tools|tool-result|tool-errors|tool-timeouts|output-meta|output-schema-validator|renderers|default-renderer|render-utils|run-scope|approval|path-utils|resolve|context|jtd-[^/]*|json-tree|list-limit)\.ts$',
+  '^packages/coding-agent/test/(tools|tool-|builtin-names|getalltools|truncat|prefix-binding|mid-turn)[^/]*\.test\.ts$',
+]
+behavior = "Built-in tool set, result/detail shapes, truncation, approval policy, per-tool timeouts."
+
+[[surface]]
+id = "CA-TOOL-READ"
+title = "read tool"
+scope = "core"
+gate = "P1"
+owner = "ara-tools::read"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(read-|sqlite)',
+  '^packages/coding-agent/test/fixtures/pdf-',
+  '^packages/coding-agent/src/tools/(read[^/]*|sqlite-reader)\.ts$',
+  '^packages/coding-agent/test/(read-|pdf-)[^/]*\.test\.ts$',
+]
+behavior = "Line-numbered file reads, ranges, truncation, directories, archives, PDFs, sqlite, images."
+
+[[surface]]
+id = "CA-TOOL-WRITE"
+title = "write tool"
+scope = "core"
+gate = "P1"
+owner = "ara-tools::write"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(file-write-fallback|conflict-|auto-generated)',
+  '^packages/coding-agent/src/tools/(write|file-write-fallback|file-recorder|auto-generated-guard|conflict-detect|fs-cache-invalidation)\.ts$',
+  '^packages/coding-agent/test/(write-|cache-invalidation)[^/]*\.test\.ts$',
+]
+behavior = "Create/overwrite files, parent dirs, guards, conflict detection, streaming preview."
+
+[[surface]]
+id = "CA-TOOL-BASH"
+title = "bash tool and execution"
+scope = "core"
+gate = "P1"
+owner = "ara-tools::bash"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(bash-|shell-tokenize)',
+  '^packages/coding-agent/test/fixtures/bash-',
+  '^packages/coding-agent/src/tools/(bash[^/]*|shell-tokenize|terminal-output)\.ts$',
+  '^packages/coding-agent/src/exec/',
+  '^packages/coding-agent/test/(bash-|direnv|non-interactive-env|shell-snapshot|terminal-output|fatal-stderr)[^/]*\.test\.ts$',
+]
+behavior = "Shell command execution, timeouts, output caps, abort, background jobs, PTY, env."
+
+[[surface]]
+id = "CA-TOOL-EDIT"
+title = "edit/patch tools"
+scope = "core"
+gate = "P1"
+owner = "tbd (pi-edit vendoring candidate)"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(apply-patch|ast-edit|edit-)',
+  '^packages/coding-agent/test/fixtures/chunk-edit',
+  '^packages/coding-agent/src/edit/',
+  '^packages/coding-agent/src/tools/(ast-edit|hashline-format)\.ts$',
+  '^packages/coding-agent/test/(edit-|streaming-edit|apply-patch|join-patch)[^/]*\.test\.ts$',
+]
+behavior = "String replace, hashline and patch edit modes with validation."
+
+[[surface]]
+id = "CA-TOOL-SEARCH"
+title = "grep, glob, ast-grep tools"
+scope = "core"
+gate = "P1"
+owner = "tbd (pi-walker vendoring candidate)"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(glob|grep|ast-grep|multi-grep|multi-path|grouped-file|search-url)',
+  '^packages/coding-agent/src/tools/(grep|glob|ast-grep|match-line-format|grouped-file-output)\.ts$',
+  '^packages/coding-agent/test/(grep|glob|fuzzy)[^/]*\.test\.ts$',
+]
+behavior = "Content and path search with ignore rules and result limits."
+
+[[surface]]
+id = "CA-TOOL-INTERACT"
+title = "ask, think, todo, yield, checkpoint tools"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(ask|todo|yield|think|plan-mode-guard)',
+  '^packages/coding-agent/test/modes/components/ask-dialog',
+  '^packages/coding-agent/src/tools/(ask|think|todo|yield|checkpoint|plan-mode-guard)\.ts$',
+  '^packages/coding-agent/test/(ask-|checkpoint|goal-)[^/]*\.test\.ts$',
+]
+behavior = "User questions, todo list, yield/terminal results, checkpoints."
+
+[[surface]]
+id = "CA-TOOL-GH"
+title = "GitHub tools"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(gh|github-cache)','^packages/coding-agent/src/tools/(gh[^/]*|github-cache)\.ts$', '^packages/coding-agent/test/(gh-|git-)[^/]*\.test\.ts$']
+behavior = "gh CLI-backed PR/issue/run tools."
+
+[[surface]]
+id = "CA-TOOL-BROWSER"
+title = "Browser and computer-use tools"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(browser-|computer|chromium|puppeteer)',
+  '^packages/coding-agent/test/fixtures/(browser-|computer-)',
+  '^packages/coding-agent/src/tools/(browser|computer|puppeteer)',
+  '^packages/coding-agent/test/(computer-|cli-computer|sdk-computer)[^/]*\.test\.ts$',
+]
+behavior = "Puppeteer browser, relay, computer use."
+
+[[surface]]
+id = "CA-TOOL-EVAL"
+title = "eval (code execution kernels) tool"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/eval-',
+  '^packages/coding-agent/test/(core|eval)/',
+  '^packages/coding-agent/test/fixtures/js-process','^packages/coding-agent/src/tools/eval', '^packages/coding-agent/src/eval/', '^packages/coding-agent/test/(eval-|agent-session-python)[^/]*\.test\.ts$']
+behavior = "Python/JS kernels, notebooks, output formatting."
+
+[[surface]]
+id = "CA-TOOL-MEMORY"
+title = "Memory tools"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/memory-','^packages/coding-agent/src/tools/(memory-[^/]*|learn)\.ts$', '^packages/coding-agent/test/memory-tools\.test\.ts$']
+behavior = "retain/recall/reflect/edit memory tools."
+
+[[surface]]
+id = "CA-TOOL-FETCH"
+title = "fetch tool"
+scope = "service"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/fetch-','^packages/coding-agent/src/tools/fetch\.ts$']
+behavior = "URL fetch with readability/markdown conversion."
+
+[[surface]]
+id = "CA-TOOL-MEDIA"
+title = "Image generation, image inspection and TTS tools"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/(image-gen|inspect-image)',
+  '^packages/coding-agent/src/tools/(image-gen|image-providers|inspect-image[^/]*|tts)\.ts$',
+  '^packages/coding-agent/test/(inspect-image|image-|block-images|strip-images|kitty-image)[^/]*\.test\.ts$',
+]
+behavior = "Image generation/inspection and speech output."
+
+[[surface]]
+id = "CA-TOOL-MISC"
+title = "Other tools (review, security scan, vibe, xdev, hub, skills, debug)"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/','^packages/coding-agent/src/tools/']
+behavior = "Remaining built-in tools; each needs its own row when taken up."
+
+[[surface]]
+id = "CA-CONFIG"
+title = "Settings and config files"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/config\.ts$',
+  '^packages/coding-agent/src/config/(settings[^/]*|config-file|resolve-config-value|append-only-context-mode|inline-tool-descriptors-mode|claude-paths|prompt-templates|mcp-schema\.json)',
+  '^packages/coding-agent/test/(config/|settings-|config-|prompt-templates|append-only-context-mode|inline-tool-descriptors)',
+]
+behavior = "Layered settings, config paths, prompt templates."
+
+[[surface]]
+id = "CA-MODEL-REGISTRY"
+title = "Model registry, resolution, discovery, custom models"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/config/(model-[^/]*|models-config[^/]*|custom-models|provider-globals|service-tier|api-key-resolver)\.ts$',
+  '^packages/coding-agent/test/(model-|models-|issue-970|issue-2761|xiaomi|lm-studio|dry-balance)[^/]*\.test\.ts$',
+]
+behavior = "Resolving provider/model ids, API keys, custom model config and discovery."
+
+[[surface]]
+id = "CA-KEYBINDINGS"
+title = "Keybindings"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = ['^packages/coding-agent/src/config/keybindings\.ts$', '^packages/coding-agent/test/(keybindings|custom-editor)[^/]*\.test\.ts$']
+behavior = "Terminal key mapping."
+
+[[surface]]
+id = "CA-SYSPROMPT"
+title = "System prompt assembly and prompt templates"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/(system-prompt|workspace-tree)\.ts$',
+  '^packages/coding-agent/src/prompts/',
+  '^packages/coding-agent/test/(system-prompt|workspace-tree|prompt-format|client-prompts|tool-guidance)[^/]*\.test\.ts$',
+]
+behavior = "System prompt from templates, tools, context files, skills, environment."
+
+[[surface]]
+id = "CA-DISCOVERY"
+title = "Context file, agent, rule and plugin discovery"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/discovery/', '^packages/coding-agent/test/(discovery/|extensions-discovery|file-mentions|bundled-agent)']
+behavior = "AGENTS.md/CLAUDE.md and other tool-config discovery, at-imports, containment."
+
+[[surface]]
+id = "CA-CAPABILITY"
+title = "Capability model for discovered resources"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/capability/', '^packages/coding-agent/test/capability/']
+behavior = "Typed capability records (context files, skills, rules, tools, hooks)."
+
+[[surface]]
+id = "CA-EXT-SKILLS"
+title = "Skills loading"
+scope = "core"
+gate = "P1"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/extensibility/skills\.ts$',
+  '^packages/coding-agent/test/(skills|skill-|skillful|agent-session-skill)[^/]*\.test\.ts$',
+  '^packages/coding-agent/test/fixtures/skills',
+]
+behavior = "SKILL.md discovery, validation, collision handling, prompt injection."
+
+[[surface]]
+id = "CA-EXT-HOOKS"
+title = "Hooks"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/extensibility/hooks/', '^packages/coding-agent/test/hook-[^/]*\.test\.ts$']
+behavior = "Lifecycle hooks around tools and prompts."
+
+[[surface]]
+id = "CA-EXT-SLASH"
+title = "Slash commands"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/extensibility/slash-commands\.ts$',
+  '^packages/coding-agent/src/slash-commands/',
+  '^packages/coding-agent/src/commands/',
+  '^packages/coding-agent/test/(slash-commands/|slash-command|available-commands|command-|join-command|install-command)',
+]
+behavior = "Built-in and custom slash commands."
+
+[[surface]]
+id = "CA-EXT-PLUGINS"
+title = "Extensions, custom tools/commands, plugins, legacy shims"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/extensibility/',
+  '^packages/coding-agent/test/fixtures/legacy-pi',
+  '^packages/coding-agent/test/utils/filter-user-extensions',
+  '^packages/coding-agent/src/extensibility/',
+  '^packages/coding-agent/test/(extension|plugin|legacy-pi|marketplace/|custom-|issue-973|issue-983|issue-4197|issue-5764|issue-6449|issue-5879|issue-4919|tan-extension|runner-cache|reload-plugins|cli-extension|cli-explicit-extension|sdk-[^/]*extension)',
+]
+behavior = "TS extension runtime and plugin marketplace; ARA needs an explicit host extension interface instead of in-process TS."
+
+[[surface]]
+id = "CA-PRINT-MODE"
+title = "Non-interactive print mode"
+scope = "host"
+gate = "P1"
+owner = "ara-cli"
+status = "open"
+match = [
+  '^packages/coding-agent/test/modes/(print-mode|noninteractive-dispose)','^packages/coding-agent/src/modes/print-mode\.ts$', '^packages/coding-agent/test/(print-mode|silent-abort-print)[^/]*\.test\.ts$']
+behavior = "Single prompt run with text or JSON event output and exit status."
+
+[[surface]]
+id = "CA-RPC"
+title = "RPC mode (JSON lines over stdio)"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/fixtures/(mock-rpc|locked-stdin)',
+  '^packages/coding-agent/test/(rpc-example|checkpoint-rpc-qa)\.ts$','^packages/coding-agent/src/modes/rpc/', '^packages/coding-agent/src/jsonrpc/', '^packages/coding-agent/test/(rpc|checkpoint-rpc|ipc-)[^/]*\.test\.ts$', '^python/omp-rpc/']
+behavior = "Command/event frames, host tools and URIs, subagents over RPC; Python client."
+
+[[surface]]
+id = "CA-ACP"
+title = "Agent Client Protocol mode"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/modes/acp/', '^packages/coding-agent/test/(acp-|agent-session-acp|bash-acp|edit-acp|read-acp|write-acp)[^/]*\.test\.ts$']
+behavior = "ACP server, permission gate and fs/terminal bridges."
+
+[[surface]]
+id = "CA-TUI-MODE"
+title = "Interactive terminal mode, components, controllers, themes, setup wizard"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = [
+  '^packages/coding-agent/test/modes/',
+  '^packages/coding-agent/test/live/',
+  '^packages/coding-agent/test/fixtures/(xterm|fatal-tui|assistant-message)',
+  '^packages/coding-agent/test/helpers/terminal-multiplexer',
+  '^packages/coding-agent/src/modes/',
+  '^packages/coding-agent/src/(tui|live|activity)/',
+  '^packages/coding-agent/src/startup-splash\.ts$',
+  '^packages/coding-agent/test/(tui/|interactive-|input-controller|event-controller|status-|theme-|test-theme|welcome-|autocomplete|emoji|editor-|external-editor|hook-editor|hook-selector|selector-|rewind-selector|worker-selector|startup-|streaming-(preview|render|reveal)|silent-abort-overlay|steering-skip|subagent-hud|job-|live-|macos-spelling|visual-truncate|terminal-title|xterm|usage-(dashboard|row)|power-assertion|countdown|composer|prompt-action|session-selector|model-browser|model-picker|model-hub|agent-hub|agents-hub|setup-wizard|keybindings|issue-(6334|9712|9597|9816)|activity-index|tui-tree|extension-(list|dashboard|inspector|mcp-inspector)|mcp-name|agent-session-tree)',
+]
+behavior = "Terminal UI. Products present state through host APIs; this is not shared Core."
+
+[[surface]]
+id = "CA-CLI"
+title = "CLI entry, argument parsing and subcommands"
+scope = "host"
+gate = "P1"
+owner = "ara-cli"
+status = "open"
+match = [
+  '^packages/coding-agent/test/cli/',
+  '^packages/coding-agent/test/fixtures/(cli-|compiled-worker)',
+  '^packages/coding-agent/src/(cli|cli-commands|main)\.ts$',
+  '^packages/coding-agent/src/cli/',
+  '^packages/coding-agent/test/(cli-|main-|initial-message|flag-tables|profile-|gallery-|gc-|images-cli|stats-cli|setup-cli|tiny-models-cli|update-cli|usage-cli|config-cli|sample-profile|pi-scope)',
+]
+behavior = "omp argv routing, flags (--print, --model, --session, --max-time ...), subcommands."
+
+[[surface]]
+id = "CA-SDK"
+title = "SDK entry (createAgentSession)"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/(sdk|index)\.ts$', '^packages/coding-agent/test/sdk-[^/]*\.test\.ts$']
+behavior = "Programmatic session creation with tools, skills, extensions, isolation."
+
+[[surface]]
+id = "CA-MCP"
+title = "MCP client manager and transports"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/mcp/',
+  '^packages/coding-agent/test/mcp-test-utils',
+  '^packages/coding-agent/test/fixtures/[a-z-]*-mcp\.ts$',
+  '^packages/coding-agent/test/client-resources','^packages/coding-agent/src/mcp/', '^packages/coding-agent/test/(mcp-|token-mcp|task-executor-mcp|read-cli-mcp)[^/]*\.test\.ts$']
+behavior = "stdio/HTTP/SSE MCP transports, OAuth, tool/resource catalogs, reconnect."
+
+[[surface]]
+id = "CA-LSP"
+title = "LSP integration"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/lsp-',
+  '^packages/coding-agent/test/fixtures/fake-lsp','^packages/coding-agent/src/lsp/', '^packages/coding-agent/test/(lsp/|lsp-|biome-client)']
+behavior = "Language server diagnostics/formatting for edits."
+
+[[surface]]
+id = "CA-DAP"
+title = "Debug Adapter Protocol"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/dap/', '^packages/coding-agent/test/dap-']
+behavior = "Debugger sessions."
+
+[[surface]]
+id = "CA-SSH"
+title = "SSH remote execution"
+scope = "host"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/ssh-url','^packages/coding-agent/src/ssh/', '^packages/coding-agent/test/(ssh/|ssh-)']
+behavior = "Remote hosts over SSH."
+
+[[surface]]
+id = "CA-SUBAGENT"
+title = "Task/subagent execution"
+scope = "service"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/task-',
+  '^packages/coding-agent/test/registry/','^packages/coding-agent/src/task/', '^packages/coding-agent/test/(task/|task-|subagent-|issue-2750|issue-985|sdk-workpool)']
+behavior = "Spawning subagents, parallel work pools, isolation and result assembly."
+
+[[surface]]
+id = "CA-ASYNC-JOBS"
+title = "Background jobs"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/async/', '^packages/coding-agent/test/(async-job|sdk-async|extension-context-async)[^/]*\.test\.ts$']
+behavior = "Auto-backgrounding and job manager with delivery back into the session."
+
+[[surface]]
+id = "CA-WEB"
+title = "Web search and scrapers"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/web-',
+  '^packages/coding-agent/test/web-scrapers/','^packages/coding-agent/src/(web|exa)/', '^packages/coding-agent/test/web/']
+behavior = "Search providers and site scrapers."
+
+[[surface]]
+id = "CA-MEMORY"
+title = "Memory backends (memories, mnemopi, hindsight, autolearn)"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/(memories|hindsight)/',
+  '^packages/coding-agent/src/(memories|memory-backend|mnemopi|hindsight|autolearn)/',
+  '^packages/coding-agent/test/(memories-|memory-|mnemopi-|hindsight-|autolearn-|sdk-autolearn)',
+]
+behavior = "Long-term memory backends; ARA's sourced memory is a later P4 extension."
+
+[[surface]]
+id = "CA-ADVISOR"
+title = "Advisor/watchdog"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/advisor/','^packages/coding-agent/src/advisor/', '^packages/coding-agent/test/(advisor-|cli-advisor)']
+behavior = "Secondary model advice and watchdog."
+
+[[surface]]
+id = "CA-PLANNING"
+title = "Plan mode, goals, autoresearch, auto-thinking"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/vibe/',
+  '^packages/coding-agent/test/tools/vibe',
+  '^packages/coding-agent/src/(plan-mode|goals|autoresearch|auto-thinking|sharpshooter|if-bench|vibe)/',
+  '^packages/coding-agent/test/(plan-mode|goals/|autoresearch-|auto-thinking|sharpshooter-|if-bench|plan-)',
+]
+behavior = "Planning and research modes."
+
+[[surface]]
+id = "CA-COMMIT"
+title = "Commit command"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/commit/', '^packages/coding-agent/test/commit-']
+behavior = "AI-generated commits and hunk splitting."
+
+[[surface]]
+id = "CA-EXPORT-SHARE"
+title = "Export, share, collab, IRC"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tools/irc',
+  '^packages/coding-agent/test/fixtures/html-export',
+  '^packages/coding-agent/src/(export|collab|irc)/',
+  '^packages/coding-agent/test/(export-|share|collab/)',
+]
+behavior = "HTML export, sharing, collaborative sessions."
+
+[[surface]]
+id = "CA-BLOB"
+title = "Blob broker and uploaders"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/blob-broker/', '^packages/coding-agent/test/blob-']
+behavior = "Artifact upload targets."
+
+[[surface]]
+id = "CA-SECURITY"
+title = "Secrets obfuscation and security scanning"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/security/','^packages/coding-agent/src/(secrets|security)/', '^packages/coding-agent/test/(secrets-|fixtures/security)']
+behavior = "Secret redaction in context/output and repository security scan."
+
+[[surface]]
+id = "CA-SPEECH"
+title = "Speech-to-text and text-to-speech"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/tts/','^packages/coding-agent/src/(stt|tts)/', '^packages/coding-agent/test/stt-']
+behavior = "Voice input/output."
+
+[[surface]]
+id = "CA-TINY"
+title = "Tiny local models"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/src/tiny/', '^packages/coding-agent/test/tiny-']
+behavior = "Local small-model inference for titles/classification."
+
+[[surface]]
+id = "CA-TELEMETRY"
+title = "Telemetry export, stats, debug"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/src/(telemetry-export[^/]*\.ts|stats/|debug/)',
+  '^packages/coding-agent/test/(otel-|telemetry-|debug/|cpuprofile|usage-report)',
+]
+behavior = "OTLP export, local stats, debug tooling."
+
+[[surface]]
+id = "CA-MISC-RUNTIME"
+title = "Other coding-agent runtime modules"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = [
+  '^packages/coding-agent/test/(utils|internal-urls|launch)/',
+  '^packages/coding-agent/test/fixtures/(changelog|truncated|model-registry|models-config)',
+  '^packages/coding-agent/test/oauth-',
+  '^packages/coding-agent/src/(cursor|cursor-bridge-tools|thinking)\.ts$',
+  '^packages/coding-agent/src/(cleanse|compress|internal-urls|markit|launch|subprocess|registry|lib|utils)/',
+  '^packages/coding-agent/src/priority\.json$',
+  '^packages/coding-agent/test/(cleanse|compress|cursor-|utilities|output-sink|config-value-fd|ipc|issue-|repro-|pr-3318|bench-|if-bench|profile|git-url|getalltools)',
+]
+behavior = "Utilities and integrations; each gets its own row before port."
+
+[[surface]]
+id = "CA-TEST-TRIAGE"
+title = "coding-agent shared test helpers and unowned tests"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/coding-agent/test/']
+behavior = "Fallback for coding-agent tests not owned by a feature surface (currently only shared helpers); new unowned files land here and must be reassigned."
+
+[[surface]]
+id = "CA-REPO"
+title = "coding-agent examples, benchmarks, scripts"
+scope = "repo"
+gate = "-"
+owner = "none"
+status = "open"
+match = ['^packages/coding-agent/(examples|bench|scripts)/']
+behavior = "Not runtime behavior."
+
+# ------------------------------------------------------------ other packages
+[[surface]]
+id = "PKG-UTILS"
+title = "@oh-my-pi/pi-utils shared utilities"
+scope = "core"
+gate = "P1"
+owner = "ported with each consumer"
+status = "open"
+match = ['^packages/utils/']
+behavior = "Logger, streams, JSON/partial-JSON parsing, temp files, process management; ported only as consumers need them."
+
+[[surface]]
+id = "PKG-CATALOG"
+title = "Model catalog and compat rules"
+scope = "provider"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/catalog/']
+behavior = "Bundled models.json, KDL compat policy, discovery."
+
+[[surface]]
+id = "PKG-OMPTYPE"
+title = "omptype schema validation"
+scope = "core"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/omptype/']
+behavior = "Runtime schema validation used by tool definitions."
+
+[[surface]]
+id = "PKG-WIRE"
+title = "Shared wire protocol types"
+scope = "host"
+gate = "P2"
+owner = "tbd"
+status = "open"
+match = ['^packages/wire/']
+behavior = "Wire types shared by RPC/collab."
+
+[[surface]]
+id = "PKG-TUI"
+title = "Terminal UI library"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = ['^packages/tui/']
+behavior = "Differential terminal rendering."
+
+[[surface]]
+id = "PKG-NATIVES"
+title = "N-API native bindings package"
+scope = "native"
+gate = "P3"
+owner = "not needed in Rust"
+status = "open"
+match = ['^packages/natives/']
+behavior = "JS bindings to crates/pi-natives; Rust callers use the crates directly."
+
+[[surface]]
+id = "PKG-SNAPCOMPACT"
+title = "Snapcompact bitmap context compression"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/snapcompact/']
+behavior = "Vision-frame compression of context."
+
+[[surface]]
+id = "PKG-MNEMOPI"
+title = "mnemopi memory engine"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/mnemopi/']
+behavior = "Local SQLite memory engine."
+
+[[surface]]
+id = "PKG-STATS"
+title = "Stats dashboard"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = ['^packages/stats/']
+behavior = "Local usage dashboard."
+
+[[surface]]
+id = "PKG-COLLAB-WEB"
+title = "Collab web client"
+scope = "host-ui"
+gate = "P3"
+owner = "host"
+status = "open"
+match = ['^packages/collab-web/']
+behavior = "Browser guest client."
+
+[[surface]]
+id = "PKG-BROWSER-RELAY"
+title = "Browser relay extension"
+scope = "service"
+gate = "P3"
+owner = "tbd"
+status = "open"
+match = ['^packages/browser-relay/']
+behavior = "Chrome extension for browser tool."
+
+[[surface]]
+id = "REPO-BENCH"
+title = "Benchmarks and harnesses"
+scope = "repo"
+gate = "-"
+owner = "none"
+status = "open"
+match = ['^packages/(metaharness|typescript-edit-benchmark)/', '^python/robomp/']
+behavior = "Benchmark runners; not runtime behavior."
+
+# --------------------------------------------------------------- Rust crates
+[[surface]]
+id = "CRATE-PI-SHELL"
+title = "pi-shell embedded shell"
+scope = "native"
+gate = "P2"
+owner = "vendoring candidate"
+status = "open"
+match = ['^crates/pi-shell/', '^crates/vendor/brush-core/', '^crates/pi-builtins/']
+behavior = "Embedded brush shell with in-process builtins."
+
+[[surface]]
+id = "CRATE-PI-EDIT"
+title = "pi-edit"
+scope = "native"
+gate = "P1"
+owner = "vendoring candidate for CA-TOOL-EDIT"
+status = "open"
+match = ['^crates/pi-edit/', '^crates/pi-diff/']
+behavior = "Edit application and diffing."
+
+[[surface]]
+id = "CRATE-PI-WALKER"
+title = "pi-walker"
+scope = "native"
+gate = "P1"
+owner = "vendoring candidate for CA-TOOL-SEARCH"
+status = "open"
+match = ['^crates/pi-walker/']
+behavior = "Filesystem walking with ignore rules."
+
+[[surface]]
+id = "CRATE-PI-OTHER"
+title = "pi-ast, pi-vcs, pi-iso, pi-voice, pi-natives"
+scope = "native"
+gate = "P3"
+owner = "vendoring candidate"
+status = "open"
+match = ['^crates/']
+behavior = "AST search, VCS, isolation, voice, native N-API bundle."
+
+# ------------------------------------------------------------ repo tooling
+[[surface]]
+id = "REPO-DOCS"
+title = "Upstream documentation"
+scope = "repo"
+gate = "-"
+owner = "none"
+status = "open"
+match = ['^docs/', '^README\.md$', '^CONTRIBUTING\.md$', '^AGENTS\.md$']
+behavior = "Behavior references consulted per surface."
+
+[[surface]]
+id = "REPO-BUILD"
+title = "Build, CI, packaging, scripts and assets"
+scope = "repo"
+gate = "-"
+owner = "none"
+status = "open"
+match = ['.*']
+behavior = "Bazel/Nix/Docker/CI/scripts/assets/.omp config; not runtime behavior."

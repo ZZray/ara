@@ -1,6 +1,8 @@
 # OMP feature ledger
 
-Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `open`, `implementing`, `tested`, `audited`, `accepted`, `intentional-difference`. This ledger starts empty because this new repository contains no Rust Agent implementation. The first AI must derive a complete, source-backed inventory from the pinned OMP commit before asserting a parity percentage.
+Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `open`, `implementing`, `tested`, `audited`, `accepted`, `intentional-difference`.
+
+The complete denominator is the generated [OMP source inventory](inventory.md): every tracked file at the baseline belongs to one surface in [`surfaces.toml`](../../upstream/inventory/surfaces.toml), and every upstream test case is a behavior item (`B-xxxxxxxxxx` in [behaviors.tsv](inventory/behaviors.tsv)). Rows below are bounded behavior points being ported; each cites its surface and the upstream behavior IDs/source it covers. A surface is only `accepted` when all of its behavior items are accounted for here. `python scripts/omp_inventory.py check` rejects citations of unknown behavior IDs.
 
 | ID | Upstream source and behavior | Rust owner | Difference/reason | Executed test and artifact | Status |
 | --- | --- | --- | --- | --- | --- |
