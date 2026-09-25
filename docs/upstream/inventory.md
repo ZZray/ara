@@ -61,10 +61,10 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-MODEL-CONTROLS | Model controls, roles, credential pinning | core | P2 | tbd | 25 (6/19) | 1453 | 93 | open |
 | CA-COMPACTION-HOST | Session-level compaction methods, snapcompact, handoff | core | P1 | tbd | 19 (6/13) | 1207 | 144 | open |
 | CA-SESSION-EXTRAS | Session reminders, stats, advisors, todos, workspace and bridges | service | P3 | tbd | 26 (18/8) | 5673 | 82 | open |
-| CA-TOOL-FRAMEWORK | Tool registry, results, errors, approval, rendering contract | core | P1 | ara-tools::registry | 58 (21/37) | 7314 | 473 | open |
-| CA-TOOL-READ | read tool | core | P1 | ara-tools::read | 33 (10/23) | 5252 | 152 | open |
-| CA-TOOL-WRITE | write tool | core | P1 | ara-tools::write | 18 (6/12) | 3159 | 204 | open |
-| CA-TOOL-BASH | bash tool and execution | core | P1 | ara-tools::bash | 31 (12/19) | 4408 | 240 | open |
+| CA-TOOL-FRAMEWORK | Tool registry, results, errors, approval, rendering contract | core | P1 | ara-tools::registry | 58 (21/37) | 7314 | 473 | implementing |
+| CA-TOOL-READ | read tool | core | P1 | ara-tools::read | 33 (10/23) | 5252 | 152 | implementing |
+| CA-TOOL-WRITE | write tool | core | P1 | ara-tools::write | 18 (6/12) | 3159 | 204 | implementing |
+| CA-TOOL-BASH | bash tool and execution | core | P1 | ara-tools::bash | 31 (12/19) | 4408 | 240 | implementing |
 | CA-TOOL-EDIT | edit/patch tools | core | P1 | tbd (pi-edit vendoring candidate) | 24 (9/14) | 3114 | 92 | open |
 | CA-TOOL-SEARCH | grep, glob, ast-grep tools | core | P1 | tbd (pi-walker vendoring candidate) | 17 (5/12) | 3459 | 133 | open |
 | CA-TOOL-INTERACT | ask, think, todo, yield, checkpoint tools | core | P2 | tbd | 15 (6/9) | 3777 | 250 | open |

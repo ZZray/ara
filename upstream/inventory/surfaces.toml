@@ -608,7 +608,7 @@ title = "Tool registry, results, errors, approval, rendering contract"
 scope = "core"
 gate = "P1"
 owner = "ara-tools::registry"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(approval|index|output-|json-tree|jtd-|render-utils|resolve|tool-|path-|schema-validation|provider-schema|root-path|windows-drive|strip-output|split-internal|path-literal)',
   '^packages/coding-agent/src/tools/(index|builtin-names|essential-tools|tool-result|tool-errors|tool-timeouts|output-meta|output-schema-validator|renderers|default-renderer|render-utils|run-scope|approval|path-utils|resolve|context|jtd-[^/]*|json-tree|list-limit)\.ts$',
@@ -622,7 +622,7 @@ title = "read tool"
 scope = "core"
 gate = "P1"
 owner = "ara-tools::read"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(read-|sqlite)',
   '^packages/coding-agent/test/fixtures/pdf-',
@@ -637,7 +637,7 @@ title = "write tool"
 scope = "core"
 gate = "P1"
 owner = "ara-tools::write"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(file-write-fallback|conflict-|auto-generated)',
   '^packages/coding-agent/src/tools/(write|file-write-fallback|file-recorder|auto-generated-guard|conflict-detect|fs-cache-invalidation)\.ts$',
@@ -651,7 +651,7 @@ title = "bash tool and execution"
 scope = "core"
 gate = "P1"
 owner = "ara-tools::bash"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(bash-|shell-tokenize)',
   '^packages/coding-agent/test/fixtures/bash-',
