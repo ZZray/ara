@@ -52,11 +52,11 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | AI-USAGE | Provider usage/quota reporting | service | P3 | tbd | 16 (10/6) | 2678 | 70 | open |
 | AI-HTTP-DEBUG | HTTP/SSE inspection and request debugging | provider | P3 | tbd | 7 (3/4) | 600 | 28 | open |
 | AI-TEST-TRIAGE | packages/ai debug scripts and unowned test support | provider | P3 | tbd | 2 (2/0) | 904 | 0 | open |
-| CA-SESSION-JOURNAL | Session JSONL journal, entries, loader, migrations, listing | core | P1 | ara-session | 79 (17/62) | 12014 | 466 | open |
+| CA-SESSION-JOURNAL | Session JSONL journal, entries, loader, migrations, listing | core | P1 | ara-session | 79 (17/62) | 12014 | 466 | implementing |
 | CA-SESSION-BACKENDS | Alternative session storage backends | host | P3 | tbd | 15 (5/10) | 2447 | 80 | open |
 | CA-SESSION-FOREIGN | Foreign session import (Claude Code, Codex) | service | P3 | tbd | 6 (5/1) | 1207 | 6 | open |
 | CA-AGENT-SESSION | AgentSession orchestration over Agent + Session | core | P1 | ara-cli::run (slice 1), later ara-runtime | 109 (8/101) | 15542 | 929 | open |
-| CA-TURN-RECOVERY | Turn persistence, recovery, unexpected-stop and retry fallback | core | P1 | tbd | 26 (10/16) | 6390 | 250 | open |
+| CA-TURN-RECOVERY | Turn persistence, recovery, unexpected-stop and retry fallback | core | P1 | tbd | 26 (10/16) | 6390 | 250 | implementing |
 | CA-QUEUE | Queued, steering, yield and tool-choice queues | core | P1 | tbd | 9 (5/4) | 852 | 37 | open |
 | CA-MODEL-CONTROLS | Model controls, roles, credential pinning | core | P2 | tbd | 25 (6/19) | 1453 | 93 | open |
 | CA-COMPACTION-HOST | Session-level compaction methods, snapcompact, handoff | core | P1 | tbd | 19 (6/13) | 1207 | 144 | open |

@@ -1,0 +1,18 @@
+[package]
+name = "ara-session"
+description = "ARA session journal: append-only JSONL tree with crash recovery (ported from OMP session-manager)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ara-ai.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -482,7 +482,7 @@ title = "Session JSONL journal, entries, loader, migrations, listing"
 scope = "core"
 gate = "P1"
 owner = "ara-session"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/session/(blob-store|session-dump|session-history|session-manager-fork|recent-sessions|peek-session|session-status)',
   '^packages/coding-agent/test/fixtures/(before-compaction|large-session)\.jsonl$',
@@ -539,7 +539,7 @@ title = "Turn persistence, recovery, unexpected-stop and retry fallback"
 scope = "core"
 gate = "P1"
 owner = "tbd"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/session/(empty-error-turn|inline-edit-recovery|interrupted-thinking)',
   '^packages/coding-agent/src/session/(turn-persistence|turn-recovery|unexpected-stop-classifier|retry-fallback-chains|stream-guards|streaming-output|exit-diagnostics|inline-edit-recovery|launch-completion|codex-auto-reset)\.ts$',

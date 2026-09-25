@@ -2,6 +2,7 @@
 members = [
   "crates/ara-ai",
   "crates/ara-agent",
+  "crates/ara-session",
   "crates/ara-testkit",
 ]
 resolver = "3"
