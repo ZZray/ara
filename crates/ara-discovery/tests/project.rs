@@ -144,3 +144,90 @@ fn with_env_reads_foreign_overrides_and_wsl_home() {
     assert_eq!(dirs.copilot_custom_instruction_dirs, [PathBuf::from("/a"), PathBuf::from("/b")]);
     assert_eq!(dirs.extra_user_homes, [PathBuf::from("/mnt/c/Users/Me")]);
 }
+
+/// Review F1: hosts can cap file size and restrict `@` import targets; the
+/// defaults keep upstream's unbounded behavior.
+#[test]
+fn host_limits_on_reads_and_imports() {
+    let t = tree();
+    write(&t.cwd.join("big.md"), &"x".repeat(64));
+    write(&t.home.join("secret.md"), "SECRET");
+    write(&t.cwd.join("AGENTS.md"), "See @big.md and @~/secret.md");
+
+    let open = Discovery::new(&t.home, HostDirs::ara(&t.home), ProviderPolicy::default());
+    assert_eq!(
+        open.load_project_context_files(&t.cwd, &[]).last().unwrap().content,
+        format!("See {} and SECRET", "x".repeat(64))
+    );
+
+    let capped = ara_discovery::FsCache::with_max_file_bytes(32);
+    assert_eq!(capped.read_file(&t.cwd.join("big.md")), None);
+    assert!(capped.read_file(&t.cwd.join("AGENTS.md")).is_some());
+
+    let mut limited = Discovery::new(&t.home, HostDirs::ara(&t.home), ProviderPolicy::default());
+    let repo = t.repo.clone();
+    limited.import_policy = Some(Box::new(move |p: &Path| p.starts_with(&repo)));
+    assert_eq!(
+        limited.load_project_context_files(&t.cwd, &[]).last().unwrap().content,
+        format!("See {} and @~/secret.md", "x".repeat(64))
+    );
+}
+
+/// Review: `@` imports of a FIFO, a directory or a symlink loop keep the token.
+#[test]
+fn imports_of_special_targets_keep_their_token() {
+    let t = tree();
+    std::process::Command::new("mkfifo").arg(t.cwd.join("pipe.md")).status().unwrap();
+    std::os::unix::fs::symlink(t.cwd.join("loop-b"), t.cwd.join("loop-a")).unwrap();
+    std::os::unix::fs::symlink(t.cwd.join("loop-a"), t.cwd.join("loop-b")).unwrap();
+    write(&t.cwd.join("AGENTS.md"), "a @pipe.md b @./ c @loop-a d");
+    let discovery = Discovery::new(&t.home, HostDirs::ara(&t.home), ProviderPolicy::default());
+    assert_eq!(
+        discovery.load_project_context_files(&t.cwd, &[]).last().unwrap().content,
+        "a @pipe.md b @./ c @loop-a d"
+    );
+}
+
+/// Review F3: validation warnings come out last-first, as upstream.
+#[test]
+fn validation_warnings_follow_upstream_order() {
+    use ara_discovery::{Capability, LoadResult, Provider, SourceMeta, Sourced};
+    #[derive(Clone)]
+    struct Item(SourceMeta, bool);
+    impl Sourced for Item {
+        fn source(&self) -> &SourceMeta {
+            &self.0
+        }
+        fn source_mut(&mut self) -> &mut SourceMeta {
+            &mut self.0
+        }
+    }
+    let mut capability: Capability<Item> = Capability::new("t", "T", "t", |_| None);
+    capability.validate = Some(|item: &Item| (!item.1).then(|| "bad".to_string()));
+    capability.register(Provider {
+        id: "p".into(),
+        display_name: "P".into(),
+        description: String::new(),
+        priority: 1,
+        load: std::sync::Arc::new(|_| {
+            let item = |name: &str, ok| Item(SourceMeta::new("p", Path::new(&format!("/{name}")), Level::User), ok);
+            Ok(LoadResult { items: vec![item("a", false), item("b", true), item("c", false)], warnings: Vec::new() })
+        }),
+    });
+    let t = tree();
+    let discovery = Discovery::new(&t.home, HostDirs::ara(&t.home), ProviderPolicy::default());
+    let result = capability.load(&discovery.context(&t.cwd), &LoadOptions::default());
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.warnings, ["[P] Invalid item at /c: bad", "[P] Invalid item at /a: bad"]);
+}
+
+/// Review F2: an absolute WSL profile path is normalized.
+#[test]
+fn absolute_wsl_profile_is_normalized() {
+    let dirs = HostDirs::ara(Path::new("/h")).with_env(|k| match k {
+        "WSL_DISTRO_NAME" => Some("U".into()),
+        "USERPROFILE" => Some("/mnt/c/Users/me/../x/".into()),
+        _ => None,
+    });
+    assert_eq!(dirs.extra_user_homes, [PathBuf::from("/mnt/c/Users/x")]);
+}

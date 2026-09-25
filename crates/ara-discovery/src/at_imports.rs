@@ -31,6 +31,9 @@ pub struct Expander<'a> {
     pub fs: &'a FsCache,
     pub home: PathBuf,
     pub max_depth: usize,
+    /// Host policy on which resolved paths may be inlined; `None` (upstream
+    /// behavior) allows any readable file. A refused path keeps its token.
+    pub allow: Option<&'a (dyn Fn(&Path) -> bool + Sync)>,
 }
 
 impl Expander<'_> {
@@ -108,7 +111,7 @@ impl Expander<'_> {
         } else {
             resolve_from(base, Path::new(import))
         };
-        if visited.contains(&resolved) {
+        if visited.contains(&resolved) || self.allow.is_some_and(|allow| !allow(&resolved)) {
             return None;
         }
         let content = self.fs.read_file(&resolved)?;

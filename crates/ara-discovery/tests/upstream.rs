@@ -36,6 +36,7 @@ fn standalone(cwd: &Path, home: &Path, repo_root: Option<&Path>, file_name: &str
         dirs: &dirs,
         policy: &policy,
         fs: &fs,
+        skill_toggles: Default::default(),
     };
     load_standalone_context_files(&ctx, "test", file_name).into_iter().map(|f| f.path).collect()
 }
@@ -313,7 +314,8 @@ fn special_files_read_as_none_and_symlinks_are_followed() {
 // --- at-imports.test.ts --------------------------------------------------------
 
 fn expand(fs_cache: &FsCache, content: &str, file: &Path, home: &Path) -> String {
-    Expander { fs: fs_cache, home: home.to_path_buf(), max_depth: MAX_AT_IMPORT_DEPTH }.expand(content, file)
+    Expander { fs: fs_cache, home: home.to_path_buf(), max_depth: MAX_AT_IMPORT_DEPTH, allow: None }
+        .expand(content, file)
 }
 
 /// B-b01f6dfca7, B-99fbe51c1f, B-9af351552f, B-901394b1ee

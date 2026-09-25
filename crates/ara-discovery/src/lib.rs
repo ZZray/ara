@@ -10,15 +10,18 @@
 pub mod at_imports;
 pub mod capability;
 pub mod context_files;
+pub mod frontmatter;
 pub mod fs;
 pub mod paths;
 pub mod project;
+pub mod skills;
 
 pub use at_imports::{Expander, MAX_AT_IMPORT_DEPTH};
 pub use capability::{
     Capability, CapabilityResult, HostDirs, Level, LoadContext, LoadOptions, LoadResult, Provider, ProviderPolicy,
-    SourceMeta, Sourced,
+    SkillToggles, SourceMeta, Sourced,
 };
 pub use context_files::{ContextFile, context_file_capability, load_standalone_context_files};
 pub use fs::FsCache;
 pub use project::{Discovery, ProjectContextFile, dedupe_contained_context_files};
+pub use skills::{LoadedSkill, Skill, SkillWarning, SkillsSettings, skill_capability};

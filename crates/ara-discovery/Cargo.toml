@@ -9,6 +9,12 @@ publish.workspace = true
 [dependencies]
 ara-prompt.workspace = true
 regex.workspace = true
+globset.workspace = true
+serde_json.workspace = true
+yaml-rust2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

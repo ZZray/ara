@@ -17,6 +17,9 @@ pub struct ProjectContextFile {
     pub source: SourceMeta,
 }
 
+/// Host predicate deciding which resolved `@` import targets may be inlined.
+pub type ImportPolicy = Box<dyn Fn(&Path) -> bool + Send + Sync>;
+
 /// A host's discovery setup: its directories, provider switches, file
 /// cache and registered capabilities.
 pub struct Discovery {
@@ -25,12 +28,24 @@ pub struct Discovery {
     pub policy: ProviderPolicy,
     pub fs: FsCache,
     pub context_files: Capability<ContextFile>,
+    pub skills: Capability<crate::skills::Skill>,
+    /// Host policy for `@` imports (see [`Expander::allow`]).
+    pub import_policy: Option<ImportPolicy>,
 }
 
 impl Discovery {
     pub fn new(home: &Path, dirs: HostDirs, policy: ProviderPolicy) -> Self {
         let context_files = context_file_capability(&dirs.native_name);
-        Discovery { home: home.to_path_buf(), dirs, policy, fs: FsCache::new(), context_files }
+        let skills = crate::skills::skill_capability(&dirs.native_name);
+        Discovery {
+            home: home.to_path_buf(),
+            dirs,
+            policy,
+            fs: FsCache::new(),
+            context_files,
+            skills,
+            import_policy: None,
+        }
     }
 
     /// A load context rooted at `cwd` (repo root found by walking up to `.git`).
@@ -45,6 +60,7 @@ impl Discovery {
             dirs: &self.dirs,
             policy: &self.policy,
             fs: &self.fs,
+            skill_toggles: Default::default(),
         }
     }
 
@@ -67,7 +83,8 @@ impl Discovery {
     pub fn load_project_context_files(&self, cwd: &Path, disabled_extensions: &[String]) -> Vec<ProjectContextFile> {
         let options = LoadOptions { disabled_extensions: disabled_extensions.to_vec(), ..LoadOptions::default() };
         let result = self.load_context_files(cwd, &options);
-        let expander = Expander { fs: &self.fs, home: self.home.clone(), max_depth: MAX_AT_IMPORT_DEPTH };
+        let allow = self.import_policy.as_deref().map(|f| f as &(dyn Fn(&Path) -> bool + Sync));
+        let expander = Expander { fs: &self.fs, home: self.home.clone(), max_depth: MAX_AT_IMPORT_DEPTH, allow };
         let mut files: Vec<ProjectContextFile> = result
             .items
             .into_iter()

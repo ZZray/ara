@@ -95,8 +95,10 @@ impl HostDirs {
     /// upstream reads them: `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`,
     /// `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` (comma separated) and, under WSL
     /// (`WSL_DISTRO_NAME`/`WSL_INTEROP`), the `USERPROFILE` drive path mapped
-    /// to `/mnt/<drive>/…`. Upstream also probes `cmd.exe` when
-    /// `USERPROFILE` is unset; ARA spawns no process during discovery.
+    /// to `/mnt/<drive>/…`. Upstream also asks `wslpath -u` first (honoring
+    /// a custom automount root) and probes `cmd.exe` when `USERPROFILE` is
+    /// unset; ARA spawns no process during discovery, so a host with a
+    /// custom automount root sets `extra_user_homes` itself.
     pub fn with_env(mut self, env: impl Fn(&str) -> Option<String>) -> Self {
         let trimmed = |name: &str| env(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         self.claude_config_dir = trimmed("CLAUDE_CONFIG_DIR").map(|dir| crate::paths::resolve(Path::new(&dir)));
@@ -118,7 +120,7 @@ impl HostDirs {
 fn windows_path_to_wsl_mount(path: &str) -> Option<PathBuf> {
     let path = path.trim();
     if path.starts_with('/') {
-        return Some(PathBuf::from(path));
+        return Some(crate::paths::resolve(Path::new(path)));
     }
     let mut chars = path.chars();
     let drive = chars.next().filter(char::is_ascii_alphabetic)?;
@@ -166,6 +168,15 @@ pub struct LoadContext<'a> {
     pub dirs: &'a HostDirs,
     pub policy: &'a ProviderPolicy,
     pub fs: &'a FsCache,
+    /// Legacy per-capability opt-ins for foreign `~/` skills
+    /// (`skills.enableClaudeUser`, `skills.enableCodexUser`).
+    pub skill_toggles: SkillToggles,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SkillToggles {
+    pub claude_user: bool,
+    pub codex_user: bool,
 }
 
 impl LoadContext<'_> {
@@ -379,18 +390,18 @@ impl<T: Sourced + Clone> Capability<T> {
         }
 
         if let Some(validate) = self.validate.filter(|_| !options.include_invalid) {
-            deduped.retain(|item| match validate(item) {
-                Some(error) => {
-                    let source = item.source();
+            // Upstream walks from the end, so warnings come out last-first.
+            for index in (0..deduped.len()).rev() {
+                if let Some(error) = validate(&deduped[index]) {
+                    let source = deduped[index].source();
                     warnings.push(format!(
                         "[{}] Invalid item at {}: {error}",
                         source.provider_name,
                         source.path.display()
                     ));
-                    false
+                    deduped.remove(index);
                 }
-                None => true,
-            });
+            }
         }
 
         CapabilityResult {
