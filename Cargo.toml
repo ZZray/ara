@@ -3,6 +3,7 @@ members = [
   "crates/ara-ai",
   "crates/ara-agent",
   "crates/ara-cli",
+  "crates/ara-prompt",
   "crates/ara-session",
   "crates/ara-tools",
   "crates/ara-testkit",

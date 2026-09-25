@@ -1,0 +1,11 @@
+[package]
+name = "ara-prompt"
+description = "Prompt templates: Handlebars-compatible engine, prompt helpers and format (port of OMP pi-utils template/prompt)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde_json.workspace = true

@@ -131,6 +131,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ara-prompt"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde_json",
+]
+
+[[package]]
 name = "ara-session"
 version = "0.1.0"
 dependencies = [
