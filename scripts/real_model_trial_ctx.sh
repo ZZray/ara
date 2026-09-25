@@ -46,10 +46,11 @@ out = pathlib.Path(sys.argv[1])
 work = out / "work"
 events = [json.loads(l) for l in (out / "events.jsonl").read_text().splitlines() if l.strip()]
 starts = [e for e in events if e.get("type") == "tool_execution_start"]
-ends = [e for e in events if e.get("type") == "tool_execution_end"]
+# Parallel calls can finish out of order: pair by call id, not position.
+ends = {e["toolCallId"]: e for e in events if e.get("type") == "tool_execution_end"}
 assistants = [e["message"] for e in events if e.get("type") == "message_end" and e["message"].get("role") == "assistant"]
 print("model calls:", len(assistants))
-print("tool calls:", [(s["toolName"], json.dumps(s.get("args"))[:80], e["isError"]) for s, e in zip(starts, ends)])
+print("tool calls:", [(s["toolName"], json.dumps(s.get("args"))[:80], ends.get(s["toolCallId"], {}).get("isError")) for s in starts])
 for a in assistants:
     print("usage:", a.get("usage"), "stop:", a.get("stopReason"))
 args_text = [json.dumps(s.get("args")) for s in starts]

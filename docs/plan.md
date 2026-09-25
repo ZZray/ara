@@ -22,7 +22,10 @@ P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 | TOOLS-03 (A2) | `ara-tools`, `crates/vendor` | `edit` (all five modes, hashline default) with hashline `read`/`grep`/`write` |
 | CLI-01 | `ara-cli` | Print host |
 
-Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](evidence/real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`). CTX-01a (`ara-prompt`) is tested; CTX-01b (`ara-discovery`) is under review.
+Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](evidence/real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`). Context points (A2 CTX-01) carry their own [real-model trial](evidence/ctx-01d-system-prompt.md) on both routes: an `AGENTS.md` rule and a skill's format must be followed.
+- Accepted: CTX-01a (`ara-prompt`), CTX-01b (`ara-discovery` context files) and CTX-01c (frontmatter and skills).
+- Tested, with independent review in progress: CTX-01d (`ara-context` system prompt, date/cwd reminder, `skill://` in `read`/`bash`, CLI wiring).
+- Open: CTX-01e (`/skill:` invocation), which needs the interactive/RPC host and session custom messages.
 
 ## Track A: OMP parity (G1)
 

@@ -95,4 +95,4 @@ The review followed `ara-git-review` + `ara-rust-core-review`, as a forked read-
 Real-model route:
 Context files reach a model through the system prompt in CTX-01d, which carries the trial.
 
-Decision: tested. Accepted with CTX-01d's real-model trial.
+Decision: accepted on 2026-09-25, on the [CTX-01d real-model trial](ctx-01d-system-prompt.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`, both TRIAL PASS on the delivered code).

@@ -21,8 +21,11 @@
 //!
 //! Not ported (open): structural summaries and bracket context around
 //! ranges, multi-range selectors, archives, SQLite, PDFs, URLs, internal
-//! URIs, suffix path resolution, `:conflicts`, video, column caps, artifact
-//! spill.
+//! URIs other than `skill://`, suffix path resolution, `:conflicts`, video,
+//! column caps, artifact spill.
+//!
+//! `skill://` (`internal_urls`): resolved to the skill file, then read with
+//! the same selectors, as an immutable resource without result limits.
 
 use crate::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, ToolContext, format_bytes};
 use ara_agent::{AgentTool, ToolError, ToolOutput, UpdateFn};
@@ -192,6 +195,7 @@ fn read_window<R: BufRead + Seek>(
     display: &str,
     sel: &Selector,
     numbering: Numbering,
+    limits: bool,
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
@@ -285,11 +289,11 @@ fn read_window<R: BufRead + Seek>(
             Numbering::Hashline => format!("{line_no}:{line}"),
             Numbering::None => line.to_string(),
         };
-        if emitted >= DEFAULT_MAX_LINES {
+        if limits && emitted >= DEFAULT_MAX_LINES {
             truncated_by = Some("lines");
             continue;
         }
-        if out.len() + rendered.len() + 1 > DEFAULT_MAX_BYTES {
+        if limits && out.len() + rendered.len() + 1 > DEFAULT_MAX_BYTES {
             if emitted == 0 {
                 // A single line larger than the cap: bounded preview (OMP firstLineExceedsLimit).
                 out.push_str(cut_at_char_boundary(&rendered, DEFAULT_MAX_BYTES));
@@ -404,8 +408,12 @@ impl AgentTool for ReadTool {
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
         let input = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
-        // Internal URLs (`skill://…`) resolve to a file first; selectors apply to it.
-        let (path, sel) = if crate::internal_urls::is_internal_url(input) {
+        // Internal URLs (`skill://…`) resolve to a file first; selectors apply
+        // to it. A skill resource is immutable and exempt from result limits
+        // (upstream `immutable`, `ignoreResultLimits: scheme === "skill"`):
+        // no hashline tags, no notebook projection, no line/byte truncation.
+        let internal = crate::internal_urls::is_internal_url(input);
+        let (path, sel) = if internal {
             let exists = |p: &str| self.ctx.resolve_internal_url(p).is_ok_and(|abs| path_exists(&abs));
             let (url, sel) = split_selector(input, exists).map_err(ToolError)?;
             let target = self.ctx.resolve_internal_url(&url).map_err(ToolError)?;
@@ -465,8 +473,9 @@ impl AgentTool for ReadTool {
                 is_error: false,
             });
         }
-        let hashlines = self.ctx.hashlines() && !sel.raw;
-        let notebook = !sel.raw && abs.extension().is_some_and(|e| e.eq_ignore_ascii_case("ipynb"));
+        let hashlines = self.ctx.hashlines() && !sel.raw && !internal;
+        let notebook = !sel.raw && !internal && abs.extension().is_some_and(|e| e.eq_ignore_ascii_case("ipynb"));
+        let limits = !internal;
         let raw = sel.raw;
         let line_numbers = self.ctx.line_numbers;
         let store = self.ctx.edit_store.clone();
@@ -513,6 +522,7 @@ impl AgentTool for ReadTool {
                     &display2,
                     &sel,
                     numbering,
+                    limits,
                     &cancel2,
                 )?,
                 (None, Some(bytes)) => read_window(
@@ -521,12 +531,21 @@ impl AgentTool for ReadTool {
                     &display2,
                     &sel,
                     numbering,
+                    limits,
                     &cancel2,
                 )?,
                 (None, None) => {
                     let file = std::fs::File::open(&abs2).map_err(io)?;
                     let size = file.metadata().map_err(io)?.len();
-                    read_window(BufReader::with_capacity(64 * 1024, file), size, &display2, &sel, numbering, &cancel2)?
+                    read_window(
+                        BufReader::with_capacity(64 * 1024, file),
+                        size,
+                        &display2,
+                        &sel,
+                        numbering,
+                        limits,
+                        &cancel2,
+                    )?
                 }
             };
             let mut text = window.text.clone();
@@ -541,7 +560,7 @@ impl AgentTool for ReadTool {
                     if !seen.is_empty() {
                         store.record_seen_lines(&key, &tag, &seen);
                     }
-                } else if raw {
+                } else if raw && !internal {
                     // A raw read has no header, but records the range it showed so
                     // a same-content hashline tag inherits its provenance.
                     let seen: Vec<u32> = (window.start..window.start + window.emitted).map(|n| n as u32).collect();

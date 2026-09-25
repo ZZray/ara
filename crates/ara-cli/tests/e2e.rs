@@ -555,3 +555,62 @@ async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
             .contains("Path traversal (..) is not allowed in skill:// URLs")
     );
 }
+
+#[tokio::test]
+async fn skill_flags_filter_listing_and_resolution() {
+    let env = Env::new();
+    let work = env.work.path();
+    for (name, description) in [("greeting", "How to greet people"), ("farewell", "How to say goodbye")] {
+        let dir = work.join(".ara/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), format!("---\ndescription: {description}\n---\nBody of {name}.")).unwrap();
+    }
+    // A malformed SKILL.md is reported on stderr, not dropped silently.
+    let broken = work.join(".ara/skills/broken");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("SKILL.md"), "---\ndescription: ok\nbad: [unclosed\n---\nbody").unwrap();
+    let read_greeting = || tool_call(0, "call_g", "read", "{\"path\":\"skill://greeting\"}");
+    let script = || {
+        json!({"responses": [
+            {"events": [read_greeting(), finish("tool_calls"), done()]},
+            {"events": [text("done"), finish("stop"), done()]}
+        ]})
+    };
+
+    // `--skills` filters by name glob: only `farewell` is listed and resolvable.
+    let up = upstream(script()).await;
+    let out = output(env.cmd(&up.base_url(), &["--skills", "fare*", "hi"])).await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: skill warning") && stderr.contains("Failed to parse YAML frontmatter"), "{stderr}");
+    let reqs = up.requests.lock().await;
+    let system: String = reqs[0]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "system")
+        .map(|m| m["content"].as_str().unwrap())
+        .collect();
+    assert!(system.contains("- farewell: How to say goodbye") && !system.contains("- greeting:"), "{system}");
+    let tool_result = &reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(tool_result.as_str().unwrap().contains("Unknown skill: greeting\nAvailable: farewell"), "{tool_result}");
+    drop(reqs);
+
+    // `--no-skills`: no listing and nothing resolves.
+    let up = upstream(script()).await;
+    let out = output(env.cmd(&up.base_url(), &["--no-skills", "hi"])).await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(!stderr.contains("skill warning"), "{stderr}");
+    let reqs = up.requests.lock().await;
+    let system: String = reqs[0]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "system")
+        .map(|m| m["content"].as_str().unwrap())
+        .collect();
+    assert!(!system.contains("- farewell:") && !system.contains("- greeting:"), "{system}");
+    let tool_result = &reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(tool_result.as_str().unwrap().contains("Unknown skill: greeting\nAvailable: none"), "{tool_result}");
+}
