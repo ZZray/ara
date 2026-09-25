@@ -10,10 +10,10 @@ The Core is shared code. AI HandWave, a customized [Paseo](https://github.com/ge
 
 1. Read [AGENTS.md](AGENTS.md) and [project knowledge](docs/knowledge/INDEX.md).
 2. Read the [delivery roadmap](docs/roadmap.md), [OMP sync contract](docs/upstream-sync.md), and [acceptance rules](docs/acceptance.md).
-3. Run `python scripts/verify_bootstrap.py` to check this documentation bootstrap.
+3. Run `python scripts/verify_bootstrap.py` to check this documentation bootstrap. `python scripts/verify_backend.py` reports `NOT RUN` until a Rust backend exists, then runs baseline formatting, lint, and tests.
 4. The implementing AI starts at the exact SHA in [upstream/omp.lock.json](upstream/omp.lock.json), builds a source-to-test inventory, then ports and verifies one complete behavior at a time.
 
-The bootstrap verifier checks repository structure and links. It is **not** a product test. Every later implementation point needs actual execution evidence before it is delivered or counted as accepted.
+The bootstrap verifier checks repository structure and links. It is **not** a product test. The backend CI check runs when Rust code exists; actual host effects, failure paths, dependency policy, and bounded real-model tasks still need point-specific evidence before delivery or acceptance.
 
 ## Scope
 
@@ -40,6 +40,6 @@ See [provider trial setup](docs/testing-providers.md) for a bounded local CAS or
 
 ## Skills and review status
 
-The three [project Skills](.ara/skills/INDEX.md) cover knowledge maintenance, fixed OMP commit sync, and per-point delivery audit. `AGENTS.md` directs contributors to use them. They are contributor workflows, not an implemented Rust Skill loader. The only project Skill in the previous ARA checkout was knowledge maintenance; it was adapted for this new repository rather than copying Go-specific instructions. Independent code-review tools are not bundled or automatically invoked by this bootstrap. An implementation point must record which review actually ran and its findings; the bootstrap CI checks documentation structure only.
+The seven [project Skills](.ara/skills/INDEX.md) cover knowledge maintenance, fixed OMP sync, Git/Rust/Provider code review, backend execution, and per-point audit. `AGENTS.md` directs contributors to the applicable combination. They are contributor workflows, not an implemented Rust Skill loader. The previous ARA project's knowledge Skill and the installed local generic/OCR review workflows informed these focused versions; no Go-specific runtime instructions or reviewer binary were copied. An implementation point must record which review and tests actually ran. See [tooling evidence](docs/evidence/review-tooling-bootstrap-20260925.md).
 
 The new Git root deliberately has no ancestry from the previous ARA repository. Upstream OMP is consulted in a separate checkout; imported upstream code must retain its license and attribution. See [third-party notices](THIRD_PARTY_NOTICES.md).

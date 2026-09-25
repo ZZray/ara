@@ -36,6 +36,12 @@ REQUIRED = (
     ".ara/skills/project-knowledge-maintenance/SKILL.md",
     ".ara/skills/omp-commit-sync/SKILL.md",
     ".ara/skills/point-delivery-audit/SKILL.md",
+    ".ara/skills/ara-git-review/SKILL.md",
+    ".ara/skills/ara-rust-core-review/SKILL.md",
+    ".ara/skills/ara-provider-review/SKILL.md",
+    ".ara/skills/ara-backend-verification/SKILL.md",
+    "docs/evidence/review-tooling-bootstrap-20260925.md",
+    "scripts/verify_backend.py",
 )
 LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
