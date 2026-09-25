@@ -12,6 +12,6 @@ This is a new implementation, not a branch migration. No old ARA source, databas
 | P5 — product integrations | Host APIs for AI HandWave, Lantern/Paseo, Lumen and later products | Real product UI/API workflows, distinct product identity/data, shared Core package, error feedback and resumed history. |
 | P6 — release | Reproducible builds, migration/rollback where needed, security and license review | Final acceptance matrix, isolated rehearsal, authorized deployment, observed runtime behavior. |
 
-The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior. Product hosts may be prototyped to prove the Core interface, but their acceptance is later and separate.
+The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior. Product hosts may be prototyped to prove the Core interface, but their acceptance is later and separate.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).
