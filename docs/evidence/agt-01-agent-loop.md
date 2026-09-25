@@ -85,3 +85,5 @@ Unrun/blocked checks and impact:
 - `dropping_the_run_cancels_running_tools` shows the tool future is dropped with the run. It cannot show an OS subprocess being killed; that belongs to the bash tool evidence.
 
 Decision: tested (loop layer). Not accepted.
+
+Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.

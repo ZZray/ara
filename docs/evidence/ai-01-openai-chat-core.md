@@ -99,3 +99,5 @@ Unrun/blocked checks and impact:
 - The first-event timeout message hides the last HTTP status when retries are cut short.
 
 Decision: tested (adapter layer). Not accepted: the host-chain and real-model evidence required by `docs/acceptance.md` are pending.
+
+Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.

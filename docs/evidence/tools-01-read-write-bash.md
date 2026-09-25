@@ -98,3 +98,5 @@ Unrun/blocked checks and impact:
 - Tools are not a sandbox; permission gating is the host's job (`before_tool_call`).
 
 Decision: tested. Not accepted (host chain, real-model trial pending).
+
+Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.

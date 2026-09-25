@@ -91,3 +91,5 @@ Unrun/blocked checks and impact:
 - Power-loss durability is not exercised.
 
 Decision: tested with a controlled upstream. Not accepted: the real-model trial is missing.
+
+Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.

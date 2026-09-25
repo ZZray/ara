@@ -22,7 +22,7 @@ P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 | TOOLS-03 (A2) | `ara-tools`, `crates/vendor` | `edit` (all five modes, hashline default) with hashline `read`/`grep`/`write` |
 | CLI-01 | `ara-cli` | Print host |
 
-None is accepted: the real-model trial is still blocked by the environment's network policy.
+Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](evidence/real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`). CTX-01a (`ara-prompt`) is tested; CTX-01b (`ara-discovery`) is under review.
 
 ## Track A: OMP parity (G1)
 

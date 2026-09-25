@@ -81,3 +81,5 @@ Unrun/blocked checks and impact:
 - OMP v1/v2 sessions cannot be opened until migrations are ported.
 
 Decision: tested. Not accepted (host chain and restart through the CLI are pending in CLI-01).
+
+Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.
