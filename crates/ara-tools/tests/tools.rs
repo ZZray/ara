@@ -192,7 +192,7 @@ async fn bash_cancel_aborts_and_streams_updates() {
 #[tokio::test]
 async fn builtin_tool_set() {
     let names: Vec<String> = builtin_tools(ToolContext::new(".")).iter().map(|t| t.definition().name).collect();
-    assert_eq!(names, vec!["read", "write", "bash"]);
+    assert_eq!(names, vec!["read", "write", "bash", "grep", "glob"]);
 }
 
 #[tokio::test]

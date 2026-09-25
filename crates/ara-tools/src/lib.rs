@@ -1,4 +1,4 @@
-//! Built-in tools (OMP `packages/coding-agent/src/tools/{read,write,bash}.ts`,
+//! Built-in tools (OMP `packages/coding-agent/src/tools/{read,write,bash,grep,glob}.ts`,
 //! `exec/`, `session/streaming-output.ts` at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d).
 //!
@@ -7,7 +7,13 @@
 //! and which directory is the working root.
 
 pub mod bash;
+pub mod engine;
+pub mod glob;
+pub mod grep;
+pub mod output;
+pub mod paths;
 pub mod read;
+pub mod walk;
 pub mod write;
 
 use ara_agent::AgentTool;
@@ -27,8 +33,12 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
+    /// A relative `cwd` is made absolute against the process directory, so
+    /// `.` names a real directory rather than an empty path.
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        ToolContext { cwd: normalize(&cwd.into()), line_numbers: false }
+        let cwd = cwd.into();
+        let cwd = std::path::absolute(&cwd).unwrap_or(cwd);
+        ToolContext { cwd: normalize(&cwd), line_numbers: false }
     }
 
     /// Resolve a model-supplied path: `~` expands to `$HOME`, relative paths
@@ -72,13 +82,37 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// `read`, `write` and `bash` bound to one working directory.
+/// `read`, `write`, `bash`, `grep` and `glob` bound to one working directory.
 pub fn builtin_tools(ctx: ToolContext) -> Vec<Arc<dyn AgentTool>> {
     vec![
         Arc::new(read::ReadTool { ctx: ctx.clone() }),
         Arc::new(write::WriteTool { ctx: ctx.clone() }),
-        Arc::new(bash::BashTool { ctx }),
+        Arc::new(bash::BashTool { ctx: ctx.clone() }),
+        Arc::new(grep::GrepTool::new(ctx.clone())),
+        Arc::new(glob::GlobTool::new(ctx)),
     ]
+}
+
+/// Run blocking tool work on the blocking pool. The work gets a child of
+/// `cancel`; aborting the run, or dropping the returned future (a host-side
+/// timeout), cancels it, so abandoned filesystem scans stop promptly.
+pub(crate) async fn run_blocking<F>(
+    label: &'static str,
+    cancel: tokio_util::sync::CancellationToken,
+    f: F,
+) -> Result<ara_agent::ToolOutput, ara_agent::ToolError>
+where
+    F: FnOnce(tokio_util::sync::CancellationToken) -> Result<ara_agent::ToolOutput, ara_agent::ToolError>
+        + Send
+        + 'static,
+{
+    let work = cancel.child_token();
+    let _stop_on_drop = work.clone().drop_guard();
+    let job = tokio::task::spawn_blocking(move || f(work));
+    tokio::select! {
+        r = job => r.map_err(|e| ara_agent::ToolError(format!("{label} failed: {e}")))?,
+        _ = cancel.cancelled() => Err(ara_agent::ToolError(format!("{label} was aborted"))),
+    }
 }
 
 /// Human-readable byte size (OMP `formatBytes`).
@@ -87,7 +121,9 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{bytes}B")
     } else if bytes < 1024 * 1024 {
         format!("{:.1}KB", bytes as f64 / 1024.0)
-    } else {
+    } else if bytes < 1024 * 1024 * 1024 {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1}GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }

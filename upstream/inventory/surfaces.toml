@@ -683,7 +683,7 @@ title = "grep, glob, ast-grep tools"
 scope = "core"
 gate = "P1"
 owner = "tbd (pi-walker vendoring candidate)"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(glob|grep|ast-grep|multi-grep|multi-path|grouped-file|search-url)',
   '^packages/coding-agent/src/tools/(grep|glob|ast-grep|match-line-format|grouped-file-output)\.ts$',
@@ -1383,7 +1383,7 @@ title = "pi-walker"
 scope = "native"
 gate = "P1"
 owner = "vendoring candidate for CA-TOOL-SEARCH"
-status = "open"
+status = "implementing"
 match = ['^crates/pi-walker/']
 behavior = "Filesystem walking with ignore rules."
 

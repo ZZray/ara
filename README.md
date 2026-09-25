@@ -4,12 +4,12 @@ ARA is a Rust Agent Core for completing tasks across personal AI products. Its f
 
 The Core is shared code. AI HandWave, a customized [Paseo](https://github.com/getpaseo/paseo) frontend in [Lantern](https://github.com/ZZray/Lantern), Lumen, and later products connect through host/RPC interfaces. Each product keeps its own identity, data, permissions, and lifecycle.
 
-**Current status (P1 slice 1, tested, not accepted):** the Cargo workspace contains the first bounded OMP port:
+**Current status (P1 slice 1 and part of A2, tested, not accepted):** the Cargo workspace contains the first bounded OMP port:
 
 - message model and OpenAI-compatible Chat Completions adapter (`ara-ai`)
 - agent loop (`ara-agent`)
 - JSONL session journal with crash recovery (`ara-session`)
-- `read`/`write`/`bash` tools (`ara-tools`)
+- `read`/`write`/`bash` tools and the `grep`/`glob` search tools with gitignore-aware walking (`ara-tools`)
 - the `ara` print-mode host (`ara-cli`)
 - a controlled fake upstream (`ara-testkit`)
 

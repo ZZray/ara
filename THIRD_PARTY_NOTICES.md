@@ -1,6 +1,14 @@
 # Third-party notices
 
-ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/can1357/oh-my-pi) `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Ported code lives in `crates/ara-ai` (from `packages/ai`, `packages/catalog` types and `packages/utils` JSON parsing) and `crates/ara-agent` (from `packages/agent`). Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`).
+ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/can1357/oh-my-pi) `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Ported code lives in:
+
+- `crates/ara-ai`: from `packages/ai`, the `packages/catalog` types and the `packages/utils` JSON parsing.
+- `crates/ara-agent`: from `packages/agent`.
+- `crates/ara-session`: from `packages/coding-agent` session storage.
+- `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`) and `crates/pi-walker` (ignore-state traversal).
+- `crates/ara-cli`: from `packages/coding-agent` print mode.
+
+Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`). The search tools link the ripgrep libraries (`grep-*`, `ignore`, `globset`; MIT or Unlicense) and PCRE2 through `pcre2-sys` (PCRE2 is BSD-3-Clause).
 
 The following is the MIT license text from the pinned Oh My Pi commit's `LICENSE` file:
 

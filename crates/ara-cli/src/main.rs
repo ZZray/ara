@@ -6,7 +6,7 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
 //! The host binds the Core ports: model route (OpenAI-compatible Chat
-//! Completions), tools (`read`/`write`/`bash` rooted at the session cwd), the
+//! Completions), tools (`read`/`write`/`bash`/`grep`/`glob` rooted at the session cwd), the
 //! event sink (JSON output + session journal), cancellation (SIGINT) and
 //! budgets (`--max-time`, `--max-model-calls`). Credentials come only from the
 //! environment and are never printed; a key is only sent to its own route.
@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-const TOOL_NAMES: [&str; 3] = ["read", "write", "bash"];
+const TOOL_NAMES: [&str; 5] = ["read", "write", "bash", "grep", "glob"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Mode {
@@ -100,8 +100,8 @@ struct Args {
     /// Append a system prompt block.
     #[arg(long)]
     append_system_prompt: Vec<String>,
-    /// Tools to enable (comma separated): read,write,bash. Empty disables tools.
-    #[arg(long, default_value = "read,write,bash")]
+    /// Tools to enable (comma separated): read,write,bash,grep,glob. Empty disables tools.
+    #[arg(long, default_value = "read,write,bash,grep,glob")]
     tools: String,
     /// Prefix read output with line numbers.
     #[arg(long)]
@@ -265,7 +265,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
     }
     for name in args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         if !TOOL_NAMES.contains(&name) {
-            bail!("unknown tool {name:?} (available: read, write, bash)");
+            bail!("unknown tool {name:?} (available: {})", TOOL_NAMES.join(", "));
         }
     }
     let mut stream_options = StreamOptions { api_key, extra_headers, ..Default::default() };

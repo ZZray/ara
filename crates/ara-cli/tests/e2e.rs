@@ -444,3 +444,38 @@ async fn resume_runs_tools_in_the_session_cwd() {
     assert_eq!(recorded.trim(), std::fs::canonicalize(project.path()).unwrap().to_string_lossy());
     assert!(!elsewhere.path().join("where.txt").exists());
 }
+
+#[tokio::test]
+async fn search_tools_find_and_fix_a_seeded_bug() {
+    let env = Env::new();
+    let w = env.work.path();
+    std::fs::create_dir_all(w.join("src")).unwrap();
+    std::fs::write(w.join("src/math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
+    std::fs::write(w.join("src/util.py"), "def ident(x):\n    return x\n").unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_g", "glob", "{\"path\":\"src/*.py\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_s", "grep", "{\"pattern\":\"BUG\",\"path\":\"src\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_f", "bash", "{\"command\":\"sed -i 's/a - b  # BUG/a + b/' src/math.py && grep -c 'a + b' src/math.py\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Fixed add() in src/math.py."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Find and fix the bug marked BUG"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Fixed add() in src/math.py.\n");
+    assert_eq!(std::fs::read_to_string(w.join("src/math.py")).unwrap(), "def add(a, b):\n    return a + b\n");
+    let entries = journal(&env.session_files()[0]);
+    let glob_text = entries[4]["message"]["content"][0]["text"].as_str().unwrap();
+    let mut listed: Vec<&str> = glob_text.lines().collect();
+    listed.sort();
+    assert_eq!(listed, ["# src/", "math.py", "util.py"], "{glob_text}");
+    assert_eq!(
+        entries[6]["message"]["content"][0]["text"],
+        json!("# src/\n## math.py\n 1|def add(a, b):\n*2|    return a - b  # BUG")
+    );
+    assert_eq!(entries[8]["message"]["content"][0]["text"], json!("1"));
+    let reqs = up.requests.lock().await;
+    let tool_names: Vec<&str> =
+        reqs[0]["body"]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
+    assert_eq!(tool_names, ["read", "write", "bash", "grep", "glob"]);
+}
