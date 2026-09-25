@@ -79,26 +79,31 @@ fn native_context_files(ctx: &LoadContext<'_>) -> Items {
     if let Some(content) = non_empty(ctx, &user) {
         items.push(ContextFile::new("native", user, content, Level::User, None));
     }
-    // Nearest non-empty project config dir from cwd up to the repo root.
+    if let Some((dir, depth)) = nearest_native_project_dir(ctx) {
+        let path = dir.join("AGENTS.md");
+        if let Some(content) = non_empty(ctx, &path) {
+            items.push(ContextFile::new("native", path, content, Level::Project, Some(depth)));
+        }
+    }
+    ok(items)
+}
+
+/// Nearest non-empty native project config dir from cwd up to the repo root
+/// (`findNearestProjectConfigDir`), with its depth.
+pub(crate) fn nearest_native_project_dir(ctx: &LoadContext<'_>) -> Option<(PathBuf, i64)> {
     let mut current = ctx.cwd.clone();
     let mut depth = 0;
     loop {
         let dir = current.join(&ctx.dirs.native_project_dir);
         if !ctx.fs.read_dir_entries(&dir).is_empty() {
-            let path = resolve(&dir).join("AGENTS.md");
-            if let Some(content) = non_empty(ctx, &path) {
-                items.push(ContextFile::new("native", path, content, Level::Project, Some(depth)));
-            }
-            break;
+            return Some((resolve(&dir), depth));
         }
         if ctx.repo_root.as_deref() == Some(current.as_path()) {
-            break;
+            return None;
         }
-        let Some(parent) = current.parent() else { break };
-        current = parent.to_path_buf();
+        current = current.parent()?.to_path_buf();
         depth += 1;
     }
-    ok(items)
 }
 
 // --- Claude Code (~/.claude, .claude/) ----------------------------------------

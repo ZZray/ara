@@ -60,6 +60,11 @@ pub trait LoopHooks: Send + Sync {
     async fn follow_up_messages(&self) -> Vec<Message> {
         Vec::new()
     }
+    /// Rewrite the provider request context just before each model call (OMP
+    /// `transformProviderContext`). The run's own transcript is unchanged.
+    async fn transform_provider_context(&self, context: Context, _model: &Model) -> Context {
+        context
+    }
 }
 
 pub struct NoHooks;
@@ -432,6 +437,7 @@ async fn stream_assistant_response(
         messages: context.clone(),
         tools: Some(tool_definitions(config)),
     };
+    let llm_context = config.hooks.transform_provider_context(llm_context, &config.model).await;
     let provider_cancel = cancel.child_token();
     let mut rx = config.provider.stream(
         &config.model,

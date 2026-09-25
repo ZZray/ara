@@ -15,6 +15,7 @@ pub mod fs;
 pub mod paths;
 pub mod project;
 pub mod skills;
+pub mod system_md;
 
 pub use at_imports::{Expander, MAX_AT_IMPORT_DEPTH};
 pub use capability::{

@@ -131,6 +131,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ara-context"
+version = "0.1.0"
+dependencies = [
+ "ara-ai",
+ "ara-discovery",
+ "ara-prompt",
+ "libc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ara-discovery"
 version = "0.1.0"
 dependencies = [
