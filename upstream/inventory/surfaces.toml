@@ -667,7 +667,7 @@ title = "edit/patch tools"
 scope = "core"
 gate = "P1"
 owner = "tbd (pi-edit vendoring candidate)"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/tools/(apply-patch|ast-edit|edit-)',
   '^packages/coding-agent/test/fixtures/chunk-edit',
@@ -1373,7 +1373,7 @@ title = "pi-edit"
 scope = "native"
 gate = "P1"
 owner = "vendoring candidate for CA-TOOL-EDIT"
-status = "open"
+status = "tested"
 match = ['^crates/pi-edit/', '^crates/pi-diff/']
 behavior = "Edit application and diffing."
 

@@ -9,7 +9,7 @@ The Core is shared code. AI HandWave, a customized [Paseo](https://github.com/ge
 - message model and OpenAI-compatible Chat Completions adapter (`ara-ai`)
 - agent loop (`ara-agent`)
 - JSONL session journal with crash recovery (`ara-session`)
-- `read`/`write`/`bash` tools and the `grep`/`glob` search tools with gitignore-aware walking (`ara-tools`)
+- `read`/`write`/`edit`/`bash`/`grep`/`glob` tools (`ara-tools`), with the vendored OMP edit engine (`pi-edit`, `pi-diff`, `pi-ast` in `crates/vendor`) and hashline anchors
 - the `ara` print-mode host (`ara-cli`)
 - a controlled fake upstream (`ara-testkit`)
 

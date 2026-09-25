@@ -20,10 +20,8 @@ async fn global_gitignore_needs_a_repository() {
     }
     let run = |dir: std::path::PathBuf| async move {
         let args = json!({"pattern": "token"}).as_object().unwrap().clone();
-        let out = GrepTool::new(ToolContext::new(dir))
-            .execute("c", args, CancellationToken::new(), Arc::new(|_| {}))
-            .await
-            .unwrap();
+        let out =
+            GrepTool::new(plain_ctx(dir)).execute("c", args, CancellationToken::new(), Arc::new(|_| {})).await.unwrap();
         out.details.unwrap()["files"].clone()
     };
     let plain = tempfile::tempdir().unwrap();
@@ -34,4 +32,9 @@ async fn global_gitignore_needs_a_repository() {
     std::fs::write(repo.path().join("a.log"), "token\n").unwrap();
     std::fs::write(repo.path().join("b.txt"), "token\n").unwrap();
     assert_eq!(run(repo.path().to_path_buf()).await, json!(["b.txt"]));
+}
+
+/// Plain display (no edit tool exposed): these cases assert `*N|line` rows.
+fn plain_ctx(dir: impl Into<std::path::PathBuf>) -> ToolContext {
+    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
 }

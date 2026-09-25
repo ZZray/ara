@@ -675,19 +675,20 @@ pub fn format_grouped_paths(paths: &[String]) -> String {
 
 /// Grep-style grouped output (`formatGroupedFiles`): a header per file with its
 /// body; a blank line before each directory header and each root-level file.
+/// `body` returns the file's lines and a header suffix (a hashline `#TAG`).
 /// Files whose body is empty are omitted.
-pub fn format_grouped_files(files: &[String], mut body: impl FnMut(&str) -> Vec<String>) -> Vec<String> {
-    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+pub fn format_grouped_files(files: &[String], mut body: impl FnMut(&str) -> (Vec<String>, String)) -> Vec<String> {
+    let mut sections: Vec<(String, Vec<String>, String)> = Vec::new();
     for f in files {
-        if sections.iter().any(|(k, _)| k == f) {
+        if sections.iter().any(|(k, _, _)| k == f) {
             continue;
         }
-        let lines = body(f);
+        let (lines, suffix) = body(f);
         if !lines.is_empty() {
-            sections.push((f.clone(), lines));
+            sections.push((f.clone(), lines, suffix));
         }
     }
-    let entries: Vec<(String, bool, String)> = sections.iter().map(|(k, _)| (k.clone(), false, k.clone())).collect();
+    let entries: Vec<(String, bool, String)> = sections.iter().map(|(k, _, _)| (k.clone(), false, k.clone())).collect();
     let mut events = Vec::new();
     walk_tree(&build_tree(&entries), 0, &mut events);
     let mut out = Vec::new();
@@ -702,8 +703,9 @@ pub fn format_grouped_files(files: &[String], mut body: impl FnMut(&str) -> Vec<
             out.push(format!("{hashes} {name}/"));
             continue;
         }
-        out.push(format!("{hashes} {name}"));
-        if let Some((_, lines)) = sections.iter().find(|(k, _)| *k == key) {
+        let section = sections.iter().find(|(k, _, _)| *k == key);
+        out.push(format!("{hashes} {name}{}", section.map_or("", |(_, _, suffix)| suffix.as_str())));
+        if let Some((_, lines, _)) = section {
             out.extend(lines.iter().cloned());
         }
     }
@@ -774,14 +776,15 @@ mod tests {
             .collect();
         assert_eq!(format_grouped_paths(&paths), "top.md\n# packages/pkg/src/\na.ts\n## nested/\nb.ts\n# dir/");
         let files: Vec<String> = ["src/a.rs", "src/b/c.rs", "root.txt"].iter().map(|s| s.to_string()).collect();
-        let out = format_grouped_files(&files, |f| vec![format!("*1|{f}")]);
+        let out = format_grouped_files(&files, |f| (vec![format!("*1|{f}")], String::new()));
         assert_eq!(
             out.join("\n"),
             "# root.txt\n*1|root.txt\n\n# src/\n## a.rs\n*1|src/a.rs\n\n## b/\n### c.rs\n*1|src/b/c.rs"
         );
         // Upstream B-499e4bca94: skipped files and their now-empty directories vanish.
-        let skipped =
-            format_grouped_files(&files, |f| if f.starts_with("src/b") { vec![] } else { vec![f.to_string()] });
+        let skipped = format_grouped_files(&files, |f| {
+            (if f.starts_with("src/b") { vec![] } else { vec![f.to_string()] }, String::new())
+        });
         assert_eq!(skipped.join("\n"), "# root.txt\nroot.txt\n\n# src/\n## a.rs\nsrc/a.rs");
         let abs: Vec<String> = ["/tmp/x/a.rs", "/tmp/x/b.rs"].iter().map(|s| s.to_string()).collect();
         assert_eq!(format_grouped_paths(&abs), "# /tmp/x/\na.rs\nb.rs");

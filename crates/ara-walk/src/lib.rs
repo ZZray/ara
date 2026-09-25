@@ -20,14 +20,40 @@
 //! lstats the root and finds a symlink), so it reports no matches there; ARA
 //! walks the resolved directory for grep as upstream glob does.
 
-use crate::engine::{Budget, EngineError};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::ffi::{OsStr, OsString};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
+use tokio_util::sync::CancellationToken;
+
+/// Why a walk stopped before finishing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkError {
+    Timeout,
+    Aborted,
+}
+
+/// Cancellation plus a wall-clock budget, checked between entries.
+#[derive(Clone)]
+pub struct Budget {
+    pub cancel: CancellationToken,
+    pub deadline: Instant,
+}
+
+impl Budget {
+    pub fn check(&self) -> Result<(), WalkError> {
+        if self.cancel.is_cancelled() {
+            Err(WalkError::Aborted)
+        } else if Instant::now() >= self.deadline {
+            Err(WalkError::Timeout)
+        } else {
+            Ok(())
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -298,7 +324,7 @@ impl<F: FnMut(WalkEntry) -> Visit> Walker<'_, F> {
         depth: usize,
         state: &Arc<IgnoreState>,
         is_root: bool,
-    ) -> Result<bool, EngineError> {
+    ) -> Result<bool, WalkError> {
         let Ok(rd) = std::fs::read_dir(dir) else { return Ok(false) };
         let mut names = EntryNames::default();
         let mut entries: Vec<(OsString, EntryKind)> = Vec::new();
@@ -356,7 +382,7 @@ pub fn walk(
     opts: WalkOptions,
     budget: &Budget,
     visit: impl FnMut(WalkEntry) -> Visit,
-) -> Result<(), EngineError> {
+) -> Result<(), WalkError> {
     let global = if opts.use_gitignore {
         let (m, _) = Gitignore::global();
         (!m.is_empty()).then_some(m)

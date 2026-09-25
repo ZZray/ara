@@ -6,7 +6,7 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
 //! The host binds the Core ports: model route (OpenAI-compatible Chat
-//! Completions), tools (`read`/`write`/`bash`/`grep`/`glob` rooted at the session cwd), the
+//! Completions), tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` rooted at the session cwd), the
 //! event sink (JSON output + session journal), cancellation (SIGINT) and
 //! budgets (`--max-time`, `--max-model-calls`). Credentials come only from the
 //! environment and are never printed; a key is only sent to its own route.
@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-const TOOL_NAMES: [&str; 5] = ["read", "write", "bash", "grep", "glob"];
+const TOOL_NAMES: [&str; 6] = ["read", "write", "edit", "bash", "grep", "glob"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Mode {
@@ -100,12 +100,15 @@ struct Args {
     /// Append a system prompt block.
     #[arg(long)]
     append_system_prompt: Vec<String>,
-    /// Tools to enable (comma separated): read,write,bash,grep,glob. Empty disables tools.
-    #[arg(long, default_value = "read,write,bash,grep,glob")]
+    /// Tools to enable (comma separated): read,write,edit,bash,grep,glob. Empty disables tools.
+    #[arg(long, default_value = "read,write,edit,bash,grep,glob")]
     tools: String,
     /// Prefix read output with line numbers.
     #[arg(long)]
     line_numbers: bool,
+    /// Edit tool mode: hashline (default; anchored reads), replace, patch, apply_patch or sloppy.
+    #[arg(long, default_value = "hashline", value_parser = parse_edit_mode)]
+    edit_mode: pi_edit::EditMode,
     /// Include thinking blocks in text output.
     #[arg(long)]
     print_thoughts: bool,
@@ -115,6 +118,11 @@ struct Args {
     /// Stream idle and first-event timeout in seconds (default 300; 0 disables).
     #[arg(long)]
     stream_idle_timeout: Option<f64>,
+}
+
+fn parse_edit_mode(value: &str) -> Result<pi_edit::EditMode, String> {
+    pi_edit::EditMode::parse(value)
+        .ok_or_else(|| format!("unknown edit mode {value:?} (hashline, replace, patch, apply_patch, sloppy)"))
 }
 
 const DEFAULT_SYSTEM_PROMPT: &str = "You are ARA, a software engineering agent working in a local workspace. Use the provided tools to inspect and change files and to run commands. Tools act on real files and processes. Prefer small, verifiable steps and report what you actually did and observed; do not claim results you did not see in tool output.";
@@ -387,7 +395,8 @@ async fn run(args: Args) -> Result<i32> {
     system_prompt.extend(args.append_system_prompt.iter().cloned());
 
     let enabled: Vec<&str> = args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let tool_ctx = ToolContext { cwd: cwd.clone(), line_numbers: args.line_numbers };
+    let mut tool_ctx = ToolContext::new(cwd.clone()).with_edit(args.edit_mode, enabled.contains(&"edit"));
+    tool_ctx.line_numbers = args.line_numbers;
     let tools: Vec<_> =
         builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
 

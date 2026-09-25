@@ -15,10 +15,10 @@
 use crate::engine::{self, Budget, EngineError};
 use crate::output::{Notice, truncate_head};
 use crate::paths::{self, FindPattern};
-use crate::walk::{self, EntryKind};
 use crate::{DEFAULT_MAX_BYTES, ToolContext};
 use ara_agent::{AgentTool, ToolError, ToolOutput, UpdateFn};
 use ara_ai::{JsonObject, Tool};
+use ara_walk::{self as walk, EntryKind};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::PathBuf;

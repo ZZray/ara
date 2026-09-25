@@ -7,13 +7,13 @@
 //! and which directory is the working root.
 
 pub mod bash;
+pub mod edit;
 pub mod engine;
 pub mod glob;
 pub mod grep;
 pub mod output;
 pub mod paths;
 pub mod read;
-pub mod walk;
 pub mod write;
 
 use ara_agent::AgentTool;
@@ -25,11 +25,29 @@ pub const DEFAULT_MAX_LINES: usize = 3000;
 pub const DEFAULT_MAX_BYTES: usize = 50 * 1024;
 
 /// Shared tool settings chosen by the host.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ToolContext {
     pub cwd: PathBuf,
     /// `N|text` line prefixes on reads (OMP `readLineNumbers`, default off).
     pub line_numbers: bool,
+    /// Edit mode of the `edit` tool (OMP `edit.mode`, default hashline).
+    edit_mode: pi_edit::EditMode,
+    /// Whether the host exposes the `edit` tool (OMP `hasEditTool`, default true).
+    edit_enabled: bool,
+    /// File snapshots shared by `read`, `grep` and `edit` for one session
+    /// (OMP `getEditStore(session)`): tags, seen lines, clipboard registers.
+    pub edit_store: pi_edit::EditStore,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("cwd", &self.cwd)
+            .field("line_numbers", &self.line_numbers)
+            .field("edit_mode", &self.edit_mode)
+            .field("edit_enabled", &self.edit_enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ToolContext {
@@ -38,7 +56,48 @@ impl ToolContext {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
         let cwd = cwd.into();
         let cwd = std::path::absolute(&cwd).unwrap_or(cwd);
-        ToolContext { cwd: normalize(&cwd), line_numbers: false }
+        ToolContext {
+            cwd: normalize(&cwd),
+            line_numbers: false,
+            edit_mode: pi_edit::EditMode::Hashline,
+            edit_enabled: true,
+            edit_store: pi_edit::EditStore::new(),
+        }
+    }
+
+    /// Select the edit mode and whether the `edit` tool is exposed.
+    pub fn with_edit(mut self, mode: pi_edit::EditMode, edit_enabled: bool) -> Self {
+        self.edit_mode = mode;
+        self.edit_enabled = edit_enabled;
+        self
+    }
+
+    pub fn edit_mode(&self) -> pi_edit::EditMode {
+        self.edit_mode
+    }
+
+    /// Hashline display for `read`, `grep` and `write`: `[path#TAG]` headers
+    /// and `N:text` rows (OMP `resolveFileDisplayMode`: the edit tool is
+    /// exposed in hashline mode).
+    pub fn hashlines(&self) -> bool {
+        self.edit_enabled && self.edit_mode == pi_edit::EditMode::Hashline
+    }
+
+    /// Header path for a hashline read (`formatReadHashlineHeader`): cwd-relative
+    /// inside cwd, otherwise absolute with the home directory shortened to `~`.
+    pub fn hashline_display(&self, abs: &Path) -> String {
+        let display = paths::format_path_relative_to_cwd(abs, &self.cwd, false);
+        if !Path::new(&display).is_absolute() {
+            return display;
+        }
+        match std::env::var_os("HOME").map(PathBuf::from) {
+            Some(home) if !home.as_os_str().is_empty() => match abs.strip_prefix(&home) {
+                Ok(rest) if rest.as_os_str().is_empty() => "~".into(),
+                Ok(rest) => format!("~/{}", rest.to_string_lossy()),
+                Err(_) => display,
+            },
+            _ => display,
+        }
     }
 
     /// Resolve a model-supplied path: `~` expands to `$HOME`, relative paths
@@ -82,11 +141,13 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// `read`, `write`, `bash`, `grep` and `glob` bound to one working directory.
+/// `read`, `write`, `edit`, `bash`, `grep` and `glob` bound to one working
+/// directory and one snapshot store.
 pub fn builtin_tools(ctx: ToolContext) -> Vec<Arc<dyn AgentTool>> {
     vec![
         Arc::new(read::ReadTool { ctx: ctx.clone() }),
         Arc::new(write::WriteTool { ctx: ctx.clone() }),
+        Arc::new(edit::EditTool::new(ctx.clone())),
         Arc::new(bash::BashTool { ctx: ctx.clone() }),
         Arc::new(grep::GrepTool::new(ctx.clone())),
         Arc::new(glob::GlobTool::new(ctx)),

@@ -5,10 +5,12 @@ ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/ca
 - `crates/ara-ai`: from `packages/ai`, the `packages/catalog` types and the `packages/utils` JSON parsing.
 - `crates/ara-agent`: from `packages/agent`.
 - `crates/ara-session`: from `packages/coding-agent` session storage.
-- `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`) and `crates/pi-walker` (ignore-state traversal).
+- `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`, `edit.rs`).
+- `crates/ara-walk`: from `crates/pi-walker` (ignore-state traversal).
+- `crates/vendor/pi-diff`, `crates/vendor/pi-ast`, `crates/vendor/pi-edit`: upstream crates copied verbatim except for the local modifications listed in `crates/vendor/README.md` (`pi-ast` also carries its own `LICENSE`).
 - `crates/ara-cli`: from `packages/coding-agent` print mode.
 
-Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`). The search tools link the ripgrep libraries (`grep-*`, `ignore`, `globset`; MIT or Unlicense) and PCRE2 through `pcre2-sys` (PCRE2 is BSD-3-Clause).
+Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`). The search tools link the ripgrep libraries (`grep-*`, `ignore`, `globset`; MIT or Unlicense) and PCRE2 through `pcre2-sys` (PCRE2 is BSD-3-Clause). The vendored crates link tree-sitter and its grammars and `ast-grep-core` (MIT), and `xxhash-rust` (BSL-1.0).
 
 The following is the MIT license text from the pinned Oh My Pi commit's `LICENSE` file:
 

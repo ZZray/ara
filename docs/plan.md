@@ -18,7 +18,8 @@ P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 | AGT-01 | `ara-agent` | Agent loop |
 | SES-01 | `ara-session` | Session journal |
 | TOOLS-01 | `ara-tools` | `read` / `write` / `bash` |
-| TOOLS-02 (A2) | `ara-tools` | `grep` / `glob` with the pi-walker ignore chain |
+| TOOLS-02 (A2) | `ara-tools`, `ara-walk` | `grep` / `glob` with the pi-walker ignore chain |
+| TOOLS-03 (A2) | `ara-tools`, `crates/vendor` | `edit` (all five modes, hashline default) with hashline `read`/`grep`/`write` |
 | CLI-01 | `ara-cli` | Print host |
 
 None is accepted: the real-model trial is still blocked by the environment's network policy.

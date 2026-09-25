@@ -1,6 +1,6 @@
 //! Filesystem search engine behind `grep` and `glob` (OMP
 //! `crates/pi-natives/src/grep.rs`, `glob.rs` and `glob_util.rs` at
-//! 596f2da7101178214aa27a753529d15e6b7ad91d; traversal in [`crate::walk`]).
+//! 596f2da7101178214aa27a753529d15e6b7ad91d; traversal in `ara-walk`).
 //!
 //! Matching uses the same ripgrep libraries as upstream: `grep-regex` first,
 //! then PCRE2 (lookaround, backreferences), then a retry with stray
@@ -15,7 +15,7 @@
 //! (same results; upstream searches line by line). The PCRE2 JIT switch is
 //! `ARA_PCRE2_JIT` (upstream `OMP_PCRE2_JIT`).
 
-use crate::walk::{self, EntryKind, Visit, WalkEntry, WalkOptions};
+use ara_walk::{self as walk, EntryKind, Visit, WalkEntry, WalkOptions};
 use globset::{GlobBuilder, GlobMatcher};
 use grep_matcher::{LineMatchKind, LineTerminator, Matcher};
 use grep_pcre2::{RegexMatcher as PcreMatcher, RegexMatcherBuilder as PcreMatcherBuilder};
@@ -25,8 +25,6 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
-use std::time::Instant;
-use tokio_util::sync::CancellationToken;
 
 /// PCRE2 JIT: `ARA_PCRE2_JIT=1` forces it on, `0`/`false` off. Unset, it is on
 /// except on macOS, where PCRE2's JIT allocator can fault (upstream
@@ -62,21 +60,13 @@ impl fmt::Display for EngineError {
     }
 }
 
-/// Cancellation plus a wall-clock budget, checked between files and entries.
-#[derive(Clone)]
-pub struct Budget {
-    pub cancel: CancellationToken,
-    pub deadline: Instant,
-}
+pub use ara_walk::Budget;
 
-impl Budget {
-    pub fn check(&self) -> Result<(), EngineError> {
-        if self.cancel.is_cancelled() {
-            Err(EngineError::Aborted)
-        } else if Instant::now() >= self.deadline {
-            Err(EngineError::Timeout)
-        } else {
-            Ok(())
+impl From<ara_walk::WalkError> for EngineError {
+    fn from(e: ara_walk::WalkError) -> Self {
+        match e {
+            ara_walk::WalkError::Timeout => EngineError::Timeout,
+            ara_walk::WalkError::Aborted => EngineError::Aborted,
         }
     }
 }

@@ -10,9 +10,12 @@
 //! `*N|line` match lines and ` N|line` context lines with `...` gaps, missing
 //! path and oversized-file notes, 30 s timeout, and the upstream error texts.
 //!
-//! Not ported (open): internal URLs and archives as search targets, hashline
-//! snapshot anchors (tied to the hashline edit tool), SSH approval tiers,
-//! the TUI renderer.
+//! Hashline mode (edit tool in hashline mode): each matched file gets a
+//! whole-file snapshot tag (`## file#TAG` / `[file#TAG]`) and `*N:line` rows,
+//! and the displayed lines are recorded as seen.
+//!
+//! Not ported (open): internal URLs and archives as search targets, SSH
+//! approval tiers, the TUI renderer.
 
 use crate::engine::{self, Budget, EngineError, GrepMatch, GrepParams};
 use crate::output::{Notice, truncate_head};
@@ -80,9 +83,10 @@ fn line_range_fetch_cap(specs: &[PathSpec], keep: u64) -> u64 {
     cap.min(engine::MAX_FILE_BYTES)
 }
 
-/// `formatMatchLine` (plain mode): `*N|line` for matches, ` N|line` for context.
-pub fn format_match_line(line_number: u64, line: &str, is_match: bool) -> String {
-    format!("{}{line_number}|{line}", if is_match { '*' } else { ' ' })
+/// `formatMatchLine`: `*N|line` for matches and ` N|line` for context; in
+/// hashline mode the editable `*N:line` / ` N:line` shape.
+pub fn format_match_line(line_number: u64, line: &str, is_match: bool, hashline: bool) -> String {
+    format!("{}{line_number}{}{line}", if is_match { '*' } else { ' ' }, if hashline { ':' } else { '|' })
 }
 
 fn engine_error(e: EngineError, timeout: Duration) -> ToolError {
@@ -351,14 +355,26 @@ impl GrepTool {
             by_file.entry(rel).or_default().push(m);
         }
         let match_count: usize = by_file.values().map(Vec::len).sum();
+        // Hashline mode: a whole-file tag per matched file makes its lines
+        // editable anchors (files over 4 MB get none and stay plain).
+        let mut tags: HashMap<String, (PathBuf, String)> = HashMap::new();
+        if ctx.hashlines() {
+            for rel in &file_list {
+                let abs = crate::normalize(&ctx.cwd.join(rel));
+                if let Some(tag) = ctx.edit_store.record_file(&abs, None) {
+                    tags.insert(rel.clone(), (abs, tag));
+                }
+            }
+        }
         let render = |rel: &str| -> Vec<String> {
+            let hashline = tags.contains_key(rel);
             let mut out = Vec::new();
             let mut last: Option<u64> = None;
             let mut push = |n: u64, line: &str, is_match: bool, out: &mut Vec<String>| {
                 if last.is_some_and(|l| n > l + 1) {
                     out.push("...".into());
                 }
-                out.push(format_match_line(n, line, is_match));
+                out.push(format_match_line(n, line, is_match, hashline));
                 last = Some(n);
             };
             for m in by_file.get(rel).map(Vec::as_slice).unwrap_or_default() {
@@ -372,17 +388,33 @@ impl GrepTool {
             }
             out
         };
+        let record_seen = |rel: &str, body: &[String]| {
+            if let Some((abs, tag)) = tags.get(rel) {
+                let seen = pi_edit::store::seen_lines_from_body(&body.join("\n"));
+                if !seen.is_empty() {
+                    ctx.edit_store.record_seen_lines(&pi_edit::path_policy::canonical_key(abs), tag, &seen);
+                }
+            }
+        };
         let mut output: Vec<String> = Vec::new();
         if scope.is_directory || is_multi_scope {
-            output = paths::format_grouped_files(&file_list, render);
+            output = paths::format_grouped_files(&file_list, |rel| {
+                let body = render(rel);
+                record_seen(rel, &body);
+                (body, tags.get(rel).map(|(_, tag)| format!("#{tag}")).unwrap_or_default())
+            });
         } else {
             for rel in &file_list {
                 let body = render(rel);
                 if body.is_empty() {
                     continue;
                 }
+                record_seen(rel, &body);
                 if !output.is_empty() {
                     output.push(String::new());
+                }
+                if let Some((_, tag)) = tags.get(rel) {
+                    output.push(pi_edit::modes::hashline::format::format_hashline_header(rel, tag));
                 }
                 output.extend(body);
             }

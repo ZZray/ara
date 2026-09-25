@@ -1,0 +1,11 @@
+[package]
+name = "ara-walk"
+description = "Gitignore-aware directory traversal (port of OMP pi-walker ignore-state walking)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ignore = "0.4"
+tokio-util.workspace = true

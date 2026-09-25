@@ -22,8 +22,13 @@ fn text(o: &ToolOutput) -> String {
         .join("\n")
 }
 
+/// Plain display (no edit tool exposed), as these read/write/bash cases assert.
+fn plain(dir: &std::path::Path) -> ToolContext {
+    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
+}
+
 fn tools(dir: &std::path::Path) -> (read::ReadTool, write::WriteTool, bash::BashTool) {
-    let ctx = ToolContext::new(dir);
+    let ctx = plain(dir);
     (read::ReadTool { ctx: ctx.clone() }, write::WriteTool { ctx: ctx.clone() }, bash::BashTool { ctx })
 }
 
@@ -47,7 +52,9 @@ async fn read_ranges_numbers_and_limits() {
     );
     assert_eq!(r("missing.txt").await.unwrap_err().0, "File not found: missing.txt");
 
-    let numbered = read::ReadTool { ctx: ToolContext { cwd: dir.path().into(), line_numbers: true } };
+    let mut numbered_ctx = plain(dir.path());
+    numbered_ctx.line_numbers = true;
+    let numbered = read::ReadTool { ctx: numbered_ctx };
     let out =
         numbered.execute("c", args(json!({"path": "a.txt:2-3"})), CancellationToken::new(), noop()).await.unwrap();
     assert!(text(&out).starts_with("2|two\n3|three"));
@@ -192,7 +199,7 @@ async fn bash_cancel_aborts_and_streams_updates() {
 #[tokio::test]
 async fn builtin_tool_set() {
     let names: Vec<String> = builtin_tools(ToolContext::new(".")).iter().map(|t| t.definition().name).collect();
-    assert_eq!(names, vec!["read", "write", "bash", "grep", "glob"]);
+    assert_eq!(names, vec!["read", "write", "edit", "bash", "grep", "glob"]);
 }
 
 #[tokio::test]

@@ -148,7 +148,12 @@ async fn tool_task_produces_file_and_receipts() {
         roles(&entries),
         vec!["model_change", "user", "assistant", "toolResult", "assistant", "toolResult", "assistant"]
     );
-    assert_eq!(entries[4]["message"]["content"][0]["text"], json!("Successfully wrote 12 bytes to hello.txt"));
+    // Hashline mode (the default edit mode) returns a fresh snapshot header.
+    let tag = pi_edit::store::file_hash("hi from ara\n");
+    assert_eq!(
+        entries[4]["message"]["content"][0]["text"],
+        json!(format!("[hello.txt#{tag}]\nSuccessfully wrote 12 bytes to hello.txt"))
+    );
     assert_eq!(entries[6]["message"]["content"][0]["text"], json!("hi from ara\ndone"));
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 3);
@@ -446,16 +451,19 @@ async fn resume_runs_tools_in_the_session_cwd() {
 }
 
 #[tokio::test]
-async fn search_tools_find_and_fix_a_seeded_bug() {
+async fn search_and_hashline_edit_fix_a_seeded_bug() {
     let env = Env::new();
     let w = env.work.path();
     std::fs::create_dir_all(w.join("src")).unwrap();
     std::fs::write(w.join("src/math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
     std::fs::write(w.join("src/util.py"), "def ident(x):\n    return x\n").unwrap();
+    // The tag is the content hash upstream also computes for this text.
+    let edit = json!({"input": "[src/math.py#450E]\nPUT 2.=2:\n+    return a + b\n"}).to_string();
     let up = upstream(json!({"responses": [
         {"events": [tool_call(0, "call_g", "glob", "{\"path\":\"src/*.py\"}"), finish("tool_calls"), done()]},
         {"events": [tool_call(0, "call_s", "grep", "{\"pattern\":\"BUG\",\"path\":\"src\"}"), finish("tool_calls"), done()]},
-        {"events": [tool_call(0, "call_f", "bash", "{\"command\":\"sed -i 's/a - b  # BUG/a + b/' src/math.py && grep -c 'a + b' src/math.py\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_e", "edit", &edit), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_r", "read", "{\"path\":\"src/math.py\"}"), finish("tool_calls"), done()]},
         {"events": [text("Fixed add() in src/math.py."), finish("stop"), done()]}
     ]}))
     .await;
@@ -465,17 +473,18 @@ async fn search_tools_find_and_fix_a_seeded_bug() {
     assert_eq!(stdout, "Fixed add() in src/math.py.\n");
     assert_eq!(std::fs::read_to_string(w.join("src/math.py")).unwrap(), "def add(a, b):\n    return a + b\n");
     let entries = journal(&env.session_files()[0]);
-    let glob_text = entries[4]["message"]["content"][0]["text"].as_str().unwrap();
-    let mut listed: Vec<&str> = glob_text.lines().collect();
+    let result = |i: usize| entries[i]["message"]["content"][0]["text"].as_str().unwrap().to_string();
+    let mut listed: Vec<String> = result(4).lines().map(str::to_string).collect();
     listed.sort();
-    assert_eq!(listed, ["# src/", "math.py", "util.py"], "{glob_text}");
-    assert_eq!(
-        entries[6]["message"]["content"][0]["text"],
-        json!("# src/\n## math.py\n 1|def add(a, b):\n*2|    return a - b  # BUG")
-    );
-    assert_eq!(entries[8]["message"]["content"][0]["text"], json!("1"));
+    assert_eq!(listed, ["# src/", "math.py", "util.py"]);
+    assert_eq!(result(6), "# src/\n## math.py#450E\n 1:def add(a, b):\n*2:    return a - b  # BUG");
+    let edited = result(8);
+    assert!(edited.starts_with("[src/math.py#") && edited.contains("return a + b"), "{edited}");
+    assert!(!edited.contains("#450E"), "the tag changes after an edit: {edited}");
+    let new_tag = &edited[13..17];
+    assert_eq!(result(10), format!("[src/math.py#{new_tag}]\n1:def add(a, b):\n2:    return a + b"));
     let reqs = up.requests.lock().await;
     let tool_names: Vec<&str> =
         reqs[0]["body"]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
-    assert_eq!(tool_names, ["read", "write", "bash", "grep", "glob"]);
+    assert_eq!(tool_names, ["read", "write", "edit", "bash", "grep", "glob"]);
 }

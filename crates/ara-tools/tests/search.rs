@@ -41,11 +41,11 @@ fn age(root: &Path, rel: &str, secs_ago: u64) {
 }
 
 async fn grep(root: &Path, a: Value) -> Result<ToolOutput, ToolError> {
-    GrepTool::new(ToolContext::new(root)).execute("c", args(a), CancellationToken::new(), noop()).await
+    GrepTool::new(plain_ctx(root)).execute("c", args(a), CancellationToken::new(), noop()).await
 }
 
 async fn glob(root: &Path, a: Value) -> Result<ToolOutput, ToolError> {
-    GlobTool::new(ToolContext::new(root)).execute("c", args(a), CancellationToken::new(), noop()).await
+    GlobTool::new(plain_ctx(root)).execute("c", args(a), CancellationToken::new(), noop()).await
 }
 
 #[tokio::test]
@@ -235,12 +235,12 @@ async fn grep_notes_oversized_targets_and_honours_budget() {
     assert!(t.starts_with("*1|early"), "{}", &t[..80]);
     assert!(!t.contains("late\n") && t.ends_with("Searched only the first 4MB of large files (matches past the 4MB window are not shown; use `read` for the rest): big.log"), "{}", &t[t.len() - 200..]);
 
-    let tool = GrepTool { ctx: ToolContext::new(r), timeout: Duration::ZERO };
+    let tool = GrepTool { ctx: plain_ctx(r), timeout: Duration::ZERO };
     let e = tool.execute("c", args(json!({"pattern": "early"})), CancellationToken::new(), noop()).await.unwrap_err();
     assert_eq!(e.0, "Grep timed out after 0s; narrow paths or pattern, or scope with `glob` first");
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let e = GrepTool::new(ToolContext::new(r)).execute("c", args(json!({"pattern": "early"})), cancel, noop()).await;
+    let e = GrepTool::new(plain_ctx(r)).execute("c", args(json!({"pattern": "early"})), cancel, noop()).await;
     assert_eq!(e.unwrap_err().0, "Grep was aborted");
 }
 
@@ -313,7 +313,7 @@ async fn glob_ignore_rules_and_errors() {
     let t = text(&glob(r, json!({"path": "a.js; missing"})).await.unwrap());
     assert_eq!(t, "a.js\n\nSkipped missing paths: missing");
 
-    let expired = GlobTool { ctx: ToolContext::new(r), timeout: Duration::ZERO };
+    let expired = GlobTool { ctx: plain_ctx(r), timeout: Duration::ZERO };
     let t = text(&expired.execute("c", args(json!({"path": "**/*"})), CancellationToken::new(), noop()).await.unwrap());
     assert!(
         t.starts_with(
@@ -340,7 +340,7 @@ async fn parent_ignore_rules_follow_upstream_anchoring_and_precedence() {
     let from_root = files(grep(r, json!({"pattern": "token"})).await.unwrap());
     assert_eq!(from_root, json!(["pkg/keep.log", "pkg/src.txt"]));
     assert_eq!(files(grep(r, json!({"pattern": "token", "path": "pkg"})).await.unwrap()), from_root);
-    let sub = GrepTool::new(ToolContext::new(r.join("pkg")));
+    let sub = GrepTool::new(plain_ctx(r.join("pkg")));
     let out = sub.execute("c", args(json!({"pattern": "token"})), CancellationToken::new(), noop()).await.unwrap();
     assert_eq!(files(out), json!(["keep.log", "src.txt"]));
     let listed = files(glob(r, json!({"path": "pkg/**/*"})).await.unwrap());
@@ -390,14 +390,14 @@ async fn review_regressions() {
     big.push_str(&"z".repeat(5 * 1024 * 1024));
     put(r, "other/big.log", &big);
     std::fs::create_dir_all(r.join("work")).unwrap();
-    let tool = GrepTool::new(ToolContext::new(r.join("work")));
+    let tool = GrepTool::new(plain_ctx(r.join("work")));
     let out = tool
         .execute("c", args(json!({"pattern": "early", "path": "../other/big.log"})), CancellationToken::new(), noop())
         .await
         .unwrap();
     assert!(text(&out).ends_with("use `read` for the rest): ../other/big.log"), "{}", text(&out));
     // A relative host cwd is resolved against the process directory.
-    let here = GrepTool::new(ToolContext::new("."));
+    let here = GrepTool::new(plain_ctx("."));
     let out = here
         .execute(
             "c",
@@ -490,4 +490,9 @@ async fn special_files_symlinked_roots_and_multiline_merging() {
     put(r, "c.txt", "printf(\"a\\n\");\nprintf(\"b\\n\");\nprintf(\"c\\n\");\n");
     let t = text(&grep(r, json!({"pattern": "\\\\n", "path": "c.txt"})).await.unwrap());
     assert_eq!(t, "*1|printf(\"a\\n\");\nprintf(\"b\\n\");\nprintf(\"c\\n\");");
+}
+
+/// Plain display (no edit tool exposed): these cases assert `*N|line` rows.
+fn plain_ctx(dir: impl Into<std::path::PathBuf>) -> ToolContext {
+    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
 }

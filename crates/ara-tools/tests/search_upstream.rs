@@ -28,17 +28,11 @@ fn args(v: Value) -> JsonObject {
 }
 
 async fn grep(cwd: &Path, a: Value) -> ToolOutput {
-    GrepTool::new(ToolContext::new(cwd))
-        .execute("c", args(a), CancellationToken::new(), Arc::new(|_| {}))
-        .await
-        .unwrap()
+    GrepTool::new(plain_ctx(cwd)).execute("c", args(a), CancellationToken::new(), Arc::new(|_| {})).await.unwrap()
 }
 
 async fn glob(cwd: &Path, a: Value) -> ToolOutput {
-    GlobTool::new(ToolContext::new(cwd))
-        .execute("c", args(a), CancellationToken::new(), Arc::new(|_| {}))
-        .await
-        .unwrap()
+    GlobTool::new(plain_ctx(cwd)).execute("c", args(a), CancellationToken::new(), Arc::new(|_| {})).await.unwrap()
 }
 
 /// `createSearchFixture`.
@@ -225,10 +219,15 @@ async fn glob_path_lists_quotes_and_outside_cwd() {
     assert_eq!(d(&out)["files"], json!([format!("{o}/outside.txt")]));
     assert_eq!(d(&out)["scopePath"], o);
     for root in ["/", "//"] {
-        let e = GlobTool::new(ToolContext::new(r))
+        let e = GlobTool::new(plain_ctx(r))
             .execute("c", args(json!({"path": root})), CancellationToken::new(), Arc::new(|_| {}))
             .await
             .unwrap_err();
         assert_eq!(e.0, "Searching from root directory '/' is not allowed");
     }
+}
+
+/// Plain display (no edit tool exposed): these cases assert `*N|line` rows.
+fn plain_ctx(dir: impl Into<std::path::PathBuf>) -> ToolContext {
+    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
 }
