@@ -39,7 +39,7 @@ title = "Agent loop: turns, streaming assistant messages, tool execution, abort"
 scope = "core"
 gate = "P1"
 owner = "ara-agent::agent_loop"
-status = "open"
+status = "implementing"
 match = [
   '^packages/agent/src/(agent-loop|replay-policy|thinking)\.ts$',
   '^packages/agent/src/utils/yield\.ts$',

@@ -11,3 +11,18 @@ Keep `Project`, `Task`, `Session`, `Run`, and scheduled `Job` distinct. A Sessio
 The first wire protocols are OpenAI-compatible Chat Completions/Responses and Anthropic Messages. Protocol-specific frames live in adapters; model choice and endpoint configuration belong to the host. OpenRouter free and local CAS are test routes, not Core dependencies.
 
 This is an architecture target. Source-backed Rust behavior and host tests are required before any part can be marked implemented. See [verification](verification.md).
+
+## Rust crate layout
+
+**Decision, 2026-09-25**, from the P1 slice-1 implementation:
+
+| Crate | Owns | Must not depend on |
+| --- | --- | --- |
+| `ara-ai` | Message model, assistant stream protocol, provider adapters (`ModelProvider` port), argument validation, history pairing guard | Session storage, tools, hosts |
+| `ara-agent` | Agent loop, `AgentTool` port, `LoopHooks` (permission gate, steering/follow-up queues), `AgentEventSink` port | Storage, process/file effects, product state |
+| `ara-session` | Session journal format and recovery | Providers, hosts |
+| `ara-tools` | Built-in tool implementations (file/process effects) behind `AgentTool` | Hosts, products |
+| `ara-cli` | Reference host: argument parsing, model/credential binding, journal location, print mode | Product state (HandWave/Lantern/Lumen) |
+| `ara-testkit` | Controlled fake upstream and fixtures | Production crates at runtime |
+
+The loop awaits each `AgentEventSink::emit`. A host that persists `message_end` inside the sink has therefore journaled an assistant tool-call message before any of its tools start. By default the loop refuses to re-execute a trailing unpaired tool-call tail (`UnpairedTail::Refuse`), because such calls may already have run and their effects are unknown. A host opts in to execution only when it knows the calls never ran.

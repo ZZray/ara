@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/ara-ai",
+  "crates/ara-agent",
   "crates/ara-testkit",
 ]
 resolver = "3"
@@ -9,7 +10,8 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.88"
+publish = false
 
 [workspace.dependencies]
 ara-ai = { path = "crates/ara-ai" }

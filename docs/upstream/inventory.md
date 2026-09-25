@@ -19,7 +19,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | Surface | Title | Scope | Gate | Rust owner | Files (src/test) | Source lines | Test cases | Status |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
 | REPO-PKG-META | Package manifests, changelogs, READMEs, licenses, tsconfig | repo | - | none | 93 (0/0) | 0 | 0 | open |
-| AGT-LOOP | Agent loop: turns, streaming assistant messages, tool execution, abort | core | P1 | ara-agent::agent_loop | 15 (4/11) | 3291 | 139 | open |
+| AGT-LOOP | Agent loop: turns, streaming assistant messages, tool execution, abort | core | P1 | ara-agent::agent_loop | 15 (4/11) | 3291 | 139 | implementing |
 | AGT-AGENT | Stateful Agent: prompt/continue, subscriptions, queues, pause gate | core | P1 | ara-agent::agent | 6 (4/2) | 2827 | 51 | open |
 | AGT-APPEND-CTX | Append-only context mode | core | P1 | ara-agent::context | 2 (1/1) | 374 | 59 | open |
 | AGT-COMPACTION | Compaction, branch summaries, pruning, handoff, shake | core | P1 | ara-agent::compaction | 50 (15/20) | 6133 | 199 | open |

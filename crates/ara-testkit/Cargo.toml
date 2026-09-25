@@ -4,6 +4,7 @@ description = "Controlled fake model upstream and scripted providers for ARA tes
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "ara-fake-upstream"

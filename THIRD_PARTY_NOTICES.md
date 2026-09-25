@@ -1,6 +1,6 @@
 # Third-party notices
 
-The ARA Rust repository initially contains planning documents and no copied Oh My Pi implementation. Its intended source baseline is [Oh My Pi](https://github.com/can1357/oh-my-pi), `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Code copied or translated from that source must retain applicable copyright and license notices; check further dependencies as they are added.
+ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/can1357/oh-my-pi) `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Ported code lives in `crates/ara-ai` (from `packages/ai`, `packages/catalog` types and `packages/utils` JSON parsing) and `crates/ara-agent` (from `packages/agent`). Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`).
 
 The following is the MIT license text from the pinned Oh My Pi commit's `LICENSE` file:
 
