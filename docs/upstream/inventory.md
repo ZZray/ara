@@ -55,7 +55,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-SESSION-JOURNAL | Session JSONL journal, entries, loader, migrations, listing | core | P1 | ara-session | 79 (17/62) | 12014 | 466 | implementing |
 | CA-SESSION-BACKENDS | Alternative session storage backends | host | P3 | tbd | 15 (5/10) | 2447 | 80 | open |
 | CA-SESSION-FOREIGN | Foreign session import (Claude Code, Codex) | service | P3 | tbd | 6 (5/1) | 1207 | 6 | open |
-| CA-AGENT-SESSION | AgentSession orchestration over Agent + Session | core | P1 | ara-cli::run (slice 1), later ara-runtime | 109 (8/101) | 15542 | 929 | open |
+| CA-AGENT-SESSION | AgentSession orchestration over Agent + Session | core | P1 | ara-cli::run (slice 1), later ara-runtime | 109 (8/101) | 15542 | 929 | implementing |
 | CA-TURN-RECOVERY | Turn persistence, recovery, unexpected-stop and retry fallback | core | P1 | tbd | 26 (10/16) | 6390 | 250 | implementing |
 | CA-QUEUE | Queued, steering, yield and tool-choice queues | core | P1 | tbd | 9 (5/4) | 852 | 37 | open |
 | CA-MODEL-CONTROLS | Model controls, roles, credential pinning | core | P2 | tbd | 25 (6/19) | 1453 | 93 | open |
@@ -85,11 +85,11 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-EXT-HOOKS | Hooks | core | P2 | tbd | 9 (5/4) | 1409 | 57 | open |
 | CA-EXT-SLASH | Slash commands | host | P2 | tbd | 105 (70/35) | 9576 | 172 | open |
 | CA-EXT-PLUGINS | Extensions, custom tools/commands, plugins, legacy shims | host | P3 | tbd | 146 (48/98) | 17160 | 746 | open |
-| CA-PRINT-MODE | Non-interactive print mode | host | P1 | ara-cli | 7 (1/6) | 247 | 20 | open |
+| CA-PRINT-MODE | Non-interactive print mode | host | P1 | ara-cli | 7 (1/6) | 247 | 20 | implementing |
 | CA-RPC | RPC mode (JSON lines over stdio) | host | P2 | tbd | 44 (15/24) | 9194 | 183 | open |
 | CA-ACP | Agent Client Protocol mode | host | P2 | tbd | 14 (6/8) | 4179 | 218 | open |
 | CA-TUI-MODE | Interactive terminal mode, components, controllers, themes, setup wizard | host-ui | P3 | host | 556 (210/240) | 82568 | 1868 | open |
-| CA-CLI | CLI entry, argument parsing and subcommands | host | P1 | ara-cli | 123 (78/45) | 31096 | 445 | open |
+| CA-CLI | CLI entry, argument parsing and subcommands | host | P1 | ara-cli | 123 (78/45) | 31096 | 445 | implementing |
 | CA-SDK | SDK entry (createAgentSession) | core | P2 | tbd | 20 (2/18) | 4394 | 171 | open |
 | CA-MCP | MCP client manager and transports | host | P2 | tbd | 80 (26/54) | 10299 | 302 | open |
 | CA-LSP | LSP integration | host | P2 | tbd | 35 (24/10) | 10188 | 44 | open |

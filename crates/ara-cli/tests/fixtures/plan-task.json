@@ -1,0 +1,5 @@
+{"responses": [
+ {"events": [{"data": {"id":"d1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\"path\":\"notes/plan.md\",\"content\":\"# Plan\\n- port agent loop\\n\"}"}}]}}]}}, {"data": {"id":"d1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}}, {"data":{"id":"d1","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30}}}, {"done": true}]},
+ {"events": [{"data": {"id":"d2","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_2","type":"function","function":{"name":"bash","arguments":"{\"command\":\"wc -l notes/plan.md && cat notes/plan.md\"}"}}]}}]}}, {"data": {"id":"d2","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}}, {"done": true}]},
+ {"events": [{"data": {"id":"d3","choices":[{"index":0,"delta":{"content":"Wrote notes/plan.md (2 lines)."}}]}}, {"data": {"id":"d3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}}, {"data":{"id":"d3","choices":[],"usage":{"prompt_tokens":300,"completion_tokens":12,"prompt_tokens_details":{"cached_tokens":100}}}}, {"done": true}]}
+]}

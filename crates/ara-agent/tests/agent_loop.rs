@@ -233,6 +233,7 @@ fn config(provider: Arc<dyn ModelProvider>, tools: Vec<Arc<dyn AgentTool>>, hook
         max_tokens: None,
         temperature: None,
         deadline: None,
+        max_model_calls: None,
         hooks,
     }
 }
@@ -292,7 +293,8 @@ async fn simple_prompt_event_sequence() {
         &CancellationToken::new(),
         &sink,
     )
-    .await;
+    .await
+    .messages;
     assert_eq!(
         types(&sink).await,
         vec![
@@ -329,7 +331,8 @@ async fn tool_call_turn_executes_and_continues() {
         &CancellationToken::new(),
         &sink,
     )
-    .await;
+    .await
+    .messages;
     assert_eq!(
         types(&sink).await,
         vec![
@@ -383,7 +386,8 @@ async fn validation_unknown_tool_blocked_and_empty_error() {
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     let results: Vec<&Message> = new.iter().filter(|m| m.role() == "toolResult").collect();
     let text_of = |id: &str| {
         results
@@ -410,7 +414,8 @@ async fn validation_unknown_tool_blocked_and_empty_error() {
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     assert_eq!(result_text(&new[2]), "denied by host policy");
     assert!(log.lock().unwrap().is_empty(), "blocked call has no effect");
 }
@@ -427,7 +432,8 @@ async fn provider_error_pairs_completed_calls_with_synthetic_results() {
         &CancellationToken::new(),
         &sink,
     )
-    .await;
+    .await
+    .messages;
     assert_eq!(new.len(), 3);
     assert_eq!(new[1].as_assistant().unwrap().stop_reason, StopReason::Error);
     assert_eq!(
@@ -469,7 +475,8 @@ async fn abort_during_stream_keeps_only_completed_calls() {
         &cancel,
         sink.as_ref(),
     )
-    .await;
+    .await
+    .messages;
     let assistant = new[1].as_assistant().unwrap();
     assert_eq!(assistant.stop_reason, StopReason::Aborted);
     assert_eq!(assistant.error_message.as_deref(), Some("Request was aborted"));
@@ -502,7 +509,8 @@ async fn abort_during_tool_execution_stops_before_next_model_call() {
         &cancel,
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(*log.lock().unwrap(), vec!["start:slow", "cancelled:slow"]);
     assert_eq!(result_text(&new[2]), "echo cancelled");
@@ -525,7 +533,8 @@ async fn length_stop_pairs_calls_and_resamples() {
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     assert!(
         result_text(&new[2]).starts_with("Tool call was not executed because the assistant hit its output token limit")
     );
@@ -543,14 +552,15 @@ async fn shared_calls_overlap_and_exclusive_serializes() {
     ]);
     let (shared, _) = echo(300, Concurrency::Shared);
     let started = Instant::now();
-    agent_loop(
+    let _ = agent_loop(
         vec![user("go")],
         &mut Vec::new(),
         &config(provider, vec![shared], Arc::new(NoHooks)),
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     let shared_elapsed = started.elapsed();
     assert!(shared_elapsed < Duration::from_millis(1000), "two batches of overlapping 300ms calls: {shared_elapsed:?}");
 
@@ -560,14 +570,15 @@ async fn shared_calls_overlap_and_exclusive_serializes() {
     ]);
     let (exclusive, log) = echo(200, Concurrency::Exclusive);
     let started = Instant::now();
-    agent_loop(
+    let _ = agent_loop(
         vec![user("go")],
         &mut Vec::new(),
         &config(provider, vec![exclusive], Arc::new(NoHooks)),
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     assert!(started.elapsed() >= Duration::from_millis(400));
     assert_eq!(*log.lock().unwrap(), vec!["start:a", "end:a", "start:b", "end:b"]);
 }
@@ -579,7 +590,7 @@ async fn deadline_cancels_in_flight_stream() {
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.deadline = Some(Instant::now() + Duration::from_millis(150));
     let started = Instant::now();
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     let a = new[1].as_assistant().unwrap();
     assert_eq!(a.stop_reason, StopReason::Aborted);
@@ -598,7 +609,7 @@ async fn deadline_cancels_running_tool() {
     let mut cfg = config(provider.clone(), vec![tool], Arc::new(NoHooks));
     cfg.deadline = Some(Instant::now() + Duration::from_millis(150));
     let started = Instant::now();
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
     assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(*log.lock().unwrap(), vec!["start:slow", "cancelled:slow"]);
     assert_eq!(result_text(&new[2]), "echo cancelled");
@@ -621,7 +632,7 @@ async fn dequeued_steering_survives_deadline() {
         tokio::time::sleep(Duration::from_millis(20)).await;
         h2.steering.lock().unwrap().push(user("late steer"));
     });
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
     assert!(new.iter().any(|m| matches!(m, Message::User(u) if u.content.plain_text() == "late steer")), "{new:?}");
 }
 
@@ -655,7 +666,8 @@ async fn panicking_tool_becomes_error_result() {
         &CancellationToken::new(),
         &NullSink,
     )
-    .await;
+    .await
+    .messages;
     let texts: Vec<String> = new.iter().filter(|m| m.role() == "toolResult").map(result_text).collect();
     assert!(texts.contains(&"Tool boom panicked: kaboom".to_string()), "{texts:?}");
     assert!(texts.contains(&"echo: fine".to_string()));
@@ -699,8 +711,9 @@ async fn approval_hook_observes_abort() {
         c2.cancel();
     });
     let started = Instant::now();
-    let new =
-        agent_loop(vec![user("go")], &mut Vec::new(), &config(provider, vec![tool], hooks), &cancel, &NullSink).await;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &config(provider, vec![tool], hooks), &cancel, &NullSink)
+        .await
+        .messages;
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(log.lock().unwrap().is_empty());
     let texts: Vec<String> = new.iter().filter(|m| m.role() == "toolResult").map(result_text).collect();
@@ -755,7 +768,7 @@ async fn steering_and_follow_up_messages() {
     let cfg = config(provider.clone(), vec![tool], hooks.clone());
     // Steering queued before the run starts is injected in the first turn.
     hooks.steering.lock().unwrap().push(user("steer"));
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
     let roles: Vec<String> = new
         .iter()
         .map(|m| match m {
@@ -801,8 +814,10 @@ async fn continue_rules_and_unpaired_tail_resume() {
         .unwrap_err();
     assert!(err.to_string().contains("effects are unknown"), "{err}");
     assert!(log.lock().unwrap().is_empty(), "refused tail never executes");
-    let new =
-        agent_loop_continue(&mut ctx, &cfg, &CancellationToken::new(), &NullSink, UnpairedTail::Execute).await.unwrap();
+    let new = agent_loop_continue(&mut ctx, &cfg, &CancellationToken::new(), &NullSink, UnpairedTail::Execute)
+        .await
+        .unwrap()
+        .messages;
     assert_eq!(
         *log.lock().unwrap(),
         vec!["start:again", "end:again"],
@@ -825,11 +840,53 @@ async fn real_http_chain_with_fake_upstream() {
     let (tool, log) = echo(1, Concurrency::Shared);
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.model.base_url = server.base_url();
-    let new = agent_loop(vec![user("use echo")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await;
+    let new =
+        agent_loop(vec![user("use echo")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
     assert_eq!(*log.lock().unwrap(), vec!["start:call_1", "end:call_1"]);
     assert_eq!(new.last().unwrap().as_assistant().unwrap().text(), "all done");
     let reqs = server.requests.lock().await;
     let msgs = reqs[1]["body"]["messages"].as_array().unwrap();
     assert_eq!(msgs[2]["tool_calls"][0]["id"], json!("call_1"));
     assert_eq!(msgs[3], json!({"role": "tool", "content": "echo: wire", "tool_call_id": "call_1"}));
+}
+
+#[tokio::test]
+async fn model_call_budget_stops_before_the_next_call() {
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("c1", "echo", json!({"text": "x"}))], StopReason::ToolUse),
+        reply("never", &[], StopReason::Stop),
+    ]);
+    let (tool, log) = echo(1, Concurrency::Shared);
+    let mut cfg = config(provider.clone(), vec![tool], Arc::new(NoHooks));
+    cfg.max_model_calls = Some(1);
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    assert_eq!(provider.contexts.lock().unwrap().len(), 1);
+    assert_eq!(*log.lock().unwrap(), vec!["start:c1", "end:c1"], "calls of the last allowed turn still run");
+    assert_eq!(new.last().unwrap().role(), "toolResult");
+}
+
+#[tokio::test]
+async fn run_end_reasons() {
+    let run = |turns: Vec<Turn>, deadline: Option<Duration>, budget: Option<usize>| async move {
+        let (tool, _) = echo(300, Concurrency::Shared);
+        let mut cfg = config(ScriptedProvider::new(turns), vec![tool], Arc::new(NoHooks));
+        cfg.deadline = deadline.map(|d| Instant::now() + d);
+        cfg.max_model_calls = budget;
+        agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.end
+    };
+    let tool_turn = || reply("", &[("c", "echo", json!({"text": "x"}))], StopReason::ToolUse);
+    assert_eq!(run(vec![reply("ok", &[], StopReason::Stop)], None, None).await, RunEnd::Completed);
+    assert_eq!(run(vec![tool_turn()], None, Some(1)).await, RunEnd::ModelCallBudget);
+    assert_eq!(run(vec![], None, Some(0)).await, RunEnd::ModelCallBudget, "zero budget makes no call");
+    assert_eq!(
+        run(vec![tool_turn(), tool_turn()], Some(Duration::from_millis(100)), None).await,
+        RunEnd::Deadline,
+        "deadline hit during a tool"
+    );
+    assert_eq!(run(vec![Turn::HangAfterPartial], Some(Duration::from_millis(100)), None).await, RunEnd::Deadline);
+    assert_eq!(run(vec![Turn::ErrorAfterToolCall("boom".into())], None, None).await, RunEnd::Error);
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let cfg = config(ScriptedProvider::new(vec![]), vec![], Arc::new(NoHooks));
+    assert_eq!(agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &cancel, &NullSink).await.end, RunEnd::Aborted);
 }

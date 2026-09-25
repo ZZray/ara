@@ -76,6 +76,9 @@ pub struct AgentConfig {
     pub temperature: Option<f64>,
     /// Wall-clock deadline (OMP `config.deadline`).
     pub deadline: Option<Instant>,
+    /// Upper bound on model calls in one run (host budget gate, like OMP's
+    /// `beforeModelCall` stop). The run ends before the next call once reached.
+    pub max_model_calls: Option<usize>,
     pub hooks: Arc<dyn LoopHooks>,
 }
 
@@ -123,6 +126,10 @@ impl RunControl {
         self.token.is_cancelled()
     }
 
+    fn deadline_fired(&self) -> bool {
+        self.reason.lock().unwrap().as_deref() == Some(DEADLINE_TEXT)
+    }
+
     fn abort_text(&self) -> String {
         self.reason.lock().unwrap().clone().unwrap_or_else(|| ABORTED_TEXT.to_string())
     }
@@ -134,6 +141,28 @@ impl Drop for RunControl {
             t.abort();
         }
     }
+}
+
+/// Why a run ended. Hosts use it instead of inferring from the transcript.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunEnd {
+    /// The assistant stopped with nothing left to do.
+    Completed,
+    /// `AgentConfig::deadline` passed.
+    Deadline,
+    /// `AgentConfig::max_model_calls` was reached before another model call.
+    ModelCallBudget,
+    /// The caller cancelled the run.
+    Aborted,
+    /// The last assistant turn failed (`stopReason: error`).
+    Error,
+}
+
+/// Messages added by a run and why it ended.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunReport {
+    pub messages: Vec<Message>,
+    pub end: RunEnd,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,13 +205,13 @@ pub async fn agent_loop(
     config: &AgentConfig,
     cancel: &CancellationToken,
     sink: &dyn AgentEventSink,
-) -> Vec<Message> {
+) -> RunReport {
     let ctl = RunControl::new(cancel, config.deadline);
     context.extend(prompts.iter().cloned());
     let mut new_messages = prompts.clone();
     sink.emit(AgentEvent::AgentStart).await;
-    run_loop(context, &mut new_messages, config, &ctl, sink, prompts).await;
-    new_messages
+    let end = run_loop(context, &mut new_messages, config, &ctl, sink, prompts).await;
+    RunReport { messages: new_messages, end }
 }
 
 /// Continue from the current transcript without a new message
@@ -193,7 +222,7 @@ pub async fn agent_loop_continue(
     cancel: &CancellationToken,
     sink: &dyn AgentEventSink,
     tail: UnpairedTail,
-) -> Result<Vec<Message>, LoopError> {
+) -> Result<RunReport, LoopError> {
     let Some(last) = context.last() else {
         return Err(LoopError::CannotContinue("Cannot continue: no messages in context".into()));
     };
@@ -207,8 +236,8 @@ pub async fn agent_loop_continue(
     let ctl = RunControl::new(cancel, config.deadline);
     let mut new_messages = Vec::new();
     sink.emit(AgentEvent::AgentStart).await;
-    run_loop(context, &mut new_messages, config, &ctl, sink, Vec::new()).await;
-    Ok(new_messages)
+    let end = run_loop(context, &mut new_messages, config, &ctl, sink, Vec::new()).await;
+    Ok(RunReport { messages: new_messages, end })
 }
 
 async fn emit_inputs(sink: &dyn AgentEventSink, messages: &[Message]) {
@@ -218,8 +247,9 @@ async fn emit_inputs(sink: &dyn AgentEventSink, messages: &[Message]) {
     }
 }
 
-async fn end(sink: &dyn AgentEventSink, new_messages: &[Message]) {
+async fn end(sink: &dyn AgentEventSink, new_messages: &[Message], reason: RunEnd) -> RunEnd {
     sink.emit(AgentEvent::AgentEnd { messages: new_messages.to_vec() }).await;
+    reason
 }
 
 async fn run_loop(
@@ -229,11 +259,11 @@ async fn run_loop(
     ctl: &RunControl,
     sink: &dyn AgentEventSink,
     initial: Vec<Message>,
-) {
+) -> RunEnd {
     let mut to_emit = initial;
     if deadline_passed(config) {
         emit_inputs(sink, &to_emit).await;
-        return end(sink, new_messages).await;
+        return end(sink, new_messages, RunEnd::Deadline).await;
     }
     let mut pending: Vec<Message> =
         if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_messages().await };
@@ -249,10 +279,11 @@ async fn run_loop(
         sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(tail), tool_results: results }).await;
     }
 
+    let mut model_calls = 0usize;
     loop {
         let mut has_more_tool_calls = true;
         while has_more_tool_calls || !pending.is_empty() {
-            if deadline_passed(config) {
+            if deadline_passed(config) || config.max_model_calls.is_some_and(|max| model_calls >= max) {
                 // Commit already-dequeued messages so queued user input is never lost.
                 for m in pending.drain(..) {
                     context.push(m.clone());
@@ -260,7 +291,8 @@ async fn run_loop(
                     to_emit.push(m);
                 }
                 emit_inputs(sink, &to_emit).await;
-                return end(sink, new_messages).await;
+                let reason = if deadline_passed(config) { RunEnd::Deadline } else { RunEnd::ModelCallBudget };
+                return end(sink, new_messages, reason).await;
             }
             let mut turn_messages = std::mem::take(&mut to_emit);
             for m in pending.drain(..) {
@@ -271,6 +303,7 @@ async fn run_loop(
             sink.emit(AgentEvent::TurnStart).await;
             emit_inputs(sink, &turn_messages).await;
 
+            model_calls += 1;
             let message = stream_assistant_response(context, config, ctl, sink).await;
             new_messages.push(Message::Assistant(message.clone()));
 
@@ -284,8 +317,13 @@ async fn run_loop(
                     new_messages.push(Message::ToolResult(r.clone()));
                     results.push(r);
                 }
+                let reason = match message.stop_reason {
+                    StopReason::Aborted if ctl.deadline_fired() => RunEnd::Deadline,
+                    StopReason::Aborted => RunEnd::Aborted,
+                    _ => RunEnd::Error,
+                };
                 sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(message), tool_results: results }).await;
-                return end(sink, new_messages).await;
+                return end(sink, new_messages, reason).await;
             }
 
             let runnable = matches!(message.stop_reason, StopReason::ToolUse | StopReason::Stop);
@@ -321,12 +359,15 @@ async fn run_loop(
             }
             sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(message), tool_results: results }).await;
             if deadline_passed(config) {
-                return end(sink, new_messages).await;
+                return end(sink, new_messages, RunEnd::Deadline).await;
             }
             pending = if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_messages().await };
         }
-        if deadline_passed(config) || ctl.is_cancelled() {
-            break;
+        if deadline_passed(config) || ctl.deadline_fired() {
+            return end(sink, new_messages, RunEnd::Deadline).await;
+        }
+        if ctl.is_cancelled() {
+            return end(sink, new_messages, RunEnd::Aborted).await;
         }
         let mut late = config.hooks.steering_messages().await;
         late.extend(config.hooks.follow_up_messages().await);
@@ -335,7 +376,7 @@ async fn run_loop(
         }
         pending = late;
     }
-    end(sink, new_messages).await;
+    end(sink, new_messages, RunEnd::Completed).await
 }
 
 /// Keep only tool calls that reached `toolcall_end` on an error/aborted turn

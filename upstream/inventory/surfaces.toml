@@ -524,7 +524,7 @@ title = "AgentSession orchestration over Agent + Session"
 scope = "core"
 gate = "P1"
 owner = "ara-cli::run (slice 1), later ara-runtime"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/session/(agent-session|emit-listener|session-context|messages|thinking-display)',
   '^packages/coding-agent/test/helpers/agent-session-setup',
@@ -924,7 +924,7 @@ title = "Non-interactive print mode"
 scope = "host"
 gate = "P1"
 owner = "ara-cli"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/modes/(print-mode|noninteractive-dispose)','^packages/coding-agent/src/modes/print-mode\.ts$', '^packages/coding-agent/test/(print-mode|silent-abort-print)[^/]*\.test\.ts$']
 behavior = "Single prompt run with text or JSON event output and exit status."
@@ -976,7 +976,7 @@ title = "CLI entry, argument parsing and subcommands"
 scope = "host"
 gate = "P1"
 owner = "ara-cli"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/cli/',
   '^packages/coding-agent/test/fixtures/(cli-|compiled-worker)',
