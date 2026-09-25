@@ -203,7 +203,7 @@ fn read_window(
                     format_bytes(size)
                 ));
             }
-            if count % 4096 == 0 && cancel.is_cancelled() {
+            if count.is_multiple_of(4096) && cancel.is_cancelled() {
                 return Err(aborted());
             }
         }
@@ -233,7 +233,7 @@ fn read_window(
             break;
         }
         line_no += 1;
-        if line_no % 4096 == 0 && cancel.is_cancelled() {
+        if line_no.is_multiple_of(4096) && cancel.is_cancelled() {
             return Err(aborted());
         }
         let in_window = line_no >= start && end.is_none_or(|e| line_no <= e) && truncated_by.is_none();

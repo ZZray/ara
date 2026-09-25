@@ -14,7 +14,7 @@ Upstream SHA and source/test location:
 - Behavior tests: `test/tools/*`, `test/read-*`, `test/write-*`, `test/bash-*` (CA-TOOL-READ/WRITE/BASH surfaces; 596 upstream cases in total, most tied to unported features).
 
 Delivered commit or exact worktree snapshot:
-The commit adding this file on `dev`, with parent `cf21722`.
+First delivered as `e47386b`. That commit failed the Clippy gate (`manual_is_multiple_of`, 2 hits in `read.rs`) because a command chain did not stop on the gate failure. The follow-up commit on `dev` that fixes the lint and amends this record is the tested snapshot. Tests were unaffected, and `verify_backend.py` passes on it.
 
 Rust entry and host chain exercised:
 `AgentTool::execute` on `ReadTool`, `WriteTool` and `BashTool` against real temp directories, files, FIFOs, symlinks and `bash` processes. The loop and CLI chain are covered in CLI-01.
