@@ -26,8 +26,8 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | AGT-PROXY | Proxy stream function (remote agent transport) | core | P2 | tbd | 3 (1/2) | 391 | 13 | open |
 | AGT-TELEMETRY | Agent telemetry and run collector | core | P2 | tbd | 5 (2/3) | 2744 | 63 | open |
 | AGT-TOKENIZER | Token estimation | core | P1 | tbd | 3 (1/2) | 307 | 13 | open |
-| AI-STREAM-CORE | Message model, stream contract, event stream | core | P1 | ara-ai::types, ara-ai::stream | 26 (9/17) | 5113 | 176 | open |
-| AI-OPENAI-CHAT | OpenAI-compatible Chat Completions adapter | provider | P1 | ara-ai::providers::openai_completions | 59 (8/51) | 8054 | 455 | open |
+| AI-STREAM-CORE | Message model, stream contract, event stream | core | P1 | ara-ai::types, ara-ai::stream | 26 (9/17) | 5113 | 176 | implementing |
+| AI-OPENAI-CHAT | OpenAI-compatible Chat Completions adapter | provider | P1 | ara-ai::providers::openai_completions | 59 (8/51) | 8054 | 455 | implementing |
 | AI-OPENAI-RESPONSES | OpenAI Responses, Azure Responses and Codex adapters | provider | P2 | tbd | 45 (11/34) | 16660 | 441 | open |
 | AI-ANTHROPIC | Anthropic Messages adapter | provider | P2 | tbd | 45 (9/36) | 8118 | 426 | open |
 | AI-GOOGLE | Google Gemini, Vertex, Gemini CLI, Antigravity adapters | provider | P3 | tbd | 33 (9/24) | 4227 | 225 | open |
@@ -39,16 +39,16 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | AI-OLLAMA | Ollama provider | provider | P3 | tbd | 8 (2/6) | 817 | 18 | open |
 | AI-KIMI | Kimi provider | provider | P3 | tbd | 5 (2/3) | 365 | 25 | open |
 | AI-PROVIDERS-MISC | Other provider transports and shared request helpers | provider | P3 | tbd | 39 (8/30) | 1089 | 184 | open |
-| AI-MOCK | Mock provider | core | P1 | ara-testkit | 2 (1/1) | 520 | 25 | open |
-| AI-TRANSFORM | Cross-provider message transform and vision guard | core | P1 | ara-ai::transform | 13 (2/11) | 1299 | 48 | open |
+| AI-MOCK | Mock provider | core | P1 | ara-testkit | 2 (1/1) | 520 | 25 | implementing |
+| AI-TRANSFORM | Cross-provider message transform and vision guard | core | P1 | ara-ai::transform | 13 (2/11) | 1299 | 48 | implementing |
 | AI-REGISTRY | API/provider registry | provider | P2 | tbd | 10 (3/7) | 706 | 33 | open |
 | AI-SERVERS | Wire-protocol servers and auth gateway | host | P3 | tbd | 20 (6/14) | 2342 | 119 | open |
 | AI-AUTH | Credential storage, OAuth/API-key login, auth broker | host | P3 | tbd | 132 (55/76) | 19342 | 613 | open |
 | AI-DIALECT | In-band tool-call dialects | provider | P2 | tbd | 46 (26/8) | 6094 | 76 | open |
-| AI-ERROR | Provider error classification | core | P1 | ara-ai::error | 23 (15/8) | 2146 | 175 | open |
-| AI-RETRY | Retry, timeouts, empty completion recovery | core | P1 | tbd | 10 (6/4) | 1194 | 41 | open |
+| AI-ERROR | Provider error classification | core | P1 | ara-ai::error | 23 (15/8) | 2146 | 175 | implementing |
+| AI-RETRY | Retry, timeouts, empty completion recovery | core | P1 | tbd | 10 (6/4) | 1194 | 41 | implementing |
 | AI-STREAM-GUARDS | Stream healing and loop guards | provider | P2 | tbd | 13 (7/5) | 2497 | 89 | open |
-| AI-TOOLSCHEMA | Tool schema normalization and argument validation | core | P1 | ara-ai::validation | 35 (19/15) | 8031 | 381 | open |
+| AI-TOOLSCHEMA | Tool schema normalization and argument validation | core | P1 | ara-ai::validation | 35 (19/15) | 8031 | 381 | implementing |
 | AI-USAGE | Provider usage/quota reporting | service | P3 | tbd | 16 (10/6) | 2678 | 70 | open |
 | AI-HTTP-DEBUG | HTTP/SSE inspection and request debugging | provider | P3 | tbd | 7 (3/4) | 600 | 28 | open |
 | AI-TEST-TRIAGE | packages/ai debug scripts and unowned test support | provider | P3 | tbd | 2 (2/0) | 904 | 0 | open |

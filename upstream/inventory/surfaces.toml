@@ -127,7 +127,7 @@ title = "Message model, stream contract, event stream"
 scope = "core"
 gate = "P1"
 owner = "ara-ai::types, ara-ai::stream"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/handoff\.test\.ts$',
   '^packages/ai/test/(provider-response|provider-inflight|provider-fetch-override|proxy|tokens|total-tokens|resolve-used-fraction|unicode-surrogate)\.test\.ts$',
@@ -144,7 +144,7 @@ title = "OpenAI-compatible Chat Completions adapter"
 scope = "provider"
 gate = "P1"
 owner = "ara-ai::providers::openai_completions"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/issue-(1203|1207|1227|1776|1838|2080|2315|2996|3434|3528|3593|5983|827|8854|883|911|945|955|959|969|9433|2883)-[^/]*\.test\.ts$',
   '^packages/ai/test/openai-(tool-strict|stream|output-token|max-output|first-event|configuration|daybreak)[^/]*\.test\.ts$',
@@ -307,7 +307,7 @@ title = "Mock provider"
 scope = "core"
 gate = "P1"
 owner = "ara-testkit"
-status = "open"
+status = "implementing"
 match = ['^packages/ai/src/providers/mock\.ts$', '^packages/ai/test/mock-provider\.test\.ts$']
 behavior = "Deterministic scripted provider for tests."
 
@@ -317,7 +317,7 @@ title = "Cross-provider message transform and vision guard"
 scope = "core"
 gate = "P1"
 owner = "ara-ai::transform"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/(tool-call-without-result|transcript-render)\.test\.ts$',
   '^packages/ai/test/data/',
@@ -394,7 +394,7 @@ title = "Provider error classification"
 scope = "core"
 gate = "P1"
 owner = "ara-ai::error"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/(rate-limit-utils|overflow-utils)\.test\.ts$','^packages/ai/src/error/', '^packages/ai/test/(error-|context-overflow|abort)[^/]*\.test\.ts$']
 behavior = "Retryable/auth/rate-limit/overflow classification, abort errors, formatting."
@@ -405,7 +405,7 @@ title = "Retry, timeouts, empty completion recovery"
 scope = "core"
 gate = "P1"
 owner = "tbd"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/issue-(4593)-[^/]*\.test\.ts$',
   '^packages/ai/test/pre-response-timeout',
@@ -435,7 +435,7 @@ title = "Tool schema normalization and argument validation"
 scope = "core"
 gate = "P1"
 owner = "ara-ai::validation"
-status = "open"
+status = "implementing"
 match = [
   '^packages/ai/test/todo-op-whitespace\.test\.ts$',
   '^packages/ai/test/(tool-argument-coercion|tool-examples|tool-inventory)\.test\.ts$',

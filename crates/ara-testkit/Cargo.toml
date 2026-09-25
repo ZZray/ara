@@ -1,0 +1,16 @@
+[package]
+name = "ara-testkit"
+description = "Controlled fake model upstream and scripted providers for ARA tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ara-fake-upstream"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
