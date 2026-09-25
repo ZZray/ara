@@ -38,4 +38,8 @@ See [provider trial setup](docs/testing-providers.md) for a bounded local CAS or
 - [`docs/handoff-prompt.md`](docs/handoff-prompt.md): ready-to-use prompt for the first Rust implementation AI.
 - [`docs/evidence/README.md`](docs/evidence/README.md): executed test receipt template for later delivery points.
 
+## Skills and review status
+
+The three [project Skills](.ara/skills/INDEX.md) cover knowledge maintenance, fixed OMP commit sync, and per-point delivery audit. `AGENTS.md` directs contributors to use them. They are contributor workflows, not an implemented Rust Skill loader. The only project Skill in the previous ARA checkout was knowledge maintenance; it was adapted for this new repository rather than copying Go-specific instructions. Independent code-review tools are not bundled or automatically invoked by this bootstrap. An implementation point must record which review actually ran and its findings; the bootstrap CI checks documentation structure only.
+
 The new Git root deliberately has no ancestry from the previous ARA repository. Upstream OMP is consulted in a separate checkout; imported upstream code must retain its license and attribution. See [third-party notices](THIRD_PARTY_NOTICES.md).

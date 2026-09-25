@@ -1,8 +1,8 @@
 # Audit procedure
 
-Audit the change that will actually be delivered. Start with `git status`, the target commit or staged diff, its requirement-to-file mapping, and the relevant OMP source or ARA decision. Review every changed file and critical hunk for ownership, state transitions, permissions, cancellation, unknown usage, credential exposure, persistent format, and compatibility with the shared Core boundary.
+Use the [point delivery audit Skill](../.ara/skills/point-delivery-audit/SKILL.md) for each implementation point. Audit the change that will actually be delivered. Start with `git status`, the target commit or staged diff, its requirement-to-file mapping, and the relevant OMP source or ARA decision. Review every changed file and critical hunk for ownership, state transitions, permissions, cancellation, unknown usage, credential exposure, persistent format, and compatibility with the shared Core boundary.
 
-Use available independent review tools (for example the local `ocr` CLI or a read-only reviewer) for scope/rule coverage; then perform semantic review and inspect actual test output. A reviewer result is evidence, not permission to widen scope or claim runtime success. For security-sensitive or concurrent code, get an independent second view where available.
+Use available independent review tools (for example the local `ocr` CLI or a read-only reviewer) for scope/rule coverage; then perform semantic review and inspect actual test output. The bootstrap does not install or run these tools automatically. Record which tool and version actually ran, or mark the missing independent review as a gap. A reviewer result is evidence, not permission to widen scope or claim runtime success. For security-sensitive or concurrent code, get an independent second view.
 
 Review record:
 
