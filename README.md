@@ -1,6 +1,6 @@
 # ARA
 
-ARA is a Rust Agent Core for completing tasks across personal AI products. Its first implementation target is a source-backed Rust port of [Oh My Pi](https://github.com/can1357/oh-my-pi) at the fixed commit `596f2da7101178214aa27a753529d15e6b7ad91d` (v18.1.8). After that baseline is tested, ARA adds its own memory, planning, background execution, and typed multimodal input.
+ARA is a Rust Agent Core for completing tasks across personal AI products. Its first implementation target is a source-backed Rust port of [Oh My Pi](https://github.com/can1357/oh-my-pi) at the fixed commit `596f2da7101178214aa27a753529d15e6b7ad91d` (v18.1.8). After that baseline is tested, ARA adds its own sourced memory, revisable planning, reviewed feedback loop, bounded background execution, and typed multimodal input. The [Agent evolution direction](docs/knowledge/agent-evolution.md) explains how these parts serve task completion rather than one-turn answers.
 
 The Core is shared code. AI HandWave, a customized [Paseo](https://github.com/getpaseo/paseo) frontend in [Lantern](https://github.com/ZZray/Lantern), Lumen, and later products connect through host/RPC interfaces. Each product keeps its own identity, data, permissions, and lifecycle.
 
@@ -43,6 +43,7 @@ See [provider trial setup](docs/testing-providers.md) for a bounded local CAS or
 - [`docs/roadmap.md`](docs/roadmap.md): implementation order and delivery boundaries.
 - [`docs/acceptance.md`](docs/acceptance.md): per-point real test and audit requirements.
 - [`docs/knowledge/INDEX.md`](docs/knowledge/INDEX.md): durable architecture and product knowledge, loaded on demand.
+- [`docs/knowledge/agent-evolution.md`](docs/knowledge/agent-evolution.md): ARA's distinct Agent design direction and later acceptance examples.
 - [`.ara/skills/INDEX.md`](.ara/skills/INDEX.md): repeatable contributor workflows.
 - [`docs/handoff-prompt.md`](docs/handoff-prompt.md): ready-to-use prompt for the first Rust implementation AI.
 - [`docs/evidence/README.md`](docs/evidence/README.md): executed test receipt template for later delivery points.
