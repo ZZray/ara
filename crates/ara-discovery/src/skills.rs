@@ -63,6 +63,7 @@ pub fn scan_skills_from_dir(
     require_description: bool,
 ) -> LoadResult<Skill> {
     let mut result = LoadResult::default();
+    let dir = &crate::paths::normalize(dir);
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return result,
@@ -93,6 +94,10 @@ pub fn scan_skills_from_dir(
                 continue;
             }
         };
+        // ARA: frontmatter repair warnings reach the host (upstream logs them).
+        if let Some(warning) = parsed.warning {
+            result.warnings.push(warning);
+        }
         let fm = parsed.frontmatter;
         if fm.get("enabled") == Some(&Value::Bool(false)) {
             continue;
@@ -364,8 +369,23 @@ pub fn expand_tilde(path: &str, home: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// `new Bun.Glob(pattern).match(name)`: `*`/`?` stay within one path
+/// segment and a leading `!` negates.
+pub fn bun_glob_match(pattern: &str, name: &str) -> bool {
+    let (negated, pattern) = match pattern.strip_prefix('!') {
+        Some(rest) => (true, rest),
+        None => (false, pattern),
+    };
+    let matched = globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .map(|g| g.compile_matcher().is_match(name))
+        .unwrap_or(false);
+    matched != negated
+}
+
 fn glob_matches(patterns: &[String], name: &str) -> bool {
-    patterns.iter().any(|p| globset::Glob::new(p).map(|g| g.compile_matcher().is_match(name)).unwrap_or(false))
+    patterns.iter().any(|p| bun_glob_match(p, name))
 }
 
 impl Discovery {

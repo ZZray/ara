@@ -114,3 +114,44 @@ fn crlf_html_comments_and_tabs_are_repaired() {
         parse_frontmatter("---\nkebab-key: 1\n---\nb", &FrontmatterOptions { raw_keys: true, ..strict }).unwrap();
     assert_eq!(result.frontmatter["kebab-key"], 1);
 }
+
+/// Review F1: deep nesting is an error handled by the fallback, not a stack
+/// overflow (checked on a 2 MiB thread).
+#[test]
+fn deep_yaml_nesting_does_not_overflow() {
+    let result = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let content = format!("---\nname: x\ndescription: d\na:\n{}x\n---\nbody", "- ".repeat(30_000));
+            let parsed =
+                parse_frontmatter(&content, &FrontmatterOptions { level: FailureLevel::Off, ..Default::default() })
+                    .unwrap();
+            (Value::Object(parsed.frontmatter), parsed.body)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(result.0["name"], "x");
+    assert_eq!(result.0["description"], "d");
+    assert_eq!(result.1, "body");
+    assert!(ara_discovery::frontmatter::parse_yaml(&format!("{}x", "- ".repeat(300))).is_err());
+}
+
+/// Review F3, F6, F7, F8: JS regex classes, `<<` scalars, key order, truncation.
+#[test]
+fn review_parity_details() {
+    // ASCII `\w`: a non-ASCII key is not a fallback line.
+    let (fm, _) = parse("---\ncafé: a: b\nbad: [\nok: 1\n---\nx");
+    assert_eq!(fm, json!({"bad": "[", "ok": 1}));
+    // `<<` with a scalar is an ordinary key.
+    assert_eq!(parse("---\n<<: 5\n---\n").0, json!({"<<": 5}));
+    // Integer-like keys first.
+    let (fm, _) = parse("---\n2: two\nname: n\n1: one\n---\n");
+    assert_eq!(fm.as_object().unwrap().keys().collect::<Vec<_>>(), ["1", "2", "name"]);
+    // Inline source text: 63 UTF-16 units and an ellipsis.
+    let content = format!("---\ninvalid: [x\n---\n{}", "y".repeat(80));
+    let warning = parse_frontmatter(&content, &FrontmatterOptions::default()).unwrap().warning.unwrap();
+    let inline = warning.split("(Inline '").nth(1).unwrap().split("'):").next().unwrap();
+    assert_eq!(inline.encode_utf16().count(), 64);
+    assert!(inline.ends_with('…'));
+}

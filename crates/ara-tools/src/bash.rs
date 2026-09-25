@@ -270,12 +270,16 @@ impl AgentTool for BashTool {
         cancel: CancellationToken,
         update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
-        let command = args.get("command").and_then(Value::as_str).unwrap_or_default().to_string();
+        // `skill://` URLs in the command, env values and cwd resolve to paths
+        // (OMP `expandInternalUrls`).
+        let skills = self.ctx.skills.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let expand = |text: &str, no_escape: bool| crate::internal_urls::expand_skill_urls(text, &skills, no_escape);
+        let command = expand(args.get("command").and_then(Value::as_str).unwrap_or_default(), false);
         let timeout = resolve_timeout(args.get("timeout").and_then(Value::as_f64));
         let cwd = args
             .get("cwd")
             .and_then(Value::as_str)
-            .map(|c| self.ctx.resolve(c))
+            .map(|c| self.ctx.resolve(&expand(c, true)))
             .unwrap_or_else(|| self.ctx.cwd.clone());
         if !cwd.is_dir() {
             return Err(ToolError(format!("Working directory does not exist: {}", self.ctx.display(&cwd))));
@@ -290,7 +294,7 @@ impl AgentTool for BashTool {
         if let Some(Value::Object(env)) = args.get("env") {
             for (k, v) in env {
                 if let Some(v) = v.as_str() {
-                    cmd.env(k, v);
+                    cmd.env(k, expand(v, true));
                 }
             }
         }

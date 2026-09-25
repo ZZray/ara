@@ -21,9 +21,13 @@
 //! - Deadline and model-call budget stops are reported on stderr with exit 1.
 
 use anyhow::{Context as _, Result, bail};
-use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, NoHooks, RunEnd, agent_loop};
+use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
 use ara_ai::providers::openai_completions::StreamOptions;
 use ara_ai::{Message, Model, OpenAICompletionsProvider, StopReason, UserMessage};
+use ara_context::{
+    DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
+};
+use ara_discovery::{Discovery, HostDirs, ProviderPolicy, SkillsSettings};
 use ara_session::{SessionJournal, latest_session};
 use ara_tools::{ToolContext, builtin_tools};
 use async_trait::async_trait;
@@ -94,12 +98,18 @@ struct Args {
     max_tokens: Option<u64>,
     #[arg(long)]
     temperature: Option<f64>,
-    /// Replace the default system prompt.
+    /// Replace the default system prompt (text, or a file path).
     #[arg(long)]
     system_prompt: Option<String>,
-    /// Append a system prompt block.
+    /// Append text to the system prompt (text, or a file path; repeatable).
     #[arg(long)]
     append_system_prompt: Vec<String>,
+    /// Do not discover or list skills.
+    #[arg(long)]
+    no_skills: bool,
+    /// Only include skills whose names match these globs (comma separated).
+    #[arg(long)]
+    skills: Option<String>,
     /// Tools to enable (comma separated): read,write,edit,bash,grep,glob. Empty disables tools.
     #[arg(long, default_value = "read,write,edit,bash,grep,glob")]
     tools: String,
@@ -125,7 +135,31 @@ fn parse_edit_mode(value: &str) -> Result<pi_edit::EditMode, String> {
         .ok_or_else(|| format!("unknown edit mode {value:?} (hashline, replace, patch, apply_patch, sloppy)"))
 }
 
-const DEFAULT_SYSTEM_PROMPT: &str = "You are ARA, a software engineering agent working in a local workspace. Use the provided tools to inspect and change files and to run commands. Tools act on real files and processes. Prefer small, verifiable steps and report what you actually did and observed; do not claim results you did not see in tool output.";
+/// Per-request provider context rewrite: the date/cwd reminder on the first
+/// user turn (OMP `DateCwdReminderInjector`).
+struct CliHooks {
+    reminder: DateCwdReminder,
+    cwd: String,
+}
+
+#[async_trait]
+impl LoopHooks for CliHooks {
+    async fn transform_provider_context(&self, context: ara_ai::Context, _model: &Model) -> ara_ai::Context {
+        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        self.reminder.transform(context, &date, &self.cwd)
+    }
+}
+
+fn ara_home() -> PathBuf {
+    std::env::var_os("ARA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ara")))
+        .unwrap_or_else(|| PathBuf::from(".ara"))
+}
+
+fn user_home() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+}
 
 /// OMP `sanitizeText`: strip ANSI escape sequences, then C0/C1 controls other
 /// than `\t` and `\n`.
@@ -385,20 +419,63 @@ async fn run(args: Args) -> Result<i32> {
     });
     let session_path = journal.as_ref().map(|j| j.path().to_path_buf());
 
-    let mut system_prompt = vec![args.system_prompt.clone().unwrap_or_else(|| {
-        format!(
-            "{DEFAULT_SYSTEM_PROMPT}\n\nWorking directory: {}\nCurrent date: {}",
-            cwd.display(),
-            chrono::Utc::now().format("%Y-%m-%d")
-        )
-    })];
-    system_prompt.extend(args.append_system_prompt.iter().cloned());
+    // Context files, skills and SYSTEM.md from the host's locations: native
+    // `$ARA_HOME/agent` and `.ara/`, foreign tools per upstream defaults.
+    let home = user_home();
+    let mut dirs = HostDirs::ara(&home).with_env(|k| std::env::var(k).ok());
+    dirs.native_user_dir = ara_home().join("agent");
+    let discovery = Discovery::new(&home, dirs, ProviderPolicy::default());
+    let skills_settings = SkillsSettings {
+        enabled: !args.no_skills,
+        include_skills: args
+            .skills
+            .as_deref()
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default(),
+        ..SkillsSettings::default()
+    };
+    let (skills, skill_warnings) = discovery.load_skills(&cwd, &skills_settings);
+    for warning in &skill_warnings {
+        let at = if warning.skill_path.is_empty() { String::new() } else { format!(" ({})", warning.skill_path) };
+        eprintln!("ara: skill warning{at}: {}", warning.message);
+    }
 
     let enabled: Vec<&str> = args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let mut tool_ctx = ToolContext::new(cwd.clone()).with_edit(args.edit_mode, enabled.contains(&"edit"));
+    let mut tool_ctx = ToolContext::new(cwd.clone()).with_edit(args.edit_mode, enabled.contains(&"edit")).with_skills(
+        skills
+            .iter()
+            .map(|s| ara_tools::internal_urls::SkillRef {
+                name: s.name.clone(),
+                file_path: s.file_path.clone(),
+                base_dir: s.base_dir.clone(),
+            })
+            .collect(),
+    );
     tool_ctx.line_numbers = args.line_numbers;
     let tools: Vec<_> =
         builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
+
+    let prompt_tools: Vec<PromptTool> = tools
+        .iter()
+        .map(|t| {
+            let name = t.definition().name.clone();
+            let label = name.get(..1).map(|f| f.to_uppercase() + &name[1..]).unwrap_or_default();
+            PromptTool { name, label }
+        })
+        .collect();
+    let append: Vec<String> = args.append_system_prompt.iter().filter_map(|a| resolve_prompt_input(Some(a))).collect();
+    let options = SystemPromptOptions {
+        custom_prompt: resolve_prompt_input(args.system_prompt.as_deref()),
+        append_prompt: (!append.is_empty()).then(|| append.join("\n\n")),
+        tools: Some(prompt_tools),
+        skills: Some(skills),
+        model: Some(route.model.id.clone()),
+        urls: InternalUrls { skill: enabled.contains(&"read"), ..InternalUrls::default() },
+        ..SystemPromptOptions::default()
+    };
+    let system_prompt = build_system_prompt(&discovery, &cwd, &options).context("building the system prompt")?;
+    let hooks: Arc<dyn LoopHooks> =
+        Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
 
     let provider = Arc::new(OpenAICompletionsProvider {
         client: reqwest::Client::builder().build().context("building HTTP client")?,
@@ -441,7 +518,7 @@ async fn run(args: Args) -> Result<i32> {
             temperature: args.temperature,
             deadline: args.max_time.map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0))),
             max_model_calls: args.max_model_calls,
-            hooks: Arc::new(NoHooks),
+            hooks: hooks.clone(),
         };
         let report =
             agent_loop(vec![Message::User(UserMessage::text(prompt))], &mut context, &config, &cancel, &sink).await;

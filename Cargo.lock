@@ -115,6 +115,8 @@ dependencies = [
  "anyhow",
  "ara-agent",
  "ara-ai",
+ "ara-context",
+ "ara-discovery",
  "ara-session",
  "ara-testkit",
  "ara-tools",

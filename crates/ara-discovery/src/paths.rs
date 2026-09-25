@@ -26,6 +26,29 @@ pub fn resolve(p: &Path) -> PathBuf {
     out
 }
 
+/// `path.normalize(p)`: collapse `.`, `..` and repeated separators without
+/// making the path absolute (leading `..` of a relative path stays).
+pub fn normalize(p: &Path) -> PathBuf {
+    let mut out: Vec<Component<'_>> = Vec::new();
+    for component in p.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.last() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir) | Some(Component::Prefix(_)) => {}
+                _ => out.push(component),
+            },
+            other => out.push(other),
+        }
+    }
+    if out.is_empty() {
+        return PathBuf::from(".");
+    }
+    out.iter().map(|c| c.as_os_str()).collect()
+}
+
 /// `path.resolve(base, p)`.
 pub fn resolve_from(base: &Path, p: &Path) -> PathBuf {
     resolve(&base.join(p))

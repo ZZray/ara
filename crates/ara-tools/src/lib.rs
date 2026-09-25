@@ -11,6 +11,7 @@ pub mod edit;
 pub mod engine;
 pub mod glob;
 pub mod grep;
+pub mod internal_urls;
 pub mod output;
 pub mod paths;
 pub mod read;
@@ -37,6 +38,8 @@ pub struct ToolContext {
     /// File snapshots shared by `read`, `grep` and `edit` for one session
     /// (OMP `getEditStore(session)`): tags, seen lines, clipboard registers.
     pub edit_store: pi_edit::EditStore,
+    /// Skills `skill://` URLs resolve against (the host's loaded skills).
+    pub skills: std::sync::Arc<std::sync::RwLock<Vec<internal_urls::SkillRef>>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -62,7 +65,20 @@ impl ToolContext {
             edit_mode: pi_edit::EditMode::Hashline,
             edit_enabled: true,
             edit_store: pi_edit::EditStore::new(),
+            skills: Default::default(),
         }
+    }
+
+    /// Set the skills `skill://` URLs resolve against.
+    pub fn with_skills(self, skills: Vec<internal_urls::SkillRef>) -> Self {
+        *self.skills.write().unwrap_or_else(|e| e.into_inner()) = skills;
+        self
+    }
+
+    /// Resolve an internal URL (`skill://…`) to a filesystem path.
+    pub fn resolve_internal_url(&self, url: &str) -> Result<PathBuf, String> {
+        let skills = self.skills.read().unwrap_or_else(|e| e.into_inner());
+        internal_urls::resolve_skill_url(&skills, url)
     }
 
     /// Select the edit mode and whether the `edit` tool is exposed.

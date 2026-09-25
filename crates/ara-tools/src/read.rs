@@ -404,7 +404,15 @@ impl AgentTool for ReadTool {
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
         let input = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
-        let (path, sel) = split_selector(input, |p| path_exists(&self.ctx.resolve(p))).map_err(ToolError)?;
+        // Internal URLs (`skill://…`) resolve to a file first; selectors apply to it.
+        let (path, sel) = if crate::internal_urls::is_internal_url(input) {
+            let exists = |p: &str| self.ctx.resolve_internal_url(p).is_ok_and(|abs| path_exists(&abs));
+            let (url, sel) = split_selector(input, exists).map_err(ToolError)?;
+            let target = self.ctx.resolve_internal_url(&url).map_err(ToolError)?;
+            (target.to_string_lossy().into_owned(), sel)
+        } else {
+            split_selector(input, |p| path_exists(&self.ctx.resolve(p))).map_err(ToolError)?
+        };
         let abs = self.ctx.resolve(&path);
         let display = self.ctx.display(&abs);
         let meta = match tokio::fs::metadata(&abs).await {

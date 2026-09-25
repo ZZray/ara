@@ -292,3 +292,36 @@ fn loader_precedence_symlinks_and_custom_override() {
     let shared = skills.iter().find(|s| s.name == "shared").unwrap();
     assert_eq!((shared.source.as_str(), shared.description.as_str()), ("custom:user", "custom copy"));
 }
+
+/// Review F2: Bun.Glob semantics (values from Bun.Glob, side by side).
+#[test]
+fn bun_glob_semantics() {
+    use ara_discovery::skills::bun_glob_match;
+    assert!(bun_glob_match("!foo", "bar") && !bun_glob_match("!foo", "foo"));
+    assert!(!bun_glob_match("*", "a/b") && !bun_glob_match("t*", "team/x") && !bun_glob_match("?", "/"));
+    assert!(bun_glob_match("valid-*", "valid-skill") && bun_glob_match("**", "a/b"));
+
+    let env = env();
+    let d = discovery(&env);
+    let settings = SkillsSettings {
+        custom_directories: vec![fixtures().display().to_string()],
+        include_skills: vec!["!valid-skill".into()],
+        ..all_builtins_off()
+    };
+    let names: Vec<String> = d.load_skills(&env.cwd, &settings).0.into_iter().map(|s| s.name).collect();
+    assert_eq!(names.len(), FIXTURE_ORDER.len() - 1);
+    assert!(!names.contains(&"valid-skill".to_string()));
+}
+
+/// Review F9, F10: paths are normalized; frontmatter warnings are surfaced.
+#[test]
+fn normalized_paths_and_frontmatter_warnings() {
+    let env = env();
+    write_skill(&env.home.join("custom"), "broken", "---\ndescription: ok\nbad: [unclosed\n---\nbody");
+    let d = discovery(&env);
+    let dir = format!("{}/./custom/../custom", env.home.display());
+    let (skills, warnings) =
+        d.load_skills(&env.cwd, &SkillsSettings { custom_directories: vec![dir], ..all_builtins_off() });
+    assert_eq!(skills[0].file_path, env.home.join("custom/broken/SKILL.md"));
+    assert!(warnings.iter().any(|w| w.message.starts_with("Failed to parse YAML frontmatter (")));
+}

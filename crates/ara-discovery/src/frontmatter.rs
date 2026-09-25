@@ -1,15 +1,29 @@
 //! Markdown YAML frontmatter (OMP `packages/utils/src/frontmatter.ts`).
 //!
-//! YAML is read with `yaml-rust2`'s event parser and resolved with the YAML
-//! 1.2 core schema (as `Bun.YAML` does): `null`/`Null`/`NULL`/`~`/empty are
-//! null, `true`/`True`/`TRUE`/`false`/… booleans, decimal/`0o`/`0x` integers,
-//! floats including `.inf`/`.nan`; `yes`, dates and `1_000` stay strings.
-//! Anchors, aliases and `<<` merge keys resolve; a repeated key keeps the
-//! last value; several documents parse as an array (so no mapping).
+//! YAML is read from `yaml-rust2`'s event stream (iteratively, nesting capped
+//! at [`MAX_YAML_DEPTH`]) and resolved with the YAML 1.2 core schema:
+//! `null`/`Null`/`NULL`/`~`/empty are null, `true`/`True`/`TRUE`/`false`/…
+//! booleans, decimal/`0o`/`0x` integers, floats; `yes`, dates and `1_000`
+//! stay strings. Anchors, aliases and `<<` merge keys resolve; a repeated key
+//! keeps the last value; integer-like keys come first (JS object order);
+//! several documents parse as an array (so no mapping).
+//!
+//! Known differences from `Bun.YAML` (upstream's parser), from a
+//! side-by-side review: `.nan` reads as null and `±.inf` as `±f64::MAX`
+//! (JSON has no non-finite numbers; both keep JS truthiness and non-string
+//! type); Bun's number quirks (`+.5` and `-.5` as strings, signed hex, `1e`)
+//! follow the spec here instead; block-scalar edge cases (`|+` at the end of
+//! frontmatter, explicit indentation indicators), `description: ---` as a
+//! document separator, `a: ? b`, tabs outside `repair`, complex keys and
+//! self-referencing aliases may differ. Deep nesting fails with an error
+//! (and the line fallback) instead of recursing.
 
 use serde_json::{Map, Value};
 use std::sync::LazyLock;
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser, Tag};
+
+/// Maximum YAML nesting depth; deeper input is a parse error.
+pub const MAX_YAML_DEPTH: usize = 256;
 use yaml_rust2::scanner::{Marker, TScalarStyle};
 
 /// How a parse failure is reported (`level`).
@@ -70,7 +84,19 @@ static CORE_FLOAT: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$").unwrap());
 
 fn number(f: f64) -> Value {
-    ara_prompt::js::number(f)
+    finite(f)
+}
+
+/// JSON has no non-finite numbers: NaN (falsy) becomes null and ±Infinity
+/// (truthy numbers) `±f64::MAX`, keeping upstream's truthiness and type.
+fn finite(f: f64) -> Value {
+    if f.is_nan() {
+        Value::Null
+    } else if f.is_infinite() {
+        ara_prompt::js::number(if f > 0.0 { f64::MAX } else { f64::MIN })
+    } else {
+        ara_prompt::js::number(f)
+    }
 }
 
 /// Core-schema resolution of a plain scalar.
@@ -79,9 +105,9 @@ fn resolve_plain(v: &str) -> Value {
         "" | "~" | "null" | "Null" | "NULL" => return Value::Null,
         "true" | "True" | "TRUE" => return Value::Bool(true),
         "false" | "False" | "FALSE" => return Value::Bool(false),
-        ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => return number(f64::INFINITY),
-        "-.inf" | "-.Inf" | "-.INF" => return number(f64::NEG_INFINITY),
-        ".nan" | ".NaN" | ".NAN" => return number(f64::NAN),
+        ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => return finite(f64::INFINITY),
+        "-.inf" | "-.Inf" | "-.INF" => return finite(f64::NEG_INFINITY),
+        ".nan" | ".NaN" | ".NAN" => return finite(f64::NAN),
         _ => {}
     }
     if let Some(hex) = v.strip_prefix("0x").filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit())) {
@@ -148,7 +174,12 @@ impl Builder {
             Some(Node::Map(map, pending, _)) => match pending.take() {
                 None => *pending = Some(value),
                 Some(key) => {
-                    if matches!(&key, Value::String(k) if k == "<<") {
+                    let mergeable = match &value {
+                        Value::Object(_) => true,
+                        Value::Array(items) => items.iter().all(Value::is_object),
+                        _ => false,
+                    };
+                    if matches!(&key, Value::String(k) if k == "<<") && mergeable {
                         merge_into(map, value);
                     } else {
                         map.insert(key_string(&key), value);
@@ -186,7 +217,7 @@ impl MarkedEventReceiver for Builder {
             Event::MappingStart(anchor, _) => self.stack.push(Node::Map(Map::new(), None, anchor)),
             Event::SequenceEnd | Event::MappingEnd => match self.stack.pop() {
                 Some(Node::Seq(items, anchor)) => self.push_value(Value::Array(items), anchor),
-                Some(Node::Map(map, _, anchor)) => self.push_value(Value::Object(map), anchor),
+                Some(Node::Map(map, _, anchor)) => self.push_value(Value::Object(js_key_order(map)), anchor),
                 None => {}
             },
             _ => {}
@@ -194,10 +225,34 @@ impl MarkedEventReceiver for Builder {
     }
 }
 
+/// Rebuild a mapping in JS own-key order (integer-like keys first).
+fn js_key_order(map: Map<String, Value>) -> Map<String, Value> {
+    let order: Vec<String> = ara_prompt::js::entries(&map).into_iter().map(|(k, _)| k.clone()).collect();
+    let mut map = map;
+    order.into_iter().filter_map(|k| map.remove(&k).map(|v| (k, v))).collect()
+}
+
 /// `YAML.parse`: one document → its value; none → null; several → array.
+/// Events are pulled one at a time, so nesting never recurses.
 pub fn parse_yaml(source: &str) -> Result<Value, String> {
     let mut builder = Builder::default();
-    Parser::new_from_str(source).load(&mut builder, true).map_err(|e| e.to_string())?;
+    let mut parser = Parser::new_from_str(source);
+    let mut depth = 0usize;
+    loop {
+        let (event, mark) = parser.next_token().map_err(|e| e.to_string())?;
+        match event {
+            Event::StreamEnd => break,
+            Event::SequenceStart(..) | Event::MappingStart(..) => {
+                depth += 1;
+                if depth > MAX_YAML_DEPTH {
+                    return Err(format!("YAML nesting exceeds {MAX_YAML_DEPTH} levels"));
+                }
+            }
+            Event::SequenceEnd | Event::MappingEnd => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        builder.on_event(event, mark);
+    }
     Ok(match builder.docs.len() {
         0 => Value::Null,
         1 => builder.docs.pop().unwrap_or(Value::Null),
@@ -211,9 +266,22 @@ pub fn parse_yaml(source: &str) -> Result<Value, String> {
 
 static HTML_COMMENT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?s)<!--.*?-->").unwrap());
 static KEBAB: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"-([a-z])").unwrap());
+/// JavaScript regex classes: `\s` (JS whitespace), `\S`, ASCII `\w`, and `.`
+/// (anything but a line terminator).
+const JS_S: &str = r"[\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}]";
+const JS_NOT_S: &str =
+    r"[^\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}]";
+const JS_DOT: &str = r"[^\n\r\u{2028}\u{2029}]";
+
+fn js_regex(pattern: &str) -> regex::Regex {
+    let pattern =
+        pattern.replace(r"\S", JS_NOT_S).replace(r"\s", JS_S).replace(r"\w", "[A-Za-z0-9_]").replace("<DOT>", JS_DOT);
+    regex::Regex::new(&pattern).unwrap()
+}
+
 static PLAIN_SCALAR_KEY_VALUE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"^(\s*[A-Za-z_][\w-]*:\s+)(\S.*?)(\s*)$").unwrap());
-static FALLBACK_LINE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^([\w-]+):\s*(.*)$").unwrap());
+    LazyLock::new(|| js_regex(r"^(\s*[A-Za-z_][\w-]*:\s+)(\S<DOT>*?)(\s*)$"));
+static FALLBACK_LINE: LazyLock<regex::Regex> = LazyLock::new(|| js_regex(r"^([\w-]+):\s*(<DOT>*)$"));
 
 fn kebab_to_camel(key: &str) -> String {
     if !key.contains('-') {
@@ -307,7 +375,13 @@ pub fn parse_frontmatter(content: &str, options: &FrontmatterOptions) -> Result<
         return Ok(Frontmatter { frontmatter: finalize(frontmatter), body, warning: None });
     }
     let source = options.source.clone().unwrap_or_else(|| {
-        let head: String = content.chars().take(64).collect();
+        // `truncate(content, 64)`: 63 UTF-16 units and an ellipsis.
+        let units: Vec<u16> = content.encode_utf16().collect();
+        let head = if units.len() <= 64 {
+            content.to_string()
+        } else {
+            format!("{}…", String::from_utf16_lossy(&units[..63]))
+        };
         format!("Inline '{head}'")
     });
     let message = format!("Failed to parse YAML frontmatter ({source}): {error}");
@@ -358,7 +432,8 @@ mod tests {
             (json!(1000), json!(31), json!(15), json!(5))
         );
         assert_eq!((n["m"].clone(), n["n"].clone(), n["o"].clone()), (json!(1), json!(0.5), json!("1_000")));
-        assert_eq!((n["g"].clone(), n["i"].clone()), (json!("Infinity"), json!("NaN")));
+        // Non-finite: NaN is null (falsy), Infinity a truthy number.
+        assert_eq!((n["g"].as_f64(), n["i"].clone()), (Some(f64::MAX), json!(null)));
         assert_eq!(parse_yaml("? [a, b]\n: c\n1: x\ntrue: y").unwrap(), json!({"a,b": "c", "1": "x", "true": "y"}));
         assert_eq!(parse_yaml("- a\n- b").unwrap(), json!(["a", "b"]));
         assert_eq!(parse_yaml("a: 1\n---\nb: 2").unwrap(), json!([{"a": 1}, {"b": 2}]));

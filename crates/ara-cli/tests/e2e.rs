@@ -19,8 +19,10 @@ struct Env {
 
 impl Env {
     fn new() -> Env {
-        let home = tempfile::tempdir().unwrap();
-        let work = tempfile::tempdir().unwrap();
+        // Non-hidden names: discovery skips AGENTS.md in hidden directories
+        // (tempfile's default `.tmpXXXX`).
+        let home = tempfile::Builder::new().prefix("ara-e2e-home-").tempdir().unwrap();
+        let work = tempfile::Builder::new().prefix("ara-e2e-work-").tempdir().unwrap();
         let sessions = home.path().join("sessions");
         Env { _home: home, work, sessions }
     }
@@ -36,10 +38,17 @@ impl Env {
             "ARA_TEST_BASE_URL",
             "OPENROUTER_BASE_URL",
             "ARA_TEST_MODEL_ID",
+            "CLAUDE_CONFIG_DIR",
+            "COPILOT_HOME",
+            "COPILOT_CUSTOM_INSTRUCTIONS_DIRS",
+            "WSL_DISTRO_NAME",
+            "WSL_INTEROP",
         ] {
             c.env_remove(k);
         }
+        // Discovery reads the user's home: isolate it.
         c.env("ARA_API_KEY", "sk-e2e-secret-value")
+            .env("HOME", self._home.path())
             .env("ARA_HOME", self._home.path())
             .args(["--model", "fake-model", "--base-url", base_url, "--cwd"])
             .arg(self.work.path())
@@ -126,7 +135,17 @@ async fn text_answer_is_printed_and_journaled() {
     assert_eq!(entries[3]["message"]["usage"]["input"], json!(40));
     let reqs = up.requests.lock().await;
     assert!(reqs[0]["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"));
-    assert_eq!(reqs[0]["body"]["messages"][1], json!({"role": "user", "content": "Say hello"}));
+    // System blocks (main prompt + project footer), then the prompt with the
+    // date/cwd reminder the provider hook prepends at request time.
+    let messages = reqs[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(messages.iter().filter(|m| m["role"] == "system").count(), 2);
+    assert!(messages[0]["content"].as_str().unwrap().contains("in ARA coding harness"));
+    assert!(messages[1]["content"].as_str().unwrap().contains("<workstation>"));
+    let first_user = messages[2]["content"].as_str().unwrap();
+    assert!(first_user.starts_with("<system-reminder>\nToday: "), "{first_user}");
+    assert!(first_user.ends_with("</system-reminder>\n\nSay hello"), "{first_user}");
+    // The stored transcript keeps the prompt without the reminder.
+    assert_eq!(entries[2]["message"]["content"], json!("Say hello"));
 }
 
 #[tokio::test]
@@ -354,8 +373,10 @@ async fn continue_and_stdin_prompt() {
     assert_eq!(files.len(), 1, "continued the same session");
     assert_eq!(roles(&journal(&files[0])), vec!["model_change", "user", "assistant", "user", "assistant"]);
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs[1]["body"]["messages"].as_array().unwrap().len(), 4, "system + prior turn + new prompt");
-    assert_eq!(reqs[1]["body"]["messages"][3], json!({"role": "user", "content": "second from stdin"}));
+    assert_eq!(reqs[1]["body"]["messages"].as_array().unwrap().len(), 5, "2 system + prior turn + new prompt");
+    // The reminder stays on the first user turn; later turns are unchanged.
+    assert!(reqs[1]["body"]["messages"][2]["content"].as_str().unwrap().starts_with("<system-reminder>"));
+    assert_eq!(reqs[1]["body"]["messages"][4], json!({"role": "user", "content": "second from stdin"}));
 }
 
 #[tokio::test]
@@ -402,7 +423,8 @@ async fn stdin_is_prepended_and_keys_stay_on_their_route() {
     let out = tokio::task::spawn_blocking(move || child.wait_with_output().unwrap()).await.unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs[0]["body"]["messages"][1]["content"], json!("--- a\n+++ b\nreview this diff"));
+    let first_user = reqs[0]["body"]["messages"][2]["content"].as_str().unwrap();
+    assert!(first_user.ends_with("</system-reminder>\n\n--- a\n+++ b\nreview this diff"), "{first_user}");
     assert!(reqs[0]["headers"].get("authorization").is_none(), "OpenRouter key not sent to another host");
 }
 
@@ -487,4 +509,49 @@ async fn search_and_hashline_edit_fix_a_seeded_bug() {
     let tool_names: Vec<&str> =
         reqs[0]["body"]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
     assert_eq!(tool_names, ["read", "write", "edit", "bash", "grep", "glob"]);
+}
+
+#[tokio::test]
+async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
+    let env = Env::new();
+    let work = env.work.path();
+    std::fs::write(work.join("AGENTS.md"), "Always answer in French.").unwrap();
+    let skill_dir = work.join(".ara/skills/greeting");
+    std::fs::create_dir_all(skill_dir.join("assets")).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: How to greet people\n---\nSay bonjour twice.")
+        .unwrap();
+    std::fs::write(skill_dir.join("assets/extra.txt"), "extra asset").unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_s", "read", "{\"path\":\"skill://greeting\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_a", "read", "{\"path\":\"skill://greeting/assets/extra.txt\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_x", "read", "{\"path\":\"skill://greeting/../../AGENTS.md\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Bonjour, bonjour."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Greet me"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Bonjour, bonjour.\n");
+
+    let reqs = up.requests.lock().await;
+    let first = reqs[0]["body"]["messages"].as_array().unwrap();
+    let system: String =
+        first.iter().filter(|m| m["role"] == "system").map(|m| m["content"].as_str().unwrap()).collect();
+    assert!(system.contains("- greeting: How to greet people"), "skill listed");
+    assert!(system.contains("`skill://<name>`"), "skill:// advertised");
+    assert!(!system.contains("history://") && !system.contains("omp://"), "unported URLs not advertised");
+    assert!(system.contains("<repo-rules>") && system.contains("Always answer in French."), "AGENTS.md included");
+    assert!(system.contains(&format!("<file path=\"{}\">", work.canonicalize().unwrap().join("AGENTS.md").display())));
+
+    let entries = journal(&env.session_files()[0]);
+    let results: Vec<&Value> = entries.iter().filter(|e| e["message"]["role"] == "toolResult").collect();
+    assert!(results[0]["message"]["content"][0]["text"].as_str().unwrap().contains("Say bonjour twice."));
+    assert!(results[1]["message"]["content"][0]["text"].as_str().unwrap().contains("extra asset"));
+    assert_eq!(results[2]["message"]["isError"], json!(true));
+    assert!(
+        results[2]["message"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Path traversal (..) is not allowed in skill:// URLs")
+    );
 }
