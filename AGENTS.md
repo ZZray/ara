@@ -1,0 +1,17 @@
+# ARA contributor rules
+
+This repository is a fresh Rust Agent Core. Read `docs/knowledge/INDEX.md` first, then only relevant linked pages. `docs/roadmap.md`, `docs/upstream-sync.md`, and `docs/acceptance.md` define delivery gates.
+
+- Keep this Git history independent from the old ARA and OMP repositories. Use the fixed OMP commit in `upstream/omp.lock.json` as source evidence; do not follow a moving branch or silently advance the marker.
+- Port OMP behavior to Rust first. Record upstream source location, ARA implementation, intentional difference, and executable evidence for each item. Incremental upgrades compare the previously ported SHA with a new exact SHA.
+- Preserve full Agent behavior. Do not make a passing narrow fixture stand for a completed OMP surface, phase, or product.
+- Shared Core must not import AI HandWave, Lantern/Paseo, Lumen, or ARA product state. Hosts own identity, permissions, persistence location, Gateway grants, scheduling, and user-facing transport. Reuse the Core through stable host interfaces; do not copy it into a product.
+- Distinguish Project, Task, Session, Run, and background Job. A successful Run is evidence awaiting review, not automatic Task acceptance. Never silently replace a failed native resume with a new conversation or replay a tool with unknown effects.
+- Treat user references and observations as sourced, versioned evidence. Compaction may summarize them but must not erase the original. Model reasoning need not expose private chain of thought; externally reviewable decisions and tool receipts are required.
+- Every implementation point must run its applicable tests **on the delivered code** before being marked delivered. Test real process/host behavior and failure paths; use a controlled fake upstream for deterministic faults and bounded real-model trials for selected actual tasks. Record outputs and artifacts, not just HTTP status or exit code. See `docs/acceptance.md`.
+- Prefer existing ARA Manager → OMP management → CAS for bounded real-model validation when available. Verify current model ID, protocol, route, and authorization before use. OpenRouter free models are an alternative. Never commit API keys, tokens, account data, or local configuration; use environment variables or CI secrets.
+- Source-backed provider protocol changes need fixtures and focused tests. Unknown usage is not zero; error, cancellation, and approval requests are not success. Tool allowlists are not an OS sandbox.
+- Preserve license and copyright notices for any upstream code copied into this repository. Do not claim an upstream feature is ported until its behavior is exercised in Rust.
+- Keep commits scoped. WIP commits may be frequent but must be labeled unfinished; a delivery commit requires its evidence. Do not push, deploy, rewrite history, or mutate a live product installation without the relevant user instruction.
+
+Project Skills are indexed at `.ara/skills/INDEX.md`. Use a Skill when its workflow fits; knowledge pages hold durable decisions, while temporary run status belongs in handoffs or evidence records.

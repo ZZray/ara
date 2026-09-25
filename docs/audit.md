@@ -1,0 +1,19 @@
+# Audit procedure
+
+Audit the change that will actually be delivered. Start with `git status`, the target commit or staged diff, its requirement-to-file mapping, and the relevant OMP source or ARA decision. Review every changed file and critical hunk for ownership, state transitions, permissions, cancellation, unknown usage, credential exposure, persistent format, and compatibility with the shared Core boundary.
+
+Use available independent review tools (for example the local `ocr` CLI or a read-only reviewer) for scope/rule coverage; then perform semantic review and inspect actual test output. A reviewer result is evidence, not permission to widen scope or claim runtime success. For security-sensitive or concurrent code, get an independent second view where available.
+
+Review record:
+
+```text
+Requirement and tested commit:
+Changed files/hunks and why each is necessary:
+Independent review command/result:
+Semantic findings (trigger, impact, source location, evidence):
+Tests actually run and results:
+Missing/blocked evidence:
+Decision: accept this point / request changes / not tested
+```
+
+Do not force a defect from style preference or an untriggered hypothesis. Do not accept a point with a known failing test, missing mandatory real task evidence, or changed source after the recorded test. Task acceptance is separate from a successful Run and from a Git commit.

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "upstream_url": "https://github.com/can1357/oh-my-pi.git",
+  "upstream_version": "v18.1.8",
+  "baseline_commit": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "reviewed_upstream_commit": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "ported_through_commit": null,
+  "license": "MIT"
+}
