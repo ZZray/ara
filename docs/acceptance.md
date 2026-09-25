@@ -1,6 +1,6 @@
 # Per-point testing and acceptance
 
-Code, a green compile, a written test, a model HTTP 200, or a plausible answer is not delivery. **Every implementation point must be executed and checked against its stated outcome before its delivery is accepted.** Run tests on the exact delivered commit or recorded worktree snapshot. Failed or unavailable tests keep the point open.
+Code, a green compile, a written test, a model HTTP 200, or a plausible answer is not delivery. **Every implementation point must be executed and checked against its stated outcome before its delivery is accepted.** Run [backend verification](../.ara/skills/ara-backend-verification/SKILL.md) on the exact delivered commit or recorded worktree snapshot when Rust backend code changes. Failed or unavailable mandatory tests keep the point open.
 
 ## Evidence for one point
 

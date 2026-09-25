@@ -1,12 +1,16 @@
-name: documentation bootstrap
+name: repository checks
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -14,3 +18,7 @@ jobs:
           python-version: '3.11'
       - run: python scripts/verify_bootstrap.py
       - run: python scripts/omp_inventory.py check
+      - name: Install Rust checks when a backend exists
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: rustup component add clippy rustfmt
+      - run: python scripts/verify_backend.py
