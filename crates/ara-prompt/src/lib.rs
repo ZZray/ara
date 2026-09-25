@@ -3,7 +3,7 @@
 //! `format` normalizer ([`prompt`]). Ported from OMP `packages/utils/src/
 //! {template,prompt}.ts` at 596f2da7101178214aa27a753529d15e6b7ad91d.
 
-mod js;
+pub mod js;
 pub mod prompt;
 pub mod template;
 

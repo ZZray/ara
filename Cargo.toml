@@ -3,6 +3,7 @@ members = [
   "crates/ara-ai",
   "crates/ara-agent",
   "crates/ara-cli",
+  "crates/ara-discovery",
   "crates/ara-prompt",
   "crates/ara-session",
   "crates/ara-tools",
@@ -28,6 +29,8 @@ ara-session = { path = "crates/ara-session" }
 ara-tools = { path = "crates/ara-tools" }
 ara-testkit = { path = "crates/ara-testkit" }
 ara-walk = { path = "crates/ara-walk" }
+ara-prompt = { path = "crates/ara-prompt" }
+ara-discovery = { path = "crates/ara-discovery" }
 # Vendored OMP crates (crates/vendor, see crates/vendor/README.md).
 pi-ast = { path = "crates/vendor/pi-ast" }
 pi-diff = { path = "crates/vendor/pi-diff" }

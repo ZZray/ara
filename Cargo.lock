@@ -131,6 +131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ara-discovery"
+version = "0.1.0"
+dependencies = [
+ "ara-prompt",
+ "regex",
+ "tempfile",
+]
+
+[[package]]
 name = "ara-prompt"
 version = "0.1.0"
 dependencies = [
