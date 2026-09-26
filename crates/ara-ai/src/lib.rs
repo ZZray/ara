@@ -7,6 +7,7 @@ pub mod event;
 pub mod json;
 pub mod model_tokenizer;
 pub mod providers;
+pub(crate) mod replay_safe_retry;
 pub mod sse;
 pub mod transform;
 pub mod types;

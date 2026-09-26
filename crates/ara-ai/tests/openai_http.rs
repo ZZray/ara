@@ -119,6 +119,210 @@ async fn retries_429_then_succeeds() {
 }
 
 #[tokio::test]
+async fn replay_safe_retry_discards_known_empty_stop_before_text() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), usage(3, 0), done()]},
+            {"events": [text("answer"), finish("stop"), usage(3, 2), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 2);
+    assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert_eq!(msg.text(), "answer");
+    assert_eq!(msg.usage.output, Some(2));
+}
+
+#[tokio::test]
+async fn replay_safe_retry_exhausts_two_known_empty_stops() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), usage(3, 1), done()]},
+            {"events": [finish("stop"), usage(3, 1), done()]},
+            {"events": [finish("stop"), usage(3, 1), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 3);
+    assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert_eq!(msg.stop_reason, StopReason::Stop);
+    assert_eq!(msg.text(), "");
+    assert_eq!(msg.usage.output, Some(1));
+}
+
+#[tokio::test]
+async fn replay_safe_retry_does_not_treat_unknown_usage_as_zero() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), done()]},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 1);
+    assert_eq!(msg.stop_reason, StopReason::Stop);
+    assert_eq!(msg.text(), "");
+    assert_eq!(msg.usage.output, None);
+}
+
+#[tokio::test]
+async fn replay_safe_retry_reissues_pre_output_stream_reset_once() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [{"raw": ": keep-alive\n\n"}, {"sleep_ms": 50}], "end": "drop"},
+            {"events": [text("recovered"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut options = opts();
+    options.retry.max_attempts = 1;
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert_eq!(server.served(), 2, "{msg:?}");
+    assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert_eq!(msg.text(), "recovered");
+}
+
+#[tokio::test]
+async fn replay_safe_retry_only_reissues_transient_in_band_statuses() {
+    for (status, should_retry) in [(409, false), (425, false), (408, true), (429, true)] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"events": [{"data": {"error": {"code": status, "message": "stream rejected"}}}]},
+                {"events": [text("recovered"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let (_, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        if should_retry {
+            assert_eq!(server.served(), 2, "status {status}");
+            assert_eq!(msg.text(), "recovered");
+        } else {
+            assert_eq!(server.served(), 1, "status {status}");
+            assert_eq!(msg.error_status, Some(status));
+        }
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_cancellation_during_backoff_stops_requests() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), usage(3, 0), done()]},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let mut options = opts();
+    options.cancel = cancel.clone();
+    let rx = openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.served() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    cancel.cancel();
+    let (_, msg) = collect(rx).await;
+    assert_eq!(server.served(), 1);
+    assert_eq!(msg.stop_reason, StopReason::Aborted);
+}
+
+#[tokio::test]
+async fn replay_safe_retry_never_reissues_after_tool_event() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [tool_call(0, "call-1", "read", "{\"path\":\"a.txt\"}"), {"sleep_ms": 50}], "end": "drop"},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut options = opts();
+    options.retry.max_attempts = 1;
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert!(events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolcallStart { .. })));
+    assert_eq!(msg.stop_reason, StopReason::Error);
+    assert_eq!(server.served(), 1, "a tool call must commit its provider attempt");
+}
+
+#[tokio::test]
+async fn replay_safe_retry_streams_recovered_text_before_terminal() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), usage(3, 0), done()]},
+            {"events": [text("live"), {"sleep_ms": 1000}, finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let mut options = opts();
+    options.cancel = cancel.clone();
+    let mut rx = openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options);
+    let delta = tokio::time::timeout(Duration::from_millis(900), async {
+        loop {
+            if let AssistantMessageEvent::TextDelta { delta, .. } = rx.recv().await.expect("live event") {
+                break delta;
+            }
+        }
+    })
+    .await
+    .expect("text should arrive before the delayed terminal frame");
+    assert_eq!(delta, "live");
+    assert_eq!(server.served(), 2);
+    cancel.cancel();
+    let (_, msg) = collect(rx).await;
+    assert_eq!(msg.stop_reason, StopReason::Aborted);
+    assert_eq!(msg.text(), "live");
+}
+
+#[tokio::test]
+async fn replay_safe_retry_accept_empty_response_disables_reissue() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), usage(3, 0), done()]},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut options = opts();
+    options.accept_empty_response = true;
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert_eq!(server.served(), 1);
+    assert_eq!(msg.stop_reason, StopReason::Stop);
+    assert_eq!(msg.text(), "");
+}
+
+#[tokio::test]
 async fn prepared_text_observation_matches_retried_wire_body() {
     let server = FakeUpstream::start(
         script(json!({"responses": [
@@ -438,12 +642,15 @@ async fn empty_and_non_sse_bodies_are_errors() {
     )
     .await
     .unwrap();
+    let mut once = opts();
+    once.accept_empty_response = true; // inspect each malformed response without outer stream retries
     let (_, msg) =
-        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), once.clone()))
+            .await;
     assert_eq!(msg.stop_reason, StopReason::Error);
     assert_eq!(msg.error_message.as_deref(), Some(openai_completions::EMPTY_STREAM_MESSAGE));
     let (_, msg) =
-        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), once)).await;
     assert_eq!(msg.error_message.as_deref(), Some(openai_completions::EMPTY_STREAM_MESSAGE));
 }
 
@@ -564,10 +771,38 @@ async fn cancel_is_honoured_while_consumer_is_not_reading() {
     let rx = openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), o);
     tokio::time::sleep(Duration::from_millis(300)).await; // channel fills; provider parks in push
     cancel.cancel();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(2100)).await; // terminal must survive a delayed consumer
     let started = Instant::now();
     let (events, msg) = collect(rx).await;
     assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(msg.stop_reason, StopReason::Aborted);
     assert!(events.len() < 600, "provider stopped producing after cancel: {}", events.len());
+}
+
+#[tokio::test]
+async fn cancel_while_terminal_waits_for_full_channel_keeps_one_terminal() {
+    // Start + text_start + 253 deltas + text_end fill the 256-slot outer
+    // channel; the final Done waits for a consumer that has not started.
+    let mut frames: Vec<Value> = (0..253).map(|i| text(&format!("t{i} "))).collect();
+    frames.push(finish("stop"));
+    frames.push(done());
+    let server = FakeUpstream::start(script(json!({"responses": [{"events": frames}]})), None).await.unwrap();
+    let cancel = CancellationToken::new();
+    let mut options = opts();
+    options.cancel = cancel.clone();
+    let rx = openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while rx.len() < 256 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("outer event channel should fill before cancellation");
+    tokio::time::sleep(Duration::from_millis(50)).await; // let Done reach the blocked send
+    assert_eq!(server.served(), 1);
+    cancel.cancel();
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let (events, msg) = collect(rx).await;
+    assert_eq!(msg.stop_reason, StopReason::Aborted);
+    assert_eq!(events.iter().filter(|e| e.is_terminal()).count(), 1);
 }

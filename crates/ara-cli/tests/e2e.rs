@@ -182,6 +182,27 @@ async fn tool_task_produces_file_and_receipts() {
     );
 }
 
+#[tokio::test]
+async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [finish("stop"), usage(4, 0), done()]},
+        {"events": [tool_call(0, "call_w", "write", "{\"path\":\"retry.txt\",\"content\":\"once\\n\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Wrote retry.txt once."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Write retry.txt with once"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote retry.txt once.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("retry.txt")).unwrap(), "once\n");
+    assert_eq!(up.served(), 3, "one empty retry, one tool turn, one final turn");
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
+    assert_eq!(entries[3]["message"]["content"][0]["id"], json!("call_w"));
+    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_w"));
+}
+
 fn spawn_json(c: &mut Command) -> Child {
     c.args(["--mode", "json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
 }

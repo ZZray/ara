@@ -172,6 +172,8 @@ pub struct StreamOptions {
     pub extra_headers: Vec<(String, String)>,
     pub compat: OpenAICompat,
     pub retry: RetryPolicy,
+    /// A caller expecting a valid empty stop opts out of replay-safe retries.
+    pub accept_empty_response: bool,
     /// Optional bounded, best-effort diagnostics. Full/closed channels drop
     /// observations without delaying or failing the model request.
     pub request_text_observer: Option<RequestTextObserver>,
@@ -190,6 +192,7 @@ impl Default for StreamOptions {
             extra_headers: Vec::new(),
             compat: OpenAICompat::default(),
             retry: RetryPolicy::default(),
+            accept_empty_response: false,
             request_text_observer: None,
         }
     }
@@ -1078,7 +1081,29 @@ async fn post_with_retry(
 
 /// Start a streamed completion. Always yields exactly one terminal event.
 pub fn stream(client: reqwest::Client, model: Model, context: Context, options: StreamOptions) -> AssistantStream {
+    let cancel = options.cancel.clone();
+    let accept_empty_response = options.accept_empty_response;
+    crate::replay_safe_retry::with_replay_safe_stream_retry(
+        model.clone(),
+        cancel,
+        accept_empty_response,
+        move |cancel| {
+            let mut options = options.clone();
+            options.cancel = cancel;
+            stream_once(client.clone(), model.clone(), context.clone(), options)
+        },
+    )
+}
+
+fn stream_once(
+    client: reqwest::Client,
+    model: Model,
+    context: Context,
+    options: StreamOptions,
+) -> crate::replay_safe_retry::AttemptStream {
     let (sink, rx) = EventSink::channel();
+    let error = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let recorded_error = error.clone();
     tokio::spawn(async move {
         let start = Instant::now();
         let mut state = ChunkState::new(&model);
@@ -1092,6 +1117,7 @@ pub fn stream(client: reqwest::Client, model: Model, context: Context, options: 
                 sink.push(AssistantMessageEvent::Done { reason, message: output }).await;
             }
             Err(err) => {
+                *recorded_error.lock().unwrap() = Some(err.clone());
                 let mut events = Vec::new();
                 state.close_open_blocks(&mut events);
                 for e in events {
@@ -1108,7 +1134,7 @@ pub fn stream(client: reqwest::Client, model: Model, context: Context, options: 
             }
         }
     });
-    rx
+    crate::replay_safe_retry::AttemptStream { events: rx, error }
 }
 
 async fn run(

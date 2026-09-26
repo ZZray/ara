@@ -1,7 +1,8 @@
 //! Assistant message stream protocol (OMP `AssistantMessageEvent`).
 //!
-//! Every provider stream emits `start`, then block lifecycle events, then
-//! exactly one terminal `done` or `error` event carrying the final message.
+//! A started response emits `start`, then block lifecycle events, then one
+//! terminal `done` or `error` event. A pre-response failure can emit only its
+//! terminal `error` event. Every stream has exactly one terminal event.
 //! `partial` is the provider's current snapshot of the assistant message.
 
 use crate::types::{AssistantMessage, StopReason, ToolCall};
