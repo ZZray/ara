@@ -8,7 +8,10 @@ ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/ca
 - `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`, `edit.rs`).
 - `crates/ara-walk`: from `crates/pi-walker` (ignore-state traversal).
 - `crates/vendor/pi-diff`, `crates/vendor/pi-ast`, `crates/vendor/pi-edit`: upstream crates copied verbatim except for the local modifications listed in `crates/vendor/README.md` (`pi-ast` also carries its own `LICENSE`).
-- `crates/ara-cli`: from `packages/coding-agent` print mode.
+- `crates/ara-cli`: from `packages/coding-agent` print mode and `main.ts` prompt-file discovery.
+- `crates/ara-prompt`: from `packages/utils` (`template.ts`, `prompt.ts`). `tests/fixtures/template/` holds upstream prompt templates used as goldens.
+- `crates/ara-discovery`: from the `packages/coding-agent` capability, discovery, `config.ts` and skills code and from `packages/utils` `frontmatter.ts`. `tests/fixtures/skills*` are copied from upstream `test/fixtures/skills*`.
+- `crates/ara-context`: from `packages/coding-agent` `system-prompt.ts`, `session/date-cwd-reminder.ts` and `utils/active-repo-context.ts`. `prompts/` holds upstream's `prompts/system/` templates, copied verbatim except for the edits listed in `crates/ara-context/prompts/README.md`.
 
 Each module names the upstream files it follows. Upstream copyright and license apply to those portions. Further dependencies are reviewed through `deny.toml` (`cargo deny check`). The search tools link the ripgrep libraries (`grep-*`, `ignore`, `globset`; MIT or Unlicense) and PCRE2 through `pcre2-sys` (PCRE2 is BSD-3-Clause). The vendored crates link tree-sitter and its grammars and `ast-grep-core` (MIT), and `xxhash-rust` (BSL-1.0).
 

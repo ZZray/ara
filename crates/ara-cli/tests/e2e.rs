@@ -614,3 +614,91 @@ async fn skill_flags_filter_listing_and_resolution() {
     let tool_result = &reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"];
     assert!(tool_result.as_str().unwrap().contains("Unknown skill: greeting\nAvailable: none"), "{tool_result}");
 }
+
+/// Joined system messages of the first request.
+async fn first_system(up: &ara_testkit::FakeUpstream) -> String {
+    let reqs = up.requests.lock().await;
+    reqs[0]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "system")
+        .map(|m| m["content"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Review F1: without flags the CLI uses the discovered `SYSTEM.md` (project
+/// before user) and `APPEND_SYSTEM.md`, as upstream `main.ts` does; flags win
+/// and the last occurrence of a flag counts.
+#[tokio::test]
+async fn discovered_system_md_and_prompt_flags() {
+    let env = Env::new();
+    let work = env.work.path();
+    let user_dir = env._home.path().join("agent");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    std::fs::create_dir_all(work.join(".ara")).unwrap();
+    std::fs::write(user_dir.join("SYSTEM.md"), "USER-SYSTEM-MARKER").unwrap();
+    std::fs::write(work.join(".ara/SYSTEM.md"), "PROJECT-SYSTEM-MARKER").unwrap();
+    std::fs::write(work.join(".ara/APPEND_SYSTEM.md"), "APPEND-MARKER").unwrap();
+    let run = |args: Vec<&'static str>| {
+        let env = &env;
+        async move {
+            let up = upstream(json!({"responses": [{"events": [text("ok"), finish("stop"), done()]}]})).await;
+            let mut all = args;
+            all.push("hi");
+            let out = output(env.cmd(&up.base_url(), &all)).await;
+            let (_, stderr) = text_of(&out);
+            assert_eq!(out.status.code(), Some(0), "{stderr}");
+            (first_system(&up).await, stderr)
+        }
+    };
+
+    let (system, _) = run(vec![]).await;
+    assert_eq!(system.matches("PROJECT-SYSTEM-MARKER").count(), 1, "{system}");
+    assert!(!system.contains("USER-SYSTEM-MARKER") && !system.contains("coding harness"), "{system}");
+    assert_eq!(system.matches("APPEND-MARKER").count(), 1, "{system}");
+
+    std::fs::remove_file(work.join(".ara/SYSTEM.md")).unwrap();
+    let (system, _) = run(vec![]).await;
+    assert!(system.contains("USER-SYSTEM-MARKER") && !system.contains("coding harness"), "{system}");
+
+    let (system, _) = run(vec!["--system-prompt", "FIRST-FLAG", "--system-prompt", "FLAG-SYSTEM-MARKER"]).await;
+    assert!(system.contains("FLAG-SYSTEM-MARKER"), "{system}");
+    assert!(!system.contains("FIRST-FLAG") && !system.contains("USER-SYSTEM-MARKER"), "{system}");
+    let (system, _) = run(vec!["--append-system-prompt", "A1", "--append-system-prompt", "FLAG-APPEND"]).await;
+    assert!(system.contains("FLAG-APPEND") && !system.contains("APPEND-MARKER"), "{system}");
+    assert!(!system.contains("\nA1"), "{system}");
+
+    // Review F8: an unreadable prompt file warns and falls back to the text.
+    let dir = work.join("prompt-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir_arg: &'static str = Box::leak(dir.display().to_string().into_boxed_str());
+    let (system, stderr) = run(vec!["--system-prompt", dir_arg]).await;
+    assert!(stderr.contains(&format!("ara: warning: Could not read system prompt file {dir_arg}")), "{stderr}");
+    assert!(system.contains(dir_arg), "{system}");
+}
+
+/// Review F7: a relative `ARA_HOME` is taken against the process cwd, so a
+/// user skill listed in the prompt also resolves through `skill://`.
+#[tokio::test]
+async fn relative_ara_home_user_skills_resolve() {
+    let env = Env::new();
+    let skill = env._home.path().join("rel-home/agent/skills/userskill");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "---\ndescription: A user skill\n---\nUser skill body.").unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_u", "read", "{\"path\":\"skill://userskill\"}"), finish("tool_calls"), done()]},
+        {"events": [text("done"), finish("stop"), done()]}
+    ]}))
+    .await;
+    let mut cmd = env.cmd(&up.base_url(), &["hi"]);
+    cmd.env("ARA_HOME", "rel-home").current_dir(env._home.path());
+    let out = output(cmd).await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(first_system(&up).await.contains("- userskill: A user skill"));
+    let reqs = up.requests.lock().await;
+    let result = &reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"];
+    assert!(result.as_str().unwrap().contains("User skill body."), "{result}");
+}

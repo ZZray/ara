@@ -156,13 +156,60 @@ impl Default for SystemPromptOptions {
 }
 
 /// `resolvePromptInput`: text with a newline is literal; otherwise a
-/// readable file's content, else the text itself.
-pub fn resolve_prompt_input(input: Option<&str>) -> Option<String> {
+/// readable file's content (decoded lossily, as `Bun.file().text()`), else the
+/// text itself. A read failure other than a missing file or an over-long name
+/// adds a warning (upstream logs it) and still falls back to the text.
+pub fn resolve_prompt_input(input: Option<&str>, description: &str, warnings: &mut Vec<String>) -> Option<String> {
     let input = input.filter(|s| !s.is_empty())?;
     if input.contains('\n') {
         return Some(input.to_string());
     }
-    Some(std::fs::read_to_string(input).unwrap_or_else(|_| input.to_string()))
+    match std::fs::read(input) {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(e) => {
+            let quiet = e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ENAMETOOLONG);
+            if !quiet {
+                warnings.push(format!("Could not read {description} file {input}: {e}"));
+            }
+            Some(input.to_string())
+        }
+    }
+}
+
+/// `loadPersonalityOverride`: the trimmed `PERSONALITY.md`, or `None` with a
+/// warning when it is empty or unreadable (a missing file is silent).
+fn load_personality_override(path: &Path, warnings: &mut Vec<String>) -> Option<String> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let content = String::from_utf8_lossy(&bytes).trim().to_string();
+            if content.is_empty() {
+                warnings.push(format!(
+                    "PERSONALITY.md is empty; using the configured personality preset ({})",
+                    path.display()
+                ));
+                return None;
+            }
+            Some(content)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            warnings.push(format!(
+                "Failed to read PERSONALITY.md; using the configured personality preset ({}): {e}",
+                path.display()
+            ));
+            None
+        }
+    }
+}
+
+/// A built system prompt and the warnings met while building it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SystemPrompt {
+    /// Ordered system prompt blocks.
+    pub blocks: Vec<String>,
+    /// Non-fatal problems (unreadable `PERSONALITY.md`, …) for the host to
+    /// surface.
+    pub warnings: Vec<String>,
 }
 
 fn first_non_empty(value: Option<&str>) -> Option<&str> {
@@ -299,12 +346,13 @@ fn cpu_model() -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// `buildSystemPrompt`: ordered system prompt blocks.
+/// `buildSystemPrompt`: ordered system prompt blocks plus warnings.
 pub fn build_system_prompt(
     discovery: &Discovery,
     cwd: &Path,
     options: &SystemPromptOptions,
-) -> Result<Vec<String>, TemplateError> {
+) -> Result<SystemPrompt, TemplateError> {
+    let mut warnings = Vec::new();
     let cwd = ara_discovery::paths::resolve(cwd);
     let custom = options.custom_prompt.as_deref().filter(|s| !s.is_empty());
     let append = options.append_prompt.as_deref();
@@ -312,18 +360,18 @@ pub fn build_system_prompt(
     // A caller-supplied custom prompt owns block 0; discovered SYSTEM.md stays out.
     let system_md = if custom.is_some() { None } else { discovery.load_system_prompt_file(&cwd).map(|f| f.content) };
 
-    let context_files = match &options.context_files {
-        Some(files) => dedupe_contained_context_files(files.clone()),
-        None => {
-            let mut files = discovery.load_project_context_files(&cwd, &options.disabled_extensions);
-            for root in &options.additional_workspace_roots {
-                if ara_discovery::paths::resolve(root) != cwd {
-                    files.extend(discovery.load_project_context_files(root, &options.disabled_extensions));
-                }
-            }
-            dedupe_contained_context_files(files)
-        }
+    // Supplied or discovered, the cwd's files are joined by every extra
+    // workspace root's own, then deduped (upstream `contextFilesPromise`).
+    let mut files = match &options.context_files {
+        Some(files) => files.clone(),
+        None => discovery.load_project_context_files(&cwd, &options.disabled_extensions),
     };
+    for root in &options.additional_workspace_roots {
+        if ara_discovery::paths::resolve(root) != cwd {
+            files.extend(discovery.load_project_context_files(root, &options.disabled_extensions));
+        }
+    }
+    let context_files = dedupe_contained_context_files(files);
     let skills = match &options.skills {
         Some(skills) => skills.clone(),
         None if options.skills_settings.enabled => discovery.load_skills(&cwd, &options.skills_settings).0,
@@ -337,10 +385,7 @@ pub fn build_system_prompt(
         Personality::None => String::new(),
         preset => {
             let override_path = discovery.dirs.native_user_dir.join("PERSONALITY.md");
-            std::fs::read_to_string(override_path)
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+            load_personality_override(&override_path, &mut warnings)
                 .unwrap_or_else(|| preset.preset().trim().to_string())
         }
     };
@@ -448,5 +493,5 @@ pub fn build_system_prompt(
             blocks.push(rendered.to_string());
         }
     }
-    Ok(blocks)
+    Ok(SystemPrompt { blocks, warnings })
 }

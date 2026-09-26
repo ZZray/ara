@@ -69,9 +69,10 @@ impl ToolContext {
         }
     }
 
-    /// Set the skills `skill://` URLs resolve against.
-    pub fn with_skills(self, skills: Vec<internal_urls::SkillRef>) -> Self {
-        *self.skills.write().unwrap_or_else(|e| e.into_inner()) = skills;
+    /// Set the skills `skill://` URLs resolve against. The list is this
+    /// context's own: clones made earlier keep theirs.
+    pub fn with_skills(mut self, skills: Vec<internal_urls::SkillRef>) -> Self {
+        self.skills = std::sync::Arc::new(std::sync::RwLock::new(skills));
         self
     }
 

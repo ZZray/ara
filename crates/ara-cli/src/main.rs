@@ -98,12 +98,14 @@ struct Args {
     max_tokens: Option<u64>,
     #[arg(long)]
     temperature: Option<f64>,
-    /// Replace the default system prompt (text, or a file path).
-    #[arg(long)]
+    /// Replace the default system prompt (text, or a file path). Without it,
+    /// a discovered `SYSTEM.md` is used. The last occurrence wins.
+    #[arg(long, overrides_with = "system_prompt")]
     system_prompt: Option<String>,
-    /// Append text to the system prompt (text, or a file path; repeatable).
-    #[arg(long)]
-    append_system_prompt: Vec<String>,
+    /// Append text to the system prompt (text, or a file path). Without it, a
+    /// discovered `APPEND_SYSTEM.md` is used. The last occurrence wins.
+    #[arg(long, overrides_with = "append_system_prompt")]
+    append_system_prompt: Option<String>,
     /// Do not discover or list skills.
     #[arg(long)]
     no_skills: bool,
@@ -150,11 +152,14 @@ impl LoopHooks for CliHooks {
     }
 }
 
+/// `$ARA_HOME` (default `~/.ara`), absolute against the process cwd so paths
+/// derived from it do not depend on the session's `--cwd`.
 fn ara_home() -> PathBuf {
-    std::env::var_os("ARA_HOME")
+    let home = std::env::var_os("ARA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ara")))
-        .unwrap_or_else(|| PathBuf::from(".ara"))
+        .unwrap_or_else(|| PathBuf::from(".ara"));
+    std::path::absolute(&home).unwrap_or(home)
 }
 
 fn user_home() -> PathBuf {
@@ -419,8 +424,9 @@ async fn run(args: Args) -> Result<i32> {
     });
     let session_path = journal.as_ref().map(|j| j.path().to_path_buf());
 
-    // Context files, skills and SYSTEM.md from the host's locations: native
-    // `$ARA_HOME/agent` and `.ara/`, foreign tools per upstream defaults.
+    // Context files, skills, SYSTEM.md and APPEND_SYSTEM.md from the host's
+    // locations: native `$ARA_HOME/agent` and `.ara/`, foreign tools per
+    // upstream defaults.
     let home = user_home();
     let mut dirs = HostDirs::ara(&home).with_env(|k| std::env::var(k).ok());
     dirs.native_user_dir = ara_home().join("agent");
@@ -463,17 +469,28 @@ async fn run(args: Args) -> Result<i32> {
             PromptTool { name, label }
         })
         .collect();
-    let append: Vec<String> = args.append_system_prompt.iter().filter_map(|a| resolve_prompt_input(Some(a))).collect();
+    // Flags win; otherwise the discovered files (upstream `main.ts`
+    // `discoverSystemPromptFile` / `discoverAppendSystemPromptFile`).
+    let mut prompt_warnings = Vec::new();
+    let discovered = |name: &str| discovery.discover_prompt_file(&cwd, name).map(|p| p.to_string_lossy().into_owned());
+    let system_source = args.system_prompt.clone().or_else(|| discovered("SYSTEM.md"));
+    let append_source = args.append_system_prompt.clone().or_else(|| discovered("APPEND_SYSTEM.md"));
+    let custom_prompt = resolve_prompt_input(system_source.as_deref(), "system prompt", &mut prompt_warnings);
+    let append_prompt = resolve_prompt_input(append_source.as_deref(), "append system prompt", &mut prompt_warnings);
     let options = SystemPromptOptions {
-        custom_prompt: resolve_prompt_input(args.system_prompt.as_deref()),
-        append_prompt: (!append.is_empty()).then(|| append.join("\n\n")),
+        custom_prompt,
+        append_prompt,
         tools: Some(prompt_tools),
         skills: Some(skills),
         model: Some(route.model.id.clone()),
         urls: InternalUrls { skill: enabled.contains(&"read"), ..InternalUrls::default() },
         ..SystemPromptOptions::default()
     };
-    let system_prompt = build_system_prompt(&discovery, &cwd, &options).context("building the system prompt")?;
+    let built = build_system_prompt(&discovery, &cwd, &options).context("building the system prompt")?;
+    for warning in prompt_warnings.iter().chain(&built.warnings) {
+        eprintln!("ara: warning: {warning}");
+    }
+    let system_prompt = built.blocks;
     let hooks: Arc<dyn LoopHooks> =
         Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
 

@@ -216,3 +216,64 @@ async fn bash_expands_skill_urls() {
     let out = b(json!({"command": "echo skill://nope/x"})).await.unwrap();
     assert!(text(&out).contains("skill://nope/x"), "{}", text(&out));
 }
+
+/// Review F2: a backslash ends an unquoted token (upstream `\\` in the
+/// class), so an escaped quote next to a URL keeps its meaning.
+#[test]
+fn backslash_ends_an_unquoted_token() {
+    let skills = [skill("demo", "/s/demo")];
+    assert_eq!(expand_skill_urls("cat skill://demo/a\\ b", &skills, false), "cat '/s/demo/a'\\ b");
+    assert_eq!(expand_skill_urls_strict("cat skill://demo/a\\ b", &skills).unwrap(), "cat '/s/demo/a'\\ b");
+    assert_eq!(
+        expand_skill_urls("echo skill://demo/x\\\" '\" ; touch M ; \"' skill://demo/y\\\"", &skills, false),
+        "echo '/s/demo/x'\\\" '\" ; touch M ; \"' '/s/demo/y'\\\""
+    );
+}
+
+/// Review F3 (intentional difference): a quoted token whose opening quote is
+/// literal text inside another quote is not expanded.
+#[test]
+fn quoted_tokens_nested_in_quotes_stay_literal() {
+    let skills = [skill("demo", "/s/demo")];
+    for literal in
+        ["echo '\"skill://demo/x;touch${IFS}M\"'", "echo \"'skill://demo/x'\"", "echo \"see \"skill://demo\" here\""]
+    {
+        assert_eq!(expand_skill_urls(literal, &skills, false), literal);
+    }
+    // A quote that really opens a string still expands.
+    assert_eq!(expand_skill_urls("cat \"skill://demo/a\" 'x'", &skills, false), "cat '/s/demo/a' 'x'");
+}
+
+/// Review F2/F3 through `bash`: text the model quoted never runs, with or
+/// without skills loaded.
+#[tokio::test]
+async fn bash_expansion_never_turns_quoted_text_into_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    let commands =
+        ["echo skill://demo/x\\\" '\" ; touch F2 ; \"' skill://demo/y\\\"", "echo '\"skill://demo/x;touch${IFS}F3\"'"];
+    for skills in [Vec::new(), vec![demo.clone()]] {
+        let loaded = !skills.is_empty();
+        let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, false).with_skills(skills);
+        let bash = bash::BashTool { ctx };
+        for command in commands {
+            let _ = bash.execute("c", args(json!({"command": command})), CancellationToken::new(), noop()).await;
+        }
+        for marker in ["F2", "F3"] {
+            assert!(!root.join(marker).exists(), "{marker} ran (skills loaded: {loaded})");
+        }
+    }
+}
+
+/// Review F6: `with_skills` gives the context its own list; an earlier clone
+/// keeps resolving against its skills.
+#[test]
+fn with_skills_does_not_touch_earlier_clones() {
+    let a = ToolContext::new("/tmp").with_skills(vec![skill("only-a", "/s/a")]);
+    let b = a.clone().with_skills(vec![skill("only-b", "/s/b")]);
+    assert_eq!(a.resolve_internal_url("skill://only-a").unwrap(), PathBuf::from("/s/a/SKILL.md"));
+    assert!(a.resolve_internal_url("skill://only-b").is_err());
+    assert_eq!(b.resolve_internal_url("skill://only-b").unwrap(), PathBuf::from("/s/b/SKILL.md"));
+    assert!(b.resolve_internal_url("skill://only-a").is_err());
+}

@@ -231,3 +231,46 @@ fn absolute_wsl_profile_is_normalized() {
     });
     assert_eq!(dirs.extra_user_homes, [PathBuf::from("/mnt/c/Users/x")]);
 }
+
+/// Review F1: `findConfigFile` as upstream `main.ts` uses it for `SYSTEM.md`
+/// and `APPEND_SYSTEM.md`. Project dirs are `<cwd>/{.ara,.claude,.codex,.gemini}`
+/// (cwd itself, no walk up); user dirs are the native dir, then foreign
+/// dirs only when that user source is enabled; the project file wins.
+#[test]
+fn prompt_files_follow_config_dir_priority() {
+    use ara_discovery::config_files::ConfigLevel;
+    let dir = tempfile::Builder::new().prefix("ara-config-").tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let (home, cwd) = (root.join("home"), root.join("repo/app"));
+    std::fs::create_dir_all(&cwd).unwrap();
+    let write = |path: PathBuf| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "x").unwrap();
+    };
+    let d = Discovery::new(&home, HostDirs::ara(&home), ProviderPolicy::default());
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), None);
+
+    // Foreign user dirs are opt-in; the native user dir always counts.
+    write(home.join(".codex/SYSTEM.md"));
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), None);
+    let mut policy = ProviderPolicy::default();
+    policy.enabled_user_sources.insert("codex".into());
+    let with_codex = Discovery::new(&home, HostDirs::ara(&home), policy);
+    assert_eq!(with_codex.discover_prompt_file(&cwd, "SYSTEM.md"), Some(home.join(".codex/SYSTEM.md")));
+    write(home.join(".ara/agent/SYSTEM.md"));
+    assert_eq!(with_codex.discover_prompt_file(&cwd, "SYSTEM.md"), Some(home.join(".ara/agent/SYSTEM.md")));
+
+    // A parent's project dir does not count; the cwd's does, before the user's.
+    write(root.join("repo/.ara/SYSTEM.md"));
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), Some(home.join(".ara/agent/SYSTEM.md")));
+    write(cwd.join(".gemini/SYSTEM.md"));
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), Some(cwd.join(".gemini/SYSTEM.md")));
+    write(cwd.join(".claude/SYSTEM.md"));
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), Some(cwd.join(".claude/SYSTEM.md")));
+    write(cwd.join(".ara/SYSTEM.md"));
+    assert_eq!(d.discover_prompt_file(&cwd, "SYSTEM.md"), Some(cwd.join(".ara/SYSTEM.md")));
+    assert_eq!(d.find_config_file(&cwd, "SYSTEM.md", ConfigLevel::User), Some(home.join(".ara/agent/SYSTEM.md")));
+    // `existsSync`: a directory of that name counts too.
+    std::fs::create_dir_all(cwd.join(".ara/APPEND_SYSTEM.md")).unwrap();
+    assert_eq!(d.discover_prompt_file(&cwd, "APPEND_SYSTEM.md"), Some(cwd.join(".ara/APPEND_SYSTEM.md")));
+}

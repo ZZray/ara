@@ -196,9 +196,14 @@ pub fn resolve_skill_url_to_path(skills: &[SkillRef], url: &str) -> Result<PathB
 }
 
 static SKILL_URL_IN_COMMAND: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    // JS `\s` spelled out; unquoted URLs stop before shell syntax.
+    // JS `\s` spelled out; unquoted URLs stop before shell syntax. Backslash
+    // is written `\x5C` so it cannot be mistaken for an escape: every class
+    // excludes it (upstream `[^\s'")`\\;&|<>($]`), otherwise an escaped
+    // quote next to a token is swallowed into the quoted path and flips
+    // quote parity.
     const S: &str = r"\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}";
-    regex::Regex::new(&format!(r#"'skill://[^'{S}")`\\]+'|"skill://[^"{S}')`\\]+"|skill://[^{S}'")`\;&|<>($]+"#))
+    const B: &str = r"\x5C";
+    regex::Regex::new(&format!(r#"'skill://[^'{S}")`{B}]+'|"skill://[^"{S}')`{B}]+"|skill://[^{S}'")`{B};&|<>($]+"#))
         .unwrap()
 });
 
@@ -292,6 +297,11 @@ pub fn expand_skill_urls_strict(command: &str, skills: &[SkillRef]) -> Result<St
 /// `expandInternalUrls` for `skill://`: resolvable URLs become (shell-escaped)
 /// absolute paths; unresolvable ones and mentions inside larger quoted text
 /// stay as written.
+///
+/// Intentional difference: upstream skips only unquoted tokens inside a
+/// shell quote. ARA also skips a quoted token whose opening quote is itself
+/// inside a quote (`echo '"skill://s/x;cmd"'`): that quote is literal text,
+/// and replacing it would end the outer quote and run the rest as commands.
 pub fn expand_skill_urls(command: &str, skills: &[SkillRef], no_escape: bool) -> String {
     if !command.contains("skill://") {
         return command.to_string();
@@ -300,10 +310,10 @@ pub fn expand_skill_urls(command: &str, skills: &[SkillRef], no_escape: bool) ->
         SKILL_URL_IN_COMMAND.find_iter(command).map(|m| (m.start(), m.as_str().to_string())).collect();
     let mut expanded = command.to_string();
     for (index, token) in matches.into_iter().rev() {
-        let quoted = token.starts_with('\'') || token.starts_with('"');
-        if !quoted && is_inside_shell_quote(command, index) {
+        if is_inside_shell_quote(command, index) {
             continue;
         }
+        let quoted = token.starts_with('\'') || token.starts_with('"');
         let url = if quoted { &token[1..token.len() - 1] } else { token.as_str() };
         let Ok(path) = resolve_skill_url_to_path(skills, url) else { continue };
         let path = path.to_string_lossy();

@@ -7,7 +7,6 @@
 //! every earlier request byte-identical.
 
 use ara_ai::{Context, DeveloperMessage, Message, UserBlock, UserContent, UserMessage};
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 const TEMPLATE: &str = include_str!("../prompts/date-cwd-reminder.md");
@@ -40,15 +39,30 @@ fn inject(message: &UserMessage, reminder: &str) -> UserMessage {
     UserMessage { content, ..message.clone() }
 }
 
+/// Upstream keys its state by message object identity (`Map<Message, …>`,
+/// `WeakSet`). Rust transcripts are values rebuilt per request, so a message
+/// is identified by its position *and* content: an injection or control
+/// applies only while the message it was made for is still there unchanged,
+/// and a message counts as seen only if the previous request had the same
+/// message at the same position. A rewritten or shortened transcript thus
+/// gets no stale substitutions and its new user turns are found again.
 #[derive(Default)]
 struct State {
     /// Index and original of the first user message the reminders belong to.
     root: Option<(usize, UserMessage)>,
     current: Option<String>,
-    injections: HashMap<usize, Message>,
-    controls: Vec<(usize, Message)>,
-    /// Messages already seen by an earlier request (transcripts only grow).
-    seen: usize,
+    /// `(index, original, injected)`.
+    injections: Vec<(usize, Message, Message)>,
+    /// `(anchor index, anchor original, developer message)`.
+    controls: Vec<(usize, Message, Message)>,
+    /// The messages of the previous request.
+    seen: Vec<Message>,
+}
+
+impl State {
+    fn is_seen(&self, index: usize, message: &Message) -> bool {
+        self.seen.get(index) == Some(message)
+    }
 }
 
 /// `DateCwdReminderInjector`: keeps reminders append-only across requests.
@@ -83,18 +97,18 @@ impl DateCwdReminder {
                 ..State::default()
             };
             if !starts_with_reminder(&first_user, &reminder) {
-                state.injections.insert(first_index, Message::User(inject(&first_user, &reminder)));
+                let original = Message::User(first_user.clone());
+                state.injections.push((first_index, original, Message::User(inject(&first_user, &reminder))));
             }
         } else if state.current.as_deref() != Some(reminder.as_str()) {
-            let seen = state.seen;
             let new_user = context.messages.iter().enumerate().rev().find_map(|(i, m)| match m {
-                Message::User(u) if i >= seen => Some((i, u)),
+                Message::User(u) if !state.is_seen(i, m) => Some((i, u)),
                 _ => None,
             });
             match new_user {
                 Some((index, user)) => {
                     let injected = Message::User(inject(user, &reminder));
-                    state.injections.insert(index, injected);
+                    state.injections.push((index, Message::User(user.clone()), injected));
                 }
                 None => {
                     let anchor = context.messages.len() - 1;
@@ -102,17 +116,29 @@ impl DateCwdReminder {
                         content: UserContent::Text(reminder.clone()),
                         timestamp: ara_ai::now_ms(),
                     });
-                    state.controls.push((anchor, developer));
+                    state.controls.push((anchor, context.messages[anchor].clone(), developer));
                 }
             }
             state.current = Some(reminder);
         }
         let mut messages = Vec::with_capacity(context.messages.len() + state.controls.len());
         for (index, message) in context.messages.iter().enumerate() {
-            messages.push(state.injections.get(&index).cloned().unwrap_or_else(|| message.clone()));
-            messages.extend(state.controls.iter().filter(|(a, _)| *a == index).map(|(_, m)| m.clone()));
+            let injected = state
+                .injections
+                .iter()
+                .rev()
+                .find(|(i, original, _)| *i == index && original == message)
+                .map(|(_, _, injected)| injected.clone());
+            messages.push(injected.unwrap_or_else(|| message.clone()));
+            messages.extend(
+                state
+                    .controls
+                    .iter()
+                    .filter(|(i, anchor, _)| *i == index && anchor == message)
+                    .map(|(_, _, m)| m.clone()),
+            );
         }
-        state.seen = context.messages.len();
+        state.seen = context.messages.clone();
         Context { messages, ..context }
     }
 }

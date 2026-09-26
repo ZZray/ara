@@ -9,6 +9,7 @@
 
 pub mod at_imports;
 pub mod capability;
+pub mod config_files;
 pub mod context_files;
 pub mod frontmatter;
 pub mod fs;

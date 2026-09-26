@@ -68,7 +68,7 @@ fn ctx_file(path: &Path, content: &str, depth: i64) -> ProjectContextFile {
 }
 
 fn render_text(env: &Env, cwd: &Path, options: &SystemPromptOptions) -> (Vec<String>, String) {
-    let blocks = build_system_prompt(&discovery(env), cwd, options).unwrap();
+    let blocks = build_system_prompt(&discovery(env), cwd, options).unwrap().blocks;
     let joined = blocks.join("\n\n");
     (blocks, joined)
 }
@@ -124,9 +124,12 @@ fn loaded_prompt_text_is_not_resolved_as_a_path() {
     assert!(text.contains(&as_text));
     assert!(!text.contains("File content that must not replace the prompt."));
     // The path-or-text resolution is a separate, explicit step.
-    assert_eq!(resolve_prompt_input(Some(&as_text)).as_deref(), Some("File content that must not replace the prompt."));
-    assert_eq!(resolve_prompt_input(Some("two\nlines")).as_deref(), Some("two\nlines"));
-    assert_eq!(resolve_prompt_input(Some("/no/such/file")).as_deref(), Some("/no/such/file"));
+    let mut warnings = Vec::new();
+    let mut resolve = |input: &str| resolve_prompt_input(Some(input), "system prompt", &mut warnings);
+    assert_eq!(resolve(&as_text).as_deref(), Some("File content that must not replace the prompt."));
+    assert_eq!(resolve("two\nlines").as_deref(), Some("two\nlines"));
+    assert_eq!(resolve("/no/such/file").as_deref(), Some("/no/such/file"));
+    assert!(warnings.is_empty(), "a missing file is not a warning: {warnings:?}");
 }
 
 /// B-ac48bf7bb2
@@ -454,4 +457,117 @@ fn date_cwd_reminder_injection() {
     );
     assert_eq!(second.messages[0], first_injected);
     assert_eq!(user_text(&second.messages[2]), format!("{}\n\nsecond", render_date_cwd_reminder("2026-08-15", "/new")));
+}
+
+// --- review regressions ------------------------------------------------------------
+
+/// Review F8: unreadable prompt inputs and `PERSONALITY.md` warn (upstream
+/// `logger.warn`) and fall back; a missing file stays silent.
+#[test]
+fn unreadable_prompt_inputs_warn_and_fall_back() {
+    let env = env();
+    let mut warnings = Vec::new();
+    let dir = env.root.join("a-directory");
+    fs::create_dir_all(&dir).unwrap();
+    let dir_text = dir.display().to_string();
+    assert_eq!(resolve_prompt_input(Some(&dir_text), "system prompt", &mut warnings), Some(dir_text.clone()));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].starts_with(&format!("Could not read system prompt file {dir_text}: ")), "{warnings:?}");
+    // Invalid UTF-8 is decoded lossily, like `Bun.file().text()`.
+    let latin1 = env.root.join("latin1.md");
+    fs::write(&latin1, b"caf\xe9 rules").unwrap();
+    let text = resolve_prompt_input(Some(&latin1.display().to_string()), "system prompt", &mut warnings).unwrap();
+    assert_eq!(text, "caf\u{FFFD} rules");
+
+    let personality = HostDirs::ara(&env.home).native_user_dir.join("PERSONALITY.md");
+    fs::create_dir_all(personality.parent().unwrap()).unwrap();
+    for (setup, expected) in [
+        (Some("   \n"), "PERSONALITY.md is empty; using the configured personality preset"),
+        (None, "Failed to read PERSONALITY.md; using the configured personality preset"),
+    ] {
+        let _ = fs::remove_file(&personality);
+        let _ = fs::remove_dir(&personality);
+        match setup {
+            Some(content) => fs::write(&personality, content).unwrap(),
+            None => fs::create_dir(&personality).unwrap(),
+        }
+        let built = build_system_prompt(&discovery(&env), &env.root, &explicit()).unwrap();
+        assert!(built.warnings.iter().any(|w| w.starts_with(expected)), "{:?}", built.warnings);
+    }
+    let _ = fs::remove_dir(&personality);
+    let built = build_system_prompt(&discovery(&env), &env.root, &explicit()).unwrap();
+    assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+}
+
+/// Review F9: extra workspace roots contribute their context files even when
+/// the caller supplies the cwd's files.
+#[test]
+fn additional_roots_load_with_supplied_context_files() {
+    let env = env();
+    let extra = env.root.join("extra-root");
+    fs::create_dir_all(&extra).unwrap();
+    fs::write(extra.join("AGENTS.md"), "Rule from the extra root.").unwrap();
+    let supplied = ctx_file(&env.root.join("AGENTS.md"), "Rule supplied by the host.", 0);
+    let options = SystemPromptOptions {
+        context_files: Some(vec![supplied]),
+        additional_workspace_roots: vec![extra.clone()],
+        ..explicit()
+    };
+    let (_, text) = render_text(&env, &env.root, &options);
+    assert!(text.contains("Rule supplied by the host."), "{text}");
+    assert!(text.contains("Rule from the extra root."), "{text}");
+}
+
+fn ctx(messages: Vec<Message>) -> Context {
+    Context { system_prompt: vec!["s".into()], messages, tools: None }
+}
+
+/// Review F4: state follows the messages it was made for. A rewritten or
+/// shortened transcript gets no stale content, and its new user turns are
+/// found again.
+#[test]
+fn reminder_follows_rewritten_and_shortened_transcripts() {
+    let r = |date: &str| render_date_cwd_reminder(date, "/w");
+    let injector = DateCwdReminder::new();
+    injector.transform(ctx(vec![user("first", 1)]), "day1", "/w");
+    let out = injector.transform(ctx(vec![user("first", 1), assistant("a"), user("second", 2)]), "day2", "/w");
+    assert_eq!(user_text(&out.messages[2]), format!("{}\n\nsecond", r("day2")));
+
+    // The host rewrites the tail: the edited turn is sent as written.
+    let out = injector.transform(ctx(vec![user("first", 1), assistant("a"), user("EDITED PROMPT", 3)]), "day2", "/w");
+    assert_eq!(user_text(&out.messages[2]), "EDITED PROMPT");
+    assert_eq!(user_text(&out.messages[0]), format!("{}\n\nfirst", r("day1")));
+
+    // Shrink, then a new turn at the same index: it is new, so a changed
+    // reminder attaches to it.
+    injector.transform(ctx(vec![user("first", 1)]), "day2", "/w");
+    let out = injector.transform(ctx(vec![user("first", 1), assistant("b"), user("third", 4)]), "day3", "/w");
+    assert_eq!(user_text(&out.messages[2]), format!("{}\n\nthird", r("day3")));
+}
+
+/// The date changes with no new user turn (e.g. after tool results): the
+/// reminder rides a developer turn after the last message, and that turn
+/// stays in place, unchanged, on later requests. Upstream
+/// `DateCwdReminderInjector` `#controls`.
+#[test]
+fn reminder_developer_fallback_is_append_only() {
+    let injector = DateCwdReminder::new();
+    let base = vec![user("first", 1), assistant("calling a tool")];
+    injector.transform(ctx(base.clone()), "day1", "/w");
+    let out = injector.transform(ctx(base.clone()), "day2", "/w");
+    assert_eq!(out.messages.len(), 3);
+    let Message::Developer(dev) = &out.messages[2] else { panic!("{:?}", out.messages[2]) };
+    assert_eq!(dev.content.plain_text(), render_date_cwd_reminder("day2", "/w"));
+    let developer = out.messages[2].clone();
+
+    let mut longer = base.clone();
+    longer.push(assistant("more"));
+    let out = injector.transform(ctx(longer.clone()), "day2", "/w");
+    assert_eq!(out.messages.len(), 4);
+    assert_eq!(out.messages[2], developer, "the developer turn stays after its anchor");
+    assert_eq!(out.messages[3], longer[2]);
+
+    // The anchor is rewritten: the developer turn goes with it.
+    let out = injector.transform(ctx(vec![user("first", 1), assistant("rewritten")]), "day2", "/w");
+    assert_eq!(out.messages.len(), 2);
 }
