@@ -4,6 +4,8 @@
 //! at 596f2da7101178214aa27a753529d15e6b7ad91d (MIT; see
 //! THIRD_PARTY_NOTICES.md). Native exact tokenizer families are not ported yet.
 //! These estimates are for sizing and display, not a context-limit gate.
+//! Raw byte length is not a universal token upper bound: pinned Claude
+//! fixtures contain content counts larger than their UTF-8 byte lengths.
 
 use ara_ai::{AssistantBlock, Message, UserBlock, UserContent};
 
@@ -14,17 +16,8 @@ pub const IMAGE_TOKEN_ESTIMATE: usize = 1200;
 pub enum EstimateMode {
     /// Sum `ceil(UTF-8 bytes / 4)` separately for each fragment.
     Approximate,
-    /// Sum raw UTF-8 byte lengths. A text token cannot consume fewer than one byte.
-    ByteUpperBound,
-}
-
-/// A cheap budget probe that never rejects text on a heuristic estimate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BudgetProbe {
-    /// The byte upper bound itself fits; exact tokenization is unnecessary.
-    Fits { upper_bound_bytes: usize },
-    /// Exact tokenization is needed before deciding whether the text fits.
-    NeedsExactCount { upper_bound_bytes: usize },
+    /// Sum raw UTF-8 byte lengths. This is a size observation, not a token bound.
+    RawUtf8Bytes,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,21 +29,12 @@ pub struct MessageCountOptions {
 pub fn count_text(text: &str, mode: EstimateMode) -> usize {
     match mode {
         EstimateMode::Approximate => text.len().saturating_add(3) / 4,
-        EstimateMode::ByteUpperBound => text.len(),
+        EstimateMode::RawUtf8Bytes => text.len(),
     }
 }
 
 pub fn count_fragments<'a>(fragments: impl IntoIterator<Item = &'a str>, mode: EstimateMode) -> usize {
     fragments.into_iter().fold(0usize, |sum, fragment| sum.saturating_add(count_text(fragment, mode)))
-}
-
-pub fn probe_budget<'a>(fragments: impl IntoIterator<Item = &'a str>, budget: usize) -> BudgetProbe {
-    let upper_bound_bytes = count_fragments(fragments, EstimateMode::ByteUpperBound);
-    if upper_bound_bytes <= budget {
-        BudgetProbe::Fits { upper_bound_bytes }
-    } else {
-        BudgetProbe::NeedsExactCount { upper_bound_bytes }
-    }
 }
 
 fn count_user_content(content: &UserContent) -> usize {

@@ -1,6 +1,5 @@
 use ara_agent::tokenizer::{
-    BudgetProbe, EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, count_fragments, count_message,
-    count_messages, count_text, probe_budget,
+    EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, count_fragments, count_message, count_messages, count_text,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall,
@@ -15,17 +14,18 @@ fn image() -> ImageContent {
 #[test]
 fn utf8_estimates_round_each_fragment() {
     assert_eq!(count_text("hello world", EstimateMode::Approximate), 3);
-    assert_eq!(count_text("hello world", EstimateMode::ByteUpperBound), 11);
+    assert_eq!(count_text("hello world", EstimateMode::RawUtf8Bytes), 11);
     assert_eq!(count_fragments(["é", "a"], EstimateMode::Approximate), 2);
     assert_eq!(count_fragments(["éa"], EstimateMode::Approximate), 1);
-    assert_eq!(count_fragments(["é", "a"], EstimateMode::ByteUpperBound), 3);
+    assert_eq!(count_fragments(["é", "a"], EstimateMode::RawUtf8Bytes), 3);
 }
 
 #[test]
-fn budget_probe_never_rejects_on_an_approximation() {
-    assert_eq!(probe_budget(["é", "a"], 3), BudgetProbe::Fits { upper_bound_bytes: 3 });
-    assert_eq!(probe_budget(["hello world"], 4), BudgetProbe::NeedsExactCount { upper_bound_bytes: 11 });
-    assert_eq!(probe_budget([""], 0), BudgetProbe::Fits { upper_bound_bytes: 0 });
+fn raw_bytes_are_only_an_observation() {
+    assert_eq!(count_fragments([""], EstimateMode::RawUtf8Bytes), 0);
+    assert_eq!(count_fragments(["ξ"], EstimateMode::RawUtf8Bytes), 2);
+    // The pinned Claude fixture counts this two-byte text as three content
+    // tokens, so no fit/exceeds verdict may be inferred from this value.
 }
 
 #[test]
