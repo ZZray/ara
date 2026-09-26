@@ -46,6 +46,7 @@ limit. No Claude review was used.
 The full backend gate is red and no bounded real-model task or complete
 Agent host receipt ran on this commit. AI-01e and the overall gate remain
 open; the local code commit is explicitly WIP. Accepted counts stay at
-AI 6/7 and P0-P6 1/7. Cross-protocol Responses composite-ID pairing,
-target-specific ID normalization and other provider replay differences
-remain separate open work.
+AI 6/7 and P0-P6 1/7. Cross-protocol Responses composite-ID pairing and
+Chat wire mapping were added as local WIP `3271bb7` in a later
+[receipt](ai-01e-composite-tool-ids.md). Native Responses encoding,
+other target-specific ID rules and provider replay differences remain open.

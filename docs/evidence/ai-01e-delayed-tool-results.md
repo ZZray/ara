@@ -26,7 +26,9 @@ transformed list before building the outbound request.
 
 This slice leaves the Agent loop, Session, CLI, tool effects, provider route,
 retry policy, budget and usage accounting unchanged. Cross-protocol Responses
-composite-ID pairing, target-specific ID normalization and thinking-block
+composite-ID pairing and Chat wire mapping were added separately in local
+WIP `3271bb7`; see [its receipt](ai-01e-composite-tool-ids.md). Native
+Responses encoding, other target-specific ID rules and thinking-block
 conversion remain open. Malformed-call sanitization was added separately in
 local WIP `b17c690`; see [its receipt](ai-01e-malformed-tool-calls.md).
 
