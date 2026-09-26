@@ -139,6 +139,68 @@ async fn delayed_real_tool_result_reaches_the_wire_before_guidance() {
 }
 
 #[tokio::test]
+async fn malformed_tool_call_and_result_do_not_reach_openai_wire() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [{"events": [text("continued"), finish("stop"), done()]}]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut assistant = AssistantMessage::empty("openai-completions", "fake", "fake-model");
+    assistant.stop_reason = StopReason::ToolUse;
+    assistant.content = vec![
+        AssistantBlock::text("Reading files."),
+        AssistantBlock::ToolCall(ToolCall {
+            id: "bad".into(),
+            name: "".into(),
+            arguments: Default::default(),
+            thought_signature: None,
+        }),
+        AssistantBlock::ToolCall(ToolCall {
+            id: "good".into(),
+            name: "read".into(),
+            arguments: serde_json::from_value(json!({"path": "good.txt"})).unwrap(),
+            thought_signature: None,
+        }),
+    ];
+    let mut context = ctx();
+    context.messages = vec![
+        Message::User(UserMessage::text("read two files")),
+        Message::Assistant(assistant),
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: "bad".into(),
+            tool_name: "".into(),
+            content: vec![UserBlock::text("Tool not found")],
+            details: None,
+            is_error: true,
+            timestamp: 2,
+        }),
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: "good".into(),
+            tool_name: "read".into(),
+            content: vec![UserBlock::text("real file contents")],
+            details: None,
+            is_error: false,
+            timestamp: 3,
+        }),
+        Message::User(UserMessage::text("continue")),
+    ];
+    let (_, answer) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), context, opts())).await;
+    assert_eq!(answer.text(), "continued");
+    let reqs = server.requests.lock().await;
+    assert_eq!(reqs.len(), 1);
+    let wire = reqs[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(wire.len(), 5);
+    assert_eq!(wire[2]["content"], "Reading files.");
+    assert_eq!(wire[2]["tool_calls"].as_array().unwrap().len(), 1);
+    assert_eq!(wire[2]["tool_calls"][0]["id"], "good");
+    assert_eq!(wire[2]["tool_calls"][0]["function"]["name"], "read");
+    assert_eq!(wire[3], json!({"role": "tool", "content": "real file contents", "tool_call_id": "good"}));
+    assert_eq!(wire[4], json!({"role": "user", "content": "continue"}));
+}
+
+#[tokio::test]
 async fn retries_429_then_succeeds() {
     let server = FakeUpstream::start(
         script(json!({"responses": [

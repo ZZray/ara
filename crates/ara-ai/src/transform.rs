@@ -38,6 +38,58 @@ fn synthetic_result(call: &ToolCall, text: &str, timestamp: i64) -> Message {
     })
 }
 
+/// Remove calls a provider cannot replay and their occurrence-matched results
+/// before duplicate-ID repair. Result queues belong to one assistant turn and
+/// are discarded at each non-result boundary.
+fn sanitize_malformed_tool_calls(messages: &[Message]) -> Vec<Message> {
+    let has_malformed = messages
+        .iter()
+        .filter_map(Message::as_assistant)
+        .any(|assistant| assistant.tool_calls().any(|call| call.id.trim().is_empty() || call.name.trim().is_empty()));
+    if !has_malformed {
+        return messages.to_vec();
+    }
+
+    let mut drop_queues: HashMap<String, VecDeque<bool>> = HashMap::new();
+    let mut output = Vec::with_capacity(messages.len());
+    for message in messages {
+        match message {
+            Message::Assistant(assistant) => {
+                drop_queues.clear();
+                let mut assistant = assistant.clone();
+                assistant.content.retain(|block| {
+                    let AssistantBlock::ToolCall(call) = block else { return true };
+                    let malformed = call.id.trim().is_empty() || call.name.trim().is_empty();
+                    drop_queues.entry(call.id.clone()).or_default().push_back(malformed);
+                    !malformed
+                });
+                if !assistant.content.is_empty() {
+                    output.push(Message::Assistant(assistant));
+                }
+            }
+            Message::ToolResult(result) => {
+                let drop = if let Some(queue) = drop_queues.get_mut(&result.tool_call_id) {
+                    let drop = queue.pop_front().unwrap_or(false);
+                    if queue.is_empty() {
+                        drop_queues.remove(&result.tool_call_id);
+                    }
+                    drop
+                } else {
+                    false
+                };
+                if !drop {
+                    output.push(message.clone());
+                }
+            }
+            _ => {
+                drop_queues.clear();
+                output.push(message.clone());
+            }
+        }
+    }
+    output
+}
+
 fn append_duplicate_suffix(id: &str, suffix: &str) -> String {
     // OMP caps each segment so a suffix remains valid for strict replay
     // providers. Composite IDs receive the suffix on each segment.
@@ -125,7 +177,8 @@ fn take_real_result(
 }
 
 pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
-    let messages = deduplicate_tool_call_ids(messages);
+    let messages = sanitize_malformed_tool_calls(messages);
+    let messages = deduplicate_tool_call_ids(&messages);
     let mut result_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, message) in messages.iter().enumerate() {
         if let Message::ToolResult(result) = message {
@@ -514,5 +567,90 @@ mod tests {
         assert_eq!(result.content, vec![UserBlock::text("failure details")]);
         assert!(result.is_error);
         assert_eq!(result.timestamp, 42);
+    }
+
+    fn named_call(id: &str, name: &str) -> AssistantBlock {
+        AssistantBlock::ToolCall(ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        })
+    }
+
+    fn assistant_blocks(blocks: Vec<AssistantBlock>) -> Message {
+        let mut message = AssistantMessage::empty("openai-completions", "p", "m");
+        message.stop_reason = StopReason::ToolUse;
+        message.content = blocks;
+        Message::Assistant(message)
+    }
+
+    #[test]
+    fn malformed_call_and_its_result_are_removed_without_losing_text_or_valid_call() {
+        let input = vec![
+            Message::User(UserMessage::text("read both")),
+            assistant_blocks(vec![
+                AssistantBlock::text("Reading files."),
+                named_call("bad", "  "),
+                named_call("good", "read"),
+            ]),
+            result_text("bad", "Tool not found"),
+            result_text("good", "real file contents"),
+            Message::User(UserMessage::text("continue")),
+        ];
+        let original = input.clone();
+        let output = transform_messages(&input);
+        assert_eq!(input, original);
+        assert_eq!(
+            texts(&output),
+            vec!["user:read both", "assistant", "result:good:real file contents", "user:continue"]
+        );
+        let assistant = output[1].as_assistant().unwrap();
+        assert_eq!(assistant.content, vec![AssistantBlock::text("Reading files."), named_call("good", "read")]);
+        assert_eq!(transform_messages(&output), output);
+    }
+
+    #[test]
+    fn empty_id_and_malformed_only_turn_are_removed() {
+        let input = vec![
+            assistant_blocks(vec![named_call(" ", "read")]),
+            result_text(" ", "bad result"),
+            assistant_blocks(vec![named_call("good", "read"), named_call("", "read")]),
+            result_text("good", "good result"),
+            result_text("", "empty id result"),
+        ];
+        let output = transform_messages(&input);
+        assert_eq!(texts(&output), vec!["assistant", "result:good:good result"]);
+        assert_eq!(output[0].as_assistant().unwrap().content, vec![named_call("good", "read")]);
+    }
+
+    #[test]
+    fn repeated_id_drops_only_the_malformed_occurrences_result() {
+        let input = vec![
+            assistant_blocks(vec![named_call("shared", ""), named_call("shared", "read")]),
+            result_text("shared", "rejected"),
+            result_text("shared", "real"),
+        ];
+        let output = transform_messages(&input);
+        assert_eq!(texts(&output), vec!["assistant", "result:shared:real"]);
+        assert_eq!(output[0].as_assistant().unwrap().content, vec![named_call("shared", "read")]);
+
+        let reversed = vec![
+            assistant_blocks(vec![named_call("shared", "read"), named_call("shared", "")]),
+            result_text("shared", "real"),
+            result_text("shared", "rejected"),
+        ];
+        assert_eq!(texts(&transform_messages(&reversed)), vec!["assistant", "result:shared:real"]);
+    }
+
+    #[test]
+    fn missing_malformed_result_cannot_consume_later_reused_id() {
+        let input = vec![
+            assistant_blocks(vec![named_call("shared", "")]),
+            Message::User(UserMessage::text("try again")),
+            assistant_blocks(vec![named_call("shared", "read")]),
+            result_text("shared", "real"),
+        ];
+        assert_eq!(texts(&transform_messages(&input)), vec!["user:try again", "assistant", "result:shared:real"]);
     }
 }
