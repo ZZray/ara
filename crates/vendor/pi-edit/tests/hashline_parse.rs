@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use pi_edit::modes::hashline::{
 	format::{
 		format_cut_header, format_hashline_header, format_numbered_line, format_numbered_lines,
@@ -622,9 +620,10 @@ fn input_supports_fallback_path_and_absolute_paths_in_cwd() {
 	let fallback = SplitOptions { cwd: None, path: Some("a.ts") };
 	let patch = Patch::parse("PUT <1:\n+x", &fallback).unwrap();
 	assert_eq!(patch.sections[0].path, "a.ts");
-	let cwd = Path::new("/tmp/work");
-	let options = SplitOptions { cwd: Some(cwd), path: None };
-	let patch = Patch::parse("[/tmp/work/src/a.ts]\nPUT <1:\n+x", &options).unwrap();
+	let cwd = std::env::current_dir().unwrap().join("work");
+	let options = SplitOptions { cwd: Some(&cwd), path: None };
+	let absolute_input = format!("[{}]\nPUT <1:\n+x", cwd.join("src/a.ts").display());
+	let patch = Patch::parse(&absolute_input, &options).unwrap();
 	assert_eq!(patch.sections[0].path, "src/a.ts");
 	assert!(Patch::parse("plain text", &fallback).is_err());
 }

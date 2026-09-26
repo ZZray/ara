@@ -53,13 +53,11 @@ reaping cases each waited for a still-open descendant pipe. These are real
 Windows process-tree cleanup failures; test limits were not relaxed.
 
 A diagnostic workspace run that explicitly skipped those three tests reached
-`pi-edit --test hashline_parity`: 8/10 passed. One failing assertion uses a
+`pi-edit --test hashline_parity`: 8/10 passed. One failing assertion used a
 Unix `/workspace` absolute path in a pure parser test. The other, a streaming
 preview of a nested file through a bare hashline header, returned zero files
 instead of one on Windows. The latter is an unresolved edit path-recovery
-behavior and is not waived as a fixture mismatch. Tests after that target,
-the backend script's full gate, and bounded real-model tasks have not passed
-on this candidate.
+behavior and is not waived as a fixture mismatch.
 
 The failing parity cases are
 `pure_format_input_and_streaming_contracts_cover_uncaptured_cases` and
@@ -69,6 +67,24 @@ The diagnostic command was:
 ```powershell
 $env:PATH = 'C:\Program Files\Git\usr\bin;' + $env:PATH
 cargo test --workspace --all-targets --all-features --quiet -- --skip deadline_during_a_tool_and_zero_budget_exit_nonzero --skip bash_timeout_kills_process_group --skip bash_keeps_stream_order_and_reaps_background_children
+```
+
+On the follow-up test-only snapshot, `hashline_parity` is 9/10 after the
+pure parser test uses a native absolute path. `hashline_parse` is 41/41 after
+the same fixture correction. `hashline_patcher` is 5/6: the case
+`patcher_apply_cases` fails to redirect a bare `a.txt` header to the tagged
+`nested/a.txt`, leaving the file unchanged. This and the streaming preview
+failure share the Windows verbatim-prefix mismatch in the worktree containment
+check; the CLI's explicit `--cwd` can reach that path. No editor runtime code
+was changed. A diagnostic **five-skip** workspace command (the three Bash
+cases plus `hashline_streaming_preview_cases_preserve_partial_and_final_contracts`
+and `patcher_apply_cases`) exited 0 across the remaining workspace tests.
+This is not an unfiltered gate pass. The backend script's full gate and bounded
+real-model tasks have not passed on the follow-up snapshot.
+
+```powershell
+$env:PATH = 'C:\Program Files\Git\usr\bin;' + $env:PATH
+cargo test --workspace --all-targets --all-features --quiet -- --skip deadline_during_a_tool_and_zero_budget_exit_nonzero --skip bash_timeout_kills_process_group --skip bash_keeps_stream_order_and_reaps_background_children --skip hashline_streaming_preview_cases_preserve_partial_and_final_contracts --skip patcher_apply_cases
 ```
 
 The Windows CLI SIGINT and crash-resume process cases remain Unix-gated, so

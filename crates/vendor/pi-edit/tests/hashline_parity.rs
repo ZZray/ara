@@ -433,12 +433,13 @@ fn pure_format_input_and_streaming_contracts_cover_uncaptured_cases() {
 	assert_eq!(section.file_hash.as_deref(), Some("1A2B"));
 	assert_eq!(section.diff, "PUT 2.=2:\n+BBB");
 
-	let cwd = Path::new("/workspace");
+	let cwd = std::env::current_dir().unwrap().join("workspace");
 	let patch = Patch::parse("\n[foo.ts]\nPUT <1:\n+x", &SplitOptions::default())
 		.expect("normalizes leading blanks, cwd-relative paths, and explicit fallback paths");
 	assert_eq!(patch.sections[0].path, "foo.ts");
-	let absolute = Patch::parse("[/workspace/src/foo.ts]\nPUT <1:\n+x", &SplitOptions {
-		cwd:  Some(cwd),
+	let absolute_input = format!("[{}]\nPUT <1:\n+x", cwd.join("src/foo.ts").display());
+	let absolute = Patch::parse(&absolute_input, &SplitOptions {
+		cwd:  Some(&cwd),
 		path: None,
 	})
 	.expect("cwd relative");
