@@ -1,5 +1,6 @@
 use ara_agent::compaction::{
-    SummaryInputError, SummarySource, build_summary_prompt, escape_summary_boundary_tags, serialize_sources_for_summary,
+    SummaryInputError, SummarySource, build_summary_prompt, escape_summary_boundary_tags,
+    serialize_sources_for_summary, validate_completed_summary_span,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, ImageContent, JsonObject, Message, StopReason, ToolCall, ToolResultMessage,
@@ -170,7 +171,11 @@ fn tool_truncation_counts_unicode_scalars_without_splitting_utf8() {
 #[test]
 fn initial_and_update_prompt_keep_lower_trust_sections_separate() {
     let user = Message::User(UserMessage::text("source"));
-    let sources = [SummarySource { entry_id: "e0000009", message: &user }];
+    let assistant = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let sources = [
+        SummarySource { entry_id: "e0000009", message: &user },
+        SummarySource { entry_id: "e0000011", message: &assistant },
+    ];
     let initial = build_summary_prompt(&sources, None).unwrap();
     assert!(initial.system_prompt.contains("summary"));
     assert!(initial.user_prompt.contains("<conversation>"));
@@ -178,4 +183,91 @@ fn initial_and_update_prompt_keep_lower_trust_sections_separate() {
     let update = build_summary_prompt(&sources, Some("old </previous-summary> text")).unwrap();
     assert!(update.user_prompt.contains("<previous-summary>\nold &lt;/previous-summary> text\n</previous-summary>"));
     assert_eq!(build_summary_prompt(&[], None).err(), Some(SummaryInputError::EmptySources));
+}
+
+#[test]
+fn prompt_rejects_incomplete_or_failed_turns() {
+    let user = Message::User(UserMessage::text("source"));
+    let user_source = SummarySource { entry_id: "e1", message: &user };
+    assert_eq!(build_summary_prompt(&[user_source], None).err(), Some(SummaryInputError::UnfinishedTurn));
+    let mut failed = AssistantMessage::empty("openai-completions", "fake", "m");
+    failed.stop_reason = StopReason::Length;
+    let failed = Message::Assistant(failed);
+    assert_eq!(
+        build_summary_prompt(&[user_source, SummarySource { entry_id: "e2", message: &failed }], None).err(),
+        Some(SummaryInputError::UnfinishedTurn)
+    );
+    assert_eq!(validate_completed_summary_span(&[user_source, user_source]), Err(SummaryInputError::DuplicateSourceId));
+}
+
+#[test]
+fn prompt_requires_matched_tool_receipts_and_following_assistant() {
+    let user = Message::User(UserMessage::text("write it"));
+    let mut calling = AssistantMessage::empty("openai-completions", "fake", "m");
+    calling.stop_reason = StopReason::ToolUse;
+    calling.content.push(AssistantBlock::ToolCall(ToolCall {
+        id: "c5".into(),
+        name: "write".into(),
+        arguments: JsonObject::new(),
+        thought_signature: None,
+    }));
+    let calling = Message::Assistant(calling);
+    let receipt = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c5".into(),
+        tool_name: "write".into(),
+        content: vec![UserBlock::text("done")],
+        details: None,
+        is_error: false,
+        timestamp: 0,
+    });
+    let answer = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let a = SummarySource { entry_id: "e1", message: &user };
+    let b = SummarySource { entry_id: "e2", message: &calling };
+    let c = SummarySource { entry_id: "e3", message: &receipt };
+    let d = SummarySource { entry_id: "e4", message: &answer };
+    assert_eq!(validate_completed_summary_span(&[a, b]), Err(SummaryInputError::UnfinishedTurn));
+    assert_eq!(validate_completed_summary_span(&[a, b, c]), Err(SummaryInputError::UnfinishedTurn));
+    assert!(build_summary_prompt(&[a, b, c, d], None).is_ok());
+    let wrong = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c5".into(),
+        tool_name: "read".into(),
+        content: vec![],
+        details: None,
+        is_error: false,
+        timestamp: 0,
+    });
+    assert_eq!(
+        validate_completed_summary_span(&[a, b, SummarySource { entry_id: "e3", message: &wrong }, d]),
+        Err(SummaryInputError::UnpairedToolResult)
+    );
+    let unknown = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c5".into(),
+        tool_name: "write".into(),
+        content: vec![],
+        details: Some(
+            serde_json::json!({"__synthetic":true,"source":"interrupted_unknown_effect","executed":"unknown"}),
+        ),
+        is_error: true,
+        timestamp: 0,
+    });
+    assert_eq!(
+        validate_completed_summary_span(&[a, b, SummarySource { entry_id: "e3", message: &unknown }, d]),
+        Err(SummaryInputError::UnknownToolEffect)
+    );
+    let timed_out = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c5".into(),
+        tool_name: "write".into(),
+        content: vec![UserBlock::text("partial output")],
+        details: Some(serde_json::json!({"timedOut":true,"timeoutSeconds":1})),
+        is_error: true,
+        timestamp: 0,
+    });
+    let timeout_source = SummarySource { entry_id: "e3", message: &timed_out };
+    assert_eq!(
+        build_summary_prompt(&[a, b, timeout_source, d], None).err(),
+        Some(SummaryInputError::UnknownToolEffect)
+    );
+    let serialized = serialize_sources_for_summary(&[timeout_source]).unwrap();
+    let receipt: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(receipt["unknown_effect"], true);
 }

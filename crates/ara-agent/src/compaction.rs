@@ -5,9 +5,10 @@
 //! ARA uses JSONL provenance, excludes private reasoning, and bounds input.
 //! This module does not choose a cut point, call a model or change context.
 
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
-use ara_ai::{AssistantBlock, JsonObject, Message, UserBlock, UserContent};
+use ara_ai::{AssistantBlock, JsonObject, Message, StopReason, ToolResultMessage, UserBlock, UserContent};
 use serde::Serialize;
 
 const TOOL_RESULT_MAX_CHARS: usize = 2_000;
@@ -27,6 +28,10 @@ pub enum SummaryInputError {
     UnsupportedImage,
     TooManySources,
     TooLarge,
+    DuplicateSourceId,
+    UnfinishedTurn,
+    UnpairedToolResult,
+    UnknownToolEffect,
 }
 
 impl std::fmt::Display for SummaryInputError {
@@ -39,6 +44,12 @@ impl std::fmt::Display for SummaryInputError {
             }
             Self::TooManySources => f.write_str("compaction has too many source messages for one summary request"),
             Self::TooLarge => f.write_str("compaction input is too large for one summary request"),
+            Self::DuplicateSourceId => f.write_str("compaction source entry IDs must be unique"),
+            Self::UnfinishedTurn => f.write_str("compaction source span does not end at a completed assistant turn"),
+            Self::UnpairedToolResult => f.write_str("compaction source span has an unmatched tool result"),
+            Self::UnknownToolEffect => {
+                f.write_str("compaction cannot hide a tool call whose execution effect is unknown")
+            }
         }
     }
 }
@@ -115,6 +126,82 @@ fn truncate_tool_result(text: &str) -> String {
     let kept: String = chars.by_ref().take(TOOL_RESULT_MAX_CHARS).collect();
     let omitted = chars.count();
     if omitted == 0 { kept } else { format!("{kept}\n\n[... {omitted} more characters truncated]") }
+}
+
+fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
+    result.details.as_ref().is_some_and(|details| {
+        details.get("timedOut").and_then(serde_json::Value::as_bool) == Some(true)
+            || (details.get("__synthetic").and_then(serde_json::Value::as_bool) == Some(true)
+                && details.get("source").and_then(serde_json::Value::as_str) == Some("interrupted_unknown_effect")
+                && details.get("executed").and_then(serde_json::Value::as_str) == Some("unknown"))
+    })
+}
+
+/// Check that a proposed span ends after a completed assistant turn and does
+/// not hide an unpaired or unknown-effect tool call. The Session owner must
+/// still prove IDs and messages correspond to the current branch and commit
+/// against that branch's leaf.
+pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<(), SummaryInputError> {
+    if sources.is_empty() {
+        return Err(SummaryInputError::EmptySources);
+    }
+    if sources.len() > MAX_SUMMARY_SOURCES {
+        return Err(SummaryInputError::TooManySources);
+    }
+    let mut seen_ids = HashSet::new();
+    let mut pending: HashMap<&str, &str> = HashMap::new();
+    let mut awaiting_assistant = false;
+    let mut last_complete_assistant = false;
+    for source in sources {
+        if source.entry_id.is_empty() || !source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(SummaryInputError::InvalidSourceId);
+        }
+        if !seen_ids.insert(source.entry_id) {
+            return Err(SummaryInputError::DuplicateSourceId);
+        }
+        match source.message {
+            Message::User(_) | Message::Developer(_) => {
+                if !pending.is_empty() || awaiting_assistant {
+                    return Err(SummaryInputError::UnfinishedTurn);
+                }
+                last_complete_assistant = false;
+            }
+            Message::Assistant(assistant) => {
+                if !pending.is_empty() {
+                    return Err(SummaryInputError::UnfinishedTurn);
+                }
+                awaiting_assistant = false;
+                let calls: Vec<_> = assistant.tool_calls().collect();
+                match assistant.stop_reason {
+                    StopReason::Stop if calls.is_empty() => last_complete_assistant = true,
+                    StopReason::Stop | StopReason::ToolUse if !calls.is_empty() => {
+                        last_complete_assistant = false;
+                        awaiting_assistant = true;
+                        for call in calls {
+                            if pending.insert(&call.id, &call.name).is_some() {
+                                return Err(SummaryInputError::UnfinishedTurn);
+                            }
+                        }
+                    }
+                    _ => return Err(SummaryInputError::UnfinishedTurn),
+                }
+            }
+            Message::ToolResult(result) => {
+                if has_unknown_tool_effect(result) {
+                    return Err(SummaryInputError::UnknownToolEffect);
+                }
+                match pending.remove(result.tool_call_id.as_str()) {
+                    Some(name) if name == result.tool_name => {}
+                    _ => return Err(SummaryInputError::UnpairedToolResult),
+                }
+                last_complete_assistant = false;
+            }
+        }
+    }
+    if !pending.is_empty() || awaiting_assistant || !last_complete_assistant {
+        return Err(SummaryInputError::UnfinishedTurn);
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -223,12 +310,7 @@ pub fn serialize_sources_for_summary(sources: &[SummarySource<'_>]) -> Result<St
                         UserBlock::Image(_) => return Err(SummaryInputError::UnsupportedImage),
                     }
                 }
-                let unknown_effect = result.details.as_ref().is_some_and(|details| {
-                    details.get("__synthetic").and_then(serde_json::Value::as_bool) == Some(true)
-                        && details.get("source").and_then(serde_json::Value::as_str)
-                            == Some("interrupted_unknown_effect")
-                        && details.get("executed").and_then(serde_json::Value::as_str) == Some("unknown")
-                });
+                let unknown_effect = has_unknown_tool_effect(result);
                 SummaryEntry::ToolResult {
                     entry_id: source.entry_id,
                     tool_call_id: &result.tool_call_id,
@@ -262,9 +344,7 @@ pub fn build_summary_prompt(
     sources: &[SummarySource<'_>],
     previous_summary: Option<&str>,
 ) -> Result<SummaryPrompt, SummaryInputError> {
-    if sources.is_empty() {
-        return Err(SummaryInputError::EmptySources);
-    }
+    validate_completed_summary_span(sources)?;
     let conversation = serialize_sources_for_summary(sources)?;
     let previous = previous_summary.filter(|s| !s.trim().is_empty());
     if previous.is_some_and(|s| s.len() > MAX_SUMMARY_INPUT_BYTES.saturating_sub(conversation.len())) {

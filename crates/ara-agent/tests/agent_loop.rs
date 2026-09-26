@@ -1,6 +1,7 @@
 //! Agent loop behavior tests (OMP `packages/agent/test/agent-loop.test.ts` themes)
 //! with a scripted in-process provider, plus one real HTTP chain case.
 
+use ara_agent::compaction::{SummarySource, build_summary_prompt};
 use ara_agent::*;
 use ara_ai::event::EventSink;
 use ara_ai::*;
@@ -314,6 +315,32 @@ async fn simple_prompt_event_sequence() {
     assert_eq!(provider.contexts.lock().unwrap()[0].system_prompt, vec!["sys".to_string()]);
     let updates = sink.events.lock().await.iter().filter(|e| matches!(e, AgentEvent::MessageUpdate { .. })).count();
     assert_eq!(updates, 3, "text_start/delta/end streamed as message_update");
+}
+
+#[tokio::test]
+async fn stop_with_tool_calls_is_a_completed_compaction_span_after_receipt_and_answer() {
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("c1", "echo", json!({"text": "one"}))], StopReason::Stop),
+        reply("done", &[], StopReason::Stop),
+    ]);
+    let (tool, _) = echo(1, Concurrency::Shared);
+    let sink = RecordingSink::default();
+    let mut context = Vec::new();
+    let report = agent_loop(
+        vec![user("go")],
+        &mut context,
+        &config(provider, vec![tool], Arc::new(NoHooks)),
+        &CancellationToken::new(),
+        &sink,
+    )
+    .await;
+    assert_eq!(report.end, RunEnd::Completed);
+    assert_eq!(context.len(), 4);
+    assert!(matches!(context[2], Message::ToolResult(_)));
+    let ids: Vec<_> = (1..=context.len()).map(|index| format!("e{index}")).collect();
+    let sources: Vec<_> =
+        ids.iter().zip(&context).map(|(id, message)| SummarySource { entry_id: id, message }).collect();
+    assert!(build_summary_prompt(&sources, None).is_ok());
 }
 
 #[tokio::test]
