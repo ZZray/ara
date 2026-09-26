@@ -175,4 +175,6 @@ Unrun checks:
 - Model-change prompt refresh.
 - Plugin-contained skills (`containRoot`).
 
-Decision: changes requested. F1–F9 must be fixed, tested and re-reviewed, and the real-model trial re-run on the fixed code, before acceptance.
+Fixes for F1–F9, with regression tests, are in WIP commit `b920852`. Full verification, the real-model re-run and the re-review are still pending (see the handoff).
+
+Decision: changes requested. Acceptance needs the full verification, the real-model trial on the fixed code and an independent re-review.
