@@ -3,6 +3,7 @@
 
 pub mod agent_loop;
 pub mod event;
+pub mod tokenizer;
 pub mod tool;
 
 pub use agent_loop::{

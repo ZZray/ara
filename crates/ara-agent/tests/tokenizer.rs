@@ -1,0 +1,86 @@
+use ara_agent::tokenizer::{
+    BudgetProbe, EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, count_fragments, count_message,
+    count_messages, count_text, probe_budget,
+};
+use ara_ai::{
+    AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall,
+    ToolResultMessage, UserBlock, UserContent, UserMessage,
+};
+use serde_json::{Map, Value};
+
+fn image() -> ImageContent {
+    ImageContent { data: "AA==".into(), mime_type: "image/png".into() }
+}
+
+#[test]
+fn utf8_estimates_round_each_fragment() {
+    assert_eq!(count_text("hello world", EstimateMode::Approximate), 3);
+    assert_eq!(count_text("hello world", EstimateMode::ByteUpperBound), 11);
+    assert_eq!(count_fragments(["é", "a"], EstimateMode::Approximate), 2);
+    assert_eq!(count_fragments(["éa"], EstimateMode::Approximate), 1);
+    assert_eq!(count_fragments(["é", "a"], EstimateMode::ByteUpperBound), 3);
+}
+
+#[test]
+fn budget_probe_never_rejects_on_an_approximation() {
+    assert_eq!(probe_budget(["é", "a"], 3), BudgetProbe::Fits { upper_bound_bytes: 3 });
+    assert_eq!(probe_budget(["hello world"], 4), BudgetProbe::NeedsExactCount { upper_bound_bytes: 11 });
+    assert_eq!(probe_budget([""], 0), BudgetProbe::Fits { upper_bound_bytes: 0 });
+}
+
+#[test]
+fn estimates_supported_message_blocks_without_stale_cache() {
+    let mut user = Message::User(UserMessage::text("a"));
+    assert_eq!(count_message(&user, MessageCountOptions::default()), 1);
+    if let Message::User(message) = &mut user {
+        message.content = UserContent::Blocks(vec![UserBlock::text("abcde"), UserBlock::Image(image())]);
+    }
+    // The fixed OMP implementation estimates user text but not user images.
+    assert_eq!(count_message(&user, MessageCountOptions::default()), 2);
+
+    let developer = Message::Developer(DeveloperMessage { content: UserContent::Text("测试".into()), timestamp: 0 });
+    assert_eq!(count_message(&developer, MessageCountOptions::default()), 2);
+
+    let mut arguments = Map::new();
+    arguments.insert("path".into(), Value::String("a".into()));
+    arguments.insert("meta".into(), serde_json::json!({"lang": "中文"}));
+    let argument_tokens = count_text(&serde_json::to_string(&arguments).unwrap(), EstimateMode::Approximate);
+    let mut assistant = AssistantMessage::empty("openai-completions", "test", "test");
+    assistant.content = vec![
+        AssistantBlock::Text(TextContent { text: "hi".into(), text_signature: None }),
+        AssistantBlock::Thinking(ThinkingContent {
+            thinking: "think".into(),
+            thinking_signature: Some("abcdefgh".into()),
+        }),
+        AssistantBlock::RedactedThinking { data: "opaque".into() },
+        AssistantBlock::ToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "read".into(),
+            arguments,
+            thought_signature: None,
+        }),
+        AssistantBlock::Image(image()),
+    ];
+    let assistant = Message::Assistant(assistant);
+    let full = count_message(&assistant, MessageCountOptions::default());
+    let floored = count_message(&assistant, MessageCountOptions { exclude_encrypted_reasoning: true });
+    let visible = count_fragments(["hi", "think", "read"], EstimateMode::Approximate);
+    assert_eq!(floored, visible + argument_tokens + IMAGE_TOKEN_ESTIMATE);
+    assert_eq!(full, floored + count_fragments(["abcdefgh", "opaque"], EstimateMode::Approximate));
+
+    let tool_result = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "call-1".into(),
+        tool_name: "read".into(),
+        content: vec![UserBlock::text("hello"), UserBlock::Image(image())],
+        details: None,
+        is_error: false,
+        timestamp: 0,
+    });
+    assert_eq!(count_message(&tool_result, MessageCountOptions::default()), 2 + IMAGE_TOKEN_ESTIMATE);
+
+    let messages = [user, developer, assistant, tool_result];
+    assert_eq!(
+        count_messages(&messages, MessageCountOptions::default()),
+        messages.iter().map(|message| count_message(message, MessageCountOptions::default())).sum::<usize>()
+    );
+}

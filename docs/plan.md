@@ -26,6 +26,7 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 - Accepted: CTX-01a (`ara-prompt`), CTX-01b (`ara-discovery` context files) and CTX-01c (frontmatter and skills).
 - Changes requested: CTX-01d (`ara-context` system prompt, date/cwd reminder, `skill://` in `read`/`bash`, CLI wiring). F1–F9 are in WIP `b920852`; the same-day reminder follow-up is in WIP `c9f9e24`. Independent re-review found no remaining code blocker. Fresh Windows real-model tasks passed on Agnes and on one OpenRouter retry, while the first OpenRouter task failed its skill format; full backend verification and the authorized push remain open. Local Ubuntu is not a prerequisite (see the [evidence](evidence/ctx-01d-system-prompt.md) and [handoff](handoffs/2026-09-26.md)).
 - Open: CTX-01e (`/skill:` invocation), which needs the interactive/RPC host and session custom messages.
+- A3 preparation (WIP): the isolated AGT-TOKENIZERa estimate and non-rejecting byte budget probe are under implementation; [evidence](evidence/agt-tokenizer-estimate.md). CTX-01d still gates A2 acceptance, and A3 compaction/long-task behavior is not claimed.
 
 ## Track A: OMP parity (G1)
 
