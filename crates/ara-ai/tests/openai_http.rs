@@ -100,6 +100,45 @@ async fn streams_text_usage_and_records_request() {
 }
 
 #[tokio::test]
+async fn delayed_real_tool_result_reaches_the_wire_before_guidance() {
+    let server =
+        FakeUpstream::start(script(json!({"responses": [{"events": [text("ack"), finish("stop"), done()]}]})), None)
+            .await
+            .unwrap();
+    let mut assistant = AssistantMessage::empty("openai-completions", "fake", "fake-model");
+    assistant.stop_reason = StopReason::ToolUse;
+    assistant.content.push(AssistantBlock::ToolCall(ToolCall {
+        id: "call_late".into(),
+        name: "read".into(),
+        arguments: serde_json::from_value(json!({"path": "a.txt"})).unwrap(),
+        thought_signature: None,
+    }));
+    let mut context = ctx();
+    context.messages = vec![
+        Message::Assistant(assistant),
+        Message::User(UserMessage::text("continue after the read")),
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: "call_late".into(),
+            tool_name: "read".into(),
+            content: vec![UserBlock::text("actual file body")],
+            details: None,
+            is_error: false,
+            timestamp: 3,
+        }),
+    ];
+    let (_, answer) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), context, opts())).await;
+    assert_eq!(answer.text(), "ack");
+    let reqs = server.requests.lock().await;
+    assert_eq!(reqs.len(), 1);
+    let wire = reqs[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(wire[1]["role"], "assistant");
+    assert_eq!(wire[2], json!({"role": "tool", "content": "actual file body", "tool_call_id": "call_late"}));
+    assert_eq!(wire[3], json!({"role": "user", "content": "continue after the read"}));
+    assert_eq!(wire.len(), 4);
+}
+
+#[tokio::test]
 async fn retries_429_then_succeeds() {
     let server = FakeUpstream::start(
         script(json!({"responses": [

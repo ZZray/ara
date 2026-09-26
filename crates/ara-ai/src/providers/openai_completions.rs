@@ -1522,4 +1522,41 @@ mod tests {
         let context = Context { tools: Some(vec![]), ..context };
         assert!(build_params(&model(), &context, &StreamOptions::default()).get("tools").is_none());
     }
+
+    #[test]
+    fn delayed_tool_result_is_adjacent_on_the_openai_wire() {
+        let mut assistant = AssistantMessage::empty(API, "test", "m");
+        assistant.stop_reason = StopReason::ToolUse;
+        assistant.content.push(AssistantBlock::ToolCall(ToolCall {
+            id: "call_late".into(),
+            name: "read".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        }));
+        let context = Context {
+            system_prompt: vec![],
+            messages: vec![
+                Message::Assistant(assistant),
+                Message::Developer(crate::types::DeveloperMessage {
+                    content: crate::types::UserContent::Text("later guidance".into()),
+                    timestamp: 2,
+                }),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "call_late".into(),
+                    tool_name: "read".into(),
+                    content: vec![UserBlock::text("actual file body")],
+                    details: None,
+                    is_error: false,
+                    timestamp: 3,
+                }),
+            ],
+            tools: None,
+        };
+        let wire = convert_messages(&model(), &context, &OpenAICompat::default());
+        assert_eq!(wire.len(), 3);
+        assert_eq!(wire[0]["role"], "assistant");
+        assert_eq!(wire[1], json!({"role": "tool", "content": "actual file body", "tool_call_id": "call_late"}));
+        assert_eq!(wire[2]["role"], "user");
+        assert_eq!(wire[2]["content"], "later guidance");
+    }
 }
