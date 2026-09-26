@@ -335,6 +335,115 @@ async fn stateful_agent_drains_steering_then_follow_up_and_rejects_parallel_prom
 }
 
 #[tokio::test]
+async fn stateful_agent_queue_modes_control_model_turns_independently() {
+    async fn run(steering: QueueMode, follow_up: QueueMode) -> (Vec<String>, usize) {
+        let provider = ScriptedProvider::new(vec![
+            reply("one", &[], StopReason::Stop),
+            reply("two", &[], StopReason::Stop),
+            reply("three", &[], StopReason::Stop),
+            reply("four", &[], StopReason::Stop),
+        ]);
+        let agent = Agent::new(config(provider.clone(), vec![], Arc::new(NoHooks)), Vec::new());
+        assert_eq!(agent.steering_mode(), QueueMode::OneAtATime);
+        assert_eq!(agent.follow_up_mode(), QueueMode::OneAtATime);
+        agent.set_steering_mode(steering);
+        agent.set_follow_up_mode(follow_up);
+        agent.steer(user("steer-a"));
+        agent.steer(user("steer-b"));
+        agent.follow_up(user("follow-a"));
+        agent.follow_up(user("follow-b"));
+        let report = agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+        assert_eq!(report.end, RunEnd::Completed);
+        assert!(!agent.has_queued_messages());
+        (user_texts(&agent.messages().await), provider.contexts.lock().unwrap().len())
+    }
+
+    let expected = ["initial", "steer-a", "steer-b", "follow-a", "follow-b"];
+    assert_eq!(run(QueueMode::OneAtATime, QueueMode::OneAtATime).await, (expected.map(str::to_string).to_vec(), 4));
+    assert_eq!(run(QueueMode::All, QueueMode::All).await, (expected.map(str::to_string).to_vec(), 2));
+    assert_eq!(run(QueueMode::All, QueueMode::OneAtATime).await, (expected.map(str::to_string).to_vec(), 3));
+    assert_eq!(run(QueueMode::OneAtATime, QueueMode::All).await, (expected.map(str::to_string).to_vec(), 3));
+}
+
+#[tokio::test]
+async fn idle_continue_does_not_dequeue_a_second_steer_before_the_first_model_call() {
+    let provider =
+        ScriptedProvider::new(vec![reply("answer a", &[], StopReason::Stop), reply("answer b", &[], StopReason::Stop)]);
+    let agent = Agent::new(
+        config(provider.clone(), vec![], Arc::new(NoHooks)),
+        vec![Message::Assistant(AssistantMessage::empty("test", "test", "test"))],
+    );
+    agent.steer(user("steer-a"));
+    agent.steer(user("steer-b"));
+    let report = agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(report.end, RunEnd::Completed);
+    {
+        let contexts = provider.contexts.lock().unwrap();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(user_texts(&contexts[0].messages), ["steer-a"]);
+        assert_eq!(user_texts(&contexts[1].messages), ["steer-a", "steer-b"]);
+    }
+    assert_eq!(user_texts(&agent.messages().await), ["steer-a", "steer-b"]);
+}
+
+#[tokio::test]
+async fn stateful_agent_queue_peek_pop_and_clear_keep_fifo_order() {
+    let provider = ScriptedProvider::new(vec![reply("done", &[], StopReason::Stop)]);
+    let agent = Agent::new(config(provider, vec![], Arc::new(NoHooks)), Vec::new());
+    agent.steer(user("first"));
+    agent.steer(user("second"));
+    agent.follow_up(user("later"));
+    assert_eq!(user_texts(&agent.peek_steering_queue()), ["first", "second"]);
+    assert_eq!(user_texts(&agent.peek_follow_up_queue()), ["later"]);
+    assert_eq!(agent.queued_counts(), (2, 1));
+    assert!(agent.has_queued_messages());
+    assert_eq!(user_texts(&[agent.pop_last_steer().unwrap()]), ["second"]);
+    assert_eq!(agent.queued_counts(), (1, 1));
+    agent.clear_follow_up_queue();
+    assert!(agent.pop_last_follow_up().is_none());
+    let report = agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(report.end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["initial", "first"]);
+    agent.steer(user("remove"));
+    agent.follow_up(user("remove too"));
+    agent.clear_steering_queue();
+    assert_eq!(agent.queued_counts(), (0, 1));
+    agent.clear_all_queues();
+    assert_eq!(agent.queued_counts(), (0, 0));
+}
+
+#[tokio::test]
+async fn stateful_agent_can_retract_a_follow_up_during_a_running_tool() {
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("one", "echo", json!({"text": "once"}))], StopReason::ToolUse),
+        reply("done", &[], StopReason::Stop),
+    ]);
+    let (tool, log) = echo(100, Concurrency::Shared);
+    let agent = Agent::new(config(provider.clone(), vec![tool], Arc::new(NoHooks)), Vec::new());
+    let running = {
+        let agent = agent.clone();
+        tokio::spawn(
+            async move { agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await },
+        )
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if log.lock().unwrap().iter().any(|v| v == "start:one") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    agent.follow_up(user("withdrawn"));
+    assert_eq!(user_texts(&[agent.pop_last_follow_up().unwrap()]), ["withdrawn"]);
+    assert_eq!(running.await.unwrap().unwrap().end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["initial"]);
+    assert_eq!(provider.contexts.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn stateful_agent_idle_continue_keeps_queue_on_cancel_and_refuses_unknown_tail() {
     let provider =
         ScriptedProvider::new(vec![reply("first", &[], StopReason::Stop), reply("second", &[], StopReason::Stop)]);

@@ -10,6 +10,7 @@ use crate::tool::ToolDecision;
 use ara_ai::{Context, JsonObject, Message, Model, ToolCall};
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
@@ -35,10 +36,37 @@ impl std::fmt::Display for AgentError {
 
 impl std::error::Error for AgentError {}
 
+/// How many Agent-owned queued messages a dequeue returns. OMP defaults to
+/// one message per turn for both steering and follow-up queues.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueueMode {
+    All,
+    #[default]
+    OneAtATime,
+}
+
 #[derive(Default)]
 struct Queues {
     steering: VecDeque<Message>,
     follow_up: VecDeque<Message>,
+    steering_mode: QueueMode,
+    follow_up_mode: QueueMode,
+}
+
+impl Queues {
+    fn take_steering(&mut self) -> Vec<Message> {
+        match self.steering_mode {
+            QueueMode::All => self.steering.drain(..).collect(),
+            QueueMode::OneAtATime => self.steering.pop_front().into_iter().collect(),
+        }
+    }
+
+    fn take_follow_up(&mut self) -> Vec<Message> {
+        match self.follow_up_mode {
+            QueueMode::All => self.follow_up.drain(..).collect(),
+            QueueMode::OneAtATime => self.follow_up.pop_front().into_iter().collect(),
+        }
+    }
 }
 
 /// One logical Agent. Hosts decide who may enqueue and persist all messages
@@ -103,6 +131,57 @@ impl Agent {
         (q.steering.len(), q.follow_up.len())
     }
 
+    pub fn has_queued_messages(&self) -> bool {
+        let q = self.queues.lock().unwrap();
+        !q.steering.is_empty() || !q.follow_up.is_empty()
+    }
+
+    pub fn steering_mode(&self) -> QueueMode {
+        self.queues.lock().unwrap().steering_mode
+    }
+
+    pub fn follow_up_mode(&self) -> QueueMode {
+        self.queues.lock().unwrap().follow_up_mode
+    }
+
+    pub fn set_steering_mode(&self, mode: QueueMode) {
+        self.queues.lock().unwrap().steering_mode = mode;
+    }
+
+    pub fn set_follow_up_mode(&self, mode: QueueMode) {
+        self.queues.lock().unwrap().follow_up_mode = mode;
+    }
+
+    pub fn peek_steering_queue(&self) -> Vec<Message> {
+        self.queues.lock().unwrap().steering.iter().cloned().collect()
+    }
+
+    pub fn peek_follow_up_queue(&self) -> Vec<Message> {
+        self.queues.lock().unwrap().follow_up.iter().cloned().collect()
+    }
+
+    pub fn pop_last_steer(&self) -> Option<Message> {
+        self.queues.lock().unwrap().steering.pop_back()
+    }
+
+    pub fn pop_last_follow_up(&self) -> Option<Message> {
+        self.queues.lock().unwrap().follow_up.pop_back()
+    }
+
+    pub fn clear_steering_queue(&self) {
+        self.queues.lock().unwrap().steering.clear();
+    }
+
+    pub fn clear_follow_up_queue(&self) {
+        self.queues.lock().unwrap().follow_up.clear();
+    }
+
+    pub fn clear_all_queues(&self) {
+        let mut q = self.queues.lock().unwrap();
+        q.steering.clear();
+        q.follow_up.clear();
+    }
+
     pub fn abort(&self) {
         let active = self.run_state.lock().unwrap().active_cancel.clone();
         if let Some(cancel) = active {
@@ -124,10 +203,15 @@ impl Agent {
         Ok(run_cancel)
     }
 
-    fn config_with_queues(&self) -> AgentConfig {
+    fn config_with_queues(&self) -> (AgentConfig, Arc<QueueHooks>) {
         let mut config = self.config.clone();
-        config.hooks = Arc::new(QueueHooks { queues: self.queues.clone(), base: self.config.hooks.clone() });
-        config
+        let hooks = Arc::new(QueueHooks {
+            queues: self.queues.clone(),
+            base: self.config.hooks.clone(),
+            skip_initial_steering_poll: AtomicBool::new(false),
+        });
+        config.hooks = hooks.clone();
+        (config, hooks)
     }
 
     /// Run ownership stays with the Agent if the caller drops its waiting
@@ -148,7 +232,8 @@ impl Agent {
                     crate::agent_loop::UNPAIRED_TAIL_REFUSED.into(),
                 )));
             }
-            Ok(agent_loop(prompts, &mut messages, &agent.config_with_queues(), &cancel, sink.as_ref()).await)
+            let (config, _) = agent.config_with_queues();
+            Ok(agent_loop(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
         })
         .await
         .map_err(|_| AgentError::RunPanicked)?
@@ -167,7 +252,7 @@ impl Agent {
         tokio::spawn(async move {
             let _guard = RunningGuard(agent.clone());
             let mut messages = agent.messages.lock().await;
-            let config = agent.config_with_queues();
+            let (config, queue_hooks) = agent.config_with_queues();
             if unpaired_tool_call_tail(&messages).is_some() {
                 return Err(AgentError::CannotContinue(LoopError::CannotContinue(
                     crate::agent_loop::UNPAIRED_TAIL_REFUSED.into(),
@@ -200,6 +285,12 @@ impl Agent {
                         "Cannot continue: run was cancelled or deadline passed".into(),
                     )));
                 }
+                // The first steering batch is already the initial prompt. OMP
+                // skips the loop's first poll here so one-at-a-time stays one
+                // message per model turn. A follow-up does not skip that poll.
+                if steering {
+                    queue_hooks.skip_initial_steering_poll.store(true, Ordering::Release);
+                }
                 Ok(agent_loop(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
             } else {
                 agent_loop_continue(&mut messages, &config, &cancel, sink.as_ref(), UnpairedTail::Refuse)
@@ -215,6 +306,7 @@ impl Agent {
 struct QueueHooks {
     queues: Arc<Mutex<Queues>>,
     base: Arc<dyn LoopHooks>,
+    skip_initial_steering_poll: AtomicBool,
 }
 
 #[async_trait]
@@ -224,15 +316,18 @@ impl LoopHooks for QueueHooks {
     }
 
     async fn steering_messages(&self) -> Vec<Message> {
+        if self.skip_initial_steering_poll.swap(false, Ordering::AcqRel) {
+            return Vec::new();
+        }
         let from_base = self.base.steering_messages().await;
-        let mut result: Vec<_> = self.queues.lock().unwrap().steering.drain(..).collect();
+        let mut result = self.queues.lock().unwrap().take_steering();
         result.extend(from_base);
         result
     }
 
     async fn follow_up_messages(&self) -> Vec<Message> {
         let from_base = self.base.follow_up_messages().await;
-        let mut result: Vec<_> = self.queues.lock().unwrap().follow_up.drain(..).collect();
+        let mut result = self.queues.lock().unwrap().take_follow_up();
         result.extend(from_base);
         result
     }
