@@ -47,7 +47,7 @@ import json, pathlib, re, subprocess, sys
 out = pathlib.Path(sys.argv[1])
 exit_code, elapsed = map(int, sys.argv[2:4])
 work = out / "work"
-events = [json.loads(l) for l in (out / "events.jsonl").read_text().splitlines() if l.strip()]
+events = [json.loads(l) for l in (out / "events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
 starts = [e for e in events if e.get("type") == "tool_execution_start"]
 # Parallel calls can finish out of order: pair by call id, not position.
 ends = {e["toolCallId"]: e for e in events if e.get("type") == "tool_execution_end"}
@@ -77,12 +77,12 @@ successful_skills = [s["toolName"] for s, end in skill_calls
 read_skill = bool(successful_skills)
 print("successful skill reads:", successful_skills)
 mathx = work / "mathx.py"
-agents_rule = mathx.exists() and mathx.read_text().splitlines()[:1] == ["# owner: ara-trial"]
+agents_rule = mathx.exists() and mathx.read_text(encoding="utf-8").splitlines()[:1] == ["# owner: ara-trial"]
 print("AGENTS.md rule followed:", agents_rule)
 works = mathx.exists() and subprocess.run([sys.executable, "-c", "import mathx; assert mathx.double(21) == 42"], cwd=work).returncode == 0
 print("double(21) == 42:", works)
 notes = work / "RELEASE_NOTES.md"
-lines = notes.read_text().splitlines() if notes.exists() else []
+lines = notes.read_text(encoding="utf-8").splitlines() if notes.exists() else []
 skill_format = bool(lines) and lines[0] == "## vNEXT" and any(l.startswith("- [ara] ") for l in lines[1:])
 print("skill format followed:", skill_format, lines[:4])
 passed = exit_code == 0 and 0 < len(assistants) <= 12 and elapsed <= 300 and read_skill and agents_rule and works and skill_format
