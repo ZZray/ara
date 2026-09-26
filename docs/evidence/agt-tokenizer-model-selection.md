@@ -4,7 +4,7 @@ Fixed OMP source: `596f2da7101178214aa27a753529d15e6b7ad91d`, `packages/catalog/
 
 `ara-agent::tokenizer::count_model_fragments` reads the host-selected `Model.tokenizer` and uses `ara-ctok` to count each text fragment with the chosen Claude family. Unknown metadata returns `UnknownTokenizer`, and checked-sum overflow returns `CountOverflow`. It counts content text only. The Agent loop does not call this API yet, and the OpenAI adapter's system, assistant, tool and image transformations mean the result is **not** a full provider-request token count. It must not trigger a hard context gate or compaction in this state. Other model families, full model catalog identity resolution, actual request projection, and context-overflow behavior remain open.
 
-Tests run on Windows on the uncommitted worktree after implementation:
+Tests run on Windows on the candidate code committed locally as WIP `7cf48f1`:
 
 | Check | Result |
 | --- | --- |
