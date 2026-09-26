@@ -281,7 +281,234 @@ fn user(text: &str) -> Message {
     Message::User(UserMessage::text(text))
 }
 
+fn user_texts(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::User(u) => Some(u.content.plain_text()),
+            _ => None,
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------- tests
+
+#[tokio::test]
+async fn stateful_agent_drains_steering_then_follow_up_and_rejects_parallel_prompt() {
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("one", "echo", json!({"text": "once"}))], StopReason::ToolUse),
+        reply("after steer", &[], StopReason::Stop),
+        reply("after follow-up", &[], StopReason::Stop),
+    ]);
+    let (tool, log) = echo(250, Concurrency::Shared);
+    let agent = Agent::new(config(provider.clone(), vec![tool], Arc::new(NoHooks)), Vec::new());
+    let sink = Arc::new(RecordingSink::default());
+    let running = {
+        let agent = agent.clone();
+        let sink = sink.clone();
+        tokio::spawn(async move { agent.prompt(vec![user("initial")], CancellationToken::new(), sink).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if log.lock().unwrap().iter().any(|v| v == "start:one") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(agent.is_busy());
+    assert!(matches!(
+        agent.prompt(vec![user("wrong")], CancellationToken::new(), Arc::new(NullSink)).await,
+        Err(AgentError::Busy)
+    ));
+    agent.steer(user("steer"));
+    agent.follow_up(user("follow-up"));
+    let report = running.await.unwrap().unwrap();
+    assert_eq!(report.end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["initial", "steer", "follow-up"]);
+    assert_eq!(*log.lock().unwrap(), vec!["start:one", "end:one"]);
+    assert_eq!(provider.contexts.lock().unwrap().len(), 3);
+    assert_eq!(agent.queued_counts(), (0, 0));
+    assert!(!agent.is_busy());
+}
+
+#[tokio::test]
+async fn stateful_agent_idle_continue_keeps_queue_on_cancel_and_refuses_unknown_tail() {
+    let provider =
+        ScriptedProvider::new(vec![reply("first", &[], StopReason::Stop), reply("second", &[], StopReason::Stop)]);
+    let agent = Agent::new(config(provider.clone(), vec![], Arc::new(NoHooks)), Vec::new());
+    let first = agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(first.end, RunEnd::Completed);
+    agent.follow_up(user("queued"));
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert!(matches!(agent.continue_run(cancelled, Arc::new(NullSink)).await, Err(AgentError::CannotContinue(_))));
+    assert_eq!(agent.queued_counts(), (0, 1));
+    let second = agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(second.end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["initial", "queued"]);
+    assert_eq!(provider.contexts.lock().unwrap().len(), 2);
+
+    let mut tail = AssistantMessage::empty("test", "test", "test");
+    tail.stop_reason = StopReason::ToolUse;
+    tail.content.push(AssistantBlock::ToolCall(call_block("unknown", "echo", &json!({"text": "x"}))));
+    let unsafe_agent = Agent::new(config(provider, vec![], Arc::new(NoHooks)), vec![Message::Assistant(tail)]);
+    unsafe_agent.steer(user("must remain"));
+    let err = unsafe_agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap_err();
+    assert!(matches!(err, AgentError::CannotContinue(_)));
+    let err =
+        unsafe_agent.prompt(vec![user("new prompt")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap_err();
+    assert!(matches!(err, AgentError::CannotContinue(_)));
+    assert_eq!(unsafe_agent.queued_counts(), (1, 0));
+    assert_eq!(unsafe_agent.messages().await.len(), 1);
+}
+
+#[tokio::test]
+async fn stateful_agent_idle_continue_drains_host_hook_and_requeues_cancelled_dequeue() {
+    let provider = ScriptedProvider::new(vec![
+        reply("first", &[], StopReason::Stop),
+        reply("after host queue", &[], StopReason::Stop),
+        reply("after cancelled dequeue", &[], StopReason::Stop),
+    ]);
+    let hooks = Arc::new(Hooks::default());
+    let agent = Agent::new(config(provider.clone(), vec![], hooks.clone()), Vec::new());
+    agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    hooks.follow_up.lock().unwrap().push(user("from host"));
+    let next = agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(next.end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["initial", "from host"]);
+
+    let slow_hooks = Arc::new(Hooks { slow_dequeue_ms: 100, ..Default::default() });
+    let slow_agent = Agent::new(config(provider.clone(), vec![], slow_hooks.clone()), agent.messages().await);
+    slow_hooks.steering.lock().unwrap().push(user("from slow hook"));
+    let cancel = CancellationToken::new();
+    let pending = {
+        let agent = slow_agent.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move { agent.continue_run(cancel, Arc::new(NullSink)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if slow_hooks.steering.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    cancel.cancel();
+    assert!(matches!(pending.await.unwrap(), Err(AgentError::CannotContinue(_))));
+    assert_eq!(slow_agent.queued_counts(), (1, 0));
+    assert_eq!(user_texts(&slow_agent.messages().await), ["initial", "from host"]);
+    let resumed = slow_agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(resumed.end, RunEnd::Completed);
+    assert_eq!(user_texts(&slow_agent.messages().await), ["initial", "from host", "from slow hook"]);
+    assert_eq!(provider.contexts.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn stateful_agent_prefers_steer_enqueued_during_host_hook_wait() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct SlowEmptyHook(Arc<AtomicBool>);
+    #[async_trait]
+    impl LoopHooks for SlowEmptyHook {
+        async fn steering_messages(&self) -> Vec<Message> {
+            self.0.store(true, Ordering::Release);
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            Vec::new()
+        }
+    }
+    let provider = ScriptedProvider::new(vec![
+        reply("steering answer", &[], StopReason::Stop),
+        reply("follow-up answer", &[], StopReason::Stop),
+    ]);
+    let started = Arc::new(AtomicBool::new(false));
+    let agent = Agent::new(
+        config(provider, vec![], Arc::new(SlowEmptyHook(started.clone()))),
+        vec![Message::Assistant(AssistantMessage::empty("test", "test", "test"))],
+    );
+    agent.follow_up(user("follow-up"));
+    let pending = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !started.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    agent.steer(user("late steer"));
+    assert_eq!(pending.await.unwrap().unwrap().end, RunEnd::Completed);
+    assert_eq!(user_texts(&agent.messages().await), ["late steer", "follow-up"]);
+}
+
+#[tokio::test]
+async fn stateful_agent_abort_only_cancels_its_run() {
+    let provider = ScriptedProvider::new(vec![Turn::HangAfterPartial]);
+    let agent = Agent::new(config(provider, vec![], Arc::new(NoHooks)), Vec::new());
+    let parent_cancel = CancellationToken::new();
+    let sink = Arc::new(RecordingSink::default());
+    let running = {
+        let agent = agent.clone();
+        let cancel = parent_cancel.clone();
+        let sink = sink.clone();
+        tokio::spawn(async move { agent.prompt(vec![user("start")], cancel, sink).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if sink.events.lock().await.iter().any(|event| matches!(event, AgentEvent::MessageUpdate { .. })) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    agent.abort();
+    let report = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().unwrap();
+    assert_eq!(report.end, RunEnd::Aborted);
+    assert!(!parent_cancel.is_cancelled());
+    assert!(!agent.is_busy());
+}
+
+#[tokio::test]
+async fn stateful_agent_survives_dropped_waiter_without_replaying_tool() {
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("one", "echo", json!({"text": "once"}))], StopReason::ToolUse),
+        reply("done", &[], StopReason::Stop),
+    ]);
+    let (tool, log) = echo(100, Concurrency::Shared);
+    let agent = Agent::new(config(provider, vec![tool], Arc::new(NoHooks)), Vec::new());
+    let waiting = {
+        let agent = agent.clone();
+        tokio::spawn(async move { agent.prompt(vec![user("run")], CancellationToken::new(), Arc::new(NullSink)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if log.lock().unwrap().iter().any(|v| v == "start:one") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    waiting.abort();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while agent.is_busy() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["start:one", "end:one"]);
+    assert_eq!(agent.messages().await.last().unwrap().as_assistant().unwrap().text(), "done");
+}
 
 #[tokio::test]
 async fn simple_prompt_event_sequence() {
@@ -868,8 +1095,10 @@ async fn real_http_chain_with_fake_upstream() {
     let (tool, log) = echo(1, Concurrency::Shared);
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.model.base_url = server.base_url();
+    let agent = Agent::new(cfg, Vec::new());
     let new =
-        agent_loop(vec![user("use echo")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+        agent.prompt(vec![user("use echo")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap().messages;
+    assert_eq!(agent.messages().await, new);
     assert_eq!(*log.lock().unwrap(), vec!["start:call_1", "end:call_1"]);
     assert_eq!(new.last().unwrap().as_assistant().unwrap().text(), "all done");
     let reqs = server.requests.lock().await;

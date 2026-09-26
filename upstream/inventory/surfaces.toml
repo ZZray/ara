@@ -54,7 +54,7 @@ title = "Stateful Agent: prompt/continue, subscriptions, queues, pause gate"
 scope = "core"
 gate = "P1"
 owner = "ara-agent::agent"
-status = "open"
+status = "implementing"
 match = [
   '^packages/agent/src/(agent|pause|types|index)\.ts$',
   '^packages/agent/test/(agent|pause-gate)\.test\.ts$',
@@ -553,7 +553,7 @@ title = "Queued, steering, yield and tool-choice queues"
 scope = "core"
 gate = "P1"
 owner = "tbd"
-status = "open"
+status = "implementing"
 match = [
   '^packages/coding-agent/test/session/yield-queue',
   '^packages/coding-agent/src/session/(queued-messages|yield-queue|tool-choice-queue|tool-call-loop-redirect|async-job-delivery)\.ts$',
