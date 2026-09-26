@@ -1,9 +1,9 @@
 use ara_agent::compaction::{SummaryCallErrorKind, SummaryInputError, SummarySource, summarize_sources};
 use ara_ai::providers::openai_completions::{RetryPolicy, StreamOptions};
 use ara_ai::{
-    AssistantBlock, AssistantMessage, AssistantMessageEvent, AssistantStream, CallOptions, Context, EventSink,
-    ImageContent, Message, Model, ModelProvider, OpenAICompletionsProvider, StopReason, ToolCall, ToolChoice, Usage,
-    UserMessage,
+    AssistantBlock, AssistantMessage, AssistantMessageEvent, AssistantStream, CallOptions, Context, DeveloperMessage,
+    EventSink, ImageContent, Message, Model, ModelProvider, OpenAICompletionsProvider, StopReason, ToolCall,
+    ToolChoice, Usage, UserContent, UserMessage,
 };
 use ara_testkit::FakeUpstream;
 use ara_testkit::chunks::{done as sse_done, finish, text as sse_text};
@@ -313,6 +313,27 @@ async fn invalid_span_or_budget_never_starts_provider() {
     assert_eq!(result.unwrap_err().kind, SummaryCallErrorKind::InvalidInput(SummaryInputError::UnfinishedTurn));
     assert!(provider.seen.lock().unwrap().is_none());
     let (_, assistant) = sources();
+    let developer = Message::Developer(DeveloperMessage {
+        content: UserContent::Text("do not lower this instruction".into()),
+        timestamp: 0,
+    });
+    let with_developer = [
+        inputs[0],
+        SummarySource { entry_id: "e2", message: &developer },
+        SummarySource { entry_id: "e3", message: &assistant },
+    ];
+    let result = summarize_sources(
+        &with_developer,
+        None,
+        &model(),
+        &provider,
+        128,
+        Instant::now() + Duration::from_secs(1),
+        &CancellationToken::new(),
+    )
+    .await;
+    assert_eq!(result.unwrap_err().kind, SummaryCallErrorKind::InvalidInput(SummaryInputError::DeveloperInSummary));
+    assert!(provider.seen.lock().unwrap().is_none());
     let inputs = [inputs[0], SummarySource { entry_id: "e2", message: &assistant }];
     let result = summarize_sources(
         &inputs,

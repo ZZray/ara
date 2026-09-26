@@ -3,8 +3,8 @@ use ara_agent::compaction::{
     serialize_sources_for_summary, validate_completed_summary_span,
 };
 use ara_ai::{
-    AssistantBlock, AssistantMessage, ImageContent, JsonObject, Message, StopReason, ToolCall, ToolResultMessage,
-    UserBlock, UserContent, UserMessage,
+    AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, JsonObject, Message, StopReason, ToolCall,
+    ToolResultMessage, UserBlock, UserContent, UserMessage,
 };
 
 #[test]
@@ -198,6 +198,32 @@ fn prompt_rejects_incomplete_or_failed_turns() {
         Some(SummaryInputError::UnfinishedTurn)
     );
     assert_eq!(validate_completed_summary_span(&[user_source, user_source]), Err(SummaryInputError::DuplicateSourceId));
+}
+
+#[test]
+fn prompt_rejects_developer_priority_downgrade_but_raw_serializer_preserves_source() {
+    let user = Message::User(UserMessage::text("ordinary request"));
+    let developer = Message::Developer(DeveloperMessage {
+        content: UserContent::Text("high-priority constraint".into()),
+        timestamp: 0,
+    });
+    let assistant = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let user_source = SummarySource { entry_id: "e1", message: &user };
+    let developer_source = SummarySource { entry_id: "e2", message: &developer };
+    let assistant_source = SummarySource { entry_id: "e3", message: &assistant };
+    let later_assistant_source = SummarySource { entry_id: "e4", message: &assistant };
+    assert_eq!(
+        build_summary_prompt(&[user_source, developer_source, assistant_source], None).err(),
+        Some(SummaryInputError::DeveloperInSummary)
+    );
+    assert_eq!(
+        build_summary_prompt(&[user_source, assistant_source, developer_source, later_assistant_source], None).err(),
+        Some(SummaryInputError::DeveloperInSummary)
+    );
+    let raw = serialize_sources_for_summary(&[developer_source]).unwrap();
+    let row: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(row["role"], "developer");
+    assert_eq!(row["entry_id"], "e2");
 }
 
 #[test]

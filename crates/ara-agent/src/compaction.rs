@@ -46,6 +46,7 @@ pub enum SummaryInputError {
     TooManySources,
     TooLarge,
     DuplicateSourceId,
+    DeveloperInSummary,
     UnfinishedTurn,
     UnpairedToolResult,
     UnknownToolEffect,
@@ -62,6 +63,7 @@ impl std::fmt::Display for SummaryInputError {
             Self::TooManySources => f.write_str("compaction has too many source messages for one summary request"),
             Self::TooLarge => f.write_str("compaction input is too large for one summary request"),
             Self::DuplicateSourceId => f.write_str("compaction source entry IDs must be unique"),
+            Self::DeveloperInSummary => f.write_str("compaction cannot lower a developer message into summary text"),
             Self::UnfinishedTurn => f.write_str("compaction source span does not end at a completed assistant turn"),
             Self::UnpairedToolResult => f.write_str("compaction source span has an unmatched tool result"),
             Self::UnknownToolEffect => {
@@ -177,12 +179,13 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
             return Err(SummaryInputError::DuplicateSourceId);
         }
         match source.message {
-            Message::User(_) | Message::Developer(_) => {
+            Message::User(_) => {
                 if !pending.is_empty() || awaiting_assistant {
                     return Err(SummaryInputError::UnfinishedTurn);
                 }
                 last_complete_assistant = false;
             }
+            Message::Developer(_) => return Err(SummaryInputError::DeveloperInSummary),
             Message::Assistant(assistant) => {
                 if !pending.is_empty() {
                     return Err(SummaryInputError::UnfinishedTurn);
