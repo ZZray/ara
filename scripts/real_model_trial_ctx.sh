@@ -29,6 +29,7 @@ Release notes live in `RELEASE_NOTES.md` at the repository root.
 - The first line of the file is exactly `## vNEXT`.
 - Each change is one line starting with `- [ara] ` followed by a short description.
 MD
+expected_skill_body="$(cat "$work/.ara/skills/release-notes/SKILL.md")"
 cargo build -q --manifest-path "$root/Cargo.toml" --bin ara
 start=$(date +%s)
 set +e
@@ -39,10 +40,12 @@ HOME="$out/home" ARA_HOME="$out/home/.ara" "$root/target/debug/ara" --model "$AR
   </dev/null >"$out/events.jsonl" 2>"$out/stderr.txt"
 code=$?
 set -e
-echo "exit=$code elapsed=$(( $(date +%s) - start ))s out=$out"
-python3 - "$out" <<'PY'
-import json, pathlib, subprocess, sys
+elapsed=$(( $(date +%s) - start ))
+echo "exit=$code elapsed=${elapsed}s out=$out"
+python3 - "$out" "$code" "$elapsed" "$expected_skill_body" <<'PY'
+import json, pathlib, re, subprocess, sys
 out = pathlib.Path(sys.argv[1])
+exit_code, elapsed = map(int, sys.argv[2:4])
 work = out / "work"
 events = [json.loads(l) for l in (out / "events.jsonl").read_text().splitlines() if l.strip()]
 starts = [e for e in events if e.get("type") == "tool_execution_start"]
@@ -54,10 +57,25 @@ print("tool calls:", [(s["toolName"], json.dumps(s.get("args"))[:80], ends.get(s
 for a in assistants:
     print("usage:", a.get("usage"), "stop:", a.get("stopReason"))
 args_text = [json.dumps(s.get("args")) for s in starts]
-via_url = [s["toolName"] for s, a in zip(starts, args_text) if "skill://release-notes" in a]
-via_path = [s["toolName"] for s, a in zip(starts, args_text) if "release-notes/SKILL.md" in a and "skill://" not in a]
-read_skill = bool(via_url or via_path)
-print("skill read via skill:// :", via_url, "via path:", via_path)
+skill_calls = [(s, ends.get(s["toolCallId"])) for s, a in zip(starts, args_text)
+               if s["toolName"] in {"read", "bash"}
+               and ("skill://release-notes" in a or "release-notes/SKILL.md" in a)]
+skill_body = sys.argv[4].replace("\r\n", "\n").strip()
+def skill_text(end):
+    blocks = end.get("result", {}).get("content", [])
+    return "\n".join(block.get("text", "") for block in blocks if block.get("type") == "text").replace("\r\n", "\n")
+def contains_skill_body(end):
+    text = skill_text(end)
+    if skill_body in text:
+        return True
+    # Local-path reads in edit mode add a hashline header and N: prefixes.
+    numbered = [match.group(1) for line in text.splitlines()
+                if (match := re.match(r"^\d+[:|](.*)$", line))]
+    return skill_body in "\n".join(numbered)
+successful_skills = [s["toolName"] for s, end in skill_calls
+                     if skill_body and end and not end.get("isError") and contains_skill_body(end)]
+read_skill = bool(successful_skills)
+print("successful skill reads:", successful_skills)
 mathx = work / "mathx.py"
 agents_rule = mathx.exists() and mathx.read_text().splitlines()[:1] == ["# owner: ara-trial"]
 print("AGENTS.md rule followed:", agents_rule)
@@ -67,5 +85,7 @@ notes = work / "RELEASE_NOTES.md"
 lines = notes.read_text().splitlines() if notes.exists() else []
 skill_format = bool(lines) and lines[0] == "## vNEXT" and any(l.startswith("- [ara] ") for l in lines[1:])
 print("skill format followed:", skill_format, lines[:4])
-print("TRIAL PASS:", read_skill and agents_rule and works and skill_format)
+passed = exit_code == 0 and 0 < len(assistants) <= 12 and elapsed <= 300 and read_skill and agents_rule and works and skill_format
+print("TRIAL PASS:", passed)
+sys.exit(0 if passed else 1)
 PY
