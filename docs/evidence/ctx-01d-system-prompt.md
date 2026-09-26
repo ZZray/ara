@@ -1,5 +1,33 @@
 # CTX-01d: system prompt assembly, skill:// and CLI integration
 
+## 2026-09-26 follow-up: product candidate `c9f9e24` remains WIP
+
+The F1–F9 fixes in `b920852` and the follow-up in `c9f9e24` are implemented, but CTX-01d is not accepted. The follow-up fixes a same-day F4 reminder loss found in re-review, tests both provider wire roles for the developer fallback, narrows the emitted `skill://` guidance to available tools, and makes the F8 filename error check compile on Windows. `Cargo.lock` uses `find-msvc-tools` 0.1.14 because 0.1.13 breaks `cc` compilation on Windows; the descending context-file sort is written with stable `sort_by_key` to satisfy current strict Clippy. The prompt template differences are recorded in `crates/ara-context/prompts/README.md`.
+
+Executed checks on the `c9f9e24` product code, plus the subsequent trial-harness check:
+
+| Check | Result |
+| --- | --- |
+| Rust 1.94.1, `cargo fmt -p ara-context -p ara-discovery -- --check` | Exit 0. |
+| Rust 1.94.1, `CARGO_INCREMENTAL=0 cargo test -p ara-context --test upstream` | Exit 0; 21 passed, including same-day rewrite/shrink, both developer wire roles, and read-only/read-plus-bash prompt guidance. |
+| `cargo deny check` | Exit 0; advisories, bans, licenses and sources accepted by policy (six duplicate-dependency warnings and one missing license-field warning). |
+| `python3 scripts/omp_inventory.py check` and `python3 scripts/verify_bootstrap.py` | Exit 0 for both. |
+| `bash -n scripts/real_model_trial_ctx.sh` and synthetic checker fixtures (`7df9631` harness) | Syntax exit 0. Complete raw and numbered skill receipts exit 0, including when the model-writable skill file is later emptied; a nonzero Run exit, a missing paired result, or a result echoing only one skill sentence exits 1. No real model was called. |
+| Rust 1.94.1, `cargo test -p ara-cli --test skill_protocol` on Windows | Exit 0; 3 passed. This is library handoff coverage, not CLI e2e coverage. |
+| Rust 1.94.1, `cargo test -p ara-cli --test e2e` on Windows | **Not passed.** Test compilation uses Unix-only `libc::kill` and `SIGKILL`. |
+| Rust 1.94.1, `cargo test -p ara-tools --test skill_urls` on Windows | **Not passed; 7/10 passed.** Two test expectations use `/s/demo/a` where the Windows path is `/s/demo\\a`; the Bash execution case cannot find `bash` in the process PATH. The corresponding Unix run is still required. |
+| `CARGO_INCREMENTAL=0 python3 scripts/verify_backend.py` on Windows | **Not passed.** Rust 1.94.1 reaches `cargo test --workspace --all-targets --all-features`, then Unix-only discovery fixtures fail to compile (`std::os::unix` in `tests/{upstream,skills,project}.rs`). The script was started before the last prompt-test edit, so it is not a completed check of the final snapshot. |
+| Rust 1.94.1, `cargo test -p ara-discovery --lib` on Windows | Exit 101: `paths::tests::resolve_and_depth` assumes `/a/c`, while Windows resolves `D:\\a\\c`; three other unit tests pass. |
+| Rust 1.98.1, `cargo clippy --workspace --lib --bins --all-features -- -D warnings` on Windows | Exit 101 on existing Unix-oriented `ara-tools` Windows warnings (`bash.rs` unused `pid`/`GroupGuard`, `write.rs` unused `mut`, `bash.rs` `unnecessary_lazy_evaluations`). No full Clippy pass is claimed. |
+
+Independent Codex subagent re-reviewed `f74d261..b920852` with `ara-git-review` and `ara-rust-core-review`, found the same-day F4 loss and the missing wire-role check, then re-reviewed the follow-up diff after both were fixed. Its final verdict found no remaining actionable product-code issue; it did not run tests. The same reviewer examined the corrected trial checker and found no remaining high-confidence issue. The full Linux backend verification on the final commit, two fresh real-model task trials and their artifact review remain mandatory. The prior trials below were on the earlier code and do not satisfy this gate. `c9f9e24` and `7df9631` are local while Git Credential Manager authentication for the authorized `dev` push is pending; neither `ARA_API_KEY` nor `OPENROUTER_API_KEY` is available in this task environment. No key was written to the repository.
+
+Read-only live catalogue probes on 2026-09-26: unauthenticated `GET https://openrouter.ai/api/v1/models` listed `openrouter/free`; unauthenticated `GET https://api.agnes-ai.cn/v1/models` returned HTTP 401. These do not establish route authorization or task success. The authenticated model IDs and OpenAI-compatible protocol must be checked immediately before each trial.
+
+The trial harness now exits nonzero when its checks fail. It requires a zero CLI exit code, 1–12 model calls within 300 seconds, a successful tool result paired by `toolCallId` that contains the release-notes skill body captured before the Run (raw or numbered read output), and the requested file artifacts. Its earlier printed `TRIAL PASS: False` was not an exit-status gate.
+
+Open bounded differences: `grep`, `glob` and `write` do not resolve `skill://`; image, binary and directory skill reads do not match upstream's resource handling; range context lines for text skill reads remain with TOOLS-01. Quoted `skill://` tokens nested inside another shell quote stay literal as an intentional safety difference from upstream (F3). The prompt now directs the model to use filesystem paths with other file tools and advertises Bash expansion only when Bash is available.
+
 Point / requirement / exclusions:
 Build the Agent system prompt from discovered context the way OMP does, and let the model use skills:
 - `ara-context`, the port of `buildSystemPrompt`:
@@ -17,7 +45,7 @@ Build the Agent system prompt from discovered context the way OMP does, and let 
 - `skill://` in the tools (`internal-urls/skill-protocol.ts`, `tools/bash-skill-urls.ts`):
   - `read` resolves it;
   - `bash` expands it in the command, env values and cwd.
-- CLI host wiring (`ara-cli`): `Discovery` → context files and skills → `ToolContext::with_skills` → `build_system_prompt`; `--no-skills` and `--skills <globs>`. The CLI does not yet pass the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` (review F1, open).
+- CLI host wiring (`ara-cli`): `Discovery` → context files, skills, and project-first `SYSTEM.md`/`APPEND_SYSTEM.md` discovery → `ToolContext::with_skills` → `build_system_prompt`; `--no-skills` and `--skills <globs>`. Explicit prompt flags override discovery and repeated flags keep the last value.
 
 Excluded:
 - `/skill:<name>` invocation. Upstream handles it only in the interactive, RPC and ACP hosts, not print mode; it moves to CTX-01e.
@@ -45,8 +73,7 @@ Upstream SHA and source/test location:
   - `crates/ara-tools/tests/skill_urls.rs` (21 of 47 in `bash-skill-urls.test.ts`): all 13 `expandSkillUrls` cases and the 8 `skill://` quoting cases of `expandInternalUrls`. The other 26 need other schemes.
   - `crates/ara-cli/tests/skill_protocol.rs` (3 of 5 in `skill-protocol-customdirs.test.ts`): B-edc3d29fb5, B-4ebceb9b09, B-0b170f55e3.
 
-Delivered commit:
-The commit that carries this receipt on `dev`. Earlier WIP: `68d774d`, `0c6b893`.
+Candidate product-code commit: `c9f9e24`; trial-harness commit: `7df9631` (both local WIP until push completes). Earlier WIP: `68d774d`, `0c6b893`, `b920852`.
 
 Rust entry and host chain:
 - `ara_context::{build_system_prompt, resolve_prompt_input, DateCwdReminder}`
@@ -56,7 +83,7 @@ Rust entry and host chain:
 - `ara-cli` `main.rs`
 - Exercised through the real `ara` binary by `tests/e2e.rs` and the real-model trial.
 
-Environment and sanitized commands:
+Prior evidence at `f74d261` (before F1–F9 fixes); these results do not verify the current candidate:
 - `CARGO_INCREMENTAL=0 python3 scripts/verify_backend.py`: PASS (fmt, clippy `-D warnings`, 634 tests, 1 upstream-ignored, doc tests).
 - `cargo test -p ara-context --test upstream`: 16 tests.
 - `cargo test -p ara-tools --test skill_urls`: 6 tests.
@@ -118,6 +145,7 @@ Intentional differences:
    The range context lines of upstream's in-memory renderer are not ported, the same open item as plain reads in TOOLS-01. That leaves B-20f58d354f and B-3deff3fcd6 (delimited multi-path reads) unported.
 3. The reminder is applied through a Core hook (`transform_provider_context`) rather than inside the session, so any host can use it. The CLI passes the local date and cwd.
 4. Prompt identity is host-supplied (`harnessName`, ARA edit 1).
+5. Bash expansion leaves a quoted `skill://` token literal when the token starts inside another shell quote. Upstream expands that case and can turn the result into shell syntax. `quoted_tokens_nested_in_quotes_stay_literal` and the marker-file regression cover this safety difference.
 
 Real-model route:
 `scripts/real_model_trial_ctx.sh`.
@@ -131,7 +159,7 @@ Real-model route:
 - Bounds: ≤ 12 model calls, ≤ 300 s, ≤ 2048 output tokens per call.
 - Keys come from the environment only; `HOME` and `ARA_HOME` are isolated per run.
 
-Observed output, on the delivered code (after the final `read`/`bash` changes):
+Observed output on the earlier `f74d261` code (before the current fixes):
 
 | Route and model | Calls | Time | Tokens in / out | Skill read | Result |
 | --- | --- | --- | --- | --- | --- |
@@ -146,7 +174,7 @@ Observed output, on the delivered code (after the final `read`/`bash` changes):
   - That round found that models also try `cat skill://…` in bash, which led to porting the bash expansion.
 - Harness fix: tool results are now paired with their calls by `toolCallId`. Parallel calls can finish out of order.
 
-Independent review:
+Prior independent review of `68d774d^..f74d261` (blocking at that snapshot):
 - Reviewer: a forked read-only general-purpose agent following `ara-git-review` + `ara-rust-core-review`.
 - Target: `68d774d^..f74d261`, read from a `git archive` export. Upstream compared at the pinned SHA.
 - Checks run by the reviewer:
@@ -167,7 +195,7 @@ Independent review:
   - F8 (Low): unreadable prompt files and `PERSONALITY.md` fall back without a warning.
   - F9 (Low): extra workspace roots are skipped when context files are supplied.
 - The "Host level" list above is library hand-off coverage (`skill_protocol.rs`), not CLI coverage: the CLI has no custom-directory setting.
-- The developer-turn fallback of the reminder has no test yet.
+- At `f74d261`, the developer-turn fallback of the reminder had no test; `b920852` added the append-only case and `c9f9e24` added both provider wire-role cases.
 
 Unrun checks:
 - `/skill:` invocation (CTX-01e).
@@ -175,6 +203,6 @@ Unrun checks:
 - Model-change prompt refresh.
 - Plugin-contained skills (`containRoot`).
 
-Fixes for F1–F9, with regression tests, are in WIP commit `b920852`. Full verification, the real-model re-run and the re-review are still pending (see the handoff).
+Fixes for F1–F9, with regression tests, are in WIP commit `b920852`; the F4 follow-up and final review are in WIP `c9f9e24`. Full verification and the real-model re-runs are still pending (see the handoff).
 
-Decision: changes requested. Acceptance needs the full verification, the real-model trial on the fixed code and an independent re-review.
+Decision: changes requested. The independent re-review is complete; acceptance still needs full verification on the final code and both real-model trials with reviewed artifacts.
