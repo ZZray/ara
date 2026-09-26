@@ -1,8 +1,10 @@
 mod common;
 
 use common::run_fixture;
+#[cfg(unix)]
+use pi_edit::EditStore;
 use pi_edit::{
-	EditMode, EditStore, PathPolicy,
+	EditMode, PathPolicy,
 	fuzzy::{FindMatchOptions, find_match},
 	path_policy::canonical_key,
 	text::adjust_indentation,

@@ -285,6 +285,7 @@ fn copilot_custom_instruction_dirs_contribute_agents_md() {
 // --- fs-special-files.test.ts --------------------------------------------------
 
 /// B-16043be376, B-a1688c97d4
+#[cfg(unix)]
 #[test]
 fn special_files_read_as_none_and_symlinks_are_followed() {
     let (_t, dir) = canonical_tempdir();

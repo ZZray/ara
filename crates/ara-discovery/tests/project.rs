@@ -128,6 +128,7 @@ fn bom_and_invalid_utf8_decode_like_bun() {
     assert_eq!(files.last().unwrap().content, "rule \u{FFFD} end");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn with_env_reads_foreign_overrides_and_wsl_home() {
     let env = |k: &str| match k {
@@ -174,6 +175,7 @@ fn host_limits_on_reads_and_imports() {
 }
 
 /// Review: `@` imports of a FIFO, a directory or a symlink loop keep the token.
+#[cfg(unix)]
 #[test]
 fn imports_of_special_targets_keep_their_token() {
     let t = tree();
@@ -218,10 +220,17 @@ fn validation_warnings_follow_upstream_order() {
     let discovery = Discovery::new(&t.home, HostDirs::ara(&t.home), ProviderPolicy::default());
     let result = capability.load(&discovery.context(&t.cwd), &LoadOptions::default());
     assert_eq!(result.items.len(), 1);
-    assert_eq!(result.warnings, ["[P] Invalid item at /c: bad", "[P] Invalid item at /a: bad"]);
+    assert_eq!(
+        result.warnings,
+        ["c", "a"].map(|name| format!(
+            "[P] Invalid item at {}: bad",
+            ara_discovery::paths::resolve(Path::new(&format!("/{name}"))).display()
+        ))
+    );
 }
 
 /// Review F2: an absolute WSL profile path is normalized.
+#[cfg(target_os = "linux")]
 #[test]
 fn absolute_wsl_profile_is_normalized() {
     let dirs = HostDirs::ara(Path::new("/h")).with_env(|k| match k {

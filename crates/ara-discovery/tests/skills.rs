@@ -137,6 +137,7 @@ fn agents_toggles_and_third_party_gate() {
 }
 
 /// B-7e1875d07a, B-42b0f9a421
+#[cfg(target_os = "linux")]
 #[test]
 fn wsl_host_agents_skills() {
     let env = env();
@@ -270,19 +271,26 @@ fn loader_precedence_symlinks_and_custom_override() {
     write_skill(&repo.join(".agents/skills"), "shared", "---\ndescription: agents copy\n---\n");
     // A symlinked duplicate of another skill directory.
     write_skill(&repo.join(".agents/skills"), "real", "---\ndescription: real one\n---\n");
-    std::os::unix::fs::symlink(repo.join(".agents/skills/real"), repo.join(".claude/skills/alias").as_path())
-        .unwrap_or_else(|_| {
-            fs::create_dir_all(repo.join(".claude/skills")).unwrap();
-            std::os::unix::fs::symlink(repo.join(".agents/skills/real"), repo.join(".claude/skills/alias")).unwrap();
-        });
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(repo.join(".agents/skills/real"), repo.join(".claude/skills/alias").as_path())
+            .unwrap_or_else(|_| {
+                fs::create_dir_all(repo.join(".claude/skills")).unwrap();
+                std::os::unix::fs::symlink(repo.join(".agents/skills/real"), repo.join(".claude/skills/alias"))
+                    .unwrap();
+            });
+    }
     let d = discovery(&env);
     let settings = SkillsSettings { enable_native_project: false, ..SkillsSettings::default() };
     let (skills, _) = d.load_skills(&cwd, &settings);
     let shared = skills.iter().find(|s| s.name == "shared").unwrap();
     assert_eq!((shared.source.as_str(), shared.description.as_str()), ("agents:project", "agents copy"));
-    // `alias` (claude, priority 80) and `real` (agents) are the same file: one survives.
-    let same_file: Vec<_> = skills.iter().filter(|s| s.description == "real one").collect();
-    assert_eq!(same_file.len(), 1);
+    // `alias` (claude, priority 80) and `real` (agents) are the same file: one survives on Unix.
+    #[cfg(unix)]
+    {
+        let same_file: Vec<_> = skills.iter().filter(|s| s.description == "real one").collect();
+        assert_eq!(same_file.len(), 1);
+    }
 
     // A custom directory replaces a default-provider skill of the same name.
     let custom = env.home.join("custom");

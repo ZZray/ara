@@ -1,4 +1,4 @@
-//! Node `path` semantics the discovery code relies on (POSIX).
+//! Node `path` semantics the discovery code relies on.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -54,10 +54,10 @@ pub fn resolve_from(base: &Path, p: &Path) -> PathBuf {
     resolve(&base.join(p))
 }
 
-/// `calculateDepth`: `cwd.split(sep).length - target.split(sep).length`.
+/// `calculateDepth`: component count difference using the host separator.
 /// Positive for ancestors, 0 for cwd, negative below it.
 pub fn calculate_depth(cwd: &Path, target: &Path) -> i64 {
-    let count = |p: &Path| p.to_string_lossy().split('/').count() as i64;
+    let count = |p: &Path| p.components().count() as i64;
     count(cwd) - count(target)
 }
 
@@ -76,10 +76,12 @@ mod tests {
 
     #[test]
     fn resolve_and_depth() {
-        assert_eq!(resolve(Path::new("/a/./b/../c/")), PathBuf::from("/a/c"));
-        assert_eq!(resolve(Path::new("/..")), PathBuf::from("/"));
-        assert_eq!(calculate_depth(Path::new("/r/a/b"), Path::new("/r")), 2);
-        assert_eq!(calculate_depth(Path::new("/r"), Path::new("/r/.gemini")), -1);
-        assert!(is_within(Path::new("/h"), Path::new("/h/x")) && !is_within(Path::new("/h"), Path::new("/hx")));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(resolve(&root.join("a/./b/../c/")), root.join("a/c"));
+        assert_eq!(resolve(&root.join("a/..")), root);
+        assert_eq!(calculate_depth(&root.join("r").join("a").join("b"), &root.join("r")), 2);
+        assert_eq!(calculate_depth(&root.join("r"), &root.join("r").join(".gemini")), -1);
+        assert!(is_within(&root.join("h"), &root.join("h/x")) && !is_within(&root.join("h"), &root.join("hx")));
     }
 }
