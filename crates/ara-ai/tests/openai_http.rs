@@ -196,6 +196,137 @@ async fn replay_safe_retry_preserves_header_only_admission_rejection() {
 }
 
 #[tokio::test]
+async fn replay_safe_retry_classifies_broad_terminal_account_caps() {
+    let google_quota = json!({"error": {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": "Too many requests",
+        "details": [{
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "QUOTA_EXHAUSTED"
+        }]
+    }})
+    .to_string();
+    let google_long_ms = json!({"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Too many requests",
+        "details": [
+            {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "300000ms"}
+        ]
+    }})
+    .to_string();
+    let google_reset_text = json!({"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Your limit will reset in 10 minutes",
+        "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]
+    }})
+    .to_string();
+    let google_absolute = json!({"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED",
+        "message": "Your limit will reset at 2099-01-01 00:00:00Z. Please retry in 5s",
+        "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]
+    }})
+    .to_string();
+    let google_short = json!({"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Your limit will reset in 30s",
+        "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]
+    }})
+    .to_string();
+    let dashscope_throttle = json!({"error": {
+        "code": "insufficient_quota",
+        "message": "You exceeded your current quota, please check your plan and billing details. https://help.aliyun.com/zh/model-studio/error-code#token-limit"
+    }})
+    .to_string();
+    for (name, body, blocked) in [
+        ("opaque", "".to_string(), true),
+        (
+            "subscription",
+            json!({"error": {"message": "You've exceeded your subscription rate limits"}}).to_string(),
+            true,
+        ),
+        ("Chinese account", json!({"error": {"message": "已达到 5 小时的使用上限"}}).to_string(), true),
+        ("Google structured", google_quota, true),
+        ("Google long milliseconds", google_long_ms, true),
+        ("Google reset text", google_reset_text, true),
+        ("Google absolute reset", google_absolute, true),
+        ("Google short reset", google_short, false),
+        ("DashScope token throttle", dashscope_throttle, false),
+        ("Chinese throttle", json!({"error": {"message": "每分钟使用次数已达上限"}}).to_string(), false),
+        ("generic throttle", json!({"error": {"message": "Too many requests"}}).to_string(), false),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"status": 429, "body": body},
+                {"events": [text("recovered"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut options = opts();
+        options.retry.max_attempts = 1;
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options))
+                .await;
+        if blocked {
+            assert_eq!(server.served(), 1, "{name}: {msg:?}");
+            assert_eq!(events.len(), 1, "{name}: rejected before Start");
+            assert_eq!(msg.error_status, Some(429), "{name}");
+        } else {
+            assert_eq!(server.served(), 2, "{name}: {msg:?}");
+            assert_eq!(msg.text(), "recovered", "{name}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_classifies_broad_in_band_account_caps() {
+    let google = |retry_delay: &str| {
+        json!({
+            "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Too many requests",
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"},
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}
+            ]
+        })
+    };
+    for (name, error, blocked) in [
+        ("subscription", json!({"code": 429, "message": "You've exceeded your subscription rate limits"}), true),
+        ("Chinese account", json!({"code": 429, "message": "额度已用完，请充值"}), true),
+        ("Chinese throttle", json!({"code": 429, "message": "每分钟使用次数已达上限"}), false),
+        ("Google long milliseconds", google("300000ms"), true),
+        (
+            "Google absolute reset",
+            json!({
+                "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Your limit will reset at 2099-01-01 00:00:00Z",
+                "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"}]
+            }),
+            true,
+        ),
+        ("Google short seconds", google("30s"), false),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"events": [{"data": {"error": error}}]},
+                {"events": [text("recovered"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        if blocked {
+            assert_eq!(server.served(), 1, "{name}: {msg:?}");
+            assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+            assert_eq!(msg.error_status, Some(429), "{name}");
+        } else {
+            assert_eq!(server.served(), 2, "{name}: {msg:?}");
+            assert_eq!(msg.text(), "recovered", "{name}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn replay_safe_retry_does_not_replay_stalled_error_body_with_no_retry_header() {
     for headers in [json!({"rate_limit_type": "max_parallel_requests"}), json!({"retry-after": "120"})] {
         let server = FakeUpstream::start(

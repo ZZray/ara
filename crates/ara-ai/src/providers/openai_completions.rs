@@ -19,7 +19,7 @@
 //! DeepSeek token stripping, reasoning replay fields, strict tools, prompt cache
 //! keys, OpenRouter routing), markup healing, object-shaped streamed arguments
 //! merge beyond top-level keys, reasoning_details signatures, Copilot/Azure
-//! setup, cost calculation, the replay-safe whole-stream retry wrapper.
+//! setup, cost calculation, and complete replay-safe retry parity.
 
 use crate::error::{ProviderError, envelope_message, parse_error_envelope};
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
@@ -31,6 +31,7 @@ use crate::types::{
     AssistantBlock, AssistantMessage, Context, JsonObject, Message, Model, StopReason, TextContent, ThinkingContent,
     Tool, ToolCall, ToolChoice, Usage, UserBlock, UserContent,
 };
+use crate::usage_limit::account_usage_limit;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -594,63 +595,6 @@ struct InBandError {
     retry_blocked: bool,
 }
 
-/// Keep account-cap evidence from the structured stream frame. The public
-/// error message alone can omit a provider's `insufficient_quota` code.
-fn account_usage_limit(error: &Value, detail: &str) -> bool {
-    let lower = detail.to_ascii_lowercase();
-    // Concurrency and per-minute throttles clear without switching accounts.
-    if lower.contains("concurrent") || lower.contains("per minute") {
-        return false;
-    }
-    // DashScope uses OpenAI's billing wording for a documented TPM/TPS cap.
-    // Require both the wording and the specific documentation anchor; the
-    // same wording without that anchor describes a real account quota.
-    if lower.contains("you exceeded your current quota, please check your plan and billing details")
-        && lower.match_indices("error-code").any(|(index, _)| {
-            lower[index..]
-                .split(|ch: char| ch.is_whitespace() || ch == '(' || ch == ')')
-                .next()
-                .is_some_and(|part| part.contains("#token-limit"))
-        })
-    {
-        return false;
-    }
-    let codes: Vec<String> = ["code", "type"]
-        .into_iter()
-        .filter_map(|key| error.get(key).and_then(Value::as_str))
-        .map(|code| code.trim().to_ascii_lowercase())
-        .collect();
-    if codes.iter().any(|code| {
-        matches!(
-            code.as_str(),
-            "insufficient_quota"
-                | "usage_limit_reached"
-                | "usage_limit_exceeded"
-                | "usage_not_included"
-                | "quota_exhausted"
-                | "insufficient_balance"
-        )
-    }) {
-        return true;
-    }
-    if lower.contains("account") && lower.contains("rate limit") {
-        return true;
-    }
-    if lower.contains("rate limit") || lower.contains("too many requests") {
-        return false;
-    }
-    if codes.iter().any(|code| code == "quota_exceeded") {
-        return true;
-    }
-    lower.contains("quota exhausted")
-        || lower.contains("usage limit reached")
-        || lower.contains("insufficient balance")
-        || lower.contains("out of credits")
-        || lower.contains("spending limit")
-        || (lower.contains("quota")
-            && (lower.contains("account") || lower.contains("monthly") || lower.contains("billing")))
-}
-
 fn stream_error(chunk: &Value) -> Option<InBandError> {
     let error = chunk.get("error");
     let structured = error.is_some_and(Value::is_object);
@@ -676,7 +620,7 @@ fn stream_error(chunk: &Value) -> Option<InBandError> {
         Some("REQUEST_TIMEOUT") => Some(408),
         _ => None,
     });
-    let retry_blocked = account_usage_limit(err, &detail);
+    let retry_blocked = account_usage_limit(status, Some(chunk), &detail, None);
     let cause = match status {
         Some(status) => ProviderError::Http { status, detail },
         None => ProviderError::Stream(detail),
@@ -1140,8 +1084,9 @@ async fn post_with_retry(
                 if !retryable || last || admission_reject || hint_too_long {
                     let detail = parse_error_envelope(&body);
                     let error = serde_json::from_str::<Value>(&body).ok();
-                    let structured = error.as_ref().and_then(|value| value.get("error")).unwrap_or(&Value::Null);
-                    *retry_blocked = admission_reject || hint_too_long || account_usage_limit(structured, &detail);
+                    *retry_blocked = admission_reject
+                        || hint_too_long
+                        || account_usage_limit(Some(status), error.as_ref(), &detail, Some(&body));
                     return Err(ProviderError::Http { status, detail });
                 }
                 sleep_or_cancel(hint.unwrap_or(default_delay), cancel).await?;

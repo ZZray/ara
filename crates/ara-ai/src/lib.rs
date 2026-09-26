@@ -11,6 +11,7 @@ pub(crate) mod replay_safe_retry;
 pub mod sse;
 pub mod transform;
 pub mod types;
+pub(crate) mod usage_limit;
 pub mod validation;
 
 pub use error::ProviderError;
