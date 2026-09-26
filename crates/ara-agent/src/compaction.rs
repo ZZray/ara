@@ -7,13 +7,19 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+use std::time::Instant;
 
-use ara_ai::{AssistantBlock, JsonObject, Message, StopReason, ToolResultMessage, UserBlock, UserContent};
+use ara_ai::{
+    AssistantBlock, AssistantMessage, AssistantMessageEvent, CallOptions, Context, JsonObject, Message, Model,
+    ModelProvider, StopReason, ToolChoice, ToolResultMessage, Usage, UserBlock, UserContent, UserMessage,
+};
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
 const TOOL_RESULT_MAX_CHARS: usize = 2_000;
 const MAX_SUMMARY_INPUT_BYTES: usize = 1_000_000;
 const MAX_SUMMARY_SOURCES: usize = 256;
+const MAX_SUMMARY_OUTPUT_BYTES: usize = 1_000_000;
 
 #[derive(Clone, Copy)]
 pub struct SummarySource<'a> {
@@ -361,4 +367,222 @@ pub fn build_summary_prompt(
         return Err(SummaryInputError::TooLarge);
     }
     Ok(SummaryPrompt { system_prompt: SUMMARIZATION_SYSTEM_PROMPT, user_prompt })
+}
+
+/// A completed, visible summary. Raw assistant blocks (including private
+/// reasoning) are deliberately not returned to the Session owner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AcceptedSummary {
+    pub text: String,
+    /// IDs for this summary window only. A previous summary has separate
+    /// provenance that the Session owner must carry forward when updating it.
+    pub window_source_entry_ids: Vec<String>,
+    pub model_id: String,
+    pub response_id: Option<String>,
+    pub usage: Usage,
+    pub duration_ms: Option<u64>,
+    pub ttft_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryCallErrorKind {
+    InvalidInput(SummaryInputError),
+    InvalidMaxTokens,
+    Cancelled,
+    Deadline,
+    StreamEndedWithoutTerminal,
+    ProviderError,
+    IncompleteResponse,
+    UnexpectedToolCall,
+    UnsupportedResponseImage,
+    EmptySummary,
+    SummaryTooLarge,
+}
+
+/// `usage` is present only when a terminal model message was received. Its
+/// optional token fields retain provider unknowns rather than becoming zero.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SummaryCallError {
+    pub kind: SummaryCallErrorKind,
+    pub usage: Option<Box<Usage>>,
+    pub provider_status: Option<u16>,
+    /// Bounded provider diagnostic. Callers must still redact it before logs
+    /// or user display because an upstream may echo request content.
+    pub provider_message: Option<String>,
+}
+
+impl std::fmt::Display for SummaryCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "summary call failed: {:?}", self.kind)
+    }
+}
+
+impl std::error::Error for SummaryCallError {}
+
+fn rejected(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallError {
+    SummaryCallError { kind, usage: usage.map(Box::new), provider_status: None, provider_message: None }
+}
+
+fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> SummaryCallError {
+    let mut failure = rejected(kind, Some(message.usage.clone()));
+    failure.provider_status = message.error_status;
+    failure.provider_message = message.error_message.as_deref().map(|text| text.chars().take(512).collect());
+    failure
+}
+
+fn accept_summary_response(
+    window_source_entry_ids: Vec<String>,
+    model: &Model,
+    reason: StopReason,
+    message: AssistantMessage,
+    saw_tool_call_event: bool,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    if reason != StopReason::Stop
+        || message.stop_reason != StopReason::Stop
+        || message.error_message.is_some()
+        || message.error_status.is_some()
+    {
+        return Err(rejected_terminal(SummaryCallErrorKind::IncompleteResponse, &message));
+    }
+    if saw_tool_call_event || message.tool_calls().next().is_some() {
+        return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));
+    }
+    let mut text = String::new();
+    let mut first_text = true;
+    for block in &message.content {
+        match block {
+            AssistantBlock::Text(part) => {
+                let separator = usize::from(!first_text);
+                if part.text.len() > MAX_SUMMARY_OUTPUT_BYTES.saturating_sub(text.len()).saturating_sub(separator) {
+                    return Err(rejected_terminal(SummaryCallErrorKind::SummaryTooLarge, &message));
+                }
+                if separator != 0 {
+                    text.push('\n');
+                }
+                text.push_str(&part.text);
+                first_text = false;
+            }
+            AssistantBlock::ToolCall(_) => {
+                return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));
+            }
+            AssistantBlock::Image(_) => {
+                return Err(rejected_terminal(SummaryCallErrorKind::UnsupportedResponseImage, &message));
+            }
+            AssistantBlock::Thinking(_) | AssistantBlock::RedactedThinking { .. } => {}
+        }
+    }
+    if text.trim().is_empty() {
+        return Err(rejected_terminal(SummaryCallErrorKind::EmptySummary, &message));
+    }
+    Ok(AcceptedSummary {
+        text,
+        window_source_entry_ids,
+        model_id: model.id.clone(),
+        response_id: message.response_id,
+        usage: message.usage,
+        duration_ms: message.duration,
+        ttft_ms: message.ttft,
+    })
+}
+
+/// Make one bounded logical summary call. This layer never runs tools, retries,
+/// edits the journal, or treats partial output as accepted. The provider may
+/// retry HTTP before streaming according to its own configuration. The host must
+/// choose a model/window that fits the prepared prompt and must validate
+/// source IDs against its Session branch before committing the derived text.
+pub async fn summarize_sources(
+    sources: &[SummarySource<'_>],
+    previous_summary: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    max_output_tokens: u64,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    let prompt = build_summary_prompt(sources, previous_summary)
+        .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    if max_output_tokens == 0 {
+        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
+    }
+    if cancel.is_cancelled() {
+        return Err(rejected(SummaryCallErrorKind::Cancelled, None));
+    }
+    if Instant::now() >= deadline {
+        return Err(rejected(SummaryCallErrorKind::Deadline, None));
+    }
+
+    let window_source_entry_ids = sources.iter().map(|source| source.entry_id.to_owned()).collect();
+    let context = Context {
+        system_prompt: vec![prompt.system_prompt.to_owned()],
+        messages: vec![Message::User(UserMessage::text(prompt.user_prompt))],
+        tools: Some(Vec::new()),
+    };
+    let provider_cancel = cancel.child_token();
+    // A dropped summary future must stop the provider's spawned HTTP task.
+    let _provider_guard = provider_cancel.clone().drop_guard();
+    let mut events = provider.stream(
+        model,
+        &context,
+        CallOptions {
+            cancel: provider_cancel.clone(),
+            tool_choice: Some(ToolChoice::None),
+            max_tokens: Some(max_output_tokens),
+            temperature: None,
+        },
+    );
+    let deadline = tokio::time::Instant::from_std(deadline);
+    let timeout = tokio::time::sleep_until(deadline);
+    tokio::pin!(timeout);
+    let mut saw_tool_call_event = false;
+    loop {
+        let event = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                provider_cancel.cancel();
+                return Err(rejected(SummaryCallErrorKind::Cancelled, None));
+            }
+            _ = &mut timeout => {
+                provider_cancel.cancel();
+                return Err(rejected(SummaryCallErrorKind::Deadline, None));
+            }
+            event = events.recv() => event,
+        };
+        match event {
+            Some(AssistantMessageEvent::Done { reason, message }) => {
+                if cancel.is_cancelled() {
+                    provider_cancel.cancel();
+                    return Err(rejected(SummaryCallErrorKind::Cancelled, Some(message.usage)));
+                }
+                if Instant::now() >= deadline.into_std() {
+                    provider_cancel.cancel();
+                    return Err(rejected(SummaryCallErrorKind::Deadline, Some(message.usage)));
+                }
+                let accepted =
+                    accept_summary_response(window_source_entry_ids, model, reason, message, saw_tool_call_event)?;
+                if cancel.is_cancelled() {
+                    provider_cancel.cancel();
+                    return Err(rejected(SummaryCallErrorKind::Cancelled, Some(accepted.usage)));
+                }
+                if Instant::now() >= deadline.into_std() {
+                    provider_cancel.cancel();
+                    return Err(rejected(SummaryCallErrorKind::Deadline, Some(accepted.usage)));
+                }
+                return Ok(accepted);
+            }
+            Some(AssistantMessageEvent::Error { error, .. }) => {
+                if cancel.is_cancelled() {
+                    provider_cancel.cancel();
+                    return Err(rejected_terminal(SummaryCallErrorKind::Cancelled, &error));
+                }
+                return Err(rejected_terminal(SummaryCallErrorKind::ProviderError, &error));
+            }
+            Some(
+                AssistantMessageEvent::ToolcallStart { .. }
+                | AssistantMessageEvent::ToolcallDelta { .. }
+                | AssistantMessageEvent::ToolcallEnd { .. },
+            ) => saw_tool_call_event = true,
+            Some(_) => {}
+            None => return Err(rejected(SummaryCallErrorKind::StreamEndedWithoutTerminal, None)),
+        }
+    }
 }

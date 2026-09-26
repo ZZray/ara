@@ -1,6 +1,6 @@
 # AGT-COMPACTIONa: source-tagged summary input (WIP)
 
-Fixed OMP source: `596f2da7101178214aa27a753529d15e6b7ad91d`, `packages/agent/src/compaction/utils.ts:205-328` and `compaction.ts:928-1015`. The three templates in `crates/ara-agent/prompts/` byte-match that commit's `packages/agent/src/compaction/prompts/`; their MIT source is recorded in `THIRD_PARTY_NOTICES.md`.
+Fixed OMP source: `596f2da7101178214aa27a753529d15e6b7ad91d`, `packages/agent/src/compaction/utils.ts:205-328` and `compaction.ts:873-954`. The three templates in `crates/ara-agent/prompts/` byte-match that commit's `packages/agent/src/compaction/prompts/`; their MIT source is recorded in `THIRD_PARTY_NOTICES.md`.
 
 `ara-agent::compaction` prepares a one-shot summary prompt from caller-supplied journal entry IDs and messages. It carries source IDs into JSONL records, retains visible role, tool calls, stop reason and tool receipts, flags native interrupted recovery and timed-out tool receipts as unknown effect, and excludes private thinking, redacted payloads and signatures. Images fail explicitly. Untrusted `<conversation>` and `<previous-summary>` tags are escaped, and the serializer is bounded to 256 source messages and 1 MiB. Prompt construction checks unique IDs, a completed assistant stop, matched tool-call IDs and names, and no unknown-effect receipt. `Stop` with tool calls follows the actual Agent loop: those calls execute and require receipts plus a later final assistant stop. The raw transcript remains untouched.
 
