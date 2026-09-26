@@ -647,6 +647,16 @@ async fn skill_url_search_and_read_only_write_reach_cli() {
     assert!(!work.join("skill:").exists());
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 4);
+    let system: String = reqs[0]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "system")
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert!(system.contains("`grep` can search a `skill://` file or directory"));
+    assert!(system.contains("`glob` can list a `skill://` file or directory"));
+    assert!(system.contains("`write` rejects `skill://` URLs as read-only"));
     for (request, id, fragment) in
         [(1, "call_glob", "SKILL.md"), (2, "call_grep", "marker-in-skill"), (3, "call_write", "read-only for write")]
     {

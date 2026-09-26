@@ -371,6 +371,8 @@ fn internal_urls_follow_the_host() {
     assert!(skill_only.contains("# Internal URLs") && skill_only.contains("`skill://<name>`"));
     assert!(skill_only.contains("Use `read` for `skill://` content"));
     assert!(skill_only.contains("Other file tools require filesystem paths"));
+    assert!(!skill_only.contains("`grep` can search") && !skill_only.contains("`glob` can list"));
+    assert!(!skill_only.contains("`write` rejects"));
     assert!(!skill_only.contains("`bash` also expands `skill://`"));
     assert!(!skill_only.contains("Most FS/bash tools auto-resolve"));
     assert!(!skill_only.contains("history://") && !skill_only.contains("pr://"));
@@ -381,6 +383,25 @@ fn internal_urls_follow_the_host() {
     let urls = ara_context::InternalUrls { skill: true, ..Default::default() };
     let (_, with_bash) = render_text(&env, &env.root, &SystemPromptOptions { urls, tools: Some(tools), ..explicit() });
     assert!(with_bash.contains("`bash` also expands `skill://`"));
+
+    let mut tools = read_tool();
+    for (name, label) in [("grep", "Grep"), ("glob", "Glob"), ("write", "Write")] {
+        tools.push(PromptTool { name: name.into(), label: label.into() });
+    }
+    let urls = ara_context::InternalUrls { skill: true, ..Default::default() };
+    let (_, with_search) =
+        render_text(&env, &env.root, &SystemPromptOptions { urls, tools: Some(tools), ..explicit() });
+    assert!(with_search.contains("`grep` can search a `skill://` file or directory"));
+    assert!(with_search.contains("`glob` can list a `skill://` file or directory"));
+    assert!(with_search.contains("`write` rejects `skill://` URLs as read-only"));
+    assert!(!with_search.contains("`bash` also expands `skill://`"));
+
+    let tools = vec![PromptTool { name: "grep".into(), label: "Grep".into() }];
+    let urls = ara_context::InternalUrls { skill: true, ..Default::default() };
+    let (_, grep_only) = render_text(&env, &env.root, &SystemPromptOptions { urls, tools: Some(tools), ..explicit() });
+    assert!(!grep_only.contains("Use `read` for `skill://`"));
+    assert!(grep_only.contains("`grep` can search a `skill://` file or directory"));
+    assert!(!grep_only.contains("`glob` can list") && !grep_only.contains("`write` rejects"));
 }
 
 // --- date-cwd-reminder.test.ts ---------------------------------------------------------

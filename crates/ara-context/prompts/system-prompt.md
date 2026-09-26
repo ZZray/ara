@@ -55,7 +55,11 @@ Matching skill → MUST read `skill://<name>` first.
 {{#if urls.any}}
 # Internal URLs
 {{#if urls.skill}}
-Use `read` for `skill://` content. Other file tools require filesystem paths.
+{{#has tools "read"}}Use `read` for `skill://` content.{{/has}}
+{{#has tools "grep"}}`grep` can search a `skill://` file or directory.{{/has}}
+{{#has tools "glob"}}`glob` can list a `skill://` file or directory; URL glob patterns are unsupported.{{/has}}
+{{#has tools "write"}}`write` rejects `skill://` URLs as read-only.{{/has}}
+Other file tools require filesystem paths.
 {{#has tools "bash"}}`bash` also expands `skill://` in commands, environment values, and working directories.{{/has}}
 - `skill://<name>`: instructions; `/<path>`: its file
 {{/if}}
