@@ -24,14 +24,11 @@ block both retry layers, including when the error body stalls. Empty-stop retry 
 explicit provider output count of 0 or 1. Unknown usage is not zero in ARA.
 `accept_empty_response` opts out of this wrapper's retries.
 
-**Open parity:** ARA suppresses outer retries for selected structured in-band
-and terminal non-2xx account-quota codes or clear account-quota messages, while
-retaining retry for short-term 429 throttles. The inner HTTP layer can still
-repeat account-cap 429s before the final error is classified. This is not
-OMP's full account-usage-limit classifier; other provider phrasings remain
-open. OMP's image stream event is not in ARA's current event
-protocol, although a terminal image block prevents empty-stop retry. OMP's
-full retry classifier and the wider AI-RETRY surface remain open. The final
+**Open parity:** The broad outer account-cap classifier is documented below.
+The inner HTTP layer can still repeat account-cap 429s before the final error
+is classified. ARA now has the OMP `image_end` event shape and commits the
+outer retry attempt on it, but its current OpenAI Chat adapter does not emit
+output images. OMP's wider AI-RETRY surface remains open. The final
 assistant message contains only the delivered attempt's usage and duration;
 these are not aggregate cost or end-to-end latency across discarded attempts.
 Do not infer total usage from them.
@@ -199,5 +196,41 @@ findings were fixed with HTTP and in-band regressions. Final read-only
 re-review found no further confirmed P1/P2 in this scoped diff; the reviewer
 did not rerun tests. The current worktree was tested locally, and the code
 was committed as WIP because the full delivery gate and bounded real-model
-task have not passed. Aggregate retry usage, image events, the wider
+task have not passed. Aggregate retry usage, provider image output, the wider
 AI-RETRY surface, and the prior inner HTTP account-cap behavior remain open.
+
+## Image event commit follow-up (2026-09-26, WIP)
+
+Code commit: `accd018` on local `dev`. Fixed OMP
+`packages/ai/src/types.ts:1341` defines an `image_end` event with content
+index, `ImageContent`, and a current assistant snapshot;
+`packages/ai/src/utils/empty-completion-retry.ts:48` treats it as meaningful
+output. `ara-ai::event::AssistantMessageEvent` now carries that variant and
+prints a tagged `type: image` content object without repeating the partial
+snapshot. `ara-ai::replay_safe_retry` immediately commits the attempt on the
+event. The existing Agent and CLI generic event paths need no state-machine
+change. ARA's existing `ImageContent` only covers its base fields; optional
+upstream image metadata and a provider that actually emits output images are
+still open.
+
+An in-process synthetic provider attempt emits `Start` and `ImageEnd`, waits
+before its terminal 503, then finishes with an error. The test observes the
+image before the terminal and verifies exactly one attempt, one Start, and no
+replay after the 503. A separate event-shape test checks `contentIndex`, the
+tagged image JSON, the current snapshot, and nonterminal status. These tests
+prove the retry wrapper's contract, not an OpenAI Chat image-output route.
+
+| Check on `accd018` | Result |
+| --- | --- |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 37 unit and 42 HTTP tests |
+| `cargo test -p ara-agent --all-targets --all-features --quiet` | Exit 0: 32 loop, 12 compaction, 8 call, 7 cut, and 4 other tests |
+| `python scripts/verify_backend.py` | Owned formatting and strict workspace Clippy pass; all-target tests stop at the same 3 Windows CLI e2e failures (15/18 pass): Bash start, deadline exit, resume file. Doc phase not reached. |
+| `cargo test --workspace --doc --all-features --quiet` | Exit 0 separately |
+| `cargo deny check`; `python scripts/omp_inventory.py check`; `git diff --cached --check` | Exit 0; deny retains existing policy warnings |
+
+Independent Codex plan and diff reviews checked the fixed OMP event and retry
+semantics, the changed two files, and Agent/CLI consumers. Final read-only
+review found no reachable defect in scope and did not rerun tests. No
+controlled upstream in the current ARA provider stack produces `image_end`,
+so the real Provider → Agent → CLI path and bounded real-model task remain
+unverified. The point remains **implementing (WIP), not accepted**.
