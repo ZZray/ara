@@ -5,7 +5,7 @@
 //! terminal `error` event. Every stream has exactly one terminal event.
 //! `partial` is the provider's current snapshot of the assistant message.
 
-use crate::types::{AssistantMessage, StopReason, ToolCall};
+use crate::types::{AssistantBlock, AssistantMessage, ImageContent, StopReason, ToolCall};
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +39,11 @@ pub enum AssistantMessageEvent {
     ThinkingEnd {
         content_index: usize,
         content: String,
+        partial: AssistantMessage,
+    },
+    ImageEnd {
+        content_index: usize,
+        content: ImageContent,
         partial: AssistantMessage,
     },
     ToolcallStart {
@@ -77,6 +82,7 @@ impl AssistantMessageEvent {
             Self::ThinkingStart { .. } => "thinking_start",
             Self::ThinkingDelta { .. } => "thinking_delta",
             Self::ThinkingEnd { .. } => "thinking_end",
+            Self::ImageEnd { .. } => "image_end",
             Self::ToolcallStart { .. } => "toolcall_start",
             Self::ToolcallDelta { .. } => "toolcall_delta",
             Self::ToolcallEnd { .. } => "toolcall_end",
@@ -99,6 +105,7 @@ impl AssistantMessageEvent {
             | Self::ThinkingStart { partial, .. }
             | Self::ThinkingDelta { partial, .. }
             | Self::ThinkingEnd { partial, .. }
+            | Self::ImageEnd { partial, .. }
             | Self::ToolcallStart { partial, .. }
             | Self::ToolcallDelta { partial, .. }
             | Self::ToolcallEnd { partial, .. } => partial,
@@ -124,6 +131,9 @@ impl AssistantMessageEvent {
             }
             Self::TextEnd { content_index, content, .. } | Self::ThinkingEnd { content_index, content, .. } => {
                 json!({"type": self.type_name(), "contentIndex": content_index, "content": content})
+            }
+            Self::ImageEnd { content_index, content, .. } => {
+                json!({"type": "image_end", "contentIndex": content_index, "content": AssistantBlock::Image(content.clone())})
             }
             Self::ToolcallEnd { content_index, tool_call, .. } => {
                 json!({"type": "toolcall_end", "contentIndex": content_index, "toolCall": tool_call})
@@ -166,5 +176,26 @@ impl EventSink {
             r = self.tx.send(event) => r.is_ok(),
             _ = cancel.cancelled() => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn image_end_keeps_content_and_current_snapshot() {
+        let image = ImageContent { data: "YQ==".into(), mime_type: "image/png".into() };
+        let mut partial = AssistantMessage::empty("openai-completions", "fake", "model");
+        partial.content.push(AssistantBlock::Image(image.clone()));
+        let event = AssistantMessageEvent::ImageEnd { content_index: 0, content: image, partial: partial.clone() };
+        assert_eq!(event.type_name(), "image_end");
+        assert!(!event.is_terminal());
+        assert_eq!(event.partial(), &partial);
+        assert_eq!(
+            event.printable(),
+            json!({"type": "image_end", "contentIndex": 0, "content": {"type": "image", "data": "YQ==", "mimeType": "image/png"}})
+        );
     }
 }

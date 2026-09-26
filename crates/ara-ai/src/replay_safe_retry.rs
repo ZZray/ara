@@ -39,7 +39,9 @@ fn meaningful(event: &AssistantMessageEvent) -> bool {
         AssistantMessageEvent::TextEnd { content, .. } | AssistantMessageEvent::ThinkingEnd { content, .. } => {
             !content.is_empty()
         }
-        AssistantMessageEvent::ToolcallStart { .. } | AssistantMessageEvent::ToolcallEnd { .. } => true,
+        AssistantMessageEvent::ImageEnd { .. }
+        | AssistantMessageEvent::ToolcallStart { .. }
+        | AssistantMessageEvent::ToolcallEnd { .. } => true,
         _ => false,
     }
 }
@@ -268,4 +270,74 @@ where
         }
     });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ImageContent;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::oneshot;
+
+    fn model() -> Model {
+        Model {
+            id: "image-model".into(),
+            api: "openai-completions".into(),
+            provider: "fake".into(),
+            base_url: "http://example.invalid/v1".into(),
+            reasoning: false,
+            max_tokens: None,
+            tokenizer: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn image_end_commits_live_and_prevents_error_replay() {
+        let model = model();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted_attempts = attempts.clone();
+        let (release, wait_for_release) = oneshot::channel::<()>();
+        let mut wait_for_release = Some(wait_for_release);
+        let mut stream = with_replay_safe_stream_retry(model.clone(), CancellationToken::new(), false, move |_| {
+            counted_attempts.fetch_add(1, Ordering::SeqCst);
+            let (sink, events) = EventSink::channel();
+            let error = Arc::new(Mutex::new(Some(AttemptError {
+                cause: ProviderError::Http { status: 503, detail: "temporary".into() },
+                retry_blocked: false,
+            })));
+            let wait = wait_for_release.take().expect("image output must prevent a second attempt");
+            let model = model.clone();
+            tokio::spawn(async move {
+                let mut partial = AssistantMessage::empty(&model.api, &model.provider, &model.id);
+                assert!(sink.push(AssistantMessageEvent::Start { partial: partial.clone() }).await);
+                let image = ImageContent { data: "YQ==".into(), mime_type: "image/png".into() };
+                partial.content.push(AssistantBlock::Image(image.clone()));
+                assert!(
+                    sink.push(AssistantMessageEvent::ImageEnd {
+                        content_index: 0,
+                        content: image,
+                        partial: partial.clone()
+                    })
+                    .await
+                );
+                let _ = wait.await;
+                partial.stop_reason = StopReason::Error;
+                partial.error_message = Some("503 temporary".into());
+                partial.error_status = Some(503);
+                assert!(sink.push(AssistantMessageEvent::Error { reason: StopReason::Error, error: partial }).await);
+            });
+            AttemptStream { events, error }
+        });
+
+        let start = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().unwrap();
+        assert!(matches!(start, AssistantMessageEvent::Start { .. }));
+        let image = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().unwrap();
+        assert!(matches!(image, AssistantMessageEvent::ImageEnd { .. }));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        release.send(()).unwrap();
+        let terminal = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().unwrap();
+        assert!(matches!(terminal, AssistantMessageEvent::Error { error, .. } if error.error_status == Some(503)));
+        assert!(tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().is_none());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
 }
