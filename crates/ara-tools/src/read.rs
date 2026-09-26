@@ -121,6 +121,8 @@ pub fn split_selector(input: &str, exists: impl Fn(&str) -> bool) -> Result<(Str
 fn path_exists(p: &Path) -> bool {
     match std::fs::symlink_metadata(p) {
         Ok(_) => true,
+        #[cfg(windows)]
+        Err(e) if e.raw_os_error() == Some(123) => false,
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
     }
 }

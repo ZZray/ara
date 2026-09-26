@@ -515,7 +515,7 @@ mod tests {
 	fn golden_json_serialization_matches_bun() {
 		for (fixture, golden) in [(MIXED_FIXTURE, MIXED_GOLDEN), (EMPTY_FIXTURE, EMPTY_GOLDEN)] {
 			let value: Value = serde_json::from_str(fixture).unwrap();
-			assert_eq!(stringify_indent1(&value), golden);
+			assert_eq!(stringify_indent1(&value), golden.replace("\r\n", "\n"));
 		}
 	}
 
@@ -525,7 +525,7 @@ mod tests {
 			let editable = notebook_to_editable_text(fixture, "fixture.ipynb").unwrap();
 			let serialized =
 				serialize_edited_notebook_text(Some(fixture), &editable, "fixture.ipynb").unwrap();
-			assert_eq!(serialized, golden);
+			assert_eq!(serialized, golden.replace("\r\n", "\n"));
 		}
 	}
 

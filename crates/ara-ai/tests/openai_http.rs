@@ -357,14 +357,27 @@ async fn cancellation_mid_stream_aborts() {
 
 #[tokio::test]
 async fn dropped_stream_is_incomplete() {
-    let server = FakeUpstream::start(script(json!({"responses": [{"events": [text("half")], "end": "drop"}]})), None)
-        .await
-        .unwrap();
+    let server = FakeUpstream::start(script(json!({"responses": [{"events": [text("half")]}]})), None).await.unwrap();
     let (_, msg) =
         collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
     assert_eq!(msg.stop_reason, StopReason::Error);
-    let err = msg.error_message.unwrap();
-    assert!(err == openai_completions::INCOMPLETE_STREAM_MESSAGE || err.starts_with("stream read failed"), "{err}");
+    assert_eq!(msg.text(), "half");
+    assert_eq!(msg.error_message.as_deref(), Some(openai_completions::INCOMPLETE_STREAM_MESSAGE));
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn reset_without_confirmed_frames_never_completes_or_dispatches_tools() {
+    let server = FakeUpstream::start(script(json!({"responses": [{"events": [text("half")], "end": "drop"}]})), None)
+        .await
+        .unwrap();
+    let mut options = opts();
+    options.retry.max_attempts = 1;
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert_eq!(msg.stop_reason, StopReason::Error);
+    assert_eq!(msg.tool_calls().count(), 0);
+    assert_eq!(server.served(), 1);
 }
 
 #[tokio::test]
@@ -464,17 +477,63 @@ async fn builder_error_fails_fast_without_retry() {
 
 #[tokio::test]
 async fn read_error_after_finish_keeps_completed_response() {
-    let server = FakeUpstream::start(
-        script(json!({"responses": [{"events": [text("answer"), finish("stop"), usage(4, 2)], "end": "drop"}]})),
-        None,
-    )
-    .await
-    .unwrap();
-    let (_, msg) =
-        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut buf).await.unwrap();
+            assert!(n > 0, "request closed before its body was read");
+            request.extend_from_slice(&buf[..n]);
+            let Some(header_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") else { continue };
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                })
+                .unwrap();
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 100000\r\nconnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let frame = json!({
+            "id": "fake-1",
+            "choices": [{"index": 0, "delta": {"content": "answer"}, "finish_reason": "stop"}]
+        });
+        socket.write_all(format!("data: {frame}\n\n").as_bytes()).await.unwrap();
+        socket.flush().await.unwrap();
+        released.await.unwrap();
+        #[allow(deprecated)]
+        socket.set_linger(Some(Duration::from_secs(0))).unwrap();
+        drop(socket);
+    });
+    let mut stream =
+        openai_completions::stream(reqwest::Client::new(), model(&format!("http://{addr}/v1")), ctx(), opts());
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(3), stream.recv()).await.unwrap().unwrap();
+        if matches!(event, AssistantMessageEvent::TextDelta { .. }) {
+            break;
+        }
+    }
+    assert!(tokio::time::timeout(Duration::from_millis(100), stream.recv()).await.is_err());
+    release.send(()).unwrap();
+    let (_, msg) = tokio::time::timeout(Duration::from_secs(2), collect(stream)).await.unwrap();
+    server.await.unwrap();
     assert_eq!(msg.stop_reason, StopReason::Stop);
     assert_eq!(msg.text(), "answer");
-    assert_eq!(msg.usage.output, Some(2));
+    assert!(msg.usage.is_unknown());
 }
 
 #[tokio::test]

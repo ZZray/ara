@@ -44,7 +44,7 @@ fn decode_uri_component(s: &str) -> Option<String> {
 /// (first check), upstream's `path.normalize` tests reduce to a `/`-separated
 /// segment starting with `..` (`..foo` is rejected as upstream does).
 pub fn validate_relative_path(relative: &str) -> Result<(), String> {
-    if Path::new(relative).is_absolute() {
+    if relative.starts_with('/') || Path::new(relative).is_absolute() {
         return Err("Absolute paths are not allowed in skill:// URLs".into());
     }
     if relative.split(['/', '\\']).any(|part| part == "..") || relative.split('/').any(|part| part.starts_with("..")) {
@@ -272,6 +272,20 @@ fn shell_escape(p: &str) -> String {
     format!("'{}'", p.replace('\'', "'\\''"))
 }
 
+fn shell_escape_path(path: &Path) -> String {
+    shell_escape(&shell_path(path))
+}
+
+fn shell_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        // Git Bash needs forward slashes even for extended-length Windows paths.
+        path.to_string_lossy().replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    path.to_string_lossy().into_owned()
+}
+
 /// `expandSkillUrls`: every `skill://` token (quoted or not) becomes a
 /// shell-escaped path; the first unresolvable one is an error. `bash` uses
 /// the lenient [`expand_skill_urls`], as upstream's tool does.
@@ -287,7 +301,7 @@ pub fn expand_skill_urls_strict(command: &str, skills: &[SkillRef]) -> Result<St
         let url = if quoted { &token[1..token.len() - 1] } else { token };
         let path = resolve_skill_url_to_path(skills, url)?;
         out.push_str(&command[last..m.start()]);
-        out.push_str(&shell_escape(&path.to_string_lossy()));
+        out.push_str(&shell_escape_path(&path));
         last = m.end();
     }
     out.push_str(&command[last..]);
@@ -316,8 +330,7 @@ pub fn expand_skill_urls(command: &str, skills: &[SkillRef], no_escape: bool) ->
         let quoted = token.starts_with('\'') || token.starts_with('"');
         let url = if quoted { &token[1..token.len() - 1] } else { token.as_str() };
         let Ok(path) = resolve_skill_url_to_path(skills, url) else { continue };
-        let path = path.to_string_lossy();
-        let replacement = if no_escape { path.into_owned() } else { shell_escape(&path) };
+        let replacement = if no_escape { shell_path(&path) } else { shell_escape_path(&path) };
         expanded.replace_range(index..index + token.len(), &replacement);
     }
     expanded

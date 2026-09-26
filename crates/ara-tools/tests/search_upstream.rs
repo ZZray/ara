@@ -175,8 +175,14 @@ async fn walker_pruned_targets_overlaps_and_unrelated_trees() {
     let out = grep(r, json!({"pattern": "needle-dup", "path": ".; src/a.ts"})).await;
     assert_eq!(d(&out)["matchCount"], 1);
 
+    #[cfg(unix)]
     let a = tempfile::tempdir_in("/tmp").unwrap();
+    #[cfg(unix)]
     let b = tempfile::tempdir_in("/var/tmp").unwrap();
+    #[cfg(windows)]
+    let a = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let b = tempfile::tempdir().unwrap();
     std::fs::write(a.path().join("alpha.txt"), "shared-needle alpha\n").unwrap();
     std::fs::write(b.path().join("beta.txt"), "shared-needle beta\n").unwrap();
     let started = std::time::Instant::now();
@@ -215,9 +221,9 @@ async fn glob_path_lists_quotes_and_outside_cwd() {
     std::fs::write(outside.path().join("outside.txt"), "outside\n").unwrap();
     let out = glob(r, json!({"path": outside.path().to_str().unwrap()})).await;
     let o = outside.path().to_str().unwrap();
-    assert_eq!(text(&out), format!("# {o}/\noutside.txt"));
-    assert_eq!(d(&out)["files"], json!([format!("{o}/outside.txt")]));
-    assert_eq!(d(&out)["scopePath"], o);
+    assert_eq!(text(&out), format!("# {}/\noutside.txt", o.replace('\\', "/")));
+    assert_eq!(d(&out)["files"], json!([format!("{}/outside.txt", o.replace('\\', "/"))]));
+    assert_eq!(d(&out)["scopePath"], o.replace('\\', "/"));
     for root in ["/", "//"] {
         let e = GlobTool::new(plain_ctx(r))
             .execute("c", args(json!({"path": root})), CancellationToken::new(), Arc::new(|_| {}))

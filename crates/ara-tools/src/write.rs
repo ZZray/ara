@@ -136,7 +136,10 @@ impl AgentTool for WriteTool {
         tokio::fs::write(&abs, content.as_bytes())
             .await
             .map_err(|e| ToolError(format!("Cannot write {display}: {e}")))?;
+        #[cfg(unix)]
         let mut made_executable = false;
+        #[cfg(not(unix))]
+        let made_executable = false;
         #[cfg(unix)]
         if !existed && content.starts_with("#!") {
             use std::os::unix::fs::PermissionsExt;

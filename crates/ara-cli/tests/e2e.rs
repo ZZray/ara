@@ -248,10 +248,12 @@ async fn upstream_auth_failure_exits_nonzero_with_the_error() {
     assert_eq!(entries.last().unwrap()["message"]["errorStatus"], json!(401));
 }
 
+#[cfg(unix)]
 fn signal(child: &Child, sig: i32) {
     assert_eq!(unsafe { libc::kill(child.id() as i32, sig) }, 0);
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn sigint_during_a_tool_aborts_and_journals() {
     let env = Env::new();
@@ -282,6 +284,7 @@ async fn sigint_during_a_tool_aborts_and_journals() {
     assert_eq!(up.served(), 1, "no model call after the abort");
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn crash_mid_tool_resume_reports_unknown_effect_without_replay() {
     let env = Env::new();
@@ -468,7 +471,9 @@ async fn resume_runs_tools_in_the_session_cwd() {
             .await;
     assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
     let recorded = std::fs::read_to_string(project.path().join("where.txt")).unwrap();
-    assert_eq!(recorded.trim(), std::fs::canonicalize(project.path()).unwrap().to_string_lossy());
+    let expected = Command::new("bash").arg("-c").arg("pwd").current_dir(project.path()).output().unwrap();
+    assert!(expected.status.success());
+    assert_eq!(recorded.trim(), String::from_utf8_lossy(&expected.stdout).trim());
     assert!(!elsewhere.path().join("where.txt").exists());
 }
 
@@ -541,7 +546,8 @@ async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
     assert!(system.contains("`skill://<name>`"), "skill:// advertised");
     assert!(!system.contains("history://") && !system.contains("omp://"), "unported URLs not advertised");
     assert!(system.contains("<repo-rules>") && system.contains("Always answer in French."), "AGENTS.md included");
-    assert!(system.contains(&format!("<file path=\"{}\">", work.canonicalize().unwrap().join("AGENTS.md").display())));
+    let displayed_path = work.canonicalize().unwrap().join("AGENTS.md").display().to_string().replace('\\', "/");
+    assert!(system.contains(&format!("<file path=\"{displayed_path}\">")));
 
     let entries = journal(&env.session_files()[0]);
     let results: Vec<&Value> = entries.iter().filter(|e| e["message"]["role"] == "toolResult").collect();

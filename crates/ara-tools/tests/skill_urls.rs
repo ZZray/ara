@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 fn shell_escape(p: &str) -> String {
+    #[cfg(windows)]
+    let p = p.replace('\\', "/");
     format!("'{}'", p.replace('\'', "'\\''"))
 }
 
@@ -209,9 +211,20 @@ async fn bash_expands_skill_urls() {
     let out = b(json!({"command": "sh skill://demo/scripts/hello.sh"})).await.unwrap();
     assert!(text(&out).contains("hello-from-skill"), "{}", text(&out));
     let out = b(json!({"command": "echo \"$SKILL_DIR\"", "env": {"SKILL_DIR": "skill://demo"}})).await.unwrap();
-    assert!(text(&out).contains(&demo.base_dir.display().to_string()), "{}", text(&out));
+    assert!(text(&out).contains(&demo.base_dir.display().to_string().replace('\\', "/")), "{}", text(&out));
+    let out = b(json!({"command": "sh \"$SKILL_DIR/scripts/hello.sh\"", "env": {"SKILL_DIR": "skill://demo"}}))
+        .await
+        .unwrap();
+    assert_eq!(text(&out), "hello-from-skill");
     let out = b(json!({"command": "pwd", "cwd": "skill://demo/scripts"})).await.unwrap();
-    assert!(text(&out).contains(&demo.base_dir.join("scripts").display().to_string()), "{}", text(&out));
+    let expected = std::process::Command::new("bash")
+        .arg("-c")
+        .arg("pwd")
+        .current_dir(demo.base_dir.join("scripts"))
+        .output()
+        .unwrap();
+    assert!(expected.status.success());
+    assert_eq!(text(&out), String::from_utf8_lossy(&expected.stdout).trim());
     // Unknown skills stay literal, so the shell sees the original token.
     let out = b(json!({"command": "echo skill://nope/x"})).await.unwrap();
     assert!(text(&out).contains("skill://nope/x"), "{}", text(&out));
@@ -222,11 +235,16 @@ async fn bash_expands_skill_urls() {
 #[test]
 fn backslash_ends_an_unquoted_token() {
     let skills = [skill("demo", "/s/demo")];
-    assert_eq!(expand_skill_urls("cat skill://demo/a\\ b", &skills, false), "cat '/s/demo/a'\\ b");
-    assert_eq!(expand_skill_urls_strict("cat skill://demo/a\\ b", &skills).unwrap(), "cat '/s/demo/a'\\ b");
+    let a = shell_escape(&joined(&skills[0], "a"));
+    assert_eq!(expand_skill_urls("cat skill://demo/a\\ b", &skills, false), format!("cat {a}\\ b"));
+    assert_eq!(expand_skill_urls_strict("cat skill://demo/a\\ b", &skills).unwrap(), format!("cat {a}\\ b"));
     assert_eq!(
         expand_skill_urls("echo skill://demo/x\\\" '\" ; touch M ; \"' skill://demo/y\\\"", &skills, false),
-        "echo '/s/demo/x'\\\" '\" ; touch M ; \"' '/s/demo/y'\\\""
+        format!(
+            "echo {}\\\" '\" ; touch M ; \"' {}\\\"",
+            shell_escape(&joined(&skills[0], "x")),
+            shell_escape(&joined(&skills[0], "y"))
+        )
     );
 }
 
@@ -241,7 +259,10 @@ fn quoted_tokens_nested_in_quotes_stay_literal() {
         assert_eq!(expand_skill_urls(literal, &skills, false), literal);
     }
     // A quote that really opens a string still expands.
-    assert_eq!(expand_skill_urls("cat \"skill://demo/a\" 'x'", &skills, false), "cat '/s/demo/a' 'x'");
+    assert_eq!(
+        expand_skill_urls("cat \"skill://demo/a\" 'x'", &skills, false),
+        format!("cat {} 'x'", shell_escape(&joined(&skills[0], "a")))
+    );
 }
 
 /// Review F2/F3 through `bash`: text the model quoted never runs, with or

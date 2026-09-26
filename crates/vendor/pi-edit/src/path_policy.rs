@@ -607,7 +607,11 @@ mod tests {
 		assert_eq!(p.resolve("/").unwrap().absolute, tmp.path());
 		assert_eq!(p.resolve("@~/x").unwrap().absolute, tmp.path().join("home/x"));
 		assert_eq!(p.resolve(":./x").unwrap().absolute, tmp.path().join("./x"));
-		assert_eq!(p.resolve("file:///tmp/a%20b").unwrap().absolute, PathBuf::from("/tmp/a b"));
+		let file_url = p.resolve("file:///tmp/a%20b").unwrap().absolute;
+		#[cfg(unix)]
+		assert_eq!(file_url, PathBuf::from("/tmp/a b"));
+		#[cfg(windows)]
+		assert!(file_url.is_absolute() && file_url.ends_with("tmp/a b") && file_url.components().count() == 4);
 		assert!(
 			p.resolve("agent://x")
 				.unwrap_err()
@@ -704,9 +708,7 @@ mod tests {
 		let missing = tmp.path().join("missing.txt");
 		assert_eq!(
 			canonical_key(&missing),
-			std::fs::canonicalize(tmp.path())
-				.unwrap()
-				.join("missing.txt")
+			strip_windows_verbatim_path(std::fs::canonicalize(tmp.path()).unwrap().join("missing.txt"))
 		);
 	}
 }

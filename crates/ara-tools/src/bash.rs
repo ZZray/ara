@@ -220,14 +220,17 @@ fn kill_group(pid: Option<u32>) {
     }
 }
 
-/// Kills the call's process group when dropped (normal end, error, or the
-/// execute future being dropped by the host).
-struct GroupGuard(Option<u32>);
+/// Kills the call's process group on Unix when dropped (normal end, error, or
+/// the execute future being dropped by the host).
+struct GroupGuard {
+    #[cfg(unix)]
+    pid: Option<u32>,
+}
 
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
-        kill_group(self.0);
+        kill_group(self.pid);
     }
 }
 
@@ -304,7 +307,11 @@ impl AgentTool for BashTool {
         let started = Instant::now();
         let mut child = cmd.spawn().map_err(|e| ToolError(format!("Failed to start bash: {e}")))?;
         drop(cmd); // release the parent's copies of the pipe's write end
-        let _group = GroupGuard(child.id());
+        let _group = GroupGuard {
+            #[cfg(unix)]
+            pid: child.id(),
+        };
+        #[cfg(unix)]
         let pid = child.id();
         let sink = Arc::new(Mutex::new(OutputSink::default()));
         let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
@@ -366,16 +373,16 @@ impl AgentTool for BashTool {
             text.push_str(n);
         }
         let exit_code = match &ending {
-            Ending::Exited(Some(status)) => status.code().or_else(|| {
-                // OMP maps a signal kill without an exit code to 128 + signal (137 for SIGKILL).
+            Ending::Exited(Some(status)) => {
                 #[cfg(unix)]
                 {
                     use std::os::unix::process::ExitStatusExt;
-                    status.signal().map(|s| 128 + s)
+                    // OMP maps a signal kill without an exit code to 128 + signal (137 for SIGKILL).
+                    status.code().or_else(|| status.signal().map(|s| 128 + s))
                 }
                 #[cfg(not(unix))]
-                None
-            }),
+                status.code()
+            }
             _ => None,
         };
         match ending {

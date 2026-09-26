@@ -97,10 +97,19 @@ async fn write_creates_dirs_counts_utf16_and_marks_shebang() {
     let w =
         |p: &str, c: &str| write.execute("c", args(json!({"path": p, "content": c})), CancellationToken::new(), noop());
     let out = w("deep/nested/x.txt", "héllo😀").await.unwrap();
-    assert_eq!(text(&out), "Successfully wrote 7 bytes to deep/nested/x.txt");
+    assert_eq!(
+        text(&out),
+        format!(
+            "Successfully wrote 7 bytes to {}",
+            std::path::Path::new("deep").join("nested").join("x.txt").display()
+        )
+    );
     assert_eq!(std::fs::read_to_string(dir.path().join("deep/nested/x.txt")).unwrap(), "héllo😀");
     let out = w("run.sh", "#!/bin/sh\necho hi\n").await.unwrap();
+    #[cfg(unix)]
     assert_eq!(text(&out), format!("Successfully wrote 18 bytes to run.sh\n{}", write::EXECUTABLE_NOTICE));
+    #[cfg(not(unix))]
+    assert_eq!(text(&out), "Successfully wrote 18 bytes to run.sh");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -269,8 +278,10 @@ async fn read_bounds_and_robustness() {
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o644) }, 0);
         assert_eq!(r("pipe").await.unwrap_err().0, "Cannot read pipe: not a regular file");
     }
-    let home = std::env::var("HOME").unwrap();
     let ctx = ToolContext::new(dir.path());
-    assert_eq!(ctx.resolve("~/x/../y"), std::path::PathBuf::from(home).join("y"));
+    let expected_home = std::env::var_os("HOME")
+        .map(|home| std::path::PathBuf::from(home).join("y"))
+        .unwrap_or_else(|| dir.path().join("~/y"));
+    assert_eq!(ctx.resolve("~/x/../y"), expected_home);
     assert_eq!(ctx.resolve("a/./b/../c"), dir.path().join("a/c"));
 }

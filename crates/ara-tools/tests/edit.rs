@@ -288,12 +288,15 @@ async fn data_safety_refusals_and_partial_failure_report() {
     assert_eq!(std::fs::read_to_string(r.join("p1.txt")).unwrap(), "one\nadded\n");
 
     // A moved script keeps its executable bit.
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(r.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
-    std::fs::set_permissions(r.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let out = run(&t.edit, json!({"input": format!("[run.sh#{}]\nMV bin/run.sh\n", tag(r, "run.sh"))})).await;
-    assert!(!out.is_error, "{}", text(&out));
-    assert_eq!(std::fs::metadata(r.join("bin/run.sh")).unwrap().permissions().mode() & 0o777, 0o755);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(r.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(r.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = run(&t.edit, json!({"input": format!("[run.sh#{}]\nMV bin/run.sh\n", tag(r, "run.sh"))})).await;
+        assert!(!out.is_error, "{}", text(&out));
+        assert_eq!(std::fs::metadata(r.join("bin/run.sh")).unwrap().permissions().mode() & 0o777, 0o755);
+    }
 }
 
 #[tokio::test]

@@ -465,25 +465,28 @@ async fn windowed_search_stops_at_the_budget_and_defers_oversized_files() {
 async fn special_files_symlinked_roots_and_multiline_merging() {
     let d = tempfile::tempdir().unwrap();
     let r = d.path();
-    put(r, "a.txt", "x\n");
-    let status = std::process::Command::new("mkfifo").arg(r.join("pipe")).status().unwrap();
-    assert!(status.success());
-    let files = |o: ToolOutput| o.details.unwrap()["files"].clone();
-    assert_eq!(files(glob(r, json!({"path": "*"})).await.unwrap()), json!(["a.txt"]), "FIFOs are never listed");
+    #[cfg(unix)]
+    {
+        put(r, "a.txt", "x\n");
+        let status = std::process::Command::new("mkfifo").arg(r.join("pipe")).status().unwrap();
+        assert!(status.success());
+        let files = |o: ToolOutput| o.details.unwrap()["files"].clone();
+        assert_eq!(files(glob(r, json!({"path": "*"})).await.unwrap()), json!(["a.txt"]), "FIFOs are never listed");
 
-    // A symlinked root walks the real directory with its repository's ignore chain.
-    let repo = r.join("repo");
-    std::fs::create_dir_all(repo.join(".git")).unwrap();
-    put(&repo, ".gitignore", "*.gen\n");
-    put(&repo, "sub/a.gen", "token\n");
-    put(&repo, "sub/b.txt", "token\n");
-    std::fs::create_dir_all(r.join("outside")).unwrap();
-    std::os::unix::fs::symlink(repo.join("sub"), r.join("outside/link")).unwrap();
-    assert_eq!(files(glob(r, json!({"path": "outside/link"})).await.unwrap()), json!(["outside/link/b.txt"]));
-    assert_eq!(
-        files(grep(r, json!({"pattern": "token", "path": "outside/link"})).await.unwrap()),
-        json!(["outside/link/b.txt"])
-    );
+        // A symlinked root walks the real directory with its repository's ignore chain.
+        let repo = r.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        put(&repo, ".gitignore", "*.gen\n");
+        put(&repo, "sub/a.gen", "token\n");
+        put(&repo, "sub/b.txt", "token\n");
+        std::fs::create_dir_all(r.join("outside")).unwrap();
+        std::os::unix::fs::symlink(repo.join("sub"), r.join("outside/link")).unwrap();
+        assert_eq!(files(glob(r, json!({"path": "outside/link"})).await.unwrap()), json!(["outside/link/b.txt"]));
+        assert_eq!(
+            files(grep(r, json!({"pattern": "token", "path": "outside/link"})).await.unwrap()),
+            json!(["outside/link/b.txt"])
+        );
+    }
 
     // A multi-line pattern that cannot match a newline still merges adjacent
     // matching lines into one match, as upstream's multi-line search does.

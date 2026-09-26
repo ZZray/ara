@@ -204,6 +204,7 @@ pub fn is_missing(e: &std::io::Error) -> bool {
     matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
         || e.raw_os_error() == Some(libc::ENAMETOOLONG)
         || e.raw_os_error() == Some(libc::ENOTDIR)
+        || (cfg!(windows) && e.raw_os_error() == Some(123)) // ERROR_INVALID_NAME for selectors and globs.
 }
 
 /// `splitPathAndSelPreferringLiteral`: an existing (or unprobeable) literal path keeps its colon.
