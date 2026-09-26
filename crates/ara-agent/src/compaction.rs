@@ -3,7 +3,8 @@
 //! Follows fixed OMP `packages/agent/src/compaction/utils.ts` and
 //! `compaction.ts` at 596f2da7101178214aa27a753529d15e6b7ad91d.
 //! ARA uses JSONL provenance, excludes private reasoning, and bounds input.
-//! This module does not choose a cut point, call a model or change context.
+//! This module enumerates structural whole-turn cuts but does not choose one by
+//! budget, write a Session compaction or change model context.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -25,6 +26,16 @@ const MAX_SUMMARY_OUTPUT_BYTES: usize = 1_000_000;
 pub struct SummarySource<'a> {
     pub entry_id: &'a str,
     pub message: &'a Message,
+}
+
+/// A structural boundary before a user message. The preceding messages pass
+/// completed-turn and receipt validation; this entry and later messages stay
+/// raw. Prompt construction must still reject unsupported payloads or size.
+/// The ID is caller-supplied until checked against a Session source snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WholeTurnCutCandidate {
+    pub first_kept_index: usize,
+    pub first_kept_entry_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,6 +219,40 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
         return Err(SummaryInputError::UnfinishedTurn);
     }
     Ok(())
+}
+
+/// Enumerate structurally safe, message-only, whole-turn cuts. Unlike fixed
+/// OMP's split-turn cut, these never hide a partial tool cycle or turn prefix.
+/// A developer message in the summarized prefix would lose its priority when
+/// converted to summary text, so no cut after it is offered. A caller must
+/// still build the summary prompt to check image/size support. This does not
+/// choose a budget or prove the IDs match the active Session branch.
+pub fn whole_turn_cut_candidates(sources: &[SummarySource<'_>]) -> Vec<WholeTurnCutCandidate> {
+    if !sources.first().is_some_and(|source| matches!(source.message, Message::User(_))) {
+        return Vec::new();
+    }
+    let mut candidates = Vec::new();
+    let mut seen_ids = HashSet::new();
+    seen_ids.insert(sources[0].entry_id);
+    for index in 1..sources.len().min(MAX_SUMMARY_SOURCES + 1) {
+        if matches!(sources[index - 1].message, Message::Developer(_)) {
+            break;
+        }
+        let source = &sources[index];
+        if matches!(source.message, Message::User(_))
+            && !source.entry_id.is_empty()
+            && source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            && !seen_ids.contains(source.entry_id)
+            && validate_completed_summary_span(&sources[..index]).is_ok()
+        {
+            candidates.push(WholeTurnCutCandidate {
+                first_kept_index: index,
+                first_kept_entry_id: source.entry_id.to_owned(),
+            });
+        }
+        seen_ids.insert(source.entry_id);
+    }
+    candidates
 }
 
 #[derive(Serialize)]
