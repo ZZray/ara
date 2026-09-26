@@ -44,8 +44,9 @@ fn inject(message: &UserMessage, reminder: &str) -> UserMessage {
 /// is identified by its position *and* content: an injection or control
 /// applies only while the message it was made for is still there unchanged,
 /// and a message counts as seen only if the previous request had the same
-/// message at the same position. A rewritten or shortened transcript thus
-/// gets no stale substitutions and its new user turns are found again.
+/// message at the same position. Rewritten or shortened transcripts reset the
+/// reminder history so the current reminder cannot disappear with a removed
+/// message.
 #[derive(Default)]
 struct State {
     /// Index and original of the first user message the reminders belong to.
@@ -89,7 +90,10 @@ impl DateCwdReminder {
         };
         let reminder = render_date_cwd_reminder(date, cwd);
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let same_root = state.root.as_ref().is_some_and(|(i, u)| *i == first_index && *u == first_user);
+        let unchanged_prefix = state.seen.len() <= context.messages.len()
+            && state.seen.iter().zip(&context.messages).all(|(previous, current)| previous == current);
+        let same_root =
+            unchanged_prefix && state.root.as_ref().is_some_and(|(i, u)| *i == first_index && *u == first_user);
         if !same_root {
             *state = State {
                 root: Some((first_index, first_user.clone())),

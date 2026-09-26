@@ -16,5 +16,6 @@ ARA edits, all in `system-prompt.md`:
 2. **Internal URLs.** Each `scheme://` line sits behind `{{#if urls.<scheme>}}`, and the whole section behind `{{#if urls.any}}`. The prompt then advertises only the protocols the host's tools actually resolve. Upstream lists every protocol unconditionally.
    - With CTX-01d, ARA resolves `skill://` in `read` and expands it in `bash`. The CLI enables `urls.skill` when `read` is active.
    - The OMP harness-docs line (`omp://`) only renders when the host provides a docs URL.
+3. **`skill://` tool guidance.** The internal-URL section names `read`, adds `bash` only when that tool is available, and tells the model that other file tools require filesystem paths. Upstream says most filesystem tools auto-resolve the URLs; ARA has not ported `grep`, `glob`, or `write` routing.
 
 The other files are unchanged.

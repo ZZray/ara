@@ -3,7 +3,8 @@
 //! `test/date-cwd-reminder.test.ts` (unit cases). Each test names its
 //! inventory behavior IDs.
 
-use ara_ai::{AssistantMessage, Context, Message, UserBlock, UserContent, UserMessage};
+use ara_ai::providers::openai_completions::{OpenAICompat, convert_messages};
+use ara_ai::{AssistantMessage, Context, Message, Model, UserBlock, UserContent, UserMessage};
 use ara_context::{
     DateCwdReminder, Personality, PromptTool, SystemPromptOptions, build_system_prompt, kernel_identity,
     render_date_cwd_reminder, resolve_prompt_input,
@@ -202,8 +203,8 @@ fn explicit_context_entries_dedupe_by_content() {
     };
     let (_, text) = render_text(&env, &env.root, &options);
     assert_eq!(text.matches(shared).count(), 1);
-    assert!(!text.contains(&format!("<file path=\"{}\">", far.display())));
-    assert!(text.contains(&format!("<file path=\"{}\">", near.display())));
+    assert!(!text.contains(&format!("<file path=\"{}\">", far.display().to_string().replace('\\', "/"))));
+    assert!(text.contains(&format!("<file path=\"{}\">", near.display().to_string().replace('\\', "/"))));
 
     let options = SystemPromptOptions {
         custom_prompt: Some("Base prompt".into()),
@@ -365,10 +366,21 @@ fn internal_urls_follow_the_host() {
     let (_, none) = render_text(&env, &env.root, &explicit());
     assert!(!none.contains("# Internal URLs") && !none.contains("omp://") && !none.contains("agent://"));
     let urls = ara_context::InternalUrls { skill: true, ..Default::default() };
-    let (_, skill_only) = render_text(&env, &env.root, &SystemPromptOptions { urls, ..explicit() });
+    let (_, skill_only) =
+        render_text(&env, &env.root, &SystemPromptOptions { urls, tools: Some(read_tool()), ..explicit() });
     assert!(skill_only.contains("# Internal URLs") && skill_only.contains("`skill://<name>`"));
+    assert!(skill_only.contains("Use `read` for `skill://` content"));
+    assert!(skill_only.contains("Other file tools require filesystem paths"));
+    assert!(!skill_only.contains("`bash` also expands `skill://`"));
+    assert!(!skill_only.contains("Most FS/bash tools auto-resolve"));
     assert!(!skill_only.contains("history://") && !skill_only.contains("pr://"));
     assert!(skill_only.contains("in ARA coding harness"));
+
+    let mut tools = read_tool();
+    tools.push(PromptTool { name: "bash".into(), label: "Bash".into() });
+    let urls = ara_context::InternalUrls { skill: true, ..Default::default() };
+    let (_, with_bash) = render_text(&env, &env.root, &SystemPromptOptions { urls, tools: Some(tools), ..explicit() });
+    assert!(with_bash.contains("`bash` also expands `skill://`"));
 }
 
 // --- date-cwd-reminder.test.ts ---------------------------------------------------------
@@ -533,14 +545,20 @@ fn reminder_follows_rewritten_and_shortened_transcripts() {
     let out = injector.transform(ctx(vec![user("first", 1), assistant("a"), user("second", 2)]), "day2", "/w");
     assert_eq!(user_text(&out.messages[2]), format!("{}\n\nsecond", r("day2")));
 
-    // The host rewrites the tail: the edited turn is sent as written.
+    // The host rewrites the tail: the removed injection cannot carry day2,
+    // so the surviving first user gets the current reminder.
     let out = injector.transform(ctx(vec![user("first", 1), assistant("a"), user("EDITED PROMPT", 3)]), "day2", "/w");
     assert_eq!(user_text(&out.messages[2]), "EDITED PROMPT");
-    assert_eq!(user_text(&out.messages[0]), format!("{}\n\nfirst", r("day1")));
+    assert_eq!(user_text(&out.messages[0]), format!("{}\n\nfirst", r("day2")));
 
-    // Shrink, then a new turn at the same index: it is new, so a changed
-    // reminder attaches to it.
-    injector.transform(ctx(vec![user("first", 1)]), "day2", "/w");
+    // A same-day shrink also resets state. The current reminder is present
+    // exactly once even though the day2 user turn was removed.
+    let out = injector.transform(ctx(vec![user("first", 1)]), "day2", "/w");
+    assert_eq!(out.messages.len(), 1);
+    assert_eq!(user_text(&out.messages[0]), format!("{}\n\nfirst", r("day2")));
+    assert_eq!(user_text(&out.messages[0]).matches(&r("day2")).count(), 1);
+
+    // After the shrink, a new turn at the same index is new again.
     let out = injector.transform(ctx(vec![user("first", 1), assistant("b"), user("third", 4)]), "day3", "/w");
     assert_eq!(user_text(&out.messages[2]), format!("{}\n\nthird", r("day3")));
 }
@@ -570,4 +588,27 @@ fn reminder_developer_fallback_is_append_only() {
     // The anchor is rewritten: the developer turn goes with it.
     let out = injector.transform(ctx(vec![user("first", 1), assistant("rewritten")]), "day2", "/w");
     assert_eq!(out.messages.len(), 2);
+}
+
+#[test]
+fn reminder_developer_fallback_uses_provider_compatible_wire_role() {
+    let injector = DateCwdReminder::new();
+    let base = vec![user("first", 1), assistant("calling a tool")];
+    injector.transform(ctx(base.clone()), "day1", "/w");
+    let out = injector.transform(ctx(base), "day2", "/w");
+    let model = Model {
+        id: "fake-model".into(),
+        api: "openai-completions".into(),
+        provider: "fake".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        max_tokens: None,
+    };
+    for (supports_developer_role, expected_role) in [(false, "user"), (true, "developer")] {
+        let compat = OpenAICompat { supports_developer_role, ..OpenAICompat::default() };
+        let wire = convert_messages(&model, &out, &compat);
+        let fallback = wire.last().unwrap();
+        assert_eq!(fallback["role"], expected_role);
+        assert_eq!(fallback["content"], render_date_cwd_reminder("day2", "/w"));
+    }
 }

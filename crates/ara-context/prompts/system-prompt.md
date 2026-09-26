@@ -54,8 +54,9 @@ Matching skill → MUST read `skill://<name>` first.
 
 {{#if urls.any}}
 # Internal URLs
-Most FS/bash tools auto-resolve these to FS paths.
 {{#if urls.skill}}
+Use `read` for `skill://` content. Other file tools require filesystem paths.
+{{#has tools "bash"}}`bash` also expands `skill://` in commands, environment values, and working directories.{{/has}}
 - `skill://<name>`: instructions; `/<path>`: its file
 {{/if}}
 {{#if urls.rule}}

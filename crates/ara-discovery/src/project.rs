@@ -96,7 +96,7 @@ impl Discovery {
             })
             .collect();
         // Depth descending; user files (no depth) count as -1 here.
-        files.sort_by(|a, b| b.depth.unwrap_or(-1).cmp(&a.depth.unwrap_or(-1)));
+        files.sort_by_key(|file| std::cmp::Reverse(file.depth.unwrap_or(-1)));
         dedupe_contained_context_files(files)
     }
 }

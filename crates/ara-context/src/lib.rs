@@ -155,6 +155,13 @@ impl Default for SystemPromptOptions {
     }
 }
 
+#[cfg(unix)]
+const NAME_TOO_LONG_OS_ERROR: i32 = libc::ENAMETOOLONG;
+#[cfg(windows)]
+const NAME_TOO_LONG_OS_ERROR: i32 = 206; // ERROR_FILENAME_EXCED_RANGE
+#[cfg(not(any(unix, windows)))]
+const NAME_TOO_LONG_OS_ERROR: i32 = -1;
+
 /// `resolvePromptInput`: text with a newline is literal; otherwise a
 /// readable file's content (decoded lossily, as `Bun.file().text()`), else the
 /// text itself. A read failure other than a missing file or an over-long name
@@ -167,7 +174,7 @@ pub fn resolve_prompt_input(input: Option<&str>, description: &str, warnings: &m
     match std::fs::read(input) {
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
         Err(e) => {
-            let quiet = e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(libc::ENAMETOOLONG);
+            let quiet = e.kind() == std::io::ErrorKind::NotFound || e.raw_os_error() == Some(NAME_TOO_LONG_OS_ERROR);
             if !quiet {
                 warnings.push(format!("Could not read {description} file {input}: {e}"));
             }
