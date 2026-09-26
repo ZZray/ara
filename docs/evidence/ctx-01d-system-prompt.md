@@ -17,7 +17,7 @@ Build the Agent system prompt from discovered context the way OMP does, and let 
 - `skill://` in the tools (`internal-urls/skill-protocol.ts`, `tools/bash-skill-urls.ts`):
   - `read` resolves it;
   - `bash` expands it in the command, env values and cwd.
-- CLI host wiring (`ara-cli`): `Discovery` → context files, `SYSTEM.md`, skills → `ToolContext::with_skills` → `build_system_prompt`; `--no-skills` and `--skills <globs>`.
+- CLI host wiring (`ara-cli`): `Discovery` → context files and skills → `ToolContext::with_skills` → `build_system_prompt`; `--no-skills` and `--skills <globs>`. The CLI does not yet pass the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` (review F1, open).
 
 Excluded:
 - `/skill:<name>` invocation. Upstream handles it only in the interactive, RPC and ACP hosts, not print mode; it moves to CTX-01e.
@@ -147,7 +147,27 @@ Observed output, on the delivered code (after the final `read`/`bash` changes):
 - Harness fix: tool results are now paired with their calls by `toolCallId`. Parallel calls can finish out of order.
 
 Independent review:
-Pending (`ara-git-review` + `ara-rust-core-review` on this commit).
+- Reviewer: a forked read-only general-purpose agent following `ara-git-review` + `ara-rust-core-review`.
+- Target: `68d774d^..f74d261`, read from a `git archive` export. Upstream compared at the pinned SHA.
+- Checks run by the reviewer:
+  - scoped crate tests, all passing (`ara-context` 16, `ara-tools` `skill_urls` 6, `ara-cli` `skill_protocol` 3 and `e2e` 16, `ara-agent` 21);
+  - scratch-only probes through `BashTool`, the `ara` binary and a byte-exact node emulation of upstream's regex.
+- Verdict: **blocking**. Findings, with the required fixes, are tracked in [the 2026-09-26 handoff](../handoffs/2026-09-26.md):
+  - F1 (High): the CLI never passes the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` as the custom/append prompt, so they never reach the model. Upstream: `main.ts:1037-1105`.
+  - F2 (High, safety): the unquoted token class in `internal_urls.rs` lacks the backslash exclusion (`\;` upstream). A `"` next to a `skill://` token then flips quote parity after expansion, and quoted text runs as a command.
+  - F3 (Medium, safety, also upstream): a quoted `"skill://…"` token nested inside another quote is expanded and can inject shell syntax.
+  - F4 (Medium): `DateCwdReminder` keys its state by index and count; upstream keys it by message identity. A rewritten or shrunk transcript gets stale content.
+  - F5 (Medium, evidence): claims above that did not match the code (corrected here). Unrecorded differences:
+    - `skill://` is not resolved by `grep`/`glob`/`write`;
+    - `--append-system-prompt` is repeatable (upstream keeps the last value);
+    - skill reads of images, binaries and directories differ;
+    - `THIRD_PARTY_NOTICES.md` omits `ara-context`'s templates.
+  - F6 (Low): `ToolContext::with_skills` mutates every clone.
+  - F7 (Low): a relative `ARA_HOME` lists user skills that `read skill://` cannot open.
+  - F8 (Low): unreadable prompt files and `PERSONALITY.md` fall back without a warning.
+  - F9 (Low): extra workspace roots are skipped when context files are supplied.
+- The "Host level" list above is library hand-off coverage (`skill_protocol.rs`), not CLI coverage: the CLI has no custom-directory setting.
+- The developer-turn fallback of the reminder has no test yet.
 
 Unrun checks:
 - `/skill:` invocation (CTX-01e).
@@ -155,4 +175,4 @@ Unrun checks:
 - Model-change prompt refresh.
 - Plugin-contained skills (`containRoot`).
 
-Decision: tested. It becomes accepted after the independent review.
+Decision: changes requested. F1–F9 must be fixed, tested and re-reviewed, and the real-model trial re-run on the fixed code, before acceptance.

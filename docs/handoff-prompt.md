@@ -1,5 +1,7 @@
 # Prompt for the first implementation AI
 
+> Continuing work? Use the latest run handoff instead: [2026-09-26](handoffs/2026-09-26.md). This file is the original bootstrap prompt.
+
 Copy the following prompt into the next AI's task. Supply access to this new repository and a **separate** checkout of the pinned OMP source. Do not give it a populated `.env` or paste API keys.
 
 ```text
