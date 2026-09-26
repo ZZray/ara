@@ -28,7 +28,7 @@ pub(crate) struct AttemptStream {
 #[derive(Clone)]
 pub(crate) struct AttemptError {
     pub cause: ProviderError,
-    pub account_usage_limit: bool,
+    pub retry_blocked: bool,
 }
 
 fn meaningful(event: &AssistantMessageEvent) -> bool {
@@ -52,8 +52,8 @@ fn visible(message: &AssistantMessage) -> bool {
     })
 }
 
-fn retryable_started_stream_error(error: &AttemptError) -> bool {
-    if error.account_usage_limit {
+fn retryable_uncommitted_error(error: &AttemptError) -> bool {
+    if error.retry_blocked {
         return false;
     }
     match &error.cause {
@@ -156,7 +156,6 @@ where
             let AttemptStream { mut events, error } = attempt(attempt_cancel.clone());
             let mut buffered = Vec::new();
             let mut sent_start = false;
-            let mut saw_start = false;
             let mut committed = accept_empty_response;
             let mut last_partial = AssistantMessage::empty(&model.api, &model.provider, &model.id);
             let terminal = loop {
@@ -185,9 +184,6 @@ where
                     return;
                 };
                 last_partial = event.partial().clone();
-                if matches!(event, AssistantMessageEvent::Start { .. }) {
-                    saw_start = true;
-                }
                 if event.is_terminal() {
                     break event;
                 }
@@ -234,13 +230,12 @@ where
                     && !visible(message)
                     && empty_retries < MAX_EMPTY_RETRIES);
             let typed_error = error.lock().unwrap().clone();
-            // Pre-response HTTP retries and their admission/Retry-After limits
-            // belong to post_with_retry. Only a started 2xx stream is eligible
-            // for this additional replay-safe provider-error retry.
+            // The HTTP layer owns its inner attempts and explicit no-retry
+            // decisions. One additional attempt is safe before any output is
+            // committed, even if the first request never emitted Start.
             let retry_error = matches!(&terminal, AssistantMessageEvent::Error { reason: StopReason::Error, .. })
                 && !committed
-                && saw_start
-                && typed_error.as_ref().is_some_and(retryable_started_stream_error)
+                && typed_error.as_ref().is_some_and(retryable_uncommitted_error)
                 && error_retries < MAX_ERROR_RETRIES;
             let delay = if retry_empty {
                 let delay = BASE_DELAY.saturating_mul(2u32.saturating_pow(empty_retries));

@@ -591,7 +591,7 @@ pub fn is_progress_chunk(chunk: &Value) -> bool {
 
 struct InBandError {
     cause: ProviderError,
-    account_usage_limit: bool,
+    retry_blocked: bool,
 }
 
 /// Keep account-cap evidence from the structured stream frame. The public
@@ -661,7 +661,7 @@ fn stream_error(chunk: &Value) -> Option<InBandError> {
     let detail = envelope_message(chunk)
         .unwrap_or_else(|| "Provider returned an in-band OpenAI completions stream error".into());
     if !structured {
-        return Some(InBandError { cause: ProviderError::Stream(detail), account_usage_limit: false });
+        return Some(InBandError { cause: ProviderError::Stream(detail), retry_blocked: false });
     }
     let err = error.unwrap();
     let status = match err.get("code") {
@@ -676,12 +676,12 @@ fn stream_error(chunk: &Value) -> Option<InBandError> {
         Some("REQUEST_TIMEOUT") => Some(408),
         _ => None,
     });
-    let account_usage_limit = account_usage_limit(err, &detail);
+    let retry_blocked = account_usage_limit(err, &detail);
     let cause = match status {
         Some(status) => ProviderError::Http { status, detail },
         None => ProviderError::Stream(detail),
     };
-    Some(InBandError { cause, account_usage_limit })
+    Some(InBandError { cause, retry_blocked })
 }
 
 fn content_text(content: Option<&Value>) -> String {
@@ -721,7 +721,7 @@ pub struct ChunkState {
     /// At least one JSON `data:` frame was decoded.
     pub saw_frame: bool,
     pub first_token: Option<Instant>,
-    account_usage_limit: bool,
+    retry_blocked: bool,
     last_display_parse: HashMap<usize, usize>,
 }
 
@@ -739,7 +739,7 @@ impl ChunkState {
             saw_done: false,
             saw_frame: false,
             first_token: None,
-            account_usage_limit: false,
+            retry_blocked: false,
             last_display_parse: HashMap::new(),
         }
     }
@@ -881,7 +881,7 @@ impl ChunkState {
         }
         self.saw_frame = true;
         if let Some(err) = stream_error(chunk) {
-            self.account_usage_limit = err.account_usage_limit;
+            self.retry_blocked = err.retry_blocked;
             return Err(err.cause);
         }
         if self.output.response_id.is_none() {
@@ -1097,6 +1097,7 @@ async fn post_with_retry(
     body: &Value,
     policy: &RetryPolicy,
     cancel: &CancellationToken,
+    retry_blocked: &mut bool,
 ) -> Result<reqwest::Response, ProviderError> {
     let bytes = serde_json::to_vec(body).map_err(|e| ProviderError::Config(e.to_string()))?;
     let mut attempt: u32 = 0;
@@ -1120,15 +1121,28 @@ async fn post_with_retry(
             Ok(resp) => {
                 let status = resp.status().as_u16();
                 let hint = retry_after(resp.headers());
+                let admission_header = resp
+                    .headers()
+                    .get("rate_limit_type")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.trim() == "max_parallel_requests");
+                let hint_too_long = hint.is_some_and(|h| h > policy.max_delay);
+                // Preserve an explicit no-retry header even if the error body
+                // stalls and the first-event watchdog drops this future.
+                *retry_blocked = admission_header || hint_too_long;
                 let retryable = matches!(status, 408 | 429 | 500..=599);
                 let body = tokio::select! {
                     b = resp.text() => b.unwrap_or_default(),
                     _ = cancel.cancelled() => return Err(ProviderError::Aborted),
                 };
-                let admission_reject = body.contains("\"rate_limit_type\"") && body.contains("max_parallel_requests");
-                let hint_too_long = hint.is_some_and(|h| h > policy.max_delay);
+                let admission_reject = admission_header
+                    || (body.contains("\"rate_limit_type\"") && body.contains("max_parallel_requests"));
                 if !retryable || last || admission_reject || hint_too_long {
-                    return Err(ProviderError::Http { status, detail: parse_error_envelope(&body) });
+                    let detail = parse_error_envelope(&body);
+                    let error = serde_json::from_str::<Value>(&body).ok();
+                    let structured = error.as_ref().and_then(|value| value.get("error")).unwrap_or(&Value::Null);
+                    *retry_blocked = admission_reject || hint_too_long || account_usage_limit(structured, &detail);
+                    return Err(ProviderError::Http { status, detail });
                 }
                 sleep_or_cancel(hint.unwrap_or(default_delay), cancel).await?;
             }
@@ -1186,7 +1200,7 @@ fn stream_once(
             Err(err) => {
                 *recorded_error.lock().unwrap() = Some(crate::replay_safe_retry::AttemptError {
                     cause: err.clone(),
-                    account_usage_limit: state.account_usage_limit,
+                    retry_blocked: state.retry_blocked,
                 });
                 let mut events = Vec::new();
                 state.close_open_blocks(&mut events);
@@ -1240,10 +1254,12 @@ async fn run(
     let first_deadline = options.first_event_timeout.map(|d| started + d);
     let response = match first_deadline {
         Some(deadline) => tokio::select! {
-            r = post_with_retry(client, &url, &headers, &params, &options.retry, &cancel) => r?,
+            r = post_with_retry(client, &url, &headers, &params, &options.retry, &cancel, &mut state.retry_blocked) => r?,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout(FIRST_EVENT_TIMEOUT_MESSAGE.into())),
         },
-        None => post_with_retry(client, &url, &headers, &params, &options.retry, &cancel).await?,
+        None => {
+            post_with_retry(client, &url, &headers, &params, &options.retry, &cancel, &mut state.retry_blocked).await?
+        }
     };
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &cancel).await {
         return Err(ProviderError::Aborted);

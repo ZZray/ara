@@ -119,6 +119,134 @@ async fn retries_429_then_succeeds() {
 }
 
 #[tokio::test]
+async fn replay_safe_retry_reissues_pre_start_transient_http_once() {
+    for status in [408, 429, 503] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"status": status, "body": "{\"error\":{\"message\":\"temporary failure\"}}"},
+                {"events": [text("recovered"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut options = opts();
+        options.retry.max_attempts = 1;
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options))
+                .await;
+        assert_eq!(server.served(), 2, "status {status}: {msg:?}");
+        assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+        assert_eq!(msg.text(), "recovered");
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_preserves_pre_start_account_cap_and_admission_rejection() {
+    for (body, expected_detail) in [
+        (r#"{"error":{"code":"insufficient_quota","message":"Request declined"}}"#, "Request declined"),
+        (r#"{"error":{"message":"Account monthly quota reached"}}"#, "Account monthly quota reached"),
+        (
+            r#"{"error":{"rate_limit_type":"max_parallel_requests","message":"Concurrent request limit"}}"#,
+            "Concurrent request limit",
+        ),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"status": 429, "body": body},
+                {"events": [text("must not run"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut options = opts();
+        options.retry.max_attempts = 1;
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options))
+                .await;
+        assert_eq!(server.served(), 1, "{msg:?}");
+        assert_eq!(events.len(), 1, "no Start before a rejected request");
+        assert_eq!(msg.error_status, Some(429));
+        assert!(msg.error_message.as_deref().is_some_and(|message| message.contains(expected_detail)));
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_preserves_header_only_admission_rejection() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {
+                "status": 429,
+                "headers": {"rate_limit_type": "max_parallel_requests"},
+                "body": "{\"error\":{\"message\":\"Busy\"}}"
+            },
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 1, "header-only admission rejection bypasses both retry layers");
+    assert_eq!(events.len(), 1, "no Start before a rejected request");
+    assert_eq!(msg.error_status, Some(429));
+    assert_eq!(msg.error_message.as_deref(), Some("429 Busy"));
+}
+
+#[tokio::test]
+async fn replay_safe_retry_does_not_replay_stalled_error_body_with_no_retry_header() {
+    for headers in [json!({"rate_limit_type": "max_parallel_requests"}), json!({"retry-after": "120"})] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"status": 429, "headers": headers, "events": [], "end": "hang"},
+                {"events": [text("must not run"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut options = opts();
+        options.first_event_timeout = Some(Duration::from_millis(100));
+        let (_, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options))
+                .await;
+        assert_eq!(msg.error_message.as_deref(), Some(openai_completions::FIRST_EVENT_TIMEOUT_MESSAGE));
+        assert_eq!(server.served(), 1, "explicit no-retry header survives a stalled body");
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_cancellation_during_pre_start_backoff_stops_requests() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"status": 503, "body": "temporary failure"},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let mut options = opts();
+    options.retry.max_attempts = 1;
+    options.cancel = cancel.clone();
+    let rx = openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.served() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("first request should reach the upstream");
+    cancel.cancel();
+    let (_, msg) = collect(rx).await;
+    assert_eq!(msg.stop_reason, StopReason::Aborted);
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
 async fn replay_safe_retry_discards_known_empty_stop_before_text() {
     let server = FakeUpstream::start(
         script(json!({"responses": [
@@ -575,7 +703,8 @@ async fn auth_failure_is_not_retried() {
 async fn retries_exhausted_reports_last_status() {
     let server = FakeUpstream::start(
         script(json!({"responses": [
-            {"status": 500, "body": "a"}, {"status": 500, "body": "b"}, {"status": 502, "body": "{\"message\":\"gateway\"}"}
+            {"status": 500, "body": "a"}, {"status": 500, "body": "b"}, {"status": 502, "body": "c"},
+            {"status": 500, "body": "d"}, {"status": 500, "body": "e"}, {"status": 502, "body": "{\"message\":\"gateway\"}"}
         ]})),
         None,
     )
@@ -585,7 +714,7 @@ async fn retries_exhausted_reports_last_status() {
         collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
     assert_eq!(msg.error_status, Some(502));
     assert_eq!(msg.error_message.as_deref(), Some("502 gateway"));
-    assert_eq!(server.served(), 3);
+    assert_eq!(server.served(), 6, "three inner attempts in each of two outer attempts");
 }
 
 #[tokio::test]
@@ -619,7 +748,10 @@ async fn idle_stall_times_out_and_keepalive_does_not_reset() {
 #[tokio::test]
 async fn first_event_timeout_covers_slow_headers() {
     let server = FakeUpstream::start(
-        script(json!({"responses": [{"delay_ms": 2000, "events": [text("late"), finish("stop"), done()]}]})),
+        script(json!({"responses": [
+            {"delay_ms": 2000, "events": [text("late"), finish("stop"), done()]},
+            {"delay_ms": 2000, "events": [text("late again"), finish("stop"), done()]}
+        ]})),
         None,
     )
     .await
@@ -629,6 +761,7 @@ async fn first_event_timeout_covers_slow_headers() {
     let (_, msg) =
         collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), o)).await;
     assert_eq!(msg.error_message.as_deref(), Some(openai_completions::FIRST_EVENT_TIMEOUT_MESSAGE));
+    assert_eq!(server.served(), 2, "one bounded replay after the pre-Start timeout");
 }
 
 #[tokio::test]
@@ -671,16 +804,22 @@ async fn dropped_stream_is_incomplete() {
 
 #[tokio::test]
 async fn reset_without_confirmed_frames_never_completes_or_dispatches_tools() {
-    let server = FakeUpstream::start(script(json!({"responses": [{"events": [text("half")], "end": "drop"}]})), None)
-        .await
-        .unwrap();
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [text("half")], "end": "drop"},
+            {"events": [text("half again")], "end": "drop"}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
     let mut options = opts();
     options.retry.max_attempts = 1;
     let (_, msg) =
         collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
     assert_eq!(msg.stop_reason, StopReason::Error);
     assert_eq!(msg.tool_calls().count(), 0);
-    assert_eq!(server.served(), 1);
+    assert_eq!(server.served(), 2, "one bounded replay before any confirmed content");
 }
 
 #[tokio::test]

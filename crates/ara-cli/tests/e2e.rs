@@ -203,6 +203,36 @@ async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
     assert_eq!(entries[4]["message"]["toolCallId"], json!("call_w"));
 }
 
+#[tokio::test]
+async fn pre_start_http_retry_reaches_one_tool_task_without_duplicate_effects() {
+    let env = Env::new();
+    let mut responses = vec![
+        json!({
+            "status": 503,
+            "headers": {"retry-after": "0"},
+            "body": "{\"error\":{\"message\":\"temporary failure\"}}"
+        });
+        6
+    ];
+    responses.push(json!({"events": [
+        tool_call(0, "call_w", "write", "{\"path\":\"retry.txt\",\"content\":\"once\\n\"}"),
+        finish("tool_calls"), done()
+    ]}));
+    responses.push(json!({"events": [text("Wrote retry.txt once."), finish("stop"), done()]}));
+    let up = upstream(json!({"responses": responses})).await;
+
+    let out = output(env.cmd(&up.base_url(), &["Write retry.txt with once"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote retry.txt once.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("retry.txt")).unwrap(), "once\n");
+    assert_eq!(up.served(), 8, "six inner attempts, one replay with a tool turn, one final turn");
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
+    assert_eq!(entries[3]["message"]["content"][0]["id"], json!("call_w"));
+    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_w"));
+}
+
 fn spawn_json(c: &mut Command) -> Child {
     c.args(["--mode", "json"]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
 }
