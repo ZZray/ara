@@ -140,6 +140,50 @@ impl Entry {
     }
 }
 
+/// One decoded message tied to its actual journal entry ID. This is an
+/// in-memory snapshot; a later writer must re-read and compare the leaf before
+/// committing a compaction derived from it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourcedMessage {
+    pub entry_id: String,
+    pub message: Message,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactionSourceSnapshot {
+    pub session_id: String,
+    pub leaf_id: String,
+    pub messages: Vec<SourcedMessage>,
+}
+
+/// Strict read failures for provenance-sensitive compaction preparation.
+/// Ordinary `branch()` and `build_context()` retain their tolerant OMP port.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompactionSourceError {
+    #[error("session has no durable branch to compact")]
+    NotDurable,
+    #[error("session has unrepaired records; compaction source is incomplete")]
+    UnrepairedJournal,
+    #[error("session was loaded with invalid UTF-8; compaction source text is not exact")]
+    InvalidUtf8,
+    #[error("session entry ID {id} occurs more than once")]
+    DuplicateEntryId { id: String },
+    #[error("session entry has an empty ID")]
+    EmptyEntryId,
+    #[error("session branch references missing entry {id}")]
+    MissingEntry { id: String },
+    #[error("session entry {id} has an invalid parentId")]
+    InvalidParentId { id: String },
+    #[error("session branch has a parent cycle at {id}")]
+    ParentCycle { id: String },
+    #[error("session parent {parent_id} is not earlier than child {child_id}")]
+    ParentNotEarlier { child_id: String, parent_id: String },
+    #[error("session message entry {id} cannot be decoded")]
+    UndecodableMessage { id: String },
+    #[error("session entry {id} has unsupported context type {kind}")]
+    UnsupportedContextEntry { id: String, kind: String },
+}
+
 /// What `open` found and repaired.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LoadReport {
@@ -167,6 +211,7 @@ pub struct SessionJournal {
     leaf: Option<String>,
     materialized: bool,
     rewrite_required: bool,
+    loaded_invalid_utf8: bool,
     pending_backup: bool,
     pub report: LoadReport,
 }
@@ -194,6 +239,7 @@ impl SessionJournal {
             leaf: None,
             materialized: false,
             rewrite_required: false,
+            loaded_invalid_utf8: false,
             pending_backup: false,
             report: LoadReport::default(),
         })
@@ -206,6 +252,7 @@ impl SessionJournal {
         let corrupt = |message: String| SessionError::Corrupt { path: path.into(), message };
         let bytes = fs::read(path)?;
         let text = String::from_utf8_lossy(&bytes);
+        let loaded_invalid_utf8 = matches!(&text, std::borrow::Cow::Owned(_));
         let mut header: Option<Value> = None;
         let mut title: Option<TitleSlot> = None;
         let mut entries = Vec::new();
@@ -276,6 +323,7 @@ impl SessionJournal {
             leaf,
             materialized: true,
             rewrite_required: damaged,
+            loaded_invalid_utf8,
             pending_backup: damaged,
             report: LoadReport { malformed_records: malformed, backup: None },
         })
@@ -428,6 +476,87 @@ impl SessionJournal {
         }
         out.reverse();
         out
+    }
+
+    /// Provenance-preserving, read-only source snapshot for compaction. Unlike
+    /// `branch()`, this rejects ambiguous or incomplete history. It skips only
+    /// known non-context anchors; unsupported context entries need their own
+    /// projection before compaction can safely use this branch.
+    pub fn compaction_source_snapshot(&self) -> std::result::Result<CompactionSourceSnapshot, CompactionSourceError> {
+        if !self.materialized || self.leaf.is_none() {
+            return Err(CompactionSourceError::NotDurable);
+        }
+        if self.rewrite_required {
+            return Err(CompactionSourceError::UnrepairedJournal);
+        }
+        if self.loaded_invalid_utf8 {
+            return Err(CompactionSourceError::InvalidUtf8);
+        }
+        let mut by_id: HashMap<&str, (usize, &Entry)> = HashMap::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            if entry.id.is_empty() {
+                return Err(CompactionSourceError::EmptyEntryId);
+            }
+            if by_id.insert(&entry.id, (index, entry)).is_some() {
+                return Err(CompactionSourceError::DuplicateEntryId { id: entry.id.clone() });
+            }
+        }
+        let leaf_id = self.leaf.as_ref().expect("checked leaf").clone();
+        let mut current = Some(leaf_id.as_str());
+        let mut seen = HashSet::new();
+        let mut branch = Vec::new();
+        while let Some(id) = current {
+            if !seen.insert(id) {
+                return Err(CompactionSourceError::ParentCycle { id: id.to_owned() });
+            }
+            let (index, entry) =
+                by_id.get(id).copied().ok_or_else(|| CompactionSourceError::MissingEntry { id: id.to_owned() })?;
+            let valid_parent = match (entry.raw.get("parentId"), entry.parent_id.as_deref()) {
+                (Some(Value::Null), None) => true,
+                (Some(Value::String(raw)), Some(parent)) => !raw.is_empty() && raw == parent,
+                _ => false,
+            };
+            if !valid_parent {
+                return Err(CompactionSourceError::InvalidParentId { id: entry.id.clone() });
+            }
+            if let Some(parent_id) = entry.parent_id.as_deref() {
+                if seen.contains(parent_id) {
+                    return Err(CompactionSourceError::ParentCycle { id: parent_id.to_owned() });
+                }
+                let (parent_index, _) = by_id
+                    .get(parent_id)
+                    .copied()
+                    .ok_or_else(|| CompactionSourceError::MissingEntry { id: parent_id.to_owned() })?;
+                if parent_index >= index {
+                    return Err(CompactionSourceError::ParentNotEarlier {
+                        child_id: entry.id.clone(),
+                        parent_id: parent_id.to_owned(),
+                    });
+                }
+            }
+            branch.push(entry);
+            current = entry.parent_id.as_deref();
+        }
+        branch.reverse();
+        let mut messages = Vec::new();
+        for entry in branch {
+            match entry.kind.as_str() {
+                "message" => messages.push(SourcedMessage {
+                    entry_id: entry.id.clone(),
+                    message: entry
+                        .message()
+                        .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?,
+                }),
+                "model_change" | "label" => {}
+                _ => {
+                    return Err(CompactionSourceError::UnsupportedContextEntry {
+                        id: entry.id.clone(),
+                        kind: entry.kind.clone(),
+                    });
+                }
+            }
+        }
+        Ok(CompactionSourceSnapshot { session_id: self.session_id().to_owned(), leaf_id, messages })
     }
 
     /// Model-visible messages on the current branch (subset of OMP
