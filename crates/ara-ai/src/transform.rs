@@ -18,6 +18,63 @@ use crate::types::{
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
+fn is_responses_family_api(api: &str) -> bool {
+    matches!(api, "openai-responses" | "openai-codex-responses" | "azure-openai-responses")
+}
+
+pub(crate) fn responses_call_component(id: &str) -> &str {
+    match id.split_once('|') {
+        Some((call, _)) if !call.is_empty() => call,
+        _ => id,
+    }
+}
+
+/// An opaque Chat ID containing `|` must not inherit the pairing rule of an
+/// earlier Responses call with the same prefix.
+pub(crate) struct ToolCallOriginScope {
+    responses_components: HashSet<String>,
+    opaque_composite_call_ids: HashSet<String>,
+}
+
+impl ToolCallOriginScope {
+    pub(crate) fn collect(messages: &[Message]) -> Self {
+        let mut scope = Self { responses_components: HashSet::new(), opaque_composite_call_ids: HashSet::new() };
+        for assistant in messages.iter().filter_map(Message::as_assistant) {
+            for call in assistant.tool_calls() {
+                if is_responses_family_api(&assistant.api) {
+                    scope.responses_components.insert(responses_call_component(&call.id).to_owned());
+                } else if call.id.contains('|') {
+                    scope.opaque_composite_call_ids.insert(call.id.clone());
+                }
+            }
+        }
+        scope
+    }
+
+    pub(crate) fn pairing_key<'a>(&self, id: &'a str) -> &'a str {
+        let Some((call, _)) = id.split_once('|') else { return id };
+        if call.is_empty() || self.opaque_composite_call_ids.contains(id) {
+            return id;
+        }
+        if self.responses_components.contains(call) { call } else { id }
+    }
+}
+
+pub(crate) fn chat_wire_tool_call_id(id: &str, source_api: &str) -> String {
+    if !is_responses_family_api(source_api) || !id.contains('|') {
+        return id.to_owned();
+    }
+    // Cross-protocol Responses replay uses the call half on Chat Completions.
+    // Match OMP's 40-character sanitized component for this target.
+    id.split_once('|')
+        .map(|(call, _)| call)
+        .unwrap_or(id)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') { c } else { '_' })
+        .take(40)
+        .collect()
+}
+
 fn is_truncated_empty_assistant(msg: &AssistantMessage) -> bool {
     matches!(msg.stop_reason, StopReason::Length | StopReason::Error | StopReason::Aborted)
         && !msg.content.iter().any(|b| match b {
@@ -105,7 +162,7 @@ fn append_duplicate_suffix(id: &str, suffix: &str) -> String {
 /// OMP's first pass gives repeated calls distinct IDs before the second pass
 /// pulls delayed results. A new assistant turn supersedes an older pending
 /// rewrite for the same ID, so its real result cannot be stolen by that turn.
-fn deduplicate_tool_call_ids(messages: &[Message]) -> Vec<Message> {
+fn deduplicate_tool_call_ids(messages: &[Message], scope: &ToolCallOriginScope) -> Vec<Message> {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut pending: HashMap<String, VecDeque<Option<String>>> = HashMap::new();
     let mut out = Vec::with_capacity(messages.len());
@@ -116,7 +173,7 @@ fn deduplicate_tool_call_ids(messages: &[Message]) -> Vec<Message> {
                 let mut touched = HashSet::new();
                 for block in &mut assistant.content {
                     let AssistantBlock::ToolCall(call) = block else { continue };
-                    let original = call.id.clone();
+                    let original = scope.pairing_key(&call.id).to_owned();
                     if touched.insert(original.clone()) {
                         pending.remove(&original);
                     }
@@ -128,14 +185,14 @@ fn deduplicate_tool_call_ids(messages: &[Message]) -> Vec<Message> {
                     }
                     let mut duplicate_index = count;
                     let replacement = loop {
-                        let candidate = append_duplicate_suffix(&original, &format!("_dup{duplicate_index}"));
-                        if !seen.contains_key(&candidate) {
+                        let candidate = append_duplicate_suffix(&call.id, &format!("_dup{duplicate_index}"));
+                        if !seen.contains_key(scope.pairing_key(&candidate)) {
                             break candidate;
                         }
                         duplicate_index += 1;
                     };
                     seen.insert(original.clone(), duplicate_index + 1);
-                    seen.insert(replacement.clone(), 1);
+                    seen.insert(scope.pairing_key(&replacement).to_owned(), 1);
                     pending.entry(original).or_default().push_back(Some(replacement.clone()));
                     call.id = replacement;
                 }
@@ -143,7 +200,7 @@ fn deduplicate_tool_call_ids(messages: &[Message]) -> Vec<Message> {
             }
             Message::ToolResult(result) => {
                 let mut result = result.clone();
-                let original = result.tool_call_id.clone();
+                let original = scope.pairing_key(&result.tool_call_id).to_owned();
                 if let Some(queue) = pending.get_mut(&original) {
                     if let Some(Some(replacement)) = queue.pop_front() {
                         result.tool_call_id = replacement;
@@ -166,8 +223,9 @@ fn take_real_result(
     messages: &[Message],
     result_indices: &HashMap<String, Vec<usize>>,
     consumed: &mut [bool],
+    scope: &ToolCallOriginScope,
 ) -> Option<Message> {
-    for &index in result_indices.get(id)? {
+    for &index in result_indices.get(scope.pairing_key(id))? {
         if index > after_index && !consumed[index] {
             consumed[index] = true;
             return Some(messages[index].clone());
@@ -178,16 +236,20 @@ fn take_real_result(
 
 pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
     let messages = sanitize_malformed_tool_calls(messages);
-    let messages = deduplicate_tool_call_ids(&messages);
+    let scope = ToolCallOriginScope::collect(&messages);
+    let messages = deduplicate_tool_call_ids(&messages, &scope);
     let mut result_indices: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, message) in messages.iter().enumerate() {
         if let Message::ToolResult(result) = message {
-            result_indices.entry(result.tool_call_id.clone()).or_default().push(index);
+            result_indices.entry(scope.pairing_key(&result.tool_call_id).to_owned()).or_default().push(index);
         }
     }
     let mut consumed = vec![false; messages.len()];
-    let valid_ids: HashSet<&str> =
-        messages.iter().filter_map(Message::as_assistant).flat_map(|m| m.tool_calls().map(|c| c.id.as_str())).collect();
+    let valid_ids: HashSet<String> = messages
+        .iter()
+        .filter_map(Message::as_assistant)
+        .flat_map(|m| m.tool_calls().map(|c| scope.pairing_key(&c.id).to_owned()))
+        .collect();
     let mut out: Vec<Message> = Vec::with_capacity(messages.len());
     let mut pending: Vec<ToolCall> = Vec::new();
     let mut pending_start = 0;
@@ -208,9 +270,9 @@ pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
                  aborted_start: usize,
                  consumed: &mut [bool]| {
         for call in pending.drain(..) {
-            if resolved.insert(call.id.clone()) {
+            if resolved.insert(scope.pairing_key(&call.id).to_owned()) {
                 out.push(
-                    take_real_result(&call.id, pending_start, &messages, &result_indices, consumed)
+                    take_real_result(&call.id, pending_start, &messages, &result_indices, consumed, &scope)
                         .unwrap_or_else(|| synthetic_result(&call, "No result provided", ts)),
                 );
             }
@@ -218,10 +280,10 @@ pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
         if let Some(ats) = aborted_ts.take() {
             for id in order.drain(..) {
                 if let Some(call) = pending_aborted.remove(&id)
-                    && resolved.insert(call.id.clone())
+                    && resolved.insert(scope.pairing_key(&call.id).to_owned())
                 {
                     out.push(
-                        take_real_result(&call.id, aborted_start, &messages, &result_indices, consumed)
+                        take_real_result(&call.id, aborted_start, &messages, &result_indices, consumed, &scope)
                             .unwrap_or_else(|| synthetic_result(&call, "aborted", ats)),
                     );
                 }
@@ -250,8 +312,8 @@ pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
                 }
                 let calls: Vec<ToolCall> = a.tool_calls().cloned().collect();
                 if matches!(a.stop_reason, StopReason::Error | StopReason::Aborted) {
-                    pending_aborted_order = calls.iter().map(|c| c.id.clone()).collect();
-                    pending_aborted = calls.into_iter().map(|c| (c.id.clone(), c)).collect();
+                    pending_aborted_order = calls.iter().map(|c| scope.pairing_key(&c.id).to_owned()).collect();
+                    pending_aborted = calls.into_iter().map(|c| (scope.pairing_key(&c.id).to_owned(), c)).collect();
                     pending_aborted_ts = Some(a.timestamp);
                     pending_aborted_start = index;
                 } else {
@@ -261,27 +323,29 @@ pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
                 out.push(msg.clone());
             }
             Message::ToolResult(r) => {
+                let result_key = scope.pairing_key(&r.tool_call_id);
                 if consumed[index] {
                     continue;
                 }
-                if resolved.contains(&r.tool_call_id) {
+                if resolved.contains(result_key) {
                     continue;
                 }
-                if pending_aborted.remove(&r.tool_call_id).is_some() {
-                    pending_aborted_order.retain(|id| id != &r.tool_call_id);
-                    resolved.insert(r.tool_call_id.clone());
+                if pending_aborted.remove(result_key).is_some() {
+                    pending_aborted_order.retain(|id| id != result_key);
+                    resolved.insert(result_key.to_owned());
                     consumed[index] = true;
                     out.push(msg.clone());
                     continue;
                 }
-                if pending.iter().any(|c| c.id == r.tool_call_id) {
-                    resolved.insert(r.tool_call_id.clone());
+                if pending.iter().any(|c| scope.pairing_key(&c.id) == result_key) {
+                    resolved.insert(result_key.to_owned());
                     consumed[index] = true;
                     out.push(msg.clone());
                     continue;
                 }
-                if !valid_ids.contains(r.tool_call_id.as_str()) {
-                    let window_open = pending.iter().any(|c| !resolved.contains(&c.id)) || !pending_aborted.is_empty();
+                if !valid_ids.contains(result_key) {
+                    let window_open = pending.iter().any(|c| !resolved.contains(scope.pairing_key(&c.id)))
+                        || !pending_aborted.is_empty();
                     if window_open {
                         continue;
                     }
@@ -652,5 +716,111 @@ mod tests {
             result_text("shared", "real"),
         ];
         assert_eq!(texts(&transform_messages(&input)), vec!["user:try again", "assistant", "result:shared:real"]);
+    }
+
+    fn responses_assistant(ids: &[&str], stop: StopReason) -> Message {
+        let mut message = AssistantMessage::empty("openai-responses", "openai", "gpt-test");
+        message.stop_reason = stop;
+        message.content = ids.iter().map(|id| named_call(id, "read")).collect();
+        Message::Assistant(message)
+    }
+
+    #[test]
+    fn responses_plain_and_composite_ids_pair_by_call_component() {
+        for (call_id, result_id) in [
+            ("call_A", "call_A|fc_result"),
+            ("call_A|fc_assistant", "call_A|fc_result"),
+            ("call_A|fc_assistant", "call_A"),
+        ] {
+            let input = vec![responses_assistant(&[call_id], StopReason::ToolUse), result_text(result_id, "real")];
+            let original = input.clone();
+            let output = transform_messages(&input);
+            assert_eq!(input, original);
+            assert_eq!(texts(&output), vec!["assistant".to_string(), format!("result:{result_id}:real")]);
+        }
+    }
+
+    #[test]
+    fn responses_parallel_calls_and_reused_call_component_keep_each_real_result() {
+        let parallel = vec![
+            responses_assistant(&["call_A", "call_B"], StopReason::ToolUse),
+            result_text("call_A|fc_shared", "A"),
+            result_text("call_B|fc_shared", "B"),
+        ];
+        assert_eq!(
+            texts(&transform_messages(&parallel)),
+            vec!["assistant", "result:call_A|fc_shared:A", "result:call_B|fc_shared:B"]
+        );
+
+        let shared_call_half = vec![
+            responses_assistant(&["call_same|fc_A", "call_same|fc_B"], StopReason::ToolUse),
+            result_text("call_same|fc_A", "first"),
+            result_text("call_same|fc_B", "second"),
+        ];
+        assert_eq!(
+            texts(&transform_messages(&shared_call_half)),
+            vec!["assistant", "result:call_same|fc_A:first", "result:call_same_dup1|fc_B_dup1:second"]
+        );
+
+        let reused = vec![
+            responses_assistant(&["call_X"], StopReason::ToolUse),
+            result_text("call_X|fc_first", "first"),
+            responses_assistant(&["call_X"], StopReason::ToolUse),
+            result_text("call_X|fc_second", "second"),
+        ];
+        assert_eq!(
+            texts(&transform_messages(&reused)),
+            vec!["assistant", "result:call_X|fc_first:first", "assistant", "result:call_X_dup1:second"]
+        );
+    }
+
+    #[test]
+    fn responses_composite_result_resolves_aborted_call() {
+        let input = vec![
+            responses_assistant(&["call_abort"], StopReason::Aborted),
+            Message::User(UserMessage::text("continue")),
+            result_text("call_abort|fc_late", "partial output"),
+        ];
+        assert_eq!(
+            texts(&transform_messages(&input)),
+            vec!["assistant", "result:call_abort|fc_late:partial output", "user:continue"]
+        );
+    }
+
+    #[test]
+    fn chat_pipe_ids_remain_opaque_even_after_responses_prefix() {
+        let input = vec![
+            responses_assistant(&["call_A"], StopReason::ToolUse),
+            result_text("call_A|fc_R", "responses output"),
+            assistant(&["call_A|first", "call_A|second"], StopReason::ToolUse),
+            result_text("call_A|second", "chat second output"),
+        ];
+        let output = transform_messages(&input);
+        assert_eq!(
+            texts(&output),
+            vec![
+                "assistant",
+                "result:call_A|fc_R:responses output",
+                "assistant",
+                "result:call_A|second:chat second output",
+                "result:call_A|first:No result provided",
+            ]
+        );
+        let chat = output[2].as_assistant().unwrap();
+        assert_eq!(
+            chat.tool_calls().map(|call| call.id.as_str()).collect::<Vec<_>>(),
+            vec!["call_A|first", "call_A|second"]
+        );
+    }
+
+    #[test]
+    fn empty_responses_call_half_is_not_a_shared_pairing_bucket() {
+        let input = vec![
+            responses_assistant(&["|fc_A", "|fc_B"], StopReason::ToolUse),
+            result_text("|fc_A", "A"),
+            result_text("|fc_B", "B"),
+        ];
+        assert_eq!(texts(&transform_messages(&input)), vec!["assistant", "result:|fc_A:A", "result:|fc_B:B"]);
+        assert_eq!(chat_wire_tool_call_id("|fc_A", "openai-responses"), "");
     }
 }

@@ -201,6 +201,65 @@ async fn malformed_tool_call_and_result_do_not_reach_openai_wire() {
 }
 
 #[tokio::test]
+async fn responses_composite_results_and_opaque_chat_ids_match_calls_on_the_wire() {
+    let server =
+        FakeUpstream::start(script(json!({"responses": [{"events": [text("ack"), finish("stop"), done()]}]})), None)
+            .await
+            .unwrap();
+    let mut responses = AssistantMessage::empty("openai-responses", "openai", "source-model");
+    responses.stop_reason = StopReason::ToolUse;
+    responses.content.push(AssistantBlock::ToolCall(ToolCall {
+        id: "call_A|fc_assistant".into(),
+        name: "read".into(),
+        arguments: Default::default(),
+        thought_signature: None,
+    }));
+    let mut chat = AssistantMessage::empty("openai-completions", "fake", "fake-model");
+    chat.stop_reason = StopReason::ToolUse;
+    for id in ["call_A|first", "call_A|second"] {
+        chat.content.push(AssistantBlock::ToolCall(ToolCall {
+            id: id.into(),
+            name: "read".into(),
+            arguments: Default::default(),
+            thought_signature: None,
+        }));
+    }
+    let result = |id: &str, body: &str| {
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            tool_name: "read".into(),
+            content: vec![UserBlock::text(body)],
+            details: None,
+            is_error: false,
+            timestamp: 3,
+        })
+    };
+    let mut context = ctx();
+    context.messages = vec![
+        Message::Assistant(responses),
+        result("call_A|fc_result", "responses output"),
+        Message::Assistant(chat),
+        result("call_A|second", "chat second output"),
+        Message::User(UserMessage::text("continue")),
+    ];
+    let (_, answer) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), context, opts())).await;
+    assert_eq!(answer.text(), "ack");
+    let reqs = server.requests.lock().await;
+    assert_eq!(reqs.len(), 1);
+    let wire = reqs[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(wire.len(), 7);
+    assert_eq!(wire[1]["tool_calls"][0]["id"], "call_A");
+    assert_eq!(wire[2], json!({"role": "tool", "content": "responses output", "tool_call_id": "call_A"}));
+    assert_eq!(wire[3]["tool_calls"][0]["id"], "call_A|first");
+    assert_eq!(wire[3]["tool_calls"][1]["id"], "call_A|second");
+    assert_eq!(wire[4], json!({"role": "tool", "content": "chat second output", "tool_call_id": "call_A|second"}));
+    assert_eq!(wire[5]["tool_call_id"], "call_A|first");
+    assert_eq!(wire[5]["content"], "No result provided");
+    assert_eq!(wire[6], json!({"role": "user", "content": "continue"}));
+}
+
+#[tokio::test]
 async fn retries_429_then_succeeds() {
     let server = FakeUpstream::start(
         script(json!({"responses": [

@@ -26,7 +26,7 @@ use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
 use crate::json::{parse_final_arguments, parse_streaming_json};
 use crate::model_tokenizer::{ModelContentCount, count_model_fragments};
 use crate::sse::SseDecoder;
-use crate::transform::transform_messages;
+use crate::transform::{ToolCallOriginScope, chat_wire_tool_call_id, transform_messages};
 use crate::types::{
     AssistantBlock, AssistantMessage, Context, JsonObject, Message, Model, StopReason, TextContent, ThinkingContent,
     Tool, ToolCall, ToolChoice, Usage, UserBlock, UserContent,
@@ -34,7 +34,7 @@ use crate::types::{
 use crate::usage_limit::account_usage_limit;
 use futures::StreamExt;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -217,8 +217,10 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
         params.push(json!({"role": "system", "content": prompt}));
     }
     let transformed = transform_messages(&context.messages);
+    let origin_scope = ToolCallOriginScope::collect(&transformed);
     let mut generated_ids = 0usize;
     let mut remapped: HashMap<String, Vec<String>> = HashMap::new();
+    let mut used_wire_ids: HashSet<String> = HashSet::new();
     let mut i = 0;
     while i < transformed.len() {
         match &transformed[i] {
@@ -244,13 +246,26 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                     .tool_calls()
                     .enumerate()
                     .map(|(n, tc)| {
-                        let id = if tc.id.trim().is_empty() {
+                        let mut id = chat_wire_tool_call_id(&tc.id, &a.api);
+                        if id.trim().is_empty() {
                             generated_ids += 1;
-                            format!("call_ara_{i}_{n}_{generated_ids}")
-                        } else {
-                            tc.id.clone()
-                        };
-                        remapped.entry(tc.id.clone()).or_default().push(id.clone());
+                            id = format!("call_ara_{i}_{n}_{generated_ids}");
+                        }
+                        if !used_wire_ids.insert(id.clone()) {
+                            let base = id;
+                            let mut duplicate_index = 1usize;
+                            loop {
+                                let suffix = format!("_dup{duplicate_index}");
+                                let keep = 40usize.saturating_sub(suffix.len());
+                                let candidate = format!("{}{}", base.chars().take(keep).collect::<String>(), suffix);
+                                if used_wire_ids.insert(candidate.clone()) {
+                                    id = candidate;
+                                    break;
+                                }
+                                duplicate_index += 1;
+                            }
+                        }
+                        remapped.entry(origin_scope.pairing_key(&tc.id).to_owned()).or_default().push(id.clone());
                         json!({"id": id, "type": "function", "function": {"name": tc.name, "arguments": serialize_tool_arguments(&tc.arguments)}})
                     })
                     .collect();
@@ -293,7 +308,7 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                         String::new()
                     };
                     let id = remapped
-                        .get_mut(&r.tool_call_id)
+                        .get_mut(origin_scope.pairing_key(&r.tool_call_id))
                         .and_then(|q| if q.is_empty() { None } else { Some(q.remove(0)) })
                         .unwrap_or_else(|| r.tool_call_id.clone());
                     params.push(json!({"role": "tool", "content": content, "tool_call_id": id}));
@@ -1558,5 +1573,42 @@ mod tests {
         assert_eq!(wire[1], json!({"role": "tool", "content": "actual file body", "tool_call_id": "call_late"}));
         assert_eq!(wire[2]["role"], "user");
         assert_eq!(wire[2]["content"], "later guidance");
+    }
+
+    #[test]
+    fn normalized_responses_call_id_collision_keeps_distinct_chat_pairs() {
+        let prefix = format!("call_{}", "x".repeat(35));
+        let mut messages = Vec::new();
+        for (suffix, body) in [("A", "first"), ("B", "second")] {
+            let call_id = format!("{prefix}{suffix}");
+            let mut assistant = AssistantMessage::empty("openai-responses", "source", "model");
+            assistant.stop_reason = StopReason::ToolUse;
+            assistant.content.push(AssistantBlock::ToolCall(ToolCall {
+                id: format!("{call_id}|fc_assistant"),
+                name: "read".into(),
+                arguments: JsonObject::new(),
+                thought_signature: None,
+            }));
+            messages.push(Message::Assistant(assistant));
+            messages.push(Message::ToolResult(ToolResultMessage {
+                tool_call_id: format!("{call_id}|fc_result"),
+                tool_name: "read".into(),
+                content: vec![UserBlock::text(body)],
+                details: None,
+                is_error: false,
+                timestamp: 1,
+            }));
+        }
+        let context = Context { system_prompt: vec![], messages, tools: None };
+        let wire = convert_messages(&model(), &context, &OpenAICompat::default());
+        assert_eq!(wire.len(), 4);
+        let first = wire[0]["tool_calls"][0]["id"].as_str().unwrap();
+        let second = wire[2]["tool_calls"][0]["id"].as_str().unwrap();
+        assert_ne!(first, second);
+        assert!(first.len() <= 40 && second.len() <= 40);
+        assert_eq!(wire[1]["tool_call_id"], first);
+        assert_eq!(wire[1]["content"], "first");
+        assert_eq!(wire[3]["tool_call_id"], second);
+        assert_eq!(wire[3]["content"], "second");
     }
 }
