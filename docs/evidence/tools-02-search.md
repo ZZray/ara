@@ -1,5 +1,9 @@
 # TOOLS-02 — `ara-tools` grep and glob
 
+Later CTX-01d WIP `41cb9a7` adds `skill://` search routes; see the
+[separate receipt](ctx-01d-skill-url-tools.md). The exclusions below describe
+the original accepted TOOLS-02 scope and do not accept the later CTX slice.
+
 Point / requirement / exclusions:
 Port the OMP `grep` and `glob` tools for filesystem targets, with their path grammar, ignore rules, output format, limits, notices and error texts, running against real directory trees.
 

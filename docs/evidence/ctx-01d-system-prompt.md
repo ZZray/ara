@@ -1,5 +1,15 @@
 # CTX-01d: system prompt assembly, skill:// and CLI integration
 
+## 2026-09-27 skill URL search/write follow-up
+
+Local WIP `41cb9a7` routes `skill://` through `grep` and `glob`, rejects it
+before `write` has a file effect, and checks the path through the real CLI
+with a controlled fake upstream. Follow-up WIP `ca2a076` updates the gated
+system-prompt guidance. The [focused receipt](ctx-01d-skill-url-tools.md)
+records source mapping, tests, independent review and the still-failing
+Windows backend gate. The earlier live-model runs below used older code;
+CTX-01d remains **changes requested**.
+
 ## 2026-09-26 Windows real-model retest on `c9f9e24`
 
 The user supplied route credentials for this task. They were read without terminal echo into short-lived process environment variables, never written to the repository or trial directories. Authenticated `/models` calls returned HTTP 200 and listed the exact requested IDs: Agnes `agnes-2.5-flash` (11 listed models) and OpenRouter `openrouter/free` (458 listed models). The CLI binds both to `openai-completions`. The bounded task was run through the real Windows `ara` binary with Git Bash, Rust 1.94.1, at most 12 model calls, 300 seconds, and 2048 output tokens per call. `$TEMP/ara-ctx-trial-bin/python3` is a no-secret wrapper for the installed Python executable. Local Ubuntu was not used or required.
@@ -46,7 +56,11 @@ Read-only live catalogue probes on 2026-09-26: unauthenticated `GET https://open
 
 The trial harness now exits nonzero when its checks fail. It requires a zero CLI exit code, 1–12 model calls within 300 seconds, a successful tool result paired by `toolCallId` that contains the release-notes skill body captured before the Run (raw or numbered read output), and the requested file artifacts. Its earlier printed `TRIAL PASS: False` was not an exit-status gate.
 
-Open bounded differences: `grep`, `glob` and `write` do not resolve `skill://`; image, binary and directory skill reads do not match upstream's resource handling; range context lines for text skill reads remain with TOOLS-01. Quoted `skill://` tokens nested inside another shell quote stay literal as an intentional safety difference from upstream (F3). The prompt now directs the model to use filesystem paths with other file tools and advertises Bash expansion only when Bash is available.
+At the earlier `c9f9e24` checkpoint, `grep`, `glob` and `write` did not resolve
+`skill://`; the 2026-09-27 WIP above adds those routes. Still open: image,
+binary and directory skill read parity, and range context lines for text
+skill reads (TOOLS-01). Quoted `skill://` tokens nested inside another shell
+quote stay literal as an intentional safety difference from upstream (F3).
 
 Point / requirement / exclusions:
 Build the Agent system prompt from discovered context the way OMP does, and let the model use skills:
