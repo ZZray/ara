@@ -234,3 +234,55 @@ review found no reachable defect in scope and did not rerun tests. No
 controlled upstream in the current ARA provider stack produces `image_end`,
 so the real Provider → Agent → CLI path and bounded real-model task remain
 unverified. The point remains **implementing (WIP), not accepted**.
+
+## Statusless in-band transient error follow-up (2026-09-26, WIP)
+
+Code commit: `2a2a6b5` on local `dev`. Fixed OMP
+`packages/ai/src/providers/openai-completions.ts:643-665` turns an SSE error
+envelope without a numeric status into a provider response error. Its
+`utils/empty-completion-retry.ts:147-180` wrapper asks the shared classifier
+whether an uncommitted error may be retried. The classifier in
+`error/retryable.ts:42-60`, `error/flags.ts:159-160,306-312,791-819`, and
+`packages/utils/src/fetch-retry.ts:393-395` recognizes transient message
+phrases and statuses embedded in text, but excludes account usage caps and
+permanent 4xx errors. ARA previously treated every statusless in-band error
+as `ProviderError::Stream`, which could not trigger this outer retry.
+
+`ara-ai::replay_safe_retry` now applies those fixed-OMP message/status
+patterns only to an uncommitted `Stream` error. It consults the existing
+account-cap classifier first and keeps the one-extra-attempt budget. The
+provider wire request, public events, Agent, CLI, Session, and inner HTTP retry
+policy are unchanged. This is a parity repair: fixed OMP also retries ordinary
+inner 429 responses except its concurrency-admission and over-cap delay cases.
+Suppressing every inner account-cap 429 on its first response would be a
+separate intentional difference, not a remaining fixed-OMP parity step.
+
+The new controlled HTTP fixture for `Service unavailable` failed on the old
+code: one request and a terminal error. On the repaired code, a first 200 SSE
+response with a statusless transient error followed by a healthy response
+produces two requests, one visible `Start`, one terminal, and text `recovered`.
+The same result holds for an upstream connect error, socket closure, stream
+read error, truncated JSON diagnostic, and `HTTP 408`/`HTTP 501` text. Negative
+fixtures keep `HTTP 429` with an opaque body, `HTTP 401 Service unavailable`,
+an account rate cap, and an invalid schema at one request. A transient error
+after text `partial` also stays at one request and ends with that text and an
+error; committed output is never replayed. The `HTTP 429` negative fixture
+first exposed a false retry in the initial candidate and passed after the
+status-in-message and account-cap gates were added.
+
+| Check on final code | Result |
+| --- | --- |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 37 unit and 45 HTTP tests |
+| `python scripts/verify_backend.py` | Owned formatting and strict workspace Clippy pass; unfiltered tests stop at the existing Windows CLI tool-deadline case (17/18 e2e pass, verifier exit 101). The doc phase was not reached. |
+| `cargo test --workspace --doc --all-features --quiet` | Exit 0 separately; no doc test cases |
+| `cargo deny check`; `python scripts/omp_inventory.py check`; `git diff --check` | Exit 0; deny retains existing policy warnings |
+
+An independent Codex plan review established the fixed-OMP gap and warned
+against changing inner account-cap 429 behavior. Independent diff review found
+two candidate defects: false replay when a statusless message embeds a
+permanent or opaque HTTP status, and missed socket/read/408/other-5xx transient
+phrases. Both were fixed with HTTP fixtures. Final read-only re-review covered
+both changed files and reported no remaining confirmed defect; it did not run
+the full host chain or real-model trial. The unfiltered Windows backend gate,
+bounded real-model task, and wider AI-RETRY surface remain open. AI-RETRYa is
+still **implementing (WIP)**, and no acceptance count changes.
