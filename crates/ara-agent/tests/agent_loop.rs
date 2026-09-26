@@ -220,6 +220,7 @@ fn model() -> Model {
         base_url: String::new(),
         reasoning: false,
         max_tokens: None,
+        tokenizer: None,
     }
 }
 

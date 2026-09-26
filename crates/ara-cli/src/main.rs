@@ -23,7 +23,9 @@
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
 use ara_ai::providers::openai_completions::StreamOptions;
-use ara_ai::{Message, Model, OpenAICompletionsProvider, StopReason, UserMessage};
+use ara_ai::{
+    Message, Model, ModelTokenizer, OpenAICompletionsProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
+};
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
 };
@@ -63,6 +65,10 @@ struct Args {
     /// Model id sent on the wire. Env: ARA_MODEL, ARA_TEST_MODEL_ID.
     #[arg(long)]
     model: Option<String>,
+    /// Local Claude content tokenizer metadata (no context gate yet): auto,
+    /// none, claude-v3, claude-v47, claude-v5, or claude-v5-sonnet. Env: ARA_TOKENIZER.
+    #[arg(long)]
+    tokenizer: Option<String>,
     /// OpenAI-compatible base URL (…/v1). Env: ARA_BASE_URL, ARA_TEST_BASE_URL, OPENROUTER_BASE_URL.
     #[arg(long)]
     base_url: Option<String>,
@@ -288,6 +294,14 @@ fn resolve_route(args: &Args) -> Result<Route> {
         .clone()
         .or_else(|| env_first(&["ARA_MODEL", "ARA_TEST_MODEL_ID"]).map(|(_, v)| v))
         .context("no model: pass --model or set ARA_MODEL")?;
+    let tokenizer_choice = args.tokenizer.clone().or_else(|| env_first(&["ARA_TOKENIZER"]).map(|(_, value)| value));
+    let tokenizer = match tokenizer_choice.as_deref() {
+        None | Some("auto") => resolve_known_claude_tokenizer(&model_id),
+        Some("none") => None,
+        Some(name) => Some(ModelTokenizer::from_name(name).with_context(|| {
+            format!("unknown tokenizer {name:?}; use auto, none, claude-v3, claude-v47, claude-v5 or claude-v5-sonnet")
+        })?),
+    };
     let base_url = args
         .base_url
         .clone()
@@ -329,6 +343,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
             base_url,
             reasoning: false,
             max_tokens: None,
+            tokenizer,
         },
         stream_options,
     })
@@ -649,5 +664,63 @@ mod tests {
         assert!(is_openrouter("https://openrouter.ai/api/v1"));
         assert!(!is_openrouter("http://evil.example/openrouter.ai/v1"));
         assert!(!is_openrouter("http://127.0.0.1:8080/v1"));
+    }
+
+    #[test]
+    fn route_selects_or_overrides_local_tokenizer_without_changing_wire_id() {
+        let args = Args::try_parse_from([
+            "ara",
+            "--model",
+            "anthropic/claude-opus-4-7",
+            "--base-url",
+            "http://localhost/v1",
+            "--tokenizer",
+            "auto",
+        ])
+        .unwrap();
+        let route = resolve_route(&args).unwrap();
+        assert_eq!(route.model.id, "anthropic/claude-opus-4-7");
+        assert_eq!(route.model.tokenizer, Some(ModelTokenizer::ClaudeV47));
+
+        let args = Args::try_parse_from([
+            "ara",
+            "--model",
+            "reseller-alias",
+            "--base-url",
+            "http://localhost/v1",
+            "--tokenizer",
+            "claude-v5-sonnet",
+        ])
+        .unwrap();
+        let route = resolve_route(&args).unwrap();
+        assert_eq!(route.model.id, "reseller-alias");
+        assert_eq!(route.model.tokenizer, Some(ModelTokenizer::ClaudeV5Sonnet));
+
+        let args = Args::try_parse_from([
+            "ara",
+            "--model",
+            "claude-opus-5",
+            "--base-url",
+            "http://localhost/v1",
+            "--tokenizer",
+            "none",
+        ])
+        .unwrap();
+        assert_eq!(resolve_route(&args).unwrap().model.tokenizer, None);
+    }
+
+    #[test]
+    fn invalid_local_tokenizer_is_a_route_error() {
+        let args = Args::try_parse_from([
+            "ara",
+            "--model",
+            "alias",
+            "--base-url",
+            "http://localhost/v1",
+            "--tokenizer",
+            "claude-v6",
+        ])
+        .unwrap();
+        assert!(resolve_route(&args).err().unwrap().to_string().contains("unknown tokenizer"));
     }
 }

@@ -345,6 +345,8 @@ pub struct Model {
     pub base_url: String,
     pub reasoning: bool,
     pub max_tokens: Option<u64>,
+    /// Local content tokenizer selected by the host; never sent on the wire.
+    pub tokenizer: Option<crate::model_tokenizer::ModelTokenizer>,
 }
 
 #[cfg(test)]

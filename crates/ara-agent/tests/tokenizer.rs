@@ -1,14 +1,46 @@
 use ara_agent::tokenizer::{
-    EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, count_fragments, count_message, count_messages, count_text,
+    EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, ModelContentCount, count_fragments, count_message,
+    count_messages, count_model_fragments, count_text,
 };
 use ara_ai::{
-    AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, Message, TextContent, ThinkingContent, ToolCall,
-    ToolResultMessage, UserBlock, UserContent, UserMessage,
+    AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, Message, Model, ModelTokenizer, TextContent,
+    ThinkingContent, ToolCall, ToolResultMessage, UserBlock, UserContent, UserMessage,
 };
 use serde_json::{Map, Value};
 
 fn image() -> ImageContent {
     ImageContent { data: "AA==".into(), mime_type: "image/png".into() }
+}
+
+fn model(tokenizer: Option<ModelTokenizer>) -> Model {
+    Model {
+        id: "alias".into(),
+        api: "openai-completions".into(),
+        provider: "test".into(),
+        base_url: "http://localhost".into(),
+        reasoning: false,
+        max_tokens: None,
+        tokenizer,
+    }
+}
+
+#[test]
+fn explicit_model_family_selects_exact_content_counter() {
+    assert_eq!(count_model_fragments(&model(None), ["ξ"]), ModelContentCount::UnknownTokenizer);
+    for family in
+        [ModelTokenizer::ClaudeV3, ModelTokenizer::ClaudeV47, ModelTokenizer::ClaudeV5, ModelTokenizer::ClaudeV5Sonnet]
+    {
+        assert_eq!(count_model_fragments(&model(Some(family)), ["ξ"]), ModelContentCount::Exact(3));
+    }
+    let mut selected = model(Some(ModelTokenizer::ClaudeV3));
+    assert_eq!(count_model_fragments(&selected, ["hello, world"]), ModelContentCount::Exact(3));
+    selected.tokenizer = Some(ModelTokenizer::ClaudeV47);
+    assert_eq!(count_model_fragments(&selected, ["hello, world"]), ModelContentCount::Exact(4));
+    assert_eq!(count_model_fragments(&selected, ["", "ξ"]), ModelContentCount::Exact(4));
+    selected.tokenizer = Some(ModelTokenizer::ClaudeV5);
+    assert_eq!(count_model_fragments(&selected, ["a\n "]), ModelContentCount::Exact(1));
+    selected.tokenizer = Some(ModelTokenizer::ClaudeV5Sonnet);
+    assert_eq!(count_model_fragments(&selected, ["a\n "]), ModelContentCount::Exact(3));
 }
 
 #[test]

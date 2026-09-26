@@ -28,6 +28,7 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 - Open: CTX-01e (`/skill:` invocation), which needs the interactive/RPC host and session custom messages.
 - A3 preparation (WIP): the isolated AGT-TOKENIZERa text/message estimate is under implementation; [evidence](evidence/agt-tokenizer-estimate.md). The initial byte-based budget probe was removed after pinned Claude fixtures disproved its claimed token upper bound. CTX-01d still gates A2 acceptance, and A3 compaction/long-task behavior is not claimed.
 - A3 AGT-TOKENIZERb (WIP): a Claude-only content counter with pinned vocabulary and fixture evidence builds on stable Windows Rust; [evidence](evidence/agt-tokenizer-claude.md). Model-family selection, actual provider-request sizing and compaction remain separate open work.
+- A3 AGT-TOKENIZERc (WIP): the model carries an optional Claude tokenizer family, selected from a conservative canonical ID subset or explicit host override; Agent text-fragment counts use it. The loop and provider-request budget remain open; [evidence](evidence/agt-tokenizer-model-selection.md).
 
 ## Track A: OMP parity (G1)
 

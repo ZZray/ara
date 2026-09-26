@@ -22,6 +22,7 @@ fn model(base: &str) -> Model {
         base_url: base.into(),
         reasoning: false,
         max_tokens: None,
+        tokenizer: None,
     }
 }
 

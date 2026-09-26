@@ -25,7 +25,8 @@ def main() -> int:
         print("NOT RUN: no Rust backend exists in this repository yet")
         return 0
 
-    if shutil.which("cargo") is None:
+    cargo = shutil.which("cargo")
+    if cargo is None:
         print("FAIL: cargo is unavailable", file=sys.stderr)
         return 1
 
@@ -33,8 +34,8 @@ def main() -> int:
     # nightly rustfmt config), so the format check covers ARA-owned packages only.
     metadata = json.loads(
         subprocess.run(
-            ("cargo", "metadata", "--no-deps", "--format-version", "1"),
-            cwd=ROOT, check=True, capture_output=True, text=True,
+            (cargo, "metadata", "--no-deps", "--format-version", "1"),
+            cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
         ).stdout
     )
     vendor = ROOT / "crates" / "vendor"
@@ -42,12 +43,12 @@ def main() -> int:
         package["name"] for package in metadata["packages"]
         if vendor not in Path(package["manifest_path"]).parents
     )
-    fmt_command = ("cargo", "fmt", *(arg for name in owned for arg in ("-p", name)), "--", "--check")
+    fmt_command = (cargo, "fmt", *(arg for name in owned for arg in ("-p", name)), "--", "--check")
     commands = (
         fmt_command,
-        ("cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"),
-        ("cargo", "test", "--workspace", "--all-targets", "--all-features"),
-        ("cargo", "test", "--workspace", "--doc", "--all-features"),
+        (cargo, "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"),
+        (cargo, "test", "--workspace", "--all-targets", "--all-features"),
+        (cargo, "test", "--workspace", "--doc", "--all-features"),
     )
     for command in commands:
         print("RUN:", " ".join(command), flush=True)

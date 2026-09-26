@@ -603,6 +603,7 @@ fn reminder_developer_fallback_uses_provider_compatible_wire_role() {
         base_url: "http://localhost".into(),
         reasoning: false,
         max_tokens: None,
+        tokenizer: None,
     };
     for (supports_developer_role, expected_role) in [(false, "user"), (true, "developer")] {
         let compat = OpenAICompat { supports_developer_role, ..OpenAICompat::default() };

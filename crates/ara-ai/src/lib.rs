@@ -5,6 +5,7 @@
 pub mod error;
 pub mod event;
 pub mod json;
+pub mod model_tokenizer;
 pub mod providers;
 pub mod sse;
 pub mod transform;
@@ -13,6 +14,7 @@ pub mod validation;
 
 pub use error::ProviderError;
 pub use event::{AssistantMessageEvent, AssistantStream, EventSink};
+pub use model_tokenizer::{ModelTokenizer, resolve_known_claude_tokenizer};
 pub use types::*;
 
 use tokio_util::sync::CancellationToken;
