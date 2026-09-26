@@ -118,6 +118,20 @@ impl AgentTool for WriteTool {
         let hashlines = self.ctx.hashlines();
         let raw_path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
         let path = pi_edit::path_policy::unwrap_hashline_header_path(raw_path);
+        if crate::internal_urls::is_internal_url(path) {
+            let (_, selector) = crate::internal_urls::split_skill_url_selector(path);
+            if let Some(sel) = selector
+                && !sel.eq_ignore_ascii_case("raw")
+                && !sel.eq_ignore_ascii_case("conflicts")
+            {
+                return Err(ToolError(format!(
+                    "write does not accept the trailing selector \":{sel}\" — it writes a whole file. Remove \":{sel}\", or if the filename truly ends with it, percent-encode the \":\" as %3A."
+                )));
+            }
+            return Err(ToolError(
+                "skill:// URLs are read-only for write; use the protocol-specific tool for mutations.".into(),
+            ));
+        }
         let raw_content = args.get("content").and_then(|v| v.as_str()).unwrap_or_default();
         let (content, stripped) =
             if hashlines { strip_write_content(raw_content) } else { (raw_content.to_string(), false) };

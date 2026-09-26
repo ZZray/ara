@@ -89,8 +89,30 @@ impl GlobTool {
             inputs.push(".".into());
         }
         let raw = paths::expand_delimited_entries(ctx, &inputs, paths::Splitter::Find).map_err(err)?;
-        let patterns: Vec<String> =
-            raw.iter().map(|p| paths::normalize_path_like_input(p).replace('\\', "/")).collect();
+        #[cfg(windows)]
+        let search_ctx = raw.iter().any(|entry| crate::internal_urls::is_internal_url(entry)).then(|| {
+            let mut normalized = ctx.clone();
+            normalized.cwd = std::path::PathBuf::from(crate::internal_urls::search_path_string(&ctx.cwd));
+            normalized
+        });
+        #[cfg(not(windows))]
+        let search_ctx: Option<ToolContext> = None;
+        let ctx = search_ctx.as_ref().unwrap_or(ctx);
+        let patterns: Vec<String> = raw
+            .iter()
+            .map(|p| {
+                if crate::internal_urls::is_internal_url(p) {
+                    if paths::has_glob_path_chars(p) {
+                        return Err(ToolError(format!("Glob patterns are not supported for internal URLs: {p}")));
+                    }
+                    return ctx
+                        .resolve_internal_url_path_only(p)
+                        .map(|path| crate::internal_urls::search_path_string(&path).replace('\\', "/"))
+                        .map_err(ToolError);
+                }
+                Ok(paths::normalize_path_like_input(p).replace('\\', "/"))
+            })
+            .collect::<Result<_, _>>()?;
         if patterns.iter().any(|p| !p.is_empty() && p.chars().all(|c| c == '/')) {
             return Err(ToolError("Searching from root directory '/' is not allowed".into()));
         }

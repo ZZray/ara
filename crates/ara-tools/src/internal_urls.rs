@@ -14,7 +14,7 @@ pub struct SkillRef {
 
 /// Whether `input` uses a scheme these tools resolve.
 pub fn is_internal_url(input: &str) -> bool {
-    input.starts_with("skill://")
+    input.get(.."skill://".len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case("skill://"))
 }
 
 /// `decodeURIComponent`: `None` on a malformed escape or a byte sequence that
@@ -70,7 +70,45 @@ fn unknown_skill(skills: &[SkillRef], name: &str, separator: &str) -> String {
 /// segments before validation (`skill://s/../x` reads `s/x`); ARA keeps the
 /// path as written, so a `..` segment is rejected like `bash` rejects it.
 pub fn resolve_skill_url(skills: &[SkillRef], url: &str) -> Result<PathBuf, String> {
-    let rest = url.strip_prefix("skill://").unwrap_or(url);
+    resolve_skill_url_mode(skills, url, false)
+}
+
+/// Resolve the backing path for search tools. A bare URL names the skill
+/// directory, while `read` still names its `SKILL.md`.
+pub fn resolve_skill_url_path_only(skills: &[SkillRef], url: &str) -> Result<PathBuf, String> {
+    let path = resolve_skill_url_mode(skills, url, true)?;
+    let metadata = std::fs::metadata(&path).map_err(|error| {
+        if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) {
+            format!("File not found: {}", path.display())
+        } else {
+            error.to_string()
+        }
+    })?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(format!("skill:// URL must resolve to a file or directory: {url}"));
+    }
+    Ok(path)
+}
+
+/// Search path parsers use `?` as a glob token. Windows canonical paths use
+/// `\\?\` as an extended-length prefix, so remove that prefix before passing
+/// a resolved skill path back through those parsers.
+pub fn search_path_string(path: &Path) -> String {
+    let display = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = display.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = display.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    display.into_owned()
+}
+
+fn resolve_skill_url_mode(skills: &[SkillRef], url: &str, path_only: bool) -> Result<PathBuf, String> {
+    let rest = if is_internal_url(url) { &url["skill://".len()..] } else { url };
     let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
     let (raw_host, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -84,7 +122,7 @@ pub fn resolve_skill_url(skills: &[SkillRef], url: &str) -> Result<PathBuf, Stri
         return Err(unknown_skill(skills, &name, "\n"));
     };
     if path.is_empty() || path == "/" {
-        return Ok(skill.file_path.clone());
+        return Ok(if path_only { skill.base_dir.clone() } else { skill.file_path.clone() });
     }
     let relative = decode_uri_component(&path[1..]).ok_or("URI malformed")?;
     validate_relative_path(&relative)?;
@@ -93,6 +131,35 @@ pub fn resolve_skill_url(skills: &[SkillRef], url: &str) -> Result<PathBuf, Stri
         return Err("Path traversal is not allowed".into());
     }
     Ok(target)
+}
+
+/// `splitInternalUrlSel` for the `skill://` scheme. Unlike filesystem paths,
+/// selector-shaped tails are peeled even when the selector is malformed, so
+/// callers can report a selector error instead of an unknown skill.
+pub fn split_skill_url_selector(url: &str) -> (String, Option<String>) {
+    if !is_internal_url(url) {
+        return (url.to_string(), None);
+    }
+    static PART: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^(?:raw|conflicts|img|L?[0-9]+(?:(?:[-+]|\.\.)L?[0-9]+|-|\.\.)?(?:,L?[0-9]+(?:(?:[-+]|\.\.)L?[0-9]+|-|\.\.)?)*|-[0-9]+(?:[-+][0-9]+)?)$")
+            .expect("valid selector regex")
+    });
+    let mut path = url;
+    let mut parts = Vec::new();
+    while let Some(colon) = path.rfind(':').filter(|&i| i >= "skill://".len()) {
+        let tail = &path[colon + 1..];
+        if !PART.is_match(tail) {
+            break;
+        }
+        parts.push(tail);
+        path = &path[..colon];
+    }
+    if parts.is_empty() {
+        (url.to_string(), None)
+    } else {
+        parts.reverse();
+        (path.to_string(), Some(parts.join(":")))
+    }
 }
 
 #[cfg(test)]

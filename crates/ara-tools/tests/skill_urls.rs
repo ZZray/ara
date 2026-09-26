@@ -1,7 +1,7 @@
 //! Ports of OMP `packages/coding-agent/test/tools/bash-skill-urls.test.ts`
 //! (`expandSkillUrls` and the `skill://` cases of `expandInternalUrls`) at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d, plus tool-level checks of
-//! `skill://` in `read` and `bash`.
+//! `skill://` in `read`, `bash`, `grep`, `glob`, and `write`.
 //!
 //! Not ported here: the `expandInternalUrls` cases for agent, artifact,
 //! memory, rule, local and attachment URLs (those schemes are open).
@@ -151,6 +151,105 @@ fn write_skill(root: &Path, name: &str, body: &str) -> SkillRef {
         .unwrap();
     std::fs::write(dir.join("scripts/hello.sh"), "echo hello-from-skill\n").unwrap();
     SkillRef { name: name.into(), file_path: dir.join("SKILL.md"), base_dir: dir }
+}
+
+/// Search tools use the backing directory for a bare URL. Selectors filter
+/// matches, and immutable skill matches never become hashline edit anchors.
+#[tokio::test]
+async fn grep_skill_urls() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "needle-in-skill\n");
+    std::fs::write(root.join("ordinary.txt"), "needle-in-ordinary\n").unwrap();
+    let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, true).with_skills(vec![demo]);
+    let grep = grep::GrepTool::new(ctx);
+    let search = |path: &str| {
+        grep.execute(
+            "c",
+            args(json!({"pattern": "needle", "path": path, "gitignore": false})),
+            CancellationToken::new(),
+            noop(),
+        )
+    };
+    let result = text(&search("skill://demo").await.unwrap());
+    assert!(result.contains("needle-in-skill"), "{result}");
+    assert!(!result.contains("needle-in-ordinary"), "{result}");
+    assert!(!result.contains("SKILL.md#"), "{result}");
+    assert!(result.contains("|"), "immutable matches should use plain line numbers: {result}");
+    #[cfg(windows)]
+    assert!(!result.contains(":/") && !result.contains("//?/"), "workspace files should be relative: {result}");
+
+    let result = text(&search("skill://demo/SKILL.md:5-5:raw").await.unwrap());
+    assert!(result.contains("needle-in-skill"), "{result}");
+    let result = text(&search("skill://demo/SKILL.md:2-3").await.unwrap());
+    assert_eq!(result, "No matches found");
+    let mixed = text(&search("skill://demo/SKILL.md; ordinary.txt").await.unwrap());
+    assert!(mixed.contains("needle-in-skill") && mixed.contains("needle-in-ordinary"), "{mixed}");
+    assert!(!mixed.contains("SKILL.md#"), "{mixed}");
+    assert!(mixed.contains("ordinary.txt#"), "{mixed}");
+    #[cfg(windows)]
+    assert!(!mixed.contains(":/") && !mixed.contains("//?/"), "mixed workspace files should be relative: {mixed}");
+
+    assert!(search("skill://demo/**/*.md").await.unwrap_err().0.contains("Glob patterns are not supported"));
+    assert!(search("skill://demo/SKILL.md:raw:conflicts").await.unwrap_err().0.contains("invalid selector"));
+    assert!(search("skill://demo/SKILL.md:-10").await.unwrap_err().0.contains("invalid selector"));
+    assert!(search("skill://demo/../outside").await.unwrap_err().0.contains("Path traversal"));
+    assert!(search("skill://missing").await.unwrap_err().0.contains("Unknown skill"));
+    assert!(search("skill://demo/missing.md; ordinary.txt").await.unwrap_err().0.contains("File not found"));
+    assert!(text(&search("SKILL://demo/SKILL.md").await.unwrap()).contains("needle-in-skill"));
+}
+
+#[tokio::test]
+async fn glob_skill_urls() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    std::fs::write(root.join("ordinary.txt"), "body\n").unwrap();
+    let glob = glob::GlobTool::new(ToolContext::new(&root).with_skills(vec![demo]));
+    let find = |path: &str| {
+        glob.execute("c", args(json!({"path": path, "gitignore": false})), CancellationToken::new(), noop())
+    };
+    let result = text(&find("skill://demo").await.unwrap());
+    assert!(result.contains("SKILL.md") && result.contains("scripts"), "{result}");
+    assert!(!result.contains("ordinary.txt"), "{result}");
+    #[cfg(windows)]
+    assert!(!result.contains(":/") && !result.contains("//?/"), "workspace files should be relative: {result}");
+    let result = text(&find("skill://demo/scripts/hello.sh").await.unwrap());
+    assert!(result.contains("hello.sh"), "{result}");
+    assert!(find("skill://demo/**/*.sh").await.unwrap_err().0.contains("Glob patterns are not supported"));
+    assert!(find("skill://demo/../outside").await.unwrap_err().0.contains("Path traversal"));
+    assert!(find("skill://demo/missing.md; ordinary.txt").await.unwrap_err().0.contains("File not found"));
+    assert!(text(&find("SKILL://demo/SKILL.md").await.unwrap()).contains("SKILL.md"));
+}
+
+#[tokio::test]
+async fn write_skill_urls_are_read_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "original\n");
+    let write = write::WriteTool { ctx: ToolContext::new(&root).with_skills(vec![demo.clone()]) };
+    for path in ["skill://demo", "skill://demo:raw", "skill://demo/scripts/new.txt", "SKILL://demo/SKILL.md"] {
+        let err = write
+            .execute("c", args(json!({"path": path, "content": "replacement"})), CancellationToken::new(), noop())
+            .await
+            .unwrap_err()
+            .0;
+        assert!(err.contains("read-only for write"), "{path}: {err}");
+    }
+    let err = write
+        .execute(
+            "c",
+            args(json!({"path": "skill://demo/SKILL.md:1-2", "content": "replacement"})),
+            CancellationToken::new(),
+            noop(),
+        )
+        .await
+        .unwrap_err()
+        .0;
+    assert!(err.contains("does not accept the trailing selector"), "{err}");
+    assert!(std::fs::read_to_string(&demo.file_path).unwrap().contains("original"));
+    assert!(!demo.base_dir.join("scripts/new.txt").exists());
+    assert!(!root.join("skill:").exists());
 }
 
 /// `read` of a skill resource: bare URL is SKILL.md, selectors apply, the

@@ -82,6 +82,12 @@ impl ToolContext {
         internal_urls::resolve_skill_url(&skills, url)
     }
 
+    /// Resolve a skill URL to its backing path for `grep` and `glob`.
+    pub fn resolve_internal_url_path_only(&self, url: &str) -> Result<PathBuf, String> {
+        let skills = self.skills.read().unwrap_or_else(|e| e.into_inner());
+        internal_urls::resolve_skill_url_path_only(&skills, url)
+    }
+
     /// Select the edit mode and whether the `edit` tool is exposed.
     pub fn with_edit(mut self, mode: pi_edit::EditMode, edit_enabled: bool) -> Self {
         self.edit_mode = mode;

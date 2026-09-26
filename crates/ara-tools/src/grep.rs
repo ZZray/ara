@@ -14,10 +14,11 @@
 //! whole-file snapshot tag (`## file#TAG` / `[file#TAG]`) and `*N:line` rows,
 //! and the displayed lines are recorded as seen.
 //!
-//! Not ported (open): internal URLs and archives as search targets, SSH
+//! Not ported (open): internal URLs other than skill:// and archives as search targets, SSH
 //! approval tiers, the TUI renderer.
 
 use crate::engine::{self, Budget, EngineError, GrepMatch, GrepParams};
+use crate::internal_urls;
 use crate::output::{Notice, truncate_head};
 use crate::paths::{self, LineRange, SearchScope};
 use crate::{DEFAULT_MAX_BYTES, ToolContext};
@@ -52,6 +53,35 @@ struct PathSpec {
 fn parse_path_specs(ctx: &ToolContext, entries: &[String]) -> Result<Vec<PathSpec>, String> {
     let mut specs = Vec::new();
     for entry in entries {
+        if internal_urls::is_internal_url(entry) {
+            let (url, selector) = internal_urls::split_skill_url_selector(entry);
+            if paths::has_glob_path_chars(&url) {
+                return Err(format!("Glob patterns are not supported for internal URLs: {url}"));
+            }
+            let ranges = match selector.as_deref() {
+                None => None,
+                Some(sel) if sel.eq_ignore_ascii_case("raw") || sel.eq_ignore_ascii_case("conflicts") => None,
+                Some(sel) => {
+                    let chunks: Vec<&str> = sel.split(':').collect();
+                    let range = match chunks.as_slice() {
+                        [range] => Some(*range),
+                        [a, b] if a.eq_ignore_ascii_case("raw") => Some(*b),
+                        [a, b] if b.eq_ignore_ascii_case("raw") => Some(*a),
+                        _ => None,
+                    };
+                    let parsed = range.map(paths::parse_line_ranges).transpose()?.flatten();
+                    if parsed.is_none() {
+                        return Err(format!(
+                            "path entry \"{entry}\" has an invalid selector \":{sel}\" — use \":N-M\" line ranges, \":raw\"/\":conflicts\", a range plus \":raw\", or percent-encode a literal \":\" as %3A"
+                        ));
+                    }
+                    parsed
+                }
+            };
+            let clean = internal_urls::search_path_string(&ctx.resolve_internal_url_path_only(&url)?);
+            specs.push(PathSpec { original: entry.clone(), clean, ranges });
+            continue;
+        }
         let strict = paths::split_path_and_sel(entry);
         let split = paths::split_path_and_sel_preferring_literal(ctx, entry);
         let literal = strict.1.is_some() && split.1.is_none();
@@ -176,7 +206,24 @@ impl GrepTool {
             entries.push(".".into());
         }
         let entries = paths::expand_delimited_entries(ctx, &entries, paths::Splitter::Search).map_err(ToolError)?;
+        // Keep mixed physical and skill URL roots in the same Windows path
+        // namespace. A canonical cwd can carry `\\?\` while path-only URL
+        // targets must drop it before the search parser sees `?` as a glob.
+        #[cfg(windows)]
+        let search_ctx = entries.iter().any(|entry| internal_urls::is_internal_url(entry)).then(|| {
+            let mut normalized = ctx.clone();
+            normalized.cwd = PathBuf::from(internal_urls::search_path_string(&ctx.cwd));
+            normalized
+        });
+        #[cfg(not(windows))]
+        let search_ctx: Option<ToolContext> = None;
+        let ctx = search_ctx.as_ref().unwrap_or(ctx);
         let specs = parse_path_specs(ctx, &entries).map_err(ToolError)?;
+        let immutable_roots: Vec<PathBuf> = specs
+            .iter()
+            .filter(|s| internal_urls::is_internal_url(&s.original))
+            .map(|s| ctx.resolve(&s.clean))
+            .collect();
         let searchable: Vec<String> = specs.iter().map(|s| s.clean.clone()).collect();
         let scope = paths::resolve_search_scope(ctx, &searchable).map_err(ToolError)?;
 
@@ -361,6 +408,9 @@ impl GrepTool {
         if ctx.hashlines() {
             for rel in &file_list {
                 let abs = crate::normalize(&ctx.cwd.join(rel));
+                if immutable_roots.iter().any(|root| abs.starts_with(root)) {
+                    continue;
+                }
                 if let Some(tag) = ctx.edit_store.record_file(&abs, None) {
                     tags.insert(rel.clone(), (abs, tag));
                 }

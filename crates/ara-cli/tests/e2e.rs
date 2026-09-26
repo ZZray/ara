@@ -614,6 +614,49 @@ async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
 }
 
 #[tokio::test]
+async fn skill_url_search_and_read_only_write_reach_cli() {
+    let env = Env::new();
+    let work = env.work.path();
+    let skill_dir = work.join(".ara/skills/greeting");
+    std::fs::create_dir_all(skill_dir.join("assets")).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: Greeting\n---\nmarker-in-skill\n").unwrap();
+    let asset = skill_dir.join("assets/extra.txt");
+    std::fs::write(&asset, "original asset\n").unwrap();
+    std::fs::write(work.join("ordinary.txt"), "marker-in-skill\n").unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_glob", "glob", "{\"path\":\"skill://greeting\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_grep", "grep", "{\"pattern\":\"marker-in-skill\",\"path\":\"skill://greeting\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_write", "write", "{\"path\":\"skill://greeting/assets/extra.txt\",\"content\":\"changed\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Done."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Inspect the skill"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Done.\n");
+    let entries = journal(&env.session_files()[0]);
+    let results: Vec<&Value> = entries.iter().filter(|e| e["message"]["role"] == "toolResult").collect();
+    assert_eq!(results.len(), 3);
+    assert!(results[0]["message"]["content"][0]["text"].as_str().unwrap().contains("SKILL.md"));
+    assert!(results[1]["message"]["content"][0]["text"].as_str().unwrap().contains("marker-in-skill"));
+    assert!(!results[0]["message"]["content"][0]["text"].as_str().unwrap().contains("ordinary.txt"));
+    assert!(!results[1]["message"]["content"][0]["text"].as_str().unwrap().contains("ordinary.txt"));
+    assert_eq!(results[2]["message"]["isError"], json!(true));
+    assert!(results[2]["message"]["content"][0]["text"].as_str().unwrap().contains("read-only for write"));
+    assert_eq!(std::fs::read_to_string(&asset).unwrap(), "original asset\n");
+    assert!(!work.join("skill:").exists());
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 4);
+    for (request, id, fragment) in
+        [(1, "call_glob", "SKILL.md"), (2, "call_grep", "marker-in-skill"), (3, "call_write", "read-only for write")]
+    {
+        let messages = reqs[request]["body"]["messages"].as_array().unwrap();
+        let receipt = messages.iter().find(|m| m["role"] == "tool" && m["tool_call_id"] == id).unwrap();
+        assert!(receipt["content"].as_str().unwrap().contains(fragment), "{id}: {receipt}");
+    }
+}
+
+#[tokio::test]
 async fn skill_flags_filter_listing_and_resolution() {
     let env = Env::new();
     let work = env.work.path();
