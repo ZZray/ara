@@ -197,14 +197,15 @@ fn read_window<R: BufRead + Seek>(
     display: &str,
     sel: &Selector,
     numbering: Numbering,
-    limits: bool,
+    text_resource: bool,
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
+    let limits = !text_resource;
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
     let mut head = vec![0u8; SNIFF_BYTES];
     let n = read_up_to(&mut reader, &mut head).map_err(io)?;
     head.truncate(n);
-    if !sel.raw && sniff_binary(&head) {
+    if !sel.raw && !text_resource && sniff_binary(&head) {
         return Ok(Window {
             text: format!(
                 "[Cannot read binary file '{display}' ({}); not valid UTF-8 text. Use ':raw' to read bytes verbatim.]",
@@ -284,7 +285,7 @@ fn read_window<R: BufRead + Seek>(
         }
         let raw_line = String::from_utf8_lossy(&buf);
         let line = raw_line.strip_suffix('\n').unwrap_or(&raw_line);
-        let line = line.strip_suffix('\r').filter(|_| !sel.raw).unwrap_or(line);
+        let line = line.strip_suffix('\r').filter(|_| !sel.raw && !text_resource).unwrap_or(line);
         let rendered = match numbering {
             _ if sel.raw => line.to_string(),
             Numbering::Pipe => format!("{line_no}|{line}"),
@@ -316,7 +317,11 @@ fn read_window<R: BufRead + Seek>(
         let Some(total) = total else { return Err(format!("Cannot read {display}: scan budget exceeded")) };
         if total == 0 && sel.range.is_none() {
             return Ok(Window {
-                text: String::new(),
+                text: if text_resource {
+                    "Line 1 is beyond end of resource (0 lines total). The resource is empty.".into()
+                } else {
+                    String::new()
+                },
                 details: json!({"totalLines": 0, "fileSize": size}),
                 emitted: 0,
                 start,
@@ -324,12 +329,15 @@ fn read_window<R: BufRead + Seek>(
             });
         }
         let suggestion = if total == 0 {
-            "The file is empty.".to_string()
+            if text_resource { "The resource is empty." } else { "The file is empty." }.to_string()
         } else {
             format!("Use :1 to read from the start, or :{total} to read the last line.")
         };
         return Ok(Window {
-            text: format!("Line {start} is beyond end of file ({total} lines total). {suggestion}"),
+            text: format!(
+                "Line {start} is beyond end of {} ({total} lines total). {suggestion}",
+                if text_resource { "resource" } else { "file" }
+            ),
             details: json!({"totalLines": total, "fileSize": size}),
             emitted: 0,
             start,
@@ -361,12 +369,14 @@ fn read_window<R: BufRead + Seek>(
     if more_after && (truncated_by.is_some() || sel.range.is_some() || total.is_none()) {
         match total {
             Some(t) => out.push_str(&format!(
-                "\n\n[{} more lines in file. Use :{} to continue]",
+                "\n\n[{} more lines in {}. Use :{} to continue]",
                 t - last_shown,
+                if text_resource { "resource" } else { "file" },
                 last_shown + 1
             )),
             None => out.push_str(&format!(
-                "\n\n[More lines in file ({} total; not scanned to EOF). Use :{} to continue]",
+                "\n\n[More lines in {} ({} total; not scanned to EOF). Use :{} to continue]",
+                if text_resource { "resource" } else { "file" },
                 format_bytes(size),
                 last_shown + 1
             )),
@@ -434,14 +444,45 @@ impl AgentTool for ReadTool {
         };
         let resolved = json!(abs.to_string_lossy());
         if meta.is_dir() {
-            let mut names = Vec::new();
+            let mut entries = Vec::new();
             let mut rd =
                 tokio::fs::read_dir(&abs).await.map_err(|e| ToolError(format!("Cannot list {display}: {e}")))?;
             while let Ok(Some(entry)) = rd.next_entry().await {
                 let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-                names.push(format!("{}{}", entry.file_name().to_string_lossy(), if is_dir { "/" } else { "" }));
+                entries.push((is_dir, entry.file_name().to_string_lossy().into_owned()));
             }
-            names.sort();
+            if internal {
+                entries.sort_by(|a, b| {
+                    b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())).then_with(|| a.1.cmp(&b.1))
+                });
+            } else {
+                entries.sort_by(|a, b| a.1.cmp(&b.1));
+            }
+            let names: Vec<String> =
+                entries.into_iter().map(|(is_dir, name)| format!("{name}{}", if is_dir { "/" } else { "" })).collect();
+            if internal {
+                let mut content = if names.is_empty() { "(empty directory)".into() } else { names.join("\n") };
+                let size = content.len() as u64;
+                if sel.raw && (content.is_empty() || content.ends_with('\n')) {
+                    content.push('\n');
+                }
+                let numbering = if self.ctx.line_numbers && !sel.raw { Numbering::Pipe } else { Numbering::None };
+                let window = read_window(
+                    std::io::Cursor::new(content.as_bytes()),
+                    size,
+                    &display,
+                    &sel,
+                    numbering,
+                    true,
+                    &cancel,
+                )
+                .map_err(ToolError)?;
+                let mut details = window.details;
+                details["resolvedPath"] = resolved;
+                details["isDirectory"] = json!(true);
+                details["contentType"] = json!("text/plain");
+                return Ok(ToolOutput::text(window.text).with_details(details));
+            }
             let total = names.len();
             let mut text = names.iter().take(MAX_DIR_ENTRIES).cloned().collect::<Vec<_>>().join("\n");
             if total == 0 {
@@ -454,7 +495,8 @@ impl AgentTool for ReadTool {
         if !meta.is_file() {
             return Err(ToolError(format!("Cannot read {display}: not a regular file")));
         }
-        if !sel.raw
+        if !internal
+            && !sel.raw
             && let Some(mime) = image_mime(&abs)
         {
             if meta.len() > MAX_IMAGE_BYTES {
@@ -477,7 +519,6 @@ impl AgentTool for ReadTool {
         }
         let hashlines = self.ctx.hashlines() && !sel.raw && !internal;
         let notebook = !sel.raw && !internal && abs.extension().is_some_and(|e| e.eq_ignore_ascii_case("ipynb"));
-        let limits = !internal;
         let raw = sel.raw;
         let line_numbers = self.ctx.line_numbers;
         let store = self.ctx.edit_store.clone();
@@ -486,6 +527,21 @@ impl AgentTool for ReadTool {
         let file_size = meta.len();
         let (window, text) = tokio::task::spawn_blocking(move || -> Result<(Window, String), String> {
             let io = |e: std::io::Error| format!("Cannot read {display2}: {e}");
+            // SkillProtocolHandler creates an in-memory UTF-8 text resource
+            // for every regular file, including images and invalid UTF-8.
+            let resource_text = if internal {
+                let bytes = std::fs::read(&abs2).map_err(io)?;
+                let mut content = String::from_utf8_lossy(&bytes).into_owned();
+                let size = content.len() as u64;
+                // Raw selectors address `text.split("\n")`, including the
+                // final empty segment of an empty or newline-terminated file.
+                if raw && (content.is_empty() || content.ends_with('\n')) {
+                    content.push('\n');
+                }
+                Some((content, size))
+            } else {
+                None
+            };
             // The text a tag is minted from is exactly the text displayed:
             // notebooks as editable cells, files up to the snapshot cap from
             // one in-memory read. Without such text (over 4 MB, or not UTF-8)
@@ -517,37 +573,49 @@ impl AgentTool for ReadTool {
             } else {
                 Numbering::None
             };
-            let window = match (&editable, &undecodable) {
-                (Some(text), _) => read_window(
-                    std::io::Cursor::new(text.as_bytes()),
-                    text.len() as u64,
+            let window = if let Some((content, size)) = &resource_text {
+                read_window(
+                    std::io::Cursor::new(content.as_bytes()),
+                    *size,
                     &display2,
                     &sel,
                     numbering,
-                    limits,
+                    true,
                     &cancel2,
-                )?,
-                (None, Some(bytes)) => read_window(
-                    std::io::Cursor::new(bytes.as_slice()),
-                    bytes.len() as u64,
-                    &display2,
-                    &sel,
-                    numbering,
-                    limits,
-                    &cancel2,
-                )?,
-                (None, None) => {
-                    let file = std::fs::File::open(&abs2).map_err(io)?;
-                    let size = file.metadata().map_err(io)?.len();
-                    read_window(
-                        BufReader::with_capacity(64 * 1024, file),
-                        size,
+                )?
+            } else {
+                match (&editable, &undecodable) {
+                    (Some(text), _) => read_window(
+                        std::io::Cursor::new(text.as_bytes()),
+                        text.len() as u64,
                         &display2,
                         &sel,
                         numbering,
-                        limits,
+                        false,
                         &cancel2,
-                    )?
+                    )?,
+                    (None, Some(bytes)) => read_window(
+                        std::io::Cursor::new(bytes.as_slice()),
+                        bytes.len() as u64,
+                        &display2,
+                        &sel,
+                        numbering,
+                        false,
+                        &cancel2,
+                    )?,
+                    (None, None) => {
+                        let file = std::fs::File::open(&abs2).map_err(io)?;
+                        let size = file.metadata().map_err(io)?.len();
+                        read_window(
+                            BufReader::with_capacity(64 * 1024, file),
+                            size,
+                            &display2,
+                            &sel,
+                            numbering,
+                            false,
+                            &cancel2,
+                        )?
+                    }
                 }
             };
             let mut text = window.text.clone();
@@ -578,6 +646,14 @@ impl AgentTool for ReadTool {
         details["resolvedPath"] = resolved;
         // The on-disk size, not the size of a notebook's cell projection.
         details["fileSize"] = json!(meta.len());
+        if internal {
+            let markdown = abs.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+                ["md", "markdown", "mdx", "mdc", "mkd", "mdown"]
+                    .iter()
+                    .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+            });
+            details["contentType"] = json!(if markdown { "text/markdown" } else { "text/plain" });
+        }
         Ok(ToolOutput::text(text).with_details(details))
     }
 }

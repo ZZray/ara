@@ -276,14 +276,14 @@ async fn read_skill_urls() {
 
     assert_eq!(text(&r("skill://demo:-2").await.unwrap()), "body-line-3999\nbody-line-4000");
     assert_eq!(text(&r("skill://demo/scripts/hello.sh").await.unwrap()), "echo hello-from-skill");
-    assert_eq!(text(&r("skill://demo/scripts/hello.sh:raw").await.unwrap()), "echo hello-from-skill");
+    assert_eq!(text(&r("skill://demo/scripts/hello.sh:raw").await.unwrap()), "echo hello-from-skill\n");
     let mut numbered_ctx = read.ctx.clone();
     numbered_ctx.line_numbers = true;
     let numbered = read::ReadTool { ctx: numbered_ctx };
     let out = numbered.execute("c", args(json!({"path": "skill://demo:2-3"})), CancellationToken::new(), noop());
     assert_eq!(
         text(&out.await.unwrap()),
-        "2|name: demo\n3|description: demo skill.\n\n[4001 more lines in file. Use :4 to continue]"
+        "2|name: demo\n3|description: demo skill.\n\n[4001 more lines in resource. Use :4 to continue]"
     );
 
     let err = |p: &'static str| async move { r(p).await.unwrap_err().0 };
@@ -295,6 +295,53 @@ async fn read_skill_urls() {
     std::fs::write(root.join("plain.txt"), &long_body).unwrap();
     let plain = text(&r("plain.txt").await.unwrap());
     assert!(plain.starts_with("[plain.txt#") && plain.contains("more lines in file"));
+}
+
+/// Fixed OMP resolves skill files as text resources and directory subpaths as
+/// immutable, uncapped text listings, even for image and binary extensions.
+#[tokio::test]
+async fn read_skill_resource_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    std::fs::write(demo.base_dir.join("image.png"), [0x89, b'P', b'N', b'G', 0, b'X']).unwrap();
+    std::fs::write(demo.base_dir.join("bytes.bin"), [0xff, 0, b'A', b'\n']).unwrap();
+    std::fs::write(demo.base_dir.join("empty.txt"), b"").unwrap();
+    std::fs::write(demo.base_dir.join("lines.txt"), b"one\r\ntwo\r\n").unwrap();
+    let refs = demo.base_dir.join("references");
+    std::fs::create_dir_all(refs.join("zdir")).unwrap();
+    for i in 0..=500 {
+        std::fs::write(refs.join(format!("file-{i:03}.txt")), b"x").unwrap();
+    }
+    let read = read::ReadTool { ctx: ToolContext::new(&root).with_skills(vec![demo]) };
+    let r = |p: &str| read.execute("c", args(json!({"path": p})), CancellationToken::new(), noop());
+
+    let image = r("skill://demo/image.png").await.unwrap();
+    assert_eq!(image.content.len(), 1, "skill images are text resources");
+    assert!(text(&image).contains("�PNG\0X"), "{}", text(&image));
+    let binary = text(&r("skill://demo/bytes.bin").await.unwrap());
+    assert!(binary.contains("�\0A"), "{binary:?}");
+    assert!(!binary.contains("Cannot read binary file"), "{binary:?}");
+    assert_eq!(text(&r("skill://demo/lines.txt").await.unwrap()), "one\r\ntwo\r");
+    let raw = r("skill://demo/lines.txt:raw").await.unwrap();
+    assert_eq!(text(&raw), "one\r\ntwo\r\n");
+    assert_eq!(raw.details.as_ref().unwrap()["totalLines"], 3);
+    assert_eq!(
+        text(&r("skill://demo/empty.txt").await.unwrap()),
+        "Line 1 is beyond end of resource (0 lines total). The resource is empty."
+    );
+    let empty_raw = r("skill://demo/empty.txt:raw").await.unwrap();
+    assert_eq!(text(&empty_raw), "");
+    assert_eq!(empty_raw.details.as_ref().unwrap()["totalLines"], 1);
+
+    let listing = text(&r("skill://demo/references:raw").await.unwrap());
+    assert!(listing.starts_with("zdir/\nfile-000.txt"), "{}", &listing[..listing.len().min(100)]);
+    assert!(listing.contains("file-500.txt"), "skill directories have no 500-entry cap");
+    assert!(!listing.contains("more entries in listing"));
+    assert_eq!(
+        text(&r("skill://demo/references:raw:1-1").await.unwrap()),
+        "zdir/\n\n[501 more lines in resource. Use :2 to continue]"
+    );
 }
 
 /// `bash`: `skill://` in the command, env values and cwd resolve to paths.
