@@ -163,3 +163,41 @@ remaining confirmed P1/P2 defect in scope. A bounded real-model task, the
 unfiltered full Windows gate, wider account-cap classifier, inner non-2xx
 account-cap suppression, image event, and aggregate retry accounting remain
 open. The point stays **implementing (WIP), not accepted**.
+
+## Account usage-limit classifier follow-up (2026-09-26, WIP)
+
+Code commit: `c285bd1` on local `dev`. The private
+`ara-ai::usage_limit::account_usage_limit` classifier replaces the narrow
+OpenAI Chat account-cap check at both terminal HTTP and in-band stream error
+sites. It is adapted from fixed OMP
+`packages/ai/src/error/{rate-limit,flags,retryable}.ts` and
+`packages/utils/src/fetch-retry.ts` at
+`596f2da7101178214aa27a753529d15e6b7ad91d` (MIT). It changes only the
+outer replay decision after a finalized error. The existing inner HTTP 429
+attempt cap and public provider contract are unchanged.
+
+Controlled cases distinguish opaque 429 account caps; subscription, daily
+free-model, ClinePass, Chinese quota, billing, and structured Google RPC
+account caps; from per-minute, concurrent, Chinese transient, and DashScope
+token throttles. Google `RATE_LIMIT_EXCEEDED` uses a five-minute boundary
+for relative `RetryInfo` milliseconds/seconds, reset-in text, and absolute
+English/Chinese reset timestamps. Absolute reset dates take precedence over
+short `Please retry` hints, following fixed OMP. Short or expired hints keep
+the transient retry path. HTTP and in-band fixtures assert the actual request
+count and terminal outcome; unit fixtures cover 402/403 and code precedence.
+
+| Check on `c285bd1` | Result |
+| --- | --- |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 35 unit, 42 HTTP tests |
+| `python scripts/verify_backend.py` | Owned-package formatting and workspace strict Clippy pass; unfiltered all-target tests stop at 3 existing Windows CLI e2e failures (15/18 pass): Bash not found, tool deadline exit, resume file missing. The script does not reach doc tests. |
+| `cargo test --workspace --doc --all-features --quiet` | Exit 0 (separate run after the stopped verifier) |
+| `cargo deny check`; `python scripts/omp_inventory.py check`; `git diff --cached --check` | Exit 0; deny retains existing duplicate/license-field warnings |
+
+Independent Codex review first found that `300000ms` and `reset in 10
+minutes` were missed, then found absolute reset timestamps were missed. Both
+findings were fixed with HTTP and in-band regressions. Final read-only
+re-review found no further confirmed P1/P2 in this scoped diff; the reviewer
+did not rerun tests. The current worktree was tested locally, and the code
+was committed as WIP because the full delivery gate and bounded real-model
+task have not passed. Aggregate retry usage, image events, the wider
+AI-RETRY surface, and the prior inner HTTP account-cap behavior remain open.
