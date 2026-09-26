@@ -31,6 +31,7 @@ that invoke `bash`; the workspace configuration was not changed.
 | `cargo test -p ara-tools --test skill_urls` with Git Bash on `PATH` | 10/10 passed; command and environment-variable script execution both observed |
 | `cargo test -p ara-tools --test search_upstream` | 7/7 passed |
 | `cargo test -p pi-edit --lib` | 90/90 passed |
+| `cargo test --doc --workspace --all-features` on `cd124f7` | exit 0; every crate reports 0 documentation tests |
 | `cargo deny check` | exit 0; advisory, ban, license and source policies pass, with existing warnings |
 | `python scripts/omp_inventory.py check` | exit 0; fixed inventory consistent |
 | `git diff --check` | exit 0 |
@@ -57,8 +58,8 @@ Unix `/workspace` absolute path in a pure parser test. The other, a streaming
 preview of a nested file through a bare hashline header, returned zero files
 instead of one on Windows. The latter is an unresolved edit path-recovery
 behavior and is not waived as a fixture mismatch. Tests after that target,
-documentation tests, the backend script's full gate, and bounded real-model
-tasks have not passed on this candidate.
+the backend script's full gate, and bounded real-model tasks have not passed
+on this candidate.
 
 The failing parity cases are
 `pure_format_input_and_streaming_contracts_cover_uncaptured_cases` and
@@ -72,6 +73,12 @@ cargo test --workspace --all-targets --all-features --quiet -- --skip deadline_d
 
 The Windows CLI SIGINT and crash-resume process cases remain Unix-gated, so
 their Windows behavior has no equivalent executable evidence here.
+
+Follow-up test hardening uses relative marker names in the Bash process tests;
+Git Bash otherwise treats native backslashes in an unquoted absolute path as
+escapes and can produce a false negative marker check. The hardened
+`ara-tools --test tools` run remains 8/10, with the same two elapsed-time
+failures. This test-only follow-up does not alter process lifecycle behavior.
 
 ## Review and next work
 

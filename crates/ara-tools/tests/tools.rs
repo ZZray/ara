@@ -160,7 +160,7 @@ async fn bash_timeout_kills_process_group() {
     let (_, _, bash) = tools(dir.path());
     let marker = dir.path().join("survived");
     let started = Instant::now();
-    let cmd = format!("(sleep 3; touch {}) & echo started; wait", marker.display());
+    let cmd = "(sleep 3; touch survived) & echo started; wait";
     let out =
         bash.execute("c", args(json!({"command": cmd, "timeout": 1})), CancellationToken::new(), noop()).await.unwrap();
     assert!(started.elapsed() < Duration::from_millis(2800), "{:?}", started.elapsed());
@@ -220,7 +220,7 @@ async fn bash_keeps_stream_order_and_reaps_background_children() {
     assert_eq!(text(&out), "a\nb\nc");
     let marker = dir.path().join("bg-survived");
     let started = Instant::now();
-    let out = b(json!({"command": format!("(sleep 2; touch {}) & echo hi", marker.display())})).await.unwrap();
+    let out = b(json!({"command": "(sleep 2; touch bg-survived) & echo hi"})).await.unwrap();
     assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
     assert_eq!(text(&out), "hi");
     tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -238,7 +238,7 @@ async fn dropping_a_bash_call_kills_its_group() {
     let dir = tempfile::tempdir().unwrap();
     let (_, _, bash) = tools(dir.path());
     let marker = dir.path().join("after-drop");
-    let cmd = format!("sleep 2; touch {}", marker.display());
+    let cmd = "sleep 2; touch after-drop";
     let r = tokio::time::timeout(
         Duration::from_millis(300),
         bash.execute("c", args(json!({"command": cmd})), CancellationToken::new(), noop()),
