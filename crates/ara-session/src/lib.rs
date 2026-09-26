@@ -17,7 +17,7 @@
 //! ARA additions (intentional): unsupported header versions are rejected
 //! rather than half-read (migrations are not ported); the bytes of a torn file
 //! are copied to a synced backup before any rewrite; appends are `fsync`ed and
-//! rewrites are atomic with a directory sync; a failed append is rolled back
+//! rewrites are atomic with a directory sync where supported; a failed append is rolled back
 //! so `Err` always means "not recorded"; tool calls interrupted before their
 //! results were recorded are paired with explicit "effect unknown" results on
 //! resume instead of being replayed.
@@ -29,7 +29,9 @@
 use ara_ai::{Message, ToolResultMessage, UserBlock, now_ms};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -373,14 +375,14 @@ impl SessionJournal {
     }
 
     /// Atomic full rewrite: synced backup of damaged bytes, unique temp file,
-    /// fsync, rename, directory fsync.
+    /// fsync, rename, and directory fsync where supported.
     fn rewrite(&mut self) -> Result<()> {
         let dir = self.dir();
         fs::create_dir_all(&dir)?;
         if self.pending_backup && self.path.exists() {
             let backup = self.path.with_extension(format!("jsonl.torn-{}.bak", now_ms()));
             fs::copy(&self.path, &backup)?;
-            File::open(&backup)?.sync_all()?;
+            OpenOptions::new().write(true).open(&backup)?.sync_all()?;
             sync_dir(&dir)?;
             self.report.backup = Some(backup);
             self.pending_backup = false;

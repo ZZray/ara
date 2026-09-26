@@ -166,7 +166,6 @@ fn rejects_lossy_utf8_source_even_when_json_still_decodes() {
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
 
-#[cfg(unix)]
 #[test]
 fn successful_rewrite_clears_current_damage_even_if_load_report_keeps_history() {
     let dir = tempfile::tempdir().unwrap();
