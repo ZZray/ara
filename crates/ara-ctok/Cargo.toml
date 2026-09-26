@@ -1,0 +1,16 @@
+[package]
+name = "ara-ctok"
+description = "Exact Claude content token counts from the pinned OMP ctok reconstruction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+unicode-general-category.workspace = true
+unicode-normalization.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true

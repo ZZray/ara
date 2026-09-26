@@ -27,6 +27,7 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 - Changes requested: CTX-01d (`ara-context` system prompt, date/cwd reminder, `skill://` in `read`/`bash`, CLI wiring). F1–F9 are in WIP `b920852`; the same-day reminder follow-up is in WIP `c9f9e24`. Independent re-review found no remaining code blocker. Fresh Windows real-model tasks passed on Agnes and on one OpenRouter retry, while the first OpenRouter task failed its skill format; full backend verification and the authorized push remain open. Local Ubuntu is not a prerequisite (see the [evidence](evidence/ctx-01d-system-prompt.md) and [handoff](handoffs/2026-09-26.md)).
 - Open: CTX-01e (`/skill:` invocation), which needs the interactive/RPC host and session custom messages.
 - A3 preparation (WIP): the isolated AGT-TOKENIZERa text/message estimate is under implementation; [evidence](evidence/agt-tokenizer-estimate.md). The initial byte-based budget probe was removed after pinned Claude fixtures disproved its claimed token upper bound. CTX-01d still gates A2 acceptance, and A3 compaction/long-task behavior is not claimed.
+- A3 AGT-TOKENIZERb (WIP): a Claude-only content counter with pinned vocabulary and fixture evidence builds on stable Windows Rust; [evidence](evidence/agt-tokenizer-claude.md). Model-family selection, actual provider-request sizing and compaction remain separate open work.
 
 ## Track A: OMP parity (G1)
 

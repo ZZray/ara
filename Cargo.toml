@@ -4,6 +4,7 @@ members = [
   "crates/ara-agent",
   "crates/ara-cli",
   "crates/ara-context",
+  "crates/ara-ctok",
   "crates/ara-discovery",
   "crates/ara-prompt",
   "crates/ara-session",
@@ -33,6 +34,7 @@ ara-walk = { path = "crates/ara-walk" }
 ara-prompt = { path = "crates/ara-prompt" }
 ara-discovery = { path = "crates/ara-discovery" }
 ara-context = { path = "crates/ara-context" }
+ara-ctok = { path = "crates/ara-ctok" }
 # Vendored OMP crates (crates/vendor, see crates/vendor/README.md).
 pi-ast = { path = "crates/vendor/pi-ast" }
 pi-diff = { path = "crates/vendor/pi-diff" }
@@ -61,6 +63,8 @@ parking_lot = "0.12"
 phf = { version = "0.13", features = ["macros"] }
 regex = "1"
 unicode-normalization = "0.1"
+unicode-general-category = "1.1"
+zstd = "0.13"
 yaml-rust2 = "0.13"
 xxhash-rust = { version = "0.8", features = ["xxh64", "xxh32"] }
 tree-sitter = "0.25"
