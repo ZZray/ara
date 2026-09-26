@@ -22,7 +22,13 @@ const MAX_BUFFERED_MARKERS: usize = 64;
 /// public event protocol deliberately exposes only the final attempt.
 pub(crate) struct AttemptStream {
     pub events: AssistantStream,
-    pub error: Arc<Mutex<Option<ProviderError>>>,
+    pub error: Arc<Mutex<Option<AttemptError>>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct AttemptError {
+    pub cause: ProviderError,
+    pub account_usage_limit: bool,
 }
 
 fn meaningful(event: &AssistantMessageEvent) -> bool {
@@ -46,10 +52,13 @@ fn visible(message: &AssistantMessage) -> bool {
     })
 }
 
-fn retryable_started_stream_error(error: &ProviderError) -> bool {
-    match error {
+fn retryable_started_stream_error(error: &AttemptError) -> bool {
+    if error.account_usage_limit {
+        return false;
+    }
+    match &error.cause {
         ProviderError::Http { status, .. } => matches!(status, 408 | 429 | 500..=599),
-        _ => error.is_retryable(),
+        _ => error.cause.is_retryable(),
     }
 }
 

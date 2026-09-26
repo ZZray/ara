@@ -199,10 +199,16 @@ async fn replay_safe_retry_reissues_pre_output_stream_reset_once() {
 
 #[tokio::test]
 async fn replay_safe_retry_only_reissues_transient_in_band_statuses() {
-    for (status, should_retry) in [(409, false), (425, false), (408, true), (429, true)] {
+    for (status, detail, should_retry) in [
+        (409, "stream rejected", false),
+        (425, "stream rejected", false),
+        (408, "stream rejected", true),
+        (429, "Rate limit exceeded, retry after one second", true),
+        (429, "Concurrent requests quota exceeded", true),
+    ] {
         let server = FakeUpstream::start(
             script(json!({"responses": [
-                {"events": [{"data": {"error": {"code": status, "message": "stream rejected"}}}]},
+                {"events": [{"data": {"error": {"code": status, "message": detail}}}]},
                 {"events": [text("recovered"), finish("stop"), done()]}
             ]})),
             None,
@@ -219,6 +225,99 @@ async fn replay_safe_retry_only_reissues_transient_in_band_statuses() {
             assert_eq!(msg.error_status, Some(status));
         }
     }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_preserves_in_band_account_limits_without_replay() {
+    for (error, expected_detail) in [
+        (
+            json!({"type": "TOO_MANY_REQUESTS", "code": "insufficient_quota", "message": "Request declined"}),
+            "Request declined",
+        ),
+        (json!({"code": 429, "message": "Account monthly quota reached"}), "Account monthly quota reached"),
+        (json!({"code": 429, "message": "Your account rate limit was reached"}), "Your account rate limit"),
+        (
+            json!({"type": "TOO_MANY_REQUESTS", "code": "insufficient_quota", "message":
+                "You exceeded your current quota, please check your plan and billing details."}),
+            "You exceeded your current quota",
+        ),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"events": [{"data": {"error": error}}]},
+                {"events": [text("must not run"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        assert_eq!(server.served(), 1, "{msg:?}");
+        assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+        assert_eq!(msg.stop_reason, StopReason::Error);
+        assert_eq!(msg.error_status, Some(429));
+        assert!(msg.error_message.as_deref().is_some_and(|message| message.contains(expected_detail)));
+        assert_eq!(msg.text(), "");
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_reissues_a_concurrent_quota_throttle() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [{"data": {"error": {
+                "type": "TOO_MANY_REQUESTS", "code": "quota_exceeded", "message": "Concurrent requests quota exceeded"
+            }}}]},
+            {"events": [text("recovered"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 2);
+    assert_eq!(msg.text(), "recovered");
+}
+
+#[tokio::test]
+async fn replay_safe_retry_reissues_generic_quota_code_with_rate_limit_message() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [{"data": {"error": {
+                "type": "TOO_MANY_REQUESTS", "code": "quota_exceeded", "message": "Rate limit exceeded"
+            }}}]},
+            {"events": [text("recovered"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 2);
+    assert_eq!(msg.text(), "recovered");
+}
+
+#[tokio::test]
+async fn replay_safe_retry_reissues_documented_dashscope_token_throttle() {
+    let detail = "You exceeded your current quota, please check your plan and billing details. See https://help.aliyun.com/zh/model-studio/error-code#token-limit";
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [{"data": {"error": {
+                "type": "TOO_MANY_REQUESTS", "code": "insufficient_quota", "message": detail
+            }}}]},
+            {"events": [text("recovered"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 2);
+    assert_eq!(msg.text(), "recovered");
 }
 
 #[tokio::test]

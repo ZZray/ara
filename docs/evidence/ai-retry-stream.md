@@ -23,9 +23,11 @@ can issue one additional pre-Start request. Empty-stop retry requires an
 explicit provider output count of 0 or 1. Unknown usage is not zero in ARA.
 `accept_empty_response` opts out of this wrapper's retries.
 
-**Open parity:** OMP's account-usage-limit classifier suppresses retry of an
-in-band 429 that means credential quota exhaustion; ARA still retries a 2xx
-in-band 429 once. OMP's image stream event is not in ARA's current event
+**Open parity:** ARA now suppresses retries for selected structured in-band
+account-quota codes and clear account-quota messages, while retaining retry
+for short-term 429 throttles. This is not OMP's full account-usage-limit
+classifier: other provider phrasings and non-2xx HTTP 429 account caps are
+still open. OMP's image stream event is not in ARA's current event
 protocol, although a terminal image block prevents empty-stop retry. OMP's
 full retry classifier and the wider AI-RETRY surface remain open. The final
 assistant message contains only the delivered attempt's usage and duration;
@@ -49,6 +51,8 @@ Controlled `FakeUpstream` HTTP/SSE checks on Windows:
 | Empty stop with unknown usage | 1 request; unknown output stays `None` |
 | 2xx keep-alive then reset before output | 2 requests; first attempt's markers discarded, `recovered` delivered |
 | In-band status | 409/425: 1 request and error; 408/429: 2 requests and `recovered` |
+| In-band account quota | `insufficient_quota` with neutral text, account monthly/rate-limit text, and billing quota without a token-limit anchor: 1 request, original 429 error delivered |
+| Short-term quota throttles | Concurrent-request and generic rate-limit text with `quota_exceeded`, plus DashScope's billing text with the precise `error-code#token-limit` anchor: 2 requests and `recovered` |
 | Tool-call event then reset | 1 request; no replay after the tool event |
 | Recovered live text | `live` delta observed before the delayed terminal; later cancellation keeps the text |
 | Cancel during retry wait | 1 request; Aborted terminal |
@@ -76,23 +80,27 @@ python scripts/omp_inventory.py check
 cargo test --workspace --doc --quiet
 ```
 
-Scoped checks pass: `ara-ai` has 31 unit and 31 HTTP tests, and the real
+Scoped checks pass: `ara-ai` has 31 unit and 35 HTTP tests, and the real
 process test passes 1/1. Workspace strict Clippy, dependency policy (existing
-duplicate warnings), fixed OMP inventory, and doc tests pass. The unfiltered
-Windows workspace test command with Git Bash on PATH still fails at the two
-known `ara-tools --test tools` process-tree cases; an earlier unfiltered run
-also reached the known CLI deadline failure. A diagnostic run with exactly
+duplicate warnings), fixed OMP inventory, and doc tests pass. The last
+unfiltered Windows workspace run, before this quota follow-up, failed at the
+two known `ara-tools --test tools` process-tree cases; an earlier unfiltered run
+also reached the known CLI deadline failure. A current-snapshot diagnostic run with exactly
 those three Bash/CLI cases plus the two existing Windows `pi-edit` hashline
 cases explicitly skipped exits 0 across the remaining workspace targets.
 These skips are not acceptance evidence for the omitted behaviors. The full
 backend gate and bounded real-model task remain open.
 
 Independent Codex review used `ara-git-review` and `ara-provider-review` on
-the ARA worktree against `e1d0850` and the pinned OMP source. The reviewer
-found and rechecked the full-channel cancellation and 409/425 classification
-issues after fixes, with no remaining confirmed P1/P2 blocker for WIP. The
-reviewer independently ran 9/9 retry HTTP cases, 31/31 HTTP cases, scoped
-strict Clippy and `git diff --check`; it did not run the full workspace or
-real-model task. Account-quota classification, pre-Start parity and aggregate
-usage are recorded open above. AI-RETRYa and the AI-RETRY surface are **not
-accepted**.
+the original retry diff against `e1d0850` and the quota follow-up against
+`6997534`, each compared with the pinned OMP source. The first review found
+and rechecked full-channel cancellation and 409/425 classification. The
+follow-up review found two short-term throttles misclassified as account
+caps: DashScope's documented token-limit 429 and a generic
+`quota_exceeded`/`Rate limit exceeded` response. Both were fixed and their
+HTTP fixtures passed. The reviewer independently ran 13/13 retry HTTP cases,
+scoped strict Clippy, format and `git diff --check`; it found no remaining
+confirmed P1/P2 issue in the scoped WIP diff. Neither review ran the full
+workspace or real-model task. Pre-Start parity, aggregate usage, broad
+account-cap classification, and pre-response 429 quota handling remain open.
+AI-RETRYa and the AI-RETRY surface are **not accepted**.

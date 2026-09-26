@@ -589,7 +589,69 @@ pub fn is_progress_chunk(chunk: &Value) -> bool {
         .any(|k| delta.get(*k).and_then(Value::as_str).is_some_and(|s| !s.is_empty()))
 }
 
-fn stream_error(chunk: &Value) -> Option<ProviderError> {
+struct InBandError {
+    cause: ProviderError,
+    account_usage_limit: bool,
+}
+
+/// Keep account-cap evidence from the structured stream frame. The public
+/// error message alone can omit a provider's `insufficient_quota` code.
+fn account_usage_limit(error: &Value, detail: &str) -> bool {
+    let lower = detail.to_ascii_lowercase();
+    // Concurrency and per-minute throttles clear without switching accounts.
+    if lower.contains("concurrent") || lower.contains("per minute") {
+        return false;
+    }
+    // DashScope uses OpenAI's billing wording for a documented TPM/TPS cap.
+    // Require both the wording and the specific documentation anchor; the
+    // same wording without that anchor describes a real account quota.
+    if lower.contains("you exceeded your current quota, please check your plan and billing details")
+        && lower.match_indices("error-code").any(|(index, _)| {
+            lower[index..]
+                .split(|ch: char| ch.is_whitespace() || ch == '(' || ch == ')')
+                .next()
+                .is_some_and(|part| part.contains("#token-limit"))
+        })
+    {
+        return false;
+    }
+    let codes: Vec<String> = ["code", "type"]
+        .into_iter()
+        .filter_map(|key| error.get(key).and_then(Value::as_str))
+        .map(|code| code.trim().to_ascii_lowercase())
+        .collect();
+    if codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "insufficient_quota"
+                | "usage_limit_reached"
+                | "usage_limit_exceeded"
+                | "usage_not_included"
+                | "quota_exhausted"
+                | "insufficient_balance"
+        )
+    }) {
+        return true;
+    }
+    if lower.contains("account") && lower.contains("rate limit") {
+        return true;
+    }
+    if lower.contains("rate limit") || lower.contains("too many requests") {
+        return false;
+    }
+    if codes.iter().any(|code| code == "quota_exceeded") {
+        return true;
+    }
+    lower.contains("quota exhausted")
+        || lower.contains("usage limit reached")
+        || lower.contains("insufficient balance")
+        || lower.contains("out of credits")
+        || lower.contains("spending limit")
+        || (lower.contains("quota")
+            && (lower.contains("account") || lower.contains("monthly") || lower.contains("billing")))
+}
+
+fn stream_error(chunk: &Value) -> Option<InBandError> {
     let error = chunk.get("error");
     let structured = error.is_some_and(Value::is_object);
     let flat = chunk.get("message").is_some_and(Value::is_string) && chunk.get("choices").is_none();
@@ -599,7 +661,7 @@ fn stream_error(chunk: &Value) -> Option<ProviderError> {
     let detail = envelope_message(chunk)
         .unwrap_or_else(|| "Provider returned an in-band OpenAI completions stream error".into());
     if !structured {
-        return Some(ProviderError::Stream(detail));
+        return Some(InBandError { cause: ProviderError::Stream(detail), account_usage_limit: false });
     }
     let err = error.unwrap();
     let status = match err.get("code") {
@@ -614,10 +676,12 @@ fn stream_error(chunk: &Value) -> Option<ProviderError> {
         Some("REQUEST_TIMEOUT") => Some(408),
         _ => None,
     });
-    Some(match status {
+    let account_usage_limit = account_usage_limit(err, &detail);
+    let cause = match status {
         Some(status) => ProviderError::Http { status, detail },
         None => ProviderError::Stream(detail),
-    })
+    };
+    Some(InBandError { cause, account_usage_limit })
 }
 
 fn content_text(content: Option<&Value>) -> String {
@@ -657,6 +721,7 @@ pub struct ChunkState {
     /// At least one JSON `data:` frame was decoded.
     pub saw_frame: bool,
     pub first_token: Option<Instant>,
+    account_usage_limit: bool,
     last_display_parse: HashMap<usize, usize>,
 }
 
@@ -674,6 +739,7 @@ impl ChunkState {
             saw_done: false,
             saw_frame: false,
             first_token: None,
+            account_usage_limit: false,
             last_display_parse: HashMap::new(),
         }
     }
@@ -815,7 +881,8 @@ impl ChunkState {
         }
         self.saw_frame = true;
         if let Some(err) = stream_error(chunk) {
-            return Err(err);
+            self.account_usage_limit = err.account_usage_limit;
+            return Err(err.cause);
         }
         if self.output.response_id.is_none() {
             self.output.response_id =
@@ -1117,7 +1184,10 @@ fn stream_once(
                 sink.push(AssistantMessageEvent::Done { reason, message: output }).await;
             }
             Err(err) => {
-                *recorded_error.lock().unwrap() = Some(err.clone());
+                *recorded_error.lock().unwrap() = Some(crate::replay_safe_retry::AttemptError {
+                    cause: err.clone(),
+                    account_usage_limit: state.account_usage_limit,
+                });
                 let mut events = Vec::new();
                 state.close_open_blocks(&mut events);
                 for e in events {
