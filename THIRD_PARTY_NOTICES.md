@@ -3,7 +3,7 @@
 ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/can1357/oh-my-pi) `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Ported code lives in:
 
 - `crates/ara-ai`: from `packages/ai`, the `packages/catalog` types and Claude tokenizer policy, and the `packages/utils` JSON parsing.
-- `crates/ara-agent`: from `packages/agent`.
+- `crates/ara-agent`: from `packages/agent`. `prompts/` includes the pinned compaction summary templates listed in its README.
 - `crates/ara-ctok`: Claude token-count reconstruction adapted from fixed OMP `crates/pi-natives/src/utok/{claude,utf.rs}`. The two embedded ctok vocabularies and reference fixtures come from that same commit. `crates/ara-ctok/data/LICENSE.ctok` preserves the additional MIT notice for the measured vocabulary and reconstruction; ARA replaces upstream's nightly-only `xutf` calls with stable Unicode crates.
 - `crates/ara-session`: from `packages/coding-agent` session storage.
 - `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`, `edit.rs`).
