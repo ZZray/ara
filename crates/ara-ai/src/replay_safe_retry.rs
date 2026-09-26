@@ -7,11 +7,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
 use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason};
+use crate::usage_limit::account_usage_limit;
 
 const MAX_EMPTY_RETRIES: u32 = 2;
 const MAX_ERROR_RETRIES: u32 = 1;
@@ -60,8 +62,59 @@ fn retryable_uncommitted_error(error: &AttemptError) -> bool {
     }
     match &error.cause {
         ProviderError::Http { status, .. } => matches!(status, 408 | 429 | 500..=599),
+        ProviderError::Stream(detail) => {
+            let status = status_in_stream_detail(detail);
+            !status.is_some_and(|status| (400..500).contains(&status) && !matches!(status, 408 | 429))
+                && !account_usage_limit(status, None, detail, Some(detail))
+                && (matches!(status, Some(408 | 429 | 500..=599)) || transient_statusless_stream_message(detail))
+        }
         _ => error.cause.is_retryable(),
     }
+}
+
+fn status_in_stream_detail(detail: &str) -> Option<u16> {
+    // Fixed OMP `error/flags.ts::STATUS_MESSAGE_PATTERNS`. An in-band envelope
+    // may have no numeric code field yet still carry an HTTP status in text.
+    static PATTERNS: std::sync::LazyLock<[Regex; 5]> = std::sync::LazyLock::new(|| {
+        [
+            r"(?i)\bstatus(?:_code)?[:=]\s*(\d{3})\b",
+            r"(?i)\bstatus\s+(\d{3})\b",
+            r"(?i)\bHTTP\s+(\d{3})\b",
+            r"(?i)\b(?:error|failed)\s*[:=]?\s*(\d{3})\b",
+            r"(?:^|\s)(\d{3})\s+(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+        ]
+        .map(|pattern| Regex::new(pattern).expect("valid fixed OMP status regex"))
+    });
+    PATTERNS.iter().find_map(|pattern| {
+        pattern
+            .captures(detail)
+            .and_then(|match_| match_.get(1)?.as_str().parse::<u16>().ok())
+            .filter(|status| (100..=599).contains(status))
+    })
+}
+
+fn transient_statusless_stream_message(detail: &str) -> bool {
+    // Fixed OMP `error/flags.ts` transient text/stream patterns,
+    // `error/retryable.ts::PROVIDER_TRANSIENT_EXTRA_PATTERN`, and the socket
+    // close pattern in `packages/utils/src/fetch-retry.ts`. Numeric in-band
+    // statuses are handled separately as `ProviderError::Http`.
+    static TRANSIENT: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(concat!(
+            r"(?i)\b(?:no[_ -]?capacity|(?:high|peak)[ _-]?demand|(?:at|over|insufficient)[ _-]?capacity|capacity[ _-]?(?:exceeded|exhausted)|peak[ _-]?load)\b",
+            r"|overloaded|provider.?returned.?error|rate.?limit|too many requests|\b(?:429|500|502|503|504)\b",
+            r"|service.?unavailable|server.?error|internal.?error|retry your request|network.?error|connection.?error|connection.?refused",
+            r"|unable.?to.?connect\.\s*is the computer able to access the url\?|other side closed|fetch failed|upstream.?connect",
+            r"|upstream.?request.?failed|reset before headers|socket hang up|timed? out|timeout|terminated|retry delay|stream stall",
+            r"|no error details in response|HTTP2(?:StreamReset|RefusedStream|EnhanceYourCalm)|nghttp2_(?:internal_error|refused_stream)",
+            r"|stream closed with error code nghttp2_(?:internal_error|refused_stream)|malformed.?function.?call",
+            r"|bad record mac|stream error.*received from peer|1302|stream[_ -]?read[_ -]?error",
+            r"|\b(?:the\s+)?socket connection (?:was )?closed unexpectedly\b",
+            r"|unterminated string|unexpected end of json input|unexpected end of data|unexpected eof|end of file|eof while parsing|truncated",
+            r"|stream event order|before message_start"
+        ))
+        .expect("valid fixed OMP transient stream regex")
+    });
+    TRANSIENT.is_match(detail)
 }
 
 async fn send(sink: &EventSink, event: AssistantMessageEvent, cancel: &CancellationToken) -> bool {

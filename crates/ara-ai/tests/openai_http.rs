@@ -487,6 +487,82 @@ async fn replay_safe_retry_only_reissues_transient_in_band_statuses() {
 }
 
 #[tokio::test]
+async fn replay_safe_retry_reissues_statusless_transient_in_band_errors() {
+    for error_frame in [
+        json!({"error": {"message": "Service unavailable"}}),
+        json!({"error": {"message": "HTTP 408"}}),
+        json!({"error": {"message": "HTTP 501"}}),
+        json!({"message": "Upstream connect error"}),
+        json!({"error": "The socket connection was closed unexpectedly"}),
+        json!({"error": {"message": "stream_read_error"}}),
+        json!({"error": {"message": "JSON Parse error: Unterminated string"}}),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"events": [{"data": error_frame}]},
+                {"events": [text("recovered"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        assert_eq!(server.served(), 2, "{msg:?}");
+        assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
+        assert_eq!(events.iter().filter(|e| e.is_terminal()).count(), 1);
+        assert_eq!(msg.text(), "recovered");
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_preserves_statusless_account_and_permanent_in_band_errors() {
+    for (error_frame, detail) in [
+        (json!({"error": {"message": "Your account rate limit was reached"}}), "Your account rate limit"),
+        (json!({"error": {"message": "HTTP 429"}}), "HTTP 429"),
+        (json!({"error": {"message": "HTTP 401 Service unavailable"}}), "HTTP 401 Service unavailable"),
+        (json!({"error": {"message": "Invalid tool schema"}}), "Invalid tool schema"),
+    ] {
+        let server = FakeUpstream::start(
+            script(json!({"responses": [
+                {"events": [{"data": error_frame}]},
+                {"events": [text("must not run"), finish("stop"), done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let (events, msg) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+        assert_eq!(server.served(), 1, "{msg:?}");
+        assert_eq!(events.iter().filter(|e| e.is_terminal()).count(), 1);
+        assert_eq!(msg.stop_reason, StopReason::Error);
+        assert_eq!(msg.error_status, None);
+        assert!(msg.error_message.as_deref().is_some_and(|message| message.contains(detail)));
+    }
+}
+
+#[tokio::test]
+async fn replay_safe_retry_does_not_replay_statusless_error_after_text() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [text("partial"), {"data": {"error": {"message": "Service unavailable"}}}]},
+            {"events": [text("must not run"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 1, "committed text must prevent replay");
+    assert_eq!(events.iter().filter(|e| e.is_terminal()).count(), 1);
+    assert_eq!(msg.text(), "partial");
+    assert_eq!(msg.stop_reason, StopReason::Error);
+    assert!(msg.error_message.as_deref().is_some_and(|message| message.contains("Service unavailable")));
+}
+
+#[tokio::test]
 async fn replay_safe_retry_preserves_in_band_account_limits_without_replay() {
     for (error, expected_detail) in [
         (
