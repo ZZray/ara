@@ -1,4 +1,4 @@
-# AI-RETRYa: replay-safe retry of started OpenAI Chat streams (WIP)
+# AI-RETRYa: replay-safe retry of uncommitted OpenAI Chat attempts (WIP)
 
 ## Requirement and boundary
 
@@ -10,24 +10,26 @@ in `packages/ai/test/empty-completion-retry.test.ts`. Relevant inventory cases
 include B-f3204ba5ac, B-d6c439c35f, B-c33421f9ce, B-86ff424237,
 B-8176bb72d4, B-c1662ae6aa, B-835c791d85, B-d43bbe6198 and
 B-94812de6f0. This ARA slice retries a known-empty stop at most twice and a
-typed transient error from an already started 2xx stream at most once. It
+typed transient error from an uncommitted attempt at most once, including a
+failure before the 2xx stream emits `Start`. It
 buffers pre-output lifecycle events; the first text, thinking or tool event
 commits the attempt and is forwarded live. Discarded attempts do not reach
 the Agent or its tool dispatcher. Caller cancellation stops retries.
 
-The existing `post_with_retry` owns failures before an HTTP response begins,
-including its total-attempt cap, admission rejection and over-cap Retry-After.
-The new wrapper requires a `Start` event before it retries a provider error.
-This is an intentional ARA boundary for this WIP; fixed OMP's outer wrapper
-can issue one additional pre-Start request. Empty-stop retry requires an
+The existing `post_with_retry` owns the inner HTTP retry policy (six attempts
+by default, matching fixed OMP `openai-http.ts`). The wrapper can issue one
+additional attempt before `Start`, giving at most twelve requests for two
+exhausted transient inner rounds. Admission rejection and over-cap Retry-After
+block both retry layers, including when the error body stalls. Empty-stop retry requires an
 explicit provider output count of 0 or 1. Unknown usage is not zero in ARA.
 `accept_empty_response` opts out of this wrapper's retries.
 
-**Open parity:** ARA now suppresses retries for selected structured in-band
-account-quota codes and clear account-quota messages, while retaining retry
-for short-term 429 throttles. This is not OMP's full account-usage-limit
-classifier: other provider phrasings and non-2xx HTTP 429 account caps are
-still open. OMP's image stream event is not in ARA's current event
+**Open parity:** ARA suppresses outer retries for selected structured in-band
+and terminal non-2xx account-quota codes or clear account-quota messages, while
+retaining retry for short-term 429 throttles. The inner HTTP layer can still
+repeat account-cap 429s before the final error is classified. This is not
+OMP's full account-usage-limit classifier; other provider phrasings remain
+open. OMP's image stream event is not in ARA's current event
 protocol, although a terminal image block prevents empty-stop retry. OMP's
 full retry classifier and the wider AI-RETRY surface remain open. The final
 assistant message contains only the delivered attempt's usage and duration;
@@ -68,7 +70,7 @@ result, with no entry for the discarded empty attempt. The fake upstream
 records 3 requests, with authorization headers redacted. This is a controlled
 host-chain task, not a real-model acceptance trial.
 
-## Verification on the current WIP snapshot
+## Verification on the prior started-stream WIP snapshot
 
 ```powershell
 cargo fmt -p ara-ai -- --check
@@ -103,4 +105,61 @@ scoped strict Clippy, format and `git diff --check`; it found no remaining
 confirmed P1/P2 issue in the scoped WIP diff. Neither review ran the full
 workspace or real-model task. Pre-Start parity, aggregate usage, broad
 account-cap classification, and pre-response 429 quota handling remain open.
-AI-RETRYa and the AI-RETRY surface are **not accepted**.
+AI-RETRYa and the AI-RETRY surface were **not accepted** on that snapshot.
+
+## Pre-Start follow-up on the current WIP snapshot (2026-09-26)
+
+Code commit: `ff4f47d` (WIP; local `dev`).
+
+Fixed OMP `empty-completion-retry.ts` retries an uncommitted finalized transient
+error without requiring `Start`. ARA removed that gate while retaining its
+typed side channel. `post_with_retry` now passes a private no-retry decision
+for a terminal non-2xx account cap, concurrency admission rejection, or
+over-cap `Retry-After`. Header decisions are recorded before awaiting the
+error body, so a first-event timeout cannot erase them. The public terminal
+error keeps the final status and readable detail; discarded attempts never
+reach the Agent or Session journal.
+
+Controlled FakeUpstream checks on this WIP code:
+
+| Case | Observed result |
+| --- | --- |
+| Pre-Start 408, 429 throttle, or 503 with inner cap one | Two requests; one visible Start and `recovered` terminal |
+| Pre-Start structured `insufficient_quota` or monthly account cap | One request, original 429 terminal, no Start |
+| 429 admission marked in body or response header | One request, original 429 terminal, no Start |
+| Admission or over-cap Retry-After header followed by a stalled error body | First-event timeout terminal; one request, no outer replay |
+| Cancel during Pre-Start outer backoff | Aborted terminal; one request |
+| Inner cap three exhausted in both outer rounds | Six total requests; final 502 detail `gateway` |
+| Two slow headers or two pre-output resets | Two bounded attempts; final timeout/error without a tool call |
+
+The actual `ara` process test
+`pre_start_http_retry_reaches_one_tool_task_without_duplicate_effects`
+receives six immediate 503 responses (`Retry-After: 0`), then one `write`
+tool-call response and one final response. It exits 0 with stdout
+`Wrote retry.txt once.`; the ephemeral work directory contains `retry.txt`
+with `once\n`. The Session journal has one assistant tool call `call_w` and
+one matching tool result, with no entry for the six discarded HTTP attempts.
+FakeUpstream records eight requests and redacts the authorization header.
+This is a real host chain against a controlled upstream, not a real-model
+trial.
+
+| Command on current WIP worktree | Result |
+| --- | --- |
+| `cargo fmt -p ara-ai -p ara-cli -- --check` | Exit 0 |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 31 unit and 40 HTTP tests |
+| `cargo test -p ara-cli --test e2e pre_start_http_retry_reaches_one_tool_task_without_duplicate_effects -- --nocapture` | Exit 0: 1 real-process fake-upstream tool task |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Exit 0 |
+| `cargo test --workspace --doc --quiet` | Exit 0 |
+| `cargo deny check` | Exit 0, with existing duplicate and license-field warnings |
+| `python scripts/omp_inventory.py check`; `git diff --check` | Exit 0 |
+| `cargo test --workspace --all-targets --quiet` | Exit 1: 15/18 CLI e2e tests passed; `deadline_during_a_tool_and_zero_budget_exit_nonzero`, `tool_task_produces_file_and_receipts`, and `resume_runs_tools_in_the_session_cwd` failed on this Windows environment. The latter two report Bash not found or its missing output file. The run stopped at this target; it does not prove later targets. |
+
+Independent Codex review applied `ara-git-review` and
+`ara-provider-review` to the four-file worktree diff. It found the missing
+header-only concurrency admission check and the stalled-body timeout window.
+Both were fixed; the reviewer independently ran the two new fixtures (1/1
+each), checked the final diff against the fixed OMP source, and found no
+remaining confirmed P1/P2 defect in scope. A bounded real-model task, the
+unfiltered full Windows gate, wider account-cap classifier, inner non-2xx
+account-cap suppression, image event, and aggregate retry accounting remain
+open. The point stays **implementing (WIP), not accepted**.
