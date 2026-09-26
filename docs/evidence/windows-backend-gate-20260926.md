@@ -114,3 +114,42 @@ before either stable path is changed. After those scopes are settled, rerun
 the unfiltered full gate on the final code, review the final diff, complete
 the real-model and point-delivery evidence, then decide acceptance. A passing
 diagnostic run with skipped tests cannot replace that gate.
+
+## Current-code verifier follow-up (2026-09-26, WIP)
+
+At `5acddec` plus the test-runner change, `scripts/verify_backend.py` now
+finds the installed Git Bash on Windows and prepends its `usr/bin` directory
+only to the all-target test subprocess. It does not change the machine PATH,
+product commands, or test exclusions. If Git Bash cannot be found, the script
+reports the missing test prerequisite. The final script was run from a shell
+whose PATH did not contain `bash`; it selected
+`C:\Program Files\Git\usr\bin\bash.exe`. Its owned-package format check and
+strict workspace Clippy passed. The unfiltered workspace test then ran
+`ara-cli --test e2e`: **17/18 passed**; only
+`deadline_during_a_tool_and_zero_budget_exit_nonzero` failed the under-four-
+second assertion (the suite took 5.75 seconds). The script exited 101, so
+doc tests were not reached in that run. This is a failed delivery gate, not a
+pass. The local receipt is `%TEMP%\ara-autobash-verifier-final.log`.
+
+On the same product code, a diagnostic run skipping only that CLI deadline
+case reached `ara-tools --test tools`: **8/10 passed**, with the two Bash
+process-tree timing cases failing. Skipping those three Bash cases reached
+`pi-edit --test hashline_parity`: **9/10 passed**, with nested-file streaming
+preview failing. The focused `patcher_apply_cases` also fails on the same
+nested-path recovery. These skips locate failures; they do not waive them.
+`cargo deny check`, the fixed OMP inventory check, Python syntax parsing of
+the verifier, and `git diff --check` passed on this follow-up. The only new
+file change here is the verification script; the Rust Core and module
+architecture are unchanged.
+
+Two read-only Codex reviewers independently examined narrow repair plans.
+The Windows Bash plan uses a Windows Job Object to reap descendants on timeout,
+cancel, and drop while leaving Unix behavior alone. The editor plan compares
+Windows drive paths consistently when one side has the verbatim `\\?\` prefix;
+it leaves URL admission and sandbox policy intact. Both touch established
+shared behavior, so implementation awaits the explicit scope decision required
+by `AGENTS.md`. No point is accepted: the roadmap remains 1/7 gates (14.3%)
+and the registered ledger remains 27/36 accepted. Conditional estimate for
+both fixes, regressions, unfiltered gate, and evidence review: 2–4 working
+days, low confidence; it excludes real-model availability and later product
+phases.

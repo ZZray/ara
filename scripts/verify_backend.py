@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,33 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def windows_test_env() -> dict[str, str] | None:
+    """Provide Git Bash only to Windows all-target tests, without changing PATH globally."""
+    if sys.platform != "win32":
+        return None
+    existing = shutil.which("bash")
+    if existing:
+        print(f"NOTE: Windows backend tests use Bash at {existing}", flush=True)
+        return None
+
+    candidates: list[Path] = []
+    git = shutil.which("git")
+    if git:
+        git_root = Path(git).resolve().parent.parent
+        candidates.extend((git_root / "usr" / "bin" / "bash.exe", git_root / "bin" / "bash.exe"))
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        if root := os.environ.get(variable):
+            candidates.append(Path(root) / "Git" / "usr" / "bin" / "bash.exe")
+    if local_app_data := os.environ.get("LOCALAPPDATA"):
+        candidates.append(Path(local_app_data) / "Programs" / "Git" / "usr" / "bin" / "bash.exe")
+
+    bash = next((path for path in candidates if path.is_file()), None)
+    if bash is None:
+        raise FileNotFoundError("Git Bash is required for Windows backend tests; install it or put bash on PATH")
+    print(f"NOTE: Windows backend tests use Git Bash at {bash}", flush=True)
+    return {**os.environ, "PATH": f"{bash.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
 
 
 def main() -> int:
@@ -52,7 +80,16 @@ def main() -> int:
     )
     for command in commands:
         print("RUN:", " ".join(command), flush=True)
-        result = subprocess.run(command, cwd=ROOT, check=False)
+        all_target_tests = command[1] == "test" and "--all-targets" in command
+        if all_target_tests:
+            try:
+                test_env = windows_test_env()
+            except FileNotFoundError as exc:
+                print(f"FAIL: {exc}", file=sys.stderr)
+                return 1
+        else:
+            test_env = None
+        result = subprocess.run(command, cwd=ROOT, check=False, env=test_env)
         if result.returncode:
             print(f"FAIL: exit {result.returncode}", file=sys.stderr)
             return result.returncode
