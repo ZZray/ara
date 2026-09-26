@@ -22,7 +22,7 @@
 
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
-use ara_ai::providers::openai_completions::StreamOptions;
+use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::{
     Message, Model, ModelTokenizer, OpenAICompletionsProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
 };
@@ -69,6 +69,10 @@ struct Args {
     /// none, claude-v3, claude-v47, claude-v5, or claude-v5-sonnet. Env: ARA_TOKENIZER.
     #[arg(long)]
     tokenizer: Option<String>,
+    /// Report selected-family counts for prepared message text on stderr.
+    /// Tool payloads, images and request framing are not included.
+    #[arg(long)]
+    report_request_text_tokens: bool,
     /// OpenAI-compatible base URL (…/v1). Env: ARA_BASE_URL, ARA_TEST_BASE_URL, OPENROUTER_BASE_URL.
     #[arg(long)]
     base_url: Option<String>,
@@ -509,9 +513,36 @@ async fn run(args: Args) -> Result<i32> {
     let hooks: Arc<dyn LoopHooks> =
         Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
 
+    let mut stream_options = route.stream_options;
+    let mut request_text_stats = None;
+    let request_text_task = if args.report_request_text_tokens {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<PreparedRequestTextObservation>(256);
+        let observer = RequestTextObserver::new(tx);
+        stream_options.request_text_observer = Some(observer.clone());
+        request_text_stats = Some(observer.stats());
+        eprintln!("ara: prepared message text only; tool payloads, images and request framing are unmeasured");
+        Some(tokio::spawn(async move {
+            while let Some(observation) = rx.recv().await {
+                let m = observation.measurement;
+                eprintln!(
+                    "ara: prepared text #{}: {:?}; complete={}, fields={}, bytes={}, tools={}, calls={}, images={}",
+                    observation.sequence,
+                    m.count,
+                    m.coverage_complete,
+                    m.text_fields,
+                    m.text_bytes,
+                    m.has_tool_definitions,
+                    m.has_tool_calls,
+                    m.has_images
+                );
+            }
+        }))
+    } else {
+        None
+    };
     let provider = Arc::new(OpenAICompletionsProvider {
         client: reqwest::Client::builder().build().context("building HTTP client")?,
-        base: route.stream_options,
+        base: stream_options,
     });
     let cancel = CancellationToken::new();
     let sink = HostSink {
@@ -558,6 +589,14 @@ async fn run(args: Args) -> Result<i32> {
         if end != RunEnd::Completed {
             break;
         }
+    }
+    drop(provider);
+    if let Some(task) = request_text_task {
+        let _ = task.await;
+    }
+    let dropped_observations = request_text_stats.as_ref().map_or(0, |stats| stats.dropped());
+    if dropped_observations > 0 {
+        eprintln!("ara: {dropped_observations} prepared text observation(s) were dropped");
     }
 
     if let Some(path) = &session_path
@@ -722,5 +761,45 @@ mod tests {
         ])
         .unwrap();
         assert!(resolve_route(&args).err().unwrap().to_string().contains("unknown tokenizer"));
+    }
+
+    #[test]
+    fn request_text_report_is_opt_in() {
+        let args = Args::try_parse_from(["ara", "--report-request-text-tokens", "hi"]).unwrap();
+        assert!(args.report_request_text_tokens);
+        let args = Args::try_parse_from(["ara", "hi"]).unwrap();
+        assert!(!args.report_request_text_tokens);
+    }
+
+    #[tokio::test]
+    async fn reported_request_closes_its_observer_on_cli_completion() {
+        use ara_testkit::chunks::{done, finish, text};
+        use ara_testkit::{FakeUpstream, Script};
+
+        let script: Script = serde_json::from_value(serde_json::json!({
+            "responses": [{"events": [text("ok"), finish("stop"), done()]}]
+        }))
+        .unwrap();
+        let server = FakeUpstream::start(script, None).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let args = Args::try_parse_from(vec![
+            "ara".to_owned(),
+            "--model".to_owned(),
+            "claude-opus-4-6".to_owned(),
+            "--base-url".to_owned(),
+            server.base_url(),
+            "--cwd".to_owned(),
+            dir.path().to_string_lossy().into_owned(),
+            "--no-session".to_owned(),
+            "--no-skills".to_owned(),
+            "--tools".to_owned(),
+            String::new(),
+            "--report-request-text-tokens".to_owned(),
+            "hi".to_owned(),
+        ])
+        .unwrap();
+        let code = tokio::time::timeout(Duration::from_secs(5), run(args)).await.expect("observer must close").unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(server.served(), 1);
     }
 }

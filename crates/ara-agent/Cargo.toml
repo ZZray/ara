@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 ara-ai.workspace = true
-ara-ctok.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true

@@ -24,6 +24,7 @@
 use crate::error::{ProviderError, envelope_message, parse_error_envelope};
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
 use crate::json::{parse_final_arguments, parse_streaming_json};
+use crate::model_tokenizer::{ModelContentCount, count_model_fragments};
 use crate::sse::SseDecoder;
 use crate::transform::transform_messages;
 use crate::types::{
@@ -33,7 +34,10 @@ use crate::types::{
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub const API: &str = "openai-completions";
@@ -44,6 +48,76 @@ pub const EMPTY_STREAM_MESSAGE: &str = "OpenAI completions stream ended without 
 pub const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
 pub const POST_FINISH_GRACE: Duration = Duration::from_millis(2_500);
 const REASONING_FIELDS: [&str; 3] = ["reasoning_content", "reasoning", "reasoning_text"];
+const MAX_OBSERVED_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_OBSERVED_TEXT_FIELDS: usize = 16_384;
+static NEXT_REQUEST_OBSERVATION: AtomicU64 = AtomicU64::new(1);
+
+/// Result for the text fields of a prepared Chat Completions request only.
+/// This is never a whole-prompt count or a safe context-budget verdict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreparedTextCount {
+    Exact(u64),
+    UnknownTokenizer,
+    CountOverflow,
+    UnsupportedShape,
+    TooLarge,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreparedMessageTextMeasurement {
+    pub count: PreparedTextCount,
+    /// False if an unsupported shape or field limit stopped scanning early;
+    /// the following field/coverage metrics are then only partial.
+    pub coverage_complete: bool,
+    pub text_fields: usize,
+    pub text_bytes: usize,
+    pub has_tool_definitions: bool,
+    pub has_tool_calls: bool,
+    pub has_images: bool,
+}
+
+/// Sequence is process-wide and contains no request text, model ID or route.
+/// Observation means prepared for POST; cancellation/HTTP failure may prevent
+/// delivery. A retry reuses the same body and does not produce another event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreparedRequestTextObservation {
+    pub sequence: u64,
+    pub measurement: PreparedMessageTextMeasurement,
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestTextObserver {
+    sender: mpsc::Sender<PreparedRequestTextObservation>,
+    dropped: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestTextObserverStats {
+    dropped: Arc<AtomicU64>,
+}
+
+impl RequestTextObserverStats {
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+impl RequestTextObserver {
+    pub fn new(sender: mpsc::Sender<PreparedRequestTextObservation>) -> Self {
+        Self { sender, dropped: Arc::new(AtomicU64::new(0)) }
+    }
+
+    /// Read stats after all sender clones have closed to include late drops.
+    pub fn stats(&self) -> RequestTextObserverStats {
+        RequestTextObserverStats { dropped: self.dropped.clone() }
+    }
+
+    fn report(&self, observation: PreparedRequestTextObservation) {
+        if self.sender.try_send(observation).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaxTokensField {
@@ -98,6 +172,9 @@ pub struct StreamOptions {
     pub extra_headers: Vec<(String, String)>,
     pub compat: OpenAICompat,
     pub retry: RetryPolicy,
+    /// Optional bounded, best-effort diagnostics. Full/closed channels drop
+    /// observations without delaying or failing the model request.
+    pub request_text_observer: Option<RequestTextObserver>,
 }
 
 impl Default for StreamOptions {
@@ -113,6 +190,7 @@ impl Default for StreamOptions {
             extra_headers: Vec::new(),
             compat: OpenAICompat::default(),
             retry: RetryPolicy::default(),
+            request_text_observer: None,
         }
     }
 }
@@ -322,6 +400,79 @@ pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -
         params[field] = json!(max);
     }
     params
+}
+
+/// Count only string `messages[*].content` and `content[].text` fields in the
+/// exact JSON value prepared by this adapter. Tool schemas, tool-call payloads,
+/// image data, roles, IDs and provider framing are deliberately unmeasured.
+pub fn measure_prepared_message_text(model: &Model, params: &Value) -> PreparedMessageTextMeasurement {
+    let mut result = PreparedMessageTextMeasurement {
+        count: PreparedTextCount::UnsupportedShape,
+        coverage_complete: false,
+        text_fields: 0,
+        text_bytes: 0,
+        has_tool_definitions: params.get("tools").is_some_and(|tools| tools.as_array().is_some_and(|a| !a.is_empty())),
+        has_tool_calls: false,
+        has_images: false,
+    };
+    let Some(messages) = params.get("messages").and_then(Value::as_array) else { return result };
+    let mut fragments: Vec<&str> = Vec::new();
+    for message in messages {
+        let Some(message) = message.as_object() else { return result };
+        result.has_tool_calls |= message.get("tool_calls").is_some();
+        let Some(content) = message.get("content") else { return result };
+        match content {
+            Value::String(text) => {
+                fragments.push(text);
+                if fragments.len() > MAX_OBSERVED_TEXT_FIELDS {
+                    result.count = PreparedTextCount::TooLarge;
+                    return result;
+                }
+            }
+            Value::Null => {}
+            Value::Array(parts) => {
+                for part in parts {
+                    let Some(kind) = part.get("type").and_then(Value::as_str) else { return result };
+                    match kind {
+                        "text" => {
+                            let Some(text) = part.get("text").and_then(Value::as_str) else { return result };
+                            fragments.push(text);
+                            if fragments.len() > MAX_OBSERVED_TEXT_FIELDS {
+                                result.count = PreparedTextCount::TooLarge;
+                                return result;
+                            }
+                        }
+                        "image_url" if part.get("image_url").is_some() => result.has_images = true,
+                        _ => return result,
+                    }
+                }
+            }
+            _ => return result,
+        }
+    }
+    result.coverage_complete = true;
+    for text in &fragments {
+        result.text_fields += 1;
+        result.text_bytes = match result.text_bytes.checked_add(text.len()) {
+            Some(bytes) => bytes,
+            None => {
+                result.count = PreparedTextCount::TooLarge;
+                result.coverage_complete = false;
+                return result;
+            }
+        };
+        if result.text_bytes > MAX_OBSERVED_TEXT_BYTES {
+            result.count = PreparedTextCount::TooLarge;
+            result.coverage_complete = false;
+            return result;
+        }
+    }
+    result.count = match count_model_fragments(model, fragments) {
+        ModelContentCount::Exact(tokens) => PreparedTextCount::Exact(tokens),
+        ModelContentCount::UnknownTokenizer => PreparedTextCount::UnknownTokenizer,
+        ModelContentCount::CountOverflow => PreparedTextCount::CountOverflow,
+    };
+    result
 }
 
 // ----------------------------------------------------------------- response
@@ -983,6 +1134,11 @@ async fn run(
     }
     headers.extend(options.extra_headers.iter().cloned());
     let params = build_params(model, context, options);
+    if let Some(observer) = &options.request_text_observer {
+        let sequence = NEXT_REQUEST_OBSERVATION.fetch_add(1, Ordering::Relaxed);
+        let measurement = measure_prepared_message_text(model, &params);
+        observer.report(PreparedRequestTextObservation { sequence, measurement });
+    }
 
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|d| started + d);

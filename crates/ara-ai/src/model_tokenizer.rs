@@ -2,6 +2,9 @@
 //! before Agent counting; ARA recognizes only canonical Claude ids here until
 //! its broader catalog identity policy is ported.
 
+use crate::Model;
+use ara_ctok::ClaudeFamily;
+
 /// Embedded Claude content-token reconstruction selected for a model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelTokenizer {
@@ -20,6 +23,29 @@ impl ModelTokenizer {
             "claude-v5-sonnet" => Some(Self::ClaudeV5Sonnet),
             _ => None,
         }
+    }
+}
+
+/// Exact counts of selected-family content fragments only. Provider framing,
+/// tools, images and routing transformations are outside this result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelContentCount {
+    Exact(u64),
+    UnknownTokenizer,
+    CountOverflow,
+}
+
+pub fn count_model_fragments<'a>(model: &Model, fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
+    let family = match model.tokenizer {
+        Some(ModelTokenizer::ClaudeV3) => ClaudeFamily::V3,
+        Some(ModelTokenizer::ClaudeV47) => ClaudeFamily::V47,
+        Some(ModelTokenizer::ClaudeV5) => ClaudeFamily::V5,
+        Some(ModelTokenizer::ClaudeV5Sonnet) => ClaudeFamily::V5Sonnet,
+        None => return ModelContentCount::UnknownTokenizer,
+    };
+    match ara_ctok::count_fragments(fragments, family) {
+        Some(count) => ModelContentCount::Exact(count),
+        None => ModelContentCount::CountOverflow,
     }
 }
 

@@ -8,34 +8,8 @@
 //! Raw byte length is not a universal token upper bound: pinned Claude
 //! fixtures contain content counts larger than their UTF-8 byte lengths.
 
-use ara_ai::{AssistantBlock, Message, Model, ModelTokenizer, UserBlock, UserContent};
-use ara_ctok::ClaudeFamily;
-
-/// This covers text content only. It is not a count of provider framing,
-/// tools, system prompts, images or the transformed request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelContentCount {
-    Exact(u64),
-    UnknownTokenizer,
-    CountOverflow,
-}
-
-/// Count text fragments with the tokenizer chosen for this model by the host.
-/// Unknown models remain indeterminate rather than using the byte estimate as
-/// an exact value or a safe upper bound.
-pub fn count_model_fragments<'a>(model: &Model, fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
-    let family = match model.tokenizer {
-        Some(ModelTokenizer::ClaudeV3) => ClaudeFamily::V3,
-        Some(ModelTokenizer::ClaudeV47) => ClaudeFamily::V47,
-        Some(ModelTokenizer::ClaudeV5) => ClaudeFamily::V5,
-        Some(ModelTokenizer::ClaudeV5Sonnet) => ClaudeFamily::V5Sonnet,
-        None => return ModelContentCount::UnknownTokenizer,
-    };
-    match ara_ctok::count_fragments(fragments, family) {
-        Some(count) => ModelContentCount::Exact(count),
-        None => ModelContentCount::CountOverflow,
-    }
-}
+pub use ara_ai::model_tokenizer::{ModelContentCount, count_model_fragments};
+use ara_ai::{AssistantBlock, Message, UserBlock, UserContent};
 
 /// OMP's fixed tool-result image estimate, also used for ARA assistant images.
 pub const IMAGE_TOKEN_ESTIMATE: usize = 1200;

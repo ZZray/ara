@@ -2,8 +2,12 @@
 //! controlled upstream (deterministic faults; no real model).
 
 use ara_ai::event::AssistantMessageEvent;
-use ara_ai::providers::openai_completions::{self, RetryPolicy, StreamOptions};
-use ara_ai::{AssistantMessage, Context, Message, Model, StopReason, Tool, UserMessage};
+use ara_ai::model_tokenizer::{ModelContentCount, count_model_fragments};
+use ara_ai::providers::openai_completions::{self, PreparedTextCount, RequestTextObserver, RetryPolicy, StreamOptions};
+use ara_ai::{
+    AssistantBlock, AssistantMessage, Context, ImageContent, Message, Model, ModelTokenizer, StopReason, TextContent,
+    ThinkingContent, Tool, ToolCall, ToolResultMessage, UserBlock, UserContent, UserMessage,
+};
 use ara_testkit::chunks::*;
 use ara_testkit::{FakeUpstream, Script};
 use serde_json::{Value, json};
@@ -112,6 +116,139 @@ async fn retries_429_then_succeeds() {
     assert_eq!(msg.text(), "ok");
     assert_eq!(server.served(), 3);
     assert!(msg.usage.is_unknown(), "no usage chunk means unknown usage, not zero");
+}
+
+#[tokio::test]
+async fn prepared_text_observation_matches_retried_wire_body() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"status": 429, "headers": {"retry-after": "0"}, "body": "retry"},
+            {"events": [text("ok"), finish("stop"), done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut m = model(&server.base_url());
+    m.tokenizer = Some(ModelTokenizer::ClaudeV3);
+    let mut assistant = AssistantMessage::empty("openai-completions", "fake", "fake-model");
+    assistant.content = vec![
+        AssistantBlock::Text(TextContent { text: "A".into(), text_signature: None }),
+        AssistantBlock::Thinking(ThinkingContent { thinking: "hidden reasoning".into(), thinking_signature: None }),
+        AssistantBlock::Text(TextContent { text: "B".into(), text_signature: None }),
+        AssistantBlock::ToolCall(ToolCall {
+            id: "call-1".into(),
+            name: "read".into(),
+            arguments: json!({"path":"secret"}).as_object().unwrap().clone(),
+            thought_signature: None,
+        }),
+    ];
+    let context = Context {
+        system_prompt: vec!["be brief".into()],
+        messages: vec![
+            Message::User(UserMessage {
+                content: UserContent::Blocks(vec![
+                    UserBlock::text("ask"),
+                    UserBlock::Image(ImageContent { data: "YWJj".into(), mime_type: "image/png".into() }),
+                ]),
+                synthetic: None,
+                timestamp: 0,
+            }),
+            Message::Assistant(assistant),
+            Message::ToolResult(ToolResultMessage {
+                tool_call_id: "call-1".into(),
+                tool_name: "read".into(),
+                content: vec![
+                    UserBlock::text("one"),
+                    UserBlock::text("two"),
+                    UserBlock::Image(ImageContent { data: "YWJj".into(), mime_type: "image/png".into() }),
+                ],
+                details: None,
+                is_error: false,
+                timestamp: 0,
+            }),
+        ],
+        tools: ctx().tools,
+    };
+    let (tx, mut observations) = tokio::sync::mpsc::channel(2);
+    let mut options = opts();
+    options.request_text_observer = Some(RequestTextObserver::new(tx));
+    let (_, response) = collect(openai_completions::stream(reqwest::Client::new(), m.clone(), context, options)).await;
+    assert_eq!(response.text(), "ok");
+    let observed = observations.try_recv().expect("one prepared observation");
+    assert!(observations.try_recv().is_err(), "transport retry must not duplicate the observation");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["body"], requests[1]["body"]);
+    let body = &requests[0]["body"];
+    assert_eq!(body["messages"][2]["content"], "AB");
+    assert_eq!(body["messages"][3]["content"], "one\ntwo");
+    assert_eq!(body["messages"][4]["content"][0]["text"], "Attached image(s) from tool result:");
+    let expected =
+        count_model_fragments(&m, ["be brief", "ask", "AB", "one\ntwo", "Attached image(s) from tool result:"]);
+    let ModelContentCount::Exact(expected) = expected else { panic!("selected family") };
+    assert_eq!(observed.measurement.count, PreparedTextCount::Exact(expected));
+    assert_eq!(observed.measurement.text_fields, 5);
+    assert!(observed.measurement.has_tool_definitions);
+    assert!(observed.measurement.has_tool_calls);
+    assert!(observed.measurement.has_images);
+    assert!(observed.measurement.coverage_complete);
+    assert!(!format!("{observed:?}").contains("secret"), "diagnostic must not contain tool payloads");
+}
+
+#[test]
+fn prepared_text_observation_keeps_uncertainty_explicit() {
+    let m = model("http://unused/v1");
+    let unknown = openai_completions::measure_prepared_message_text(&m, &json!({"messages":[{"content":"ξ"}]}));
+    assert_eq!(unknown.count, PreparedTextCount::UnknownTokenizer);
+    let unsupported = openai_completions::measure_prepared_message_text(
+        &m,
+        &json!({"messages":[{"content":[{"type":"audio","data":"opaque"}]}]}),
+    );
+    assert_eq!(unsupported.count, PreparedTextCount::UnsupportedShape);
+    assert!(!unsupported.coverage_complete);
+    let mut selected = m;
+    selected.tokenizer = Some(ModelTokenizer::ClaudeV3);
+    let large = openai_completions::measure_prepared_message_text(
+        &selected,
+        &json!({"messages":[{"content":"a".repeat(1024 * 1024 + 1)}]}),
+    );
+    assert_eq!(large.count, PreparedTextCount::TooLarge);
+    assert!(!large.coverage_complete);
+    let many = openai_completions::measure_prepared_message_text(
+        &selected,
+        &json!({"messages": vec![json!({"content": ""}); 16_385]}),
+    );
+    assert_eq!(many.count, PreparedTextCount::TooLarge);
+    assert!(!many.coverage_complete);
+}
+
+#[tokio::test]
+async fn unavailable_observer_does_not_change_delivery_or_cancellation() {
+    let server =
+        FakeUpstream::start(script(json!({"responses": [{"events": [text("ok"), finish("stop"), done()]}]})), None)
+            .await
+            .unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(rx);
+    let mut options = opts();
+    let observer = RequestTextObserver::new(tx);
+    options.request_text_observer = Some(observer.clone());
+    let (_, response) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert_eq!(response.text(), "ok");
+    assert_eq!(server.served(), 1);
+    assert_eq!(observer.stats().dropped(), 1);
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let mut options = opts();
+    options.cancel.cancel();
+    options.request_text_observer = Some(RequestTextObserver::new(tx));
+    let (_, response) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options)).await;
+    assert_eq!(response.stop_reason, StopReason::Aborted);
+    assert!(rx.try_recv().is_err());
+    assert_eq!(server.served(), 1);
 }
 
 #[tokio::test]
