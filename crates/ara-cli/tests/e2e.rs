@@ -1274,6 +1274,89 @@ async fn required_chat_reasoning_replays_tool_and_text_turns_after_restart() {
 }
 
 #[tokio::test]
+async fn explicit_mistral_chat_profile_replays_one_tool_effect_after_restart() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            tool_call(0, "call-write-long", "write", "{\"path\":\"mistral.txt\",\"content\":\"once\\n\"}"),
+            finish("tool_calls"), done()
+        ]},
+        {"events": [text("The file is present."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-completions",
+            "--chat-mistral-compat",
+            "--tools",
+            "write",
+            "--max-model-calls",
+            "1",
+            "Write once",
+        ],
+    ))
+    .await;
+    assert_eq!(first.status.code(), Some(1), "{}", text_of(&first).1);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("mistral.txt")).unwrap(), "once\n");
+    let session = env.session_files().pop().unwrap();
+    let before = std::fs::read(&session).unwrap();
+    let entries = journal(&session);
+    let assistant = entries.iter().find(|entry| entry["message"]["role"] == "assistant").unwrap();
+    assert_eq!(assistant["message"]["content"][0]["id"], "call-write-long");
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+    std::fs::write(env.work.path().join("mistral.txt"), "sentinel\n").unwrap();
+
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-completions",
+            "--chat-mistral-compat",
+            "--resume",
+            session.to_str().unwrap(),
+            "Check the result",
+        ],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    assert!(std::fs::read(&session).unwrap().starts_with(&before));
+    assert_eq!(std::fs::read_to_string(env.work.path().join("mistral.txt")).unwrap(), "sentinel\n");
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let messages = requests[1]["body"]["messages"].as_array().unwrap();
+    let tool_assistant = messages.iter().find(|message| message["tool_calls"].is_array()).unwrap();
+    let wire_id = tool_assistant["tool_calls"][0]["id"].as_str().unwrap();
+    assert_eq!(wire_id.len(), 9);
+    assert!(wire_id.chars().all(|character| character.is_ascii_alphanumeric()));
+    let result_index = messages.iter().position(|message| message["role"] == "tool").unwrap();
+    assert_eq!(messages[result_index]["tool_call_id"], wire_id);
+    assert_eq!(messages[result_index]["name"], "write");
+    assert_eq!(messages[result_index + 1]["role"], "assistant");
+    assert_eq!(messages[result_index + 1]["content"], "I have processed the tool results.");
+    assert_eq!(messages[result_index + 2]["role"], "user");
+    assert_eq!(up.served(), 2);
+}
+
+#[tokio::test]
+async fn mistral_chat_profile_rejects_other_protocol_and_conflicting_reasoning_mode() {
+    let env = Env::new();
+    let wrong_api =
+        output(env.cmd("http://127.0.0.1:1/v1", &["--api", "openai-responses", "--chat-mistral-compat", "hello"]))
+            .await;
+    assert_eq!(wrong_api.status.code(), Some(2));
+    assert!(text_of(&wrong_api).1.contains("--chat-mistral-compat requires --api openai-completions"));
+    let conflicting = output(
+        env.cmd("http://127.0.0.1:1/v1", &["--chat-mistral-compat", "--chat-replay-reasoning-content", "hello"]),
+    )
+    .await;
+    assert_eq!(conflicting.status.code(), Some(2));
+    assert!(text_of(&conflicting).1.contains("cannot be used with"));
+    assert!(env.session_files().is_empty());
+}
+
+#[tokio::test]
 async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
     let env = Env::new();
     let up = upstream(json!({"responses": [

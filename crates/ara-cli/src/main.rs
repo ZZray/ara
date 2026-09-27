@@ -145,8 +145,12 @@ struct Args {
     anthropic_strict_tools: bool,
     /// Replay Chat reasoning_content on every assistant turn for routes that require it.
     /// Requires --api openai-completions; disabled by default.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "chat_mistral_compat")]
     chat_replay_reasoning_content: bool,
+    /// Use Mistral/Devstral Chat history fields on a compatible endpoint.
+    /// Requires --api openai-completions; disabled by default.
+    #[arg(long, conflicts_with = "chat_replay_reasoning_content")]
+    chat_mistral_compat: bool,
     #[arg(long)]
     temperature: Option<f64>,
     /// Replace the default system prompt (text, or a file path). Without it,
@@ -352,6 +356,9 @@ fn resolve_route(args: &Args) -> Result<Route> {
     if args.chat_replay_reasoning_content && args.api != Api::OpenaiCompletions {
         bail!("--chat-replay-reasoning-content requires --api openai-completions");
     }
+    if args.chat_mistral_compat && args.api != Api::OpenaiCompletions {
+        bail!("--chat-mistral-compat requires --api openai-completions");
+    }
     if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
         bail!("--report-request-text-tokens requires --api openai-completions");
     }
@@ -406,6 +413,12 @@ fn resolve_route(args: &Args) -> Result<Route> {
     }
     let mut stream_options = StreamOptions { api_key, extra_headers, ..Default::default() };
     stream_options.compat.requires_reasoning_content_on_all_assistant_turns = args.chat_replay_reasoning_content;
+    if args.chat_mistral_compat {
+        stream_options.compat.requires_mistral_tool_ids = true;
+        stream_options.compat.requires_tool_result_name = true;
+        stream_options.compat.requires_assistant_after_tool_result = true;
+        stream_options.compat.requires_thinking_as_text = true;
+    }
     if let Some(s) = args.stream_idle_timeout {
         let d = (s > 0.0).then(|| Duration::from_secs_f64(s));
         stream_options.idle_timeout = d;

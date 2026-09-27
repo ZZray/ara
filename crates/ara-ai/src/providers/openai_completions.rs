@@ -135,6 +135,12 @@ pub struct OpenAICompat {
     /// Explicit opt-in for Chat routes that require `reasoning_content` on
     /// every replayed assistant turn, including turns without tool calls.
     pub requires_reasoning_content_on_all_assistant_turns: bool,
+    /// Mistral/Devstral Chat history requires a nine-character tool ID and
+    /// provider-specific replay of tool results and prior thinking.
+    pub requires_mistral_tool_ids: bool,
+    pub requires_tool_result_name: bool,
+    pub requires_assistant_after_tool_result: bool,
+    pub requires_thinking_as_text: bool,
 }
 
 impl Default for OpenAICompat {
@@ -145,6 +151,10 @@ impl Default for OpenAICompat {
             supports_images: true,
             max_tokens_field: MaxTokensField::MaxTokens,
             requires_reasoning_content_on_all_assistant_turns: false,
+            requires_mistral_tool_ids: false,
+            requires_tool_result_name: false,
+            requires_assistant_after_tool_result: false,
+            requires_thinking_as_text: false,
         }
     }
 }
@@ -208,6 +218,21 @@ fn serialize_tool_arguments(args: &JsonObject) -> String {
     serde_json::to_string(args).unwrap_or_else(|_| "{}".into())
 }
 
+fn mistral_tool_id(id: &str) -> String {
+    let mut normalized: String = id.chars().filter(char::is_ascii_alphanumeric).take(9).collect();
+    const PADDING: &str = "ABCDEFGHI";
+    normalized.push_str(&PADDING[..9 - normalized.len()]);
+    normalized
+}
+
+fn mistral_thinking(text: &str) -> String {
+    let mut inner = text.trim();
+    while let Some(unwrapped) = inner.strip_prefix("<thinking>").and_then(|value| value.strip_suffix("</thinking>")) {
+        inner = unwrapped.trim();
+    }
+    format!("<thinking>\n{inner}\n</thinking>")
+}
+
 fn image_url(block: &crate::types::ImageContent) -> Value {
     json!({"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", block.mime_type, block.data)}})
 }
@@ -226,10 +251,24 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
     let mut i = 0;
     while i < transformed.len() {
         match &transformed[i] {
-            Message::User(u) => push_user(&mut params, "user", &u.content, compat),
+            Message::User(u) => {
+                let previous_tool_result = compat.requires_assistant_after_tool_result
+                    && params.last().is_some_and(|message| message["role"] == "tool");
+                let before = params.len();
+                push_user(&mut params, "user", &u.content, compat);
+                if previous_tool_result && params.len() > before {
+                    params.insert(before, json!({"role":"assistant","content":"I have processed the tool results."}));
+                }
+            }
             Message::Developer(d) => {
                 let role = if compat.supports_developer_role { "developer" } else { "user" };
-                push_user(&mut params, role, &d.content, compat)
+                let previous_tool_result = compat.requires_assistant_after_tool_result
+                    && params.last().is_some_and(|message| message["role"] == "tool");
+                let before = params.len();
+                push_user(&mut params, role, &d.content, compat);
+                if previous_tool_result && params.len() > before {
+                    params.insert(before, json!({"role":"assistant","content":"I have processed the tool results."}));
+                }
             }
             Message::Assistant(a) => {
                 let text: String = a
@@ -244,7 +283,29 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                 if !text.is_empty() {
                     msg["content"] = Value::String(text);
                 }
-                if compat.requires_reasoning_content_on_all_assistant_turns {
+                if compat.requires_thinking_as_text
+                    && a.api == model.api
+                    && a.provider == model.provider
+                    && a.model == model.id
+                {
+                    let thinking = a
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            AssistantBlock::Thinking(t) if !t.thinking.trim().is_empty() => {
+                                Some(mistral_thinking(&t.thinking))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if !thinking.is_empty() {
+                        let content = msg["content"].as_str().unwrap_or_default();
+                        msg["content"] =
+                            Value::String(if content.is_empty() { thinking } else { format!("{thinking} {content}") });
+                    }
+                }
+                if compat.requires_reasoning_content_on_all_assistant_turns && !compat.requires_thinking_as_text {
                     let same_source = a.api == model.api && a.provider == model.provider && a.model == model.id;
                     let reasoning = if same_source {
                         a.content
@@ -274,17 +335,29 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                     .tool_calls()
                     .enumerate()
                     .map(|(n, tc)| {
-                        let mut id = chat_wire_tool_call_id(&tc.id, &a.api);
+                        let mut id = if compat.requires_mistral_tool_ids {
+                            tc.id.clone()
+                        } else {
+                            chat_wire_tool_call_id(&tc.id, &a.api)
+                        };
                         if id.trim().is_empty() {
                             generated_ids += 1;
                             id = format!("call_ara_{i}_{n}_{generated_ids}");
+                        }
+                        if compat.requires_mistral_tool_ids {
+                            id = mistral_tool_id(&id);
                         }
                         if !used_wire_ids.insert(id.clone()) {
                             let base = id;
                             let mut duplicate_index = 1usize;
                             loop {
-                                let suffix = format!("_dup{duplicate_index}");
-                                let keep = 40usize.saturating_sub(suffix.len());
+                                let suffix = if compat.requires_mistral_tool_ids {
+                                    duplicate_index.to_string()
+                                } else {
+                                    format!("_dup{duplicate_index}")
+                                };
+                                let keep = if compat.requires_mistral_tool_ids { 9usize } else { 40usize }
+                                    .saturating_sub(suffix.len());
                                 let candidate = format!("{}{}", base.chars().take(keep).collect::<String>(), suffix);
                                 if used_wire_ids.insert(candidate.clone()) {
                                     id = candidate;
@@ -339,7 +412,12 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                         .get_mut(origin_scope.pairing_key(&r.tool_call_id))
                         .and_then(|q| if q.is_empty() { None } else { Some(q.remove(0)) })
                         .unwrap_or_else(|| r.tool_call_id.clone());
-                    params.push(json!({"role": "tool", "content": content, "tool_call_id": id}));
+                    let id = if compat.requires_mistral_tool_ids { mistral_tool_id(&id) } else { id };
+                    let mut result = json!({"role": "tool", "content": content, "tool_call_id": id});
+                    if compat.requires_tool_result_name && !r.tool_name.is_empty() {
+                        result["name"] = Value::String(r.tool_name.clone());
+                    }
+                    params.push(result);
                     if has_images && compat.supports_images {
                         for block in &r.content {
                             if let UserBlock::Image(img) = block {
@@ -352,6 +430,9 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                 if !images.is_empty() {
                     let mut content = vec![json!({"type": "text", "text": "Attached image(s) from tool result:"})];
                     content.extend(images);
+                    if compat.requires_assistant_after_tool_result {
+                        params.push(json!({"role":"assistant","content":"I have processed the tool results."}));
+                    }
                     params.push(json!({"role": "user", "content": content}));
                 }
                 continue;
@@ -1496,6 +1577,166 @@ mod tests {
 
     fn names(events: &[AssistantMessageEvent]) -> Vec<&'static str> {
         events.iter().map(|e| e.type_name()).collect()
+    }
+
+    #[test]
+    fn mistral_history_profile_pairs_colliding_ids_and_bridges_tool_results() {
+        let mut assistant = AssistantMessage::empty(API, "test", "m");
+        assistant.content = vec![
+            AssistantBlock::Thinking(ThinkingContent {
+                thinking: "<thinking>inspect</thinking>".into(),
+                thinking_signature: None,
+            }),
+            AssistantBlock::text("write"),
+            AssistantBlock::ToolCall(ToolCall {
+                id: "abc-def_012345".into(),
+                name: "write".into(),
+                arguments: JsonObject::new(),
+                thought_signature: None,
+            }),
+            AssistantBlock::ToolCall(ToolCall {
+                id: "abcdef_012999".into(),
+                name: "read".into(),
+                arguments: JsonObject::new(),
+                thought_signature: None,
+            }),
+        ];
+        let context = Context {
+            messages: vec![
+                Message::Assistant(assistant),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "abc-def_012345".into(),
+                    tool_name: "write".into(),
+                    content: vec![UserBlock::text("saved")],
+                    details: None,
+                    is_error: false,
+                    timestamp: 1,
+                }),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "abcdef_012999".into(),
+                    tool_name: "read".into(),
+                    content: vec![UserBlock::text("body")],
+                    details: None,
+                    is_error: false,
+                    timestamp: 2,
+                }),
+                Message::User(UserMessage::text("next")),
+            ],
+            ..Context::default()
+        };
+        let default = convert_messages(&model(), &context, &OpenAICompat::default());
+        assert_eq!(default[0]["tool_calls"][0]["id"], "abc-def_012345");
+        assert_eq!(default[1]["tool_call_id"], "abc-def_012345");
+        assert!(default[1].get("name").is_none());
+        assert_eq!(default[3]["role"], "user");
+
+        let compat = OpenAICompat {
+            requires_mistral_tool_ids: true,
+            requires_tool_result_name: true,
+            requires_assistant_after_tool_result: true,
+            requires_thinking_as_text: true,
+            ..OpenAICompat::default()
+        };
+        let wire = convert_messages(&model(), &context, &compat);
+        assert_eq!(wire[0]["content"], "<thinking>\ninspect\n</thinking> write");
+        let first = wire[0]["tool_calls"][0]["id"].as_str().unwrap();
+        let second = wire[0]["tool_calls"][1]["id"].as_str().unwrap();
+        assert_eq!(first, "abcdef012");
+        assert_ne!(first, second);
+        for id in [first, second] {
+            assert_eq!(id.len(), 9);
+            assert!(id.chars().all(|c| c.is_ascii_alphanumeric()));
+        }
+        assert_eq!(wire[1], json!({"role":"tool","content":"saved","tool_call_id":first,"name":"write"}));
+        assert_eq!(wire[2], json!({"role":"tool","content":"body","tool_call_id":second,"name":"read"}));
+        assert_eq!(wire[3], json!({"role":"assistant","content":"I have processed the tool results."}));
+        assert_eq!(wire[4], json!({"role":"user","content":"next"}));
+    }
+
+    #[test]
+    fn mistral_profile_bridges_hoisted_tool_images_once() {
+        let mut assistant = AssistantMessage::empty(API, "test", "m");
+        assistant.content = vec![AssistantBlock::ToolCall(ToolCall {
+            id: "x".into(),
+            name: "read".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        })];
+        let context = Context {
+            messages: vec![
+                Message::Assistant(assistant),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "x".into(),
+                    tool_name: "read".into(),
+                    content: vec![UserBlock::Image(crate::types::ImageContent {
+                        mime_type: "image/png".into(),
+                        data: "aGVsbG8=".into(),
+                    })],
+                    details: None,
+                    is_error: false,
+                    timestamp: 1,
+                }),
+                Message::User(UserMessage::text("continue")),
+            ],
+            ..Context::default()
+        };
+        let compat = OpenAICompat {
+            requires_mistral_tool_ids: true,
+            requires_assistant_after_tool_result: true,
+            ..Default::default()
+        };
+        let wire = convert_messages(&model(), &context, &compat);
+        assert_eq!(wire[0]["tool_calls"][0]["id"], "xABCDEFGH");
+        assert_eq!(wire[1]["tool_call_id"], "xABCDEFGH");
+        assert_eq!(wire[2]["role"], "assistant");
+        assert_eq!(wire[3]["role"], "user");
+        assert_eq!(wire[4]["content"], "continue");
+        assert_eq!(wire.iter().filter(|message| message["role"] == "assistant").count(), 2);
+    }
+
+    #[test]
+    fn mistral_profile_does_not_replay_foreign_reasoning_as_text() {
+        let mut foreign = AssistantMessage::empty("anthropic-messages", "other", "foreign");
+        foreign.content = vec![
+            AssistantBlock::Thinking(ThinkingContent {
+                thinking: "private prior reasoning".into(),
+                thinking_signature: None,
+            }),
+            AssistantBlock::text("visible answer"),
+        ];
+        let context = Context { messages: vec![Message::Assistant(foreign)], ..Context::default() };
+        let compat = OpenAICompat { requires_thinking_as_text: true, ..Default::default() };
+        let wire = convert_messages(&model(), &context, &compat);
+        assert_eq!(wire, vec![json!({"role":"assistant","content":"visible answer"})]);
+    }
+
+    #[test]
+    fn mistral_profile_normalizes_whole_responses_composite_id() {
+        let mut assistant = AssistantMessage::empty("openai-responses", "elsewhere", "other");
+        assistant.content = vec![AssistantBlock::ToolCall(ToolCall {
+            id: "abc|def".into(),
+            name: "read".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        })];
+        let context = Context {
+            messages: vec![
+                Message::Assistant(assistant),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "abc|def".into(),
+                    tool_name: "read".into(),
+                    content: vec![UserBlock::text("body")],
+                    details: None,
+                    is_error: false,
+                    timestamp: 1,
+                }),
+            ],
+            ..Context::default()
+        };
+        let compat = OpenAICompat { requires_mistral_tool_ids: true, ..Default::default() };
+        let wire = convert_messages(&model(), &context, &compat);
+        assert_eq!(wire[0]["tool_calls"][0]["id"], "abcdefABC");
+        assert_eq!(wire[1]["tool_call_id"], "abcdefABC");
     }
 
     #[test]
