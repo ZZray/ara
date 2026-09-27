@@ -637,6 +637,11 @@ fn official_anthropic_route_selects_bounded_strict_tools_without_changing_custom
     assert_eq!(context.tools.as_ref().unwrap()[1], bash_open);
     assert_eq!(context.tools.as_ref().unwrap()[2], incompatible);
 
+    opts.strict_tools = Some(false);
+    let disabled = anthropic::build_params(&endpoint, &context, &opts).unwrap();
+    assert!(disabled["tools"].as_array().unwrap().iter().all(|tool| tool.get("strict").is_none()));
+    opts.strict_tools = None;
+
     endpoint.base_url = "http://fixture/v1".into();
     let custom = anthropic::build_params(&endpoint, &context, &opts).unwrap();
     assert!(custom["tools"].as_array().unwrap().iter().all(|tool| tool.get("strict").is_none()));
@@ -677,6 +682,79 @@ fn official_strict_tool_budget_demotes_unrepresentable_schemas() {
     assert_eq!(first["input_schema"]["properties"]["field_24"]["anyOf"][1]["type"], "null");
     assert!(params["tools"][1].get("strict").is_none());
     assert_eq!(params["tools"][1]["input_schema"]["properties"]["union_16"]["type"], json!(["string", "null"]));
+}
+
+#[tokio::test]
+async fn public_stream_recovers_from_strict_400_before_emitting_one_successful_turn() {
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[
+            {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"The compiled grammar is too large"}}).to_string()},
+            {"events":[
+                frame(json!({"type":"message_start","message":{"id":"msg_after_strict","usage":{"input_tokens":3,"output_tokens":0}}})),
+                frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Recovered."}})),
+                frame(json!({"type":"content_block_stop","index":0})),
+                frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}})),
+                frame(json!({"type":"message_stop"}))
+            ]}
+        ]}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("Reply"))],
+        tools: Some(vec![Tool {
+            name: "edit".into(),
+            description: "Edit a file".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        }]),
+        ..Default::default()
+    };
+    let mut opts = options();
+    opts.strict_tools = Some(true);
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Error { .. })).count(), 0);
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::ToolcallStart { .. })).count(), 0);
+    assert_eq!(message(&events).text(), "Recovered.");
+    assert_eq!(message(&events).usage.input, Some(3));
+    assert_eq!(message(&events).usage.output, Some(2));
+    assert_eq!(message(&events).usage.total_tokens, Some(5));
+    assert_eq!(server.served(), 2);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+    assert_eq!(requests[0]["body"]["messages"], requests[1]["body"]["messages"]);
+}
+
+#[tokio::test]
+async fn public_stream_does_not_replay_an_unrelated_strict_400() {
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[
+            {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"Some other validation error"}}).to_string()},
+            {"events":[frame(json!({"type":"message_start","message":{"id":"should_not_arrive"}}))]}
+        ]}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("Reply"))],
+        tools: Some(vec![Tool {
+            name: "edit".into(),
+            description: "Edit".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        }]),
+        ..Default::default()
+    };
+    let mut opts = options();
+    opts.strict_tools = Some(true);
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 0);
+    assert_eq!(server.served(), 1);
 }
 
 #[test]

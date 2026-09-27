@@ -154,6 +154,33 @@ struct WireSchemaTool {
     effects: Arc<Mutex<Vec<Value>>>,
 }
 
+struct StrictEditTool {
+    effects: Arc<Mutex<Vec<Value>>>,
+}
+
+#[async_trait]
+impl AgentTool for StrictEditTool {
+    fn definition(&self) -> Tool {
+        Tool {
+            name: "edit".into(),
+            description: "Record a test edit".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"}},
+                "required":["path"],"additionalProperties":false}),
+        }
+    }
+
+    async fn execute(
+        &self,
+        _id: &str,
+        args: JsonObject,
+        _cancel: CancellationToken,
+        _update: UpdateFn,
+    ) -> Result<ToolOutput, ToolError> {
+        self.effects.lock().unwrap().push(Value::Object(args));
+        Ok(ToolOutput::text("edited"))
+    }
+}
+
 #[async_trait]
 impl AgentTool for WireSchemaTool {
     fn definition(&self) -> Tool {
@@ -1525,6 +1552,87 @@ async fn real_anthropic_wire_postprocess_matches_tool_argument_validation() {
     assert_eq!(tool_results.len(), 2);
     assert_eq!(tool_results[0]["tool_use_id"], "toolu_bad");
     assert_eq!(tool_results[1]["tool_use_id"], "toolu_good");
+}
+
+#[tokio::test]
+async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
+    use ara_testkit::{FakeUpstream, Script};
+
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+
+    let script: Script = serde_json::from_value(json!({"responses":[
+        {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"The compiled grammar is too large"}}).to_string()},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_tool","usage":{"input_tokens":5,"output_tokens":0}}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_edit","name":"edit","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"safe.txt\"}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_final","usage":{"input_tokens":7,"output_tokens":0}}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"done"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]}))
+    .unwrap();
+    let server = FakeUpstream::start(script, None).await.unwrap();
+    let provider = Arc::new(AnthropicMessagesProvider {
+        client: reqwest::Client::new(),
+        base: ara_ai::providers::anthropic::StreamOptions {
+            api_key: Some("anthropic-test-secret".into()),
+            strict_tools: Some(true),
+            ..Default::default()
+        },
+    });
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let tool: Arc<dyn AgentTool> = Arc::new(StrictEditTool { effects: effects.clone() });
+    let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
+    cfg.model.api = "anthropic-messages".into();
+    cfg.model.base_url = server.base_url();
+    cfg.max_model_calls = Some(2);
+    let agent = Agent::new(cfg, Vec::new());
+    let sink = Arc::new(RecordingSink::default());
+    let report = agent.prompt(vec![user("edit safe.txt")], CancellationToken::new(), sink.clone()).await.unwrap();
+    assert_eq!(report.end, RunEnd::Completed);
+    assert_eq!(*effects.lock().unwrap(), vec![json!({"path":"safe.txt"})]);
+    let results = report
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tool_call_id, "toolu_edit");
+    assert!(!results[0].is_error);
+    assert_eq!(result_text(&Message::ToolResult(results[0].clone())), "edited");
+    assert_eq!(report.messages.last().unwrap().as_assistant().unwrap().text(), "done");
+    let events = sink.events.lock().await;
+    assert_eq!(events.iter().filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. })).count(), 1);
+    assert_eq!(events.iter().filter(|event| matches!(event, AgentEvent::ToolExecutionEnd { .. })).count(), 1);
+    drop(events);
+    assert_eq!(server.served(), 3);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+    assert_eq!(requests[0]["body"]["messages"], requests[1]["body"]["messages"]);
+    let followup = requests[2]["body"]["messages"].as_array().unwrap();
+    assert!(followup.iter().any(|message| {
+        message["content"]
+            .as_array()
+            .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "tool_use" && block["id"] == "toolu_edit"))
+    }));
+    assert!(followup.iter().any(|message| message["content"].as_array().is_some_and(|blocks| {
+        blocks.iter().any(|block| block["type"] == "tool_result" && block["tool_use_id"] == "toolu_edit")
+    })));
 }
 
 #[tokio::test]

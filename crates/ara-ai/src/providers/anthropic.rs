@@ -46,6 +46,8 @@ pub struct StreamOptions {
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub tool_choice: Option<ToolChoice>,
+    /// None uses the canonical official-route policy; custom routes opt in explicitly.
+    pub strict_tools: Option<bool>,
     pub cancel: CancellationToken,
     pub first_event_timeout: Option<Duration>,
     pub idle_timeout: Option<Duration>,
@@ -60,6 +62,7 @@ impl Default for StreamOptions {
             max_tokens: None,
             temperature: None,
             tool_choice: None,
+            strict_tools: None,
             cancel: CancellationToken::new(),
             first_event_timeout: Some(Duration::from_secs(300)),
             idle_timeout: Some(Duration::from_secs(300)),
@@ -576,7 +579,12 @@ fn build_params_with_strict(
 }
 
 pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
-    build_params_with_strict(model, context, options, official_api_key_route(model))
+    build_params_with_strict(
+        model,
+        context,
+        options,
+        options.strict_tools.unwrap_or_else(|| official_api_key_route(model)),
+    )
 }
 
 fn has_strict_tools(params: &Value) -> bool {
