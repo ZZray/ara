@@ -21,9 +21,11 @@ is omitted individually with a bounded, JSON-escaped stderr diagnostic. The
 outbound `tool_choice` is computed from the tools that survived filtering.
 
 This does not implement OMP's full draft-07 upgrade, vendor schema dialects,
-ArkType conversion or strict-mode policy. ARA still sends `store:false` and
-does not use server-side `previous_response_id`. These remain AI-01e parity
-work; this slice does not change the accepted point count.
+ArkType conversion or strict-mode policy. The CLI default still sends
+`store:false`; a later [explicit opt-in WIP](ai-01e-responses-chaining.md)
+can use server-side `previous_response_id`. The subsequent
+[wire postprocessing WIP](ai-01e-responses-wire-postprocess.md) adds three
+schema transformations. These slices do not change the accepted point count.
 
 ## Executable evidence
 
