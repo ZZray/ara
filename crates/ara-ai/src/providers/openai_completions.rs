@@ -132,6 +132,9 @@ pub struct OpenAICompat {
     pub supports_usage_in_streaming: bool,
     pub supports_images: bool,
     pub max_tokens_field: MaxTokensField,
+    /// Explicit opt-in for Chat routes that require `reasoning_content` on
+    /// every replayed assistant turn, including turns without tool calls.
+    pub requires_reasoning_content_on_all_assistant_turns: bool,
 }
 
 impl Default for OpenAICompat {
@@ -141,6 +144,7 @@ impl Default for OpenAICompat {
             supports_usage_in_streaming: true,
             supports_images: true,
             max_tokens_field: MaxTokensField::MaxTokens,
+            requires_reasoning_content_on_all_assistant_turns: false,
         }
     }
 }
@@ -210,7 +214,6 @@ fn image_url(block: &crate::types::ImageContent) -> Value {
 
 /// OMP `convertMessages` for the default compat profile.
 pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat) -> Vec<Value> {
-    let _ = model;
     let mut params: Vec<Value> = Vec::new();
     for prompt in context.system_prompt.iter().filter(|p| !p.trim().is_empty()) {
         params.push(json!({"role": "system", "content": prompt}));
@@ -240,6 +243,32 @@ pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat)
                 let mut msg = json!({"role": "assistant", "content": Value::Null});
                 if !text.is_empty() {
                     msg["content"] = Value::String(text);
+                }
+                if compat.requires_reasoning_content_on_all_assistant_turns {
+                    let same_source = a.api == model.api && a.provider == model.provider && a.model == model.id;
+                    let reasoning = if same_source {
+                        a.content
+                            .iter()
+                            .filter_map(|block| match block {
+                                AssistantBlock::Thinking(t)
+                                    if matches!(
+                                        t.thinking_signature.as_deref(),
+                                        Some("reasoning_content" | "reasoning" | "reasoning_text")
+                                    ) =>
+                                {
+                                    Some(t.thinking.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        String::new()
+                    };
+                    msg["reasoning_content"] = Value::String(reasoning);
+                    if msg["content"].is_null() {
+                        msg["content"] = Value::String(String::new());
+                    }
                 }
                 let calls: Vec<Value> = a
                     .tool_calls()
@@ -1467,6 +1496,92 @@ mod tests {
 
     fn names(events: &[AssistantMessageEvent]) -> Vec<&'static str> {
         events.iter().map(|e| e.type_name()).collect()
+    }
+
+    #[test]
+    fn required_chat_reasoning_replays_only_matching_signed_history() {
+        let target = model();
+        let mut tool_turn = AssistantMessage::empty(API, "test", "m");
+        tool_turn.stop_reason = StopReason::ToolUse;
+        tool_turn.content = vec![
+            AssistantBlock::Thinking(ThinkingContent {
+                thinking: "inspect".into(),
+                thinking_signature: Some("reasoning".into()),
+            }),
+            AssistantBlock::Thinking(ThinkingContent {
+                thinking: "then write".into(),
+                thinking_signature: Some("reasoning_content".into()),
+            }),
+            AssistantBlock::ToolCall(ToolCall {
+                id: "call_1".into(),
+                name: "read".into(),
+                arguments: serde_json::from_value(json!({"path": "a"})).unwrap(),
+                thought_signature: None,
+            }),
+        ];
+        let mut text_turn = AssistantMessage::empty(API, "test", "m");
+        text_turn.content = vec![AssistantBlock::text("answer")];
+        let mut reasoning_only = AssistantMessage::empty(API, "test", "m");
+        reasoning_only.content = vec![AssistantBlock::Thinking(ThinkingContent {
+            thinking: "quiet".into(),
+            thinking_signature: Some("reasoning_text".into()),
+        })];
+        let mut empty_signed = reasoning_only.clone();
+        if let AssistantBlock::Thinking(t) = &mut empty_signed.content[0] {
+            t.thinking.clear();
+        }
+        let mut foreign_provider = reasoning_only.clone();
+        foreign_provider.provider = "elsewhere".into();
+        let mut foreign_api = reasoning_only.clone();
+        foreign_api.api = "openai-responses".into();
+        let mut foreign_model = reasoning_only.clone();
+        foreign_model.model = "other".into();
+        let mut opaque = reasoning_only.clone();
+        if let AssistantBlock::Thinking(t) = &mut opaque.content[0] {
+            t.thinking_signature = Some("opaque-signature".into());
+        }
+        let context = Context {
+            system_prompt: vec![],
+            messages: vec![
+                Message::Assistant(tool_turn),
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id: "call_1".into(),
+                    tool_name: "read".into(),
+                    content: vec![UserBlock::text("file")],
+                    details: None,
+                    is_error: false,
+                    timestamp: 1,
+                }),
+                Message::Assistant(text_turn),
+                Message::Assistant(reasoning_only),
+                Message::Assistant(empty_signed),
+                Message::Assistant(foreign_provider),
+                Message::Assistant(foreign_api),
+                Message::Assistant(foreign_model),
+                Message::Assistant(opaque),
+            ],
+            tools: None,
+        };
+        let default = convert_messages(&target, &context, &OpenAICompat::default());
+        assert!(default.iter().all(|msg| msg.get("reasoning_content").is_none()));
+        assert_eq!(default.iter().filter(|msg| msg["role"] == "assistant").count(), 2);
+
+        let compat = OpenAICompat { requires_reasoning_content_on_all_assistant_turns: true, ..Default::default() };
+        let wire = convert_messages(&target, &context, &compat);
+        let assistant: Vec<_> = wire.iter().filter(|msg| msg["role"] == "assistant").collect();
+        assert_eq!(assistant.len(), 8);
+        assert_eq!(assistant[0]["reasoning_content"], "inspect\nthen write");
+        assert_eq!(assistant[0]["content"], "");
+        assert_eq!(assistant[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(wire[1], json!({"role": "tool", "content": "file", "tool_call_id": "call_1"}));
+        assert_eq!(assistant[1]["content"], "answer");
+        assert_eq!(assistant[1]["reasoning_content"], "");
+        assert_eq!(assistant[2]["content"], "");
+        assert_eq!(assistant[2]["reasoning_content"], "quiet");
+        for msg in &assistant[3..] {
+            assert_eq!(msg["reasoning_content"], "");
+            assert!(msg.get("opaque-signature").is_none());
+        }
     }
 
     #[test]

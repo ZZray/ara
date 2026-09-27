@@ -1197,6 +1197,83 @@ async fn object_streamed_write_arguments_reach_tool_and_journal_once() {
 }
 
 #[tokio::test]
+async fn required_chat_reasoning_replays_tool_and_text_turns_after_restart() {
+    let env = Env::new();
+    let reasoning = json!({"data": {"choices": [{"delta": {"reasoning_content": "write the file once"}}]}});
+    let up = upstream(json!({"responses": [
+        {"events": [
+            reasoning,
+            tool_call(0, "call_reason_write", "write", "{\"path\":\"reason.txt\",\"content\":\"once\\n\"}"),
+            finish("tool_calls"), done()
+        ]},
+        {"events": [text("Written."), finish("stop"), done()]},
+        {"events": [text("Still there."), finish("stop"), done()]},
+        {"events": [text("Done."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-completions",
+            "--chat-replay-reasoning-content",
+            "--tools",
+            "write",
+            "Write reason.txt once",
+        ],
+    ))
+    .await;
+    assert_eq!(first.status.code(), Some(0), "{}", text_of(&first).1);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("reason.txt")).unwrap(), "once\n");
+    let session = env.session_files().pop().unwrap();
+    let before = std::fs::read(&session).unwrap();
+    let entries = journal(&session);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
+    assert_eq!(entries[3]["message"]["content"][0]["type"], "thinking");
+    assert_eq!(entries[3]["message"]["content"][0]["thinking"], "write the file once");
+    assert_eq!(entries[3]["message"]["content"][0]["thinkingSignature"], "reasoning_content");
+    std::fs::write(env.work.path().join("reason.txt"), "sentinel\n").unwrap();
+
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-completions",
+            "--chat-replay-reasoning-content",
+            "--resume",
+            session.to_str().unwrap(),
+            "Check",
+        ],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    assert!(std::fs::read(&session).unwrap().starts_with(&before), "resume appended to the same journal");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("reason.txt")).unwrap(), "sentinel\n");
+    let plain = output(
+        env.cmd(&up.base_url(), &["--api", "openai-completions", "--resume", session.to_str().unwrap(), "Finish"]),
+    )
+    .await;
+    assert_eq!(plain.status.code(), Some(0), "{}", text_of(&plain).1);
+
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 4);
+    let second = reqs[1]["body"]["messages"].as_array().unwrap();
+    let tool_turn = second.iter().find(|m| m["role"] == "assistant").unwrap();
+    assert_eq!(tool_turn["reasoning_content"], "write the file once");
+    assert_eq!(tool_turn["content"], "");
+    assert_eq!(tool_turn["tool_calls"][0]["id"], "call_reason_write");
+    assert!(second.iter().any(|m| m["role"] == "tool" && m["tool_call_id"] == "call_reason_write"));
+    let third: Vec<_> =
+        reqs[2]["body"]["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "assistant").collect();
+    assert_eq!(third.len(), 2);
+    assert_eq!(third[0]["reasoning_content"], "write the file once");
+    assert_eq!(third[1]["content"], "Written.");
+    assert_eq!(third[1]["reasoning_content"], "");
+    assert!(reqs[3]["body"]["messages"].as_array().unwrap().iter().all(|m| m.get("reasoning_content").is_none()));
+    assert_eq!(up.served(), 4, "replay did not repeat the write tool");
+}
+
+#[tokio::test]
 async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
@@ -1667,6 +1744,17 @@ async fn argument_errors_do_not_touch_a_resumed_session() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--responses-stateful requires --api openai-responses"));
     assert_eq!(std::fs::read(&session).unwrap(), before, "invalid Responses route left the journal untouched");
+    let out = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--chat-replay-reasoning-content", "--resume", session.to_str().unwrap(), "y"],
+    ))
+    .await;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("--chat-replay-reasoning-content requires --api openai-completions")
+    );
+    assert_eq!(std::fs::read(&session).unwrap(), before, "invalid Chat route left the journal untouched");
 }
 
 #[tokio::test]

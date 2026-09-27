@@ -143,6 +143,10 @@ struct Args {
     /// Requires --api anthropic-messages; official routes select strict automatically.
     #[arg(long)]
     anthropic_strict_tools: bool,
+    /// Replay Chat reasoning_content on every assistant turn for routes that require it.
+    /// Requires --api openai-completions; disabled by default.
+    #[arg(long)]
+    chat_replay_reasoning_content: bool,
     #[arg(long)]
     temperature: Option<f64>,
     /// Replace the default system prompt (text, or a file path). Without it,
@@ -345,6 +349,9 @@ fn resolve_route(args: &Args) -> Result<Route> {
     if args.anthropic_strict_tools && args.api != Api::AnthropicMessages {
         bail!("--anthropic-strict-tools requires --api anthropic-messages");
     }
+    if args.chat_replay_reasoning_content && args.api != Api::OpenaiCompletions {
+        bail!("--chat-replay-reasoning-content requires --api openai-completions");
+    }
     if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
         bail!("--report-request-text-tokens requires --api openai-completions");
     }
@@ -398,6 +405,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
         }
     }
     let mut stream_options = StreamOptions { api_key, extra_headers, ..Default::default() };
+    stream_options.compat.requires_reasoning_content_on_all_assistant_turns = args.chat_replay_reasoning_content;
     if let Some(s) = args.stream_idle_timeout {
         let d = (s > 0.0).then(|| Duration::from_secs_f64(s));
         stream_options.idle_timeout = d;
