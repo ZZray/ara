@@ -1,7 +1,7 @@
 # AI-ANTHROPICa: official-route strict tool planning (WIP)
 
-Date: 2026-09-28. Local code commits `44c24a4` and follow-up `394061b`
-on `dev` (not pushed).
+Date: 2026-09-28. Local code commits `44c24a4`, `394061b`, `0e83007` and
+`0afaf91` on `dev` (not pushed).
 Fixed OMP source is `596f2da7101178214aa27a753529d15e6b7ad91d`:
 `packages/ai/src/providers/anthropic.ts` lines 4599–4602 and 4780–5070
 select strict candidates, normalize their schemas and apply shared budgets;
@@ -30,12 +30,14 @@ exercise the same public `stream` fallback, and `Some(false)` suppresses strict
 planning on an official route. No Agent, Session, CLI, shared Tool/Model API
 or other provider production code changed.
 
-This is not full fixed-OMP strict parity. ARA's shared `Tool` has no
-per-tool `strict: false`; its `Model` has no compatibility metadata for
+At code snapshot `44c24a4`, this was not full fixed-OMP strict parity. ARA's
+shared `Tool` has no per-tool `strict: false`; its `Model` has no compatibility metadata for
 custom endpoints. OMP remembers a strict rejection per endpoint/model in
 session state, while ARA may send one rejected strict request again on a
-later turn. A live official model task, CLI/Session journal proof for strict
-requests and broader Anthropic parity remain open.
+later turn. The later `0e83007` slice addresses that last gap only while the
+same in-memory provider state is shared. A live official model task,
+CLI/Session journal proof for strict requests and broader Anthropic parity
+remain open.
 
 ## Executed evidence on code snapshot `44c24a4`
 
@@ -105,3 +107,44 @@ author reviewed the request and Agent event path and found no change to
 production tool execution, credential selection, Session or CLI. The full
 gate, official real-model task and point acceptance remain open. Counts stay
 AI 6/8, registered points 27/37 and P0–P6 gates 1/7.
+
+## Session-scoped strict rejection on code commits `0e83007` and `0afaf91`
+
+The fixed OMP provider records a classified strict-tool rejection for the
+Messages endpoint and model in session provider state before retrying with
+non-strict tools (`packages/ai/src/providers/anthropic.ts`, pinned source near
+the strict fallback). ARA now offers optional `AnthropicProviderSessionState`
+in `StreamOptions`. The state owns an in-memory set of endpoint URL and model
+ID pairs. After a classified pre-stream HTTP 400, the provider records the
+pair before the non-strict fallback request; later calls sharing this state
+start non-strict on that pair. A new state, another model or another endpoint
+can still select strict tools. Unrelated 400s do not mark the pair. A failed
+fallback followed by the provider's outer retry also stays non-strict.
+
+The CLI constructs one state for its Anthropic provider instance per process.
+The public option defaults to `None`, preserving existing callers' behavior;
+custom endpoints still need explicit `strict_tools: Some(true)` to exercise
+strict mode. This is session-scoped in memory, not persisted across CLI
+processes. Agent and Session production code and tool execution were not
+changed. Per-tool `strict: false`, model compatibility metadata, an official
+HTTPS model trial, and strict CLI/Session journal evidence remain open.
+
+| Check on `0afaf91` | Observed result |
+| --- | --- |
+| `cargo clippy -p ara-ai --all-targets --all-features -- -D warnings` | Exit 0 after the `0afaf91` Clippy correction. |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 120 unit, 33 Anthropic HTTP, 48 Chat HTTP and 29 Responses HTTP tests. The new HTTP cases cover endpoint/model/new-state isolation, unrelated 400 and 503 fallback/outer retry. |
+| `cargo test -p ara-agent --test agent_loop strict_anthropic_fallback_executes_one_tool_and_correlates_followup --quiet` | Exit 0: one test; the third provider request after the tool result is non-strict with the shared state. The full six-group Agent suite had passed on `0e83007` before the Clippy-only provider correction. |
+| `cargo test -p ara-cli --test e2e anthropic_ --quiet` | Exit 0: 9/9 existing custom-route cases, which default to non-strict. They do not prove strict CLI state propagation or official-route behavior. |
+| `python scripts/verify_backend.py` | Exit 101: owned format and strict workspace Clippy passed, then workspace tests failed at the existing Windows Bash deadline assertion (`crates/ara-cli/tests/e2e.rs:1340`, 38/39 CLI e2e). Log: `%TEMP%\ara-anthropic-sticky-0afaf91-gate.log`. |
+| `cargo test --workspace --doc --all-features --quiet` | Exit 0; no documentation tests are defined. |
+| `cargo deny check --hide-inclusion-graph` | Exit 0: advisories, bans, licenses and sources OK; existing duplicate-version and tree-sitter-graphql license-field warnings. |
+| `python scripts/omp_inventory.py check`; `python scripts/verify_bootstrap.py`; `git diff --check` | Exit 0 each. |
+
+Independent Codex plan reviewer `/root/anthropic_sticky_plan_review` confirmed
+the endpoint/model state scope against the pinned upstream and recommended a
+provider-local state object. Independent Codex diff reviewer
+`/root/anthropic_sticky_diff_review` reviewed the four-file slice and the
+Clippy correction and found no high-confidence defect; it ran
+`git diff --check` but did not run Cargo. This remains WIP because the full
+Windows gate and strict official/CLI journal evidence are incomplete. Counts
+remain AI 6/8, registered points 27/37 and P0–P6 gates 1/7.
