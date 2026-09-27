@@ -345,6 +345,53 @@ async fn actual_messages_request_normalizes_legacy_and_nested_tool_schemas() {
     assert!(schema["description"].as_str().unwrap().contains("oneOf:"));
 }
 
+#[tokio::test]
+async fn actual_messages_request_applies_shared_tool_wire_postprocessing() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_wire"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Schema received."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let original = json!({"type":"object","properties":{
+        "skip":{"anyOf":[{"type":"integer","minimum":0},{"type":"null"}],"description":"optional skip"},
+        "bare":{"enum":[true,false]},
+        "mode":{"anyOf":[{"const":"a","description":"mode"},{"const":"b","description":"mode"}]},
+        "literal":{"default":{"anyOf":[{"const":"x"},{"const":"y"}]}},
+        "typed":{"type":"object","anyOf":[{"type":"string"},{"type":"null"}]}
+    },"required":["skip","mode","bare"]});
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("check schema"))],
+        tools: Some(vec![Tool {
+            name: "schema_wire".into(),
+            description: "check".into(),
+            parameters: original.clone(),
+        }]),
+        ..Default::default()
+    };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context.clone(), options())).await;
+    assert_eq!(message(&events).text(), "Schema received.");
+    assert_eq!(context.tools.as_ref().unwrap()[0].parameters, original);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    let schema = &requests[0]["body"]["tools"][0]["input_schema"];
+    assert_eq!(schema["required"], original["required"]);
+    assert_eq!(schema["properties"]["skip"]["type"], json!(["integer", "null"]));
+    assert_eq!(schema["properties"]["skip"]["description"], "optional skip\n\n{minimum: 0}");
+    assert_eq!(schema["properties"]["bare"], json!({"type":"boolean","enum":[true,false]}));
+    assert_eq!(schema["properties"]["mode"], json!({"type":"string","enum":["a","b"],"description":"mode"}));
+    assert_eq!(schema["properties"]["literal"]["default"], original["properties"]["literal"]["default"]);
+    assert_eq!(schema["properties"]["typed"]["type"], "object");
+    assert_eq!(schema["properties"]["typed"]["anyOf"].as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn empty_and_open_tool_objects_keep_their_non_strict_wire_meaning() {
     let endpoint = model("http://fixture/v1");

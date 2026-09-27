@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent as Event, AssistantStream, EventSink};
 use crate::providers::openai_completions::{RetryPolicy, post_with_retry};
+use crate::schema_wire::postprocess_json_wire_schema;
 use crate::sse::SseDecoder;
 use crate::transform::transform_messages;
 use crate::types::{
@@ -335,8 +336,10 @@ fn tool_wire(tool: &Tool) -> Result<Value, ProviderError> {
     if !tool.parameters.is_object() {
         return Err(ProviderError::Config(format!("tool {} input schema must be an object", tool.name)));
     }
-    let mut schema = crate::schema_draft::upgrade_json_schema(&tool.parameters, 0)
+    let upgraded = crate::schema_draft::upgrade_json_schema(&tool.parameters, 0)
         .map_err(|_| ProviderError::Config(format!("tool {} input schema is too deep", tool.name)))?;
+    let mut schema = postprocess_json_wire_schema(&upgraded, 0)
+        .map_err(|_| ProviderError::Config("Anthropic tool input schema is too deep".into()))?;
     let root = schema.as_object_mut().expect("checked input schema object");
     root.insert("type".into(), json!("object"));
     if !root.get("properties").is_some_and(Value::is_object) {

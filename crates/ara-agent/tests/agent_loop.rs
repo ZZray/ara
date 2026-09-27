@@ -150,12 +150,12 @@ struct LegacySchemaTool {
     effects: Arc<Mutex<Vec<Value>>>,
 }
 
-struct ResponsesWireSchemaTool {
+struct WireSchemaTool {
     effects: Arc<Mutex<Vec<Value>>>,
 }
 
 #[async_trait]
-impl AgentTool for ResponsesWireSchemaTool {
+impl AgentTool for WireSchemaTool {
     fn definition(&self) -> Tool {
         Tool {
             name: "schema_wire".into(),
@@ -1414,7 +1414,7 @@ async fn real_responses_wire_postprocess_matches_tool_argument_validation() {
     let server = FakeUpstream::start(script, None).await.unwrap();
     let provider = Arc::new(OpenAIResponsesProvider { client: reqwest::Client::new(), base: Default::default() });
     let effects = Arc::new(Mutex::new(Vec::new()));
-    let tool: Arc<dyn AgentTool> = Arc::new(ResponsesWireSchemaTool { effects: effects.clone() });
+    let tool: Arc<dyn AgentTool> = Arc::new(WireSchemaTool { effects: effects.clone() });
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.model.api = "openai-responses".into();
     cfg.model.base_url = server.base_url();
@@ -1445,6 +1445,86 @@ async fn real_responses_wire_postprocess_matches_tool_argument_validation() {
     let input = requests[1]["body"]["input"].as_array().unwrap();
     assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_invalid"));
     assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_valid"));
+}
+
+#[tokio::test]
+async fn real_anthropic_wire_postprocess_matches_tool_argument_validation() {
+    use ara_testkit::{FakeUpstream, Script};
+
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+
+    let script: Script = serde_json::from_value(json!({"responses":[
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_tools"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bad","name":"schema_wire","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"skip\":\"bad\",\"mode\":\"a\",\"flag\":true}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_good","name":"schema_wire","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"skip\":null,\"mode\":\"b\",\"flag\":true}"}})),
+            frame(json!({"type":"content_block_stop","index":1})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_final"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"checked"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]}))
+    .unwrap();
+    let server = FakeUpstream::start(script, None).await.unwrap();
+    let provider = Arc::new(AnthropicMessagesProvider {
+        client: reqwest::Client::new(),
+        base: ara_ai::providers::anthropic::StreamOptions {
+            api_key: Some("anthropic-test-secret".into()),
+            ..Default::default()
+        },
+    });
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let tool: Arc<dyn AgentTool> = Arc::new(WireSchemaTool { effects: effects.clone() });
+    let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
+    cfg.model.api = "anthropic-messages".into();
+    cfg.model.base_url = server.base_url();
+    let agent = Agent::new(cfg, Vec::new());
+    let messages = agent
+        .prompt(vec![user("validate wire arguments")], CancellationToken::new(), Arc::new(NullSink))
+        .await
+        .unwrap()
+        .messages;
+    let results = messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].tool_call_id, "toolu_bad");
+    assert!(results[0].is_error);
+    assert_eq!(results[1].tool_call_id, "toolu_good");
+    assert!(!results[1].is_error);
+    assert_eq!(*effects.lock().unwrap(), vec![json!({"skip":null,"mode":"b","flag":true})]);
+    assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "checked");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let schema = &requests[0]["body"]["tools"][0]["input_schema"];
+    assert_eq!(schema["properties"]["skip"]["type"], json!(["integer", "null"]));
+    assert_eq!(schema["properties"]["mode"], json!({"type":"string","enum":["a","b"],"description":"mode"}));
+    assert_eq!(schema["properties"]["flag"], json!({"type":"boolean","enum":[true,false]}));
+    let content = requests[1]["body"]["messages"].as_array().unwrap();
+    let tool_results = content
+        .iter()
+        .flat_map(|message| message["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_result")
+        .collect::<Vec<_>>();
+    assert_eq!(tool_results.len(), 2);
+    assert_eq!(tool_results[0]["tool_use_id"], "toolu_bad");
+    assert_eq!(tool_results[1]["tool_use_id"], "toolu_good");
 }
 
 #[tokio::test]
