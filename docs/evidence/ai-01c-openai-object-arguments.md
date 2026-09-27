@@ -36,7 +36,8 @@ then makes one follow-up request. The Session journal contains one assistant
 tool call with the complete content and one matching tool result. The
 existing string-argument CLI write/retry test also passed.
 
-Commands and outcomes on the uncommitted worktree based on `e5aa93b`:
+Commands and outcomes on the code tree committed as WIP `29bbcf9`
+(based on `e5aa93b`; no code changed between verification and commit):
 
 | Command | Result |
 | --- | --- |
