@@ -50,6 +50,10 @@ fn upstream(events: Vec<Value>) -> Script {
     serde_json::from_value(json!({"responses":[{"events":events}]})).unwrap()
 }
 
+fn raw(event: &str, data: &str) -> Value {
+    json!({"raw":format!("event: {event}\ndata: {data}\n\n")})
+}
+
 async fn collect(mut stream: ara_ai::AssistantStream) -> Vec<AssistantMessageEvent> {
     let events = tokio::time::timeout(Duration::from_secs(5), async {
         let mut events = Vec::new();
@@ -70,6 +74,131 @@ fn message(events: &[AssistantMessageEvent]) -> &AssistantMessage {
         AssistantMessageEvent::Error { error, .. } => error,
         _ => panic!("missing terminal event"),
     }
+}
+
+#[tokio::test]
+async fn spliced_envelope_keeps_first_message_and_does_not_replay_closed_blocks() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"first","usage":{"input_tokens":3}}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"once"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_once","name":"write","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"once.txt\"}"}})),
+            frame(json!({"type":"content_block_stop","index":1})),
+            frame(json!({"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"redacted"}})),
+            frame(json!({"type":"content_block_stop","index":2})),
+            frame(json!({"type":"message_start","message":{"id":"second","usage":{"input_tokens":999}}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"duplicate"}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"duplicate"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_twice","name":"write","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"twice.txt\"}"}})),
+            frame(json!({"type":"content_block_stop","index":1})),
+            frame(json!({"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"replayed"}})),
+            frame(json!({"type":"content_block_stop","index":2})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":999}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("write"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::ToolUse, .. })));
+    assert_eq!(message(&events).response_id.as_deref(), Some("first"));
+    assert_eq!(message(&events).usage.input, Some(3));
+    assert_eq!(message(&events).usage.output, Some(7));
+    assert_eq!(message(&events).text(), "once");
+    let calls: Vec<_> = message(&events).tool_calls().collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].id, "tool_once");
+    assert_eq!(calls[0].arguments["path"], "once.txt");
+    assert_eq!(
+        message(&events)
+            .content
+            .iter()
+            .filter(|block| matches!(block, AssistantBlock::RedactedThinking { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })).count(), 1);
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::TextEnd { .. })).count(), 1);
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn malformed_and_unknown_frames_do_not_discard_a_completed_message() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            raw("telemetry", "not json"),
+            raw("ping", "not json"),
+            raw("message_start", "not json"),
+            raw("message_start", r#"{"type":"telemetry"}"#),
+            frame(json!({"type":"message_start","message":{"id":"good"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"future_block"}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"future_delta"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"content_block_start","index":1})),
+            frame(json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}})),
+            frame(json!({"type":"message_start","message":{"id":"spliced"}})),
+            frame(json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":"duplicate"}})),
+            frame(json!({"type":"content_block_delta","index":2})),
+            frame(json!({"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"wrong"}})),
+            raw("content_block_delta", "not json"),
+            frame(json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ok"}})),
+            frame(json!({"type":"content_block_stop","index":2})),
+            frame(json!({"type":"content_block_delta","index":9,"delta":{"type":"text_delta","text":"ignored"}})),
+            frame(json!({"type":"content_block_stop","index":9})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+    assert_eq!(message(&events).response_id.as_deref(), Some("good"));
+    assert_eq!(message(&events).text(), "ok");
+    assert_eq!(message(&events).content.len(), 1);
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn malformed_only_start_and_structured_stream_error_are_not_success() {
+    let incomplete = FakeUpstream::start(upstream(vec![raw("message_start", "not json")]), None).await.unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&incomplete.base_url()), context.clone(), options()))
+            .await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { .. })));
+    assert_eq!(message(&events).tool_calls().count(), 0);
+    let failed = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[
+            {"events":[raw("error", r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#)]},
+            {"events":[raw("error", r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#)]}
+        ]}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&failed.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { .. })));
+    assert!(
+        message(&events).error_message.as_deref().unwrap().contains("overloaded_error"),
+        "{:?}",
+        message(&events).error_message
+    );
+    assert!(message(&events).error_message.as_deref().unwrap().contains("Overloaded"));
+    assert_eq!(failed.served(), 2);
 }
 
 #[tokio::test]

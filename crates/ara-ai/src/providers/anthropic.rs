@@ -5,7 +5,7 @@
 //! buildParams, convertAnthropicMessages and the message SSE loop.
 //! OAuth, provider-specific betas and caching remain open in AI-ANTHROPIC.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -430,9 +430,20 @@ fn stop_reason(raw: &str) -> StopReason {
     }
 }
 
+fn sse_error_detail(frame: &Value, fallback: &str) -> String {
+    let Some(message) = frame.pointer("/error/message").and_then(Value::as_str) else {
+        return fallback.to_owned();
+    };
+    match frame.pointer("/error/type").and_then(Value::as_str) {
+        Some(error_type) => format!("Anthropic stream error ({error_type}): {message}"),
+        None => format!("Anthropic stream error: {message}"),
+    }
+}
+
 enum OpenBlock {
     Text(usize),
     Thinking(usize),
+    Redacted,
     Tool { index: usize, id: String, name: String, input: Map<String, Value>, json: String },
     Ignored,
 }
@@ -444,6 +455,8 @@ struct MessageState {
     stopped: bool,
     retry_blocked: bool,
     open: HashMap<usize, OpenBlock>,
+    closed_indexes: HashSet<usize>,
+    saw_spliced_envelope: bool,
     first_token: Option<Instant>,
 }
 
@@ -456,6 +469,8 @@ impl MessageState {
             stopped: false,
             retry_blocked: false,
             open: HashMap::new(),
+            closed_indexes: HashSet::new(),
+            saw_spliced_envelope: false,
             first_token: None,
         }
     }
@@ -466,12 +481,12 @@ impl MessageState {
             return Ok(false);
         }
         if kind == "error" {
-            let detail = frame.pointer("/error/message").and_then(Value::as_str).unwrap_or("Anthropic stream error");
-            return Err(ProviderError::Stream(detail.to_owned()));
+            return Err(ProviderError::Stream(sse_error_detail(frame, "Anthropic stream error")));
         }
         if kind == "message_start" {
             if self.started {
-                return Err(ProviderError::Stream("duplicate Anthropic message_start".into()));
+                self.saw_spliced_envelope = true;
+                return Ok(true);
             }
             self.started = true;
             self.output.response_id = frame.pointer("/message/id").and_then(Value::as_str).map(str::to_owned);
@@ -480,23 +495,39 @@ impl MessageState {
             }
             return Ok(true);
         }
+        if !matches!(
+            kind,
+            "content_block_start" | "content_block_delta" | "content_block_stop" | "message_delta" | "message_stop"
+        ) {
+            return Ok(false);
+        }
         if !self.started {
             return Err(ProviderError::Stream(format!("Anthropic {kind} before message_start")));
         }
         if self.stopped {
-            return Err(ProviderError::Stream(format!("Anthropic {kind} after message_stop")));
+            return Ok(false);
+        }
+        if self.stop_reason_seen && kind != "message_stop" {
+            return Ok(false);
         }
         match kind {
             "content_block_start" => {
-                let index = frame
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| ProviderError::Stream("content_block_start missing index".into()))?
-                    as usize;
+                let Some(index) =
+                    frame.get("index").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok())
+                else {
+                    return Ok(false);
+                };
                 if self.open.contains_key(&index) {
-                    return Err(ProviderError::Stream(format!("duplicate Anthropic content block {index}")));
+                    return Ok(false);
+                }
+                if self.saw_spliced_envelope && self.closed_indexes.contains(&index) {
+                    self.open.insert(index, OpenBlock::Ignored);
+                    return Ok(false);
                 }
                 let block = &frame["content_block"];
+                if !block["type"].is_string() {
+                    return Ok(false);
+                }
                 let content_index = self.output.content.len();
                 let open = match block["type"].as_str().unwrap_or("") {
                     "text" => {
@@ -525,7 +556,7 @@ impl MessageState {
                         self.output.content.push(AssistantBlock::RedactedThinking {
                             data: block["data"].as_str().unwrap_or("").to_owned(),
                         });
-                        OpenBlock::Ignored
+                        OpenBlock::Redacted
                     }
                     "tool_use" => {
                         let id = block["id"]
@@ -542,21 +573,23 @@ impl MessageState {
                         events.push(Event::ToolcallStart { content_index, partial: self.output.clone() });
                         OpenBlock::Tool { index: content_index, id, name, input, json: String::new() }
                     }
-                    other => return Err(ProviderError::Stream(format!("unsupported Anthropic content block {other}"))),
+                    _ => OpenBlock::Ignored,
                 };
                 self.first_token.get_or_insert_with(Instant::now);
                 self.open.insert(index, open);
             }
             "content_block_delta" => {
-                let index = frame
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| ProviderError::Stream("content_block_delta missing index".into()))?
-                    as usize;
-                let open = self
-                    .open
-                    .get_mut(&index)
-                    .ok_or_else(|| ProviderError::Stream(format!("delta for unopened Anthropic block {index}")))?;
+                let Some(index) =
+                    frame.get("index").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok())
+                else {
+                    return Ok(false);
+                };
+                let Some(open) = self.open.get_mut(&index) else {
+                    return Ok(false);
+                };
+                if !frame["delta"]["type"].is_string() {
+                    return Ok(false);
+                }
                 match (open, frame.pointer("/delta/type").and_then(Value::as_str).unwrap_or("")) {
                     (OpenBlock::Text(content_index), "text_delta") => {
                         let delta = frame.pointer("/delta/text").and_then(Value::as_str).unwrap_or("");
@@ -598,20 +631,22 @@ impl MessageState {
                             partial: self.output.clone(),
                         });
                     }
-                    (OpenBlock::Ignored, _) => {}
-                    _ => return Err(ProviderError::Stream(format!("mismatched Anthropic delta for block {index}"))),
+                    (OpenBlock::Redacted | OpenBlock::Ignored, _) => {}
+                    _ => return Ok(false),
                 }
             }
             "content_block_stop" => {
-                let index = frame
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| ProviderError::Stream("content_block_stop missing index".into()))?
-                    as usize;
-                let open = self
-                    .open
-                    .remove(&index)
-                    .ok_or_else(|| ProviderError::Stream(format!("stop for unopened Anthropic block {index}")))?;
+                let Some(index) =
+                    frame.get("index").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok())
+                else {
+                    return Ok(false);
+                };
+                let Some(open) = self.open.remove(&index) else {
+                    return Ok(false);
+                };
+                if !matches!(&open, OpenBlock::Ignored) {
+                    self.closed_indexes.insert(index);
+                }
                 match open {
                     OpenBlock::Text(content_index) => {
                         let AssistantBlock::Text(text) = &self.output.content[content_index] else { unreachable!() };
@@ -651,6 +686,7 @@ impl MessageState {
                             partial: self.output.clone(),
                         });
                     }
+                    OpenBlock::Redacted => {}
                     OpenBlock::Ignored => {}
                 }
             }
@@ -676,7 +712,7 @@ impl MessageState {
                 }
                 self.stopped = true;
             }
-            other => return Err(ProviderError::Stream(format!("unsupported Anthropic event {other}"))),
+            _ => unreachable!(),
         }
         Ok(kind != "ping")
     }
@@ -798,12 +834,35 @@ async fn run(
             Some(Err(err)) => return Err(ProviderError::Transport(format!("Anthropic stream read failed: {err}"))),
         };
         for frame in frames {
-            let value: Value = serde_json::from_str(&frame.data)
-                .map_err(|_| ProviderError::Stream("malformed Anthropic SSE JSON".into()))?;
-            if let Some(name) = frame.event.as_deref()
-                && name != value["type"].as_str().unwrap_or("")
+            let name = frame.event.as_deref().unwrap_or("");
+            if name == "error" {
+                let value = serde_json::from_str::<Value>(&frame.data).unwrap_or(Value::Null);
+                return Err(ProviderError::Stream(sse_error_detail(&value, &frame.data)));
+            }
+            if name != "ping"
+                && !matches!(
+                    name,
+                    "message_start"
+                        | "message_delta"
+                        | "message_stop"
+                        | "content_block_start"
+                        | "content_block_delta"
+                        | "content_block_stop"
+                )
             {
-                return Err(ProviderError::Stream("Anthropic SSE event name did not match body type".into()));
+                continue;
+            }
+            let value: Value = if name == "ping" {
+                json!({"type":"ping"})
+            } else {
+                let Ok(value) = serde_json::from_str(&frame.data) else {
+                    eprintln!("anthropic: skipping malformed SSE JSON for {name}");
+                    continue;
+                };
+                value
+            };
+            if name != "ping" && name != value["type"].as_str().unwrap_or("") {
+                eprintln!("anthropic: SSE event {name} does not match body type");
             }
             let mut events = Vec::new();
             let is_progress = state.handle(&value, &mut events)?;
