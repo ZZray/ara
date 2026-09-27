@@ -327,3 +327,41 @@ fn refuses_to_hide_developer_unfinished_or_unknown_effect_turns_but_accepts_comp
     write_journal(&path, &entries);
     assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
 }
+
+#[test]
+fn projection_rejects_panic_receipts_but_keeps_completed_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let mut receipt = tool_result("t1", Some(json!({"panicked": true})));
+    let Message::ToolResult(result) = &mut receipt else { unreachable!() };
+    result.is_error = true;
+    let entries = vec![
+        message("q1", Value::Null, user("run a command")),
+        message("a1", json!("q1"), tool_call("t1")),
+        message("r1", json!("a1"), receipt),
+        message("a2", json!("r1"), assistant("continued")),
+        message("q2", json!("a2"), user("next question")),
+        message("a3", json!("q2"), assistant("answer")),
+        compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1", "a2"])),
+    ];
+    write_journal(&path, &entries);
+    assert_eq!(
+        SessionJournal::open(&path).unwrap().compacted_context_projection(),
+        Err(CompactionProjectionError::UnsafeSummaryBoundary { id: "c1".into() })
+    );
+
+    let mut receipt = tool_result("t1", Some(json!({"exitCode": 1})));
+    let Message::ToolResult(result) = &mut receipt else { unreachable!() };
+    result.is_error = true;
+    let entries = vec![
+        message("q1", Value::Null, user("run a command")),
+        message("a1", json!("q1"), tool_call("t1")),
+        message("r1", json!("a1"), receipt),
+        message("a2", json!("r1"), assistant("continued")),
+        message("q2", json!("a2"), user("next question")),
+        message("a3", json!("q2"), assistant("answer")),
+        compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1", "a2"])),
+    ];
+    write_journal(&path, &entries);
+    assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
+}

@@ -161,6 +161,7 @@ fn truncate_tool_result(text: &str) -> String {
 fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
     result.details.as_ref().is_some_and(|details| {
         details.get("timedOut").and_then(serde_json::Value::as_bool) == Some(true)
+            || details.get("panicked").and_then(serde_json::Value::as_bool) == Some(true)
             || (details.get("__synthetic").and_then(serde_json::Value::as_bool) == Some(true)
                 && details.get("source").and_then(serde_json::Value::as_str) == Some("interrupted_unknown_effect")
                 && details.get("executed").and_then(serde_json::Value::as_str) == Some("unknown"))

@@ -297,3 +297,49 @@ fn prompt_requires_matched_tool_receipts_and_following_assistant() {
     let receipt: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     assert_eq!(receipt["unknown_effect"], true);
 }
+
+#[test]
+fn panic_receipts_cannot_be_hidden_by_compaction() {
+    let user = Message::User(UserMessage::text("run a command"));
+    let mut calling = AssistantMessage::empty("openai-completions", "fake", "m");
+    calling.stop_reason = StopReason::ToolUse;
+    calling.content.push(AssistantBlock::ToolCall(ToolCall {
+        id: "c1".into(),
+        name: "bash".into(),
+        arguments: JsonObject::new(),
+        thought_signature: None,
+    }));
+    let calling = Message::Assistant(calling);
+    let answer = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let a = SummarySource { entry_id: "e1", message: &user };
+    let b = SummarySource { entry_id: "e2", message: &calling };
+    let d = SummarySource { entry_id: "e4", message: &answer };
+    let receipt = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        content: vec![UserBlock::text("command may have changed a file")],
+        details: Some(serde_json::json!({"panicked": true})),
+        is_error: true,
+        timestamp: 0,
+    });
+    let c = SummarySource { entry_id: "e3", message: &receipt };
+    assert_eq!(validate_completed_summary_span(&[a, b, c, d]), Err(SummaryInputError::UnknownToolEffect));
+    assert_eq!(build_summary_prompt(&[a, b, c, d], None).err(), Some(SummaryInputError::UnknownToolEffect));
+    let serialized = serialize_sources_for_summary(&[c]).unwrap();
+    let row: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(row["unknown_effect"], true);
+
+    let completed_failure = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c1".into(),
+        tool_name: "bash".into(),
+        content: vec![UserBlock::text("Command exited with code 1")],
+        details: Some(serde_json::json!({"exitCode": 1})),
+        is_error: true,
+        timestamp: 0,
+    });
+    let c = SummarySource { entry_id: "e3", message: &completed_failure };
+    assert!(build_summary_prompt(&[a, b, c, d], None).is_ok());
+    let serialized = serialize_sources_for_summary(&[c]).unwrap();
+    let row: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(row["unknown_effect"], false);
+}
