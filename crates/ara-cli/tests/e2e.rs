@@ -1438,6 +1438,27 @@ async fn upstream_auth_failure_exits_nonzero_with_the_error() {
     assert_eq!(entries.last().unwrap()["message"]["errorStatus"], json!(401));
 }
 
+#[tokio::test]
+async fn responses_failed_detail_reaches_cli_and_session_journal() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [
+        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "partial"}}},
+        {"data": {"type": "response.output_text.delta", "output_index": 0, "item_id": "partial", "delta": "draft"}},
+        {"data": {"type": "response.failed", "response": {"status": "failed", "error": {"code": "server_error", "message": "backend exploded"}}}}
+    ]}]})).await;
+    let out = output(env.cmd(&up.base_url(), &["--api", "openai-responses", "Explain the failure"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(stdout, "");
+    assert!(stderr.lines().any(|line| line == "server_error: backend exploded"), "{stderr}");
+    assert_eq!(up.served(), 1, "visible draft prevents request replay");
+    let entries = journal(&env.session_files()[0]);
+    let assistant = &entries.last().unwrap()["message"];
+    assert_eq!(assistant["stopReason"], "error");
+    assert_eq!(assistant["errorMessage"], "server_error: backend exploded");
+    assert_eq!(assistant["content"][0]["text"], "draft");
+}
+
 #[cfg(unix)]
 fn signal(child: &Child, sig: i32) {
     assert_eq!(unsafe { libc::kill(child.id() as i32, sig) }, 0);

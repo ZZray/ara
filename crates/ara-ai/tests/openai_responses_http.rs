@@ -102,6 +102,72 @@ async fn response_terminal_ends_a_hanging_socket_and_records_the_native_request(
 }
 
 #[tokio::test]
+async fn failed_response_frames_preserve_nested_codes_and_reasons() {
+    let terminal_frames = [
+        json!({"type": "response.failed", "response": {"status": "failed", "error": {"code": "server_error", "message": "backend exploded"}}}),
+        json!({"type": "response.failed", "response": {"status": "failed", "incomplete_details": {"reason": "max_output_tokens"}}}),
+        json!({"type": "response.completed", "response": {"status": "failed", "status_details": {"error": {"code": "server_error", "message": "backend exploded late"}}}}),
+        json!({"type": "response.completed", "response": {"status": "failed", "error": null, "status_details": {"error": {"code": "server_error", "message": "nested survives null"}}}}),
+        json!({"type": "response.completed", "response": {"status": "cancelled", "status_details": {"reason": "capacity_exceeded"}}}),
+        json!({"type": "error", "error": {"code": "upstream_error", "message": "stream broke"}}),
+        json!({"type": "error", "error": null, "code": "upstream_error", "message": "top-level survives null"}),
+    ];
+    let responses = terminal_frames.into_iter().map(|terminal| json!({"events": [
+        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "partial"}}},
+        {"data": {"type": "response.output_text.delta", "output_index": 0, "item_id": "partial", "delta": "draft"}},
+        {"data": terminal}
+    ]})).collect::<Vec<_>>();
+    let server = FakeUpstream::start(script(json!({"responses": responses})), None).await.unwrap();
+    for (index, expected) in [
+        "server_error: backend exploded",
+        "incomplete: max_output_tokens",
+        "server_error: backend exploded late",
+        "server_error: nested survives null",
+        "status_details: capacity_exceeded",
+        "Error Code upstream_error: stream broke",
+        "Error Code upstream_error: top-level survives null",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (events, output) = collect(openai_responses::stream(
+            reqwest::Client::new(),
+            model(&server.base_url()),
+            Context::default(),
+            options(),
+        ))
+        .await;
+        assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+        assert_eq!(output.error_message.as_deref(), Some(*expected));
+        assert_eq!(output.text(), "draft", "case {index} preserves emitted output");
+        assert_eq!(output.tool_calls().count(), 0);
+    }
+    assert_eq!(server.served(), 7, "emitted output must not be replayed");
+}
+
+#[tokio::test]
+async fn pre_output_server_error_retries_once_without_duplicate_client_events() {
+    let server = FakeUpstream::start(script(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.failed", "response": {"status": "failed", "error": {"code": "server_error", "message": "backend unavailable"}}}}
+        ]},
+        completed_text("recovered", "recovered answer")
+    ]})), None).await.unwrap();
+    let (events, output) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        model(&server.base_url()),
+        Context::default(),
+        options(),
+    ))
+    .await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::Stop, .. })));
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert_eq!(output.text(), "recovered answer");
+    assert_eq!(output.tool_calls().count(), 0);
+    assert_eq!(server.served(), 2, "only the uncommitted failed attempt is retried");
+}
+
+#[tokio::test]
 async fn opted_in_chain_sends_only_the_new_user_turn_on_real_http() {
     let server = FakeUpstream::start(
         script(json!({"responses":[completed_text("resp_first", "first answer"), completed_text("resp_second", "second answer")]})),

@@ -871,11 +871,35 @@ impl ResponsesStreamState {
 }
 
 fn response_error(response: &Value) -> String {
-    response
+    if response.get("type").and_then(Value::as_str) == Some("error") {
+        let error = response.get("error").filter(|value| !value.is_null()).unwrap_or(response);
+        let code = error.get("code").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("unknown");
+        let message = error.get("message").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("no message");
+        return format!("Error Code {code}: {message}");
+    }
+    let error = response
         .get("error")
-        .and_then(envelope_message)
-        .or_else(|| envelope_message(response))
-        .unwrap_or_else(|| "Responses provider returned an error".into())
+        .filter(|value| !value.is_null())
+        .or_else(|| response.pointer("/status_details/error").filter(|value| !value.is_null()));
+    match error {
+        Some(Value::Object(error)) => {
+            let code = error.get("code").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("unknown");
+            let message =
+                error.get("message").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("no message");
+            return format!("{code}: {message}");
+        }
+        Some(Value::String(error)) if !error.is_empty() => return error.clone(),
+        _ => {}
+    }
+    if let Some(reason) =
+        response.pointer("/incomplete_details/reason").and_then(Value::as_str).filter(|s| !s.is_empty())
+    {
+        return format!("incomplete: {reason}");
+    }
+    if let Some(reason) = response.pointer("/status_details/reason").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        return format!("status_details: {reason}");
+    }
+    envelope_message(response).unwrap_or_else(|| "Unknown error (no error details in response)".into())
 }
 
 fn strict_arguments_value(raw: &str) -> Option<Value> {
@@ -1108,7 +1132,7 @@ mod tests {
         let failed = state.handle(
             &json!({"type":"response.failed","response":{"status":"failed","error":{"message":"upstream failed"}}}),
         );
-        assert!(matches!(failed, Err(ProviderError::Stream(message)) if message == "upstream failed"));
+        assert!(matches!(failed, Err(ProviderError::Stream(message)) if message == "unknown: upstream failed"));
         assert!(state.output.provider_payload.is_none());
     }
 
