@@ -669,6 +669,64 @@ fn call_token_limit_is_capped_and_unavailable_forced_tools_are_omitted() {
     opts.tool_choice = Some(ara_ai::ToolChoice::Tool("missing".into()));
     let params = anthropic::build_params(&endpoint, &context, &opts).unwrap();
     assert!(params.get("tool_choice").is_none());
+
+    endpoint.max_tokens = None;
+    opts.max_tokens = None;
+    assert_eq!(anthropic::build_params(&endpoint, &context, &opts).unwrap()["max_tokens"], 4096);
+    opts.max_tokens = Some(8192);
+    assert_eq!(anthropic::build_params(&endpoint, &context, &opts).unwrap()["max_tokens"], 8192);
+    opts.max_tokens = Some(128_000);
+    assert_eq!(anthropic::build_params(&endpoint, &context, &opts).unwrap()["max_tokens"], 64_000);
+    opts.max_tokens = Some(0);
+    assert!(anthropic::build_params(&endpoint, &context, &opts).is_err());
+
+    endpoint.max_tokens = Some(128_000);
+    opts.max_tokens = Some(100_000);
+    assert_eq!(anthropic::build_params(&endpoint, &context, &opts).unwrap()["max_tokens"], 100_000);
+}
+
+#[tokio::test]
+async fn actual_messages_request_uses_explicit_limit_without_an_unknown_model_4096_cap() {
+    for (model_ceiling, requested, expected) in [
+        (None, None, 4096),
+        (None, Some(8192), 8192),
+        (None, Some(128_000), 64_000),
+        (Some(128_000), Some(100_000), 100_000),
+    ] {
+        let server = FakeUpstream::start(
+            upstream(vec![
+                frame(json!({"type":"message_start","message":{"id":"msg_limit"}})),
+                frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}})),
+                frame(json!({"type":"content_block_stop","index":0})),
+                frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+                frame(json!({"type":"message_stop"})),
+            ]),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.max_tokens = model_ceiling;
+        let mut opts = options();
+        opts.max_tokens = requested;
+        let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+        let events = collect(anthropic::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+        assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::Stop, .. })));
+        assert_eq!(message(&events).text(), "ok");
+        let requests = server.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["body"]["max_tokens"], expected);
+        assert_eq!(server.served(), 1);
+    }
+
+    let server = FakeUpstream::start(upstream(vec![]), None).await.unwrap();
+    let mut opts = options();
+    opts.max_tokens = Some(0);
+    let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+    assert!(message(&events).error_message.as_deref().unwrap().contains("max_tokens must be positive"));
+    assert_eq!(server.served(), 0);
 }
 
 #[tokio::test]

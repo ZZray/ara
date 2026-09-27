@@ -219,6 +219,31 @@ async fn anthropic_messages_runs_tool_and_replays_after_restart() {
 }
 
 #[tokio::test]
+async fn anthropic_explicit_max_tokens_reaches_the_real_host_request() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_limit"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Limit received."}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+        frame(json!({"type":"message_stop"}))
+    ]}]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["--api", "anthropic-messages", "--max-tokens", "8192", "Reply"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Limit received.\n");
+    assert_eq!(up.served(), 1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests[0]["body"]["max_tokens"], 8192);
+    assert_eq!(journal(&env.session_files()[0]).last().unwrap()["message"]["stopReason"], "stop");
+}
+
+#[tokio::test]
 async fn anthropic_ping_bridged_tool_call_runs_once_in_the_real_host() {
     fn frame(value: Value) -> Value {
         let name = value["type"].as_str().unwrap();

@@ -27,6 +27,9 @@ use crate::types::{
 pub const API: &str = "anthropic-messages";
 // The CLI does not yet resolve OMP catalogue limits for every model.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
+// Fixed OMP uses 64,000 when model.maxTokens is absent. Keep ARA's smaller
+// default request, but do not silently cap an explicit request at that default.
+const UNKNOWN_MODEL_MAX_TOKENS: u64 = 64_000;
 const MAX_TOOL_JSON_BYTES: usize = 1024 * 1024;
 // Snapshots are owned Rust values: keep the preview small when tiny SSE
 // deltas would otherwise clone a growing tool argument on every event.
@@ -363,8 +366,9 @@ fn tool_wire(tool: &Tool) -> Result<Value, ProviderError> {
 }
 
 pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
-    let ceiling = model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
-    let max_tokens = options.max_tokens.unwrap_or(ceiling).min(ceiling);
+    let ceiling = model.max_tokens.unwrap_or(UNKNOWN_MODEL_MAX_TOKENS);
+    let requested = options.max_tokens.unwrap_or(model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS));
+    let max_tokens = requested.min(ceiling);
     if max_tokens == 0 {
         return Err(ProviderError::Config("Anthropic max_tokens must be positive".into()));
     }
