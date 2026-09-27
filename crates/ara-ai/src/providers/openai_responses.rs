@@ -609,7 +609,14 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
         tools
             .iter()
             .filter_map(|tool| {
-                let parameters = match sanitize_responses_schema(&tool.parameters, 0) {
+                let upgraded = match super::responses_schema_draft::upgrade_json_schema(&tool.parameters, 0) {
+                    Ok(schema) => schema,
+                    Err(()) => {
+                        report_quarantined_tool(&tool.name, "schema nesting exceeds upgrade limit");
+                        return None;
+                    }
+                };
+                let parameters = match sanitize_responses_schema(&upgraded, 0) {
                     Ok(parameters) => parameters,
                     Err(()) => {
                         report_quarantined_tool(&tool.name, "schema nesting exceeds 128 levels");

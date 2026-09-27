@@ -133,6 +133,62 @@ async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request
 }
 
 #[tokio::test]
+async fn draft_07_tool_schema_is_upgraded_on_the_actual_responses_request() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[{"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","content":[{"type":"output_text","text":"Schema received."}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("check schema"))],
+        tools: Some(vec![Tool {
+            name: "legacy".into(),
+            description: "legacy schema".into(),
+            parameters: json!({
+                "$schema":"http://json-schema.org/draft-07/schema#",
+                "type":"object",
+                "properties":{
+                    "pair":{"type":"array","items":[{"type":"string"},{"type":"integer"}],"additionalItems":false},
+                    "gate":{"type":"object","dependencies":{"a":["b"]}},
+                    "name":{"type":"string","nullable":true},
+                    "item":{"$ref":"#/definitions/Item"},
+                    "literal":{"default":{"definitions":{"Example":{}}}}
+                },
+                "definitions":{"Item":{"type":"string"}}
+            }),
+        }]),
+        ..Context::default()
+    };
+    let mut opts = options();
+    opts.request.tool_choice = Some(ToolChoice::Tool("legacy".into()));
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert_eq!(output.text(), "Schema received.");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    let body = &requests[0]["body"];
+    assert_eq!(body["tool_choice"], json!({"type":"function","name":"legacy"}));
+    let parameters = &body["tools"][0]["parameters"];
+    assert_eq!(parameters["$schema"], "https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(parameters["$defs"]["Item"]["type"], "string");
+    assert_eq!(parameters["properties"]["item"]["$ref"], "#/$defs/Item");
+    assert_eq!(parameters["properties"]["pair"]["prefixItems"], json!([{"type":"string"},{"type":"integer"}]));
+    assert_eq!(parameters["properties"]["pair"]["items"], false);
+    assert_eq!(parameters["properties"]["gate"]["dependentRequired"]["a"], json!(["b"]));
+    assert_eq!(parameters["properties"]["name"]["type"], json!(["string", "null"]));
+    assert_eq!(parameters["properties"]["literal"]["default"], json!({"definitions":{"Example":{}}}));
+    assert!(parameters.get("definitions").is_none());
+    assert!(parameters["properties"]["pair"].get("additionalItems").is_none());
+    assert!(parameters["properties"]["gate"].get("dependencies").is_none());
+    assert!(parameters["properties"]["name"].get("nullable").is_none());
+}
+
+#[tokio::test]
 async fn tool_result_is_replayed_on_the_next_real_http_request() {
     let server = FakeUpstream::start(script(json!({"responses":[
         {"events":[
