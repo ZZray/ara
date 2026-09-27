@@ -289,7 +289,8 @@ async fn read_skill_urls() {
         .execute("c", args(json!({"path": "skill://demo:6-6,4004-4004"})), CancellationToken::new(), noop())
         .await
         .unwrap();
-    assert_eq!(text(&multi), "6|body-line-2\n…\n4004|body-line-4000");
+    // The Markdown parser surfaces the paragraph's opening line as context.
+    assert_eq!(text(&multi), "5|body-line-1\n6|body-line-2\n…\n4004|body-line-4000");
     assert!(!text(&multi).contains("[skill://") && multi.details.unwrap()["truncation"].is_null());
 
     let err = |p: &'static str| async move { r(p).await.unwrap_err().0 };
@@ -332,6 +333,71 @@ async fn read_skill_range_includes_context_but_raw_stays_exact() {
         text(&r("skill://demo/references:4-4").await),
         "3|file-3.txt\n4|file-4.txt\n5|file-5.txt\n6|file-6.txt\n7|file-7.txt\n\n[1 more lines in resource. Use :8 to continue]"
     );
+}
+
+#[tokio::test]
+async fn read_skill_disjoint_ranges_include_block_boundaries_without_changing_resource_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    let source = "function one() {\n  return 1;\n}\nfunction two() {\n  return 2;\n}\n";
+    std::fs::write(demo.base_dir.join("blocks.ts"), source).unwrap();
+    let mut ctx = ToolContext::new(&root).with_skills(vec![demo.clone()]).with_edit(pi_edit::EditMode::Hashline, true);
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    let r = |path: &str| {
+        let path = path.to_owned();
+        let read = &read;
+        async move { read.execute("c", args(json!({"path":path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+
+    let body = text(&r("skill://demo/blocks.ts:1-1,4-4").await);
+    assert_eq!(body, "1|function one() {\n…\n3|}\n4|function two() {\n…\n6|}");
+    assert!(read.ctx.edit_store.head(&pi_edit::path_policy::canonical_key(&demo.base_dir.join("blocks.ts"))).is_none());
+    assert_eq!(text(&r("skill://demo/blocks.ts:raw:1-1,4-4").await), "function one() {\n\n…\n\nfunction two() {");
+
+    std::fs::write(demo.base_dir.join("blocks.ts"), source.replace('\n', "\r\n")).unwrap();
+    let crlf = text(&r("skill://demo/blocks.ts:1-1,4-4").await);
+    assert_eq!(crlf, "1|function one() {\r\n…\n3|}\r\n4|function two() {\r\n…\n6|}\r");
+
+    let long_boundary = format!("}} // {}", "x".repeat(50 * 1024 + 100));
+    std::fs::write(
+        demo.base_dir.join("blocks.ts"),
+        format!("function one() {{\n  return 1;\n{long_boundary}\nfunction two() {{\n  return 2;\n}}\n"),
+    )
+    .unwrap();
+    let large = r("skill://demo/blocks.ts:1-1,4-4,100-100").await;
+    let large_text = text(&large);
+    assert!(large_text.contains(&format!("3|{long_boundary}")), "boundary row should not inherit file output limits");
+    assert!(large_text.contains("[Range 100-100 is beyond end of resource (6 lines total); skipped]"));
+    assert!(large.details.as_ref().unwrap()["truncation"].is_null());
+
+    std::fs::write(demo.base_dir.join("unknown.txt"), source).unwrap();
+    assert!(text(&r("skill://demo/unknown.txt:1-1,4-4").await).contains("3|}\n4|function two() {"));
+
+    let mut invalid = b"function one() {\n  // ".to_vec();
+    invalid.push(0xff);
+    invalid.extend_from_slice(b"\n}\nfunction two() {\n  return 2;\n}\n");
+    std::fs::write(demo.base_dir.join("invalid.ts"), invalid).unwrap();
+    let lossy = text(&r("skill://demo/invalid.ts:1-2,4-4").await);
+    assert!(lossy.contains("2|  // �") && lossy.contains("3|}") && lossy.contains("6|}"), "{lossy}");
+
+    std::fs::write(demo.base_dir.join("huge.ts"), format!("{source}// {}\n", "x".repeat(4 * 1024 * 1024))).unwrap();
+    let huge = text(&r("skill://demo/huge.ts:1-1,4-4").await);
+    assert!(huge.contains("3|}") && huge.contains("6|}"), "resource context must not use the local 4 MiB cap");
+
+    let listing = demo.base_dir.join("braces");
+    std::fs::create_dir(&listing).unwrap();
+    for name in ["a {", "b", "c", "}"] {
+        std::fs::write(listing.join(name), b"").unwrap();
+    }
+    assert_eq!(text(&r("skill://demo/braces:1-1,3-3").await), "1|a {\n…\n3|c\n4|}");
+
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let error =
+        read.execute("c", args(json!({"path":"skill://demo/blocks.ts:1-1,4-4"})), cancel, noop()).await.unwrap_err();
+    assert!(error.0.contains("aborted"), "{}", error.0);
 }
 
 /// Fixed OMP resolves skill files as text resources and directory subpaths as

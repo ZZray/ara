@@ -1786,6 +1786,32 @@ async fn read_disjoint_ranges_send_block_boundaries_to_model_and_journal() {
 }
 
 #[tokio::test]
+async fn read_skill_disjoint_ranges_send_block_boundaries_to_model_and_journal() {
+    let env = Env::new();
+    let skill_dir = env.work.path().join(".ara/skills/greeting");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: Greeting\n---\nRead this skill.\n").unwrap();
+    std::fs::write(skill_dir.join("blocks.ts"), "function one() {\n  return 1;\n}\nfunction two() {\n  return 2;\n}\n")
+        .unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_skill_context", "read", "{\"path\":\"skill://greeting/blocks.ts:1-1,4-4\"}"),
+            finish("tool_calls"), done()]},
+        {"events": [text("Both skill function boundaries are visible."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["--line-numbers", "Inspect the skill functions"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Both skill function boundaries are visible.\n");
+    let entries = journal(&env.session_files()[0]);
+    let receipt = entries.iter().find(|entry| entry["message"]["role"] == "toolResult").unwrap();
+    let body = receipt["message"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(body, "1|function one() {\n…\n3|}\n4|function two() {\n…\n6|}");
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"], json!(body));
+}
+
+#[tokio::test]
 async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
     let env = Env::new();
     let work = env.work.path();

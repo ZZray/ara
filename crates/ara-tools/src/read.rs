@@ -515,11 +515,14 @@ fn multi_block_context(
     selected: &[u32],
     numbering: Numbering,
     max_bytes: usize,
+    max_lines: usize,
 ) -> Option<(String, usize)> {
     if selected.is_empty() {
         return None;
     }
-    let lines: Vec<&str> = text.lines().collect();
+    // Internal text resources preserve CRLF verbatim; `str::lines` would
+    // silently strip their CR bytes from selected and context rows.
+    let lines: Vec<&str> = text.split_terminator('\n').collect();
     let mut rows = BTreeMap::new();
     for &line in selected {
         let source = lines.get(line.checked_sub(1)? as usize)?;
@@ -530,7 +533,7 @@ fn multi_block_context(
     let source = pi_edit::diff_string::BlockContextSource { path, lang: None };
     let mut added = false;
     for (line, content) in pi_edit::diff_string::find_block_context_lines(&lines, selected, &source) {
-        if rows.contains_key(&line) || line == 0 || line as usize > lines.len() || rows.len() >= DEFAULT_MAX_LINES {
+        if rows.contains_key(&line) || line == 0 || line as usize > lines.len() || rows.len() >= max_lines {
             continue;
         }
         let row = numbered_multi_row(line, &content, numbering);
@@ -674,8 +677,9 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
             {
                 let bound = end.map_or_else(|| start.to_string(), |end| format!("{start}-{end}"));
                 let notice = format!("[Range {bound} is beyond end of {entity} ({total} lines total); skipped]");
-                if out.len() + notices.len() + usize::from(!out.is_empty() || !notices.is_empty()) + notice.len()
-                    <= DEFAULT_MAX_BYTES
+                if text_resource
+                    || out.len() + notices.len() + usize::from(!out.is_empty() || !notices.is_empty()) + notice.len()
+                        <= DEFAULT_MAX_BYTES
                 {
                     if !out.is_empty() || !notices.is_empty() {
                         notices.push('\n');
@@ -697,9 +701,12 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
         if cancel.is_cancelled() {
             return Err(format!("Read of {display} was aborted"));
         }
-        if let Some((rendered, count)) =
-            multi_block_context(full_text, path, &seen, numbering, DEFAULT_MAX_BYTES.saturating_sub(notices.len()))
-        {
+        let (max_bytes, max_lines) = if text_resource {
+            (usize::MAX, usize::MAX)
+        } else {
+            (DEFAULT_MAX_BYTES.saturating_sub(notices.len()), DEFAULT_MAX_LINES)
+        };
+        if let Some((rendered, count)) = multi_block_context(full_text, path, &seen, numbering, max_bytes, max_lines) {
             out = rendered;
             emitted = count;
         }
@@ -822,7 +829,12 @@ impl AgentTool for ReadTool {
                     size,
                     &display,
                     &sel,
-                    ReadRender { numbering, text_resource: true, block_context: None },
+                    ReadRender {
+                        numbering,
+                        text_resource: true,
+                        block_context: (!sel.raw && !sel.multi_ranges.is_empty())
+                            .then_some((content.as_str(), abs.as_path())),
+                    },
                     &cancel,
                 )
                 .map_err(ToolError)?;
@@ -933,7 +945,12 @@ impl AgentTool for ReadTool {
                     *size,
                     &display2,
                     &sel,
-                    ReadRender { numbering, text_resource: true, block_context: None },
+                    ReadRender {
+                        numbering,
+                        text_resource: true,
+                        block_context: (!raw && !sel.multi_ranges.is_empty())
+                            .then_some((content.as_str(), abs2.as_path())),
+                    },
                     &cancel2,
                 )?
             } else {

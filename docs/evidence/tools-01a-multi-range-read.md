@@ -25,9 +25,10 @@ complete, buffered UTF-8 local files up to 4 MiB using the existing
 `pi-edit::diff_string::find_block_context_lines` implementation. Requested
 rows and fitting out-of-bounds notices take priority over optional context;
 newly displayed boundary rows enter hashline provenance. Raw reads, single
-ranges, and larger streamed files retain their prior output. Immutable
-`skill://` resources still omit block context, although fixed OMP's
-in-memory renderer includes it. This is not full CA-TOOL-READ parity. ARA
+ranges, and larger streamed files retain their prior output. A subsequent
+WIP follow-up adds the fixed OMP block context to immutable `skill://`
+in-memory resources, with their original text and uncapped result policy.
+This is not full CA-TOOL-READ parity. ARA
 also caps ordinary multi-range content while fixed OMP's in-memory builder
 does not impose that aggregate cap.
 
@@ -88,12 +89,46 @@ reported no remaining high-confidence blocker. The reviewer ran 2/2 focused
 Tools, 1/1 Edit, 1/1 CLI and 3/3 prior read unit tests; the extra cancellation
 unit test was added afterward and passed locally (4/4 read unit tests).
 
+## `skill://` in-memory resource context follow-up (WIP)
+
+Fixed OMP `read.ts::#handleInternalUrl` passes skill resource content to
+`read-format.ts::buildInMemorySelectorResult`, whose non-raw multi-range
+branch calls `buildLineEntriesWithBlockContext`. ARA now passes the same
+decoded resource to its existing boundary finder, including directory text
+resources. Unlike local editable files, resource text retains CRLF and
+replacement characters from lossy UTF-8 decoding, has no hashline tag, and
+is not subject to ARA's 50-KB/3000-line content cap. The resource-specific
+out-of-bounds notices now follow that uncapped contract too. Raw and
+single-range output, local file reads, and other tools are unchanged.
+
+| Check | Observed result |
+| --- | --- |
+| New `read_skill_disjoint_ranges_include_block_boundaries_without_changing_resource_text` before implementation | Failed: `skill://` returned only the two selected rows. |
+| Resource tests after implementation | Passed: TS and unknown-extension boundaries, Markdown paragraph context, CRLF, lossy decode, raw exactness, a >50-KB boundary with a specific out-of-bounds notice, a >4-MiB resource, directory listing context, cancellation and no editable tag. |
+| Existing `read_skill_urls` after implementation | Initially failed because Markdown AST exposed the paragraph opening line; its expected output was updated to that source-backed behavior. |
+| Real `ara` CLI fake-upstream/Session test | Passed with explicit `--line-numbers`: immutable resource uses `N|` rows; boundary rows reached the journal receipt and next model request. |
+| `cargo test -p ara-tools --test skill_urls --quiet` with Git Bash added to this command's PATH | 16/16 passed. |
+| `cargo test -p ara-tools --test tools read_ --quiet`; `cargo test -p ara-tools --lib read::tests --quiet` | 9/9 and 4/4 passed. |
+| `python scripts/verify_backend.py` on the final worktree | Owned formatting and workspace all-target/all-feature Clippy passed. Workspace tests stopped at the existing Windows Bash `deadline_during_a_tool_and_zero_budget_exit_nonzero` assertion (CLI e2e 46/47 passed; new resource test passed); exit 101. |
+| `cargo test --workspace --doc --all-features --quiet` | Passed; zero documentation test cases. |
+| `cargo deny check --hide-inclusion-graph`; `python scripts/omp_inventory.py check`; `git diff --check` | All exited 0; existing Cargo duplicate/no-license-field and Windows line-ending warnings remain. |
+
+Independent Codex reviewer `/root/resource_context_pre_review` confirmed
+the fixed OMP resource path before implementation and reviewed the diff.
+The reviewer found that the old Markdown expectation lacked its AST opening
+line and that the new CLI test needed explicit `--line-numbers` with `N|`
+resource rows. A directory listing behavior test filled the last identified
+coverage gap. Final read-only review covered `read.rs`, `skill_urls.rs` and
+the CLI e2e diff, ran the full `skill_urls` suite and focused tests, and
+reported no remaining high-confidence blocker. Complete resource AST analysis
+adds a possible memory peak; no failure was observed. The Windows gate and
+bounded real-model task still prevent acceptance.
+
 ## Acceptance and next steps
 
 TOOLS-01a's previously accepted single-range subset is unchanged; this
-extension remains WIP. The complete Windows Bash gate, a bounded real-model
-multi-range task with tool result and artifact inspection, and resource
-block-context parity remain open. No module or formal gate count
+extension remains WIP. The complete Windows Bash gate and a bounded real-model
+multi-range task with tool result and artifact inspection remain open. No module or formal gate count
 advances. Windows Bash work is a separate stable lifecycle change awaiting
 the explicit scope decision recorded in
 [`windows-bash-process-tree.md`](windows-bash-process-tree.md).
