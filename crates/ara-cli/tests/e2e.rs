@@ -572,6 +572,104 @@ async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
 }
 
 #[tokio::test]
+async fn responses_tool_history_replays_to_anthropic_after_cli_restart() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+
+    let env = Env::new();
+    let responses = upstream(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_write","call_id":"call_write","name":"write"}}},
+            {"data":{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"cross-provider.txt\",\"content\":\"written once\\n\"}"}},
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_write","call_id":"call_write","name":"write","arguments":"{}"}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_written","content":[{"type":"output_text","text":"Written once."}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})).await;
+    let first = output(env.cmd(
+        &responses.base_url(),
+        &["--api", "openai-responses", "--tools", "write", "Write cross-provider.txt once"],
+    ))
+    .await;
+    assert_eq!(first.status.code(), Some(0), "{}", text_of(&first).1);
+    assert_eq!(text_of(&first).0, "Written once.\n");
+    let path = env.work.path().join("cross-provider.txt");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "written once\n");
+    let sessions = env.session_files();
+    assert_eq!(sessions.len(), 1);
+    let before = journal(&sessions[0]);
+    let raw_call = before
+        .iter()
+        .find_map(|entry| {
+            entry["message"]["content"]
+                .as_array()?
+                .iter()
+                .find(|block| block["type"] == "toolCall")?
+                .get("id")?
+                .as_str()
+        })
+        .unwrap()
+        .to_owned();
+    let raw_result =
+        before
+            .iter()
+            .find_map(|entry| {
+                if entry["message"]["role"] == "toolResult" { entry["message"]["toolCallId"].as_str() } else { None }
+            })
+            .unwrap()
+            .to_owned();
+    assert_eq!(raw_call, "call_write|fc_write");
+    assert_eq!(raw_result, "call_write|fc_write");
+    std::fs::write(&path, "sentinel after first process\n").unwrap();
+
+    let anthropic = upstream(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_continue"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"The file was written once."}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+        frame(json!({"type":"message_stop"}))
+    ]}]})).await;
+    let resumed = output(env.cmd(
+        &anthropic.base_url(),
+        &["--api", "anthropic-messages", "--resume", sessions[0].to_str().unwrap(), "Confirm the prior write"],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    assert_eq!(text_of(&resumed).0, "The file was written once.\n");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "sentinel after first process\n");
+    assert_eq!(anthropic.served(), 1);
+    let requests = anthropic.requests.lock().await;
+    let messages = requests[0]["body"]["messages"].as_array().unwrap();
+    let call = messages
+        .iter()
+        .find_map(|message| message["content"].as_array()?.iter().find(|block| block["type"] == "tool_use"))
+        .unwrap();
+    let result = messages
+        .iter()
+        .find_map(|message| message["content"].as_array()?.iter().find(|block| block["type"] == "tool_result"))
+        .unwrap();
+    let wire_id = call["id"].as_str().unwrap();
+    assert!(!wire_id.contains('|') && !wire_id.is_empty() && wire_id.len() <= 64);
+    assert_eq!(result["tool_use_id"], wire_id);
+    assert!(result["content"].to_string().contains("cross-provider.txt"));
+    drop(requests);
+    let after = journal(&sessions[0]);
+    assert_eq!(&after[..before.len()], before.as_slice(), "resume must append without rewriting raw history");
+    assert_eq!(after.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+    assert!(after.iter().any(|entry| {
+        entry["message"]["content"]
+            .as_array()
+            .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "toolCall" && block["id"] == raw_call))
+    }));
+    assert!(after.iter().any(|entry| entry["message"]["toolCallId"] == raw_result));
+}
+
+#[tokio::test]
 async fn responses_stateful_chains_tool_result_and_resumes_with_full_history() {
     let env = Env::new();
     let up = upstream(json!({"responses": [

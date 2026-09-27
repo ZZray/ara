@@ -64,3 +64,32 @@ reviewer ran `git diff --check` but not Cargo.
 Actual Anthropic acceptance of these IDs, a bounded real-model cross-provider
 task, other Anthropic parity work and the full Windows backend gate remain
 open. Counts stay AI 6/8, registered points 27/37 and P0–P6 gates 1/7.
+
+## Real CLI restart and persisted history follow-up
+
+The `responses_tool_history_replays_to_anthropic_after_cli_restart` test runs
+two separate `ara` processes against controlled upstreams. The first takes a
+Responses `write` call and writes `cross-provider.txt`; its Session journal
+retains `call_write|fc_write` on the call and result. The test then changes the
+file to a different sentinel value. The second process resumes that same
+Session on `--api anthropic-messages`. Its outbound request carries the real
+write result under one legal, matching `tool_use`/`tool_result` ID. The
+sentinel survives, so a replay of the old write did not occur. The original
+journal entries remain an exact prefix of the appended journal when parsed
+as JSON entries, and its tool-result count remains one. The second process
+exits 0 with the scripted answer.
+
+| Check on this follow-up | Result |
+| --- | --- |
+| `cargo test -p ara-cli --test e2e responses_tool_history_replays_to_anthropic_after_cli_restart -- --nocapture` | Exit 0, 1/1 actual CLI restart test after the independent review's sentinel and journal-prefix corrections. |
+| `python scripts/verify_backend.py` | Exit 101: owned formatting and workspace strict Clippy passed; CLI e2e reached 41/42 passing. Only the existing Windows Bash deadline assertion failed, now at `crates/ara-cli/tests/e2e.rs:1563`. |
+
+Independent Codex reviewer `/root/anthropic_id_diff_review` first found that
+checking unchanged file bytes would not detect an identical overwrite, and
+that checking only the presence of the old ID did not prove raw journal
+preservation. After adding the sentinel and exact journal-prefix assertions,
+the reviewer rechecked the test and found both evidence gaps resolved. The
+reviewer ran `git diff --check`; Cargo was run separately by the author.
+This strengthens host evidence but does not prove a real Anthropic model
+accepted the request or clear the full backend gate. Formal counts stay
+unchanged.
