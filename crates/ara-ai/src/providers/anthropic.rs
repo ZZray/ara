@@ -27,6 +27,7 @@ pub const API: &str = "anthropic-messages";
 // The CLI does not yet resolve OMP catalogue limits for every model.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 const MAX_TOOL_JSON_BYTES: usize = 1024 * 1024;
+const MAX_TOOL_SCHEMA_DEPTH: usize = 128;
 
 #[derive(Clone, Debug)]
 pub struct StreamOptions {
@@ -211,11 +212,143 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
     wire
 }
 
+// Pinned OMP anthropic.ts::normalizeAnthropicToolSchema keeps only Messages
+// input_schema keywords and moves unsupported constraints into descriptions.
+fn normalize_tool_schema(schema: &Value, depth: usize, is_root: bool) -> Result<Value, ProviderError> {
+    if depth > MAX_TOOL_SCHEMA_DEPTH {
+        return Err(ProviderError::Config("Anthropic tool input schema is too deep".into()));
+    }
+    if let Value::Array(children) = schema {
+        return Ok(Value::Array(
+            children.iter().map(|child| normalize_tool_schema(child, depth + 1, false)).collect::<Result<_, _>>()?,
+        ));
+    }
+    let Some(source) = schema.as_object() else { return Ok(schema.clone()) };
+    if !is_root && source.is_empty() {
+        return Ok(Value::Bool(true));
+    }
+    let scalar_type = source
+        .get("type")
+        .and_then(|kind| {
+            kind.as_str().or_else(|| {
+                kind.as_array().and_then(|kinds| kinds.iter().filter_map(Value::as_str).find(|kind| *kind != "null"))
+            })
+        })
+        .or_else(|| source.get("properties").filter(|value| value.is_object()).map(|_| "object"))
+        .or_else(|| {
+            (source.contains_key("items") || source.get("prefixItems").is_some_and(Value::is_array)).then_some("array")
+        });
+    let mut result = Map::new();
+    let mut spill = Vec::new();
+    for (key, value) in source {
+        let universal = matches!(
+            key.as_str(),
+            "$ref"
+                | "$defs"
+                | "$schema"
+                | "definitions"
+                | "type"
+                | "anyOf"
+                | "allOf"
+                | "enum"
+                | "const"
+                | "description"
+                | "title"
+                | "default"
+                | "nullable"
+        );
+        let typed = match scalar_type {
+            Some("object") => matches!(key.as_str(), "properties" | "required" | "additionalProperties"),
+            Some("array") => matches!(key.as_str(), "items" | "prefixItems" | "minItems"),
+            Some("string") => key == "format",
+            _ => false,
+        };
+        let root_combinator = is_root && matches!(key.as_str(), "anyOf" | "allOf" | "oneOf");
+        if !root_combinator && (universal || typed) {
+            result.insert(key.clone(), value.clone());
+        } else {
+            spill.push((key.clone(), value.clone()));
+        }
+    }
+    if scalar_type == Some("string")
+        && let Some(format) = result.get("format").and_then(Value::as_str)
+        && !matches!(
+            format,
+            "date-time" | "time" | "date" | "duration" | "email" | "hostname" | "uri" | "ipv4" | "ipv6" | "uuid"
+        )
+    {
+        let value = result.remove("format").expect("format exists");
+        spill.push(("format".into(), value));
+    }
+    if scalar_type == Some("array")
+        && let Some(value) = result.get("minItems")
+        && value.as_f64() != Some(0.0)
+        && value.as_f64() != Some(1.0)
+    {
+        let value = result.remove("minItems").expect("minItems exists");
+        spill.push(("minItems".into(), value));
+    }
+    if scalar_type == Some("object") && !result.contains_key("additionalProperties") {
+        result.insert("additionalProperties".into(), Value::Bool(false));
+    }
+    for key in ["properties", "$defs", "definitions"] {
+        if let Some(Value::Object(children)) = result.get_mut(key) {
+            for child in children.values_mut() {
+                *child = normalize_tool_schema(child, depth + 1, false)?;
+            }
+        }
+    }
+    if let Some(value @ Value::Object(_)) = result.get_mut("additionalProperties") {
+        let normalized = normalize_tool_schema(value, depth + 1, false)?;
+        *value = if normalized.as_object().is_some_and(Map::is_empty) { Value::Bool(true) } else { normalized };
+    }
+    for key in ["items", "prefixItems", "anyOf", "allOf"] {
+        if let Some(value) = result.get_mut(key) {
+            match value {
+                Value::Array(children) => {
+                    for child in children {
+                        *child = normalize_tool_schema(child, depth + 1, false)?;
+                    }
+                }
+                Value::Object(_) if key == "items" => *value = normalize_tool_schema(value, depth + 1, false)?,
+                _ => {}
+            }
+        }
+    }
+    append_schema_spill(&mut result, &spill);
+    Ok(Value::Object(result))
+}
+
+fn append_schema_spill(result: &mut Map<String, Value>, spill: &[(String, Value)]) {
+    if spill.is_empty() {
+        return;
+    }
+    let entries: Vec<String> = spill.iter().map(|(key, value)| format!("{key}: {value}")).collect();
+    let formatted = format!("{{{}}}", entries.join(", "));
+    let existing = result.get("description").and_then(Value::as_str).unwrap_or("");
+    let description = if existing.is_empty() { formatted } else { format!("{existing}\n\n{formatted}") };
+    result.insert("description".into(), Value::String(description));
+}
+
 fn tool_wire(tool: &Tool) -> Result<Value, ProviderError> {
     if !tool.parameters.is_object() {
         return Err(ProviderError::Config(format!("tool {} input schema must be an object", tool.name)));
     }
-    Ok(json!({"name":tool.name,"description":tool.description,"input_schema":tool.parameters}))
+    let mut schema = crate::schema_draft::upgrade_json_schema(&tool.parameters, 0)
+        .map_err(|_| ProviderError::Config(format!("tool {} input schema is too deep", tool.name)))?;
+    let root = schema.as_object_mut().expect("checked input schema object");
+    root.insert("type".into(), json!("object"));
+    if !root.get("properties").is_some_and(Value::is_object) {
+        root.insert("properties".into(), json!({}));
+    }
+    let required = root
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|entries| entries.iter().filter(|entry| entry.is_string()).cloned().collect())
+        .unwrap_or_default();
+    root.insert("required".into(), Value::Array(required));
+    let input_schema = normalize_tool_schema(&schema, 0, true)?;
+    Ok(json!({"name":tool.name,"description":tool.description,"input_schema":input_schema}))
 }
 
 pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {

@@ -138,6 +138,141 @@ async fn text_tool_usage_and_followup_wire_are_preserved() {
 }
 
 #[tokio::test]
+async fn actual_messages_request_normalizes_legacy_and_nested_tool_schemas() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_schema"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let original = json!({
+        "$schema":"http://json-schema.org/draft-07/schema#",
+        "type":"array",
+        "definitions":{"Code":{"type":"integer","minimum":1}},
+        "properties":{
+            "code":{"$ref":"#/definitions/Code"},
+            "email":{"type":"string","format":"email","default":{"type":"object","pattern":"literal"}},
+            "color":{"type":"string","description":"Color hint","pattern":"^#[0-9a-f]+$","format":"color-hex"},
+            "count":{"type":["integer","null"],"minimum":0},
+            "tags":{"type":"array","items":{"type":"string","minLength":1},"minItems":2,"uniqueItems":true},
+            "choice":{"anyOf":[{"type":"string"},{"type":"number","minimum":1}]},
+            "metadata":{"type":"object","additionalProperties":{}},
+            "open":{"type":"object","additionalProperties":true},
+            "typed":{"type":"object","additionalProperties":{"type":"integer","minimum":0}},
+            "closed":{"type":"object","properties":{"name":{"type":"string"}}},
+            "any":true
+        },
+        "required":["email",42,false],
+        "allOf":[{"required":["email"]}],
+        "oneOf":[{"required":["code"]}],
+        "unsupportedRoot":"hint"
+    });
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("validate schema"))],
+        tools: Some(vec![Tool {
+            name: "inspect".into(),
+            description: "Inspect input".into(),
+            parameters: original.clone(),
+        }]),
+        ..Default::default()
+    };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context.clone(), options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+    assert_eq!(context.tools.as_ref().unwrap()[0].parameters, original);
+    let requests = server.requests.lock().await;
+    let schema = &requests[0]["body"]["tools"][0]["input_schema"];
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], json!(["email"]));
+    assert_eq!(schema["$schema"], "https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(schema["$defs"]["Code"]["description"], "{minimum: 1}");
+    assert_eq!(schema["properties"]["code"]["$ref"], "#/$defs/Code");
+    assert_eq!(schema["properties"]["email"]["format"], "email");
+    assert_eq!(schema["properties"]["email"]["default"], original["properties"]["email"]["default"]);
+    assert_eq!(
+        schema["properties"]["color"]["description"],
+        "Color hint\n\n{pattern: \"^#[0-9a-f]+$\", format: \"color-hex\"}"
+    );
+    assert!(schema["properties"]["color"].get("format").is_none());
+    assert_eq!(schema["properties"]["count"]["description"], "{minimum: 0}");
+    assert_eq!(schema["properties"]["choice"]["anyOf"][1]["description"], "{minimum: 1}");
+    assert_eq!(schema["properties"]["tags"]["items"]["description"], "{minLength: 1}");
+    assert!(schema["properties"]["tags"].get("minItems").is_none());
+    assert!(schema["properties"]["tags"]["description"].as_str().unwrap().contains("minItems: 2"));
+    assert_eq!(schema["properties"]["metadata"]["additionalProperties"], true);
+    assert_eq!(schema["properties"]["open"]["additionalProperties"], true);
+    assert_eq!(schema["properties"]["typed"]["additionalProperties"]["description"], "{minimum: 0}");
+    assert_eq!(schema["properties"]["closed"]["additionalProperties"], false);
+    assert_eq!(schema["properties"]["any"], true);
+    assert!(schema.get("allOf").is_none() && schema.get("oneOf").is_none());
+    assert!(schema["description"].as_str().unwrap().contains("unsupportedRoot: \"hint\""));
+    assert!(schema["description"].as_str().unwrap().contains("allOf:"));
+    assert!(schema["description"].as_str().unwrap().contains("oneOf:"));
+}
+
+#[test]
+fn empty_and_open_tool_objects_keep_their_non_strict_wire_meaning() {
+    let endpoint = model("http://fixture/v1");
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("hi"))],
+        tools: Some(vec![
+            Tool { name: "empty".into(), description: String::new(), parameters: json!({}) },
+            Tool { name: "open".into(), description: String::new(), parameters: json!({"additionalProperties":{}}) },
+            Tool {
+                name: "union".into(),
+                description: String::new(),
+                parameters: json!({
+                    "properties":{"anything":{},"value":{"oneOf":[{"type":"string"},{"type":"number"}]}},
+                    "anyOf":[{"required":["anything"]}],
+                    "required":["anything"]
+                }),
+            },
+        ]),
+        ..Default::default()
+    };
+    let params = anthropic::build_params(&endpoint, &context, &options()).unwrap();
+    assert_eq!(
+        params["tools"][0]["input_schema"],
+        json!({"type":"object","properties":{},"required":[],"additionalProperties":false})
+    );
+    assert_eq!(params["tools"][1]["input_schema"]["additionalProperties"], true);
+    assert_eq!(params["tools"][2]["input_schema"]["properties"]["anything"], true);
+    assert!(params["tools"][2]["input_schema"].get("anyOf").is_none());
+    assert!(params["tools"][2]["input_schema"]["description"].as_str().unwrap().contains("anyOf:"));
+    assert!(
+        params["tools"][2]["input_schema"]["properties"]["value"]["description"].as_str().unwrap().contains("oneOf:")
+    );
+    assert!(params["tools"][0].get("strict").is_none());
+    assert!(params["tools"][1].get("strict").is_none());
+    assert!(params["tools"][2].get("strict").is_none());
+}
+
+#[test]
+fn excessively_deep_tool_schema_fails_before_sending_a_request() {
+    let mut nested = json!({"type":"string"});
+    for _ in 0..130 {
+        nested = json!({"type":"array","items":nested});
+    }
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("hi"))],
+        tools: Some(vec![Tool {
+            name: "deep".into(),
+            description: String::new(),
+            parameters: json!({"type":"object","properties":{"value":nested}}),
+        }]),
+        ..Default::default()
+    };
+    let error = anthropic::build_params(&model("http://fixture/v1"), &context, &options()).unwrap_err();
+    assert!(error.to_string().contains("tool input schema is too deep"));
+}
+
+#[tokio::test]
 async fn signed_thinking_replays_only_to_the_same_model() {
     let server = FakeUpstream::start(
         upstream(vec![
