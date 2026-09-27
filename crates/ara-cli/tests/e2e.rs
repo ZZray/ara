@@ -219,6 +219,131 @@ async fn anthropic_messages_runs_tool_and_replays_after_restart() {
 }
 
 #[tokio::test]
+async fn anthropic_strict_rejection_falls_back_and_stays_disabled_in_one_cli_session() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    std::fs::write(env.work.path().join("math.txt"), "one minus one\n").unwrap();
+    let edit_args = json!({"path":"math.txt","old_string":"minus","new_string":"plus"}).to_string();
+    let up = upstream(json!({"responses":[
+        {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"The compiled grammar is too large"}}).to_string()},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_edit"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_edit","name":"edit","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":edit_args}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_edited"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Edited once."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_checked"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Confirmed once."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]})).await;
+    let out = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "anthropic-messages",
+            "--anthropic-strict-tools",
+            "--tools",
+            "edit",
+            "--edit-mode",
+            "replace",
+            "Change minus to plus",
+            "Confirm the edit",
+        ],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Confirmed once.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("math.txt")).unwrap(), "one plus one\n");
+    assert_eq!(up.served(), 4);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    for request in requests.iter().skip(1) {
+        assert!(request["body"]["tools"][0].get("strict").is_none());
+    }
+    assert_eq!(requests[0]["body"]["messages"], requests[1]["body"]["messages"]);
+    assert_eq!(requests[2]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_edit");
+    assert_eq!(requests[3]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_edit");
+    assert!(requests[3]["body"]["messages"].to_string().contains("Confirm the edit"));
+    drop(requests);
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let entries = journal(&files[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 2);
+    let results: Vec<_> = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["message"]["toolCallId"], "toolu_edit");
+    assert_eq!(results[0]["message"]["isError"], false);
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| {
+                entry["message"]["role"] == "assistant"
+                    && entry["message"]["content"].as_array().is_some_and(|blocks| {
+                        blocks.iter().any(|block| block["type"] == "toolCall" && block["id"] == "toolu_edit")
+                    })
+            })
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn anthropic_strict_option_rejects_other_api_and_unrelated_bad_request() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"Unrelated request error"}}).to_string()}
+    ]})).await;
+    let invalid = output(env.cmd(&up.base_url(), &["--anthropic-strict-tools", "hello"])).await;
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(text_of(&invalid).1.contains("--anthropic-strict-tools requires --api anthropic-messages"));
+    assert!(env.session_files().is_empty());
+    assert_eq!(up.served(), 0);
+
+    std::fs::write(env.work.path().join("math.txt"), "one minus one\n").unwrap();
+    let rejected = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "anthropic-messages",
+            "--anthropic-strict-tools",
+            "--tools",
+            "edit",
+            "--edit-mode",
+            "replace",
+            "Edit math.txt",
+        ],
+    ))
+    .await;
+    assert_eq!(rejected.status.code(), Some(1), "{}", text_of(&rejected).1);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("math.txt")).unwrap(), "one minus one\n");
+    assert_eq!(up.served(), 1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    let entries = journal(&env.session_files()[0]);
+    assert!(entries.iter().all(|entry| entry["message"]["role"] != "toolResult"));
+    assert_eq!(entries.last().unwrap()["message"]["stopReason"], "error");
+}
+
+#[tokio::test]
 async fn anthropic_explicit_max_tokens_reaches_the_real_host_request() {
     fn frame(value: Value) -> Value {
         let name = value["type"].as_str().unwrap();

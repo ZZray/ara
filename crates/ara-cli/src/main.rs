@@ -139,6 +139,10 @@ struct Args {
     /// Requires --api openai-responses; disabled by default.
     #[arg(long)]
     responses_stateful: bool,
+    /// Request strict Anthropic tool schemas on a compatible custom endpoint.
+    /// Requires --api anthropic-messages; official routes select strict automatically.
+    #[arg(long)]
+    anthropic_strict_tools: bool,
     #[arg(long)]
     temperature: Option<f64>,
     /// Replace the default system prompt (text, or a file path). Without it,
@@ -337,6 +341,9 @@ fn resolve_route(args: &Args) -> Result<Route> {
     }
     if args.responses_stateful && args.api != Api::OpenaiResponses {
         bail!("--responses-stateful requires --api openai-responses");
+    }
+    if args.anthropic_strict_tools && args.api != Api::AnthropicMessages {
+        bail!("--anthropic-strict-tools requires --api anthropic-messages");
     }
     if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
         bail!("--report-request-text-tokens requires --api openai-completions");
@@ -603,6 +610,7 @@ async fn run(args: Args) -> Result<i32> {
             client,
             base: ara_ai::providers::anthropic::StreamOptions {
                 api_key: stream_options.api_key,
+                strict_tools: args.anthropic_strict_tools.then_some(true),
                 provider_session_state: Some(Arc::new(Default::default())),
                 extra_headers: stream_options.extra_headers,
                 first_event_timeout: stream_options.first_event_timeout,
