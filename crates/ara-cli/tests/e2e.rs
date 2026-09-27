@@ -241,6 +241,7 @@ async fn responses_reasoning_history_survives_tool_turn_and_restart_without_json
         .unwrap();
     assert_eq!(reasoning_turn["message"]["content"][0]["thinking"], "Need a file");
     assert_eq!(reasoning_turn["message"]["providerPayload"]["items"][0]["encrypted_content"], secret);
+    assert_eq!(reasoning_turn["message"]["providerPayload"]["dt"], true);
     let resumed = output(env.cmd(
         &up.base_url(),
         &["--api", "openai-responses", "--reasoning", "--resume", session[0].to_str().unwrap(), "Continue"],
@@ -252,15 +253,18 @@ async fn responses_reasoning_history_survives_tool_turn_and_restart_without_json
     for request in requests.iter() {
         assert_eq!(request["body"]["include"], json!(["reasoning.encrypted_content"]));
     }
-    for index in [1, 2] {
-        let input = requests[index]["body"]["input"].as_array().unwrap();
-        let pos =
-            input.iter().position(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret).unwrap();
-        assert_eq!(input[pos + 1]["phase"], "commentary");
-        assert_eq!(input[pos + 2]["call_id"], "call_reason");
-        assert_eq!(input[pos + 3]["type"], "function_call_output");
-        assert_eq!(input[pos + 3]["call_id"], "call_reason");
-    }
+    let warm_input = requests[1]["body"]["input"].as_array().unwrap();
+    let pos =
+        warm_input.iter().position(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret).unwrap();
+    assert_eq!(warm_input[pos + 1]["phase"], "commentary");
+    assert_eq!(warm_input[pos + 2]["call_id"], "call_reason");
+    assert_eq!(warm_input[pos + 3]["type"], "function_call_output");
+    assert_eq!(warm_input[pos + 3]["call_id"], "call_reason");
+    let cold_input = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(cold_input.iter().all(|item| item["type"] != "reasoning"));
+    assert!(cold_input.iter().any(|item| item["type"] == "message" && item["content"][0]["text"] == "Writing it."));
+    assert!(cold_input.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_reason"));
+    assert!(cold_input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_reason"));
 }
 
 #[tokio::test]

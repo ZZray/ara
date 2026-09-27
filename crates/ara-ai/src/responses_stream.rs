@@ -783,6 +783,7 @@ impl ResponsesStreamState {
                             if size <= 32 * 1024 * 1024 {
                                 self.output.provider_payload = Some(json!({
                                     "type": "openaiResponsesHistory", "provider": self.output.provider,
+                                    "dt": true,
                                     "endpointSha256": self.endpoint_fingerprint,
                                     "items": items,
                                 }));

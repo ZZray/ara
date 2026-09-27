@@ -1,12 +1,12 @@
-//! Stateless OpenAI-compatible Responses request encoding.
+//! OpenAI-compatible Responses request encoding and transient replay state.
 //!
 //! Source: pinned OMP `packages/ai/src/providers/openai-responses.ts`
 //! (`buildParams`, `convertTools`) and `openai-shared.ts`
 //! (`buildResponsesInput`, `appendResponsesToolResultMessages`) at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
-//! This module is a request encoder only. Stream decoding, host selection and
-//! native reasoning item replay is limited to same-model stateless history.
+//! Stream decoding and host selection remain separate. Native reasoning replay
+//! is limited to same-model history after the provider session has warmed.
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
@@ -36,6 +36,24 @@ pub struct RequestOptions {
     pub tool_choice: Option<ToolChoice>,
     /// Host-confirmed input capability; unknown defaults to text only.
     pub supports_images: bool,
+    /// `None` preserves stateless direct-call replay; a hosted cold session sets `false`.
+    pub native_history_replay: Option<bool>,
+}
+
+/// Host-owned, transient replay warmup for one Responses session.
+#[derive(Debug, Default)]
+pub struct ProviderSessionState {
+    warmed: Mutex<HashMap<String, bool>>,
+}
+
+impl ProviderSessionState {
+    fn is_warmed(&self, provider: &str) -> bool {
+        self.warmed.lock().unwrap_or_else(|error| error.into_inner()).get(provider).copied().unwrap_or(false)
+    }
+
+    fn warm(&self, provider: &str) {
+        self.warmed.lock().unwrap_or_else(|error| error.into_inner()).insert(provider.to_owned(), true);
+    }
 }
 
 fn content_parts(content: &UserContent, supports_images: bool) -> Vec<Value> {
@@ -153,6 +171,11 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value
     {
         return None;
     }
+    // Old ARA payloads omitted `dt` but were incremental. A full snapshot
+    // (`dt: false`) cannot be validated against one assistant turn here.
+    if !matches!(payload.get("dt"), None | Some(Value::Bool(true))) {
+        return None;
+    }
     let items = payload.get("items")?.as_array()?;
     if items.len() != message.content.len() || items.len() > 1024 {
         return None;
@@ -242,7 +265,9 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 }
             }
             Message::Assistant(assistant) => {
-                if let Some(items) = native_history(assistant, model) {
+                if options.native_history_replay.unwrap_or(true)
+                    && let Some(items) = native_history(assistant, model)
+                {
                     for (mut item, block) in items.into_iter().zip(&assistant.content) {
                         if let AssistantBlock::ToolCall(call) = block {
                             let base = call_id(&call.id, &assistant.api);
@@ -358,6 +383,8 @@ pub struct StreamOptions {
     pub idle_timeout: Option<Duration>,
     pub extra_headers: Vec<(String, String)>,
     pub retry: RetryPolicy,
+    /// Shared only by calls in the same host session; never persisted.
+    pub session_state: Option<Arc<ProviderSessionState>>,
 }
 
 impl Default for StreamOptions {
@@ -370,6 +397,7 @@ impl Default for StreamOptions {
             idle_timeout: Some(Duration::from_secs(300)),
             extra_headers: Vec::new(),
             retry: RetryPolicy::default(),
+            session_state: None,
         }
     }
 }
@@ -402,6 +430,11 @@ fn stream_once(
         output.duration = Some(start.elapsed().as_millis() as u64);
         match result {
             Ok(()) => {
+                if let Some(session_state) = &options.session_state
+                    && native_history(&output, &model).is_some()
+                {
+                    session_state.warm(&model.provider);
+                }
                 let reason = output.stop_reason;
                 let _ = sink.push(AssistantMessageEvent::Done { reason, message: output }).await;
             }
@@ -438,7 +471,11 @@ async fn run(
         return Err(ProviderError::Config("Responses request has no base URL".into()));
     }
     let url = format!("{base}/responses");
-    let body = build_request(model, context, &options.request)?;
+    let mut request = options.request.clone();
+    if let Some(session_state) = &options.session_state {
+        request.native_history_replay = Some(session_state.is_warmed(&model.provider));
+    }
+    let body = build_request(model, context, &request)?;
     let mut headers = Vec::new();
     if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
         headers.push(("Authorization".to_owned(), format!("Bearer {key}")));
@@ -586,6 +623,7 @@ mod tests {
                 temperature: Some(0.25),
                 tool_choice: Some(ToolChoice::Tool("read".into())),
                 supports_images: false,
+                native_history_replay: None,
             },
         )
         .unwrap();
@@ -648,10 +686,27 @@ mod tests {
         assert_eq!(input[0]["encrypted_content"], "opaque");
         assert!(input[0].get("status").is_none());
         assert_eq!(input[1]["phase"], "commentary");
+        let cold_input = build_request(
+            &endpoint,
+            &Context { messages: vec![Message::Assistant(assistant.clone())], ..Context::default() },
+            &RequestOptions { native_history_replay: Some(false), ..RequestOptions::default() },
+        )
+        .unwrap()["input"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(cold_input.len(), 1);
+        assert_eq!(cold_input[0]["content"][0]["text"], "hello");
+        assert!(cold_input[0].get("phase").is_none());
         let mut changed = assistant.clone();
         changed.content[1] = AssistantBlock::text("edited");
         let changed_input = input_for(changed, &endpoint);
         assert!(changed_input.iter().all(|item| item["type"] != "reasoning"));
+        for dt in [json!(false), json!("true")] {
+            let mut unsupported_snapshot = assistant.clone();
+            unsupported_snapshot.provider_payload.as_mut().unwrap()["dt"] = dt;
+            assert!(input_for(unsupported_snapshot, &endpoint).iter().all(|item| item["type"] != "reasoning"));
+        }
         let mut failed = assistant.clone();
         failed.stop_reason = StopReason::Error;
         assert!(input_for(failed, &endpoint).iter().all(|item| item["type"] != "reasoning"));
@@ -673,6 +728,17 @@ mod tests {
         reasoning_model.reasoning = true;
         let body = build_request(&reasoning_model, &Context::default(), &RequestOptions::default()).unwrap();
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn transient_replay_warmup_is_provider_scoped() {
+        let state = ProviderSessionState::default();
+        assert!(!state.is_warmed("one"));
+        assert!(!state.is_warmed("two"));
+        state.warm("one");
+        assert!(state.is_warmed("one"));
+        assert!(!state.is_warmed("two"));
+        assert!(!ProviderSessionState::default().is_warmed("one"));
     }
 
     #[test]

@@ -583,6 +583,7 @@ async fn run(args: Args) -> Result<i32> {
                 first_event_timeout: stream_options.first_event_timeout,
                 idle_timeout: stream_options.idle_timeout,
                 retry: stream_options.retry,
+                session_state: Some(Arc::new(ara_ai::providers::openai_responses::ProviderSessionState::default())),
                 ..ResponsesStreamOptions::default()
             },
         }),

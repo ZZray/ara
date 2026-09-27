@@ -2,10 +2,11 @@
 
 use ara_ai::event::AssistantMessageEvent;
 use ara_ai::providers::openai_completions::RetryPolicy;
-use ara_ai::providers::openai_responses::{self, StreamOptions};
+use ara_ai::providers::openai_responses::{self, ProviderSessionState, StreamOptions};
 use ara_ai::{AssistantMessage, Context, Message, Model, StopReason, ToolResultMessage, UserBlock, UserMessage};
 use ara_testkit::{FakeUpstream, Script};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn script(value: Value) -> Script {
@@ -132,6 +133,60 @@ async fn tool_result_is_replayed_on_the_next_real_http_request() {
     let input = requests[1]["body"]["input"].as_array().unwrap();
     assert_eq!(input[1]["call_id"], "call_1");
     assert_eq!(input[2], json!({"type":"function_call_output","call_id":"call_1","output":"file body"}));
+}
+
+#[tokio::test]
+async fn failed_and_retried_cold_requests_warm_only_after_replayable_success() {
+    let secret = "opaque-cold-warm-marker";
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_seed","summary":[{"type":"summary_text","text":"plan"}],"encrypted_content":secret}}},
+            {"data":{"type":"response.output_item.done","output_index":1,"item":{"type":"message","id":"msg_seed","content":[{"type":"output_text","text":"seed answer"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events":[{"data":{"type":"response.failed","response":{"status":"failed","error":{"message":"temporary failure"}}}}]},
+        {"events":[{"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}}]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_recovered","content":[{"type":"output_text","text":"recovered"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_warm","content":[{"type":"output_text","text":"warm"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let endpoint = model(&server.base_url());
+    let (_, seed) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), Context::default(), options()))
+            .await;
+    assert_eq!(seed.provider_payload.as_ref().unwrap()["dt"], true);
+    let context = Context {
+        messages: vec![Message::Assistant(seed), Message::User(UserMessage::text("continue"))],
+        ..Context::default()
+    };
+    let session_state = Arc::new(ProviderSessionState::default());
+    let mut opts = options();
+    opts.session_state = Some(session_state.clone());
+    let (_, failed) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(failed.stop_reason, StopReason::Error);
+    opts.retry.max_attempts = 2;
+    let (_, recovered) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(recovered.text(), "recovered");
+    let (_, warmed) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(warmed.text(), "warm");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 5);
+    for index in [1, 2, 3] {
+        let input = requests[index]["body"]["input"].as_array().unwrap();
+        assert!(input.iter().all(|item| item["type"] != "reasoning"));
+        assert!(input.iter().any(|item| item["type"] == "message" && item["content"][0]["text"] == "seed answer"));
+    }
+    let warm_input = requests[4]["body"]["input"].as_array().unwrap();
+    assert!(warm_input.iter().any(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret));
 }
 
 #[tokio::test]

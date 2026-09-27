@@ -5,7 +5,8 @@
 Fixed OMP `596f2da7101178214aa27a753529d15e6b7ad91d`:
 `packages/ai/src/providers/openai-shared.ts::processResponsesStream`,
 `finalizeReasoningThinking`, `buildResponsesInput`, and
-`packages/ai/src/utils.ts::sanitizeResponsesHistoryItem`.
+`packages/ai/src/utils.ts::sanitizeResponsesHistoryItem`, plus
+`packages/ai/src/providers/openai-responses.ts` session warmup policy.
 ARA implements the bounded slice in `ara-ai::responses_stream` and
 `ara-ai::providers::openai_responses`, with `AssistantMessage.providerPayload`
 persisted by the existing Session journal. `ara-agent::event` removes opaque
@@ -21,7 +22,8 @@ flag must be repeated on a separate `--resume` process.
   snapshot does not emit duplicate text or silently change later partials.
   The complete reasoning item is saved as `thinkingSignature`.
 - On a completed turn with visible text or a tool call, the ordered native
-  output items are saved in `providerPayload`. The snapshot has a 32 MiB
+  output items are saved in `providerPayload` with `dt:true` (incremental).
+  The snapshot has a 32 MiB
   cumulative cap. An incomplete, failed, aborted, hidden-only or over-limit
   turn has no replayable native payload. There is no signature-only opaque
   fallback.
@@ -34,10 +36,21 @@ flag must be repeated on a separate `--resume` process.
   payload stores the endpoint fingerprint rather than URL credentials.
   SHA-256 prevents plaintext storage; it is not a password protection scheme
   against offline guesses of a low-entropy URL.
+- A CLI Responses provider starts cold for each process. Cold history uses
+  visible assistant text and tool calls, without the prior opaque reasoning
+  payload. A completed response with a replayable native payload warms that
+  provider for later calls in the same process. A failed request, including a
+  retryable empty attempt, does not warm it. Direct stateless encoder calls
+  without a host session state retain their earlier native replay behavior.
+  Warmup is transient, scoped by provider and not saved to Session. Old ARA
+  payloads without `dt` remain incremental. Explicit `dt:false` or malformed
+  `dt` falls back to visible history; full snapshot replacement requires
+  separate validation support.
 - A real `ara` process with a controlled fake upstream wrote `reason.txt`.
-  The next request and a new process after `--resume` both contained the
-  encrypted reasoning item, commentary-phase message, function call and
-  paired function output. All three requests included
+  The same-process tool continuation contained the encrypted reasoning item,
+  commentary-phase message, function call and paired function output. A new
+  process after `--resume` used visible text and paired tool history without
+  encrypted reasoning. All three requests included
   `reasoning.encrypted_content` when `--reasoning` was supplied. The Session
   JSONL contains the opaque snapshot; JSON client output does not contain it.
   The fake upstream supplied the encrypted item, so this does not prove an
@@ -45,12 +58,14 @@ flag must be repeated on a separate `--resume` process.
 - A reasoning part boundary followed by a dropped SSE connection is not
   retried; an empty reasoning start can retry. These cases use two scripted
   upstream responses and assert the served request count.
+- A five-request fake HTTP sequence verifies cold failure, a retryable empty
+  attempt, its successful retry, and later warm replay of the seed's opaque
+  reasoning item. Both attempts of the retried call remain cold.
 
-## Checks on this WIP worktree
+## Checks on this WIP worktree (2026-09-27)
 
-- `cargo test -p ara-ai --quiet`: 91 unit, 48 Chat HTTP, 8 Responses HTTP
+- `cargo test -p ara-ai --quiet`: 92 unit, 48 Chat HTTP, 9 Responses HTTP
   passed; doc target passed.
-- `cargo test -p ara-agent --quiet`: all unit and integration targets passed.
 - `cargo test -p ara-cli --test e2e responses_ --quiet`: 7/7 real-process
   Responses cases passed, including tool effects, restart and JSON output.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
@@ -60,11 +75,11 @@ flag must be repeated on a separate `--resume` process.
   existing non-fatal duplicate/license-field warnings.
 - `cargo test --workspace --all-targets --quiet` failed in existing Windows
   CLI cases: deadline exit status and Bash unavailable for two tool cases.
-  The final-code output is `%TEMP%\ara-reasoning-final-full-gate.log`. The new reasoning
-  CLI case passed in this run (23/26 CLI e2e cases passed overall).
+  The new reasoning CLI case passed (23/26 CLI e2e cases passed overall).
+  After adding `C:\Program Files\Git\bin` to PATH, CLI e2e passed 25/26;
+  only the existing Windows tool deadline timing assertion failed.
 - `cargo fmt --all -- --check` still reports unrelated vendored `pi-edit`
-  formatting; `%TEMP%\ara-reasoning-fmt.log` has the diff. Changed Rust files
-  pass direct rustfmt check.
+  formatting. Changed Rust files pass direct rustfmt check.
 
 Independent Codex agents `/root/reasoning_plan` and `/root/reasoning_risk`
 reviewed the plan and diff. They identified duplicate/divergent Thinking
@@ -76,12 +91,17 @@ review found that storing the endpoint URL could persist URL credentials;
 it is now stored as SHA-256 with a Session serialization regression. The
 independent final re-review found no remaining high-confidence P1/P2 in this
 slice. The most recent full gate and dependency audit ran after this fix.
+For cold/warm replay, independent agents `/root/cold_source` and
+`/root/cold_risk` reviewed fixed OMP source and the plan; `/root/cold_risk`
+reviewed the diff. Its `dt:false` finding was fixed with a fallback regression.
+No remaining high-confidence P1/P2 issue was reported in this bounded slice.
 
 ## Open parity and delivery gaps
 
-ARA currently replays same-origin native history after a CLI restart. Fixed
-OMP has a per-provider cold/warm replay policy, so this is an intentional WIP
-difference, not full OMP equivalence. A terminal `response.output` that first
+ARA now applies the fixed OMP cold/warm native replay policy to CLI Responses
+sessions. It does not implement `dt:false` full-history snapshot replacement,
+server-side `previous_response_id`, or the fixed OMP `max_output_tokens`
+incomplete-turn payload behavior. A terminal `response.output` that first
 adds encrypted data after an earlier `output_item.done` is not merged into
 the stored item; fixed OMP generic stream has the same gap. Cross-provider
 adaptation, hosted tools, actual model trial, complete backend gate and
