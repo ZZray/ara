@@ -3,8 +3,8 @@
 //! Follows fixed OMP `packages/agent/src/compaction/utils.ts` and
 //! `compaction.ts` at 596f2da7101178214aa27a753529d15e6b7ad91d.
 //! ARA uses JSONL provenance, excludes private reasoning, and bounds input.
-//! This module enumerates structural whole-turn cuts but does not choose one by
-//! budget, write a Session compaction or change model context.
+//! This module plans structural whole-turn cuts and a provisional recent-message
+//! target, but does not write a Session compaction or change model context.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -16,6 +16,8 @@ use ara_ai::{
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+
+use crate::tokenizer::{MessageCountOptions, count_message};
 
 const TOOL_RESULT_MAX_CHARS: usize = 2_000;
 const MAX_SUMMARY_INPUT_BYTES: usize = 1_000_000;
@@ -36,6 +38,15 @@ pub struct SummarySource<'a> {
 pub struct WholeTurnCutCandidate {
     pub first_kept_index: usize,
     pub first_kept_entry_id: String,
+}
+
+/// A provisional cut selected using raw-message estimates. The retained count
+/// is neither a provider-request count nor a context-fit verdict.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WholeTurnCutSelection {
+    pub candidate: WholeTurnCutCandidate,
+    pub estimated_retained_raw_tokens: usize,
+    pub estimated_retained_exceeds_target: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,6 +267,55 @@ pub fn whole_turn_cut_candidates(sources: &[SummarySource<'_>]) -> Vec<WholeTurn
         seen_ids.insert(source.entry_id);
     }
     candidates
+}
+
+/// Keep as much recent raw history as the approximate target permits, using
+/// only complete-turn candidates. If the newest turn alone exceeds the target,
+/// keep that turn and report the overshoot. No cut is useful when the entire
+/// history already meets the target. The chosen summary prefix must be
+/// serializable. If it is not, earlier boundaries are tried so unsupported
+/// content remains raw, even when that exceeds the estimated target. Callers
+/// must still verify Session IDs, branch leaf, provider
+/// request size and the final summary before any write or model replay.
+pub fn select_whole_turn_cut(
+    sources: &[SummarySource<'_>],
+    keep_recent_tokens: usize,
+    previous_summary: Option<&str>,
+) -> Result<Option<WholeTurnCutSelection>, SummaryInputError> {
+    let candidates = whole_turn_cut_candidates(sources);
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let mut suffix_tokens = vec![0usize; sources.len() + 1];
+    for index in (0..sources.len()).rev() {
+        suffix_tokens[index] = suffix_tokens[index + 1]
+            .saturating_add(count_message(sources[index].message, MessageCountOptions::default()));
+    }
+    if suffix_tokens[0] <= keep_recent_tokens {
+        return Ok(None);
+    }
+    let selected_position = candidates
+        .iter()
+        .position(|candidate| suffix_tokens[candidate.first_kept_index] <= keep_recent_tokens)
+        .unwrap_or(candidates.len() - 1);
+    let mut prompt_error = None;
+    for candidate in candidates[..=selected_position].iter().rev() {
+        match build_summary_prompt(&sources[..candidate.first_kept_index], previous_summary) {
+            Ok(_) => {
+                let estimated_retained_raw_tokens = suffix_tokens[candidate.first_kept_index];
+                return Ok(Some(WholeTurnCutSelection {
+                    candidate: candidate.clone(),
+                    estimated_retained_raw_tokens,
+                    estimated_retained_exceeds_target: estimated_retained_raw_tokens > keep_recent_tokens,
+                }));
+            }
+            Err(error @ (SummaryInputError::UnsupportedImage | SummaryInputError::TooLarge)) => {
+                prompt_error.get_or_insert(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(prompt_error.expect("candidate prompt was attempted"))
 }
 
 #[derive(Serialize)]

@@ -1,5 +1,6 @@
 use ara_agent::compaction::{
-    SummaryInputError, SummarySource, WholeTurnCutCandidate, serialize_sources_for_summary, whole_turn_cut_candidates,
+    SummaryInputError, SummarySource, WholeTurnCutCandidate, WholeTurnCutSelection, select_whole_turn_cut,
+    serialize_sources_for_summary, whole_turn_cut_candidates,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, JsonObject, Message, StopReason, ToolCall,
@@ -51,6 +52,16 @@ fn cuts(ids: &[&str], messages: &[Message]) -> Vec<WholeTurnCutCandidate> {
 
 fn at(index: usize, id: &str) -> WholeTurnCutCandidate {
     WholeTurnCutCandidate { first_kept_index: index, first_kept_entry_id: id.into() }
+}
+
+fn selected(
+    ids: &[&str],
+    messages: &[Message],
+    target: usize,
+) -> Result<Option<WholeTurnCutSelection>, SummaryInputError> {
+    let sources =
+        ids.iter().zip(messages).map(|(entry_id, message)| SummarySource { entry_id, message }).collect::<Vec<_>>();
+    select_whole_turn_cut(&sources, target, None)
 }
 
 #[test]
@@ -152,4 +163,109 @@ fn candidates_stop_at_the_summary_source_limit() {
     let candidates = cuts(&id_refs, &messages);
     assert_eq!(candidates.last(), Some(&at(256, "e256")));
     assert!(candidates.iter().all(|candidate| candidate.first_kept_index <= 256));
+    let selection = selected(&id_refs, &messages, 0).unwrap().unwrap();
+    assert_eq!(selection.candidate, at(256, "e256"));
+    assert!(selection.estimated_retained_exceeds_target);
+}
+
+#[test]
+fn selects_the_most_recent_complete_turn_boundary_within_the_estimated_target() {
+    let messages = [
+        user("one"),
+        assistant(StopReason::Stop, None),
+        user("abcdefgh"),
+        assistant(StopReason::Stop, None),
+        user("tail"),
+        assistant(StopReason::Stop, None),
+    ];
+    let ids = ["e1", "e2", "e3", "e4", "e5", "e6"];
+    assert_eq!(selected(&ids, &messages, 7).unwrap(), None, "already within target");
+    assert_eq!(
+        selected(&ids, &messages, 5).unwrap(),
+        Some(WholeTurnCutSelection {
+            candidate: at(2, "e3"),
+            estimated_retained_raw_tokens: 5,
+            estimated_retained_exceeds_target: false,
+        })
+    );
+    assert_eq!(
+        selected(&ids, &messages, 4).unwrap(),
+        Some(WholeTurnCutSelection {
+            candidate: at(4, "e5"),
+            estimated_retained_raw_tokens: 2,
+            estimated_retained_exceeds_target: false,
+        }),
+        "a target inside the middle turn preserves the whole newest turn"
+    );
+    for target in [0, 1] {
+        assert_eq!(
+            selected(&ids, &messages, target).unwrap(),
+            Some(WholeTurnCutSelection {
+                candidate: at(4, "e5"),
+                estimated_retained_raw_tokens: 2,
+                estimated_retained_exceeds_target: true,
+            })
+        );
+    }
+}
+
+#[test]
+fn keeps_an_unfinished_tool_tail_raw_and_reports_oversized_recent_turn() {
+    let messages = [
+        user("one"),
+        assistant(StopReason::Stop, None),
+        user("run"),
+        assistant(StopReason::ToolUse, Some("c1")),
+        tool_result("c1", false),
+    ];
+    let selection = selected(&["e1", "e2", "e3", "e4", "e5"], &messages, 1).unwrap().unwrap();
+    assert_eq!(selection.candidate, at(2, "e3"));
+    assert!(selection.estimated_retained_exceeds_target);
+    assert!(selection.estimated_retained_raw_tokens > 1);
+}
+
+#[test]
+fn refuses_a_cut_whose_summary_prompt_cannot_preserve_its_source() {
+    let image = Message::User(UserMessage {
+        content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            data: "YWJj".into(),
+            mime_type: "image/png".into(),
+        })]),
+        synthetic: None,
+        timestamp: 0,
+    });
+    let messages = [image, assistant(StopReason::Stop, None), user("next")];
+    assert_eq!(selected(&["e1", "e2", "e3"], &messages, 0), Err(SummaryInputError::UnsupportedImage));
+
+    let messages = [user(&"x".repeat(1_000_000)), assistant(StopReason::Stop, None), user("next")];
+    assert_eq!(selected(&["e1", "e2", "e3"], &messages, 0), Err(SummaryInputError::TooLarge));
+}
+
+#[test]
+fn falls_back_to_an_earlier_boundary_to_keep_unsupported_content_raw() {
+    let image = Message::User(UserMessage {
+        content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            data: "YWJj".into(),
+            mime_type: "image/png".into(),
+        })]),
+        synthetic: None,
+        timestamp: 0,
+    });
+    let ids = ["e1", "e2", "e3", "e4", "e5"];
+    let messages =
+        [user("text"), assistant(StopReason::Stop, None), image, assistant(StopReason::Stop, None), user("next")];
+    let selection = selected(&ids, &messages, 0).unwrap().unwrap();
+    assert_eq!(selection.candidate, at(2, "e3"));
+    assert!(selection.estimated_retained_exceeds_target);
+
+    let messages = [
+        user("text"),
+        assistant(StopReason::Stop, None),
+        user(&"x".repeat(1_000_000)),
+        assistant(StopReason::Stop, None),
+        user("next"),
+    ];
+    let selection = selected(&ids, &messages, 0).unwrap().unwrap();
+    assert_eq!(selection.candidate, at(2, "e3"));
+    assert!(selection.estimated_retained_exceeds_target);
 }
