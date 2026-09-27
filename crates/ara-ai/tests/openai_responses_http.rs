@@ -181,10 +181,56 @@ async fn stale_chain_retries_once_with_complete_history_before_start() {
 }
 
 #[tokio::test]
+async fn coded_stale_chain_retries_even_when_the_message_does_not_name_the_previous_response() {
+    for field in ["code", "type"] {
+        let mut rejection = json!({"error":{"message":"lookup failed"}});
+        rejection["error"][field] = json!("previous_response_not_found");
+        let server = FakeUpstream::start(
+            script(json!({"responses":[
+                completed_text("resp_first", "first answer"),
+                {"status":400,"body":rejection.to_string()},
+                completed_text("resp_fallback", "recovered")
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let endpoint = model(&server.base_url());
+        let mut opts = options();
+        opts.stateful_responses = true;
+        opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+        let (_, first) = collect(openai_responses::stream(
+            reqwest::Client::new(),
+            endpoint.clone(),
+            Context { messages: vec![Message::User(UserMessage::text("first"))], ..Context::default() },
+            opts.clone(),
+        ))
+        .await;
+        let context = Context {
+            messages: vec![
+                Message::User(UserMessage::text("first")),
+                Message::Assistant(first),
+                Message::User(UserMessage::text("next")),
+            ],
+            ..Context::default()
+        };
+        let (events, output) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+        assert_eq!(output.text(), "recovered");
+        assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 1);
+        let requests = server.requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1]["body"]["previous_response_id"], "resp_first");
+        assert!(requests[2]["body"].get("previous_response_id").is_none());
+        assert_eq!(requests[2]["body"]["input"].as_array().unwrap().len(), 3);
+        assert_eq!(requests[2]["body"]["store"], true);
+    }
+}
+
+#[tokio::test]
 async fn blocked_chained_prompt_without_previous_id_text_retries_full_history() {
     let server = FakeUpstream::start(
         script(json!({"responses":[completed_text("resp_seed", "seed"),
-            {"status":400,"body":"{\"error\":{\"code\":\"invalid_prompt\",\"message\":\"Request blocked\"}}"},
+            {"status":400,"body":"{\"error\":{\"code\":\"invalid_prompt\",\"message\":\"policy notice\"}}"},
             completed_text("resp_retry", "full retry")]})),
         None,
     )
@@ -406,7 +452,7 @@ async fn zero_data_retention_rejection_disables_storage_and_future_chaining() {
     let server = FakeUpstream::start(
         script(json!({"responses":[
             completed_text("resp_first", "first answer"),
-            {"status":400,"body":"{\"error\":{\"message\":\"Request blocked: previous_response_id unsupported under Zero Data Retention\"}}"},
+            {"status":400,"body":"{\"error\":{\"code\":\"previous_response_not_found\",\"message\":\"Request blocked: previous_response_id unsupported under Zero_Data_Retention\"}}"},
             completed_text("resp_fallback", "fallback answer"),
             completed_text("resp_next", "next answer")
         ]})), None,
@@ -697,7 +743,7 @@ async fn cancelling_a_chained_request_clears_the_baseline_without_a_fallback_pos
 async fn unrelated_http_rejection_does_not_retry_a_chained_request() {
     let server = FakeUpstream::start(
         script(json!({"responses":[completed_text("resp_seed", "seed"),
-            {"status":400,"body":"{\"error\":{\"message\":\"invalid tool schema\"}}"},
+            {"status":400,"body":"{\"error\":{\"code\":\"schema_invalid\",\"message\":\"invalid tool schema\"}}"},
             completed_text("resp_after", "after error")]})),
         None,
     )

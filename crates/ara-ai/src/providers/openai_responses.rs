@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use super::openai_completions::{RetryPolicy, post_with_retry};
+use super::openai_completions::{PostError, RetryPolicy, post_with_retry_detailed};
 
 pub const API: &str = "openai-responses";
 const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
@@ -188,13 +188,15 @@ fn chain_delta(baseline: &ChainBaseline, current: &Value) -> Option<Vec<Value>> 
     Some(now[prefix_len..].to_vec())
 }
 
-fn stale_previous_response(error: &ProviderError) -> Option<bool> {
-    let ProviderError::Http { detail, .. } = error else { return None };
+fn stale_previous_response(error: &PostError) -> Option<bool> {
+    let ProviderError::Http { detail, .. } = &error.cause else { return None };
     let lower = detail.to_ascii_lowercase();
-    if (lower.contains("previous_response") || lower.contains("previous response"))
-        && (lower.contains("zero data retention") || lower.contains("zero-data-retention"))
-    {
+    let compact = lower.chars().filter(|ch| !matches!(ch, ' ' | '_' | '-')).collect::<String>();
+    if compact.contains("previousresponse") && compact.contains("zerodataretention") {
         return Some(true);
+    }
+    if matches!(error.code.as_deref(), Some("invalid_prompt" | "previous_response_not_found")) {
+        return Some(false);
     }
     // OMP also treats a linked invalid_prompt / blocked request as a stale
     // server-side baseline, even when the message omits previous_response_id.
@@ -1102,13 +1104,15 @@ async fn post_until_first_event(
     options: &StreamOptions,
     first_deadline: Option<Instant>,
     retry_blocked: &mut bool,
-) -> Result<reqwest::Response, ProviderError> {
+) -> Result<reqwest::Response, PostError> {
     match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_retry(client, url, headers, body, &options.retry, &options.cancel, retry_blocked) => result,
-            _ = tokio::time::sleep_until(deadline.into()) => Err(ProviderError::Timeout("Responses stream timed out before its first event".into())),
+            result = post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_blocked) => result,
+            _ = tokio::time::sleep_until(deadline.into()) => Err(ProviderError::Timeout("Responses stream timed out before its first event".into()).into()),
         },
-        None => post_with_retry(client, url, headers, body, &options.retry, &options.cancel, retry_blocked).await,
+        None => {
+            post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_blocked).await
+        }
     }
 }
 
@@ -1161,7 +1165,10 @@ async fn run(
     let first_deadline = options.first_event_timeout.map(|duration| started + duration);
     let mut posted =
         post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
-    if sent_previous && let Some(zero_data_retention) = posted.as_ref().err().and_then(stale_previous_response) {
+    if sent_previous
+        && !options.cancel.is_cancelled()
+        && let Some(zero_data_retention) = posted.as_ref().err().and_then(stale_previous_response)
+    {
         // Only an explicit chain rejection before Start may replay the full
         // request. A stream error or unknown tool effect never enters here.
         if let Some(lease) = &mut chain {
@@ -1174,7 +1181,7 @@ async fn run(
         sent_previous = false;
         posted = post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
     }
-    let response = posted?;
+    let response = posted.map_err(|error| error.cause)?;
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &options.cancel).await {
         return Err(ProviderError::Aborted);
     }

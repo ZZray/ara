@@ -1058,6 +1058,33 @@ pub(crate) async fn post_with_retry(
     cancel: &CancellationToken,
     retry_blocked: &mut bool,
 ) -> Result<reqwest::Response, ProviderError> {
+    post_with_retry_detailed(client, url, headers, body, policy, cancel, retry_blocked)
+        .await
+        .map_err(|error| error.cause)
+}
+
+pub(crate) struct PostError {
+    pub cause: ProviderError,
+    pub code: Option<String>,
+}
+
+impl From<ProviderError> for PostError {
+    fn from(cause: ProviderError) -> Self {
+        Self { cause, code: None }
+    }
+}
+
+/// The Responses chain fallback needs the structured HTTP code. Other
+/// providers keep the original `post_with_retry` error contract.
+pub(crate) async fn post_with_retry_detailed(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(String, String)],
+    body: &Value,
+    policy: &RetryPolicy,
+    cancel: &CancellationToken,
+    retry_blocked: &mut bool,
+) -> Result<reqwest::Response, PostError> {
     let bytes = serde_json::to_vec(body).map_err(|e| ProviderError::Config(e.to_string()))?;
     let mut attempt: u32 = 0;
     loop {
@@ -1071,7 +1098,7 @@ pub(crate) async fn post_with_retry(
         }
         let result = tokio::select! {
             r = req.send() => r,
-            _ = cancel.cancelled() => return Err(ProviderError::Aborted),
+            _ = cancel.cancelled() => return Err(ProviderError::Aborted.into()),
         };
         let last = attempt + 1 >= policy.max_attempts;
         let default_delay = policy.base_delay.saturating_mul(2u32.saturating_pow(attempt)).min(policy.max_delay);
@@ -1092,26 +1119,37 @@ pub(crate) async fn post_with_retry(
                 let retryable = matches!(status, 408 | 429 | 500..=599);
                 let body = tokio::select! {
                     b = resp.text() => b.unwrap_or_default(),
-                    _ = cancel.cancelled() => return Err(ProviderError::Aborted),
+                    _ = cancel.cancelled() => return Err(ProviderError::Aborted.into()),
                 };
                 let admission_reject = admission_header
                     || (body.contains("\"rate_limit_type\"") && body.contains("max_parallel_requests"));
                 if !retryable || last || admission_reject || hint_too_long {
                     let detail = parse_error_envelope(&body);
                     let error = serde_json::from_str::<Value>(&body).ok();
+                    let code = error
+                        .as_ref()
+                        .and_then(|value| value.get("error"))
+                        .and_then(Value::as_object)
+                        .and_then(|error| {
+                            error
+                                .get("code")
+                                .and_then(Value::as_str)
+                                .or_else(|| error.get("type").and_then(Value::as_str))
+                        })
+                        .map(str::to_owned);
                     *retry_blocked = admission_reject
                         || hint_too_long
                         || account_usage_limit(Some(status), error.as_ref(), &detail, Some(&body));
-                    return Err(ProviderError::Http { status, detail });
+                    return Err(PostError { cause: ProviderError::Http { status, detail }, code });
                 }
                 sleep_or_cancel(hint.unwrap_or(default_delay), cancel).await?;
             }
             Err(err) => {
                 if err.is_builder() {
-                    return Err(ProviderError::Config(format!("invalid request: {err}")));
+                    return Err(ProviderError::Config(format!("invalid request: {err}")).into());
                 }
                 if last {
-                    return Err(ProviderError::Transport(format!("request failed: {err}")));
+                    return Err(ProviderError::Transport(format!("request failed: {err}")).into());
                 }
                 sleep_or_cancel(default_delay, cancel).await?;
             }
