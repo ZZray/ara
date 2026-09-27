@@ -287,6 +287,210 @@ fn orphan_tool_result(call_id: &str, output: Value) -> Value {
     })
 }
 
+// Pinned OMP `sanitizeSchemaForOpenAIResponses` and
+// `findStrictToolSchemaViolation`, for the JSON Schema / generic Responses
+// route. Only schema-valued positions are traversed: `enum`, `default`, and
+// `const` contain example data, not child schemas.
+const SCHEMA_MAP_KEYS: &[&str] =
+    &["properties", "patternProperties", "dependencies", "dependentSchemas", "$defs", "definitions"];
+const SCHEMA_ARRAY_KEYS: &[&str] = &["anyOf", "oneOf", "allOf", "prefixItems"];
+const SCHEMA_VALUE_KEYS: &[&str] = &[
+    "items",
+    "additionalItems",
+    "contains",
+    "contentSchema",
+    "propertyNames",
+    "if",
+    "then",
+    "else",
+    "not",
+    "additionalProperties",
+    "unevaluatedItems",
+    "unevaluatedProperties",
+];
+
+fn unsupported_regex_lookaround(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    for (index, pair) in bytes.windows(2).enumerate() {
+        if pair != b"(?" {
+            continue;
+        }
+        let escapes = bytes[..index].iter().rev().take_while(|byte| **byte == b'\\').count();
+        if escapes % 2 != 0 {
+            continue;
+        }
+        let suffix = &bytes[index + 2..];
+        if suffix.starts_with(b"=")
+            || suffix.starts_with(b"!")
+            || suffix.starts_with(b"<=")
+            || suffix.starts_with(b"<!")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn merge_fallback_pattern(existing: Value, next: Value) -> Value {
+    match existing {
+        Value::Object(mut object) if object.len() == 1 && object.get("anyOf").is_some_and(Value::is_array) => {
+            object.get_mut("anyOf").and_then(Value::as_array_mut).expect("checked array").push(next);
+            Value::Object(object)
+        }
+        existing => json!({"anyOf": [existing, next]}),
+    }
+}
+
+fn sanitize_responses_schema(value: &Value, depth: usize) -> Result<Value, ()> {
+    if depth > 128 {
+        return Err(());
+    }
+    let Some(object) = value.as_object() else { return Ok(value.clone()) };
+    if object.is_empty() {
+        return Ok(Value::Bool(true));
+    }
+    let mut output = serde_json::Map::new();
+    let mut one_of = None;
+    for (key, child) in object {
+        if key == "oneOf" && child.is_array() {
+            one_of = Some(child);
+            continue;
+        }
+        if key == "pattern" && child.as_str().is_some_and(unsupported_regex_lookaround) {
+            continue;
+        }
+        let normalized = if SCHEMA_MAP_KEYS.contains(&key.as_str()) {
+            if let Some(map) = child.as_object() {
+                let mut normalized_map = serde_json::Map::new();
+                for (name, schema) in map {
+                    let schema = sanitize_responses_schema(schema, depth + 1)?;
+                    let name = if key == "patternProperties" && unsupported_regex_lookaround(name) {
+                        ".*"
+                    } else {
+                        name.as_str()
+                    };
+                    if name == ".*" && key == "patternProperties" {
+                        let next = match normalized_map.remove(name) {
+                            Some(existing) => merge_fallback_pattern(existing, schema),
+                            None => schema,
+                        };
+                        normalized_map.insert(name.to_owned(), next);
+                    } else {
+                        normalized_map.insert(name.to_owned(), schema);
+                    }
+                }
+                Value::Object(normalized_map)
+            } else {
+                child.clone()
+            }
+        } else if SCHEMA_ARRAY_KEYS.contains(&key.as_str()) {
+            if let Some(items) = child.as_array() {
+                Value::Array(
+                    items.iter().map(|item| sanitize_responses_schema(item, depth + 1)).collect::<Result<_, _>>()?,
+                )
+            } else {
+                child.clone()
+            }
+        } else if SCHEMA_VALUE_KEYS.contains(&key.as_str()) {
+            sanitize_responses_schema(child, depth + 1)?
+        } else {
+            child.clone()
+        };
+        output.insert(key.clone(), normalized);
+    }
+    if let Some(variants) = one_of.and_then(Value::as_array) {
+        let converted =
+            variants.iter().map(|item| sanitize_responses_schema(item, depth + 1)).collect::<Result<Vec<_>, _>>()?;
+        match output.get_mut("anyOf") {
+            Some(Value::Array(existing)) => existing.extend(converted),
+            _ => {
+                output.insert("anyOf".into(), Value::Array(converted));
+            }
+        }
+    }
+    let has_object_type = object.get("type").is_some_and(|kind| {
+        kind == "object" || kind.as_array().is_some_and(|kinds| kinds.iter().any(|kind| kind == "object"))
+    });
+    if has_object_type && !object.contains_key("properties") {
+        output.insert("properties".into(), json!({}));
+    }
+    if output.is_empty() {
+        return Ok(Value::Bool(true));
+    }
+    Ok(Value::Object(output))
+}
+
+fn json_value_matches_type(value: &Value, kind: &str) -> bool {
+    match kind {
+        "null" => value.is_null(),
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.as_f64().is_some_and(|number| number.is_finite() && number.fract() == 0.0),
+        "boolean" => value.is_boolean(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => true,
+    }
+}
+
+fn incompatible_schema_path(value: &Value, path: &str, depth: usize) -> Option<String> {
+    if depth > 128 {
+        return Some(path.to_owned());
+    }
+    let object = value.as_object()?;
+    let types = match object.get("type") {
+        Some(Value::String(kind)) => vec![kind.as_str()],
+        Some(Value::Array(kinds)) => kinds.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let known = types
+        .into_iter()
+        .filter(|kind| matches!(*kind, "null" | "string" | "number" | "integer" | "boolean" | "array" | "object"))
+        .collect::<Vec<_>>();
+    if !known.is_empty() {
+        if object.get("enum").and_then(Value::as_array).is_some_and(|values| {
+            values.iter().any(|value| !known.iter().any(|kind| json_value_matches_type(value, kind)))
+        }) {
+            return Some(format!("{path}/enum"));
+        }
+        if object.get("const").is_some_and(|value| !known.iter().any(|kind| json_value_matches_type(value, kind))) {
+            return Some(format!("{path}/const"));
+        }
+    }
+    for key in SCHEMA_MAP_KEYS {
+        if let Some(map) = object.get(*key).and_then(Value::as_object) {
+            for (name, child) in map {
+                if let Some(found) = incompatible_schema_path(child, &format!("{path}/{key}/{name}"), depth + 1) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    for key in SCHEMA_VALUE_KEYS {
+        if let Some(child) = object.get(*key)
+            && let Some(found) = incompatible_schema_path(child, &format!("{path}/{key}"), depth + 1)
+        {
+            return Some(found);
+        }
+    }
+    for key in SCHEMA_ARRAY_KEYS {
+        if let Some(items) = object.get(*key).and_then(Value::as_array) {
+            for (index, child) in items.iter().enumerate() {
+                if let Some(found) = incompatible_schema_path(child, &format!("{path}/{key}/{index}"), depth + 1) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn report_quarantined_tool(name: &str, reason: &str) {
+    let name = name.chars().take(120).collect::<String>();
+    let reason = reason.chars().take(256).collect::<String>();
+    eprintln!("ara: Responses tool {} omitted: {}", json!(name), json!(reason));
+}
+
 /// Build the outbound `/responses` body. No request or model state is retained.
 pub fn build_request(model: &Model, context: &Context, options: &RequestOptions) -> Result<Value, ProviderError> {
     if model.api != API {
@@ -404,11 +608,25 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
     let tools = context.tools.as_ref().map(|tools| {
         tools
             .iter()
-            .map(|tool| {
-                json!({
+            .filter_map(|tool| {
+                let parameters = match sanitize_responses_schema(&tool.parameters, 0) {
+                    Ok(parameters) => parameters,
+                    Err(()) => {
+                        report_quarantined_tool(&tool.name, "schema nesting exceeds 128 levels");
+                        return None;
+                    }
+                };
+                if let Some(path) = incompatible_schema_path(&parameters, "#", 0) {
+                    report_quarantined_tool(
+                        &tool.name,
+                        &format!("enum or const conflicts with declared type at {path}"),
+                    );
+                    return None;
+                }
+                Some(json!({
                     "type": "function", "name": tool.name, "description": tool.description,
-                    "parameters": tool.parameters,
-                })
+                    "parameters": parameters,
+                }))
             })
             .collect::<Vec<_>>()
     });
@@ -423,7 +641,7 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
             ToolChoice::None => Some(json!("none")),
             ToolChoice::Required => Some(json!("required")),
             ToolChoice::Tool(name)
-                if context.tools.as_ref().is_some_and(|tools| tools.iter().any(|tool| tool.name == *name)) =>
+                if tools.as_ref().is_some_and(|tools| tools.iter().any(|tool| tool["name"] == *name)) =>
             {
                 Some(json!({"type": "function", "name": name}))
             }
@@ -698,6 +916,100 @@ mod tests {
         assert_eq!(body["tools"][0]["name"], "read");
         assert_eq!(body["tools"][0]["parameters"]["properties"]["path"]["type"], "string");
         assert_eq!(body["tool_choice"], json!({"type": "function", "name": "read"}));
+    }
+
+    #[test]
+    fn responses_schema_normalization_visits_only_schema_positions() {
+        let schema = json!({
+            "type":"object",
+            "properties": {
+                "oneOf": {"oneOf":[{"type":"object"},{"type":"string"}],
+                    "anyOf":[{"type":"null"}]},
+                "free": {},
+                "patternOnly": {"pattern":"^(?!bad$)"},
+                "literal": {"enum":[{"oneOf":[{}],"pattern":"(?=literal)"}],
+                    "default":{"properties":{"x":{}}},
+                    "examples":[{"oneOf":[{}]}]},
+                "nullable": {"type":["object","null"]}
+            },
+            "patternProperties": {
+                "(?=unsafe)": {"type":"number"},
+                ".*": {"type":"string"},
+                "\\(?=literal)": {"type":"boolean"}
+            },
+            "additionalProperties": false
+        });
+        let converted = sanitize_responses_schema(&schema, 0).unwrap();
+        assert_eq!(converted["properties"]["free"], true);
+        assert_eq!(converted["properties"]["patternOnly"], true);
+        assert_eq!(converted["properties"]["oneOf"]["anyOf"].as_array().unwrap().len(), 3);
+        assert!(converted["properties"]["oneOf"].get("oneOf").is_none());
+        assert_eq!(converted["properties"]["oneOf"]["anyOf"][1]["properties"], json!({}));
+        assert_eq!(converted["properties"]["nullable"]["properties"], json!({}));
+        assert_eq!(converted["properties"]["literal"], schema["properties"]["literal"]);
+        assert_eq!(converted["additionalProperties"], false);
+        assert_eq!(converted["patternProperties"][".*"]["anyOf"].as_array().unwrap().len(), 2);
+        assert_eq!(converted["patternProperties"]["\\(?=literal)"], json!({"type":"boolean"}));
+
+        let reversed = json!({"patternProperties": {
+            ".*": {"type":"string"}, "(?=unsafe)": {"type":"number"}
+        }});
+        assert_eq!(
+            sanitize_responses_schema(&reversed, 0).unwrap()["patternProperties"][".*"]["anyOf"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn quarantined_responses_tool_cannot_leave_an_invalid_forced_choice() {
+        let bad = Tool {
+            name: "bad".into(),
+            description: "bad enum".into(),
+            parameters: json!({"type":"object","properties":{
+                "choice":{"type":"integer","enum":["not an integer"]}
+            }}),
+        };
+        let good = Tool {
+            name: "good".into(),
+            description: "good enum".into(),
+            parameters: json!({"type":"object","properties":{
+                "choice":{"type":["string","null"],"enum":["yes",null]},
+                "open":{"enum":["anything"]}
+            }}),
+        };
+        let context = Context { tools: Some(vec![bad.clone(), good]), ..Context::default() };
+        let forced_bad = build_request(
+            &model(),
+            &context,
+            &RequestOptions { tool_choice: Some(ToolChoice::Tool("bad".into())), ..RequestOptions::default() },
+        )
+        .unwrap();
+        assert_eq!(forced_bad["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(forced_bad["tools"][0]["name"], "good");
+        assert!(forced_bad.get("tool_choice").is_none());
+        let forced_good = build_request(
+            &model(),
+            &context,
+            &RequestOptions { tool_choice: Some(ToolChoice::Tool("good".into())), ..RequestOptions::default() },
+        )
+        .unwrap();
+        assert_eq!(forced_good["tool_choice"], json!({"type":"function","name":"good"}));
+        let bad_only = Context { tools: Some(vec![bad]), ..Context::default() };
+        for choice in [ToolChoice::Required, ToolChoice::Auto, ToolChoice::None, ToolChoice::Tool("bad".into())] {
+            let body = build_request(
+                &model(),
+                &bad_only,
+                &RequestOptions { tool_choice: Some(choice), ..RequestOptions::default() },
+            )
+            .unwrap();
+            assert!(body.get("tools").is_none());
+            assert!(body.get("tool_choice").is_none());
+        }
+        assert_eq!(incompatible_schema_path(&json!({"type":"null","const":"bad"}), "#", 0), Some("#/const".into()));
+        assert_eq!(incompatible_schema_path(&json!({"type":"integer","enum":[1.0]}), "#", 0), None);
     }
 
     #[test]

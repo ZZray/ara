@@ -29,10 +29,9 @@ fixed OMP hashes; all outputs are mapped to the emitted ID. This is an
 intentional wire difference pending real endpoint compatibility checks.
 Fixed OMP credential redaction is opt-in and disabled by default. This WIP
 route has no host setting for enabling it.
-Fixed OMP also normalizes Responses tool schemas, adapts strict mode and
-quarantines incompatible tools before emitting them. This encoder currently
-copies the supplied JSON Schema unchanged; that compatibility surface is
-unverified and still open.
+The later [generic tool schema increment](ai-01e-responses-tool-schema.md)
+normalizes JSON Schema and quarantines incompatible tools. Strict mode and
+other source dialects remain open.
 
 ## Verification on this worktree
 

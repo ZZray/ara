@@ -3,7 +3,9 @@
 use ara_ai::event::AssistantMessageEvent;
 use ara_ai::providers::openai_completions::RetryPolicy;
 use ara_ai::providers::openai_responses::{self, ProviderSessionState, StreamOptions};
-use ara_ai::{AssistantMessage, Context, Message, Model, StopReason, ToolResultMessage, UserBlock, UserMessage};
+use ara_ai::{
+    AssistantMessage, Context, Message, Model, StopReason, Tool, ToolChoice, ToolResultMessage, UserBlock, UserMessage,
+};
 use ara_testkit::{FakeUpstream, Script};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -87,6 +89,47 @@ async fn response_terminal_ends_a_hanging_socket_and_records_the_native_request(
     assert_eq!(requests[0]["body"]["store"], false);
     assert_eq!(requests[0]["body"]["input"][0]["content"][0]["text"], "hi");
     assert!(requests[0]["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"));
+}
+
+#[tokio::test]
+async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request() {
+    let server = FakeUpstream::start(script(json!({"responses":[{"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,
+            "item":{"type":"message","content":[{"type":"output_text","text":"Only the safe tool is available."}]}}},
+        {"data":{"type":"response.completed","response":{"status":"completed"}}}
+    ]}]})), None).await.unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("check tools"))],
+        tools: Some(vec![
+            Tool {
+                name: "broken".into(),
+                description: "bad schema".into(),
+                parameters: json!({"type":"object","properties":{"value":{"type":"null","const":"not null"}}}),
+            },
+            Tool {
+                name: "safe".into(),
+                description: "safe schema".into(),
+                parameters: json!({"type":"object","properties":{
+                    "value":{"oneOf":[{"type":"string"},{"type":"null"}]},
+                    "patternOnly":{"pattern":"^(?!bad$)"}
+                }}),
+            },
+        ]),
+        ..Context::default()
+    };
+    let mut opts = options();
+    opts.request.tool_choice = Some(ToolChoice::Tool("broken".into()));
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert_eq!(output.text(), "Only the safe tool is available.");
+    let requests = server.requests.lock().await;
+    let body = &requests[0]["body"];
+    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(body["tools"][0]["name"], "safe");
+    assert_eq!(body["tools"][0]["parameters"]["properties"]["value"]["anyOf"].as_array().unwrap().len(), 2);
+    assert!(body["tools"][0]["parameters"]["properties"]["value"].get("oneOf").is_none());
+    assert_eq!(body["tools"][0]["parameters"]["properties"]["patternOnly"], true);
+    assert!(body.get("tool_choice").is_none());
 }
 
 #[tokio::test]
