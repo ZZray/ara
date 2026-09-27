@@ -162,6 +162,109 @@ async fn read_multiple_ranges_keep_exact_lines_and_edit_provenance() {
 }
 
 #[tokio::test]
+async fn read_disjoint_ranges_include_syntax_boundaries_and_record_visible_anchors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("blocks.ts"),
+        [
+            "function first() {",
+            "  const a = 1;",
+            "  const b = 2;",
+            "  return a + b;",
+            "}",
+            "function second() {",
+            "  const c = 3;",
+            "  return c;",
+            "}",
+            "after();",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true) };
+    let out =
+        read.execute("c", args(json!({"path":"blocks.ts:1-1,6-6"})), CancellationToken::new(), noop()).await.unwrap();
+    let body = text(&out);
+    assert!(body.contains("\n1:function first() {\n…\n5:}\n6:function second() {\n…\n9:}"), "{body}");
+    assert!(!body.contains("2:  const a") && !body.contains("8:  return c"), "{body}");
+    let key = pi_edit::path_policy::canonical_key(&dir.path().join("blocks.ts"));
+    assert_eq!(
+        read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
+        std::collections::BTreeSet::from([1, 5, 6, 9])
+    );
+}
+
+#[tokio::test]
+async fn read_disjoint_ranges_use_python_ast_and_keep_selected_lines_ahead_of_context() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("module.py"),
+        [
+            "def greet(name):",
+            "    a = 1",
+            "    b = 2",
+            "    c = 3",
+            "    d = 4",
+            "    e = 5",
+            "    f = 6",
+            "    g = 7",
+            "    return a + b + c + d + e + f + g + len(name)",
+            "trailing = 1",
+            "other = 2",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let mut ctx = plain(dir.path());
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    let run = |path: &str| {
+        let path = path.to_owned();
+        let read = &read;
+        async move { read.execute("c", args(json!({"path":path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+    let py = text(&run("module.py:1-1,11-11").await);
+    assert!(
+        py.contains("1|def greet(name):\n…\n9|    return a + b + c + d + e + f + g + len(name)\n…\n11|other = 2"),
+        "{py}"
+    );
+    assert!(!py.contains("8|    g = 7") && !py.contains("10|trailing"), "{py}");
+
+    let large_context = "x".repeat(DEFAULT_MAX_BYTES + 10);
+    std::fs::write(
+        dir.path().join("budget.ts"),
+        format!("function first() {{\n  first();\n}} // {large_context}\nfunction second() {{\n  second();\n}}\n"),
+    )
+    .unwrap();
+    let bounded = text(&run("budget.ts:1-1,4-4").await);
+    assert!(bounded.contains("1|function first() {") && bounded.contains("4|function second() {"), "{bounded}");
+    assert!(bounded.contains("6|}") && !bounded.contains(&large_context), "{bounded}");
+    assert!(bounded.len() <= DEFAULT_MAX_BYTES, "{}", bounded.len());
+    assert_eq!(text(&run("budget.ts:raw:1-1,4-4").await), "function first() {\n\n…\n\nfunction second() {");
+
+    let near_limit_context = "x".repeat(DEFAULT_MAX_BYTES - 70);
+    std::fs::write(
+        dir.path().join("notices.ts"),
+        format!("function first() {{\n  first();\n}} // {near_limit_context}\nfunction second() {{\n  second();\n}}\n"),
+    )
+    .unwrap();
+    let with_notice = text(&run("notices.ts:1-1,4-4,100-100").await);
+    assert!(
+        with_notice.contains("[Range 100-100 is beyond end of file (6 lines total); skipped]"),
+        "{}",
+        &with_notice[with_notice.len().saturating_sub(200)..]
+    );
+
+    std::fs::write(
+        dir.path().join("large.ts"),
+        format!("function outer() {{\n// {}\n  inner();\n}}\n", "y".repeat(4 * 1024 * 1024)),
+    )
+    .unwrap();
+    let streamed = text(&run("large.ts:1-1,3-3").await);
+    assert_eq!(streamed, "1|function outer() {\n…\n3|  inner();");
+}
+
+#[tokio::test]
 async fn read_multiple_ranges_raw_eof_and_limits() {
     let dir = tempfile::tempdir().unwrap();
     let (read, _, _) = tools(dir.path());

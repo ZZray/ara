@@ -33,6 +33,7 @@ use ara_ai::{ImageContent, JsonObject, Tool, UserBlock};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Seek};
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
@@ -229,6 +230,13 @@ enum Numbering {
     Hashline,
 }
 
+#[derive(Clone, Copy)]
+struct ReadRender<'a> {
+    numbering: Numbering,
+    text_resource: bool,
+    block_context: Option<(&'a str, &'a Path)>,
+}
+
 /// Stream the requested line window from `reader` (a file or in-memory
 /// bytes of `size`); blocking, checks `cancel` while scanning.
 fn read_window<R: BufRead + Seek>(
@@ -236,10 +244,10 @@ fn read_window<R: BufRead + Seek>(
     size: u64,
     display: &str,
     sel: &Selector,
-    numbering: Numbering,
-    text_resource: bool,
+    render: ReadRender<'_>,
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
+    let ReadRender { numbering, text_resource, .. } = render;
     let limits = !text_resource;
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
     let mut head = vec![0u8; SNIFF_BYTES];
@@ -260,7 +268,7 @@ fn read_window<R: BufRead + Seek>(
     }
     reader.rewind().map_err(io)?;
     if !sel.multi_ranges.is_empty() {
-        return read_multi_window::<_, MAX_SCAN_BYTES>(reader, size, display, sel, numbering, text_resource, cancel);
+        return read_multi_window::<_, MAX_SCAN_BYTES>(reader, size, display, sel, render, cancel);
     }
     let aborted = || format!("Read of {display} was aborted");
 
@@ -474,6 +482,75 @@ fn read_window<R: BufRead + Seek>(
     Ok(Window { text: out, details, emitted, start, oversized_first_line: oversized_line, raw_seen_lines: None })
 }
 
+fn numbered_multi_row(line: u32, text: &str, numbering: Numbering) -> String {
+    match numbering {
+        Numbering::Pipe => format!("{line}|{text}"),
+        Numbering::Hashline => format!("{line}:{text}"),
+        Numbering::None => text.to_owned(),
+    }
+}
+
+fn multi_separator(before: u32, after: u32) -> &'static str {
+    if after == before + 1 { "\n" } else { "\n…\n" }
+}
+
+fn render_multi_rows(rows: &BTreeMap<u32, String>) -> String {
+    let mut out = String::new();
+    let mut previous = None;
+    for (&line, row) in rows {
+        if let Some(before) = previous {
+            out.push_str(multi_separator(before, line));
+        }
+        out.push_str(row);
+        previous = Some(line);
+    }
+    out
+}
+
+/// Add pinned OMP's AST/lexical boundary rows without displacing requested
+/// lines from ARA's bounded result. Only complete, buffered UTF-8 files use it.
+fn multi_block_context(
+    text: &str,
+    path: &Path,
+    selected: &[u32],
+    numbering: Numbering,
+    max_bytes: usize,
+) -> Option<(String, usize)> {
+    if selected.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let mut rows = BTreeMap::new();
+    for &line in selected {
+        let source = lines.get(line.checked_sub(1)? as usize)?;
+        rows.insert(line, numbered_multi_row(line, source, numbering));
+    }
+    let mut used_bytes = render_multi_rows(&rows).len();
+    let path = path.to_str();
+    let source = pi_edit::diff_string::BlockContextSource { path, lang: None };
+    let mut added = false;
+    for (line, content) in pi_edit::diff_string::find_block_context_lines(&lines, selected, &source) {
+        if rows.contains_key(&line) || line == 0 || line as usize > lines.len() || rows.len() >= DEFAULT_MAX_LINES {
+            continue;
+        }
+        let row = numbered_multi_row(line, &content, numbering);
+        let before = rows.range(..line).next_back().map(|(&number, _)| number);
+        let after = rows.range(line..).next().map(|(&number, _)| number);
+        let old_separator = before.zip(after).map_or(0, |(a, b)| multi_separator(a, b).len());
+        let new_separators =
+            before.map_or(0, |a| multi_separator(a, line).len()) + after.map_or(0, |b| multi_separator(line, b).len());
+        let projected =
+            used_bytes.saturating_add(row.len()).saturating_add(new_separators).saturating_sub(old_separator);
+        if projected > max_bytes {
+            continue;
+        }
+        rows.insert(line, row);
+        used_bytes = projected;
+        added = true;
+    }
+    added.then(|| (render_multi_rows(&rows), rows.len()))
+}
+
 /// Multi-range reads use exact spans, unlike single-range reads with 1/3-line
 /// padding. Keep one forward scan and a bounded output buffer for large files.
 fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
@@ -481,10 +558,10 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
     size: u64,
     display: &str,
     sel: &Selector,
-    numbering: Numbering,
-    text_resource: bool,
+    render: ReadRender<'_>,
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
+    let ReadRender { numbering, text_resource, block_context } = render;
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
     let entity = if text_resource { "resource" } else { "file" };
     let mut out = String::new();
@@ -585,6 +662,10 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
         return Err(format!("Cannot read {display}: scan budget exceeded"));
     }
     let selection_truncated = truncated_by.is_some();
+    let mut emitted = seen.len();
+    // Preserve notices that fit after the selected rows before spending the
+    // remaining budget on optional block context.
+    let mut notices = String::new();
     if reached_eof {
         let mut omitted = 0usize;
         for range in &sel.multi_ranges {
@@ -593,11 +674,13 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
             {
                 let bound = end.map_or_else(|| start.to_string(), |end| format!("{start}-{end}"));
                 let notice = format!("[Range {bound} is beyond end of {entity} ({total} lines total); skipped]");
-                if out.len() + usize::from(!out.is_empty()) + notice.len() <= DEFAULT_MAX_BYTES {
-                    if !out.is_empty() {
-                        out.push('\n');
+                if out.len() + notices.len() + usize::from(!out.is_empty() || !notices.is_empty()) + notice.len()
+                    <= DEFAULT_MAX_BYTES
+                {
+                    if !out.is_empty() || !notices.is_empty() {
+                        notices.push('\n');
                     }
-                    out.push_str(&notice);
+                    notices.push_str(&notice);
                 } else {
                     omitted += 1;
                 }
@@ -605,9 +688,26 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
         }
         if omitted > 0 {
             truncated_by.get_or_insert("bytes");
-            out.push_str(&format!("\n[{omitted} additional out-of-bounds ranges omitted]"));
+            notices.push_str(&format!("\n[{omitted} additional out-of-bounds ranges omitted]"));
         }
     }
+    if !sel.raw
+        && let Some((full_text, path)) = block_context
+    {
+        if cancel.is_cancelled() {
+            return Err(format!("Read of {display} was aborted"));
+        }
+        if let Some((rendered, count)) =
+            multi_block_context(full_text, path, &seen, numbering, DEFAULT_MAX_BYTES.saturating_sub(notices.len()))
+        {
+            out = rendered;
+            emitted = count;
+        }
+        if cancel.is_cancelled() {
+            return Err(format!("Read of {display} was aborted"));
+        }
+    }
+    out.push_str(&notices);
     if selection_truncated {
         if !out.is_empty() {
             out.push_str("\n\n");
@@ -628,12 +728,12 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
         details["totalLines"] = json!(total);
     }
     if let Some(by) = truncated_by {
-        details["truncation"] = json!({"truncated": true, "truncatedBy": by, "outputLines": seen.len()});
+        details["truncation"] = json!({"truncated": true, "truncatedBy": by, "outputLines": emitted});
     }
     Ok(Window {
         text: out,
         details,
-        emitted: seen.len(),
+        emitted,
         start: seen.first().copied().unwrap_or(1) as usize,
         oversized_first_line: None,
         raw_seen_lines: sel.raw.then_some(seen),
@@ -722,8 +822,7 @@ impl AgentTool for ReadTool {
                     size,
                     &display,
                     &sel,
-                    numbering,
-                    true,
+                    ReadRender { numbering, text_resource: true, block_context: None },
                     &cancel,
                 )
                 .map_err(ToolError)?;
@@ -807,7 +906,9 @@ impl AgentTool for ReadTool {
                 let cells =
                     pi_edit::notebook::notebook_to_editable_text(&json, &display2).map_err(|e| e.to_string())?;
                 Some(pi_edit::text::normalize_to_lf(&cells).into_owned())
-            } else if hashlines && file_size <= pi_edit::store::MAX_SNAPSHOT_FILE_BYTES {
+            } else if (hashlines || (!raw && !sel.multi_ranges.is_empty()))
+                && file_size <= pi_edit::store::MAX_SNAPSHOT_FILE_BYTES
+            {
                 match String::from_utf8(std::fs::read(&abs2).map_err(io)?) {
                     Ok(text) => Some(pi_edit::text::normalize_to_lf(pi_edit::text::strip_bom(&text).1).into_owned()),
                     Err(e) => {
@@ -832,8 +933,7 @@ impl AgentTool for ReadTool {
                     *size,
                     &display2,
                     &sel,
-                    numbering,
-                    true,
+                    ReadRender { numbering, text_resource: true, block_context: None },
                     &cancel2,
                 )?
             } else {
@@ -843,8 +943,15 @@ impl AgentTool for ReadTool {
                         text.len() as u64,
                         &display2,
                         &sel,
-                        numbering,
-                        false,
+                        ReadRender {
+                            numbering,
+                            text_resource: false,
+                            block_context: (!notebook
+                                && !raw
+                                && !sel.multi_ranges.is_empty()
+                                && text.len() as u64 <= pi_edit::store::MAX_SNAPSHOT_FILE_BYTES)
+                                .then_some((text.as_str(), abs2.as_path())),
+                        },
                         &cancel2,
                     )?,
                     (None, Some(bytes)) => read_window(
@@ -852,8 +959,7 @@ impl AgentTool for ReadTool {
                         bytes.len() as u64,
                         &display2,
                         &sel,
-                        numbering,
-                        false,
+                        ReadRender { numbering, text_resource: false, block_context: None },
                         &cancel2,
                     )?,
                     (None, None) => {
@@ -864,8 +970,7 @@ impl AgentTool for ReadTool {
                             size,
                             &display2,
                             &sel,
-                            numbering,
-                            false,
+                            ReadRender { numbering, text_resource: false, block_context: None },
                             &cancel2,
                         )?
                     }
@@ -981,13 +1086,36 @@ mod tests {
             content.len() as u64,
             "lines.txt",
             &sel,
-            Numbering::Pipe,
-            false,
+            ReadRender { numbering: Numbering::Pipe, text_resource: false, block_context: None },
             &CancellationToken::new(),
         )
         .unwrap();
         assert!(window.text.starts_with("30|line30\n…\n50|line50"), "{}", window.text);
         assert!(!window.text.contains("continue"), "all selected ranges were complete: {}", window.text);
         assert!(window.details["totalLines"].is_null());
+    }
+
+    #[test]
+    fn cancelled_buffered_multi_range_does_not_return_block_context() {
+        let content = "function first() {\n  return 1;\n}\nfunction second() {\n  return 2;\n}\n";
+        let sel =
+            Selector { range: None, multi_ranges: vec![Range::From(1, Some(1)), Range::From(4, Some(4))], raw: false };
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = read_multi_window::<_, MAX_SCAN_BYTES>(
+            std::io::Cursor::new(content.as_bytes()),
+            content.len() as u64,
+            "blocks.ts",
+            &sel,
+            ReadRender {
+                numbering: Numbering::Pipe,
+                text_resource: false,
+                block_context: Some((content, Path::new("blocks.ts"))),
+            },
+            &cancel,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error, "Read of blocks.ts was aborted");
     }
 }

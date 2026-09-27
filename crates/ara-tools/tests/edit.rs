@@ -141,6 +141,21 @@ async fn hashline_anchors_flow_from_read_and_grep_to_edit() {
 }
 
 #[tokio::test]
+async fn disjoint_read_context_line_is_a_valid_hashline_anchor() {
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path();
+    let original = "function one() {\n  const x = 1;\n  return x;\n}\nfunction two() {\n  return 2;\n}\n";
+    std::fs::write(root.join("blocks.ts"), original).unwrap();
+    let t = tools(root, EditMode::Hashline);
+    let read = text(&run(&t.read, json!({"path":"blocks.ts:1-1,5-5"})).await);
+    assert!(read.contains("\n4:}\n5:function two() {"), "{read}");
+    let initial_tag = tag(root, "blocks.ts");
+    let visible = run(&t.edit, json!({"input": format!("[blocks.ts#{initial_tag}]\nPUT 4.=4:\n+}} // first\n")})).await;
+    assert!(!visible.is_error, "{}", text(&visible));
+    assert!(std::fs::read_to_string(root.join("blocks.ts")).unwrap().contains("} // first"));
+}
+
+#[tokio::test]
 async fn hashline_blocks_moves_deletes_and_parse_warnings() {
     let d = tempfile::tempdir().unwrap();
     let r = d.path();

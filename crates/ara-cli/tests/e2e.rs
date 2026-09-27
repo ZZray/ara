@@ -1759,6 +1759,33 @@ async fn read_multiple_ranges_reaches_model_and_session_journal() {
 }
 
 #[tokio::test]
+async fn read_disjoint_ranges_send_block_boundaries_to_model_and_journal() {
+    let env = Env::new();
+    std::fs::write(
+        env.work.path().join("blocks.ts"),
+        "function one() {\n  const x = 1;\n  return x;\n}\nfunction two() {\n  const y = 2;\n  return y;\n}\n",
+    )
+    .unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_context", "read", "{\"path\":\"blocks.ts:1-1,5-5\"}"),
+            finish("tool_calls"), done()]},
+        {"events": [text("Both function boundaries are visible."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Inspect both functions"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Both function boundaries are visible.\n");
+    let entries = journal(&env.session_files()[0]);
+    let receipt = entries.iter().find(|entry| entry["message"]["role"] == "toolResult").unwrap();
+    let body = receipt["message"]["content"][0]["text"].as_str().unwrap();
+    assert!(body.contains("\n1:function one() {\n…\n4:}\n5:function two() {\n…\n8:}"), "{body}");
+    assert!(!body.contains("2:  const x") && !body.contains("7:  return y"), "{body}");
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"], json!(body));
+}
+
+#[tokio::test]
 async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
     let env = Env::new();
     let work = env.work.path();
