@@ -121,6 +121,7 @@ dependencies = [
  "ara-ai",
  "ara-context",
  "ara-discovery",
+ "ara-mcp",
  "ara-session",
  "ara-testkit",
  "ara-tools",
@@ -170,6 +171,19 @@ dependencies = [
  "serde_json",
  "tempfile",
  "yaml-rust2",
+]
+
+[[package]]
+name = "ara-mcp"
+version = "0.1.0"
+dependencies = [
+ "ara-agent",
+ "ara-ai",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

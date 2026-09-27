@@ -3,6 +3,7 @@ members = [
   "crates/ara-ai",
   "crates/ara-agent",
   "crates/ara-cli",
+  "crates/ara-mcp",
   "crates/ara-context",
   "crates/ara-ctok",
   "crates/ara-discovery",
@@ -27,6 +28,7 @@ publish = false
 [workspace.dependencies]
 ara-ai = { path = "crates/ara-ai" }
 ara-agent = { path = "crates/ara-agent" }
+ara-mcp = { path = "crates/ara-mcp" }
 ara-session = { path = "crates/ara-session" }
 ara-tools = { path = "crates/ara-tools" }
 ara-testkit = { path = "crates/ara-testkit" }

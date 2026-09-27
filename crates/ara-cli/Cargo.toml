@@ -6,13 +6,27 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+test-fixture = []
+
 [[bin]]
 name = "ara"
 path = "src/main.rs"
 
+[[bin]]
+name = "ara-mcp-fixture"
+path = "tests/support/fake_mcp.rs"
+required-features = ["test-fixture"]
+
+[[test]]
+name = "mcp_stdio"
+path = "tests/mcp_stdio.rs"
+required-features = ["test-fixture"]
+
 [dependencies]
 anyhow.workspace = true
 ara-agent.workspace = true
+ara-mcp.workspace = true
 ara-ai.workspace = true
 ara-context.workspace = true
 ara-discovery.workspace = true

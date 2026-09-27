@@ -32,6 +32,7 @@ use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
 };
 use ara_discovery::{Discovery, HostDirs, ProviderPolicy, SkillsSettings};
+use ara_mcp::ServerConfig as McpServerConfig;
 use ara_session::{SessionJournal, latest_session};
 use ara_tools::{ToolContext, builtin_tools};
 use async_trait::async_trait;
@@ -170,6 +171,12 @@ struct Args {
     /// Tools to enable (comma separated): read,write,edit,bash,grep,glob. Empty disables tools.
     #[arg(long, default_value = "read,write,edit,bash,grep,glob")]
     tools: String,
+    /// Explicit JSON config for one local MCP stdio server.
+    #[arg(long)]
+    mcp_config: Option<PathBuf>,
+    /// Exact original MCP tool grant, as server:tool (repeatable).
+    #[arg(long = "mcp-allow")]
+    mcp_allow: Vec<String>,
     /// Prefix read output with line numbers.
     #[arg(long)]
     line_numbers: bool,
@@ -441,6 +448,11 @@ fn resolve_route(args: &Args) -> Result<Route> {
 async fn run(args: Args) -> Result<i32> {
     let _ = args.print;
     let route = resolve_route(&args)?;
+    if args.mcp_config.is_none() && !args.mcp_allow.is_empty() {
+        bail!("--mcp-allow requires --mcp-config");
+    }
+    let mcp_config =
+        args.mcp_config.as_deref().map(McpServerConfig::from_file).transpose().map_err(anyhow::Error::msg)?;
     let mut prompts = args.prompts.clone();
     if let Some(stdin) = read_stdin()? {
         // OMP buildInitialMessage: `${stdin}\n${firstPrompt}`.
@@ -562,8 +574,13 @@ async fn run(args: Args) -> Result<i32> {
             .collect(),
     );
     tool_ctx.line_numbers = args.line_numbers;
-    let tools: Vec<_> =
+    let mut tools: Vec<_> =
         builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
+    if let Some(config) = mcp_config {
+        let mcp_tools =
+            ara_mcp::connect(config, &cwd, &args.mcp_allow, &TOOL_NAMES).await.map_err(anyhow::Error::msg)?;
+        tools.extend(mcp_tools);
+    }
 
     let prompt_tools: Vec<PromptTool> = tools
         .iter()

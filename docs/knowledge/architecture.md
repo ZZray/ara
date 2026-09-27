@@ -22,7 +22,10 @@ This is an architecture target. Source-backed Rust behavior and host tests are r
 | `ara-agent` | Agent loop, `AgentTool` port, `LoopHooks` (permission gate, steering/follow-up queues), `AgentEventSink` port | Storage, process/file effects, product state |
 | `ara-session` | Session journal format and recovery | Providers, hosts |
 | `ara-tools` | Built-in tool implementations (file/process effects) behind `AgentTool` | Hosts, products |
+| `ara-mcp` | Host-side bounded MCP stdio process and `AgentTool` adapter | Session storage, product state |
 | `ara-cli` | Reference host: argument parsing, model/credential binding, journal location, print mode | Product state (HandWave/Lantern/Lumen) |
 | `ara-testkit` | Controlled fake upstream and fixtures | Production crates at runtime |
+
+**Decision, 2026-09-28 (implemented WIP, not accepted):** The CLI owns MCP server launch and exact `(server, tool)` grants. `ara-mcp` translates a granted stdio tool into the existing `AgentTool` port; the Agent loop and Session writer retain their existing ordering and recovery behavior. The child receives only explicitly mapped environment variables plus the Windows OS installation path, and a call with an uncertain effect is recorded as unknown without reconnect or replay. This first path covers a direct executable and pinned MCP `2025-11-25`; HTTP/SSE, OAuth, catalog resources/prompts and Windows process-tree containment are separate work. See [CA-MCP stdio evidence](../evidence/ca-mcp-stdio.md).
 
 The loop awaits each `AgentEventSink::emit`. A host that persists `message_end` inside the sink has therefore journaled an assistant tool-call message before any of its tools start. By default the loop refuses to re-execute a trailing unpaired tool-call tail (`UnpairedTail::Refuse`), because such calls may already have run and their effects are unknown. A host opts in to execution only when it knows the calls never ran.
