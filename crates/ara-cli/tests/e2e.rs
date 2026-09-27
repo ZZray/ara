@@ -260,6 +260,44 @@ async fn anthropic_ping_bridged_tool_call_runs_once_in_the_real_host() {
 }
 
 #[tokio::test]
+async fn anthropic_refusal_exits_with_reason_and_preserves_details_without_tool_effects() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let details = json!({"type":"refusal","category":"policy","explanation":"  Request blocked.  "});
+    let up = upstream(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_refused"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_refused","name":"write","input":{}}})),
+        frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"refused.txt\",\"content\":\"unsafe\"}"}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":details}})),
+        frame(json!({"type":"message_stop"}))
+    ]}]}))
+    .await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "anthropic-messages", "--tools", "write", "Write refused.txt"]))
+            .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(stdout, "");
+    assert!(stderr.contains("Refusal (policy): Request blocked."), "{stderr}");
+    assert!(!env.work.path().join("refused.txt").exists());
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    let results: Vec<_> = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["message"]["toolCallId"], json!("toolu_refused"));
+    assert_eq!(results[0]["message"]["isError"], json!(true));
+    assert_eq!(results[0]["message"]["details"]["__synthetic"], json!(true));
+    assert_eq!(results[0]["message"]["details"]["executed"], json!(false));
+    let assistant = entries.iter().find(|entry| entry["message"]["role"] == "assistant").unwrap();
+    assert_eq!(assistant["message"]["stopReason"], json!("error"));
+    assert_eq!(assistant["message"]["stopDetails"], details);
+}
+
+#[tokio::test]
 async fn anthropic_ping_stall_does_not_execute_an_unfinished_write() {
     fn frame(value: Value) -> Value {
         let name = value["type"].as_str().unwrap();

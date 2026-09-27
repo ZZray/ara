@@ -747,9 +747,25 @@ impl MessageState {
                     self.output.stop_reason = stop_reason(raw);
                     self.stop_reason_seen = true;
                     if self.output.stop_reason == StopReason::Error {
-                        self.output.stop_details =
-                            frame.pointer("/delta/stop_details").cloned().or_else(|| Some(json!({"type":raw})));
-                        self.output.error_message = Some(format!("Anthropic stopped with {raw}"));
+                        let wire_details = frame.pointer("/delta/stop_details").filter(|value| !value.is_null());
+                        let details = wire_details.cloned().unwrap_or_else(|| json!({"type":raw}));
+                        self.output.error_message =
+                            Some(if wire_details.is_some_and(|value| value["type"] == "refusal") {
+                                let category = details["category"].as_str().filter(|value| !value.is_empty());
+                                let label =
+                                    category.map_or_else(|| "Refusal".to_owned(), |value| format!("Refusal ({value})"));
+                                match details["explanation"].as_str().map(str::trim).filter(|value| !value.is_empty()) {
+                                    Some(explanation) => format!("{label}: {explanation}"),
+                                    None => label,
+                                }
+                            } else if raw == "refusal" {
+                                "Refusal (no details provided)".into()
+                            } else if raw == "sensitive" {
+                                "Content flagged by safety filters".into()
+                            } else {
+                                format!("Anthropic stream ended with stop_reason: {raw}")
+                            });
+                        self.output.stop_details = Some(details);
                     }
                 }
                 if let Some(usage) = frame.get("usage") {

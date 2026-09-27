@@ -202,6 +202,51 @@ async fn malformed_only_start_and_structured_stream_error_are_not_success() {
 }
 
 #[tokio::test]
+async fn refusal_details_and_sensitive_stops_keep_their_reason_in_terminal_errors() {
+    for (raw, details, expected_details, expected_message) in [
+        ("refusal", Some(Value::Null), json!({"type":"refusal"}), "Refusal (no details provided)"),
+        ("refusal", None, json!({"type":"refusal"}), "Refusal (no details provided)"),
+        (
+            "refusal",
+            Some(json!({"type":"refusal","category":"policy","explanation":"  Request blocked.  "})),
+            json!({"type":"refusal","category":"policy","explanation":"  Request blocked.  "}),
+            "Refusal (policy): Request blocked.",
+        ),
+        (
+            "refusal",
+            Some(json!({"type":"refusal","explanation":"   "})),
+            json!({"type":"refusal","explanation":"   "}),
+            "Refusal",
+        ),
+        ("sensitive", Some(Value::Null), json!({"type":"sensitive"}), "Content flagged by safety filters"),
+    ] {
+        let mut delta = json!({"stop_reason":raw});
+        if let Some(details) = details {
+            delta["stop_details"] = details;
+        }
+        let server = FakeUpstream::start(
+            upstream(vec![
+                frame(json!({"type":"message_start","message":{"id":"msg_rejected","usage":{"input_tokens":5}}})),
+                frame(json!({"type":"message_delta","delta":delta,"usage":{"output_tokens":0}})),
+                frame(json!({"type":"message_stop"})),
+            ]),
+            None,
+        )
+        .await
+        .unwrap();
+        let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+        let events =
+            collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+        assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+        assert_eq!(message(&events).stop_details.as_ref(), Some(&expected_details), "{raw}");
+        assert_eq!(message(&events).error_message.as_deref(), Some(expected_message), "{raw}");
+        assert_eq!(message(&events).usage.input, Some(5));
+        assert_eq!(message(&events).usage.output, Some(0));
+        assert_eq!(server.served(), 1);
+    }
+}
+
+#[tokio::test]
 async fn text_tool_usage_and_followup_wire_are_preserved() {
     let server = FakeUpstream::start(
         upstream(vec![
