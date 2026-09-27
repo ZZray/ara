@@ -189,3 +189,33 @@ high-confidence defect; it ran `git diff --check` but not Cargo. This proves
 controlled custom-route CLI and journal behavior, not official HTTPS behavior
 or a real-model task. The full Windows gate remains red, so AI-ANTHROPICa and
 formal counts remain unchanged.
+
+## Shared metadata scope review on `4080ca5` (no implementation)
+
+The pinned OMP `packages/ai/src/types.ts::Tool` has an optional `strict`
+property. Its `packages/ai/src/providers/anthropic.ts::buildAnthropicToolSchemaPlans`
+keeps every tool on the non-strict plan, then excludes `tool.strict === false`
+from strict candidates before applying the shared budgets. The same provider
+combines `model.compat.disableStrictTools` with the per-session rejection
+state when deciding whether to send strict schemas. Its Agent loop still
+validates tool arguments independently of wire-level `strict` selection.
+
+ARA currently has neither metadata field in its shared `Tool` and `Model`;
+`anthropic::StreamOptions.strict_tools` controls an entire request. A
+provider-local tool-name list would detach the decision from the tool
+definition and would not port OMP's contract. Independent Codex reviewer
+`/root/strict_scope_review` therefore recommended the following boundary:
+
+| Boundary | Files and behavior |
+| --- | --- |
+| Preserve | Agent argument validation and execution, Session journal, retry timing, and other providers' current wire output. |
+| Proposed change, awaiting scope confirmation | Add optional `Tool.strict` and the narrow `Model` compatibility flag in `crates/ara-ai/src/types.rs`; use them in `crates/ara-ai/src/providers/anthropic.rs`; supply defaults at existing tool/model construction sites and an explicit CLI host binding for model compatibility. Verify default serialization and other providers' unchanged requests. |
+| Defer | Full model catalogue, other provider interpretations of `Tool.strict`, persisted strict-rejection state, and unrelated Anthropic capabilities. |
+
+Tests should cover false/true/absent per-tool values, budget reassignment,
+model compatibility precedence over request opt-in, unchanged custom-route
+defaults, classified rejection fallback, real Agent tool-definition delivery
+and old JSON shape. This shared type and CLI entrypoint change needs the
+explicit scope confirmation required by `AGENTS.md` before implementation.
+Estimate after confirmation: 2–4 working days for this WIP slice, excluding
+the full delivery gate and live-model availability. Counts remain unchanged.

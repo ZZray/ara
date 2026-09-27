@@ -44,6 +44,25 @@ and Windows process-tree code track child identity and terminate descendants.
 ARA's direct Bash launcher is an intentional implementation difference, but
 its single-process Windows kill does not meet the documented effect boundary.
 
+## Focused Windows recheck on `4080ca5`
+
+An independent Codex investigator repeated the focused checks with Git Bash
+on `PATH`. The real CLI deadline test failed again (5.43 s versus its 4 s
+limit). The Bash timeout test failed (3.019 s versus 2.8 s), and the
+background-child reap test failed (2.183 s versus 1.5 s). The dropped-call
+test passed this one run; its earlier post-drop marker failure above remains
+unresolved. Without Git Bash on `PATH`, the CLI test instead failed quickly
+because Bash could not start, which is not a deadline pass. The full verifier
+supplies Git Bash on `PATH`. These isolated failures make full-suite load an
+insufficient explanation. No lifecycle code changed during this recheck.
+
+| Focused command with Git Bash on `PATH` | Observed |
+| --- | --- |
+| `cargo test -p ara-cli --test e2e deadline_during_a_tool_and_zero_budget_exit_nonzero -- --exact --nocapture` | Failed at the `< 4 s` assertion; test ran 5.43 s. |
+| `cargo test -p ara-tools --test tools bash_timeout_kills_process_group -- --exact --nocapture` | Failed at the `< 2.8 s` assertion; test ran 3.019 s. |
+| `cargo test -p ara-tools --test tools bash_keeps_stream_order_and_reaps_background_children -- --exact --nocapture` | Failed at the `< 1.5 s` assertion; test ran 2.183 s. |
+| `cargo test -p ara-tools --test tools dropping_a_bash_call_kills_its_group -- --exact --nocapture` | Passed once; earlier delayed-marker failure remains relevant. |
+
 ## Proposed bounded repair and gate
 
 Confine the repair to Windows process containment in `ara-tools::bash`, its
@@ -66,3 +85,5 @@ After authorization, rerun the three focused cases above, the unfiltered
 `ara-tools` suite, real CLI e2e and full workspace verification. Confirm both
 elapsed time and absence of delayed marker effects. The prior gate remains
 open until the delivered code passes these checks and independent diff review.
+Estimate after scope confirmation: 2–5 working days, including the unfiltered
+verifier and independent review.
