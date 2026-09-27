@@ -2,7 +2,7 @@
 
 ## Scope and source
 
-Delivered WIP code: local commits d904ed7 and da86da5. Fixed OMP source:
+Delivered WIP code: local commits d904ed7, da86da5 and 9d91223. Fixed OMP source:
 packages/ai/src/providers/anthropic.ts at
 596f2da7101178214aa27a753529d15e6b7ad91d, especially buildParams
 (3886–4140), convertAnthropicMessages (4245–4550), stream envelope
@@ -70,6 +70,35 @@ an ARA fail-closed difference for acyclic JSON Values. Remaining generic
 toolWireSchema postprocessing differences include nullable anyOf rewriting,
 bare enum type inference and const-union collapse; these need separate
 source-backed fixtures before parity is claimed. No real-model task ran.
+
+## Bounded ping keepalive follow-up (9d91223)
+
+Fixed OMP source: packages/ai/src/providers/anthropic.ts
+PING_PROGRESS_MAX_IDLE_MULTIPLIER (1629–1636) and stream idle progress
+handling (2459–2490); fixtures in
+packages/ai/test/anthropic-ping-keepalive.test.ts (122–231) and
+anthropic-stream-timeout.test.ts. A ping after semantic stream progress
+extends the idle deadline only while less than three idle intervals have
+passed since the last non-ping event. Pings before message_start do not
+satisfy the first-event deadline. A stalled tool block times out without
+creating an executable ToolCall.
+
+| Check on 9d91223 | Result and observed artifact |
+| --- | --- |
+| cargo test -p ara-ai --test anthropic_http --quiet | Exit 0, 14/14. A fake HTTP tool call spans 660 ms with two pings and a 350 ms idle setting, then completes once with path slow.txt. A stream with 30 more pings and no semantic progress times out within the 3× cap, without a completed ToolCall or retry. Pings before message_start leave the first-event watchdog active and the one safe pre-output retry returns response msg_recovered. Cancellation during pings ends Aborted. |
+| cargo test -p ara-ai --test anthropic_http pings_ -- --test-threads=1 | Exit 0, 3/3 timing cases in 2.53 s serial execution. |
+| cargo test -p ara-cli --test e2e anthropic_ --quiet | Exit 0, 6/6 real-process Anthropic cases. The ping-bridged write produces exact bytes "one write\n", one toolResult and two provider requests (tool + follow-up). A stalled ping stream exits 1 with Anthropic stream stalled, creates no never-written.txt, has no toolResult and makes only one request. |
+| cargo test -p ara-ai --quiet; cargo clippy --workspace --all-targets --all-features -- -D warnings | Exit 0: AI 108 unit, 14 Anthropic HTTP, 48 Chat HTTP and 13 Responses HTTP; strict workspace Clippy clean. |
+| cargo test --workspace --doc --quiet; cargo deny check; python scripts/omp_inventory.py check | Each exits 0. Existing dependency duplicate/license-field warnings remain. |
+| rustfmt --check on three changed Rust files; git diff --cached --check | Exit 0. Full cargo fmt --all -- --check exits 1 on unchanged vendored pi-* formatting. |
+| cargo test --workspace --all-targets --quiet, Git Bash in PATH | Exit 1 on the committed code: CLI e2e 33/34; only deadline_during_a_tool_and_zero_budget_exit_nonzero fails elapsed <4 s. Full delivery gate remains red. |
+
+Independent Codex plan and exact-diff reviewers compared the pinned OMP
+rule, provider stream, retry boundary, Agent tool execution and all three
+changed files. They found no confirmed reachable code defect. Diff review
+requested a real-host negative case and a specific timeout assertion;
+both were added and passed. The reviewers did not run independent runtime
+tests. This WIP still lacks bounded real-model evidence and the full gate.
 
 The focused HTTP negatives cover an incomplete tool JSON/EOF with no
 completed call, 401 with errorStatus, caller cancellation, and a missing
