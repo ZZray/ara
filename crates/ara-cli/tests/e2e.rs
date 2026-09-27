@@ -216,6 +216,82 @@ async fn anthropic_messages_runs_tool_and_replays_after_restart() {
 }
 
 #[tokio::test]
+async fn anthropic_ping_bridged_tool_call_runs_once_in_the_real_host() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_ping_tool"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ping_write","name":"write","input":{}}})),
+            {"sleep_ms":220}, frame(json!({"type":"ping"})),
+            {"sleep_ms":220}, frame(json!({"type":"ping"})),
+            {"sleep_ms":220},
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"ping.txt\",\"content\":\"one write\\n\"}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_ping_final"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Wrote ping.txt."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]})).await;
+    let out = output(env.cmd(
+        &up.base_url(),
+        &["--api", "anthropic-messages", "--tools", "write", "--stream-idle-timeout", "0.35", "Write ping.txt"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote ping.txt.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("ping.txt")).unwrap(), "one write\n");
+    assert_eq!(up.served(), 2);
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+}
+
+#[tokio::test]
+async fn anthropic_ping_stall_does_not_execute_an_unfinished_write() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let mut frames = vec![
+        frame(json!({"type":"message_start","message":{"id":"msg_ping_stall"}})),
+        frame(
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_unfinished","name":"write","input":{}}}),
+        ),
+        frame(
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"never-written.txt\",\"content\":\"unsafe\"}"}}),
+        ),
+    ];
+    for _ in 0..30 {
+        frames.push(json!({"sleep_ms":100}));
+        frames.push(frame(json!({"type":"ping"})));
+    }
+    let up = upstream(json!({"responses":[{"events":frames,"end":"hang"}]})).await;
+    let out = output(env.cmd(
+        &up.base_url(),
+        &["--api", "anthropic-messages", "--tools", "write", "--stream-idle-timeout", "0.25", "Write now"],
+    ))
+    .await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("Anthropic stream stalled"), "{stderr}");
+    assert!(!env.work.path().join("never-written.txt").exists());
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    assert!(entries.iter().all(|entry| entry["message"]["role"] != "toolResult"));
+}
+
+#[tokio::test]
 async fn anthropic_official_key_is_not_sent_to_a_custom_endpoint() {
     let env = Env::new();
     let up = upstream(json!({"responses":[{"status":401,"body":"{\"error\":{\"message\":\"stop\"}}"}]})).await;

@@ -28,6 +28,7 @@ pub const API: &str = "anthropic-messages";
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 const MAX_TOOL_JSON_BYTES: usize = 1024 * 1024;
 const MAX_TOOL_SCHEMA_DEPTH: usize = 128;
+const PING_PROGRESS_MAX_IDLE_MULTIPLIER: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct StreamOptions {
@@ -774,10 +775,11 @@ async fn run(
     let mut body = response.bytes_stream();
     let mut decoder = SseDecoder::new();
     let mut progressed = false;
-    let mut last_progress = Instant::now();
+    let mut last_semantic_progress = Instant::now();
+    let mut last_liveness = last_semantic_progress;
     loop {
         let deadline =
-            if progressed { options.idle_timeout.map(|timeout| last_progress + timeout) } else { first_deadline };
+            if progressed { options.idle_timeout.map(|timeout| last_liveness + timeout) } else { first_deadline };
         let next = match deadline {
             Some(deadline) => tokio::select! {
                 result = body.next() => result,
@@ -805,9 +807,19 @@ async fn run(
             }
             let mut events = Vec::new();
             let is_progress = state.handle(&value, &mut events)?;
+            let now = Instant::now();
             if is_progress {
                 progressed = true;
-                last_progress = Instant::now();
+                last_semantic_progress = now;
+                last_liveness = now;
+            } else if value["type"] == "ping"
+                && progressed
+                && options.idle_timeout.is_some_and(|timeout| {
+                    now.duration_since(last_semantic_progress)
+                        < timeout.saturating_mul(PING_PROGRESS_MAX_IDLE_MULTIPLIER)
+                })
+            {
+                last_liveness = now;
             }
             for event in events {
                 if !sink.push_or_cancel(event, cancel).await {

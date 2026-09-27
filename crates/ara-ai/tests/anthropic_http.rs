@@ -427,6 +427,141 @@ async fn missing_message_stop_after_completed_reason_is_best_effort_done() {
 }
 
 #[tokio::test]
+async fn pings_bridge_a_slow_tool_input_within_the_semantic_progress_cap() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_slow_tool"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_slow","name":"read","input":{}}})),
+            json!({"sleep_ms":220}),
+            frame(json!({"type":"ping"})),
+            json!({"sleep_ms":220}),
+            frame(json!({"type":"ping"})),
+            json!({"sleep_ms":220}),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"slow.txt\"}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("read"))], ..Default::default() };
+    let mut opts = options();
+    opts.idle_timeout = Some(Duration::from_millis(350));
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::ToolUse, .. })));
+    let calls: Vec<_> = message(&events).tool_calls().collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].id, "toolu_slow");
+    assert_eq!(calls[0].arguments["path"], "slow.txt");
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn pings_without_semantic_progress_end_a_partial_tool_call() {
+    let mut frames = vec![
+        frame(json!({"type":"message_start","message":{"id":"msg_stalled_tool"}})),
+        frame(
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_stalled","name":"read","input":{}}}),
+        ),
+    ];
+    for _ in 0..30 {
+        frames.push(json!({"sleep_ms":100}));
+        frames.push(frame(json!({"type":"ping"})));
+    }
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[{"events":frames,"end":"hang"}]})).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("read"))], ..Default::default() };
+    let mut opts = options();
+    opts.idle_timeout = Some(Duration::from_millis(250));
+    let started = std::time::Instant::now();
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    let elapsed = started.elapsed();
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+    assert_eq!(message(&events).tool_calls().count(), 0);
+    assert!(message(&events).error_message.as_deref().unwrap().contains("stalled"));
+    assert!(elapsed >= Duration::from_millis(600), "pings were not honored: {elapsed:?}");
+    assert!(elapsed < Duration::from_millis(1800), "ping cap did not end the stall: {elapsed:?}");
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn pings_before_message_start_do_not_satisfy_the_first_event_watchdog() {
+    let mut preamble = Vec::new();
+    for _ in 0..10 {
+        preamble.push(json!({"sleep_ms":100}));
+        preamble.push(frame(json!({"type":"ping"})));
+    }
+    let retry = vec![
+        frame(json!({"type":"message_start","message":{"id":"msg_recovered"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"recovered"}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+        frame(json!({"type":"message_stop"})),
+    ];
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[{"events":preamble,"end":"hang"},{"events":retry}]})).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("reply"))], ..Default::default() };
+    let mut opts = options();
+    opts.first_event_timeout = Some(Duration::from_millis(350));
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::Stop, .. })));
+    assert_eq!(message(&events).response_id.as_deref(), Some("msg_recovered"));
+    assert_eq!(message(&events).text(), "recovered");
+    assert_eq!(server.served(), 2);
+}
+
+#[tokio::test]
+async fn cancellation_during_ping_keepalives_stops_the_partial_tool_call() {
+    let mut frames = vec![
+        frame(json!({"type":"message_start","message":{"id":"msg_cancel_pings"}})),
+        frame(
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_cancel","name":"read","input":{}}}),
+        ),
+    ];
+    for _ in 0..30 {
+        frames.push(json!({"sleep_ms":100}));
+        frames.push(frame(json!({"type":"ping"})));
+    }
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[{"events":frames,"end":"hang"}]})).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let context = Context { messages: vec![Message::User(UserMessage::text("read"))], ..Default::default() };
+    let mut opts = options();
+    opts.idle_timeout = Some(Duration::from_millis(250));
+    opts.cancel = cancel.clone();
+    let mut stream = anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts);
+    let mut observed = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().unwrap();
+        let tool_started = matches!(event, AssistantMessageEvent::ToolcallStart { .. });
+        observed.push(event);
+        if tool_started {
+            break;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    cancel.cancel();
+    observed.extend(collect(stream).await);
+    assert!(matches!(observed.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Aborted, .. })));
+    assert_eq!(message(&observed).tool_calls().count(), 0);
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
 async fn http_auth_failure_and_cancellation_are_not_success() {
     let server = FakeUpstream::start(
         serde_json::from_value(json!({"responses":[
