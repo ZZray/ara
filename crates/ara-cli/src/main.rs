@@ -23,8 +23,10 @@
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
+use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
 use ara_ai::{
-    Message, Model, ModelTokenizer, OpenAICompletionsProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
+    Message, Model, ModelProvider, ModelTokenizer, OpenAICompletionsProvider, OpenAIResponsesProvider, StopReason,
+    UserMessage, resolve_known_claude_tokenizer,
 };
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
@@ -51,6 +53,23 @@ enum Mode {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Api {
+    #[value(name = "openai-completions")]
+    OpenaiCompletions,
+    #[value(name = "openai-responses")]
+    OpenaiResponses,
+}
+
+impl Api {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenaiCompletions => "openai-completions",
+            Self::OpenaiResponses => "openai-responses",
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "ara", version, about = "ARA agent (print mode)")]
 struct Args {
@@ -65,6 +84,9 @@ struct Args {
     /// Model id sent on the wire. Env: ARA_MODEL, ARA_TEST_MODEL_ID.
     #[arg(long)]
     model: Option<String>,
+    /// Model wire protocol. Defaults to Chat Completions.
+    #[arg(long, value_enum, default_value_t = Api::OpenaiCompletions)]
+    api: Api,
     /// Local Claude content tokenizer metadata (no context gate yet): auto,
     /// none, claude-v3, claude-v47, claude-v5, or claude-v5-sonnet. Env: ARA_TOKENIZER.
     #[arg(long)]
@@ -293,6 +315,9 @@ struct Route {
 
 /// Validate every argument that does not need the journal (no I/O side effects).
 fn resolve_route(args: &Args) -> Result<Route> {
+    if args.api == Api::OpenaiResponses && args.report_request_text_tokens {
+        bail!("--report-request-text-tokens is not yet supported with --api openai-responses");
+    }
     let model_id = args
         .model
         .clone()
@@ -342,7 +367,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
     Ok(Route {
         model: Model {
             id: model_id,
-            api: "openai-completions".into(),
+            api: args.api.as_str().into(),
             provider,
             base_url,
             reasoning: false,
@@ -540,10 +565,21 @@ async fn run(args: Args) -> Result<i32> {
     } else {
         None
     };
-    let provider = Arc::new(OpenAICompletionsProvider {
-        client: reqwest::Client::builder().build().context("building HTTP client")?,
-        base: stream_options,
-    });
+    let client = reqwest::Client::builder().build().context("building HTTP client")?;
+    let provider: Arc<dyn ModelProvider> = match args.api {
+        Api::OpenaiCompletions => Arc::new(OpenAICompletionsProvider { client, base: stream_options }),
+        Api::OpenaiResponses => Arc::new(OpenAIResponsesProvider {
+            client,
+            base: ResponsesStreamOptions {
+                api_key: stream_options.api_key,
+                extra_headers: stream_options.extra_headers,
+                first_event_timeout: stream_options.first_event_timeout,
+                idle_timeout: stream_options.idle_timeout,
+                retry: stream_options.retry,
+                ..ResponsesStreamOptions::default()
+            },
+        }),
+    };
     let cancel = CancellationToken::new();
     let sink = HostSink {
         mode: args.mode,

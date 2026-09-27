@@ -1049,7 +1049,7 @@ async fn sleep_or_cancel(delay: Duration, cancel: &CancellationToken) -> Result<
 
 /// POST with bounded retries before any stream byte is consumed
 /// (OMP `fetchWithRetry`: 408/429/5xx and network errors, Retry-After aware).
-async fn post_with_retry(
+pub(crate) async fn post_with_retry(
     client: &reqwest::Client,
     url: &str,
     headers: &[(String, String)],

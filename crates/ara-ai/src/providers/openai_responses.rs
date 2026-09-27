@@ -9,10 +9,19 @@
 //! native reasoning item replay are separate delivery steps.
 
 use crate::error::ProviderError;
+use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
+use crate::responses_sse::ResponsesSseDecoder;
+use crate::responses_stream::ResponsesStreamState;
 use crate::transform::{ToolCallOriginScope, responses_call_component, transform_messages};
 use crate::types::{AssistantBlock, Context, Message, Model, ToolChoice, UserBlock, UserContent};
+use futures::StreamExt;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
+
+use super::openai_completions::{RetryPolicy, post_with_retry};
 
 pub const API: &str = "openai-responses";
 const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
@@ -235,6 +244,187 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
         }
     }
     Ok(body)
+}
+
+#[derive(Clone, Debug)]
+pub struct StreamOptions {
+    pub request: RequestOptions,
+    pub api_key: Option<String>,
+    pub cancel: CancellationToken,
+    pub first_event_timeout: Option<Duration>,
+    pub idle_timeout: Option<Duration>,
+    pub extra_headers: Vec<(String, String)>,
+    pub retry: RetryPolicy,
+}
+
+impl Default for StreamOptions {
+    fn default() -> Self {
+        Self {
+            request: RequestOptions::default(),
+            api_key: None,
+            cancel: CancellationToken::new(),
+            first_event_timeout: Some(Duration::from_secs(300)),
+            idle_timeout: Some(Duration::from_secs(300)),
+            extra_headers: Vec::new(),
+            retry: RetryPolicy::default(),
+        }
+    }
+}
+
+/// Stream one stateless Responses request through the shared Agent event port.
+pub fn stream(client: reqwest::Client, model: Model, context: Context, options: StreamOptions) -> AssistantStream {
+    let cancel = options.cancel.clone();
+    crate::replay_safe_retry::with_replay_safe_stream_retry(model.clone(), cancel, false, move |cancel| {
+        let mut options = options.clone();
+        options.cancel = cancel;
+        stream_once(client.clone(), model.clone(), context.clone(), options)
+    })
+}
+
+fn stream_once(
+    client: reqwest::Client,
+    model: Model,
+    context: Context,
+    options: StreamOptions,
+) -> crate::replay_safe_retry::AttemptStream {
+    let (sink, events) = EventSink::channel();
+    let error = Arc::new(Mutex::new(None));
+    let recorded_error = error.clone();
+    tokio::spawn(async move {
+        let start = Instant::now();
+        let mut state = ResponsesStreamState::new(&model);
+        let mut retry_blocked = false;
+        let result = run(&client, &model, &context, &options, &mut state, &sink, &mut retry_blocked).await;
+        let mut output = state.output.clone();
+        output.duration = Some(start.elapsed().as_millis() as u64);
+        match result {
+            Ok(()) => {
+                let reason = output.stop_reason;
+                let _ = sink.push(AssistantMessageEvent::Done { reason, message: output }).await;
+            }
+            Err(cause) => {
+                *recorded_error.lock().expect("retry side channel") = Some(crate::replay_safe_retry::AttemptError {
+                    cause: cause.clone(),
+                    retry_blocked: retry_blocked || state.replay_unsafe_wire_event,
+                });
+                output.stop_reason = cause.stop_reason();
+                output.error_status = cause.status();
+                output.error_message = Some(cause.to_string());
+                let reason = output.stop_reason;
+                let _ = sink.push(AssistantMessageEvent::Error { reason, error: output }).await;
+            }
+        }
+    });
+    crate::replay_safe_retry::AttemptStream { events, error }
+}
+
+async fn run(
+    client: &reqwest::Client,
+    model: &Model,
+    context: &Context,
+    options: &StreamOptions,
+    state: &mut ResponsesStreamState,
+    sink: &EventSink,
+    retry_blocked: &mut bool,
+) -> Result<(), ProviderError> {
+    if options.cancel.is_cancelled() {
+        return Err(ProviderError::Aborted);
+    }
+    let base = model.base_url.trim_end_matches('/');
+    if base.is_empty() {
+        return Err(ProviderError::Config("Responses request has no base URL".into()));
+    }
+    let url = format!("{base}/responses");
+    let body = build_request(model, context, &options.request)?;
+    let mut headers = Vec::new();
+    if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
+        headers.push(("Authorization".to_owned(), format!("Bearer {key}")));
+    }
+    headers.extend(options.extra_headers.iter().cloned());
+    let started = Instant::now();
+    let first_deadline = options.first_event_timeout.map(|duration| started + duration);
+    let response = match first_deadline {
+        Some(deadline) => tokio::select! {
+            result = post_with_retry(client, &url, &headers, &body, &options.retry, &options.cancel, retry_blocked) => result?,
+            _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Responses stream timed out before its first event".into())),
+        },
+        None => post_with_retry(client, &url, &headers, &body, &options.retry, &options.cancel, retry_blocked).await?,
+    };
+    if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &options.cancel).await {
+        return Err(ProviderError::Aborted);
+    }
+    let mut chunks = response.bytes_stream();
+    let mut decoder = ResponsesSseDecoder::new();
+    let mut progressed = false;
+    let mut last_progress = Instant::now();
+    loop {
+        let deadline =
+            if progressed { options.idle_timeout.map(|duration| last_progress + duration) } else { first_deadline };
+        let next = match deadline {
+            Some(deadline) => tokio::select! {
+                next = chunks.next() => next,
+                _ = options.cancel.cancelled() => return Err(ProviderError::Aborted),
+                _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Responses stream stalled".into())),
+            },
+            None => tokio::select! {
+                next = chunks.next() => next,
+                _ = options.cancel.cancelled() => return Err(ProviderError::Aborted),
+            },
+        };
+        let ended = next.is_none();
+        let frames = match next {
+            Some(Ok(bytes)) => decoder.feed(&bytes)?,
+            Some(Err(error)) => return Err(ProviderError::Transport(format!("Responses stream read failed: {error}"))),
+            None => decoder.finish()?.into_iter().collect(),
+        };
+        for frame in frames {
+            if frame.data == "[DONE]" {
+                return Err(ProviderError::Incomplete(
+                    "Responses stream ended without a response terminal event".into(),
+                ));
+            }
+            let event: Value = serde_json::from_str(&frame.data)
+                .map_err(|_| ProviderError::Stream("Malformed Responses SSE JSON frame".into()))?;
+            let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(
+                event_type,
+                "response.created"
+                    | "response.output_item.added"
+                    | "response.reasoning_summary_part.added"
+                    | "response.reasoning_summary_text.delta"
+                    | "response.reasoning_summary_text.done"
+                    | "response.reasoning_summary_part.done"
+                    | "response.reasoning_text.delta"
+                    | "response.content_part.added"
+                    | "response.output_text.delta"
+                    | "response.refusal.delta"
+                    | "response.function_call_arguments.delta"
+                    | "response.function_call_arguments.done"
+                    | "response.output_item.done"
+                    | "response.completed"
+                    | "response.incomplete"
+                    | "response.failed"
+                    | "response.done"
+                    | "error"
+            ) {
+                progressed = true;
+                last_progress = Instant::now();
+            }
+            let updates = state.handle(&event)?;
+            for update in updates {
+                if !sink.push_or_cancel(update, &options.cancel).await {
+                    return Err(ProviderError::Aborted);
+                }
+            }
+            if state.terminal {
+                return Ok(());
+            }
+        }
+        if ended {
+            break;
+        }
+    }
+    Err(ProviderError::Incomplete("Responses stream closed without a response terminal event".into()))
 }
 
 #[cfg(test)]

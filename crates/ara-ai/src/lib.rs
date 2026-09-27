@@ -8,6 +8,8 @@ pub mod json;
 pub mod model_tokenizer;
 pub mod providers;
 pub(crate) mod replay_safe_retry;
+pub(crate) mod responses_sse;
+pub(crate) mod responses_stream;
 pub mod sse;
 pub mod transform;
 pub mod types;
@@ -51,5 +53,22 @@ impl ModelProvider for OpenAICompletionsProvider {
         opts.max_tokens = options.max_tokens.or(opts.max_tokens);
         opts.temperature = options.temperature.or(opts.temperature);
         providers::openai_completions::stream(self.client.clone(), model.clone(), context.clone(), opts)
+    }
+}
+
+/// OpenAI-compatible stateless Responses binding.
+pub struct OpenAIResponsesProvider {
+    pub client: reqwest::Client,
+    pub base: providers::openai_responses::StreamOptions,
+}
+
+impl ModelProvider for OpenAIResponsesProvider {
+    fn stream(&self, model: &Model, context: &Context, options: CallOptions) -> AssistantStream {
+        let mut base = self.base.clone();
+        base.cancel = options.cancel;
+        base.request.tool_choice = options.tool_choice.or(base.request.tool_choice);
+        base.request.max_tokens = options.max_tokens.or(base.request.max_tokens);
+        base.request.temperature = options.temperature.or(base.request.temperature);
+        providers::openai_responses::stream(self.client.clone(), model.clone(), context.clone(), base)
     }
 }

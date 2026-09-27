@@ -1,5 +1,8 @@
 # AI-01e: stateless Responses request encoder (WIP)
 
+This receipt records the earlier request-only worktree. The later HTTP/SSE
+and CLI host increment is recorded in [Responses stream and host](ai-01e-responses-stream.md).
+
 ## Source and boundary
 
 Pinned OMP commit `596f2da7101178214aa27a753529d15e6b7ad91d`:

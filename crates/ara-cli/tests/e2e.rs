@@ -149,6 +149,81 @@ async fn text_answer_is_printed_and_journaled() {
 }
 
 #[tokio::test]
+async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_write", "call_id": "call_write", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"response.txt\",\"content\":\"from responses\\n\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_write", "call_id": "call_write", "name": "write", "arguments": "{}"}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_done", "content": [{"type": "output_text", "text": "Wrote response.txt."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_resume", "content": [{"type": "output_text", "text": "Session resumed."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let first =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write response.txt"])).await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote response.txt.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("response.txt")).unwrap(), "from responses\n");
+    let session = env.session_files();
+    assert_eq!(session.len(), 1);
+    let entries = journal(&session[0]);
+    assert!(entries.iter().any(|entry| {
+        entry["message"]["role"] == "assistant"
+            && entry["message"]["content"]
+                .as_array()
+                .is_some_and(|content| content.iter().any(|block| block["type"] == "toolCall"))
+    }));
+    assert!(entries.iter().any(|entry| entry["message"]["role"] == "toolResult"));
+    let resumed = output(
+        env.cmd(&up.base_url(), &["--api", "openai-responses", "--resume", session[0].to_str().unwrap(), "Continue"]),
+    )
+    .await;
+    let (stdout, stderr) = text_of(&resumed);
+    assert_eq!(resumed.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Session resumed.\n");
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request["request"], "POST /v1/responses HTTP/1.1");
+    }
+    let input = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(input.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_write"));
+    assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_write"));
+}
+
+#[tokio::test]
+async fn responses_truncated_parallel_call_does_not_execute_either_write() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [
+        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write"}}},
+        {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"first.txt\",\"content\":\"unsafe\"}"}},
+        {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write", "arguments": ""}}},
+        {"data": {"type": "response.output_item.added", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write"}}},
+        {"data": {"type": "response.function_call_arguments.delta", "output_index": 1, "delta": "{\"path\":\"second.txt\","}},
+        {"data": {"type": "response.incomplete", "response": {"incomplete_details": {"reason": "max_output_tokens"}}}}
+    ]}]})).await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write two files"])).await;
+    assert!(!out.status.success());
+    assert!(!env.work.path().join("first.txt").exists());
+    assert!(!env.work.path().join("second.txt").exists());
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    let persisted = serde_json::to_string(&entries).unwrap();
+    assert!(persisted.contains("call_a|fc_a"));
+    assert!(!persisted.contains("call_b|fc_b"));
+}
+
+#[tokio::test]
 async fn tool_task_produces_file_and_receipts() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
