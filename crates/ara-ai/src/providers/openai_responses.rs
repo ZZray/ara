@@ -635,6 +635,171 @@ const SCHEMA_VALUE_KEYS: &[&str] = &[
     "unevaluatedProperties",
 ];
 
+fn homogeneous_enum_type(values: &[Value]) -> Option<&'static str> {
+    let kind = match values.first()? {
+        Value::String(_) => "string",
+        Value::Number(_) => "number",
+        Value::Bool(_) => "boolean",
+        _ => return None,
+    };
+    values
+        .iter()
+        .all(|value| match kind {
+            "string" => value.is_string(),
+            "number" => value.is_number(),
+            _ => value.is_boolean(),
+        })
+        .then_some(kind)
+}
+
+fn has_schema_defining_sibling(object: &serde_json::Map<String, Value>) -> bool {
+    object.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "$ref"
+                | "additionalProperties"
+                | "allOf"
+                | "const"
+                | "contains"
+                | "enum"
+                | "if"
+                | "items"
+                | "not"
+                | "oneOf"
+                | "patternProperties"
+                | "prefixItems"
+                | "properties"
+                | "propertyNames"
+                | "then"
+                | "else"
+                | "unevaluatedItems"
+                | "unevaluatedProperties"
+        )
+    })
+}
+
+// Fixed OMP `wire.ts::postProcessJsonSchema` applies these before the
+// Responses-specific sanitizer. ARA visits schema positions only, preserving
+// literal instance data and the original argument names used by validation.
+fn postprocess_responses_wire_schema(value: &Value, depth: usize) -> Result<Value, ()> {
+    let mut output = value.clone();
+    postprocess_responses_wire_schema_in_place(&mut output, depth)?;
+    Ok(output)
+}
+
+fn postprocess_responses_wire_schema_in_place(value: &mut Value, depth: usize) -> Result<(), ()> {
+    if depth > 128 {
+        return Err(());
+    }
+    let Some(output) = value.as_object_mut() else { return Ok(()) };
+
+    if !output.contains_key("type")
+        && !has_schema_defining_sibling(output)
+        && let Some(variants) = output.get("anyOf").and_then(Value::as_array).cloned()
+        && variants.len() == 2
+    {
+        let null_count = variants
+            .iter()
+            .filter(|variant| {
+                variant
+                    .as_object()
+                    .is_some_and(|object| object.len() == 1 && object.get("type") == Some(&json!("null")))
+            })
+            .count();
+        if null_count == 1
+            && let Some(scalar) = variants.iter().find(|variant| variant["type"] != "null").and_then(Value::as_object)
+            && let Some(kind) = scalar.get("type").and_then(Value::as_str)
+            && matches!(kind, "string" | "number" | "integer" | "boolean")
+        {
+            output.remove("anyOf");
+            for (key, child) in scalar {
+                if !matches!(key.as_str(), "type" | "enum" | "const") {
+                    output.entry(key.clone()).or_insert_with(|| child.clone());
+                }
+            }
+            if let Some(constant) = scalar.get("const") {
+                output.insert("enum".into(), json!([constant, null]));
+            } else if let Some(values) = scalar.get("enum").and_then(Value::as_array) {
+                let mut values = values.clone();
+                if !values.contains(&Value::Null) {
+                    values.push(Value::Null);
+                }
+                output.insert("enum".into(), Value::Array(values));
+            }
+            output.insert("type".into(), json!([kind, "null"]));
+        }
+    }
+
+    if !output.contains_key("type")
+        && let Some(values) = output.get("enum").and_then(Value::as_array)
+        && let Some(kind) = homogeneous_enum_type(values)
+    {
+        output.insert("type".into(), json!(kind));
+    }
+
+    if !output.contains_key("type")
+        && !has_schema_defining_sibling(output)
+        && let Some(variants) = output.get("anyOf").and_then(Value::as_array).cloned()
+        && variants.len() >= 2
+    {
+        let mut values = Vec::with_capacity(variants.len());
+        let mut descriptions = Vec::with_capacity(variants.len());
+        for variant in &variants {
+            let Some(branch) = variant.as_object() else { break };
+            if !branch.contains_key("const")
+                || branch.keys().any(|key| !matches!(key.as_str(), "const" | "description"))
+            {
+                break;
+            }
+            let description = match branch.get("description") {
+                Some(Value::String(text)) => Some(text.as_str()),
+                Some(_) => break,
+                None => None,
+            };
+            values.push(branch["const"].clone());
+            descriptions.push(description);
+        }
+        if values.len() == variants.len()
+            && descriptions.iter().all(|description| *description == descriptions[0])
+            && let Some(kind) = homogeneous_enum_type(&values)
+        {
+            let shared = descriptions[0];
+            let root = output.get("description").and_then(Value::as_str).map(str::to_owned);
+            if shared.is_none() || root.is_none() || shared == root.as_deref() {
+                output.remove("anyOf");
+                output.insert("type".into(), json!(kind));
+                output.insert("enum".into(), Value::Array(values));
+                if let Some(shared) = shared
+                    && root.is_none()
+                {
+                    output.insert("description".into(), json!(shared));
+                }
+            }
+        }
+    }
+
+    for key in SCHEMA_MAP_KEYS {
+        if let Some(map) = output.get_mut(*key).and_then(Value::as_object_mut) {
+            for child in map.values_mut() {
+                postprocess_responses_wire_schema_in_place(child, depth + 1)?;
+            }
+        }
+    }
+    for key in SCHEMA_ARRAY_KEYS {
+        if let Some(items) = output.get_mut(*key).and_then(Value::as_array_mut) {
+            for child in items {
+                postprocess_responses_wire_schema_in_place(child, depth + 1)?;
+            }
+        }
+    }
+    for key in SCHEMA_VALUE_KEYS {
+        if let Some(child) = output.get_mut(*key) {
+            postprocess_responses_wire_schema_in_place(child, depth + 1)?;
+        }
+    }
+    Ok(())
+}
+
 fn unsupported_regex_lookaround(pattern: &str) -> bool {
     let bytes = pattern.as_bytes();
     for (index, pair) in bytes.windows(2).enumerate() {
@@ -975,7 +1140,14 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                         return None;
                     }
                 };
-                let parameters = match sanitize_responses_schema(&upgraded, 0) {
+                let postprocessed = match postprocess_responses_wire_schema(&upgraded, 0) {
+                    Ok(schema) => schema,
+                    Err(()) => {
+                        report_quarantined_tool(&tool.name, "schema nesting exceeds postprocess limit");
+                        return None;
+                    }
+                };
+                let parameters = match sanitize_responses_schema(&postprocessed, 0) {
                     Ok(parameters) => parameters,
                     Err(()) => {
                         report_quarantined_tool(&tool.name, "schema nesting exceeds 128 levels");
@@ -1383,6 +1555,68 @@ mod tests {
                 .unwrap()
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn responses_wire_postprocess_preserves_nullable_and_literal_schema_semantics() {
+        let raw = json!({
+            "type":"object",
+            "properties": {
+                "skip":{"anyOf":[{"type":"number","minimum":0,"enum":[1,2]}, {"type":"null"}],
+                    "description":"matches to skip"},
+                "otherOrder":{"anyOf":[{"type":"null"},{"type":"string","const":"x"}]},
+                "bare":{"enum":[1,2.5]},
+                "choices":{"anyOf":[{"const":"a","description":"label"},{"const":"b","description":"label"}]},
+                "literal":{"default":{"anyOf":[{"const":"a"},{"const":"b"}]},
+                    "examples":[{"enum":[1,2]}],"const":{"enum":[true,false]}},
+                "typed":{"type":"object","anyOf":[{"type":"string"},{"type":"null"}]},
+                "constrained":{"allOf":[{"type":"string"}],
+                    "anyOf":[{"type":"number"},{"type":"null"}]}
+            },
+            "required":["skip","otherOrder"]
+        });
+        let converted = postprocess_responses_wire_schema(&raw, 0).unwrap();
+        assert_eq!(
+            converted["properties"]["skip"],
+            json!({
+                "type":["number","null"],"minimum":0,"enum":[1,2,null],"description":"matches to skip"
+            })
+        );
+        assert_eq!(converted["properties"]["otherOrder"], json!({"type":["string","null"],"enum":["x",null]}));
+        assert_eq!(converted["properties"]["bare"], json!({"type":"number","enum":[1,2.5]}));
+        assert_eq!(converted["properties"]["choices"], json!({"type":"string","enum":["a","b"],"description":"label"}));
+        assert_eq!(converted["properties"]["literal"], raw["properties"]["literal"]);
+        assert_eq!(converted["properties"]["typed"], raw["properties"]["typed"]);
+        assert_eq!(converted["properties"]["constrained"], raw["properties"]["constrained"]);
+        assert_eq!(converted["required"], raw["required"]);
+        assert_eq!(raw["properties"]["skip"]["anyOf"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn responses_wire_postprocess_keeps_nonhomogeneous_unions_and_schema_order() {
+        let raw = json!({"type":"object","properties":{
+            "empty":{"enum":[]},
+            "mixed":{"enum":["a",null]},
+            "bools":{"enum":[true,false]},
+            "different":{"anyOf":[{"const":"a","description":"first"},{"const":"b","description":"second"}]},
+            "partial":{"anyOf":[{"const":"a","description":"same"},{"const":"b"}]},
+            "rootConflict":{"description":"root","anyOf":[{"const":"a","description":"branch"},{"const":"b","description":"branch"}]},
+            "nonConst":{"anyOf":[{"type":"string"},{"const":"b"}]},
+            "nested":{"type":"array","items":{"enum":["x","y"]}},
+            "defined":{"$ref":"#/$defs/Choice"}
+        },"$defs":{"Choice":{"anyOf":[{"const":1},{"const":2}]}},"required":["nested","defined"]});
+        let converted = postprocess_responses_wire_schema(&raw, 0).unwrap();
+        for name in ["empty", "mixed", "different", "partial", "rootConflict", "nonConst"] {
+            assert_eq!(converted["properties"][name], raw["properties"][name], "{name}");
+        }
+        assert_eq!(converted["properties"]["bools"], json!({"type":"boolean","enum":[true,false]}));
+        assert_eq!(converted["properties"]["nested"]["items"]["type"], "string");
+        assert_eq!(converted["$defs"]["Choice"], json!({"type":"number","enum":[1,2]}));
+        assert_eq!(converted["required"], raw["required"]);
+        assert_eq!(
+            converted["properties"].as_object().unwrap().keys().collect::<Vec<_>>(),
+            raw["properties"].as_object().unwrap().keys().collect::<Vec<_>>()
         );
     }
 

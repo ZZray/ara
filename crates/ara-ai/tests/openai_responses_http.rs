@@ -894,6 +894,62 @@ async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request
 }
 
 #[tokio::test]
+async fn wire_postprocess_is_visible_on_responses_http_without_mutating_tool_schema() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[{"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","content":[{"type":"output_text","text":"Schema received."}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let parameters = json!({"type":"object","properties":{
+        "skip":{"anyOf":[{"type":"number","minimum":0},{"type":"null"}],"description":"optional skip"},
+        "mode":{"anyOf":[{"const":"a","description":"mode"},{"const":"b","description":"mode"}]},
+        "bare":{"enum":[true,false]},
+        "literal":{"default":{"anyOf":[{"const":"x"},{"const":"y"}]}}
+    },"required":["skip","mode"]});
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("inspect tool schema"))],
+        tools: Some(vec![
+            Tool {
+                name: "broken".into(),
+                description: "incompatible enum".into(),
+                parameters: json!({"type":"object","properties":{"x":{"type":"integer","enum":["bad"]}}}),
+            },
+            Tool { name: "safe".into(), description: "safe wire".into(), parameters: parameters.clone() },
+        ]),
+        ..Context::default()
+    };
+    let mut opts = options();
+    opts.request.tool_choice = Some(ToolChoice::Tool("safe".into()));
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), context.clone(), opts))
+            .await;
+    assert_eq!(output.text(), "Schema received.");
+    assert_eq!(context.tools.as_ref().unwrap()[1].parameters, parameters);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    let body = &requests[0]["body"];
+    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(body["tools"][0]["name"], "safe");
+    assert_eq!(body["tool_choice"], json!({"type":"function","name":"safe"}));
+    let wire = &body["tools"][0]["parameters"];
+    assert_eq!(
+        wire["properties"]["skip"],
+        json!({
+            "type":["number","null"],"minimum":0,"description":"optional skip"
+        })
+    );
+    assert_eq!(wire["properties"]["mode"], json!({"type":"string","enum":["a","b"],"description":"mode"}));
+    assert_eq!(wire["properties"]["bare"], json!({"type":"boolean","enum":[true,false]}));
+    assert_eq!(wire["properties"]["literal"], parameters["properties"]["literal"]);
+    assert_eq!(wire["required"], parameters["required"]);
+}
+
+#[tokio::test]
 async fn draft_07_tool_schema_is_upgraded_on_the_actual_responses_request() {
     let server = FakeUpstream::start(
         script(json!({"responses":[{"events":[

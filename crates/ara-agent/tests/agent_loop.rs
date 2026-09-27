@@ -150,6 +150,40 @@ struct LegacySchemaTool {
     effects: Arc<Mutex<Vec<Value>>>,
 }
 
+struct ResponsesWireSchemaTool {
+    effects: Arc<Mutex<Vec<Value>>>,
+}
+
+#[async_trait]
+impl AgentTool for ResponsesWireSchemaTool {
+    fn definition(&self) -> Tool {
+        Tool {
+            name: "schema_wire".into(),
+            description: "Checks Responses schema wire against execution validation".into(),
+            parameters: json!({"type":"object","properties":{
+                "skip":{"anyOf":[{"type":"integer","minimum":0},{"type":"null"}]},
+                "mode":{"anyOf":[{"const":"a","description":"mode"},{"const":"b","description":"mode"}]},
+                "flag":{"enum":[true,false]}
+            },"required":["skip","mode","flag"]}),
+        }
+    }
+
+    fn concurrency(&self, _args: &JsonObject) -> Concurrency {
+        Concurrency::Shared
+    }
+
+    async fn execute(
+        &self,
+        _id: &str,
+        args: JsonObject,
+        _cancel: CancellationToken,
+        _update: UpdateFn,
+    ) -> Result<ToolOutput, ToolError> {
+        self.effects.lock().unwrap().push(Value::Object(args));
+        Ok(ToolOutput::text("wire tool executed"))
+    }
+}
+
 #[async_trait]
 impl AgentTool for LegacySchemaTool {
     fn definition(&self) -> Tool {
@@ -1355,6 +1389,62 @@ async fn real_responses_http_chain_rejects_invalid_legacy_arguments_without_an_e
     let next_input = requests[1]["body"]["input"].as_array().unwrap();
     assert!(next_input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_bad"));
     assert!(next_input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_good"));
+}
+
+#[tokio::test]
+async fn real_responses_wire_postprocess_matches_tool_argument_validation() {
+    use ara_testkit::{FakeUpstream, Script};
+    let script: Script = serde_json::from_value(json!({"responses": [
+        {"events": [
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"function_call","id":"fc_invalid","call_id":"call_invalid",
+                    "name":"schema_wire","arguments":"{\"skip\":\"bad\",\"mode\":\"a\",\"flag\":true}"}}},
+            {"data":{"type":"response.output_item.done","output_index":1,
+                "item":{"type":"function_call","id":"fc_valid","call_id":"call_valid",
+                    "name":"schema_wire","arguments":"{\"skip\":null,\"mode\":\"b\",\"flag\":true}"}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events": [
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","content":[{"type":"output_text","text":"checked"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]}))
+    .unwrap();
+    let server = FakeUpstream::start(script, None).await.unwrap();
+    let provider = Arc::new(OpenAIResponsesProvider { client: reqwest::Client::new(), base: Default::default() });
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let tool: Arc<dyn AgentTool> = Arc::new(ResponsesWireSchemaTool { effects: effects.clone() });
+    let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
+    cfg.model.api = "openai-responses".into();
+    cfg.model.base_url = server.base_url();
+    let agent = Agent::new(cfg, Vec::new());
+    let messages = agent
+        .prompt(vec![user("validate wire arguments")], CancellationToken::new(), Arc::new(NullSink))
+        .await
+        .unwrap()
+        .messages;
+    let results = messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_error);
+    assert!(!results[1].is_error);
+    assert_eq!(*effects.lock().unwrap(), vec![json!({"skip":null,"mode":"b","flag":true})]);
+    assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "checked");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let schema = &requests[0]["body"]["tools"][0]["parameters"];
+    assert_eq!(schema["properties"]["skip"]["type"], json!(["integer", "null"]));
+    assert_eq!(schema["properties"]["mode"], json!({"type":"string","enum":["a","b"],"description":"mode"}));
+    assert_eq!(schema["properties"]["flag"], json!({"type":"boolean","enum":[true,false]}));
+    let input = requests[1]["body"]["input"].as_array().unwrap();
+    assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_invalid"));
+    assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_valid"));
 }
 
 #[tokio::test]
