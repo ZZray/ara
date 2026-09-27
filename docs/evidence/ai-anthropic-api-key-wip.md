@@ -2,7 +2,7 @@
 
 ## Scope and source
 
-Delivered code: local commit d904ed7. Fixed OMP source:
+Delivered WIP code: local commits d904ed7 and da86da5. Fixed OMP source:
 packages/ai/src/providers/anthropic.ts at
 596f2da7101178214aa27a753529d15e6b7ad91d, especially buildParams
 (3886–4140), convertAnthropicMessages (4245–4550), stream envelope
@@ -38,6 +38,39 @@ All keys in fixtures are dummy values.
 | git diff --cached --check and rustfmt --check on seven changed Rust files | Exit 0 before code commit. Full cargo fmt --all -- --check remains red in unchanged vendored pi-* formatting. |
 | cargo test --workspace --all-targets --quiet, with Git Bash in PATH | Exit 1 on d904ed7: ara-cli e2e 31/32, only deadline_during_a_tool_and_zero_budget_exit_nonzero fails elapsed <4s. This is the previously reproduced Windows Bash descendant/process-pipe issue; see windows-bash-process-tree.md. The full gate is not passed. |
 
+## Non-strict tool schema follow-up (da86da5)
+
+Fixed OMP source: packages/ai/src/providers/anthropic.ts
+normalizeAnthropicToolSchemaNode (4561–4777) and
+buildAnthropicBaseToolInputSchema (4995–5005), plus
+packages/ai/src/utils/schema/wire.ts::toolWireSchema (601–608).
+ARA's Anthropic tool encoder now upgrades legacy draft JSON Schema, forces
+the Messages root object shape and string-only required names, then keeps
+Anthropic's supported keywords. Unsupported constraints are retained in
+the relevant description. Nested properties, array items, combinators and
+definitions are visited only where they contain schemas; defaults, enum
+values and const data are preserved. Object nodes close by default while
+explicit open maps stay open. Strict tool mode remains outside this slice.
+
+| Check on da86da5 | Result and observed artifact |
+| --- | --- |
+| cargo test -p ara-ai --test anthropic_http --quiet | Exit 0, 10/10. The fake HTTP POST body contains upgraded draft-07 refs, the filtered required list, supported format, spilled pattern/range/array constraints, closed and open maps, and no root allOf/oneOf. Input parameters remain unchanged. Empty and excessively deep schemas have explicit request-construction outcomes. |
+| cargo test -p ara-ai --quiet | Exit 0 on da86da5: 108 unit, 10 Anthropic HTTP, 48 Chat HTTP, 13 Responses HTTP. |
+| cargo test -p ara-cli --test e2e anthropic_ --quiet | Exit 0, 4/4 real CLI process cases. |
+| cargo clippy --workspace --all-targets --all-features -- -D warnings | Exit 0 after the final deep-schema test. |
+| cargo test --workspace --doc --quiet; cargo deny check; python scripts/omp_inventory.py check | Each exits 0. Deny retains existing duplicate/license-field warnings. |
+| rustfmt --check on the two changed Rust files; git diff --cached --check | Exit 0. Full cargo fmt --all -- --check exits 1 in unchanged vendored pi-* formatting. |
+| cargo test --workspace --all-targets --quiet with Git Bash in PATH | Exit 1: the known Windows Bash deadline case fails elapsed <4s (CLI e2e 31/32); full gate remains red. |
+
+An independent Codex plan reviewer scoped this follow-up before the edit.
+An independent Codex diff reviewer covered both changed code/test files,
+compared the pinned OMP source and found no high-confidence reachable defect;
+the reviewer did not run its own tests. The 128-level normalization limit is
+an ARA fail-closed difference for acyclic JSON Values. Remaining generic
+toolWireSchema postprocessing differences include nullable anyOf rewriting,
+bare enum type inference and const-union collapse; these need separate
+source-backed fixtures before parity is claimed. No real-model task ran.
+
 The focused HTTP negatives cover an incomplete tool JSON/EOF with no
 completed call, 401 with errorStatus, caller cancellation, and a missing
 message_stop after a valid stop_reason (best-effort Done). Forced tool
@@ -55,7 +88,7 @@ rechecked against the added fixtures. Final read-only diff review found
 no further deterministic WIP blocker; the reviewer did not independently
 execute tests.
 
-Still open: Anthropic tool-schema keyword normalization and strict tools,
+Still open: Anthropic strict tools and remaining generic schema postprocessing,
 model catalogue output limits (unknown models use a conservative 4096
 default rather than OMP's catalogue-derived ceiling), OAuth and beta
 features, cache controls, vendor dialects, server tools/fallback, complete
@@ -63,6 +96,6 @@ signature/prefix rules and the remaining fixed OMP behavior inventory.
 No bounded real-model task or full delivery audit passed. This row remains
 implementing (WIP); neither AI-ANTHROPIC nor P2 is accepted.
 
-Estimate: 5–15 working days to reach the next Anthropic API-key protocol
+Estimate: 4–12 working days to reach the next Anthropic API-key protocol
 checkpoint and bounded real-model evidence, low confidence. Full fixed
 Anthropic parity is a larger part of the multi-month P0–P6 plan.
