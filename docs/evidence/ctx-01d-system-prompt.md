@@ -240,3 +240,24 @@ Unrun checks:
 Fixes for F1–F9, with regression tests, are in WIP commit `b920852`; the F4 follow-up and final review are in WIP `c9f9e24`. Full verification and the real-model re-runs are still pending (see the handoff).
 
 Decision: changes requested. The independent re-review is complete; acceptance still needs full verification on the final code and both real-model trials with reviewed artifacts.
+
+## Current-head Windows focused recheck (2026-09-28, WIP)
+
+On clean local `dev` at `4cbf171`, these checks ran through the current Rust
+code and actual `ara` process against a controlled upstream:
+
+| Command | Observed |
+| --- | --- |
+| `cargo test -p ara-context --test upstream --quiet` | Exit 0, 21/21 |
+| `cargo test -p ara-tools --test skill_urls --quiet` with Git Bash on `PATH` | Exit 0, 16/16 |
+| `cargo test -p ara-cli --test skill_protocol --quiet` | Exit 0, 3/3 |
+| `cargo test -p ara-cli --test e2e skill_url_search_and_read_only_write_reach_cli --quiet` | Exit 0, 1/1 real-process fake-upstream path |
+| `cargo test -p ara-cli --test e2e discovered_system_md_and_prompt_flags --quiet` | Exit 0, 1/1 real-process fake-upstream prompt path |
+
+The separate unfiltered backend run on this same code passed owned formatting
+and workspace Clippy, then failed the known Windows Bash deadline assertion
+(CLI 50/51); see the [handoff](../handoffs/2026-09-28.md). The current shell
+has no `ARA_API_KEY` or `OPENROUTER_API_KEY` environment variable; no live
+route or current-code real-model task was verified in this recheck. The prior
+Agnes/OpenRouter trials above remain earlier-snapshot evidence. CTX-01d stays
+**changes requested** and formal progress is unchanged.
