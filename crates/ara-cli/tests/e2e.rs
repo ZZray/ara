@@ -210,7 +210,10 @@ async fn anthropic_messages_runs_tool_and_replays_after_restart() {
     let requests = up.requests.lock().await;
     assert_eq!(requests.len(), 3);
     assert!(requests.iter().all(|request| request["request"] == "POST /v1/messages HTTP/1.1"));
-    assert!(requests.iter().all(|request| request["headers"]["x-api-key"].as_str().unwrap().starts_with("<redacted")));
+    assert!(
+        requests.iter().all(|request| request["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"))
+    );
+    assert!(requests.iter().all(|request| request["headers"].get("x-api-key").is_none()));
     assert_eq!(requests[1]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_write");
     assert_eq!(requests[2]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_write");
 }
@@ -301,7 +304,8 @@ async fn anthropic_official_key_is_not_sent_to_a_custom_endpoint() {
     assert_eq!(out.status.code(), Some(1));
     let requests = up.requests.lock().await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0]["headers"]["x-api-key"], "<redacted 9 chars>");
+    assert_eq!(requests[0]["headers"]["authorization"], "<redacted 16 chars>");
+    assert!(requests[0]["headers"].get("x-api-key").is_none());
     assert!(!requests[0].to_string().contains("official-secret-dont-send"));
 }
 

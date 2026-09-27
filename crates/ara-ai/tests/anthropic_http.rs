@@ -244,7 +244,8 @@ async fn text_tool_usage_and_followup_wire_are_preserved() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["request"], "POST /v1/messages HTTP/1.1");
     assert_eq!(requests[0]["headers"]["anthropic-version"], "2023-06-01");
-    assert!(requests[0]["headers"]["x-api-key"].as_str().unwrap().starts_with("<redacted"));
+    assert!(requests[0]["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"));
+    assert!(requests[0]["headers"].get("x-api-key").is_none());
     assert!(!requests[0].to_string().contains("anthropic-test-secret"));
     assert_eq!(requests[0]["body"]["max_tokens"], 4096);
     assert_eq!(requests[0]["body"]["system"][0]["text"], "Be concise");
@@ -511,6 +512,47 @@ fn call_token_limit_is_capped_and_unavailable_forced_tools_are_omitted() {
     opts.tool_choice = Some(ara_ai::ToolChoice::Tool("missing".into()));
     let params = anthropic::build_params(&endpoint, &context, &opts).unwrap();
     assert!(params.get("tool_choice").is_none());
+}
+
+#[tokio::test]
+async fn custom_anthropic_endpoint_uses_bearer_without_an_automatic_api_key_header() {
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[{"status":401,"body":"unauthorized"}]})).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("hi"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { .. })));
+    let requests = server.requests.lock().await;
+    let headers = &requests[0]["headers"];
+    assert_eq!(headers["authorization"], format!("<redacted {} chars>", "Bearer anthropic-test-secret".len()));
+    assert!(headers.get("x-api-key").is_none(), "{headers}");
+}
+
+#[tokio::test]
+async fn custom_anthropic_endpoint_honors_explicit_auth_headers_once() {
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[{"status":401,"body":"unauthorized"}]})).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("hi"))], ..Default::default() };
+    let mut opts = options();
+    opts.extra_headers = vec![
+        ("AUTHORIZATION".into(), "Bearer first".into()),
+        ("authorization".into(), "Custom last".into()),
+        ("X-API-KEY".into(), "explicit-key".into()),
+    ];
+    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { .. })));
+    let requests = server.requests.lock().await;
+    let headers = &requests[0]["headers"];
+    assert_eq!(headers["authorization"], "<redacted 11 chars>");
+    assert_eq!(headers["x-api-key"], "<redacted 12 chars>");
 }
 
 #[tokio::test]

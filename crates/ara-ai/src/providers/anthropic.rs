@@ -447,6 +447,51 @@ fn sse_error_detail(frame: &Value, fallback: &str) -> String {
     }
 }
 
+fn request_headers(model: &Model, options: &StreamOptions, key: &str) -> Result<Vec<(String, String)>, ProviderError> {
+    let url =
+        reqwest::Url::parse(&model.base_url).map_err(|_| ProviderError::Config("Invalid Anthropic base URL".into()))?;
+    let official_host =
+        url.scheme() == "https" && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"));
+    if official_host && url.port().is_some_and(|port| port != 443) {
+        // The CLI currently selects ANTHROPIC_API_KEY for this hostname even
+        // with a custom port. Reject it before sending any credentials.
+        return Err(ProviderError::Config("Anthropic official host with a nonstandard port is unsupported".into()));
+    }
+    let api_key_proxy = matches!(model.provider.as_str(), "opencode-go" | "opencode-zen" | "umans");
+    let caller_header = |name: &str| {
+        options
+            .extra_headers
+            .iter()
+            .rev()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    };
+    let mut headers = Vec::with_capacity(options.extra_headers.len() + 2);
+    if official_host || api_key_proxy {
+        headers.push(("x-api-key".into(), caller_header("x-api-key").unwrap_or(key).to_owned()));
+        if official_host && let Some(value) = caller_header("authorization") {
+            headers.push(("authorization".into(), value.to_owned()));
+        }
+    } else {
+        headers.push((
+            "authorization".into(),
+            caller_header("authorization").map(str::to_owned).unwrap_or_else(|| format!("Bearer {key}")),
+        ));
+        if let Some(value) = caller_header("x-api-key") {
+            headers.push(("x-api-key".into(), value.to_owned()));
+        }
+    }
+    headers.push(("anthropic-version".into(), "2023-06-01".into()));
+    headers.extend(
+        options
+            .extra_headers
+            .iter()
+            .filter(|(name, _)| !name.eq_ignore_ascii_case("authorization") && !name.eq_ignore_ascii_case("x-api-key"))
+            .cloned(),
+    );
+    Ok(headers)
+}
+
 enum OpenBlock {
     Text(usize),
     Thinking(usize),
@@ -797,9 +842,7 @@ async fn run(
         .as_deref()
         .filter(|key| !key.is_empty())
         .ok_or_else(|| ProviderError::Config("Anthropic API key is missing".into()))?;
-    let mut headers =
-        vec![("x-api-key".to_owned(), key.to_owned()), ("anthropic-version".to_owned(), "2023-06-01".to_owned())];
-    headers.extend(options.extra_headers.iter().cloned());
+    let headers = request_headers(model, options, key)?;
     let params = build_params(model, context, options)?;
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|timeout| started + timeout);
@@ -919,4 +962,76 @@ async fn run(
         };
     }
     Err(ProviderError::Incomplete("Anthropic stream ended before message_stop".into()))
+}
+
+#[cfg(test)]
+mod auth_header_tests {
+    use super::*;
+
+    fn model(base_url: &str, provider: &str) -> Model {
+        Model {
+            id: "claude-fixture".into(),
+            api: API.into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            reasoning: false,
+            max_tokens: None,
+            tokenizer: None,
+        }
+    }
+
+    fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_str())
+    }
+
+    fn count(headers: &[(String, String)], name: &str) -> usize {
+        headers.iter().filter(|(key, _)| key.eq_ignore_ascii_case(name)).count()
+    }
+
+    #[test]
+    fn official_and_generic_routes_choose_distinct_default_credentials() {
+        let opts = StreamOptions::default();
+        for url in ["https://api.anthropic.com", "https://api.anthropic.com/v1", "https://api.anthropic.com:443/v1"] {
+            let headers = request_headers(&model(url, "anthropic"), &opts, "test-key").unwrap();
+            assert_eq!(header(&headers, "x-api-key"), Some("test-key"), "{url}");
+            assert_eq!(header(&headers, "authorization"), None, "{url}");
+        }
+        for url in
+            ["https://proxy.example/v1", "https://api.anthropic.com.evil.example/v1", "http://api.anthropic.com/v1"]
+        {
+            let headers = request_headers(&model(url, "anthropic"), &opts, "test-key").unwrap();
+            assert_eq!(header(&headers, "authorization"), Some("Bearer test-key"), "{url}");
+            assert_eq!(header(&headers, "x-api-key"), None, "{url}");
+        }
+        assert!(matches!(
+            request_headers(&model("https://api.anthropic.com:8443/v1", "anthropic"), &opts, "test-key"),
+            Err(ProviderError::Config(message)) if message.contains("nonstandard port")
+        ));
+    }
+
+    #[test]
+    fn caller_auth_overrides_are_case_insensitive_and_not_duplicated() {
+        let opts = StreamOptions {
+            extra_headers: vec![
+                ("AUTHORIZATION".into(), "Bearer first".into()),
+                ("authorization".into(), "Custom last".into()),
+                ("X-API-KEY".into(), "first-key".into()),
+                ("x-api-key".into(), "last-key".into()),
+            ],
+            ..Default::default()
+        };
+        for url in ["https://api.anthropic.com/v1", "https://proxy.example/v1"] {
+            let headers = request_headers(&model(url, "anthropic"), &opts, "test-key").unwrap();
+            assert_eq!(header(&headers, "authorization"), Some("Custom last"));
+            assert_eq!(header(&headers, "x-api-key"), Some("last-key"));
+            assert_eq!(count(&headers, "authorization"), 1);
+            assert_eq!(count(&headers, "x-api-key"), 1);
+        }
+        for provider in ["opencode-go", "opencode-zen", "umans"] {
+            let headers = request_headers(&model("https://proxy.example/v1", provider), &opts, "test-key").unwrap();
+            assert_eq!(header(&headers, "x-api-key"), Some("last-key"), "{provider}");
+            assert_eq!(header(&headers, "authorization"), None, "{provider}");
+            assert_eq!(count(&headers, "x-api-key"), 1);
+        }
+    }
 }
