@@ -201,6 +201,65 @@ async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
 }
 
 #[tokio::test]
+async fn responses_identifierless_parallel_calls_write_distinct_files() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write"}}},
+            {"data": {"type": "response.output_item.added", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.delta", "delta": "{\"path\":\"a.txt\",\"content\":\"alpha\"}"}},
+            {"data": {"type": "response.function_call_arguments.delta", "delta": "{\"path\":\"b.txt\","}},
+            {"data": {"type": "response.function_call_arguments.delta", "delta": "\"content\":\"beta\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write", "arguments": ""}}},
+            {"data": {"type": "response.output_item.done", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write", "arguments": ""}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_done", "content": [{"type": "output_text", "text": "Both files written."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write a.txt and b.txt"]))
+            .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Both files written.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("a.txt")).unwrap(), "alpha");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("b.txt")).unwrap(), "beta");
+    let entries = journal(&env.session_files()[0]);
+    let assistant = entries.iter().find(|entry| entry["message"]["role"] == "assistant").unwrap();
+    let calls = assistant["message"]["content"].as_array().unwrap();
+    assert_eq!(calls[0]["id"], "call_a|fc_a");
+    assert_eq!(calls[0]["arguments"]["path"], "a.txt");
+    assert_eq!(calls[1]["id"], "call_b|fc_b");
+    assert_eq!(calls[1]["arguments"]["path"], "b.txt");
+    let requests = up.requests.lock().await;
+    let input = requests[1]["body"]["input"].as_array().unwrap();
+    for call_id in ["call_a", "call_b"] {
+        assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == call_id));
+    }
+}
+
+#[tokio::test]
+async fn responses_identifierless_conflict_does_not_execute_either_write() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [
+        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write"}}},
+        {"data": {"type": "response.output_item.added", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write"}}},
+        {"data": {"type": "response.function_call_arguments.done", "arguments": "{\"path\":\"b.txt\",\"content\":\"wrong\"}"}},
+        {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write", "arguments": "{\"path\":\"a.txt\",\"content\":\"right\"}"}}},
+        {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+    ]}]})).await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write two files"])).await;
+    assert_ne!(out.status.code(), Some(0));
+    assert!(!env.work.path().join("a.txt").exists());
+    assert!(!env.work.path().join("b.txt").exists());
+    assert_eq!(up.served(), 1);
+}
+
+#[tokio::test]
 async fn responses_truncated_parallel_call_does_not_execute_either_write() {
     let env = Env::new();
     let up = upstream(json!({"responses": [

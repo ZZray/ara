@@ -9,6 +9,221 @@
 use crate::types::JsonObject;
 use serde_json::Value;
 
+/// Strict JSON state used only to route identifierless Responses deltas.
+/// Source: pinned OMP `packages/utils/src/json-parse.ts::classifyJsonPrefix`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsonPrefixState {
+    Complete,
+    Prefix,
+    Invalid,
+}
+
+pub(crate) fn classify_json_prefix(text: &str) -> JsonPrefixState {
+    use JsonPrefixState::{Complete, Invalid, Prefix};
+    #[derive(Clone, Copy)]
+    enum Expect {
+        Value,
+        ObjectKeyOrEnd,
+        ObjectKey,
+        ObjectColon,
+        ObjectCommaOrEnd,
+        ArrayValueOrEnd,
+        ArrayCommaOrEnd,
+        End,
+    }
+    fn after_value(stack: &[bool]) -> Expect {
+        match stack.last() {
+            Some(true) => Expect::ObjectCommaOrEnd,
+            Some(false) => Expect::ArrayCommaOrEnd,
+            None => Expect::End,
+        }
+    }
+    fn scan_string(bytes: &[u8], i: &mut usize) -> Result<(), JsonPrefixState> {
+        *i += 1;
+        while *i < bytes.len() {
+            match bytes[*i] {
+                b'"' => {
+                    *i += 1;
+                    return Ok(());
+                }
+                b'\\' => {
+                    *i += 1;
+                    if *i == bytes.len() {
+                        return Err(JsonPrefixState::Prefix);
+                    }
+                    let escape = bytes[*i];
+                    if !matches!(escape, b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u') {
+                        return Err(JsonPrefixState::Invalid);
+                    }
+                    *i += 1;
+                    if escape == b'u' {
+                        for _ in 0..4 {
+                            if *i == bytes.len() {
+                                return Err(JsonPrefixState::Prefix);
+                            }
+                            if !bytes[*i].is_ascii_hexdigit() {
+                                return Err(JsonPrefixState::Invalid);
+                            }
+                            *i += 1;
+                        }
+                    }
+                }
+                0..=0x1f => return Err(JsonPrefixState::Invalid),
+                _ => *i += 1,
+            }
+        }
+        Err(JsonPrefixState::Prefix)
+    }
+    fn scan_number(bytes: &[u8], i: &mut usize) -> Result<(), JsonPrefixState> {
+        if bytes[*i] == b'-' {
+            *i += 1;
+        }
+        if *i == bytes.len() {
+            return Err(JsonPrefixState::Prefix);
+        }
+        match bytes[*i] {
+            b'0' => *i += 1,
+            b'1'..=b'9' => {
+                while *i < bytes.len() && bytes[*i].is_ascii_digit() {
+                    *i += 1;
+                }
+            }
+            _ => return Err(JsonPrefixState::Invalid),
+        }
+        if *i < bytes.len() && bytes[*i] == b'.' {
+            *i += 1;
+            if *i == bytes.len() {
+                return Err(JsonPrefixState::Prefix);
+            }
+            if !bytes[*i].is_ascii_digit() {
+                return Err(JsonPrefixState::Invalid);
+            }
+            while *i < bytes.len() && bytes[*i].is_ascii_digit() {
+                *i += 1;
+            }
+        }
+        if *i < bytes.len() && matches!(bytes[*i], b'e' | b'E') {
+            *i += 1;
+            if *i < bytes.len() && matches!(bytes[*i], b'+' | b'-') {
+                *i += 1;
+            }
+            if *i == bytes.len() {
+                return Err(JsonPrefixState::Prefix);
+            }
+            if !bytes[*i].is_ascii_digit() {
+                return Err(JsonPrefixState::Invalid);
+            }
+            while *i < bytes.len() && bytes[*i].is_ascii_digit() {
+                *i += 1;
+            }
+        }
+        Ok(())
+    }
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut stack = Vec::new(); // true: object, false: array
+    let mut expect = Expect::Value;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if matches!(c, b' ' | b'\t' | b'\n' | b'\r') {
+            i += 1;
+            continue;
+        }
+        match expect {
+            Expect::Value | Expect::ArrayValueOrEnd => {
+                if c == b']' && matches!(expect, Expect::ArrayValueOrEnd) {
+                    stack.pop();
+                    i += 1;
+                    expect = after_value(&stack);
+                    continue;
+                }
+                if c == b'{' {
+                    stack.push(true);
+                    i += 1;
+                    expect = Expect::ObjectKeyOrEnd;
+                    continue;
+                }
+                if c == b'[' {
+                    stack.push(false);
+                    i += 1;
+                    expect = Expect::ArrayValueOrEnd;
+                    continue;
+                }
+                let result = if c == b'"' {
+                    scan_string(bytes, &mut i)
+                } else if c == b'-' || c.is_ascii_digit() {
+                    scan_number(bytes, &mut i)
+                } else {
+                    let word: &[u8] = match c {
+                        b't' => b"true",
+                        b'f' => b"false",
+                        b'n' => b"null",
+                        _ => return Invalid,
+                    };
+                    let available = word.len().min(bytes.len() - i);
+                    if bytes[i..i + available] != word[..available] {
+                        return Invalid;
+                    }
+                    i += available;
+                    if available == word.len() { Ok(()) } else { Err(Prefix) }
+                };
+                if let Err(state) = result {
+                    return state;
+                }
+                expect = after_value(&stack);
+            }
+            Expect::ObjectKeyOrEnd | Expect::ObjectKey => {
+                if c == b'}' && matches!(expect, Expect::ObjectKeyOrEnd) {
+                    stack.pop();
+                    i += 1;
+                    expect = after_value(&stack);
+                    continue;
+                }
+                if c != b'"' {
+                    return Invalid;
+                }
+                if let Err(state) = scan_string(bytes, &mut i) {
+                    return state;
+                }
+                expect = Expect::ObjectColon;
+            }
+            Expect::ObjectColon => {
+                if c != b':' {
+                    return Invalid;
+                }
+                i += 1;
+                expect = Expect::Value;
+            }
+            Expect::ObjectCommaOrEnd => {
+                if c == b'}' {
+                    stack.pop();
+                    i += 1;
+                    expect = after_value(&stack);
+                } else if c == b',' {
+                    i += 1;
+                    expect = Expect::ObjectKey;
+                } else {
+                    return Invalid;
+                }
+            }
+            Expect::ArrayCommaOrEnd => {
+                if c == b']' {
+                    stack.pop();
+                    i += 1;
+                    expect = after_value(&stack);
+                } else if c == b',' {
+                    i += 1;
+                    expect = Expect::Value;
+                } else {
+                    return Invalid;
+                }
+            }
+            Expect::End => return Invalid,
+        }
+    }
+    if matches!(expect, Expect::End) { Complete } else { Prefix }
+}
+
 /// Best-effort object for a possibly incomplete JSON buffer.
 pub fn parse_streaming_json(partial: &str) -> JsonObject {
     let trimmed = partial.trim_start();
@@ -107,6 +322,29 @@ fn complete_partial_json(input: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn strict_prefix_matches_pinned_omp_cases() {
+        use JsonPrefixState::{Complete, Invalid, Prefix};
+        for (input, expected) in [
+            ("", Prefix),
+            (" \t\n\r", Prefix),
+            (r#"{"command":"echo "#, Prefix),
+            (r#"{"command":"echo {1..3}"}"#, Complete),
+            (r#"{"a":[1,{"b":true},null]}"#, Complete),
+            (r#"{"a":[1,{"b":"#, Prefix),
+            ("{\"command\":\"echo hello\n", Invalid),
+            ("{\"a\":1}{", Invalid),
+            ("{1..3}", Invalid),
+            ("{\"a\":\"\\", Prefix),
+            ("{\"a\":\"\\u12", Prefix),
+            ("{\"a\":\"\\q\"}", Invalid),
+            ("{\"a\":01}", Invalid),
+            ("12", Complete),
+        ] {
+            assert_eq!(classify_json_prefix(input), expected, "{input:?}");
+        }
+    }
 
     #[test]
     fn repairs_truncated_buffers_for_display() {

@@ -53,27 +53,53 @@ terminal fallbacks and cache usage. The HTTP fixtures cover request shape,
 two-request tool-result replay, EOF after a tool start, and unknown SSE
 events that cannot extend the idle deadline.
 
+The current identifierless-parallel increment follows fixed OMP
+`openai-shared.ts::lookupOpenFunctionCallItem` and
+`packages/utils/src/json-parse.ts::classifyJsonPrefix`: unfinished function
+items are considered in added order; a sticky delta target changes only when
+a new `{` chunk cannot extend its strict JSON prefix. Source-backed cases
+cover done events in order, split sibling chunks, brace text inside strings,
+invalid abandoned buffers, and mixed keyed/identifierless three-call routing.
+Two real CLI `write` calls produced distinct files and matching Session/tool
+result IDs. A conflicting nonempty final item caused a provider error before
+either `write` ran. Completed-item and terminal-snapshot checks also catch a
+contradiction when the snapshot omits `call_id`. Reused call IDs and cumulative
+prefix-classification work charged above 128 MiB are rejected; the charge is
+a guard, not an exact count of CPU operations.
+
 ## Verification and review
 
-- `cargo test -p ara-ai --quiet`: current worktree 78 unit, 48 existing Chat
+- `cargo test -p ara-ai --quiet`: current worktree 84 unit, 48 existing Chat
   fake HTTP, 5 Responses fake HTTP, and 0 doc tests passed.
-- `cargo test -p ara-cli --test e2e --quiet`: 20/23 passed with the ambient
-  Windows PATH; two failures could not start `bash` and one was the existing
-  tool-deadline case. With `C:\Program Files\Git\bin` and `usr\bin` prepended
-  to PATH, 22/23 passed; only
-  `deadline_during_a_tool_and_zero_budget_exit_nonzero` remained red.
-- The four Responses-specific real-process e2e cases passed: tool effect and
+- `cargo test --workspace --all-targets --quiet` with Git Bash in PATH stopped
+  at the known Windows CLI deadline assertion: 24/25 CLI e2e passed, while
+  `deadline_during_a_tool_and_zero_budget_exit_nonzero` exceeded four seconds.
+  A run excluding that case reached three known Windows Bash process-tree
+  failures. Excluding those also reached vendored `pi-edit` hashline path
+  failures (`hashline_streaming_preview_cases_preserve_partial_and_final_contracts`
+  and `patcher_apply_cases`). No full workspace test pass is claimed.
+- The six Responses-specific real-process e2e cases passed: tool effect and
   restart replay; mixed complete/partial Length turn and restart replay;
   same-run resampling without a tool effect; terminal-before-exit JSON text
-  stream.
-- `cargo clippy -p ara-ai -p ara-cli --all-targets -- -D warnings`: passed
-  on the current worktree.
+  stream; two identifierless parallel writes; conflict with no file effects.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo test --workspace --doc --quiet`, `cargo deny check`, and
+  `python scripts/omp_inventory.py check`: passed on the current worktree.
 - Targeted `rustfmt --check --edition 2024` on the eight changed Rust files
   passed on the earlier stream increment. The three Rust files changed in
   this continuation and `git diff --check` passed on the current worktree.
-  A workspace
-  `cargo fmt --all -- --check` reports unrelated vendored formatting, so
-  that command is not a passing gate.
+  A workspace `cargo fmt --all -- --check` reports unrelated vendored
+  formatting, so that command is not a passing gate.
+
+The new increment was independently reviewed before and after implementation
+by Codex agents `/root/idless_plan` and `/root/idless_risk`. Review found a
+three-call sticky-target error and a terminal-snapshot conflict bypass; both
+were corrected and given regressions. The risk reviewer also demonstrated
+that reversed, fully identifierless parallel deltas with empty final arguments
+cannot have their original call identity proven. This is the fixed OMP
+arrival-order inference, retained for parity and recorded as an open risk.
+Review additionally found repeated full-buffer JSON classification could
+consume quadratic CPU; the cumulative work bound now rejects that stream.
 
 Independent Codex reviewers `/root/responses_sse_plan` and
 `/root/responses_sse_security` reviewed the plan and worktree diff against
@@ -98,13 +124,16 @@ item's best-effort JSON object. Neither is executed on `Length`.
 
 ## Known bounds and next gate
 
-- Parallel argument events with no `output_index` or `item_id` fail closed
-  when multiple items are open. Pinned OMP can route some of these by arrival
-  order and JSON-prefix matching; ARA does not yet claim that parity.
+- Identifierless parallel argument routing follows pinned OMP arrival-order
+  inference. A nonempty authoritative final item or snapshot that contradicts
+  the inferred arguments is rejected. When both are empty, the wire provides
+  no proof of which call produced each argument: reversed arrivals can still
+  execute under the wrong call identity. This is an explicit parity risk, not
+  a claim of safe identity recovery; acceptance remains open.
 - A partial open function on an incomplete terminal now records a `Length`
   turn and continues with synthetic non-execution results. A completed
   terminal with an unfinished function, EOF without a terminal, content
-  filtering, ambiguous identifierless parallel arguments and cancellation
+  filtering, contradictory identifierless final arguments and cancellation
   remain separate error or aborted paths.
 - Native reasoning item replay, provider-hosted tools, strict tool-schema
   normalization, target-specific call-ID spelling, `previous_response_id`

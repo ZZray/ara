@@ -6,7 +6,7 @@
 
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
-use crate::json::{parse_final_arguments, parse_streaming_json};
+use crate::json::{JsonPrefixState, classify_json_prefix, parse_final_arguments, parse_streaming_json};
 use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ToolCall};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -25,6 +25,15 @@ struct OpenItem {
     call_id: Option<String>,
     argument_bytes: String,
     final_arguments: Option<String>,
+    identifierless_arguments_done: bool,
+}
+
+struct CompletedIdentifierless {
+    output_index: Option<u64>,
+    item_id: Option<String>,
+    call_id: String,
+    name: String,
+    arguments: Option<Value>,
 }
 
 pub(crate) struct ResponsesStreamState {
@@ -34,10 +43,14 @@ pub(crate) struct ResponsesStreamState {
     by_id: HashMap<String, usize>,
     by_call: HashMap<String, usize>,
     by_prefixed_call: HashMap<String, usize>,
+    seen_call_ids: HashSet<String>,
+    completed_identifierless: Vec<CompletedIdentifierless>,
     done_indices: HashSet<u64>,
     done_ids: HashSet<String>,
     completed_tool_args: Vec<bool>,
     next_key: usize,
+    identifierless_delta_target: Option<usize>,
+    identifierless_scan_work: usize,
     pub(crate) terminal: bool,
     pub(crate) replay_unsafe_wire_event: bool,
 }
@@ -51,10 +64,14 @@ impl ResponsesStreamState {
             by_id: HashMap::new(),
             by_call: HashMap::new(),
             by_prefixed_call: HashMap::new(),
+            seen_call_ids: HashSet::new(),
+            completed_identifierless: Vec::new(),
             done_indices: HashSet::new(),
             done_ids: HashSet::new(),
             completed_tool_args: Vec::new(),
             next_key: 0,
+            identifierless_delta_target: None,
+            identifierless_scan_work: 0,
             terminal: false,
             replay_unsafe_wire_event: false,
         }
@@ -86,6 +103,63 @@ impl ResponsesStreamState {
         Ok((self.open.len() == 1).then(|| *self.open.keys().next().expect("one open item")))
     }
 
+    fn identifierless_function(&mut self, delta: Option<&str>) -> Result<Option<usize>, ProviderError> {
+        let mut keys = self
+            .open
+            .iter()
+            .filter_map(|(&key, item)| {
+                (item.kind == ItemKind::Function && item.final_arguments.is_none()).then_some(key)
+            })
+            .collect::<Vec<_>>();
+        keys.sort_unstable(); // Keys increase with output_item.added order.
+        if delta.is_none() {
+            return Ok(keys.first().copied());
+        }
+        let delta = delta.expect("checked above");
+        if delta.trim_start_matches([' ', '\t', '\n', '\r']).starts_with('{') {
+            // Classification scans the accumulated buffer; bound the total
+            // work as well as the per-call argument bytes.
+            let charge = keys.iter().fold(0usize, |sum, key| {
+                sum.saturating_add(self.open[key].argument_bytes.len().saturating_mul(2).saturating_add(delta.len()))
+            });
+            self.identifierless_scan_work = self.identifierless_scan_work.saturating_add(charge);
+            if self.identifierless_scan_work > 128 * 1024 * 1024 {
+                return Err(ProviderError::Stream(
+                    "Responses identifierless argument routing exceeded work limit".into(),
+                ));
+            }
+        }
+        if let Some(target) = self.identifierless_delta_target
+            && let Some(position) = keys.iter().position(|key| *key == target)
+            && (!self.should_advance_identifierless_delta(target, delta) || position + 1 == keys.len())
+        {
+            return Ok(Some(target));
+        }
+        let key = keys.iter().enumerate().find_map(|(index, key)| {
+            (!self.should_advance_identifierless_delta(*key, delta) || index + 1 == keys.len()).then_some(*key)
+        });
+        let Some(key) = key else { return Ok(None) };
+        self.identifierless_delta_target = Some(key);
+        Ok(Some(key))
+    }
+
+    fn should_advance_identifierless_delta(&self, key: usize, delta: &str) -> bool {
+        if !delta.trim_start_matches([' ', '\t', '\n', '\r']).starts_with('{') {
+            return false;
+        }
+        let partial = &self.open[&key].argument_bytes;
+        if partial.trim().is_empty() {
+            return false;
+        }
+        if classify_json_prefix(partial) != JsonPrefixState::Prefix {
+            return true;
+        }
+        let mut combined = String::with_capacity(partial.len() + delta.len());
+        combined.push_str(partial);
+        combined.push_str(delta);
+        classify_json_prefix(&combined) == JsonPrefixState::Invalid
+    }
+
     fn add(
         &mut self,
         kind: ItemKind,
@@ -98,6 +172,9 @@ impl ResponsesStreamState {
         let call = item.get("call_id").and_then(Value::as_str).map(str::to_owned);
         if kind == ItemKind::Function && call.as_deref().is_none_or(str::is_empty) {
             return Err(ProviderError::Stream("Responses function call has no call_id".into()));
+        }
+        if call.as_ref().is_some_and(|call| self.seen_call_ids.contains(call)) {
+            return Err(ProviderError::Stream("Responses function call_id was added twice".into()));
         }
         if index.is_some_and(|index| self.by_index.contains_key(&index))
             || id.as_ref().is_some_and(|id| self.by_id.contains_key(id))
@@ -134,6 +211,7 @@ impl ResponsesStreamState {
             self.by_id.insert(id.clone(), key);
         }
         if let Some(call) = &call {
+            self.seen_call_ids.insert(call.clone());
             self.by_call.insert(call.clone(), key);
             self.by_prefixed_call.insert(format!("fc_{call}"), key);
         }
@@ -147,12 +225,16 @@ impl ResponsesStreamState {
                 call_id: call,
                 argument_bytes: item.get("arguments").and_then(Value::as_str).unwrap_or("").to_owned(),
                 final_arguments: None,
+                identifierless_arguments_done: false,
             },
         );
         Ok(key)
     }
 
     fn close(&mut self, key: usize) {
+        if self.identifierless_delta_target == Some(key) {
+            self.identifierless_delta_target = None;
+        }
         let Some(item) = self.open.remove(&key) else { return };
         if let Some(index) = item.output_index
             && self.by_index.get(&index) == Some(&key)
@@ -192,6 +274,26 @@ impl ResponsesStreamState {
     ) -> Result<(), ProviderError> {
         let index = event.get("output_index").and_then(Value::as_u64);
         let id = item.get("id").and_then(Value::as_str);
+        let call_id = item.get("call_id").and_then(Value::as_str);
+        if let Some(done) = self.completed_identifierless.iter().find(|done| {
+            index.is_some_and(|index| done.output_index == Some(index))
+                || id.is_some_and(|id| done.item_id.as_deref() == Some(id))
+                || call_id == Some(done.call_id.as_str())
+        }) {
+            let conflicts = index.is_some_and(|index| done.output_index.is_some_and(|known| known != index))
+                || id.is_some_and(|id| done.item_id.as_deref().is_some_and(|known| known != id))
+                || call_id.is_some_and(|call_id| call_id != done.call_id)
+                || item.get("type").and_then(Value::as_str).is_some_and(|kind| kind != "function_call")
+                || item.get("name").and_then(Value::as_str).is_some_and(|name| name != done.name)
+                || item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .filter(|raw| !raw.is_empty())
+                    .is_some_and(|raw| strict_arguments_value(raw) != done.arguments);
+            if conflicts {
+                return Err(ProviderError::Stream("Responses final item contradicts identifierless routing".into()));
+            }
+        }
         if index.is_some_and(|index| self.done_indices.contains(&index))
             || id.is_some_and(|id| self.done_ids.contains(id))
         {
@@ -232,6 +334,15 @@ impl ResponsesStreamState {
             };
             if item.get("name").and_then(Value::as_str).is_some_and(|name| name != original_name) {
                 return Err(ProviderError::Stream("Responses function name changed before completion".into()));
+            }
+            if open.identifierless_arguments_done
+                && let Some(final_raw) = item.get("arguments").and_then(Value::as_str).filter(|raw| !raw.is_empty())
+                && let Some(inferred_raw) = open.final_arguments.as_deref()
+                && serde_json::from_str::<Value>(inferred_raw).ok() != serde_json::from_str::<Value>(final_raw).ok()
+            {
+                return Err(ProviderError::Stream(
+                    "Responses final arguments contradict identifierless routing".into(),
+                ));
             }
         }
         let content_index = open.content_index;
@@ -289,6 +400,15 @@ impl ResponsesStreamState {
                     arguments: parse_final_arguments(raw),
                     thought_signature: None,
                 };
+                if open.identifierless_arguments_done {
+                    self.completed_identifierless.push(CompletedIdentifierless {
+                        output_index: open.output_index,
+                        item_id: open.item_id.clone(),
+                        call_id: call_id.to_owned(),
+                        name: tool_call.name.clone(),
+                        arguments: strict_arguments_value(raw),
+                    });
+                }
                 self.output.content[content_index] = AssistantBlock::ToolCall(tool_call.clone());
                 self.completed_tool_args.push(proven_complete && !tool_call.arguments.contains_key("__parseError"));
                 events.push(AssistantMessageEvent::ToolcallEnd {
@@ -361,23 +481,20 @@ impl ResponsesStreamState {
                 }
             }
             "response.function_call_arguments.delta" => {
-                let key = self.lookup(event, true)?;
-                if key.is_none()
-                    && event.get("output_index").is_none()
-                    && event.get("item_id").is_none()
-                    && self.open.len() > 1
-                {
-                    return Err(ProviderError::Stream("Ambiguous Responses function arguments delta".into()));
-                }
+                let delta = event
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ProviderError::Stream("Responses arguments delta is missing".into()))?;
+                let key = if event.get("output_index").is_none() && event.get("item_id").is_none() {
+                    self.identifierless_function(Some(delta))?
+                } else {
+                    self.lookup(event, true)?
+                };
                 if let Some(key) = key {
                     let open = self.open.get_mut(&key).expect("indexed item exists");
                     if open.kind != ItemKind::Function {
                         return Err(ProviderError::Stream("Responses arguments routed to non-function item".into()));
                     }
-                    let delta = event
-                        .get("delta")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| ProviderError::Stream("Responses arguments delta is missing".into()))?;
                     if open.argument_bytes.len().saturating_add(delta.len()) > 8 * 1024 * 1024 {
                         return Err(ProviderError::Stream("Responses function arguments exceed size limit".into()));
                     }
@@ -391,14 +508,8 @@ impl ResponsesStreamState {
                 }
             }
             "response.function_call_arguments.done" => {
-                let key = self.lookup(event, true)?;
-                if key.is_none()
-                    && event.get("output_index").is_none()
-                    && event.get("item_id").is_none()
-                    && self.open.len() > 1
-                {
-                    return Err(ProviderError::Stream("Ambiguous Responses final function arguments".into()));
-                }
+                let identifierless = event.get("output_index").is_none() && event.get("item_id").is_none();
+                let key = if identifierless { self.identifierless_function(None)? } else { self.lookup(event, true)? };
                 if let Some(key) = key {
                     let open = self.open.get_mut(&key).expect("indexed item exists");
                     if open.kind != ItemKind::Function {
@@ -414,6 +525,7 @@ impl ResponsesStreamState {
                         return Err(ProviderError::Stream("Responses function arguments exceed size limit".into()));
                     }
                     open.final_arguments = Some(raw.to_owned());
+                    open.identifierless_arguments_done = identifierless;
                     self.replay_unsafe_wire_event = true;
                 }
             }
@@ -564,6 +676,10 @@ fn response_error(response: &Value) -> String {
         .and_then(envelope_message)
         .or_else(|| envelope_message(response))
         .unwrap_or_else(|| "Responses provider returned an error".into())
+}
+
+fn strict_arguments_value(raw: &str) -> Option<Value> {
+    if raw.trim().is_empty() { Some(json!({})) } else { serde_json::from_str(raw).ok() }
 }
 
 #[cfg(test)]
@@ -776,14 +892,10 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_parallel_arguments_and_changed_call_identity_fail_closed() {
+    fn changed_parallel_call_identity_fails_closed() {
         let mut state = ResponsesStreamState::new(&model());
         state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"read"}})).unwrap();
         state.handle(&json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash"}})).unwrap();
-        assert!(matches!(
-            state.handle(&json!({"type":"response.function_call_arguments.done","arguments":"{}"})),
-            Err(ProviderError::Stream(_))
-        ));
         assert!(matches!(
             state.handle(&json!({"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc_b","arguments":"{\"path\":\"wrong\"}"})),
             Err(ProviderError::Stream(_))
@@ -793,6 +905,120 @@ mod tests {
             Err(ProviderError::Stream(_))
         ));
         assert!(matches!(state.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"changed","name":"read","arguments":"{}"}})), Err(ProviderError::Stream(_))));
+    }
+
+    #[test]
+    fn identifierless_done_uses_added_order_and_rejects_conflicting_final_snapshot() {
+        let mut state = ResponsesStreamState::new(&model());
+        for frame in [
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write"}}),
+            json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"write"}}),
+            json!({"type":"response.function_call_arguments.done","arguments":"{\"path\":\"a.txt\"}"}),
+            json!({"type":"response.function_call_arguments.done","arguments":"{\"path\":\"b.txt\"}"}),
+            json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write","arguments":""}}),
+            json!({"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"write","arguments":""}}),
+            json!({"type":"response.completed","response":{"status":"completed"}}),
+        ] {
+            state.handle(&frame).unwrap();
+        }
+        let calls = state.output.tool_calls().collect::<Vec<_>>();
+        assert_eq!(calls[0].arguments["path"], "a.txt");
+        assert_eq!(calls[1].arguments["path"], "b.txt");
+
+        let mut conflict = ResponsesStreamState::new(&model());
+        conflict.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write"}})).unwrap();
+        conflict.handle(&json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"write"}})).unwrap();
+        conflict
+            .handle(&json!({"type":"response.function_call_arguments.done","arguments":"{\"path\":\"b.txt\"}"}))
+            .unwrap();
+        assert!(matches!(conflict.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write","arguments":"{\"path\":\"a.txt\"}"}})), Err(ProviderError::Stream(_))));
+
+        let mut snapshot = ResponsesStreamState::new(&model());
+        snapshot.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write"}})).unwrap();
+        snapshot
+            .handle(&json!({"type":"response.function_call_arguments.done","arguments":"{\"path\":\"b.txt\"}"}))
+            .unwrap();
+        snapshot.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write","arguments":""}})).unwrap();
+        assert!(matches!(snapshot.handle(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","id":"fc_a","call_id":"a","name":"write","arguments":"{\"path\":\"a.txt\"}"}]}})), Err(ProviderError::Stream(_))));
+
+        let mut missing_call_id = ResponsesStreamState::new(&model());
+        missing_call_id.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write"}})).unwrap();
+        missing_call_id.handle(&json!({"type":"response.function_call_arguments.done","arguments":""})).unwrap();
+        missing_call_id.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write","arguments":""}})).unwrap();
+        assert!(matches!(missing_call_id.handle(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","id":"fc_a","name":"write","arguments":"{\"path\":\"surprise\"}"}]}})), Err(ProviderError::Stream(_))));
+        assert!(matches!(missing_call_id.handle(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","id":"fc_a","name":"bash","arguments":""}]}})), Err(ProviderError::Stream(_))));
+        assert!(matches!(missing_call_id.handle(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","id":"fc_a","content":[]}]}})), Err(ProviderError::Stream(_))));
+    }
+
+    #[test]
+    fn identifierless_deltas_keep_braces_inside_strings_and_split_sibling_chunks() {
+        let mut state = ResponsesStreamState::new(&model());
+        state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"bash"}})).unwrap();
+        state.handle(&json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"write"}})).unwrap();
+        let mut indexes = Vec::new();
+        for delta in ["{\"command\":\"echo ", "{1..3}\"}", "{\"path\":\"b", ".txt\"}"] {
+            for event in state.handle(&json!({"type":"response.function_call_arguments.delta","delta":delta})).unwrap()
+            {
+                if let AssistantMessageEvent::ToolcallDelta { content_index, .. } = event {
+                    indexes.push(content_index);
+                }
+            }
+        }
+        assert_eq!(indexes, [0, 0, 1, 1]);
+        for (index, id, call, name) in [(0, "fc_a", "a", "bash"), (1, "fc_b", "b", "write")] {
+            state.handle(&json!({"type":"response.output_item.done","output_index":index,"item":{"type":"function_call","id":id,"call_id":call,"name":name,"arguments":""}})).unwrap();
+        }
+        state.handle(&json!({"type":"response.completed","response":{"status":"completed"}})).unwrap();
+        let calls = state.output.tool_calls().collect::<Vec<_>>();
+        assert_eq!(calls[0].arguments["command"], "echo {1..3}");
+        assert_eq!(calls[1].arguments["path"], "b.txt");
+    }
+
+    #[test]
+    fn identifierless_delta_advances_after_invalid_prefix_and_rejects_duplicate_call_id() {
+        let mut state = ResponsesStreamState::new(&model());
+        state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"bash"}})).unwrap();
+        state.handle(&json!({"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_b","call_id":"b","name":"write"}})).unwrap();
+        state.handle(&json!({"type":"response.function_call_arguments.delta","delta":"{\"command\":\"bad\n"})).unwrap();
+        let events = state
+            .handle(&json!({"type":"response.function_call_arguments.delta","delta":"{\"path\":\"b.txt\"}"}))
+            .unwrap();
+        assert!(matches!(&events[0], AssistantMessageEvent::ToolcallDelta { content_index: 1, .. }));
+        assert!(matches!(state.handle(&json!({"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","id":"fc_c","call_id":"b","name":"write"}})), Err(ProviderError::Stream(_))));
+    }
+
+    #[test]
+    fn identifierless_delta_skips_two_complete_calls_when_keyed_and_unkeyed_mix() {
+        let mut state = ResponsesStreamState::new(&model());
+        for (index, id, call) in [(0, "fc_a", "a"), (1, "fc_b", "b"), (2, "fc_c", "c")] {
+            state.handle(&json!({"type":"response.output_item.added","output_index":index,"item":{"type":"function_call","id":id,"call_id":call,"name":"write"}})).unwrap();
+        }
+        state.handle(&json!({"type":"response.function_call_arguments.delta","delta":"{\"path\":\"a.txt\"}"})).unwrap();
+        state.handle(&json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"b.txt\"}"})).unwrap();
+        let events = state
+            .handle(&json!({"type":"response.function_call_arguments.delta","delta":"{\"path\":\"c.txt\"}"}))
+            .unwrap();
+        assert!(matches!(&events[0], AssistantMessageEvent::ToolcallDelta { content_index: 2, .. }));
+        for (index, id, call) in [(0, "fc_a", "a"), (1, "fc_b", "b"), (2, "fc_c", "c")] {
+            state.handle(&json!({"type":"response.output_item.done","output_index":index,"item":{"type":"function_call","id":id,"call_id":call,"name":"write","arguments":""}})).unwrap();
+        }
+        state.handle(&json!({"type":"response.completed","response":{"status":"completed"}})).unwrap();
+        let calls = state.output.tool_calls().collect::<Vec<_>>();
+        assert_eq!(
+            calls.iter().map(|call| call.arguments["path"].as_str().unwrap()).collect::<Vec<_>>(),
+            ["a.txt", "b.txt", "c.txt"]
+        );
+    }
+
+    #[test]
+    fn identifierless_routing_has_a_cumulative_scan_bound() {
+        let mut state = ResponsesStreamState::new(&model());
+        state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"a","name":"write"}})).unwrap();
+        state.identifierless_scan_work = 128 * 1024 * 1024;
+        assert!(matches!(
+            state.handle(&json!({"type":"response.function_call_arguments.delta","delta":"{"})),
+            Err(ProviderError::Stream(_))
+        ));
     }
 
     #[test]
