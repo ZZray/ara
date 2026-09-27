@@ -371,10 +371,83 @@ async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
     assert_eq!(requests.len(), 3);
     for request in requests.iter() {
         assert_eq!(request["request"], "POST /v1/responses HTTP/1.1");
+        assert_eq!(request["body"]["store"], false);
+        assert!(request["body"].get("previous_response_id").is_none());
     }
     let input = requests[2]["body"]["input"].as_array().unwrap();
     assert!(input.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_write"));
     assert!(input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_write"));
+}
+
+#[tokio::test]
+async fn responses_stateful_chains_tool_result_and_resumes_with_full_history() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_stateful", "call_id": "call_stateful", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"stateful.txt\",\"content\":\"once\\n\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_stateful", "call_id": "call_stateful", "name": "write", "arguments": "{}"}}},
+            {"data": {"type": "response.completed", "response": {"id": "resp_tool", "status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_done", "content": [{"type": "output_text", "text": "Wrote stateful.txt."}]}}},
+            {"data": {"type": "response.completed", "response": {"id": "resp_done", "status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_resume", "content": [{"type": "output_text", "text": "Session resumed."}]}}},
+            {"data": {"type": "response.completed", "response": {"id": "resp_resume", "status": "completed"}}}
+        ]}
+    ]})).await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--responses-stateful", "--tools", "write", "Write stateful.txt"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote stateful.txt.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("stateful.txt")).unwrap(), "once\n");
+    let session = env.session_files();
+    assert_eq!(session.len(), 1);
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--responses-stateful", "--resume", session[0].to_str().unwrap(), "Continue"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&resumed);
+    assert_eq!(resumed.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Session resumed.\n");
+
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests.iter().all(|request| request["request"] == "POST /v1/responses HTTP/1.1"));
+    assert!(requests.iter().all(|request| request["body"]["store"] == true));
+    assert!(requests[0]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_tool");
+    let delta = requests[1]["body"]["input"].as_array().unwrap();
+    assert_eq!(delta.len(), 1);
+    assert_eq!(delta[0]["type"], "function_call_output");
+    assert_eq!(delta[0]["call_id"], "call_stateful");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    let full = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(full.iter().any(|item| item["role"] == "user"
+        && item["content"].as_array().is_some_and(|parts| {
+            parts.iter().any(|part| part["text"].as_str().is_some_and(|text| text.ends_with("Write stateful.txt")))
+        })));
+    assert!(full.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_stateful"));
+    assert!(full.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_stateful"));
+    assert!(full.iter().any(|item| {
+        item["type"] == "message"
+            && item["content"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|part| part["text"] == "Wrote stateful.txt."))
+    }));
+    assert!(full.iter().any(|item| item["role"] == "user"
+        && item["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["text"] == "Continue"))));
+    drop(requests);
+    let entries = journal(&session[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("stateful.txt")).unwrap(), "once\n");
 }
 
 #[tokio::test]
@@ -1153,6 +1226,11 @@ async fn argument_errors_do_not_touch_a_resumed_session() {
     let out = output(env.cmd(&up.base_url(), &["--no-session", "--resume", session.to_str().unwrap(), "y"])).await;
     assert_eq!(out.status.code(), Some(2), "--no-session cannot silently drop --resume");
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be used with"));
+    let out =
+        output(env.cmd(&up.base_url(), &["--resume", session.to_str().unwrap(), "--responses-stateful", "y"])).await;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--responses-stateful requires --api openai-responses"));
+    assert_eq!(std::fs::read(&session).unwrap(), before, "invalid Responses route left the journal untouched");
 }
 
 #[tokio::test]

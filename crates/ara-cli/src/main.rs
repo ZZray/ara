@@ -135,6 +135,10 @@ struct Args {
     /// Requests encrypted reasoning for same-endpoint continuation.
     #[arg(long)]
     reasoning: bool,
+    /// Store Responses on the provider and chain compatible turns in this process.
+    /// Requires --api openai-responses; disabled by default.
+    #[arg(long)]
+    responses_stateful: bool,
     #[arg(long)]
     temperature: Option<f64>,
     /// Replace the default system prompt (text, or a file path). Without it,
@@ -330,6 +334,9 @@ struct Route {
 fn resolve_route(args: &Args) -> Result<Route> {
     if args.reasoning && args.api != Api::OpenaiResponses {
         bail!("--reasoning requires --api openai-responses");
+    }
+    if args.responses_stateful && args.api != Api::OpenaiResponses {
+        bail!("--responses-stateful requires --api openai-responses");
     }
     if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
         bail!("--report-request-text-tokens requires --api openai-completions");
@@ -613,6 +620,7 @@ async fn run(args: Args) -> Result<i32> {
                 idle_timeout: stream_options.idle_timeout,
                 retry: stream_options.retry,
                 session_state: Some(Arc::new(ara_ai::providers::openai_responses::ProviderSessionState::default())),
+                stateful_responses: args.responses_stateful,
                 ..ResponsesStreamOptions::default()
             },
         }),
