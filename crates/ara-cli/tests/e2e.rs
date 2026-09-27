@@ -451,6 +451,50 @@ async fn responses_stateful_chains_tool_result_and_resumes_with_full_history() {
 }
 
 #[tokio::test]
+async fn responses_stateful_code_only_rejection_replays_full_history_without_repeating_a_tool() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_once", "call_id": "call_once", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"coded-chain.txt\",\"content\":\"once\\n\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_once", "call_id": "call_once", "name": "write", "arguments": "{}"}}},
+            {"data": {"type": "response.completed", "response": {"id": "resp_once", "status": "completed"}}}
+        ]},
+        {"status": 400, "body": "{\"error\":{\"code\":\"previous_response_not_found\",\"message\":\"lookup failed\"}}"},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_done", "content": [{"type": "output_text", "text": "Recovered."}]}}},
+            {"data": {"type": "response.completed", "response": {"id": "resp_recovered", "status": "completed"}}}
+        ]}
+    ]})).await;
+    let out = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--responses-stateful", "--tools", "write", "Write coded-chain.txt"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Recovered.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("coded-chain.txt")).unwrap(), "once\n");
+    let session = env.session_files();
+    assert_eq!(session.len(), 1);
+    assert_eq!(journal(&session[0]).iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_once");
+    let delta = requests[1]["body"]["input"].as_array().unwrap();
+    assert_eq!(delta.len(), 1);
+    assert_eq!(delta[0]["type"], "function_call_output");
+    assert_eq!(delta[0]["call_id"], "call_once");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["store"], true);
+    let full = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(full.iter().any(|item| item["role"] == "user"));
+    assert!(full.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_once"));
+    assert!(full.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_once"));
+}
+
+#[tokio::test]
 async fn responses_reasoning_history_survives_tool_turn_and_restart_without_json_disclosure() {
     let env = Env::new();
     let secret = "opaque-reasoning-e2e-marker";
