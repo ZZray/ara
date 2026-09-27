@@ -30,10 +30,12 @@ successful chained completion resets that counter. Streaming errors,
 cancellation and unrelated HTTP errors do not retry through this path. The
 provider never replays a tool effect to repair a chain.
 
-This change does not bind the option in CLI, Agent or Session. The current CLI
-continues using `store:false`; the new path is exercised through the public
-provider entry with a controlled local HTTP upstream. No default third-party
-storage policy or stable host lifecycle changed.
+The CLI now exposes `--responses-stateful` only with
+`--api openai-responses`. It explicitly opts into provider-side `store:true`
+and reuse of a compatible response ID within one CLI process. The default CLI
+still sends `store:false`. A restarted `--resume` host creates new transient
+provider state and sends full history on its first request. Agent and Session
+ownership and the default third-party storage policy are unchanged.
 
 ## Evidence on committed WIPs `27f4b9a` and `38c624c` (2026-09-27)
 
@@ -77,13 +79,43 @@ fallback and ZDR precedence; both were fixed and the reviewer reran focused
 HTTP cases. Its final re-review found no remaining concrete issue in the two
 changed files. It identified the following open parity difference.
 
+## CLI host binding on WIP `ba63882` (2026-09-27)
+
+- `cargo test -p ara-cli --test e2e responses_ --quiet` exited 0 (10/10).
+  The new case drives the real `ara` binary through a fake Responses upstream
+  and a real `write` tool. The first POST is full with `store:true`; the second
+  contains only the paired `function_call_output` and
+  `previous_response_id=resp_tool`. A new process using `--resume` sends full
+  history with the original user, function call and result, prior assistant,
+  and new user, with no previous ID. Its session journal has exactly one
+  tool result and the file content remains `once\n`.
+- The existing default Responses host case now asserts all three requests use
+  `store:false` without a previous ID. The argument-error case confirms the
+  flag on the default Chat API exits 2 and leaves the resumed journal
+  byte-for-byte unchanged; its focused test exited 0 (1/1).
+- On committed `ba63882`, strict workspace Clippy, doc tests, `cargo deny
+  check`, pinned OMP inventory check, and scoped formatting exited 0. The
+  full `cargo test --workspace --all-targets --quiet` exited 101: 34/35 CLI
+  e2e tests passed, then the pre-existing Windows tool-deadline four-second
+  assertion failed. Log: `%TEMP%\ara-cli-stateful-ba63882-gate.log`.
+  `cargo fmt --all -- --check` still reports only unchanged vendored `pi-*`
+  files; log: `%TEMP%\ara-cli-stateful-fmt.log`.
+- Independent Codex pre-plan reviewer `/root/cli_stateful_plan_review`
+  checked scope, transient state, and fixture requirements. Independent
+  post-diff reviewer `/root/cli_stateful_diff_review` reviewed both changed
+  CLI files, found no confirmed defect, and suggested checking the original
+  user and prior assistant on restart; those assertions were added and the
+  10-case Responses suite rerun successfully.
+- No live model was called on `ba63882`; the fake upstream proves host wiring
+  and local effects, not model behavior or provider storage support.
+
 ## Open difference and acceptance
 
 `post_with_retry` currently returns only the parsed HTTP error message. When
 the upstream sends `error.code=previous_response_not_found` with an unrelated
 message, the Responses provider cannot classify it for a full-history retry.
 Preserving that structured code requires a separately scoped change to the
-shared HTTP error contract. The CLI has no stateful opt-in binding, and the
-official-endpoint default differs from fixed OMP. The full backend gate,
+shared HTTP error contract. The CLI now has an explicit opt-in binding, while
+the official-endpoint default differs from fixed OMP. The full backend gate,
 bounded actual-model task and independent point audit remain open. No AI-01e,
 AI module or P0-P6 acceptance count advances with this WIP commit.
