@@ -590,6 +590,96 @@ fn empty_and_open_tool_objects_keep_their_non_strict_wire_meaning() {
 }
 
 #[test]
+fn official_anthropic_route_selects_bounded_strict_tools_without_changing_custom_routes() {
+    let mut endpoint = model("https://api.anthropic.com/v1");
+    let edit = Tool {
+        name: "edit".into(),
+        description: "Edit a file".into(),
+        parameters: json!({"type":"object","properties":{
+            "path":{"type":"string"},
+            "content":{"type":"string"}
+        },"required":["path"]}),
+    };
+    let bash_open = Tool {
+        name: "bash".into(),
+        description: "Run a command".into(),
+        parameters: json!({"type":"object","properties":{
+            "command":{"type":"string"},
+            "env":{"type":"object","additionalProperties":{"type":"string"}}
+        },"required":["command"]}),
+    };
+    let incompatible = Tool {
+        name: "find".into(),
+        description: "Find a file".into(),
+        parameters: json!({"type":"object","properties":{
+            "query":{"oneOf":[{"type":"string"},{"type":"number"}]}
+        }}),
+    };
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("edit"))],
+        tools: Some(vec![edit.clone(), bash_open.clone(), incompatible.clone()]),
+        ..Default::default()
+    };
+    let mut opts = options();
+    opts.tool_choice = Some(ara_ai::ToolChoice::Tool("edit".into()));
+    let params = anthropic::build_params(&endpoint, &context, &opts).unwrap();
+    assert_eq!(params["tools"][0]["strict"], true);
+    assert_eq!(params["tools"][0]["input_schema"]["required"], json!(["path"]));
+    assert_eq!(params["tools"][0]["input_schema"]["properties"]["content"]["type"], "string");
+    assert!(params["tools"][1].get("strict").is_none());
+    assert_eq!(
+        params["tools"][1]["input_schema"]["properties"]["env"]["additionalProperties"],
+        json!({"type":"string"})
+    );
+    assert!(params["tools"][2].get("strict").is_none());
+    assert_eq!(params["tool_choice"], json!({"type":"tool","name":"edit"}));
+    assert_eq!(context.tools.as_ref().unwrap()[0], edit);
+    assert_eq!(context.tools.as_ref().unwrap()[1], bash_open);
+    assert_eq!(context.tools.as_ref().unwrap()[2], incompatible);
+
+    endpoint.base_url = "http://fixture/v1".into();
+    let custom = anthropic::build_params(&endpoint, &context, &opts).unwrap();
+    assert!(custom["tools"].as_array().unwrap().iter().all(|tool| tool.get("strict").is_none()));
+    endpoint.base_url = "https://api.anthropic.com/custom".into();
+    let custom_path = anthropic::build_params(&endpoint, &context, &opts).unwrap();
+    assert!(custom_path["tools"].as_array().unwrap().iter().all(|tool| tool.get("strict").is_none()));
+}
+
+#[test]
+fn official_strict_tool_budget_demotes_unrepresentable_schemas() {
+    let mut properties = serde_json::Map::new();
+    for index in 0..25 {
+        properties.insert(format!("field_{index:02}"), json!({"type":"string"}));
+    }
+    let eligible = Tool {
+        name: "edit".into(),
+        description: "Edit".into(),
+        parameters: json!({"type":"object","properties":properties}),
+    };
+    let mut unions = serde_json::Map::new();
+    for index in 0..17 {
+        unions.insert(format!("union_{index:02}"), json!({"type":["string","null"]}));
+    }
+    let over_union_budget = Tool {
+        name: "find".into(),
+        description: "Find".into(),
+        parameters: json!({"type":"object","properties":unions}),
+    };
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("use a tool"))],
+        tools: Some(vec![eligible, over_union_budget]),
+        ..Default::default()
+    };
+    let params = anthropic::build_params(&model("https://api.anthropic.com/v1"), &context, &options()).unwrap();
+    let first = &params["tools"][0];
+    assert_eq!(first["strict"], true);
+    assert_eq!(first["input_schema"]["required"], json!(["field_24"]));
+    assert_eq!(first["input_schema"]["properties"]["field_24"]["anyOf"][1]["type"], "null");
+    assert!(params["tools"][1].get("strict").is_none());
+    assert_eq!(params["tools"][1]["input_schema"]["properties"]["union_16"]["type"], json!(["string", "null"]));
+}
+
+#[test]
 fn excessively_deep_tool_schema_fails_before_sending_a_request() {
     let mut nested = json!({"type":"string"});
     for _ in 0..130 {

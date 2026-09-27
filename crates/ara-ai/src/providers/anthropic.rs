@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent as Event, AssistantStream, EventSink};
-use crate::providers::openai_completions::{RetryPolicy, post_with_retry};
+use crate::providers::openai_completions::{PostError, RetryPolicy, post_with_retry, post_with_retry_detailed};
 use crate::schema_wire::postprocess_json_wire_schema;
 use crate::sse::SseDecoder;
 use crate::transform::transform_messages;
@@ -35,6 +35,9 @@ const MAX_TOOL_JSON_BYTES: usize = 1024 * 1024;
 // deltas would otherwise clone a growing tool argument on every event.
 const MAX_TOOL_DISPLAY_BYTES: usize = 4 * 1024;
 const MAX_TOOL_SCHEMA_DEPTH: usize = 128;
+const MAX_STRICT_TOOLS: usize = 20;
+const MAX_STRICT_OPTIONAL_PARAMETERS: usize = 24;
+const MAX_STRICT_UNION_PARAMETERS: usize = 16;
 const PING_PROGRESS_MAX_IDLE_MULTIPLIER: u32 = 3;
 
 #[derive(Clone, Debug)]
@@ -365,7 +368,167 @@ fn tool_wire(tool: &Tool) -> Result<Value, ProviderError> {
     Ok(json!({"name":tool.name,"description":tool.description,"input_schema":input_schema}))
 }
 
-pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
+fn official_api_key_route(model: &Model) -> bool {
+    let Ok(url) = reqwest::Url::parse(&model.base_url) else { return false };
+    url.scheme() == "https"
+        && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"))
+        && url.port().is_none_or(|port| port == 443)
+        && matches!(url.path(), "/" | "/v1" | "/v1/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+fn strict_incompatible_keyword(value: &Value, depth: usize) -> bool {
+    if depth > MAX_TOOL_SCHEMA_DEPTH {
+        return true;
+    }
+    match value {
+        Value::Array(entries) => entries.iter().any(|entry| strict_incompatible_keyword(entry, depth + 1)),
+        Value::Object(fields) => {
+            ["oneOf", "allOf", "$ref", "patternProperties", "propertyNames"].iter().any(|key| fields.contains_key(*key))
+                || fields.values().any(|entry| strict_incompatible_keyword(entry, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StrictBudget {
+    optional_remaining: usize,
+    union_remaining: usize,
+}
+
+fn strict_schema_node(value: &Value, budget: &mut StrictBudget, depth: usize) -> Option<Value> {
+    if depth > MAX_TOOL_SCHEMA_DEPTH {
+        return None;
+    }
+    let Value::Object(fields) = value else { return Some(value.clone()) };
+    let defining = [
+        "type",
+        "properties",
+        "additionalProperties",
+        "items",
+        "prefixItems",
+        "enum",
+        "const",
+        "$ref",
+        "anyOf",
+        "allOf",
+        "oneOf",
+        "$defs",
+        "definitions",
+    ]
+    .iter()
+    .any(|key| fields.contains_key(*key));
+    if !defining {
+        return None;
+    }
+    let object_node = fields.get("type") == Some(&json!("object"))
+        || fields.contains_key("properties")
+        || fields.contains_key("additionalProperties");
+    if object_node && fields.get("additionalProperties") != Some(&Value::Bool(false)) {
+        return None;
+    }
+    let mut result = fields.clone();
+    if fields.get("type").is_some_and(Value::is_array) || fields.get("anyOf").is_some_and(Value::is_array) {
+        budget.union_remaining = budget.union_remaining.checked_sub(1)?;
+    }
+    if let Some(Value::Object(properties)) = fields.get("properties") {
+        let original_required: HashSet<&str> =
+            fields.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+        let mut normalized = Map::new();
+        let mut required = Vec::new();
+        for (name, property) in properties {
+            let mut property = strict_schema_node(property, budget, depth + 1)?;
+            if original_required.contains(name.as_str()) {
+                required.push(json!(name));
+            } else if budget.optional_remaining > 0 {
+                budget.optional_remaining -= 1;
+            } else {
+                let has_null = property
+                    .get("type")
+                    .and_then(Value::as_array)
+                    .is_some_and(|types| types.iter().any(|value| value == "null"))
+                    || property
+                        .get("anyOf")
+                        .and_then(Value::as_array)
+                        .is_some_and(|types| types.iter().any(|value| value["type"] == "null"));
+                if !has_null {
+                    if let Some(types) = property.get_mut("type").and_then(Value::as_array_mut) {
+                        types.push(json!("null"));
+                    } else if let Some(types) = property.get_mut("anyOf").and_then(Value::as_array_mut) {
+                        types.push(json!({"type":"null"}));
+                    } else {
+                        budget.union_remaining = budget.union_remaining.checked_sub(1)?;
+                        property = json!({"anyOf":[property,{"type":"null"}]});
+                    }
+                }
+                required.push(json!(name));
+            }
+            normalized.insert(name.clone(), property);
+        }
+        result.insert("properties".into(), Value::Object(normalized));
+        result.insert("required".into(), Value::Array(required));
+    }
+    for key in ["items", "prefixItems", "anyOf", "allOf", "oneOf"] {
+        if let Some(child) = result.get_mut(key) {
+            *child = match child {
+                Value::Array(entries) => Value::Array(
+                    entries
+                        .iter()
+                        .map(|entry| strict_schema_node(entry, budget, depth + 1))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Value::Object(_) => strict_schema_node(child, budget, depth + 1)?,
+                _ => child.clone(),
+            };
+        }
+    }
+    for key in ["$defs", "definitions"] {
+        if let Some(Value::Object(definitions)) = result.get_mut(key) {
+            for definition in definitions.values_mut() {
+                *definition = strict_schema_node(definition, budget, depth + 1)?;
+            }
+        }
+    }
+    Some(Value::Object(result))
+}
+
+fn tool_wires(tools: &[Tool], strict_enabled: bool) -> Result<Vec<Value>, ProviderError> {
+    let mut result = tools.iter().map(tool_wire).collect::<Result<Vec<_>, _>>()?;
+    if !strict_enabled {
+        return Ok(result);
+    }
+    let mut budget = StrictBudget {
+        optional_remaining: MAX_STRICT_OPTIONAL_PARAMETERS,
+        union_remaining: MAX_STRICT_UNION_PARAMETERS,
+    };
+    let mut strict_count = 0;
+    for (tool, wire) in tools.iter().zip(&mut result) {
+        if strict_count == MAX_STRICT_TOOLS
+            || !matches!(tool.name.as_str(), "bash" | "python" | "edit" | "find")
+            || strict_incompatible_keyword(&tool.parameters, 0)
+        {
+            continue;
+        }
+        let mut candidate_budget = budget;
+        let Some(schema) = strict_schema_node(&wire["input_schema"], &mut candidate_budget, 0) else {
+            continue;
+        };
+        wire["input_schema"] = schema;
+        wire["strict"] = Value::Bool(true);
+        budget = candidate_budget;
+        strict_count += 1;
+    }
+    Ok(result)
+}
+
+fn build_params_with_strict(
+    model: &Model,
+    context: &Context,
+    options: &StreamOptions,
+    strict_enabled: bool,
+) -> Result<Value, ProviderError> {
     let ceiling = model.max_tokens.unwrap_or(UNKNOWN_MODEL_MAX_TOKENS);
     let requested = options.max_tokens.unwrap_or(model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS));
     let max_tokens = requested.min(ceiling);
@@ -389,7 +552,7 @@ pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -
         );
     }
     if let Some(tools) = &context.tools {
-        params["tools"] = Value::Array(tools.iter().map(tool_wire).collect::<Result<_, _>>()?);
+        params["tools"] = Value::Array(tool_wires(tools, strict_enabled)?);
     }
     let available_tools = context.tools.as_deref().unwrap_or_default();
     if let Some(choice) = &options.tool_choice
@@ -410,6 +573,60 @@ pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -
         params["temperature"] = json!(temperature);
     }
     Ok(params)
+}
+
+pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
+    build_params_with_strict(model, context, options, official_api_key_route(model))
+}
+
+fn has_strict_tools(params: &Value) -> bool {
+    params["tools"].as_array().is_some_and(|tools| tools.iter().any(|tool| tool["strict"] == true))
+}
+
+fn strict_rejection(error: &PostError) -> bool {
+    let ProviderError::Http { status: 400, detail } = &error.cause else { return false };
+    let detail = detail.to_ascii_lowercase();
+    (error.code.as_deref().is_some_and(|code| code.eq_ignore_ascii_case("invalid_request_error"))
+        && ((detail.contains("compiled grammar") && detail.contains("too large"))
+            || (detail.contains("schema") && detail.contains("too complex") && detail.contains("compil"))))
+        || (detail.contains("structured_outputs")
+            || detail.contains("structured outputs")
+            || detail.contains("structured-outputs")
+            || detail.contains("structured output")
+            || detail.contains("structured-output"))
+            && (detail.contains("unsupported")
+                || detail.contains("not supported")
+                || detail.contains("not available")
+                || detail.contains("not enabled")
+                || detail.contains("does not support")
+                || detail.contains("doesn't support"))
+        || (detail.contains("custom.strict") && detail.contains("extra input") && detail.contains("not permitted"))
+}
+
+async fn post_with_strict_fallback(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(String, String)],
+    params: &Value,
+    fallback: Option<&Value>,
+    options: &StreamOptions,
+    retry_blocked: &mut bool,
+) -> Result<reqwest::Response, ProviderError> {
+    match post_with_retry_detailed(client, url, headers, params, &options.retry, &options.cancel, retry_blocked).await {
+        Err(error) if fallback.is_some() && has_strict_tools(params) && strict_rejection(&error) => {
+            post_with_retry(
+                client,
+                url,
+                headers,
+                fallback.expect("checked fallback"),
+                &options.retry,
+                &options.cancel,
+                retry_blocked,
+            )
+            .await
+        }
+        other => other.map_err(|error| error.cause),
+    }
 }
 
 fn apply_usage(usage: &mut Usage, wire: &Value) {
@@ -897,15 +1114,26 @@ async fn run(
         .ok_or_else(|| ProviderError::Config("Anthropic API key is missing".into()))?;
     let headers = request_headers(model, options, key)?;
     let params = build_params(model, context, options)?;
+    let fallback =
+        if has_strict_tools(&params) { Some(build_params_with_strict(model, context, options, false)?) } else { None };
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|timeout| started + timeout);
     let response = match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_retry(client, &url, &headers, &params, &options.retry, cancel, &mut state.retry_blocked) => result?,
+            result = post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Anthropic stream timed out before first event".into())),
         },
         None => {
-            post_with_retry(client, &url, &headers, &params, &options.retry, cancel, &mut state.retry_blocked).await?
+            post_with_strict_fallback(
+                client,
+                &url,
+                &headers,
+                &params,
+                fallback.as_ref(),
+                options,
+                &mut state.retry_blocked,
+            )
+            .await?
         }
     };
     if !sink.push_or_cancel(Event::Start { partial: state.output.clone() }, cancel).await {
@@ -1086,5 +1314,138 @@ mod auth_header_tests {
             assert_eq!(header(&headers, "authorization"), None, "{provider}");
             assert_eq!(count(&headers, "x-api-key"), 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod strict_tool_tests {
+    use super::*;
+    use ara_testkit::{FakeUpstream, Script};
+
+    fn script(error_type: &str, first_error: &str) -> Script {
+        serde_json::from_value(json!({"responses":[
+            {"status":400,"body":json!({"type":"error","error":{"type":error_type,"message":first_error}}).to_string()},
+            {"events":[{"raw":"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_ok\"}}\n\n"}]}
+        ]}))
+        .unwrap()
+    }
+
+    fn official_params() -> (Value, Value) {
+        let model = Model {
+            id: "claude-fixture".into(),
+            api: API.into(),
+            provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com/v1".into(),
+            reasoning: false,
+            max_tokens: None,
+            tokenizer: None,
+        };
+        let context = Context {
+            messages: vec![Message::User(crate::types::UserMessage::text("edit"))],
+            tools: Some(vec![Tool {
+                name: "edit".into(),
+                description: "Edit a file".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            }]),
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        (
+            build_params(&model, &context, &options).unwrap(),
+            build_params_with_strict(&model, &context, &options, false).unwrap(),
+        )
+    }
+
+    #[test]
+    fn strict_rejection_requires_a_specific_pre_stream_http_400() {
+        let error = |status, code: Option<&str>, detail: &str| PostError {
+            cause: ProviderError::Http { status, detail: detail.into() },
+            code: code.map(str::to_owned),
+        };
+        assert!(strict_rejection(&error(400, Some("invalid_request_error"), "The compiled grammar is too large")));
+        assert!(strict_rejection(&error(400, None, "structured_outputs not supported")));
+        assert!(strict_rejection(&error(400, None, "structured_outputs not enabled")));
+        assert!(strict_rejection(&error(400, None, "structured-output not available")));
+        assert!(strict_rejection(&error(400, None, "model does not support structured outputs")));
+        assert!(strict_rejection(&error(400, None, "tools.0.custom.strict: extra inputs are not permitted")));
+        assert!(!strict_rejection(&error(400, Some("other"), "The compiled grammar is too large")));
+        assert!(!strict_rejection(&error(500, Some("invalid_request_error"), "The compiled grammar is too large")));
+        assert!(!strict_rejection(&error(400, Some("invalid_request_error"), "Some other validation error")));
+    }
+
+    #[tokio::test]
+    async fn strict_grammar_rejection_retries_once_before_the_stream_starts() {
+        let server = FakeUpstream::start(
+            script("invalid_request_error", "The compiled grammar is too large, which would cause performance issues."),
+            None,
+        )
+        .await
+        .unwrap();
+        let (params, fallback) = official_params();
+        let mut retry_blocked = false;
+        let response = post_with_strict_fallback(
+            &reqwest::Client::new(),
+            &format!("{}/messages", server.base_url()),
+            &[],
+            &params,
+            Some(&fallback),
+            &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
+            &mut retry_blocked,
+        )
+        .await
+        .unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(server.served(), 2);
+        let requests = server.requests.lock().await;
+        assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+        assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+        assert_eq!(requests[1]["body"]["tools"][0]["input_schema"], fallback["tools"][0]["input_schema"]);
+    }
+
+    #[tokio::test]
+    async fn unsupported_structured_outputs_retries_without_strict_tools() {
+        let server = FakeUpstream::start(
+            script("invalid_request_error", "This model does not support structured outputs"),
+            None,
+        )
+        .await
+        .unwrap();
+        let (params, fallback) = official_params();
+        let mut retry_blocked = false;
+        let response = post_with_strict_fallback(
+            &reqwest::Client::new(),
+            &format!("{}/messages", server.base_url()),
+            &[],
+            &params,
+            Some(&fallback),
+            &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
+            &mut retry_blocked,
+        )
+        .await
+        .unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(server.served(), 2);
+        assert!(server.requests.lock().await[1]["body"]["tools"][0].get("strict").is_none());
+    }
+
+    #[tokio::test]
+    async fn unrelated_bad_request_does_not_replay_a_strict_request() {
+        let server =
+            FakeUpstream::start(script("invalid_request_error", "Some other validation error."), None).await.unwrap();
+        let (params, fallback) = official_params();
+        let mut retry_blocked = false;
+        let error = post_with_strict_fallback(
+            &reqwest::Client::new(),
+            &format!("{}/messages", server.base_url()),
+            &[],
+            &params,
+            Some(&fallback),
+            &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
+            &mut retry_blocked,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::Http { status: 400, .. }));
+        assert_eq!(server.served(), 1);
     }
 }
