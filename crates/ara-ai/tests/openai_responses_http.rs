@@ -190,6 +190,96 @@ async fn failed_and_retried_cold_requests_warm_only_after_replayable_success() {
 }
 
 #[tokio::test]
+async fn incomplete_visible_response_warms_native_history_but_new_session_starts_cold() {
+    let secret = "opaque-incomplete-marker";
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_partial","encrypted_content":secret}}},
+            {"data":{"type":"response.output_item.done","output_index":1,"item":{"type":"message","id":"msg_partial","content":[{"type":"output_text","text":"partial answer"}]}}},
+            {"data":{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"continued"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"resumed"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), Context::default(), opts.clone()))
+            .await;
+    assert_eq!(first.stop_reason, StopReason::Length);
+    assert_eq!(first.provider_payload.as_ref().unwrap()["items"][0]["encrypted_content"], secret);
+    let context = Context {
+        messages: vec![Message::Assistant(first), Message::User(UserMessage::text("continue"))],
+        ..Context::default()
+    };
+    let (_, second) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(second.text(), "continued");
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, resumed) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(resumed.text(), "resumed");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests[1]["body"]["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret)
+    );
+    assert!(requests[2]["body"]["input"].as_array().unwrap().iter().all(|item| item["type"] != "reasoning"));
+}
+
+#[tokio::test]
+async fn hidden_only_incomplete_response_is_saved_without_warming_the_session() {
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_seed","encrypted_content":"seed-secret"}}},
+            {"data":{"type":"response.output_item.done","output_index":1,"item":{"type":"message","content":[{"type":"output_text","text":"seed answer"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_hidden","encrypted_content":"hidden-secret"}}},
+            {"data":{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"continued"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let endpoint = model(&server.base_url());
+    let (_, seed) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), Context::default(), options()))
+            .await;
+    let context = Context {
+        messages: vec![Message::Assistant(seed), Message::User(UserMessage::text("continue"))],
+        ..Context::default()
+    };
+    let mut opts = options();
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, hidden) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(hidden.stop_reason, StopReason::Length);
+    assert_eq!(hidden.provider_payload.as_ref().unwrap()["items"][0]["encrypted_content"], "hidden-secret");
+    let (_, next) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(next.text(), "continued");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let input = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(input.iter().all(|item| item["type"] != "reasoning"));
+    assert!(input.iter().any(|item| item["type"] == "message" && item["content"][0]["text"] == "seed answer"));
+}
+
+#[tokio::test]
 async fn eof_after_tool_start_never_reissues_the_request_or_succeeds() {
     let server = FakeUpstream::start(script(json!({"responses":[{"events":[
         {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read"}}}
@@ -306,6 +396,7 @@ async fn cancelling_after_a_partial_tool_start_remains_aborted() {
             }
             if let AssistantMessageEvent::Error { error, .. } = event {
                 assert_eq!(error.stop_reason, StopReason::Aborted);
+                assert!(error.provider_payload.is_none());
                 return;
             }
         }

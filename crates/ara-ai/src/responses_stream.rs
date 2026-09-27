@@ -292,6 +292,23 @@ impl ResponsesStreamState {
         }
     }
 
+    fn save_native_history(&mut self) -> Result<(), ProviderError> {
+        if self.native_over_limit {
+            return Ok(());
+        }
+        let items = self.native_items.values().cloned().collect::<Vec<_>>();
+        let size = serde_json::to_vec(&items).map_err(|error| ProviderError::Stream(error.to_string()))?.len();
+        if size <= 32 * 1024 * 1024 {
+            self.output.provider_payload = Some(json!({
+                "type": "openaiResponsesHistory", "provider": self.output.provider,
+                "dt": true,
+                "endpointSha256": self.endpoint_fingerprint,
+                "items": items,
+            }));
+        }
+        Ok(())
+    }
+
     fn done_item(
         &mut self,
         event: &Value,
@@ -504,9 +521,16 @@ impl ResponsesStreamState {
         if kind == ItemKind::Function
             && let AssistantBlock::ToolCall(call) = &self.output.content[content_index]
         {
-            native["arguments"] = json!(
-                serde_json::to_string(&call.arguments).map_err(|error| ProviderError::Stream(error.to_string()))?
-            );
+            native["arguments"] = if call.arguments.contains_key("__parseError") {
+                json!(
+                    open.final_arguments
+                        .as_deref()
+                        .or_else(|| item.get("arguments").and_then(Value::as_str))
+                        .unwrap_or(&open.argument_bytes)
+                )
+            } else {
+                json!(serde_json::to_string(&call.arguments).map_err(|error| ProviderError::Stream(error.to_string()))?)
+            };
         }
         if !self.native_over_limit {
             self.native_items.insert(native_index, native);
@@ -769,26 +793,6 @@ impl ResponsesStreamState {
                         } else {
                             StopReason::Stop
                         };
-                        if !self.native_over_limit
-                            && self.native_items.len() == self.output.content.len()
-                            && self.output.content.iter().any(|block| {
-                                matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
-                                    || matches!(block, AssistantBlock::ToolCall(_))
-                            })
-                        {
-                            let items = self.native_items.values().cloned().collect::<Vec<_>>();
-                            let size = serde_json::to_vec(&items)
-                                .map_err(|error| ProviderError::Stream(error.to_string()))?
-                                .len();
-                            if size <= 32 * 1024 * 1024 {
-                                self.output.provider_payload = Some(json!({
-                                    "type": "openaiResponsesHistory", "provider": self.output.provider,
-                                    "dt": true,
-                                    "endpointSha256": self.endpoint_fingerprint,
-                                    "items": items,
-                                }));
-                            }
-                        }
                     }
                     "incomplete"
                         if response.pointer("/incomplete_details/reason").and_then(Value::as_str)
@@ -822,6 +826,7 @@ impl ResponsesStreamState {
                         )));
                     }
                 }
+                self.save_native_history()?;
                 self.terminal = true;
             }
             "response.failed" => {
@@ -927,16 +932,17 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_and_hidden_only_turns_have_no_native_history() {
+    fn successful_hidden_and_incomplete_turns_capture_native_items() {
         let mut hidden = ResponsesStreamState::new(&model());
         hidden.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","encrypted_content":"secret"}})).unwrap();
         hidden.handle(&json!({"type":"response.completed","response":{"status":"completed"}})).unwrap();
-        assert!(hidden.output.provider_payload.is_none());
+        assert_eq!(hidden.output.provider_payload.as_ref().unwrap()["items"][0]["encrypted_content"], "secret");
         let mut incomplete = ResponsesStreamState::new(&model());
         incomplete.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","encrypted_content":"secret"}})).unwrap();
         incomplete.handle(&json!({"type":"response.output_item.done","output_index":1,"item":{"type":"message","content":[{"type":"output_text","text":"partial"}]}})).unwrap();
         incomplete.handle(&json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})).unwrap();
-        assert!(incomplete.output.provider_payload.is_none());
+        assert_eq!(incomplete.output.provider_payload.as_ref().unwrap()["items"].as_array().unwrap().len(), 2);
+        assert_eq!(incomplete.output.provider_payload.as_ref().unwrap()["dt"], true);
         assert_eq!(incomplete.output.stop_reason, StopReason::Length);
     }
 
@@ -1099,6 +1105,7 @@ mod tests {
             &json!({"type":"response.failed","response":{"status":"failed","error":{"message":"upstream failed"}}}),
         );
         assert!(matches!(failed, Err(ProviderError::Stream(message)) if message == "upstream failed"));
+        assert!(state.output.provider_payload.is_none());
     }
 
     #[test]
@@ -1178,6 +1185,7 @@ mod tests {
         let call = state.output.tool_calls().next().unwrap();
         assert_eq!(call.arguments["__rawJson"], "{\"path\":\"a\"");
         assert!(call.arguments.contains_key("__parseError"));
+        assert_eq!(state.output.provider_payload.as_ref().unwrap()["items"][0]["arguments"], "{\"path\":\"a\"");
     }
 
     #[test]

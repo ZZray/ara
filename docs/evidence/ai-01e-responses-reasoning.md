@@ -21,12 +21,12 @@ flag must be repeated on a separate `--resume` process.
   parts use the fixed OMP double-newline boundary. A divergent summary done
   snapshot does not emit duplicate text or silently change later partials.
   The complete reasoning item is saved as `thinkingSignature`.
-- On a completed turn with visible text or a tool call, the ordered native
-  output items are saved in `providerPayload` with `dt:true` (incremental).
-  The snapshot has a 32 MiB
-  cumulative cap. An incomplete, failed, aborted, hidden-only or over-limit
-  turn has no replayable native payload. There is no signature-only opaque
-  fallback.
+- On a successful terminal turn, ordered native output items are saved in
+  `providerPayload` with `dt:true` (incremental) and a 32 MiB cumulative cap.
+  Successful incomplete and hidden-only turns also save native items;
+  hidden-only items do not warm or replay. Failed, aborted and
+  over-limit turns have no native payload. There is no signature-only opaque
+  fallback. See [incomplete history](ai-01e-responses-incomplete-history.md).
 - Replay requires the same Responses API, provider, model and endpoint SHA-256
   fingerprint, a
   successful stop reason, matching Thinking signature and unchanged visible
@@ -62,7 +62,7 @@ flag must be repeated on a separate `--resume` process.
   attempt, its successful retry, and later warm replay of the seed's opaque
   reasoning item. Both attempts of the retried call remain cold.
 
-## Checks on this WIP worktree (2026-09-27)
+## Checks on the cold/warm WIP snapshot before the incomplete-history extension
 
 - `cargo test -p ara-ai --quiet`: 92 unit, 48 Chat HTTP, 9 Responses HTTP
   passed; doc target passed.
@@ -90,7 +90,7 @@ further stream consistency cases; both were corrected and tested. A later
 review found that storing the endpoint URL could persist URL credentials;
 it is now stored as SHA-256 with a Session serialization regression. The
 independent final re-review found no remaining high-confidence P1/P2 in this
-slice. The most recent full gate and dependency audit ran after this fix.
+slice. The full gate and dependency audit recorded here ran after that fix.
 For cold/warm replay, independent agents `/root/cold_source` and
 `/root/cold_risk` reviewed fixed OMP source and the plan; `/root/cold_risk`
 reviewed the diff. Its `dt:false` finding was fixed with a fallback regression.
@@ -99,9 +99,10 @@ No remaining high-confidence P1/P2 issue was reported in this bounded slice.
 ## Open parity and delivery gaps
 
 ARA now applies the fixed OMP cold/warm native replay policy to CLI Responses
-sessions. It does not implement `dt:false` full-history snapshot replacement,
-server-side `previous_response_id`, or the fixed OMP `max_output_tokens`
-incomplete-turn payload behavior. A terminal `response.output` that first
+sessions and saves native items for successful incomplete turns. It does not
+implement `dt:false` full-history snapshot replacement, server-side
+`previous_response_id`, or per-item filtering of malformed native tool calls
+in a mixed truncated output. A terminal `response.output` that first
 adds encrypted data after an earlier `output_item.done` is not merged into
 the stored item; fixed OMP generic stream has the same gap. Cross-provider
 adaptation, hosted tools, actual model trial, complete backend gate and

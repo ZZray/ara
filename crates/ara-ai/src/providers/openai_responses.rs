@@ -152,7 +152,7 @@ fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
     message.api == API
         && message.provider == model.provider
         && message.model == model.id
-        && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse)
+        && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse | StopReason::Length)
 }
 
 fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value>> {
@@ -219,6 +219,9 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value
                 wire
             }
             ("function_call", AssistantBlock::ToolCall(call)) => {
+                if call.arguments.contains_key("__parseError") {
+                    return None;
+                }
                 let id = item.get("call_id")?.as_str()?;
                 let args = item.get("arguments")?.as_str()?;
                 if id != responses_call_component(&call.id)
@@ -686,6 +689,9 @@ mod tests {
         assert_eq!(input[0]["encrypted_content"], "opaque");
         assert!(input[0].get("status").is_none());
         assert_eq!(input[1]["phase"], "commentary");
+        let mut truncated = assistant.clone();
+        truncated.stop_reason = StopReason::Length;
+        assert_eq!(input_for(truncated, &endpoint)[0]["encrypted_content"], "opaque");
         let cold_input = build_request(
             &endpoint,
             &Context { messages: vec![Message::Assistant(assistant.clone())], ..Context::default() },
@@ -739,6 +745,26 @@ mod tests {
         assert!(state.is_warmed("one"));
         assert!(!state.is_warmed("two"));
         assert!(!ProviderSessionState::default().is_warmed("one"));
+    }
+
+    #[test]
+    fn partial_function_arguments_cannot_become_native_history() {
+        let endpoint = model();
+        let mut assistant = AssistantMessage::empty(API, "example", "example-model");
+        assistant.stop_reason = StopReason::Length;
+        let mut partial = call("call_bad|fc_bad");
+        if let AssistantBlock::ToolCall(call) = &mut partial {
+            call.arguments =
+                serde_json::from_value(json!({"__rawJson":"{\"path\":", "__parseError":"incomplete"})).unwrap();
+        }
+        assistant.content = vec![partial];
+        assistant.provider_payload = Some(json!({
+            "type":"openaiResponsesHistory", "provider":"example", "dt":true,
+            "endpointSha256":responses_endpoint_fingerprint(&endpoint.base_url),
+            "items":[{"type":"function_call","call_id":"call_bad","name":"read",
+                "arguments":"{\"__parseError\":\"incomplete\",\"__rawJson\":\"{\\\"path\\\":\"}"}]
+        }));
+        assert!(native_history(&assistant, &endpoint).is_none());
     }
 
     #[test]

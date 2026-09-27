@@ -268,6 +268,56 @@ async fn responses_reasoning_history_survives_tool_turn_and_restart_without_json
 }
 
 #[tokio::test]
+async fn responses_incomplete_reasoning_history_warms_in_process_and_resumes_cold() {
+    let env = Env::new();
+    let secret = "opaque-incomplete-cli-marker";
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "reasoning", "id": "rs_partial", "encrypted_content": secret}}},
+            {"data": {"type": "response.output_item.done", "output_index": 1, "item": {"type": "message", "id": "msg_partial", "content": [{"type": "output_text", "text": "Partial answer."}]}}},
+            {"data": {"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_continue", "content": [{"type": "output_text", "text": "Continued."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_resume", "content": [{"type": "output_text", "text": "Resumed."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let first =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--reasoning", "First", "Continue"])).await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Continued.\n");
+    assert!(!stdout.contains(secret));
+    let session = env.session_files();
+    assert_eq!(session.len(), 1);
+    let entries = journal(&session[0]);
+    assert!(entries.iter().any(|entry| entry["message"]["stopReason"] == "length"
+        && entry["message"]["providerPayload"]["items"][0]["encrypted_content"] == secret));
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--reasoning", "--resume", session[0].to_str().unwrap(), "Again"],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests[1]["body"]["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret)
+    );
+    let cold_input = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(cold_input.iter().all(|item| item["type"] != "reasoning"));
+    assert!(cold_input.iter().any(|item| item["type"] == "message" && item["content"][0]["text"] == "Partial answer."));
+}
+
+#[tokio::test]
 async fn responses_identifierless_parallel_calls_write_distinct_files() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
