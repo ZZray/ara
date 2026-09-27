@@ -19,8 +19,7 @@
 //!
 //! `end`: `close` (default, graceful EOF), `hang` (keep the socket open until
 //! the client disconnects), `drop` (reset without a terminal frame).
-//! Every request is appended to the record log with the `authorization`
-//! header redacted.
+//! Every request is appended to the record log with credential headers redacted.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -146,7 +145,11 @@ async fn read_request(socket: &mut TcpStream) -> anyhow::Result<Option<(String, 
 fn redact(headers: &[(String, String)]) -> Value {
     let mut map = serde_json::Map::new();
     for (k, v) in headers {
-        let value = if k == "authorization" { format!("<redacted {} chars>", v.len()) } else { v.clone() };
+        let value = if matches!(k.as_str(), "authorization" | "x-api-key") {
+            format!("<redacted {} chars>", v.len())
+        } else {
+            v.clone()
+        };
         map.insert(k.clone(), Value::String(value));
     }
     Value::Object(map)

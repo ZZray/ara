@@ -57,6 +57,23 @@ impl ModelProvider for OpenAICompletionsProvider {
     }
 }
 
+/// Anthropic Messages API-key binding.
+pub struct AnthropicMessagesProvider {
+    pub client: reqwest::Client,
+    pub base: providers::anthropic::StreamOptions,
+}
+
+impl ModelProvider for AnthropicMessagesProvider {
+    fn stream(&self, model: &Model, context: &Context, options: CallOptions) -> AssistantStream {
+        let mut base = self.base.clone();
+        base.cancel = options.cancel;
+        base.tool_choice = options.tool_choice.or(base.tool_choice);
+        base.max_tokens = options.max_tokens.or(base.max_tokens);
+        base.temperature = options.temperature.or(base.temperature);
+        providers::anthropic::stream(self.client.clone(), model.clone(), context.clone(), base)
+    }
+}
+
 /// OpenAI-compatible stateless Responses binding.
 pub struct OpenAIResponsesProvider {
     pub client: reqwest::Client,

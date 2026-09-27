@@ -25,8 +25,8 @@ use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agen
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
 use ara_ai::{
-    Message, Model, ModelProvider, ModelTokenizer, OpenAICompletionsProvider, OpenAIResponsesProvider, StopReason,
-    UserMessage, resolve_known_claude_tokenizer,
+    AnthropicMessagesProvider, Message, Model, ModelProvider, ModelTokenizer, OpenAICompletionsProvider,
+    OpenAIResponsesProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
 };
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
@@ -55,6 +55,8 @@ enum Mode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Api {
+    #[value(name = "anthropic-messages")]
+    AnthropicMessages,
     #[value(name = "openai-completions")]
     OpenaiCompletions,
     #[value(name = "openai-responses")]
@@ -64,6 +66,7 @@ enum Api {
 impl Api {
     fn as_str(self) -> &'static str {
         match self {
+            Self::AnthropicMessages => "anthropic-messages",
             Self::OpenaiCompletions => "openai-completions",
             Self::OpenaiResponses => "openai-responses",
         }
@@ -95,11 +98,11 @@ struct Args {
     /// Tool payloads, images and request framing are not included.
     #[arg(long)]
     report_request_text_tokens: bool,
-    /// OpenAI-compatible base URL (…/v1). Env: ARA_BASE_URL, ARA_TEST_BASE_URL, OPENROUTER_BASE_URL.
+    /// Provider base URL (…/v1 for OpenAI or Anthropic). Env: ARA_BASE_URL, ARA_TEST_BASE_URL, OPENROUTER_BASE_URL.
     #[arg(long)]
     base_url: Option<String>,
-    /// Name of the environment variable holding the API key. Default: OPENROUTER_API_KEY
-    /// for openrouter.ai, otherwise ARA_API_KEY then ARA_TEST_API_KEY.
+    /// Name of the environment variable holding the API key. Provider keys
+    /// are selected automatically only for their official HTTPS route.
     #[arg(long)]
     api_key_env: Option<String>,
     /// Provider label recorded on messages (default: openrouter for openrouter.ai, else openai-compatible).
@@ -257,6 +260,12 @@ fn is_openrouter(base_url: &str) -> bool {
         .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
 }
 
+fn is_official_anthropic(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url).ok().is_some_and(|url| {
+        url.scheme() == "https" && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"))
+    })
+}
+
 fn default_session_dir(cwd: &Path) -> PathBuf {
     let home = std::env::var_os("ARA_HOME")
         .map(PathBuf::from)
@@ -322,8 +331,8 @@ fn resolve_route(args: &Args) -> Result<Route> {
     if args.reasoning && args.api != Api::OpenaiResponses {
         bail!("--reasoning requires --api openai-responses");
     }
-    if args.api == Api::OpenaiResponses && args.report_request_text_tokens {
-        bail!("--report-request-text-tokens is not yet supported with --api openai-responses");
+    if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
+        bail!("--report-request-text-tokens requires --api openai-completions");
     }
     let model_id = args
         .model
@@ -344,17 +353,26 @@ fn resolve_route(args: &Args) -> Result<Route> {
         .or_else(|| env_first(&["ARA_BASE_URL", "ARA_TEST_BASE_URL", "OPENROUTER_BASE_URL"]).map(|(_, v)| v))
         .context("no base URL: pass --base-url or set ARA_BASE_URL")?;
     let openrouter = is_openrouter(&base_url);
-    // A key is only ever sent to its own route: OPENROUTER_API_KEY to openrouter.ai,
-    // ARA keys to other routes, or whatever --api-key-env names explicitly.
+    // Route-specific keys stay on their own hosts. ARA keys or an explicit
+    // --api-key-env may be used for another endpoint.
     let api_key = match &args.api_key_env {
         Some(name) => Some(std::env::var(name).with_context(|| format!("environment variable {name} is not set"))?),
+        None if args.api == Api::AnthropicMessages && is_official_anthropic(&base_url) => {
+            env_first(&["ANTHROPIC_API_KEY", "ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v)
+        }
+        None if args.api == Api::AnthropicMessages => env_first(&["ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v),
         None if openrouter => env_first(&["OPENROUTER_API_KEY"]).map(|(_, v)| v),
         None => env_first(&["ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v),
     };
-    let provider = args
-        .provider
-        .clone()
-        .unwrap_or_else(|| if openrouter { "openrouter".into() } else { "openai-compatible".into() });
+    let provider = args.provider.clone().unwrap_or_else(|| {
+        if args.api == Api::AnthropicMessages {
+            "anthropic".into()
+        } else if openrouter {
+            "openrouter".into()
+        } else {
+            "openai-compatible".into()
+        }
+    });
     let mut extra_headers = Vec::new();
     for h in &args.headers {
         let (k, v) = h.split_once(':').with_context(|| format!("--header {h:?} must be `Name: value`"))?;
@@ -574,6 +592,17 @@ async fn run(args: Args) -> Result<i32> {
     };
     let client = reqwest::Client::builder().build().context("building HTTP client")?;
     let provider: Arc<dyn ModelProvider> = match args.api {
+        Api::AnthropicMessages => Arc::new(AnthropicMessagesProvider {
+            client,
+            base: ara_ai::providers::anthropic::StreamOptions {
+                api_key: stream_options.api_key,
+                extra_headers: stream_options.extra_headers,
+                first_event_timeout: stream_options.first_event_timeout,
+                idle_timeout: stream_options.idle_timeout,
+                retry: stream_options.retry,
+                ..Default::default()
+            },
+        }),
         Api::OpenaiCompletions => Arc::new(OpenAICompletionsProvider { client, base: stream_options }),
         Api::OpenaiResponses => Arc::new(OpenAIResponsesProvider {
             client,
@@ -747,6 +776,15 @@ mod tests {
         assert!(is_openrouter("https://openrouter.ai/api/v1"));
         assert!(!is_openrouter("http://evil.example/openrouter.ai/v1"));
         assert!(!is_openrouter("http://127.0.0.1:8080/v1"));
+    }
+
+    #[test]
+    fn official_anthropic_detection_requires_its_https_host() {
+        assert!(is_official_anthropic("https://api.anthropic.com/v1"));
+        assert!(!is_official_anthropic("http://api.anthropic.com/v1"));
+        assert!(!is_official_anthropic("https://api.anthropic.com.evil.example/v1"));
+        assert!(!is_official_anthropic("https://api.anthropic.com@evil.example/v1"));
+        assert!(!is_official_anthropic("http://127.0.0.1:8080/v1"));
     }
 
     #[test]

@@ -31,6 +31,7 @@ impl Env {
         let mut c = Command::new(BIN);
         for k in [
             "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
             "ARA_API_KEY",
             "ARA_TEST_API_KEY",
             "ARA_MODEL",
@@ -146,6 +147,106 @@ async fn text_answer_is_printed_and_journaled() {
     assert!(first_user.ends_with("</system-reminder>\n\nSay hello"), "{first_user}");
     // The stored transcript keeps the prompt without the reminder.
     assert_eq!(entries[2]["message"]["content"], json!("Say hello"));
+}
+
+#[tokio::test]
+async fn anthropic_messages_runs_tool_and_replays_after_restart() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_tool","usage":{"input_tokens":10}}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_write","name":"write","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"anthropic.txt\",\"content\":\"from anthropic\\n\"}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_final"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Wrote anthropic.txt."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_resume"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The file remains."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]})).await;
+    let first =
+        output(env.cmd(&up.base_url(), &["--api", "anthropic-messages", "--tools", "write", "Write anthropic.txt"]))
+            .await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote anthropic.txt.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("anthropic.txt")).unwrap(), "from anthropic\n");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let entries = journal(&files[0]);
+    assert!(entries.iter().any(|entry| entry["message"]["role"] == "toolResult"));
+    assert!(entries.iter().any(|entry| {
+        entry["message"]["role"] == "assistant"
+            && entry["message"]["content"]
+                .as_array()
+                .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "toolCall"))
+    }));
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &["--api", "anthropic-messages", "--resume", files[0].to_str().unwrap(), "Check the file"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&resumed);
+    assert_eq!(resumed.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "The file remains.\n");
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests.iter().all(|request| request["request"] == "POST /v1/messages HTTP/1.1"));
+    assert!(requests.iter().all(|request| request["headers"]["x-api-key"].as_str().unwrap().starts_with("<redacted")));
+    assert_eq!(requests[1]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_write");
+    assert_eq!(requests[2]["body"]["messages"][2]["content"][0]["tool_use_id"], "toolu_write");
+}
+
+#[tokio::test]
+async fn anthropic_official_key_is_not_sent_to_a_custom_endpoint() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"status":401,"body":"{\"error\":{\"message\":\"stop\"}}"}]})).await;
+    let mut command = env.cmd(&up.base_url(), &["--api", "anthropic-messages", "hi"]);
+    command.env("ANTHROPIC_API_KEY", "official-secret-dont-send").env("ARA_API_KEY", "local-key");
+    let out = output(command).await;
+    assert_eq!(out.status.code(), Some(1));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["headers"]["x-api-key"], "<redacted 9 chars>");
+    assert!(!requests[0].to_string().contains("official-secret-dont-send"));
+}
+
+#[tokio::test]
+async fn anthropic_incomplete_tool_does_not_write_a_file() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_partial"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_partial","name":"write","input":{}}})),
+        frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"should-not-exist.txt\",\"content\":\"unsafe\"}"}}))
+    ]}]})).await;
+    let out = output(env.cmd(&up.base_url(), &["--api", "anthropic-messages", "--tools", "write", "write now"])).await;
+    assert_eq!(out.status.code(), Some(1), "{}", text_of(&out).1);
+    assert!(!env.work.path().join("should-not-exist.txt").exists());
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    assert!(entries.iter().all(|entry| entry["message"]["role"] != "toolResult"));
 }
 
 #[tokio::test]
@@ -717,6 +818,43 @@ async fn responses_json_mode_emits_text_before_terminal() {
         rest.iter().filter(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant").count(),
         1
     );
+    let end =
+        rest.iter().find(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant").unwrap();
+    assert_eq!(end["message"]["content"][0]["text"], json!("first second"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn anthropic_json_mode_emits_text_before_terminal() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_live"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})),
+        frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first "}})),
+        {"sleep_ms":1500},
+        frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"second"}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+        frame(json!({"type":"message_stop"}))
+    ]}]}))
+    .await;
+    let mut command = env.cmd(&up.base_url(), &["--api", "anthropic-messages", "stream please"]);
+    let mut child = spawn_json(&mut command);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let seen = tokio::task::block_in_place(|| {
+        read_until(
+            &mut reader,
+            |event| event["type"] == "message_update" && event["assistantMessageEvent"]["delta"] == "first ",
+            Duration::from_secs(10),
+        )
+    });
+    assert!(seen.iter().any(|event| event["assistantMessageEvent"]["delta"] == "first "));
+    assert!(child.try_wait().unwrap().is_none(), "Anthropic delta reached the client before the terminal frame");
+    let rest: Vec<Value> = reader.lines().map(|line| serde_json::from_str(&line.unwrap()).unwrap()).collect();
+    assert_eq!(child.wait().unwrap().code(), Some(0));
     let end =
         rest.iter().find(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant").unwrap();
     assert_eq!(end["message"]["content"][0]["text"], json!("first second"));
