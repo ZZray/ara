@@ -155,7 +155,7 @@ fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
         && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse | StopReason::Length)
 }
 
-fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value>> {
+fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Option<Value>>> {
     if !same_responses_origin(message, model)
         || !message.content.iter().any(|block| {
             matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
@@ -177,11 +177,34 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value
         return None;
     }
     let items = payload.get("items")?.as_array()?;
-    if items.len() != message.content.len() || items.len() > 1024 {
+    if items.len() > message.content.len() || message.content.len() > 1024 {
         return None;
     }
-    let mut sanitized = Vec::with_capacity(items.len());
-    for (item, block) in items.iter().zip(&message.content) {
+    let mut sanitized = Vec::with_capacity(message.content.len());
+    let mut native_items = items.iter().peekable();
+    for block in &message.content {
+        if let AssistantBlock::ToolCall(call) = block
+            && call.arguments.contains_key("__parseError")
+        {
+            if let Some(item) = native_items.peek()
+                && item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("call_id").and_then(Value::as_str) == Some(responses_call_component(&call.id))
+                && item.get("name").and_then(Value::as_str) == Some(call.name.as_str())
+            {
+                // A done item can contain invalid arguments; an open partial
+                // call has no done item at all. Both leave this block out of
+                // native replay without shifting the following valid items.
+                if item.get("arguments").and_then(Value::as_str)
+                    != call.arguments.get("__rawJson").and_then(Value::as_str)
+                {
+                    return None;
+                }
+                native_items.next();
+            }
+            sanitized.push(None);
+            continue;
+        }
+        let item = native_items.next()?;
         let wire = match (item.get("type")?.as_str()?, block) {
             ("reasoning", AssistantBlock::Thinking(thinking)) => {
                 if serde_json::from_str::<Value>(thinking.thinking_signature.as_ref()?).ok()? != *item {
@@ -219,9 +242,6 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value
                 wire
             }
             ("function_call", AssistantBlock::ToolCall(call)) => {
-                if call.arguments.contains_key("__parseError") {
-                    return None;
-                }
                 let id = item.get("call_id")?.as_str()?;
                 let args = item.get("arguments")?.as_str()?;
                 if id != responses_call_component(&call.id)
@@ -234,9 +254,37 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value
             }
             _ => return None,
         };
-        sanitized.push(wire);
+        sanitized.push(Some(wire));
+    }
+    if native_items.next().is_some()
+        || !sanitized.iter().zip(&message.content).any(|(item, block)| {
+            item.is_some()
+                && (matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                    || matches!(block, AssistantBlock::ToolCall(_)))
+        })
+    {
+        return None;
     }
     Some(sanitized)
+}
+
+enum ReplayedCall {
+    Function(String),
+    Filtered(String),
+}
+
+fn orphan_tool_result(call_id: &str, output: Value) -> Value {
+    let text = match output {
+        Value::String(text) => text,
+        other => other.to_string(),
+    };
+    let mut chars = text.chars();
+    let bounded = chars.by_ref().take(16_000).collect::<String>();
+    let suffix = if chars.next().is_some() { "\n...[truncated]" } else { "" };
+    json!({
+        "type": "message", "role": "assistant",
+        "content": format!("[Orphan tool result; call_id={call_id}]: {bounded}{suffix}"),
+    })
 }
 
 /// Build the outbound `/responses` body. No request or model state is retained.
@@ -251,7 +299,7 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
     let mut input = Vec::new();
     let transformed = transform_messages(&context.messages);
     let scope = ToolCallOriginScope::collect(&transformed);
-    let mut remapped: HashMap<String, VecDeque<String>> = HashMap::new();
+    let mut remapped: HashMap<String, VecDeque<ReplayedCall>> = HashMap::new();
     let mut used_call_ids = HashSet::new();
     for message in &transformed {
         match message {
@@ -271,17 +319,25 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 if options.native_history_replay.unwrap_or(true)
                     && let Some(items) = native_history(assistant, model)
                 {
-                    for (mut item, block) in items.into_iter().zip(&assistant.content) {
+                    for (item, block) in items.into_iter().zip(&assistant.content) {
                         if let AssistantBlock::ToolCall(call) = block {
                             let base = call_id(&call.id, &assistant.api);
-                            let wire_id = unique_call_id(base, &mut used_call_ids);
-                            remapped
-                                .entry(scope.pairing_key(&call.id).to_owned())
-                                .or_default()
-                                .push_back(wire_id.clone());
-                            item["call_id"] = json!(wire_id);
+                            let replayed = if item.is_some() {
+                                ReplayedCall::Function(unique_call_id(base, &mut used_call_ids))
+                            } else {
+                                ReplayedCall::Filtered(base)
+                            };
+                            remapped.entry(scope.pairing_key(&call.id).to_owned()).or_default().push_back(replayed);
                         }
-                        input.push(item);
+                        if let Some(mut item) = item {
+                            if let AssistantBlock::ToolCall(call) = block
+                                && let Some(ReplayedCall::Function(wire_id)) =
+                                    remapped.get(scope.pairing_key(&call.id)).and_then(VecDeque::back)
+                            {
+                                item["call_id"] = json!(wire_id);
+                            }
+                            input.push(item);
+                        }
                     }
                     continue;
                 }
@@ -300,7 +356,7 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                             remapped
                                 .entry(scope.pairing_key(&call.id).to_owned())
                                 .or_default()
-                                .push_back(wire_id.clone());
+                                .push_back(ReplayedCall::Function(wire_id.clone()));
                             input.push(json!({
                                 "type": "function_call", "call_id": wire_id,
                                 "name": call.name,
@@ -312,16 +368,19 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 }
             }
             Message::ToolResult(result) => {
-                let wire_id = remapped
+                let replayed = remapped
                     .get_mut(scope.pairing_key(&result.tool_call_id))
                     .and_then(VecDeque::pop_front)
                     .ok_or_else(|| {
-                    ProviderError::Config("tool result has no matching Responses function call".into())
-                })?;
-                input.push(json!({
-                    "type": "function_call_output", "call_id": wire_id,
-                    "output": tool_output(&result.content, options.supports_images),
-                }));
+                        ProviderError::Config("tool result has no matching Responses function call".into())
+                    })?;
+                let output = tool_output(&result.content, options.supports_images);
+                input.push(match replayed {
+                    ReplayedCall::Function(wire_id) => json!({
+                        "type": "function_call_output", "call_id": wire_id, "output": output,
+                    }),
+                    ReplayedCall::Filtered(wire_id) => orphan_tool_result(&wire_id, output),
+                });
             }
         }
     }
@@ -765,6 +824,107 @@ mod tests {
                 "arguments":"{\"__parseError\":\"incomplete\",\"__rawJson\":\"{\\\"path\\\":\"}"}]
         }));
         assert!(native_history(&assistant, &endpoint).is_none());
+    }
+
+    fn mixed_partial_message(include_done_item: bool) -> AssistantMessage {
+        let endpoint = model();
+        let reasoning = json!({"type":"reasoning","encrypted_content":"opaque"});
+        let mut assistant = AssistantMessage::empty(API, "example", "example-model");
+        assistant.stop_reason = StopReason::Length;
+        let mut partial = call("call_bad|fc_bad");
+        if let AssistantBlock::ToolCall(call) = &mut partial {
+            call.arguments = serde_json::from_value(json!({
+                "__rawJson":"{\"path\":", "__parseError":"incomplete"
+            }))
+            .unwrap();
+        }
+        assistant.content = vec![
+            AssistantBlock::Thinking(crate::types::ThinkingContent {
+                thinking: "summary".into(),
+                thinking_signature: Some(reasoning.to_string()),
+            }),
+            AssistantBlock::text("visible answer"),
+            partial,
+        ];
+        let mut items =
+            vec![reasoning, json!({"type":"message","content":[{"type":"output_text","text":"visible answer"}]})];
+        if include_done_item {
+            items.push(json!({"type":"function_call","call_id":"call_bad","name":"read",
+                "arguments":"{\"path\":"}));
+        }
+        assistant.provider_payload = Some(json!({
+            "type":"openaiResponsesHistory", "provider":"example", "dt":true,
+            "endpointSha256":responses_endpoint_fingerprint(&endpoint.base_url), "items":items
+        }));
+        assistant
+    }
+
+    #[test]
+    fn mixed_partial_call_keeps_native_text_and_reasoning_but_repairs_its_result() {
+        for include_done_item in [false, true] {
+            let assistant = mixed_partial_message(include_done_item);
+            let context = Context {
+                messages: vec![Message::Assistant(assistant.clone()), result("call_bad|fc_bad")],
+                ..Context::default()
+            };
+            let input = build_request(&model(), &context, &RequestOptions::default()).unwrap()["input"]
+                .as_array()
+                .unwrap()
+                .clone();
+            assert_eq!(input.len(), 3);
+            assert_eq!(input[0]["type"], "reasoning");
+            assert_eq!(input[0]["encrypted_content"], "opaque");
+            assert_eq!(input[1]["content"][0]["text"], "visible answer");
+            assert_eq!(input[2]["type"], "message");
+            assert_eq!(input[2]["role"], "assistant");
+            assert_eq!(input[2]["content"], "[Orphan tool result; call_id=call_bad]: file contents");
+            assert!(input.iter().all(|item| item["type"] != "function_call" && item["type"] != "function_call_output"));
+            assert!(native_history(&assistant, &model()).is_some());
+
+            let cold = build_request(
+                &model(),
+                &context,
+                &RequestOptions { native_history_replay: Some(false), ..RequestOptions::default() },
+            )
+            .unwrap();
+            assert!(cold["input"].as_array().unwrap().iter().all(|item| item["type"] != "reasoning"));
+        }
+    }
+
+    #[test]
+    fn mixed_partial_call_does_not_displace_valid_sibling_or_accept_tampered_items() {
+        let mut assistant = mixed_partial_message(false);
+        assistant.content.push(call("call_ok|fc_ok"));
+        assistant.provider_payload.as_mut().unwrap()["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"function_call","call_id":"call_ok","name":"read",
+                "arguments":"{\"path\":\"a.txt\"}"}));
+        let context = Context {
+            messages: vec![Message::Assistant(assistant.clone()), result("call_bad|fc_bad"), result("call_ok|fc_ok")],
+            ..Context::default()
+        };
+        let input =
+            build_request(&model(), &context, &RequestOptions::default()).unwrap()["input"].as_array().unwrap().clone();
+        assert_eq!(input.len(), 5);
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "call_ok");
+        assert_eq!(input[3]["type"], "message");
+        assert_eq!(input[4], json!({"type":"function_call_output","call_id":"call_ok","output":"file contents"}));
+
+        let mut changed_text = assistant.clone();
+        changed_text.content[1] = AssistantBlock::text("changed");
+        assert!(native_history(&changed_text, &model()).is_none());
+        let mut wrong_raw = assistant.clone();
+        wrong_raw.provider_payload.as_mut().unwrap()["items"].as_array_mut().unwrap().insert(
+            2,
+            json!({"type":"function_call","call_id":"call_bad","name":"read",
+                "arguments":"different"}),
+        );
+        assert!(native_history(&wrong_raw, &model()).is_none());
+        let mut wrong_order = assistant;
+        wrong_order.provider_payload.as_mut().unwrap()["items"].as_array_mut().unwrap().swap(1, 2);
+        assert!(native_history(&wrong_order, &model()).is_none());
     }
 
     #[test]

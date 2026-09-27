@@ -20,6 +20,54 @@ restart creates a cold host state. Partial tool argument parse markers remain
 raw in the saved item and cannot be replayed as valid native calls. Agent tool
 execution and Session writing were not modified.
 
+The current WIP extension aligns native items with assistant blocks in order.
+Only a call marked `__parseError` can be skipped; it may have a matching bad
+native item or no native item if it never completed. Other mismatches still
+reject the entire native payload. The filtered call's result becomes an
+assistant orphan note at its original position, so the next request has no
+orphan `function_call_output`. When a `length` terminal leaves open arguments,
+the terminal parser now records `__rawJson` and `__parseError` instead of
+turning a repairable prefix into a seemingly complete object. The Agent's
+existing synthetic result explicitly says the tool was not executed.
+
+## Mixed-output extension evidence (2026-09-27 WIP)
+
+- Pinned OMP `packages/ai/src/utils.ts:337-370,414-420` filters invalid-JSON
+  native calls item by item, preserving valid reasoning and visible output;
+  `packages/ai/src/providers/openai-shared.ts:1494-1529,2020-2055,2093-2096`
+  repairs the corresponding orphan output into an assistant note. ARA's
+  `__parseError` marker also covers a valid JSON non-object value. Filtering
+  that marker is a stricter intentional difference because its typed tool
+  arguments cannot represent that native value. OMP counts the note's 16,000
+  limit in UTF-16 code units; ARA currently counts Unicode scalar values.
+- `cargo test -p ara-ai --quiet`: 96 unit, 48 Chat HTTP and 11 Responses HTTP
+  tests passed. New unit cases cover reasoning plus visible text plus bad
+  call, both missing and present native call items, valid sibling pairing,
+  and changed text, arguments or item order. Stream tests confirm an open
+  partial call keeps raw terminal arguments even if its live preview was
+  repairable.
+- `cargo test -p ara-cli --test e2e responses_ --quiet`: 9/9 passed. A real
+  process with a fake Responses upstream emitted reasoning, visible text and
+  an open partial `write`; its Session journal recorded `length`, the native
+  items and a synthetic non-execution result. The same-process follow-up
+  included the reasoning and visible text plus an orphan assistant note, but
+  neither the malformed call nor `function_call_output`; `never.txt` did not
+  exist. A resumed process started cold and still did not create the file.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo test --workspace --doc --quiet`, `cargo deny check`,
+  `python scripts/omp_inventory.py check`, scoped `rustfmt --check`, and
+  `git diff --check` passed. `cargo deny` emitted existing non-fatal warnings.
+  With Git Bash in PATH, `cargo test --workspace --all-targets --quiet` failed
+  at the existing Windows CLI deadline timing assertion after 27/28 CLI e2e
+  tests passed. `cargo fmt --all -- --check` failed in unchanged vendored
+  `pi-*` sources; the three modified Rust files pass scoped formatting.
+- Independent Codex reviewer `/root/mixed_diff_review` applied
+  `ara-git-review` and `ara-provider-review` to all three code files against
+  the fixed OMP source, ran the focused encoder and CLI cases, and found no
+  high-confidence blocking defect. It noted the UTF-16 versus Unicode scalar
+  note-length difference. The full backend gate and bounded real-model task
+  remain open.
+
 ## Executed evidence on this WIP worktree (2026-09-27)
 
 - `cargo test -p ara-ai --quiet`: 93 unit, 48 Chat HTTP and 11 Responses HTTP
@@ -54,12 +102,8 @@ review found no new high-confidence blocking defect in this slice.
 
 ## Remaining difference and acceptance
 
-For a truncated response containing visible text plus a malformed tool call,
-fixed OMP filters the invalid native call and can replay the remaining valid
-items. ARA rejects that turn's entire native payload and uses visible
-fallback history; `native_history` still requires one item per assistant
-block. This also affects previously implemented completed turns. Incremental
-filtering needs explicit repair of any orphaned tool result before it can be
-called parity. Server-side `previous_response_id`, `dt:false` full snapshots,
-a bounded actual-model task, the full backend gate, and point audit remain
-open. No AI-01e or P0–P6 acceptance is claimed.
+The mixed malformed-call case is covered as WIP, with the stricter typed
+argument rule and Unicode note-length difference stated above. Server-side
+`previous_response_id`, `dt:false` full snapshots, a bounded actual-model
+task, the full backend gate, and point audit remain open. No AI-01e or P0–P6
+acceptance is claimed.

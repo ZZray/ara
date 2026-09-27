@@ -6,7 +6,7 @@
 
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
-use crate::json::{JsonPrefixState, classify_json_prefix, parse_final_arguments, parse_streaming_json};
+use crate::json::{JsonPrefixState, classify_json_prefix, parse_final_arguments};
 use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -287,7 +287,9 @@ impl ResponsesStreamState {
     fn finalize_partial_function_arguments(&mut self) {
         for item in self.open.values().filter(|item| item.kind == ItemKind::Function) {
             if let AssistantBlock::ToolCall(call) = &mut self.output.content[item.content_index] {
-                call.arguments = parse_streaming_json(&item.argument_bytes);
+                // The stream has ended. A prefix that can be completed for a
+                // live preview is still invalid as a final tool invocation.
+                call.arguments = parse_final_arguments(&item.argument_bytes);
             }
         }
     }
@@ -1093,7 +1095,9 @@ mod tests {
         assert!(events.is_empty(), "partial arguments cannot emit toolcall_end");
         assert_eq!(state.output.stop_reason, StopReason::Length);
         assert!(state.terminal);
-        assert!(state.output.tool_calls().next().unwrap().arguments.contains_key("path"));
+        let call = state.output.tool_calls().next().unwrap();
+        assert_eq!(call.arguments["__rawJson"], "{\"path\":");
+        assert!(call.arguments.contains_key("__parseError"));
     }
 
     #[test]
@@ -1189,6 +1193,28 @@ mod tests {
     }
 
     #[test]
+    fn open_partial_call_keeps_raw_arguments_even_when_preview_json_is_repairable() {
+        let mut state = ResponsesStreamState::new(&model());
+        state
+            .handle(&json!({"type":"response.output_item.added","output_index":0,
+            "item":{"type":"function_call","id":"fc_partial","call_id":"call_partial","name":"read"}}))
+            .unwrap();
+        state
+            .handle(&json!({"type":"response.function_call_arguments.delta","output_index":0,
+            "delta":"{\"path\":\"a.txt\","}))
+            .unwrap();
+        state
+            .handle(&json!({"type":"response.incomplete","response":{
+            "status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}))
+            .unwrap();
+        let call = state.output.tool_calls().next().unwrap();
+        assert_eq!(state.output.stop_reason, StopReason::Length);
+        assert_eq!(call.arguments["__rawJson"], "{\"path\":\"a.txt\",");
+        assert!(call.arguments.contains_key("__parseError"));
+        assert_eq!(state.output.provider_payload.as_ref().unwrap()["items"], json!([]));
+    }
+
+    #[test]
     fn a_complete_call_cannot_promote_an_open_partial_sibling() {
         let mut state = ResponsesStreamState::new(&model());
         state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"read"}})).unwrap();
@@ -1207,7 +1233,8 @@ mod tests {
         let calls = state.output.tool_calls().collect::<Vec<_>>();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].arguments["path"], "a");
-        assert!(calls[1].arguments.contains_key("command"));
+        assert_eq!(calls[1].arguments["__rawJson"], "{\"command\":");
+        assert!(calls[1].arguments.contains_key("__parseError"));
     }
 
     #[test]

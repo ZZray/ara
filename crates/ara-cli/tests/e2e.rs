@@ -411,7 +411,8 @@ async fn responses_truncated_parallel_call_does_not_execute_either_write() {
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0]["id"], json!("call_a|fc_a"));
     assert_eq!(calls[1]["id"], json!("call_b|fc_b"));
-    assert_eq!(calls[1]["arguments"]["path"], json!("second.txt"));
+    assert_eq!(calls[1]["arguments"]["__rawJson"], json!("{\"path\":\"second.txt\","));
+    assert!(calls[1]["arguments"].get("__parseError").is_some());
     let results = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect::<Vec<_>>();
     assert_eq!(results.len(), 2);
     for (result, id) in results.iter().zip(["call_a|fc_a", "call_b|fc_b"]) {
@@ -468,6 +469,82 @@ async fn responses_truncated_call_resamples_without_executing_it() {
     assert!(input.iter().any(|item| item["type"] == "function_call_output"
         && item["call_id"] == "call_partial"
         && item["output"].as_str().unwrap().contains("not executed")));
+}
+
+#[tokio::test]
+async fn responses_mixed_partial_call_replays_native_text_without_replaying_the_call() {
+    let env = Env::new();
+    let secret = "mixed-partial-opaque-marker";
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0,
+                "item": {"type": "reasoning", "id": "rs_mixed", "encrypted_content": secret}}},
+            {"data": {"type": "response.output_item.done", "output_index": 1,
+                "item": {"type": "message", "id": "msg_mixed",
+                    "content": [{"type": "output_text", "text": "Planning the write."}]}}},
+            {"data": {"type": "response.output_item.added", "output_index": 2,
+                "item": {"type": "function_call", "id": "fc_partial", "call_id": "call_partial", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.delta", "output_index": 2,
+                "delta": "{\"path\":\"never.txt\","}},
+            {"data": {"type": "response.incomplete", "response": {"status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"}}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0,
+                "item": {"type": "message", "content": [{"type": "output_text", "text": "The partial write was skipped."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0,
+                "item": {"type": "message", "content": [{"type": "output_text", "text": "Resumed."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let first = output(
+        env.cmd(&up.base_url(), &["--api", "openai-responses", "--reasoning", "--tools", "write", "Write never.txt"]),
+    )
+    .await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "The partial write was skipped.\n");
+    assert!(!env.work.path().join("never.txt").exists());
+    assert!(!stdout.contains(secret));
+    let sessions = env.session_files();
+    assert_eq!(sessions.len(), 1);
+    let entries = journal(&sessions[0]);
+    assert!(entries.iter().any(|entry| entry["message"]["stopReason"] == "length"
+        && entry["message"]["providerPayload"]["items"][0]["encrypted_content"] == secret));
+    assert!(entries.iter().any(|entry| entry["message"]["role"] == "toolResult"
+        && entry["message"]["content"][0]["text"].as_str().unwrap_or("").contains("not executed")));
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-responses",
+            "--reasoning",
+            "--tools",
+            "write",
+            "--resume",
+            sessions[0].to_str().unwrap(),
+            "Continue",
+        ],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    assert!(!env.work.path().join("never.txt").exists());
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let warm = requests[1]["body"]["input"].as_array().unwrap();
+    assert!(
+        warm.iter().any(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret),
+        "warm={warm:#?} entries={entries:#?}"
+    );
+    assert!(warm.iter().any(|item| item["type"] == "message" && item["content"][0]["text"] == "Planning the write."));
+    assert!(warm.iter().any(|item| item["type"] == "message"
+        && item["role"] == "assistant"
+        && item["content"].as_str().unwrap_or("").contains("[Orphan tool result; call_id=call_partial]")));
+    assert!(warm.iter().all(|item| item["type"] != "function_call" && item["type"] != "function_call_output"));
+    assert!(requests[2]["body"]["input"].as_array().unwrap().iter().all(|item| item["type"] != "reasoning"));
 }
 
 #[tokio::test]
