@@ -1733,6 +1733,32 @@ async fn search_and_hashline_edit_fix_a_seeded_bug() {
 }
 
 #[tokio::test]
+async fn read_multiple_ranges_reaches_model_and_session_journal() {
+    let env = Env::new();
+    std::fs::write(env.work.path().join("lines.txt"), (1..=12).map(|n| format!("line{n}\n")).collect::<String>())
+        .unwrap();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_read_ranges", "read", "{\"path\":\"lines.txt:3-3,9-9\"}"),
+            finish("tool_calls"), done()]},
+        {"events": [text("I found line3 and line9."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Read lines 3 and 9"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "I found line3 and line9.\n");
+    let entries = journal(&env.session_files()[0]);
+    let receipt = entries.iter().find(|entry| entry["message"]["role"] == "toolResult").unwrap();
+    assert_eq!(receipt["message"]["toolCallId"], json!("call_read_ranges"));
+    let body = receipt["message"]["content"][0]["text"].as_str().unwrap();
+    assert!(body.contains("\n3:line3\n…\n9:line9") && !body.contains("4:line4"), "{body}");
+    let reqs = up.requests.lock().await;
+    let forwarded = reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(forwarded["role"], json!("tool"));
+    assert_eq!(forwarded["content"], json!(body));
+}
+
+#[tokio::test]
 async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
     let env = Env::new();
     let work = env.work.path();

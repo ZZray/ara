@@ -120,6 +120,98 @@ async fn read_explicit_range_context_keeps_requested_bounds_and_raw_exact() {
 }
 
 #[tokio::test]
+async fn read_multiple_ranges_keep_exact_lines_and_edit_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lines.txt"), (1..=12).map(|n| format!("line{n}\n")).collect::<String>()).unwrap();
+    let mut ctx = plain(dir.path());
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    let run = |path: &str| {
+        let read = &read;
+        let path = path.to_owned();
+        async move { read.execute("c", args(json!({"path": path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+    assert_eq!(
+        text(&run("lines.txt:9-9,3-4,4-5,20-22").await),
+        "3|line3\n4|line4\n5|line5\n…\n9|line9\n[Range 20-22 is beyond end of file (12 lines total); skipped]"
+    );
+    assert_eq!(text(&run("lines.txt:raw:3-3,9-9").await), "line3\n\n…\n\nline9");
+
+    let hash_read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true) };
+    let out = hash_read
+        .execute("c", args(json!({"path":"lines.txt:3-4,9-9"})), CancellationToken::new(), noop())
+        .await
+        .unwrap();
+    let body = text(&out);
+    assert!(body.starts_with("[lines.txt#") && body.contains("\n3:line3\n4:line4\n…\n9:line9"), "{body}");
+    let key = pi_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
+    assert_eq!(
+        hash_read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
+        std::collections::BTreeSet::from([3, 4, 9])
+    );
+
+    let raw = hash_read
+        .execute("c", args(json!({"path":"lines.txt:raw:2-2,8-8"})), CancellationToken::new(), noop())
+        .await
+        .unwrap();
+    assert_eq!(text(&raw), "line2\n\n…\n\nline8");
+    assert_eq!(
+        hash_read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
+        std::collections::BTreeSet::from([2, 3, 4, 8, 9])
+    );
+}
+
+#[tokio::test]
+async fn read_multiple_ranges_raw_eof_and_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let (read, _, _) = tools(dir.path());
+    std::fs::write(dir.path().join("crlf.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
+    let run = |path: &str| {
+        let read = &read;
+        let path = path.to_owned();
+        async move { read.execute("c", args(json!({"path":path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+    assert_eq!(text(&run("crlf.txt:raw:1-1,3-3").await), "one\r\n\n…\n\nthree\r");
+    assert_eq!(text(&run("crlf.txt:raw:1-1,4-4").await), "one\r\n\n…\n\n");
+    assert_eq!(
+        text(&run("crlf.txt:1-1,10-12").await),
+        "one\n[Range 10-12 is beyond end of file (3 lines total); skipped]"
+    );
+    let huge = (1..=5000).map(|n| format!("line{n}\n")).collect::<String>();
+    std::fs::write(dir.path().join("huge.txt"), huge).unwrap();
+    let out = run("huge.txt:1-3500,4000-4500").await;
+    assert_eq!(out.details.as_ref().unwrap()["truncation"]["truncatedBy"], json!("lines"));
+    assert!(text(&out).contains("[Read limit reached; use :3001 to continue]"));
+    assert!(!text(&out).contains("line4000"));
+    std::fs::write(dir.path().join("wide.txt"), format!("{}\nsecond\nthird\n", "x".repeat(DEFAULT_MAX_BYTES + 1)))
+        .unwrap();
+    let too_wide = run("wide.txt:1-1,3-3").await;
+    assert_eq!(too_wide.details.as_ref().unwrap()["truncation"]["truncatedBy"], json!("bytes"));
+    assert!(text(&too_wide).contains("use :3 to continue"), "{}", text(&too_wide));
+    assert_eq!(text(&run("wide.txt:raw:3-3").await), "third");
+    std::fs::write(
+        dir.path().join("wide_later.txt"),
+        format!("first\nsecond\n{}\nfour\nfifth\n", "x".repeat(DEFAULT_MAX_BYTES + 1)),
+    )
+    .unwrap();
+    let later = run("wide_later.txt:1-1,3-3,5-5").await;
+    assert!(text(&later).contains("use :5 to continue"), "{}", text(&later));
+    std::fs::write(dir.path().join("budget.txt"), format!("{}\nsecond\nthird\n", "x".repeat(DEFAULT_MAX_BYTES - 5)))
+        .unwrap();
+    let budget = run("budget.txt:1-1,3-3").await;
+    assert!(text(&budget).contains("use :3 to continue"), "{}", text(&budget));
+    let many = (100..=8100).step_by(2).map(|n| format!("{n}-{n}")).collect::<Vec<_>>().join(",");
+    let notices = run(&format!("crlf.txt:{many}")).await;
+    assert!(text(&notices).len() <= DEFAULT_MAX_BYTES + 128);
+    assert!(text(&notices).contains("additional out-of-bounds ranges omitted"));
+    assert_eq!(notices.details.as_ref().unwrap()["truncation"]["truncatedBy"], json!("bytes"));
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    let err =
+        read.execute("c", args(json!({"path":"sub:1-1,3-3"})), CancellationToken::new(), noop()).await.unwrap_err();
+    assert!(err.0.contains("require a text file"), "{err:?}");
+}
+
+#[tokio::test]
 async fn read_explicit_range_reaches_requested_line_when_leading_context_exhausts_byte_limit() {
     let dir = tempfile::tempdir().unwrap();
     let mut ctx = plain(dir.path());

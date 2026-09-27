@@ -285,6 +285,12 @@ async fn read_skill_urls() {
         text(&out.await.unwrap()),
         "1|---\n2|name: demo\n3|description: demo skill.\n4|---\n5|body-line-1\n6|body-line-2\n\n[3998 more lines in resource. Use :7 to continue]"
     );
+    let multi = numbered
+        .execute("c", args(json!({"path": "skill://demo:6-6,4004-4004"})), CancellationToken::new(), noop())
+        .await
+        .unwrap();
+    assert_eq!(text(&multi), "6|body-line-2\n…\n4004|body-line-4000");
+    assert!(!text(&multi).contains("[skill://") && multi.details.unwrap()["truncation"].is_null());
 
     let err = |p: &'static str| async move { r(p).await.unwrap_err().0 };
     assert_eq!(err("skill://nope").await, "Unknown skill: nope\nAvailable: demo");

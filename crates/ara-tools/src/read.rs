@@ -20,7 +20,7 @@
 //! (`notebookToEditableText`), so their tags match what `edit` sees.
 //!
 //! Not ported (open): structural summaries and bracket context around
-//! ranges, multi-range selectors, archives, SQLite, PDFs, URLs, internal
+//! ranges, archives, SQLite, PDFs, URLs, internal
 //! URIs other than `skill://`, suffix path resolution, `:conflicts`, video,
 //! column caps, artifact spill.
 //!
@@ -42,11 +42,10 @@ const MAX_DIR_ENTRIES: usize = 500;
 const SNIFF_BYTES: usize = 8192;
 /// Bytes scanned past the emitted window to count remaining lines.
 const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
-const READ_DESCRIPTION: &str = "Read a local file or directory via `path`. Append a selector to `path` to read part of a file: `:50` (from line 50), `:50-200` (inclusive), `:50+150` (150 lines from 50), `:-60` (last 60 lines), `:raw` (verbatim), or a range with raw (`:raw:2-4`). Encode a literal `:` in a path as `%3A`. Directories return a listing; images return image content. Output is capped at 3000 lines / 50KB; follow the continuation notice to read more.";
+const READ_DESCRIPTION: &str = "Read a local file or directory via `path`. Append a selector to `path` to read part of a file: `:50` (from line 50), `:50-200` (inclusive), `:50+150` (150 lines from 50), `:5-7,20-24` (separate ranges), `:-60` (last 60 lines), `:raw` (verbatim), or a range with raw (`:raw:2-4`). Encode a literal `:` in a path as `%3A`. Directories return a listing; images return image content. Output is capped at 3000 lines / 50KB; follow the continuation notice to read more.";
 /// Hashline mode adds the snapshot-header rule (`read.md`, `IS_HL_MODE`).
-const READ_DESCRIPTION_HASHLINE: &str = "Read a local file or directory via `path`. Append a selector to `path` to read part of a file: `:50` (from line 50), `:50-200` (inclusive), `:50+150` (150 lines from 50), `:-60` (last 60 lines), `:raw` (verbatim, no anchors), or a range with raw (`:raw:2-4`). Encode a literal `:` in a path as `%3A`. Files return a `[path#TAG]` snapshot header plus `LINE:TEXT` numbered lines; copy `[FILENAME#TAG]` for anchored edits and NEVER fabricate the tag. Directories return a listing; images return image content. Output is capped at 3000 lines / 50KB; follow the continuation notice to read more.";
-const SELECTOR_HELP: &str =
-    "Use :N, :N-M, :N+K, :N- (open-ended), :-N (last N lines), :raw, or a range combined with raw (e.g. :raw:50-100).";
+const READ_DESCRIPTION_HASHLINE: &str = "Read a local file or directory via `path`. Append a selector to `path` to read part of a file: `:50` (from line 50), `:50-200` (inclusive), `:50+150` (150 lines from 50), `:5-7,20-24` (separate ranges), `:-60` (last 60 lines), `:raw` (verbatim, no anchors), or a range with raw (`:raw:2-4`). Encode a literal `:` in a path as `%3A`. Files return a `[path#TAG]` snapshot header plus `LINE:TEXT` numbered lines; copy `[FILENAME#TAG]` for anchored edits and NEVER fabricate the tag. Directories return a listing; images return image content. Output is capped at 3000 lines / 50KB; follow the continuation notice to read more.";
+const SELECTOR_HELP: &str = "Use :N, :N-M, :N+K, :N- (open-ended), comma-separated ranges, :-N (last N lines), :raw, or a range combined with raw (e.g. :raw:50-100).";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Range {
@@ -59,31 +58,69 @@ pub enum Range {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Selector {
     pub range: Option<Range>,
+    pub multi_ranges: Vec<Range>,
     pub raw: bool,
 }
 
 fn parse_range(sel: &str) -> Option<Range> {
-    if let Some(n) = sel.strip_prefix('-') {
+    let normalized = sel.replace("..", "-");
+    if let Some(n) = normalized.strip_prefix('-') {
         return n.parse::<usize>().ok().filter(|n| *n > 0).map(Range::Tail);
     }
+    let sel = normalized.strip_prefix(['L', 'l']).unwrap_or(&normalized);
+    let number = |part: &str| part.strip_prefix(['L', 'l']).unwrap_or(part).parse::<usize>().ok().filter(|n| *n > 0);
     if let Some((a, b)) = sel.split_once('+') {
-        let start = a.parse::<usize>().ok().filter(|n| *n > 0)?;
-        let count = b.parse::<usize>().ok().filter(|n| *n > 0)?;
-        return Some(Range::From(start, Some(start + count - 1)));
+        let start = number(a)?;
+        let count = number(b)?;
+        return start.checked_add(count - 1).map(|end| Range::From(start, Some(end)));
     }
     if let Some((a, b)) = sel.split_once('-') {
-        let start = a.parse::<usize>().ok().filter(|n| *n > 0)?;
+        let start = number(a)?;
         if b.is_empty() {
             return Some(Range::From(start, None));
         }
-        let end = b.parse::<usize>().ok()?;
+        let end = number(b)?;
         return (end >= start).then_some(Range::From(start, Some(end)));
     }
-    sel.parse::<usize>().ok().filter(|n| *n > 0).map(|n| Range::From(n, None))
+    number(sel).map(|n| Range::From(n, None))
 }
 
 fn looks_like_selector(sel: &str) -> bool {
-    !sel.is_empty() && sel.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+')
+    !sel.is_empty() && sel.chars().all(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | ',' | '.' | 'L' | 'l'))
+}
+
+fn parse_ranges(sel: &str) -> Option<Vec<Range>> {
+    let mut ranges = Vec::new();
+    for chunk in sel.split(',') {
+        let range = parse_range(chunk)?;
+        if matches!(range, Range::Tail(_)) && sel.contains(',') {
+            return None;
+        }
+        ranges.push(range);
+    }
+    if ranges.len() < 2 {
+        return Some(ranges);
+    }
+    ranges.sort_by_key(|range| match range {
+        Range::From(start, _) => *start,
+        Range::Tail(_) => unreachable!(),
+    });
+    let mut merged: Vec<Range> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let (Some(Range::From(_, last_end)), Range::From(start, next_end)) = (merged.last_mut(), &range) {
+            if last_end.is_none() {
+                continue;
+            }
+            if *start <= last_end.unwrap().saturating_add(1) {
+                if next_end.is_none_or(|next| next > last_end.unwrap()) {
+                    *last_end = *next_end;
+                }
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    Some(merged)
 }
 
 /// Split `path[:sel][:sel]` into a path and selector. A literal existing path
@@ -103,9 +140,10 @@ pub fn split_selector(input: &str, exists: impl Fn(&str) -> bool) -> Result<(Str
         }
         if tail == "raw" && !selector.raw {
             selector.raw = true;
-        } else if selector.range.is_none() && looks_like_selector(tail) {
-            match parse_range(tail) {
-                Some(r) => selector.range = Some(r),
+        } else if selector.range.is_none() && selector.multi_ranges.is_empty() && looks_like_selector(tail) {
+            match parse_ranges(tail) {
+                Some(mut ranges) if ranges.len() == 1 => selector.range = ranges.pop(),
+                Some(ranges) => selector.multi_ranges = ranges,
                 None => return Err(format!("Invalid selector ':{tail}' on '{}'. {SELECTOR_HELP}", decode(head))),
             }
         } else {
@@ -122,7 +160,7 @@ fn path_exists(p: &Path) -> bool {
     match std::fs::symlink_metadata(p) {
         Ok(_) => true,
         #[cfg(windows)]
-        Err(e) if e.raw_os_error() == Some(123) => false,
+        Err(e) if matches!(e.raw_os_error(), Some(123 | 206)) => false,
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
     }
 }
@@ -169,6 +207,8 @@ struct Window {
     start: usize,
     /// Line number and byte size of a first line over the byte cap.
     oversized_first_line: Option<(usize, usize)>,
+    /// Exact raw lines displayed by a disjoint multi-range read.
+    raw_seen_lines: Option<Vec<u32>>,
 }
 
 fn cut_at_char_boundary(s: &str, max: usize) -> &str {
@@ -215,9 +255,13 @@ fn read_window<R: BufRead + Seek>(
             emitted: 0,
             start: 1,
             oversized_first_line: None,
+            raw_seen_lines: None,
         });
     }
     reader.rewind().map_err(io)?;
+    if !sel.multi_ranges.is_empty() {
+        return read_multi_window::<_, MAX_SCAN_BYTES>(reader, size, display, sel, numbering, text_resource, cancel);
+    }
     let aborted = || format!("Read of {display} was aborted");
 
     // Tail selectors need the total line count first.
@@ -345,6 +389,7 @@ fn read_window<R: BufRead + Seek>(
             emitted: 0,
             start: requested_start,
             oversized_first_line: None,
+            raw_seen_lines: None,
         });
     }
     if emitted == 0 {
@@ -360,6 +405,7 @@ fn read_window<R: BufRead + Seek>(
                 emitted: 0,
                 start,
                 oversized_first_line: None,
+                raw_seen_lines: None,
             });
         }
         let suggestion = if total == 0 {
@@ -376,6 +422,7 @@ fn read_window<R: BufRead + Seek>(
             emitted: 0,
             start,
             oversized_first_line: None,
+            raw_seen_lines: None,
         });
     }
     let last_shown = start + emitted - 1;
@@ -424,7 +471,173 @@ fn read_window<R: BufRead + Seek>(
         let output_lines = if hashline_oversized { 0 } else { emitted };
         details["truncation"] = json!({"truncated": true, "truncatedBy": by, "outputLines": output_lines});
     }
-    Ok(Window { text: out, details, emitted, start, oversized_first_line: oversized_line })
+    Ok(Window { text: out, details, emitted, start, oversized_first_line: oversized_line, raw_seen_lines: None })
+}
+
+/// Multi-range reads use exact spans, unlike single-range reads with 1/3-line
+/// padding. Keep one forward scan and a bounded output buffer for large files.
+fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
+    mut reader: R,
+    size: u64,
+    display: &str,
+    sel: &Selector,
+    numbering: Numbering,
+    text_resource: bool,
+    cancel: &CancellationToken,
+) -> Result<Window, String> {
+    let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
+    let entity = if text_resource { "resource" } else { "file" };
+    let mut out = String::new();
+    let mut seen = Vec::new();
+    let mut buf = Vec::new();
+    let mut total = 0usize;
+    let mut scanned_after = 0u64;
+    let mut range_index = 0usize;
+    let mut prior_range: Option<usize> = None;
+    let mut truncated_by: Option<&str> = None;
+    let mut last_emitted = 0usize;
+    let mut oversized_line = None;
+    let mut ended_with_newline = false;
+    let mut reached_eof = false;
+    loop {
+        buf.clear();
+        let bytes = reader.read_until(b'\n', &mut buf).map_err(io)?;
+        if bytes == 0 {
+            reached_eof = true;
+            if !sel.raw || (!ended_with_newline && total != 0) || total == usize::MAX {
+                break;
+            }
+            // Raw selectors address the final empty `split("\n")` segment.
+        } else {
+            ended_with_newline = buf.last() == Some(&b'\n');
+        }
+        total += 1;
+        if total.is_multiple_of(4096) && cancel.is_cancelled() {
+            return Err(format!("Read of {display} was aborted"));
+        }
+        while let Some(Range::From(_, Some(end))) = sel.multi_ranges.get(range_index) {
+            if total <= *end {
+                break;
+            }
+            range_index += 1;
+        }
+        if let Some(Range::From(start, end)) = sel.multi_ranges.get(range_index)
+            && total >= *start
+            && end.is_none_or(|end| total <= end)
+            && truncated_by.is_none()
+        {
+            let raw_line = String::from_utf8_lossy(&buf);
+            let line = raw_line.strip_suffix('\n').unwrap_or(&raw_line);
+            let line = line.strip_suffix('\r').filter(|_| !sel.raw && !text_resource).unwrap_or(line);
+            let rendered = match numbering {
+                _ if sel.raw => line.to_string(),
+                Numbering::Pipe => format!("{total}|{line}"),
+                Numbering::Hashline => format!("{total}:{line}"),
+                Numbering::None => line.to_string(),
+            };
+            let separator = if seen.is_empty() {
+                ""
+            } else if prior_range != Some(range_index) {
+                if sel.raw { "\n\n…\n\n" } else { "\n…\n" }
+            } else {
+                "\n"
+            };
+            let extra = separator.len() + rendered.len();
+            if !text_resource && seen.len() >= DEFAULT_MAX_LINES {
+                truncated_by = Some("lines");
+            } else if !text_resource && out.len() + extra > DEFAULT_MAX_BYTES {
+                truncated_by = Some("bytes");
+                if rendered.len() > DEFAULT_MAX_BYTES {
+                    oversized_line = Some(total);
+                }
+                if seen.is_empty() {
+                    let preview = cut_at_char_boundary(&rendered, DEFAULT_MAX_BYTES);
+                    out = if numbering == Numbering::Hashline && !sel.raw {
+                        format!(
+                            "[Line {total} exceeds {} limit. Hashline output requires full lines.]",
+                            format_bytes(DEFAULT_MAX_BYTES as u64)
+                        )
+                    } else {
+                        preview.to_string()
+                    };
+                }
+            } else {
+                out.push_str(separator);
+                out.push_str(&rendered);
+                seen.push(total as u32);
+                last_emitted = total;
+                prior_range = Some(range_index);
+            }
+        }
+        if bytes == 0 {
+            break;
+        }
+        // A late requested span is still reachable, as with a single-range
+        // read. Bound only the post-selection scan for EOF/total-line notes.
+        if truncated_by.is_some() || range_index >= sel.multi_ranges.len() {
+            scanned_after += bytes as u64;
+            if scanned_after > POST_SCAN_LIMIT {
+                break;
+            }
+        }
+    }
+    if !reached_eof && seen.is_empty() && truncated_by.is_none() {
+        return Err(format!("Cannot read {display}: scan budget exceeded"));
+    }
+    let selection_truncated = truncated_by.is_some();
+    if reached_eof {
+        let mut omitted = 0usize;
+        for range in &sel.multi_ranges {
+            if let Range::From(start, end) = range
+                && *start > total
+            {
+                let bound = end.map_or_else(|| start.to_string(), |end| format!("{start}-{end}"));
+                let notice = format!("[Range {bound} is beyond end of {entity} ({total} lines total); skipped]");
+                if out.len() + usize::from(!out.is_empty()) + notice.len() <= DEFAULT_MAX_BYTES {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(&notice);
+                } else {
+                    omitted += 1;
+                }
+            }
+        }
+        if omitted > 0 {
+            truncated_by.get_or_insert("bytes");
+            out.push_str(&format!("\n[{omitted} additional out-of-bounds ranges omitted]"));
+        }
+    }
+    if selection_truncated {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        let after = oversized_line.unwrap_or(last_emitted).saturating_add(1);
+        let next = sel
+            .multi_ranges
+            .iter()
+            .find_map(|range| match range {
+                Range::From(start, end) if end.is_none_or(|end| end >= after) => Some((*start).max(after)),
+                _ => None,
+            })
+            .unwrap_or(after);
+        out.push_str(&format!("[Read limit reached; use :{next} to continue]"));
+    }
+    let mut details = json!({"fileSize": size});
+    if reached_eof {
+        details["totalLines"] = json!(total);
+    }
+    if let Some(by) = truncated_by {
+        details["truncation"] = json!({"truncated": true, "truncatedBy": by, "outputLines": seen.len()});
+    }
+    Ok(Window {
+        text: out,
+        details,
+        emitted: seen.len(),
+        start: seen.first().copied().unwrap_or(1) as usize,
+        oversized_first_line: None,
+        raw_seen_lines: sel.raw.then_some(seen),
+    })
 }
 
 pub struct ReadTool {
@@ -478,6 +691,9 @@ impl AgentTool for ReadTool {
         };
         let resolved = json!(abs.to_string_lossy());
         if meta.is_dir() {
+            if !sel.multi_ranges.is_empty() && !internal {
+                return Err(ToolError(format!("Multiple line ranges require a text file: {display} is a directory")));
+            }
             let mut entries = Vec::new();
             let mut rd =
                 tokio::fs::read_dir(&abs).await.map_err(|e| ToolError(format!("Cannot list {display}: {e}")))?;
@@ -497,7 +713,7 @@ impl AgentTool for ReadTool {
             if internal {
                 let mut content = if names.is_empty() { "(empty directory)".into() } else { names.join("\n") };
                 let size = content.len() as u64;
-                if sel.raw && (content.is_empty() || content.ends_with('\n')) {
+                if sel.raw && sel.multi_ranges.is_empty() && (content.is_empty() || content.ends_with('\n')) {
                     content.push('\n');
                 }
                 let numbering = if self.ctx.line_numbers && !sel.raw { Numbering::Pipe } else { Numbering::None };
@@ -528,6 +744,9 @@ impl AgentTool for ReadTool {
         }
         if !meta.is_file() {
             return Err(ToolError(format!("Cannot read {display}: not a regular file")));
+        }
+        if !sel.multi_ranges.is_empty() && !internal && image_mime(&abs).is_some() && !sel.raw {
+            return Err(ToolError(format!("Multiple line ranges require a text file: {display} is an image")));
         }
         if !internal
             && !sel.raw
@@ -569,7 +788,7 @@ impl AgentTool for ReadTool {
                 let size = content.len() as u64;
                 // Raw selectors address `text.split("\n")`, including the
                 // final empty segment of an empty or newline-terminated file.
-                if raw && (content.is_empty() || content.ends_with('\n')) {
+                if raw && sel.multi_ranges.is_empty() && (content.is_empty() || content.ends_with('\n')) {
                     content.push('\n');
                 }
                 Some((content, size))
@@ -667,7 +886,10 @@ impl AgentTool for ReadTool {
                 } else if raw && !internal {
                     // A raw read has no header, but records the range it showed so
                     // a same-content hashline tag inherits its provenance.
-                    let seen: Vec<u32> = (window.start..window.start + window.emitted).map(|n| n as u32).collect();
+                    let seen: Vec<u32> = window
+                        .raw_seen_lines
+                        .clone()
+                        .unwrap_or_else(|| (window.start..window.start + window.emitted).map(|n| n as u32).collect());
                     store.record_file(&abs2, Some(&seen));
                 }
             }
@@ -700,16 +922,38 @@ mod tests {
     fn selectors() {
         let none = |_: &str| false;
         let ok = |s: &str| split_selector(s, none).unwrap();
-        assert_eq!(ok("a.txt:5-9"), ("a.txt".into(), Selector { range: Some(Range::From(5, Some(9))), raw: false }));
+        assert_eq!(
+            ok("a.txt:5-9"),
+            ("a.txt".into(), Selector { range: Some(Range::From(5, Some(9))), multi_ranges: vec![], raw: false })
+        );
         assert_eq!(ok("a.txt:5+3").1.range, Some(Range::From(5, Some(7))));
         assert_eq!(ok("a.txt:-4").1.range, Some(Range::Tail(4)));
         assert_eq!(ok("a.txt:7-").1.range, Some(Range::From(7, None)));
-        assert_eq!(ok("a.txt:raw:2-4"), ("a.txt".into(), Selector { range: Some(Range::From(2, Some(4))), raw: true }));
-        assert_eq!(ok("a.txt:2-4:raw").1, Selector { range: Some(Range::From(2, Some(4))), raw: true });
+        assert_eq!(
+            ok("a.txt:raw:2-4"),
+            ("a.txt".into(), Selector { range: Some(Range::From(2, Some(4))), multi_ranges: vec![], raw: true })
+        );
+        assert_eq!(
+            ok("a.txt:2-4:raw").1,
+            Selector { range: Some(Range::From(2, Some(4))), multi_ranges: vec![], raw: true }
+        );
+        assert_eq!(ok("a.txt:9,3-4,4-5").1.multi_ranges, vec![Range::From(3, Some(5)), Range::From(9, None)]);
+        assert_eq!(ok("a.txt:5-7,1-4").1.range, Some(Range::From(1, Some(7))));
+        assert_eq!(ok("a.txt:2-3,8-").1.multi_ranges, vec![Range::From(2, Some(3)), Range::From(8, None)]);
+        assert_eq!(ok("a.txt:L2..L3,L8+L2").1.multi_ranges, vec![Range::From(2, Some(3)), Range::From(8, Some(9))]);
         assert_eq!(ok("dir/a%3Ab.txt").0, "dir/a:b.txt");
         assert_eq!(ok("weird:name"), ("weird:name".into(), Selector::default()));
         assert_eq!(split_selector("x:1", |p| p == "x:1").unwrap(), ("x:1".into(), Selector::default()));
-        for bad in ["a.txt:0", "a.txt:9-3", "a.txt:-0", "a.txt:1+0"] {
+        assert_eq!(split_selector("x:1-2,4", |p| p == "x:1-2,4").unwrap(), ("x:1-2,4".into(), Selector::default()));
+        for bad in [
+            "a.txt:0",
+            "a.txt:9-3",
+            "a.txt:-0",
+            "a.txt:1+0",
+            "a.txt:1,,3",
+            "a.txt:1,-2",
+            "a.txt:2+18446744073709551615",
+        ] {
             let err = split_selector(bad, none).unwrap_err();
             assert!(err.starts_with("Invalid selector ':") && err.contains("on 'a.txt'"), "{err}");
         }
@@ -722,5 +966,28 @@ mod tests {
         let mut cut = "é".repeat(10).into_bytes();
         cut.pop();
         assert!(!sniff_binary(&cut), "sequence cut at the sniff boundary is not binary");
+    }
+
+    #[test]
+    fn multi_range_scan_budget_starts_after_requested_lines() {
+        let content = (1..=60).map(|n| format!("line{n}\n")).collect::<String>();
+        let sel = Selector {
+            range: None,
+            multi_ranges: vec![Range::From(30, Some(30)), Range::From(50, Some(50))],
+            raw: false,
+        };
+        let window = read_multi_window::<_, 8>(
+            std::io::Cursor::new(content.as_bytes()),
+            content.len() as u64,
+            "lines.txt",
+            &sel,
+            Numbering::Pipe,
+            false,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert!(window.text.starts_with("30|line30\n…\n50|line50"), "{}", window.text);
+        assert!(!window.text.contains("continue"), "all selected ranges were complete: {}", window.text);
+        assert!(window.details["totalLines"].is_null());
     }
 }
