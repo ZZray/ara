@@ -111,11 +111,11 @@ changed files. It identified the following open parity difference.
 
 ## Open difference and acceptance
 
-`post_with_retry` currently returns only the parsed HTTP error message. When
-the upstream sends `error.code=previous_response_not_found` with an unrelated
-message, the Responses provider cannot classify it for a full-history retry.
-Preserving that structured code requires a separately scoped change to the
-shared HTTP error contract. The CLI now has an explicit opt-in binding, while
+The structured `error.code=previous_response_not_found` gap is addressed by
+the [coded-rejection WIP follow-up](ai-01e-responses-coded-chain-rejection.md)
+on `88d881b` and real CLI fixture `342aac6`. The public `ProviderError`
+contract remains unchanged; Responses alone consumes an internal detailed
+HTTP result. The CLI has an explicit opt-in binding, while
 the official-endpoint default differs from fixed OMP. The full backend gate,
 bounded actual-model task and independent point audit remain open. No AI-01e,
 AI module or P0-P6 acceptance count advances with this WIP commit.
