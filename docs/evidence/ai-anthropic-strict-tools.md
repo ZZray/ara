@@ -1,7 +1,7 @@
 # AI-ANTHROPICa: official-route strict tool planning (WIP)
 
-Date: 2026-09-28. Local code commits `44c24a4`, `394061b`, `0e83007` and
-`0afaf91` on `dev` (not pushed).
+Date: 2026-09-28. Local code commits `44c24a4`, `394061b`, `0e83007`,
+`0afaf91` and `2face04` on `dev` (not pushed).
 Fixed OMP source is `596f2da7101178214aa27a753529d15e6b7ad91d`:
 `packages/ai/src/providers/anthropic.ts` lines 4599–4602 and 4780–5070
 select strict candidates, normalize their schemas and apply shared budgets;
@@ -146,5 +146,46 @@ provider-local state object. Independent Codex diff reviewer
 `/root/anthropic_sticky_diff_review` reviewed the four-file slice and the
 Clippy correction and found no high-confidence defect; it ran
 `git diff --check` but did not run Cargo. This remains WIP because the full
-Windows gate and strict official/CLI journal evidence are incomplete. Counts
+Windows gate and strict official/CLI journal evidence were incomplete at this
+snapshot. Counts
 remain AI 6/8, registered points 27/37 and P0–P6 gates 1/7.
+
+## Controlled CLI strict route and Session journal on `2face04`
+
+The CLI now offers `--anthropic-strict-tools` only with
+`--api anthropic-messages`. It maps to the provider's existing explicit
+`strict_tools: Some(true)` switch, allowing a compatible custom route to be
+tested with the real CLI binary and controlled HTTP upstream. Without the flag,
+custom routes retain their non-strict default; canonical official HTTPS
+selection is unchanged. Invalid API/flag combinations fail before journal I/O.
+Credential selection, Agent and Session production code, and tool execution
+were not changed.
+
+In one CLI process with two prompts and the closed-schema replace-mode `edit`,
+the fake upstream returned a classified strict-related HTTP 400, then a tool
+call, a successful tool follow-up, and a second-prompt answer. The four
+recorded request bodies had strict tool settings `true`, absent, absent and
+absent. The rejected and fallback requests had equal message history. The
+third and fourth requests contained the matching `toolu_edit` result; the
+fourth also contained the second prompt. The file changed from `one minus
+one` to `one plus one` exactly once. One Session journal contained two user
+prompts, one assistant tool call and one successful matching tool result. An
+unrelated HTTP 400 caused one strict request, nonzero exit, no edit and an
+error journal entry. Wrong-API use exited 2 before creating a journal.
+
+| Check on `2face04` | Observed result |
+| --- | --- |
+| `cargo test -p ara-cli --test e2e anthropic_strict_ --quiet` | Exit 0: 2/2 new real-process controlled-upstream cases. |
+| `cargo test -p ara-cli --test e2e anthropic_ --quiet` | Exit 0: 11/11 Anthropic CLI cases, including the existing custom-route default behavior. |
+| `cargo clippy -p ara-cli --all-targets --all-features -- -D warnings`; `git diff --check` | Exit 0 each. |
+| `python scripts/verify_backend.py` | Exit 101: owned formatting and strict workspace Clippy passed; workspace tests reached CLI e2e, where 40/41 passed. The sole failure was the existing Windows Git Bash deadline assertion at `crates/ara-cli/tests/e2e.rs:1465` (`started.elapsed() < Duration::from_secs(4)`). |
+
+Independent Codex plan reviewer `/root/anthropic_cli_strict_plan_review`
+checked the smallest host path and recommended an explicit Anthropic-only CLI
+opt-in over test-only injection. Independent Codex diff reviewer
+`/root/anthropic_cli_strict_diff_review` reviewed both changed files, CLI
+prompt loop, provider fallback/state and fake upstream, and found no
+high-confidence defect; it ran `git diff --check` but not Cargo. This proves
+controlled custom-route CLI and journal behavior, not official HTTPS behavior
+or a real-model task. The full Windows gate remains red, so AI-ANTHROPICa and
+formal counts remain unchanged.
