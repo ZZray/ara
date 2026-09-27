@@ -8,8 +8,8 @@ use ara_ai::event::AssistantMessageEvent;
 use ara_ai::providers::anthropic::{self, StreamOptions};
 use ara_ai::providers::openai_completions::RetryPolicy;
 use ara_ai::{
-    AssistantBlock, AssistantMessage, Context, Message, Model, StopReason, Tool, ToolResultMessage, UserBlock,
-    UserMessage,
+    AssistantBlock, AssistantMessage, Context, ImageContent, Message, Model, StopReason, Tool, ToolResultMessage,
+    UserBlock, UserContent, UserMessage,
 };
 use ara_testkit::{FakeUpstream, Script};
 use serde_json::{Value, json};
@@ -581,6 +581,118 @@ fn replay_repairs_tool_tail_adjacent_assistants_and_error_images() {
     for pair in messages.windows(2) {
         assert!(!(pair[0]["role"] == "assistant" && pair[1]["role"] == "assistant"));
     }
+}
+
+#[tokio::test]
+async fn actual_messages_request_normalizes_images_and_keeps_unsupported_mime_visible() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_images"}})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let image = |mime_type: &str| UserBlock::Image(ImageContent { data: "YQ==".into(), mime_type: mime_type.into() });
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage {
+                content: UserContent::Blocks(vec![
+                    UserBlock::text("   "),
+                    image(" IMAGE/JPG "),
+                    image("image/png"),
+                    image("image/gif"),
+                    image("image/webp"),
+                    image(" image/svg+xml "),
+                ]),
+                synthetic: None,
+                timestamp: 1,
+            }),
+            Message::User(UserMessage {
+                content: UserContent::Blocks(vec![UserBlock::text(" \n ")]),
+                synthetic: None,
+                timestamp: 2,
+            }),
+        ],
+        ..Default::default()
+    };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+    let requests = server.requests.lock().await;
+    let messages = requests[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+    let blocks = messages[0]["content"].as_array().unwrap();
+    assert_eq!(blocks[0], json!({"type":"text","text":"(see attached image)"}));
+    for (index, media_type) in ["image/jpeg", "image/png", "image/gif", "image/webp"].iter().enumerate() {
+        assert_eq!(blocks[index + 1]["source"]["media_type"], *media_type);
+    }
+    assert_eq!(blocks[5], json!({"type":"text","text":"[unsupported image:  image/svg+xml ]"}));
+}
+
+#[tokio::test]
+async fn actual_messages_request_keeps_error_image_hints_and_unsupported_text_in_result() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_results"}})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let image = |mime_type: &str| UserBlock::Image(ImageContent { data: "YQ==".into(), mime_type: mime_type.into() });
+    let mut assistant = AssistantMessage::empty("anthropic-messages", "anthropic", "claude-fixture");
+    assistant.content = ["a", "b", "c", "d", "e"]
+        .into_iter()
+        .map(|id| {
+            AssistantBlock::ToolCall(ara_ai::ToolCall {
+                id: id.into(),
+                name: "read".into(),
+                arguments: serde_json::Map::new(),
+                thought_signature: None,
+            })
+        })
+        .collect();
+    assistant.stop_reason = StopReason::ToolUse;
+    let result = |id: &str, content: Vec<UserBlock>, is_error| {
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            tool_name: "read".into(),
+            content,
+            details: None,
+            is_error,
+            timestamp: 2,
+        })
+    };
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("read")),
+            Message::Assistant(assistant),
+            result("a", vec![image("image/png")], true),
+            result("b", vec![image("image/svg+xml")], true),
+            result("c", Vec::new(), true),
+            result("d", vec![image(" IMAGE/JPG ")], false),
+            result("e", vec![UserBlock::text("  \n ")], false),
+        ],
+        ..Default::default()
+    };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+    let requests = server.requests.lock().await;
+    let blocks = requests[0]["body"]["messages"][2]["content"].as_array().unwrap();
+    assert_eq!(blocks[0]["content"], json!([{"type":"text","text":"(see attached image)"}]));
+    assert_eq!(blocks[1]["content"], json!([{"type":"text","text":"[unsupported image: image/svg+xml]"}]));
+    assert_eq!(blocks[2]["content"], "Tool failed with no output.");
+    assert_eq!(blocks[3]["content"][0]["text"], "(see attached image)");
+    assert_eq!(blocks[3]["content"][1]["source"]["media_type"], "image/jpeg");
+    assert_eq!(blocks[4]["content"], "");
+    assert_eq!(blocks[5]["text"], "Attached image(s) from the tool result(s) above:");
+    assert_eq!(blocks[6]["source"]["media_type"], "image/png");
 }
 
 #[tokio::test]

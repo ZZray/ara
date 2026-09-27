@@ -63,34 +63,40 @@ impl Default for StreamOptions {
 fn user_content(content: &UserContent) -> Value {
     match content {
         UserContent::Text(text) => Value::String(text.clone()),
-        UserContent::Blocks(blocks) => Value::Array(
-            blocks
-                .iter()
-                .map(|block| match block {
-                    UserBlock::Text(text) => json!({"type":"text","text":text.text}),
-                    UserBlock::Image(image) => json!({
-                        "type":"image",
-                        "source":{"type":"base64","media_type":image.mime_type,"data":image.data}
-                    }),
-                })
-                .collect(),
-        ),
+        UserContent::Blocks(blocks) => result_content(blocks),
     }
 }
 
 fn result_content(blocks: &[UserBlock]) -> Value {
-    Value::Array(
-        blocks
-            .iter()
-            .map(|block| match block {
-                UserBlock::Text(text) => json!({"type":"text","text":text.text}),
-                UserBlock::Image(image) => json!({
+    let mut converted = Vec::new();
+    let mut saw_text = false;
+    let mut saw_image = false;
+    for block in blocks {
+        match block {
+            UserBlock::Text(text) if !text.text.trim().is_empty() => {
+                saw_text = true;
+                converted.push(json!({"type":"text","text":text.text}));
+            }
+            UserBlock::Text(_) => {}
+            UserBlock::Image(image) => {
+                let media_type = image.mime_type.trim().to_ascii_lowercase();
+                let media_type = if media_type == "image/jpg" { "image/jpeg" } else { &media_type };
+                if !matches!(media_type, "image/jpeg" | "image/png" | "image/gif" | "image/webp") {
+                    converted.push(json!({"type":"text","text":format!("[unsupported image: {}]", image.mime_type)}));
+                    continue;
+                }
+                saw_image = true;
+                converted.push(json!({
                     "type":"image",
-                    "source":{"type":"base64","media_type":image.mime_type,"data":image.data}
-                }),
-            })
-            .collect(),
-    )
+                    "source":{"type":"base64","media_type":media_type,"data":image.data}
+                }));
+            }
+        }
+    }
+    if saw_image && !saw_text {
+        converted.insert(0, json!({"type":"text","text":"(see attached image)"}));
+    }
+    Value::Array(converted)
 }
 
 fn assistant_content(message: &AssistantMessage, model: &Model) -> Vec<Value> {
@@ -144,7 +150,7 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
         match &messages[i] {
             Message::User(user) => {
                 let content = user_content(&user.content);
-                if content != "" && content != json!([]) {
+                if content.as_str().is_none_or(|text| !text.trim().is_empty()) && content != json!([]) {
                     wire.push(json!({"role":"user","content":content}));
                 }
             }
@@ -152,7 +158,7 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
                 // Without OMP's mid-conversation-system beta, developer text
                 // is a user turn. Top-level context.system_prompt stays system.
                 let content = user_content(&developer.content);
-                if content != "" && content != json!([]) {
+                if content.as_str().is_none_or(|text| !text.trim().is_empty()) && content != json!([]) {
                     wire.push(json!({"role":"user","content":content}));
                 }
             }
@@ -169,26 +175,25 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
                 let mut results = Vec::new();
                 let mut hoisted_images = Vec::new();
                 while let Some(Message::ToolResult(result)) = messages.get(i) {
-                    let content = if result.is_error {
-                        let text_blocks: Vec<UserBlock> = result
-                            .content
-                            .iter()
-                            .filter_map(|block| match block {
-                                UserBlock::Text(_) => Some(block.clone()),
-                                UserBlock::Image(_) => {
-                                    hoisted_images.push(block.clone());
-                                    None
-                                }
-                            })
-                            .collect();
-                        if text_blocks.is_empty() {
-                            Value::String("Tool failed with no output.".into())
-                        } else {
-                            result_content(&text_blocks)
-                        }
-                    } else {
-                        result_content(&result.content)
-                    };
+                    let mut content = result_content(&result.content);
+                    if result.is_error
+                        && let Value::Array(blocks) = &mut content
+                    {
+                        blocks.retain(|block| {
+                            if block["type"] == "image" {
+                                hoisted_images.push(block.clone());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                    if content == json!([]) {
+                        content = Value::String(String::new());
+                    }
+                    if result.is_error && content == "" {
+                        content = Value::String("Tool failed with no output.".into());
+                    }
                     results.push(json!({
                         "type":"tool_result",
                         "tool_use_id":result.tool_call_id,
@@ -199,8 +204,7 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
                 }
                 if !hoisted_images.is_empty() {
                     results.push(json!({"type":"text","text":"Attached image(s) from the tool result(s) above:"}));
-                    let Value::Array(images) = result_content(&hoisted_images) else { unreachable!() };
-                    results.extend(images);
+                    results.extend(hoisted_images);
                 }
                 wire.push(json!({"role":"user","content":results}));
                 continue;
