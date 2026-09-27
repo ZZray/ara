@@ -1,4 +1,4 @@
-//! Upgrade raw JSON tool schemas before the Responses-specific sanitizer.
+//! Upgrade raw JSON tool schemas before provider encoding and argument validation.
 //! Port of pinned OMP `utils/schema/draft.ts` for acyclic JSON values.
 
 use serde_json::{Map, Value, json};
@@ -116,7 +116,7 @@ fn draft_07_schema_uri(value: &str) -> bool {
 /// The input is a `serde_json::Value`, so unlike OMP's JavaScript object graph
 /// it is acyclic and needs no identity cache. A depth cap quarantines one bad
 /// tool without affecting its neighbors.
-pub(super) fn upgrade_json_schema(value: &Value, depth: usize) -> Result<Value, ()> {
+pub(crate) fn upgrade_json_schema(value: &Value, depth: usize) -> Result<Value, ()> {
     if depth > MAX_UPGRADE_DEPTH {
         return Err(());
     }

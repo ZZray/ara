@@ -6,9 +6,10 @@ Pinned OMP commit `596f2da7101178214aa27a753529d15e6b7ad91d`:
 `packages/ai/src/utils/schema/draft.ts::upgradeJsonSchemaTo202012` is called
 by `utils/schema/wire.ts::toolWireSchema` before
 `providers/openai-responses.ts` sanitizes and emits a tool. ARA now runs the
-JSON-value upgrade in `ara-ai::providers::responses_schema_draft` before its
-existing Responses sanitizer. Agent, Session, CLI and other provider routes
-were not changed.
+JSON-value upgrade in `ara-ai::schema_draft` before its existing Responses
+sanitizer. The same upgrader now feeds tool-argument validation; see the
+[validation receipt](ai-01f-draft-validation.md). Agent, Session, CLI and other
+provider routes were not changed.
 
 The conversion recognizes draft-07 shapes without a `$schema` declaration.
 It upgrades the four recognized draft-07 `$schema` URIs, local
@@ -24,18 +25,15 @@ uses `$defs`. OMP's JavaScript object insertion order decides the winner in
 that collision, but ARA's JSON map does not preserve that order. This is an
 intentional difference for ambiguous inputs.
 
-This is request-wire work only. `ara-ai::validation` still reads raw tool
-parameters and does not enforce `$ref`, tuple `prefixItems`,
-`dependentRequired`/`dependentSchemas`, or a `false` subschema. OMP upgrades
-the schema before tool-argument validation too
-(`packages/ai/src/utils/validation.ts`). ARA also lacks the remaining raw
-`toolWireSchema` postprocessing, strict-mode and vendor dialect policy. An
-emitted 2020-12 tool schema therefore does not prove full draft-07 tool
-behavior or AI-01e acceptance.
+The subsequent validation slice uses this upgrade before tool execution and
+enforces selected upgraded constraints. ARA still lacks the remaining raw
+`toolWireSchema` postprocessing, strict-mode and vendor dialect policy. The
+wire and validation slices together do not prove full draft-07 tool behavior
+or AI-01e acceptance.
 
 ## Executable evidence
 
-- Unit tests in `responses_schema_draft.rs` cover nested legacy keywords
+- Unit tests in `schema_draft.rs` cover nested legacy keywords
   without a URI, local/external refs, literal-data preservation, tuple and
   dependency collisions, nullable forms, omitted legacy keywords, source
   immutability and the depth cap.

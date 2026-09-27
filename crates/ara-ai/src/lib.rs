@@ -10,6 +10,7 @@ pub mod providers;
 pub(crate) mod replay_safe_retry;
 pub(crate) mod responses_sse;
 pub(crate) mod responses_stream;
+pub(crate) mod schema_draft;
 pub mod sse;
 pub mod transform;
 pub mod types;

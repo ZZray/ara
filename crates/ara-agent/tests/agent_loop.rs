@@ -146,6 +146,44 @@ struct EchoTool {
     log: Arc<Mutex<Vec<String>>>,
 }
 
+struct LegacySchemaTool {
+    effects: Arc<Mutex<Vec<Value>>>,
+}
+
+#[async_trait]
+impl AgentTool for LegacySchemaTool {
+    fn definition(&self) -> Tool {
+        Tool {
+            name: "legacy_schema".into(),
+            description: "Checks legacy JSON Schema arguments".into(),
+            parameters: json!({
+                "type":"object",
+                "properties":{
+                    "item":{"$ref":"#/definitions/Item"},
+                    "pair":{"type":"array","items":[{"type":"string"},{"type":"integer"}],"additionalItems":false}
+                },
+                "required":["item","pair"],
+                "definitions":{"Item":{"type":"string"}}
+            }),
+        }
+    }
+
+    fn concurrency(&self, _args: &JsonObject) -> Concurrency {
+        Concurrency::Shared
+    }
+
+    async fn execute(
+        &self,
+        _id: &str,
+        args: JsonObject,
+        _cancel: CancellationToken,
+        _update: UpdateFn,
+    ) -> Result<ToolOutput, ToolError> {
+        self.effects.lock().unwrap().push(Value::Object(args));
+        Ok(ToolOutput::text("legacy tool executed"))
+    }
+}
+
 #[async_trait]
 impl AgentTool for EchoTool {
     fn definition(&self) -> Tool {
@@ -728,6 +766,52 @@ async fn tool_call_turn_executes_and_continues() {
 }
 
 #[tokio::test]
+async fn legacy_schema_validation_blocks_invalid_effect_and_replays_both_results() {
+    let provider = ScriptedProvider::new(vec![
+        reply(
+            "",
+            &[
+                ("bad", "legacy_schema", json!({"item":"ok","pair":["a",1,"extra"]})),
+                ("good", "legacy_schema", json!({"item":"ok","pair":["a",1]})),
+            ],
+            StopReason::ToolUse,
+        ),
+        reply("checked", &[], StopReason::Stop),
+    ]);
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let tool: Arc<dyn AgentTool> = Arc::new(LegacySchemaTool { effects: effects.clone() });
+    let new = agent_loop(
+        vec![user("check the pair")],
+        &mut Vec::new(),
+        &config(provider.clone(), vec![tool], Arc::new(NoHooks)),
+        &CancellationToken::new(),
+        &NullSink,
+    )
+    .await
+    .messages;
+    let results = new
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].tool_call_id, "bad");
+    assert!(results[0].is_error);
+    assert!(result_text(&Message::ToolResult(results[0].clone())).contains("pair/2: must not match false schema"));
+    assert_eq!(results[1].tool_call_id, "good");
+    assert!(!results[1].is_error);
+    assert_eq!(result_text(&Message::ToolResult(results[1].clone())), "legacy tool executed");
+    assert_eq!(*effects.lock().unwrap(), vec![json!({"item":"ok","pair":["a",1]})]);
+    let contexts = provider.contexts.lock().unwrap();
+    assert!(contexts[1].messages.iter().any(|message| matches!(message,
+        Message::ToolResult(result) if result.tool_call_id == "bad" && result.is_error)));
+    assert!(contexts[1].messages.iter().any(|message| matches!(message,
+        Message::ToolResult(result) if result.tool_call_id == "good" && !result.is_error)));
+}
+
+#[tokio::test]
 async fn validation_unknown_tool_blocked_and_empty_error() {
     let provider = ScriptedProvider::new(vec![
         reply(
@@ -1214,6 +1298,63 @@ async fn real_http_chain_with_fake_upstream() {
     let msgs = reqs[1]["body"]["messages"].as_array().unwrap();
     assert_eq!(msgs[2]["tool_calls"][0]["id"], json!("call_1"));
     assert_eq!(msgs[3], json!({"role": "tool", "content": "echo: wire", "tool_call_id": "call_1"}));
+}
+
+#[tokio::test]
+async fn real_responses_http_chain_rejects_invalid_legacy_arguments_without_an_effect() {
+    use ara_testkit::{FakeUpstream, Script};
+    let script: Script = serde_json::from_value(json!({"responses": [
+        {"events": [
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"function_call","id":"fc_bad","call_id":"call_bad",
+                    "name":"legacy_schema","arguments":"{\"item\":\"ok\",\"pair\":[\"a\",1,\"extra\"]}"}}},
+            {"data":{"type":"response.output_item.done","output_index":1,
+                "item":{"type":"function_call","id":"fc_good","call_id":"call_good",
+                    "name":"legacy_schema","arguments":"{\"item\":\"ok\",\"pair\":[\"a\",1]}"}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        {"events": [
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","content":[{"type":"output_text","text":"checked"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]}))
+    .unwrap();
+    let server = FakeUpstream::start(script, None).await.unwrap();
+    let provider = Arc::new(OpenAIResponsesProvider { client: reqwest::Client::new(), base: Default::default() });
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let tool: Arc<dyn AgentTool> = Arc::new(LegacySchemaTool { effects: effects.clone() });
+    let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
+    cfg.model.api = "openai-responses".into();
+    cfg.model.base_url = server.base_url();
+    let agent = Agent::new(cfg, Vec::new());
+    let new = agent
+        .prompt(vec![user("check the pair")], CancellationToken::new(), Arc::new(NullSink))
+        .await
+        .unwrap()
+        .messages;
+    let results = new
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_error);
+    assert_eq!(results[0].tool_call_id, "call_bad|fc_bad");
+    assert!(!results[1].is_error);
+    assert_eq!(results[1].tool_call_id, "call_good|fc_good");
+    assert_eq!(*effects.lock().unwrap(), vec![json!({"item":"ok","pair":["a",1]})]);
+    assert_eq!(new.last().unwrap().as_assistant().unwrap().text(), "checked");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let tool_schema = &requests[0]["body"]["tools"][0]["parameters"];
+    assert_eq!(tool_schema["properties"]["pair"]["prefixItems"], json!([{"type":"string"},{"type":"integer"}]));
+    assert_eq!(tool_schema["properties"]["pair"]["items"], false);
+    let next_input = requests[1]["body"]["input"].as_array().unwrap();
+    assert!(next_input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_bad"));
+    assert!(next_input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_good"));
 }
 
 #[tokio::test]

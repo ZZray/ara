@@ -609,7 +609,7 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
         tools
             .iter()
             .filter_map(|tool| {
-                let upgraded = match super::responses_schema_draft::upgrade_json_schema(&tool.parameters, 0) {
+                let upgraded = match crate::schema_draft::upgrade_json_schema(&tool.parameters, 0) {
                     Ok(schema) => schema,
                     Err(()) => {
                         report_quarantined_tool(&tool.name, "schema nesting exceeds upgrade limit");
