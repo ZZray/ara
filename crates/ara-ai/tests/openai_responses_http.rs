@@ -41,6 +41,16 @@ fn options() -> StreamOptions {
     }
 }
 
+fn completed_text(id: &str, text: &str) -> Value {
+    json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,
+            "item":{"type":"message","id":format!("msg_{id}"),"role":"assistant",
+                "content":[{"type":"output_text","text":text}]}}},
+        {"data":{"type":"response.completed","response":{"id":id,"status":"completed",
+            "usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}}
+    ]})
+}
+
 async fn collect(stream: ara_ai::AssistantStream) -> (Vec<AssistantMessageEvent>, AssistantMessage) {
     let mut stream = stream;
     let mut events = Vec::new();
@@ -89,6 +99,579 @@ async fn response_terminal_ends_a_hanging_socket_and_records_the_native_request(
     assert_eq!(requests[0]["body"]["store"], false);
     assert_eq!(requests[0]["body"]["input"][0]["content"][0]["text"], "hi");
     assert!(requests[0]["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"));
+}
+
+#[tokio::test]
+async fn opted_in_chain_sends_only_the_new_user_turn_on_real_http() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_first", "first answer"), completed_text("resp_second", "second answer")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let first_context =
+        Context { messages: vec![Message::User(UserMessage::text("first question"))], ..Context::default() };
+    let (_, first) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), first_context, opts.clone())).await;
+    assert_eq!(first.text(), "first answer");
+    let second_context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("first question")),
+            Message::Assistant(first),
+            Message::User(UserMessage::text("second question")),
+        ],
+        ..Context::default()
+    };
+    let (_, second) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, second_context, opts)).await;
+    assert_eq!(second.text(), "second answer");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["body"]["store"], true);
+    assert!(requests[0]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_first");
+    assert_eq!(requests[1]["body"]["store"], true);
+    assert_eq!(requests[1]["body"]["input"].as_array().unwrap().len(), 1);
+    assert_eq!(requests[1]["body"]["input"][0]["content"][0]["text"], "second question");
+}
+
+#[tokio::test]
+async fn stale_chain_retries_once_with_complete_history_before_start() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[
+            completed_text("resp_first", "first answer"),
+            {"status":400,"body":"{\"error\":{\"message\":\"previous_response_id not found\"}}"},
+            completed_text("resp_fallback", "recovered")
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("first"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("first")),
+            Message::Assistant(first),
+            Message::User(UserMessage::text("next")),
+        ],
+        ..Context::default()
+    };
+    let (events, output) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(output.text(), "recovered");
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 1);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_first");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["input"].as_array().unwrap().len(), 3);
+    assert_eq!(requests[2]["body"]["store"], true);
+}
+
+#[tokio::test]
+async fn blocked_chained_prompt_without_previous_id_text_retries_full_history() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"),
+            {"status":400,"body":"{\"error\":{\"code\":\"invalid_prompt\",\"message\":\"Request blocked\"}}"},
+            completed_text("resp_retry", "full retry")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("seed")),
+            Message::Assistant(seed),
+            Message::User(UserMessage::text("next")),
+        ],
+        ..Context::default()
+    };
+    let (_, output) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(output.text(), "full retry");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_seed");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["input"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn chained_tool_result_is_the_only_delta_and_changed_history_breaks_the_chain() {
+    let tool_turn = json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{
+            "type":"function_call","id":"fc_read","call_id":"call_read","name":"read","arguments":"{}"}}},
+        {"data":{"type":"response.completed","response":{"id":"resp_tool","status":"completed"}}}
+    ]});
+    let server = FakeUpstream::start(
+        script(json!({"responses":[tool_turn, completed_text("resp_result", "read complete"),
+            completed_text("resp_rewrite", "rewritten")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("read file"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(first.stop_reason, StopReason::ToolUse);
+    let call_id = first.tool_calls().next().unwrap().id.clone();
+    let result = Message::ToolResult(ToolResultMessage {
+        tool_call_id: call_id,
+        tool_name: "read".into(),
+        content: vec![UserBlock::text("file body")],
+        details: None,
+        is_error: false,
+        timestamp: 1,
+    });
+    let (_, second) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context {
+            messages: vec![
+                Message::User(UserMessage::text("read file")),
+                Message::Assistant(first.clone()),
+                result.clone(),
+            ],
+            ..Context::default()
+        },
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(second.text(), "read complete");
+    let (_, third) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context {
+            messages: vec![
+                Message::User(UserMessage::text("edited first request")),
+                Message::Assistant(first),
+                result,
+                Message::Assistant(second),
+                Message::User(UserMessage::text("continue")),
+            ],
+            ..Context::default()
+        },
+        opts,
+    ))
+    .await;
+    assert_eq!(third.text(), "rewritten");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_tool");
+    assert_eq!(
+        requests[1]["body"]["input"],
+        json!([{
+            "type":"function_call_output","call_id":"call_read","output":"file body"
+        }])
+    );
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["input"][0]["content"][0]["text"], "edited first request");
+}
+
+#[tokio::test]
+async fn stateful_baseline_is_scoped_to_credentials_and_session_state() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_first", "first answer"),
+            completed_text("resp_other_key", "key changed"), completed_text("resp_new_state", "new state")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("first"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("first")),
+            Message::Assistant(first),
+            Message::User(UserMessage::text("next")),
+        ],
+        ..Context::default()
+    };
+    opts.api_key = Some("another-test-secret".into());
+    let (_, second) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(second.text(), "key changed");
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, third) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(third.text(), "new state");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests.iter().all(|request| request["body"].get("previous_response_id").is_none()));
+    assert!(requests.iter().all(|request| request["body"]["store"] == true));
+}
+
+#[tokio::test]
+async fn zero_data_retention_rejection_disables_storage_and_future_chaining() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[
+            completed_text("resp_first", "first answer"),
+            {"status":400,"body":"{\"error\":{\"message\":\"Request blocked: previous_response_id unsupported under Zero Data Retention\"}}"},
+            completed_text("resp_fallback", "fallback answer"),
+            completed_text("resp_next", "next answer")
+        ]})), None,
+    ).await.unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("first"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let messages = vec![
+        Message::User(UserMessage::text("first")),
+        Message::Assistant(first),
+        Message::User(UserMessage::text("second")),
+    ];
+    let (_, second) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: messages.clone(), ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(second.text(), "fallback answer");
+    let mut third_messages = messages;
+    third_messages.push(Message::Assistant(second));
+    third_messages.push(Message::User(UserMessage::text("third")));
+    let (_, third) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context { messages: third_messages, ..Context::default() },
+        opts,
+    ))
+    .await;
+    assert_eq!(third.text(), "next answer");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_first");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["store"], false);
+    assert!(requests[3]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[3]["body"]["store"], false);
+}
+
+#[tokio::test]
+async fn three_consecutive_stale_ids_disable_chaining_for_the_session() {
+    let stale = json!({"status":400,
+        "body":"{\"error\":{\"message\":\"previous_response_id expired\"}}"});
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"),
+            stale.clone(), completed_text("resp_one", "one"),
+            stale.clone(), completed_text("resp_two", "two"),
+            stale, completed_text("resp_three", "three"),
+            completed_text("resp_after", "after")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let mut messages = vec![Message::User(UserMessage::text("seed"))];
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: messages.clone(), ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    messages.push(Message::Assistant(seed));
+    for (n, expected) in [(1, "one"), (2, "two"), (3, "three")] {
+        messages.push(Message::User(UserMessage::text(format!("turn {n}"))));
+        let (_, output) = collect(openai_responses::stream(
+            reqwest::Client::new(),
+            endpoint.clone(),
+            Context { messages: messages.clone(), ..Context::default() },
+            opts.clone(),
+        ))
+        .await;
+        assert_eq!(output.text(), expected);
+        messages.push(Message::Assistant(output));
+    }
+    messages.push(Message::User(UserMessage::text("after")));
+    let (_, after) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context { messages, ..Context::default() },
+        opts,
+    ))
+    .await;
+    assert_eq!(after.text(), "after");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 8);
+    for index in [1, 3, 5] {
+        assert!(requests[index]["body"].get("previous_response_id").is_some());
+        assert_eq!(requests[index]["body"]["store"], true);
+    }
+    for index in [2, 4, 6] {
+        assert!(requests[index]["body"].get("previous_response_id").is_none());
+    }
+    assert!(requests[7]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[7]["body"]["store"], false);
+}
+
+#[tokio::test]
+async fn in_band_chain_failure_is_not_replayed_and_clears_its_baseline() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[
+            completed_text("resp_first", "first answer"),
+            {"events":[
+                {"data":{"type":"response.output_text.delta","output_index":0,"delta":"partial"}},
+                {"data":{"type":"response.failed","response":{"status":"failed",
+                    "error":{"message":"previous_response_id invalid"}}}}
+            ]},
+            completed_text("resp_after_error", "after error")
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, first) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("first"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("first")),
+            Message::Assistant(first),
+            Message::User(UserMessage::text("second")),
+        ],
+        ..Context::default()
+    };
+    let (_, failed) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(failed.stop_reason, StopReason::Error);
+    let (_, recovered) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(recovered.text(), "after error");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_first");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["body"]["store"], true);
+}
+
+#[tokio::test]
+async fn overlapping_calls_cannot_publish_a_forked_chain_baseline() {
+    let slow = json!({"events":[
+        {"sleep_ms":300},
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message",
+            "role":"assistant","content":[{"type":"output_text","text":"slow branch"}]}}},
+        {"data":{"type":"response.completed","response":{"id":"resp_slow","status":"completed"}}}
+    ]});
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"), slow,
+            completed_text("resp_fast", "fast branch"), completed_text("resp_follow", "follow up")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let branch_context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("seed")),
+            Message::Assistant(seed),
+            Message::User(UserMessage::text("branch")),
+        ],
+        ..Context::default()
+    };
+    let slow_task = tokio::spawn({
+        let endpoint = endpoint.clone();
+        let context = branch_context.clone();
+        let opts = opts.clone();
+        async move { collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await.1 }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.served() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (_, fast) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        branch_context.clone(),
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(fast.text(), "fast branch");
+    assert_eq!(slow_task.await.unwrap().text(), "slow branch");
+    let mut follow_messages = branch_context.messages;
+    follow_messages.push(Message::Assistant(fast));
+    follow_messages.push(Message::User(UserMessage::text("after branches")));
+    let (_, follow) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context { messages: follow_messages, ..Context::default() },
+        opts,
+    ))
+    .await;
+    assert_eq!(follow.text(), "follow up");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_seed");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert!(requests[3]["body"].get("previous_response_id").is_none());
+}
+
+#[tokio::test]
+async fn cancelling_a_chained_request_clears_the_baseline_without_a_fallback_post() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"),
+            {"delay_ms":5000,"events":[{"data":{"type":"response.completed",
+                "response":{"id":"resp_late","status":"completed"}}}]},
+            completed_text("resp_after", "after cancel")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("seed")),
+            Message::Assistant(seed),
+            Message::User(UserMessage::text("next")),
+        ],
+        ..Context::default()
+    };
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let mut cancelled_opts = opts.clone();
+    cancelled_opts.cancel = cancel.clone();
+    let pending = tokio::spawn({
+        let endpoint = endpoint.clone();
+        let context = context.clone();
+        async move { collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, cancelled_opts)).await.1 }
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.served() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    cancel.cancel();
+    assert_eq!(pending.await.unwrap().stop_reason, StopReason::Aborted);
+    let (_, after) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(after.text(), "after cancel");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_seed");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+}
+
+#[tokio::test]
+async fn unrelated_http_rejection_does_not_retry_a_chained_request() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"),
+            {"status":400,"body":"{\"error\":{\"message\":\"invalid tool schema\"}}"},
+            completed_text("resp_after", "after error")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("seed")),
+            Message::Assistant(seed),
+            Message::User(UserMessage::text("next")),
+        ],
+        ..Context::default()
+    };
+    let (_, rejected) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(rejected.stop_reason, StopReason::Error);
+    assert_eq!(rejected.error_status, Some(400));
+    let (_, after) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(after.text(), "after error");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_seed");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
 }
 
 #[tokio::test]

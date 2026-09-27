@@ -31,6 +31,8 @@ const MAX_NATIVE_SNAPSHOT_ITEMS: usize = 1024;
 const MAX_NATIVE_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const INTERRUPTED_TOOL_OUTPUT: &str =
     "[No tool output recorded: the tool call was interrupted before it produced a result.]";
+const MAX_CHAIN_BASELINE_BYTES: usize = 32 * 1024 * 1024;
+const CHAIN_STALE_FAILURE_LIMIT: u8 = 3;
 
 /// Request fields supported by the stateless Responses path.
 #[derive(Clone, Debug, Default)]
@@ -48,6 +50,163 @@ pub struct RequestOptions {
 #[derive(Debug, Default)]
 pub struct ProviderSessionState {
     warmed: Mutex<HashMap<String, bool>>,
+    chains: Mutex<HashMap<String, ChainEntry>>,
+}
+
+#[derive(Debug)]
+struct ChainBaseline {
+    request: Value,
+    response_items: Vec<Value>,
+    response_id: String,
+}
+
+#[derive(Debug, Default)]
+struct ChainEntry {
+    baseline: Option<Arc<ChainBaseline>>,
+    active: u32,
+    generation: u64,
+    stale_failures: u8,
+    disabled: bool,
+}
+
+struct ChainLease {
+    state: Arc<ProviderSessionState>,
+    key: String,
+    generation: u64,
+    baseline: Option<Arc<ChainBaseline>>,
+    completed: bool,
+}
+
+impl ChainLease {
+    fn begin(state: Arc<ProviderSessionState>, key: String) -> Option<Self> {
+        let mut chains = state.chains.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = chains.entry(key.clone()).or_default();
+        if entry.disabled {
+            return None;
+        }
+        entry.active = entry.active.saturating_add(1);
+        entry.generation = entry.generation.wrapping_add(1);
+        let baseline = if entry.active == 1 { entry.baseline.clone() } else { None };
+        if entry.active > 1 {
+            // Two branches cannot both extend the same server-side response.
+            entry.baseline = None;
+        }
+        let generation = entry.generation;
+        drop(chains);
+        Some(Self { state, key, generation, baseline, completed: false })
+    }
+
+    fn stale_rejection(&mut self, zero_data_retention: bool) {
+        let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = chains.get_mut(&self.key)
+            && entry.generation == self.generation
+        {
+            entry.baseline = None;
+            entry.stale_failures = entry.stale_failures.saturating_add(1);
+            if zero_data_retention || entry.stale_failures >= CHAIN_STALE_FAILURE_LIMIT {
+                entry.disabled = true;
+            }
+        }
+        self.baseline = None;
+    }
+
+    fn complete(&mut self, request: Value, output: &AssistantMessage, model: &Model, chained: bool) {
+        let response_items =
+            native_history(output, model).and_then(|items| items.into_iter().collect::<Option<Vec<_>>>());
+        let baseline = output.response_id.as_ref().filter(|id| !id.is_empty()).and_then(|id| {
+            let items = response_items.filter(|items| !items.is_empty())?;
+            let bytes = serde_json::to_vec(&request).ok()?.len();
+            if bytes > MAX_CHAIN_BASELINE_BYTES {
+                return None;
+            }
+            Some(Arc::new(ChainBaseline { request, response_items: items, response_id: id.clone() }))
+        });
+        let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = chains.get_mut(&self.key)
+            && entry.generation == self.generation
+            && entry.active == 1
+        {
+            entry.baseline = if entry.disabled { None } else { baseline };
+            if chained && entry.baseline.is_some() {
+                entry.stale_failures = 0;
+            }
+            self.completed = true;
+        }
+    }
+}
+
+impl Drop for ChainLease {
+    fn drop(&mut self) {
+        let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = chains.get_mut(&self.key) {
+            entry.active = entry.active.saturating_sub(1);
+            if !self.completed && entry.generation == self.generation {
+                entry.baseline = None;
+            }
+        }
+    }
+}
+
+fn chain_key(model: &Model, options: &StreamOptions) -> String {
+    let routing = serde_json::to_vec(&(&options.api_key, &options.extra_headers)).unwrap_or_default();
+    let digest = ring::digest::digest(&ring::digest::SHA256, &routing);
+    let routing_hash = digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    format!("{}\0{}\0{}\0{routing_hash}", model.provider, model.base_url.trim_end_matches('/'), model.id)
+}
+
+fn comparable_chain_item(item: &Value) -> Value {
+    let mut item = item.clone();
+    if let Some(object) = item.as_object_mut() {
+        object.remove("status");
+        if matches!(object.get("type").and_then(Value::as_str), Some("message" | "function_call")) {
+            object.remove("id");
+        }
+    }
+    item
+}
+
+fn chain_delta(baseline: &ChainBaseline, current: &Value) -> Option<Vec<Value>> {
+    let mut previous_controls = baseline.request.clone();
+    previous_controls.as_object_mut()?.remove("input");
+    let mut current_controls = current.clone();
+    current_controls.as_object_mut()?.remove("input");
+    if previous_controls != current_controls {
+        return None;
+    }
+    let previous = baseline.request.get("input")?.as_array()?;
+    let now = current.get("input")?.as_array()?;
+    let prefix_len = previous.len().checked_add(baseline.response_items.len())?;
+    if now.len() <= prefix_len {
+        return None;
+    }
+    for (actual, expected) in now.iter().take(prefix_len).zip(previous.iter().chain(&baseline.response_items)) {
+        if comparable_chain_item(actual) != comparable_chain_item(expected) {
+            return None;
+        }
+    }
+    Some(now[prefix_len..].to_vec())
+}
+
+fn stale_previous_response(error: &ProviderError) -> Option<bool> {
+    let ProviderError::Http { detail, .. } = error else { return None };
+    let lower = detail.to_ascii_lowercase();
+    if (lower.contains("previous_response") || lower.contains("previous response"))
+        && (lower.contains("zero data retention") || lower.contains("zero-data-retention"))
+    {
+        return Some(true);
+    }
+    // OMP also treats a linked invalid_prompt / blocked request as a stale
+    // server-side baseline, even when the message omits previous_response_id.
+    if lower.contains("invalid_prompt") || lower.contains("request blocked") {
+        return Some(false);
+    }
+    if !(lower.contains("previous_response") || lower.contains("previous response")) {
+        return None;
+    }
+    if ["not found", "invalid", "expired", "stale", "unsupported"].iter().any(|text| lower.contains(text)) {
+        return Some(false);
+    }
+    None
 }
 
 impl ProviderSessionState {
@@ -872,6 +1031,9 @@ pub struct StreamOptions {
     pub retry: RetryPolicy,
     /// Shared only by calls in the same host session; never persisted.
     pub session_state: Option<Arc<ProviderSessionState>>,
+    /// Explicitly allow server-side Responses storage and delta chaining.
+    /// The default leaves third-party endpoints on the stateless `store:false` route.
+    pub stateful_responses: bool,
 }
 
 impl Default for StreamOptions {
@@ -885,6 +1047,7 @@ impl Default for StreamOptions {
             extra_headers: Vec::new(),
             retry: RetryPolicy::default(),
             session_state: None,
+            stateful_responses: false,
         }
     }
 }
@@ -941,6 +1104,24 @@ fn stream_once(
     crate::replay_safe_retry::AttemptStream { events, error }
 }
 
+async fn post_until_first_event(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(String, String)],
+    body: &Value,
+    options: &StreamOptions,
+    first_deadline: Option<Instant>,
+    retry_blocked: &mut bool,
+) -> Result<reqwest::Response, ProviderError> {
+    match first_deadline {
+        Some(deadline) => tokio::select! {
+            result = post_with_retry(client, url, headers, body, &options.retry, &options.cancel, retry_blocked) => result,
+            _ = tokio::time::sleep_until(deadline.into()) => Err(ProviderError::Timeout("Responses stream timed out before its first event".into())),
+        },
+        None => post_with_retry(client, url, headers, body, &options.retry, &options.cancel, retry_blocked).await,
+    }
+}
+
 async fn run(
     client: &reqwest::Client,
     model: &Model,
@@ -962,7 +1143,25 @@ async fn run(
     if let Some(session_state) = &options.session_state {
         request.native_history_replay = Some(session_state.is_warmed(&model.provider));
     }
-    let body = build_request(model, context, &request)?;
+    let mut body = build_request(model, context, &request)?;
+    let mut chain = if options.stateful_responses {
+        options.session_state.as_ref().and_then(|state| ChainLease::begin(state.clone(), chain_key(model, options)))
+    } else {
+        None
+    };
+    let mut complete_body = None;
+    let mut sent_previous = false;
+    if let Some(lease) = &chain {
+        body["store"] = json!(true);
+        complete_body = Some(body.clone());
+        if let Some(baseline) = &lease.baseline
+            && let Some(delta) = chain_delta(baseline, &body)
+        {
+            body["input"] = json!(delta);
+            body["previous_response_id"] = json!(baseline.response_id);
+            sent_previous = true;
+        }
+    }
     let mut headers = Vec::new();
     if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
         headers.push(("Authorization".to_owned(), format!("Bearer {key}")));
@@ -970,13 +1169,22 @@ async fn run(
     headers.extend(options.extra_headers.iter().cloned());
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|duration| started + duration);
-    let response = match first_deadline {
-        Some(deadline) => tokio::select! {
-            result = post_with_retry(client, &url, &headers, &body, &options.retry, &options.cancel, retry_blocked) => result?,
-            _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Responses stream timed out before its first event".into())),
-        },
-        None => post_with_retry(client, &url, &headers, &body, &options.retry, &options.cancel, retry_blocked).await?,
-    };
+    let mut posted =
+        post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
+    if sent_previous && let Some(zero_data_retention) = posted.as_ref().err().and_then(stale_previous_response) {
+        // Only an explicit chain rejection before Start may replay the full
+        // request. A stream error or unknown tool effect never enters here.
+        if let Some(lease) = &mut chain {
+            lease.stale_rejection(zero_data_retention);
+        }
+        body = complete_body.as_ref().expect("stateful full request").clone();
+        if zero_data_retention {
+            body["store"] = json!(false);
+        }
+        sent_previous = false;
+        posted = post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
+    }
+    let response = posted?;
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &options.cancel).await {
         return Err(ProviderError::Aborted);
     }
@@ -1044,6 +1252,14 @@ async fn run(
                 }
             }
             if state.terminal {
+                if let Some(lease) = &mut chain {
+                    lease.complete(
+                        complete_body.take().expect("stateful full request"),
+                        &state.output,
+                        model,
+                        sent_previous,
+                    );
+                }
                 return Ok(());
             }
         }
