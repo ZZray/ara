@@ -151,6 +151,68 @@ async fn eof_after_tool_start_never_reissues_the_request_or_succeeds() {
 }
 
 #[tokio::test]
+async fn reasoning_boundary_before_disconnect_is_not_retried() {
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}},
+            {"data":{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"plan"}},
+            {"data":{"type":"response.reasoning_summary_part.done","output_index":0,"summary_index":0}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"wrong retry"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let mut opts = options();
+    opts.retry.max_attempts = 2;
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), Context::default(), opts))
+            .await;
+    assert_eq!(output.stop_reason, StopReason::Error);
+    assert_eq!(server.served(), 1);
+    assert!(output.provider_payload.is_none());
+}
+
+#[tokio::test]
+async fn empty_reasoning_start_can_retry_a_disconnected_stream() {
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[{"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}}]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"recovered"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let mut opts = options();
+    opts.retry.max_attempts = 2;
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), Context::default(), opts))
+            .await;
+    assert_eq!(output.text(), "recovered");
+    assert_eq!(server.served(), 2);
+}
+
+#[tokio::test]
+async fn completed_reasoning_text_before_disconnect_is_not_retried() {
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}},
+            {"data":{"type":"response.reasoning_summary_text.done","output_index":0,"summary_index":0,"text":"plan"}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"wrong retry"}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]}
+    ]})), None).await.unwrap();
+    let mut opts = options();
+    opts.retry.max_attempts = 2;
+    let (_, output) =
+        collect(openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), Context::default(), opts))
+            .await;
+    assert_eq!(output.stop_reason, StopReason::Error);
+    assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
 async fn unknown_events_do_not_extend_the_idle_deadline() {
     let server = FakeUpstream::start(script(json!({"responses":[{"events":[
         {"data":{"type":"response.created","response":{"id":"resp_idle"}}},

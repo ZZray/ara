@@ -6,14 +6,16 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
 //! This module is a request encoder only. Stream decoding, host selection and
-//! native reasoning item replay are separate delivery steps.
+//! native reasoning item replay is limited to same-model stateless history.
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
 use crate::responses_sse::ResponsesSseDecoder;
-use crate::responses_stream::ResponsesStreamState;
+use crate::responses_stream::{ResponsesStreamState, responses_endpoint_fingerprint};
 use crate::transform::{ToolCallOriginScope, responses_call_component, transform_messages};
-use crate::types::{AssistantBlock, Context, Message, Model, ToolChoice, UserBlock, UserContent};
+use crate::types::{
+    AssistantBlock, AssistantMessage, Context, Message, Model, StopReason, ToolChoice, UserBlock, UserContent,
+};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -128,6 +130,89 @@ fn unique_call_id(base: String, used: &mut HashSet<String>) -> String {
     }
 }
 
+fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
+    message.api == API
+        && message.provider == model.provider
+        && message.model == model.id
+        && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse)
+}
+
+fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Value>> {
+    if !same_responses_origin(message, model)
+        || !message.content.iter().any(|block| {
+            matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                || matches!(block, AssistantBlock::ToolCall(_))
+        })
+    {
+        return None;
+    }
+    let payload = message.provider_payload.as_ref()?;
+    if payload.get("type")?.as_str()? != "openaiResponsesHistory"
+        || payload.get("provider")?.as_str()? != model.provider
+        || payload.get("endpointSha256")?.as_str()? != responses_endpoint_fingerprint(&model.base_url)
+    {
+        return None;
+    }
+    let items = payload.get("items")?.as_array()?;
+    if items.len() != message.content.len() || items.len() > 1024 {
+        return None;
+    }
+    let mut sanitized = Vec::with_capacity(items.len());
+    for (item, block) in items.iter().zip(&message.content) {
+        let wire = match (item.get("type")?.as_str()?, block) {
+            ("reasoning", AssistantBlock::Thinking(thinking)) => {
+                if serde_json::from_str::<Value>(thinking.thinking_signature.as_ref()?).ok()? != *item {
+                    return None;
+                }
+                let mut wire = json!({"type": "reasoning"});
+                for field in ["summary", "content", "encrypted_content"] {
+                    if let Some(value) = item.get(field) {
+                        let valid = if field == "encrypted_content" {
+                            value.is_string() || value.is_null()
+                        } else {
+                            value.is_array()
+                        };
+                        if !valid {
+                            return None;
+                        }
+                        wire[field] = value.clone();
+                    }
+                }
+                wire
+            }
+            ("message", AssistantBlock::Text(text)) => {
+                let parts = item.get("content")?.as_array()?;
+                let native_text = parts
+                    .iter()
+                    .filter_map(|part| part.get("text").or_else(|| part.get("refusal")).and_then(Value::as_str))
+                    .collect::<String>();
+                if native_text != text.text {
+                    return None;
+                }
+                let mut wire = json!({"type": "message", "role": "assistant", "content": parts});
+                if let Some(phase) = item.get("phase").and_then(Value::as_str) {
+                    wire["phase"] = json!(phase);
+                }
+                wire
+            }
+            ("function_call", AssistantBlock::ToolCall(call)) => {
+                let id = item.get("call_id")?.as_str()?;
+                let args = item.get("arguments")?.as_str()?;
+                if id != responses_call_component(&call.id)
+                    || item.get("name")?.as_str()? != call.name
+                    || serde_json::from_str::<Value>(args).ok()? != json!(call.arguments)
+                {
+                    return None;
+                }
+                json!({"type": "function_call", "call_id": id, "name": call.name, "arguments": args})
+            }
+            _ => return None,
+        };
+        sanitized.push(wire);
+    }
+    Some(sanitized)
+}
+
 /// Build the outbound `/responses` body. No request or model state is retained.
 pub fn build_request(model: &Model, context: &Context, options: &RequestOptions) -> Result<Value, ProviderError> {
     if model.api != API {
@@ -157,6 +242,21 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 }
             }
             Message::Assistant(assistant) => {
+                if let Some(items) = native_history(assistant, model) {
+                    for (mut item, block) in items.into_iter().zip(&assistant.content) {
+                        if let AssistantBlock::ToolCall(call) = block {
+                            let base = call_id(&call.id, &assistant.api);
+                            let wire_id = unique_call_id(base, &mut used_call_ids);
+                            remapped
+                                .entry(scope.pairing_key(&call.id).to_owned())
+                                .or_default()
+                                .push_back(wire_id.clone());
+                            item["call_id"] = json!(wire_id);
+                        }
+                        input.push(item);
+                    }
+                    continue;
+                }
                 for block in &assistant.content {
                     match block {
                         AssistantBlock::Text(text) if !text.text.trim().is_empty() => input.push(json!({
@@ -199,6 +299,9 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
     }
 
     let mut body = json!({"model": model.id, "input": input, "stream": true, "store": false});
+    if model.reasoning {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
     let instructions =
         context.system_prompt.iter().filter(|prompt| !prompt.trim().is_empty()).cloned().collect::<Vec<_>>();
     if !instructions.is_empty() {
@@ -511,6 +614,65 @@ mod tests {
             json!({"type": "function_call", "call_id": "call_A", "name": "read", "arguments": "{\"path\":\"a.txt\"}"})
         );
         assert_eq!(input[2], json!({"type": "function_call_output", "call_id": "call_A", "output": "file contents"}));
+    }
+
+    #[test]
+    fn native_reasoning_replay_requires_matching_origin_and_unmodified_content() {
+        let endpoint = model();
+        let reasoning = json!({"type":"reasoning","id":"rs_1","encrypted_content":"opaque","status":"completed"});
+        let mut assistant = AssistantMessage::empty(API, "example", "example-model");
+        assistant.content = vec![
+            AssistantBlock::Thinking(crate::types::ThinkingContent {
+                thinking: "summary".into(),
+                thinking_signature: Some(reasoning.to_string()),
+            }),
+            AssistantBlock::text("hello"),
+        ];
+        assistant.provider_payload = Some(
+            json!({"type":"openaiResponsesHistory","provider":"example","endpointSha256":responses_endpoint_fingerprint(&endpoint.base_url),"items":[
+                reasoning, {"type":"message","phase":"commentary","content":[{"type":"output_text","text":"hello"}]}
+            ]}),
+        );
+        let input_for = |message: AssistantMessage, endpoint: &Model| {
+            build_request(
+                endpoint,
+                &Context { messages: vec![Message::Assistant(message)], ..Context::default() },
+                &RequestOptions::default(),
+            )
+            .unwrap()["input"]
+                .as_array()
+                .unwrap()
+                .clone()
+        };
+        let input = input_for(assistant.clone(), &endpoint);
+        assert_eq!(input[0]["encrypted_content"], "opaque");
+        assert!(input[0].get("status").is_none());
+        assert_eq!(input[1]["phase"], "commentary");
+        let mut changed = assistant.clone();
+        changed.content[1] = AssistantBlock::text("edited");
+        let changed_input = input_for(changed, &endpoint);
+        assert!(changed_input.iter().all(|item| item["type"] != "reasoning"));
+        let mut failed = assistant.clone();
+        failed.stop_reason = StopReason::Error;
+        assert!(input_for(failed, &endpoint).iter().all(|item| item["type"] != "reasoning"));
+        let mut foreign = endpoint.clone();
+        foreign.provider = "other".into();
+        assert!(input_for(assistant.clone(), &foreign).iter().all(|item| item["type"] != "reasoning"));
+        let mut moved = endpoint.clone();
+        moved.base_url = "https://different.invalid/v1".into();
+        assert!(input_for(assistant.clone(), &moved).iter().all(|item| item["type"] != "reasoning"));
+        let mut malformed = assistant.clone();
+        malformed.provider_payload.as_mut().unwrap()["items"][0]["encrypted_content"] = json!({"bad":"shape"});
+        assert!(input_for(malformed, &endpoint).iter().all(|item| item["type"] != "reasoning"));
+        let mut tampered = assistant;
+        if let AssistantBlock::Thinking(thinking) = &mut tampered.content[0] {
+            thinking.thinking_signature = Some("{\"type\":\"reasoning\",\"encrypted_content\":\"different\"}".into());
+        }
+        assert!(input_for(tampered, &endpoint).iter().all(|item| item["type"] != "reasoning"));
+        let mut reasoning_model = endpoint;
+        reasoning_model.reasoning = true;
+        let body = build_request(&reasoning_model, &Context::default(), &RequestOptions::default()).unwrap();
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
     }
 
     #[test]

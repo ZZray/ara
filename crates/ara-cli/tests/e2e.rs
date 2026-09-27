@@ -201,6 +201,69 @@ async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
 }
 
 #[tokio::test]
+async fn responses_reasoning_history_survives_tool_turn_and_restart_without_json_disclosure() {
+    let env = Env::new();
+    let secret = "opaque-reasoning-e2e-marker";
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "reasoning", "id": "rs_1"}}},
+            {"data": {"type": "response.reasoning_summary_text.delta", "output_index": 0, "summary_index": 0, "delta": "Need a file"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "Need a file"}], "encrypted_content": secret}}},
+            {"data": {"type": "response.output_item.done", "output_index": 1, "item": {"type": "message", "id": "msg_phase", "phase": "commentary", "content": [{"type": "output_text", "text": "Writing it."}]}}},
+            {"data": {"type": "response.output_item.added", "output_index": 2, "item": {"type": "function_call", "id": "fc_reason", "call_id": "call_reason", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.done", "output_index": 2, "arguments": "{\"path\":\"reason.txt\",\"content\":\"ok\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 2, "item": {"type": "function_call", "id": "fc_reason", "call_id": "call_reason", "name": "write", "arguments": "{}"}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_final", "content": [{"type": "output_text", "text": "File ready."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_resume", "content": [{"type": "output_text", "text": "Continued."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &["--mode", "json", "--api", "openai-responses", "--reasoning", "--tools", "write", "Create reason.txt"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert!(!stdout.contains(secret) && !stdout.contains("providerPayload") && !stdout.contains("thinkingSignature"));
+    assert_eq!(std::fs::read_to_string(env.work.path().join("reason.txt")).unwrap(), "ok");
+    let session = env.session_files();
+    let entries = journal(&session[0]);
+    let reasoning_turn = entries
+        .iter()
+        .find(|entry| entry["message"]["providerPayload"]["items"].as_array().is_some_and(|items| items.len() == 3))
+        .unwrap();
+    assert_eq!(reasoning_turn["message"]["content"][0]["thinking"], "Need a file");
+    assert_eq!(reasoning_turn["message"]["providerPayload"]["items"][0]["encrypted_content"], secret);
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--reasoning", "--resume", session[0].to_str().unwrap(), "Continue"],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request["body"]["include"], json!(["reasoning.encrypted_content"]));
+    }
+    for index in [1, 2] {
+        let input = requests[index]["body"]["input"].as_array().unwrap();
+        let pos =
+            input.iter().position(|item| item["type"] == "reasoning" && item["encrypted_content"] == secret).unwrap();
+        assert_eq!(input[pos + 1]["phase"], "commentary");
+        assert_eq!(input[pos + 2]["call_id"], "call_reason");
+        assert_eq!(input[pos + 3]["type"], "function_call_output");
+        assert_eq!(input[pos + 3]["call_id"], "call_reason");
+    }
+}
+
+#[tokio::test]
 async fn responses_identifierless_parallel_calls_write_distinct_files() {
     let env = Env::new();
     let up = upstream(json!({"responses": [

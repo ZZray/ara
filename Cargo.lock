@@ -104,6 +104,7 @@ dependencies = [
  "httpdate",
  "regex",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "thiserror",

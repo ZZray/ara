@@ -128,6 +128,10 @@ struct Args {
     max_model_calls: Option<usize>,
     #[arg(long)]
     max_tokens: Option<u64>,
+    /// Confirm that the selected Responses model supports reasoning items.
+    /// Requests encrypted reasoning for same-endpoint continuation.
+    #[arg(long)]
+    reasoning: bool,
     #[arg(long)]
     temperature: Option<f64>,
     /// Replace the default system prompt (text, or a file path). Without it,
@@ -315,6 +319,9 @@ struct Route {
 
 /// Validate every argument that does not need the journal (no I/O side effects).
 fn resolve_route(args: &Args) -> Result<Route> {
+    if args.reasoning && args.api != Api::OpenaiResponses {
+        bail!("--reasoning requires --api openai-responses");
+    }
     if args.api == Api::OpenaiResponses && args.report_request_text_tokens {
         bail!("--report-request-text-tokens is not yet supported with --api openai-responses");
     }
@@ -370,7 +377,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
             api: args.api.as_str().into(),
             provider,
             base_url,
-            reasoning: false,
+            reasoning: args.reasoning,
             max_tokens: None,
             tokenizer,
         },

@@ -205,6 +205,10 @@ pub struct AssistantMessage {
     pub response_id: Option<String>,
     #[serde(rename = "upstreamProvider", default, skip_serializing_if = "Option::is_none")]
     pub upstream_provider: Option<String>,
+    /// Opaque provider-native history for same-provider continuation. Hosts
+    /// persist this with the message, but must not print it in client events.
+    #[serde(rename = "providerPayload", default, skip_serializing_if = "Option::is_none")]
+    pub provider_payload: Option<Value>,
     pub usage: Usage,
     #[serde(rename = "stopReason")]
     pub stop_reason: StopReason,
@@ -232,6 +236,7 @@ impl AssistantMessage {
             model: model.to_string(),
             response_id: None,
             upstream_provider: None,
+            provider_payload: None,
             usage: Usage::unknown(),
             stop_reason: StopReason::Stop,
             stop_details: None,

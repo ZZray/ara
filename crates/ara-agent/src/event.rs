@@ -34,6 +34,33 @@ fn output_json(o: &ToolOutput) -> Value {
     v
 }
 
+fn public_event(mut value: Value) -> Value {
+    fn strip(message: &mut Value) {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            return;
+        }
+        if let Some(fields) = message.as_object_mut() {
+            fields.remove("providerPayload");
+        }
+        if let Some(blocks) = message.get_mut("content").and_then(Value::as_array_mut) {
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) == Some("thinking")
+                    && let Some(fields) = block.as_object_mut()
+                {
+                    fields.remove("thinkingSignature");
+                }
+            }
+        }
+    }
+    if let Some(messages) = value.get_mut("messages").and_then(Value::as_array_mut) {
+        messages.iter_mut().for_each(strip);
+    }
+    if let Some(message) = value.get_mut("message") {
+        strip(message);
+    }
+    value
+}
+
 impl AgentEvent {
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -56,12 +83,12 @@ impl AgentEvent {
         let t = self.type_name();
         match self {
             AgentEvent::AgentStart | AgentEvent::TurnStart => json!({"type": t}),
-            AgentEvent::AgentEnd { messages } => json!({"type": t, "messages": messages}),
+            AgentEvent::AgentEnd { messages } => public_event(json!({"type": t, "messages": messages})),
             AgentEvent::TurnEnd { message, tool_results } => {
-                json!({"type": t, "message": message, "toolResults": tool_results})
+                public_event(json!({"type": t, "message": message, "toolResults": tool_results}))
             }
             AgentEvent::MessageStart { message } | AgentEvent::MessageEnd { message } => {
-                json!({"type": t, "message": message})
+                public_event(json!({"type": t, "message": message}))
             }
             AgentEvent::MessageUpdate { event, .. } => json!({"type": t, "assistantMessageEvent": event.printable()}),
             AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
@@ -103,5 +130,24 @@ pub struct RecordingSink {
 impl AgentEventSink for RecordingSink {
     async fn emit(&self, event: AgentEvent) {
         self.events.lock().await.push(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_projection_hides_only_assistant_replay_data() {
+        let event = public_event(json!({
+            "message": {"role":"assistant", "providerPayload":{"items":["opaque"]},
+                "content":[{"type":"thinking","thinking":"summary","thinkingSignature":"opaque"},
+                    {"type":"toolCall","arguments":{"providerPayload":"business value"}}]},
+            "toolResults":[{"details":{"providerPayload":"tool detail"}}]
+        }));
+        assert!(event["message"].get("providerPayload").is_none());
+        assert!(event["message"]["content"][0].get("thinkingSignature").is_none());
+        assert_eq!(event["message"]["content"][1]["arguments"]["providerPayload"], "business value");
+        assert_eq!(event["toolResults"][0]["details"]["providerPayload"], "tool detail");
     }
 }

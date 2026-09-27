@@ -7,14 +7,20 @@
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
 use crate::json::{JsonPrefixState, classify_json_prefix, parse_final_arguments, parse_streaming_json};
-use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ToolCall};
+use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+pub(crate) fn responses_endpoint_fingerprint(base_url: &str) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, base_url.trim_end_matches('/').as_bytes());
+    digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ItemKind {
     Text,
     Function,
+    Reasoning,
 }
 
 struct OpenItem {
@@ -26,6 +32,9 @@ struct OpenItem {
     argument_bytes: String,
     final_arguments: Option<String>,
     identifierless_arguments_done: bool,
+    summary_parts: Vec<String>,
+    summary_parts_done: HashSet<usize>,
+    raw_reasoning: String,
 }
 
 struct CompletedIdentifierless {
@@ -38,6 +47,7 @@ struct CompletedIdentifierless {
 
 pub(crate) struct ResponsesStreamState {
     pub(crate) output: AssistantMessage,
+    endpoint_fingerprint: String,
     open: HashMap<usize, OpenItem>,
     by_index: HashMap<u64, usize>,
     by_id: HashMap<String, usize>,
@@ -48,6 +58,9 @@ pub(crate) struct ResponsesStreamState {
     done_indices: HashSet<u64>,
     done_ids: HashSet<String>,
     completed_tool_args: Vec<bool>,
+    native_items: BTreeMap<u64, Value>,
+    native_bytes: usize,
+    native_over_limit: bool,
     next_key: usize,
     identifierless_delta_target: Option<usize>,
     identifierless_scan_work: usize,
@@ -59,6 +72,7 @@ impl ResponsesStreamState {
     pub(crate) fn new(model: &Model) -> Self {
         Self {
             output: AssistantMessage::empty(&model.api, &model.provider, &model.id),
+            endpoint_fingerprint: responses_endpoint_fingerprint(&model.base_url),
             open: HashMap::new(),
             by_index: HashMap::new(),
             by_id: HashMap::new(),
@@ -69,6 +83,9 @@ impl ResponsesStreamState {
             done_indices: HashSet::new(),
             done_ids: HashSet::new(),
             completed_tool_args: Vec::new(),
+            native_items: BTreeMap::new(),
+            native_bytes: 0,
+            native_over_limit: false,
             next_key: 0,
             identifierless_delta_target: None,
             identifierless_scan_work: 0,
@@ -203,6 +220,13 @@ impl ResponsesStreamState {
                 }));
                 events.push(AssistantMessageEvent::ToolcallStart { content_index, partial: self.output.clone() });
             }
+            ItemKind::Reasoning => {
+                self.output.content.push(AssistantBlock::Thinking(ThinkingContent {
+                    thinking: String::new(),
+                    thinking_signature: None,
+                }));
+                events.push(AssistantMessageEvent::ThinkingStart { content_index, partial: self.output.clone() });
+            }
         }
         if let Some(index) = index {
             self.by_index.insert(index, key);
@@ -226,6 +250,9 @@ impl ResponsesStreamState {
                 argument_bytes: item.get("arguments").and_then(Value::as_str).unwrap_or("").to_owned(),
                 final_arguments: None,
                 identifierless_arguments_done: false,
+                summary_parts: Vec::new(),
+                summary_parts_done: HashSet::new(),
+                raw_reasoning: String::new(),
             },
         );
         Ok(key)
@@ -302,9 +329,21 @@ impl ResponsesStreamState {
         let kind = match item.get("type").and_then(Value::as_str) {
             Some("message") => ItemKind::Text,
             Some("function_call") => ItemKind::Function,
-            Some("reasoning") => return Ok(()),
+            Some("reasoning") => ItemKind::Reasoning,
             _ => return Err(ProviderError::Stream("Unsupported Responses output item".into())),
         };
+        if !self.native_over_limit {
+            self.native_bytes = self.native_bytes.saturating_add(item.to_string().len());
+            if self.native_bytes > 32 * 1024 * 1024 {
+                self.native_over_limit = true;
+                self.native_items.clear();
+                for block in &mut self.output.content {
+                    if let AssistantBlock::Thinking(thinking) = block {
+                        thinking.thinking_signature = None;
+                    }
+                }
+            }
+        }
         // Done items use exact IDs/call IDs. The `fc_<call_id>` alias is only
         // for argument deltas: it can equal a sibling's real call_id.
         let call_id = item.get("call_id").and_then(Value::as_str);
@@ -417,6 +456,60 @@ impl ResponsesStreamState {
                     partial: self.output.clone(),
                 });
             }
+            ItemKind::Reasoning => {
+                let summary = item
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|part| part.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    })
+                    .unwrap_or_default();
+                let raw = item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<String>()
+                    })
+                    .unwrap_or_default();
+                let streamed = match &self.output.content[content_index] {
+                    AssistantBlock::Thinking(block) => block.thinking.clone(),
+                    _ => return Err(ProviderError::Stream("Responses reasoning block changed".into())),
+                };
+                let thinking = if !summary.is_empty() {
+                    summary
+                } else if !raw.is_empty() {
+                    raw
+                } else if !streamed.is_empty() {
+                    streamed
+                } else {
+                    open.raw_reasoning.clone()
+                };
+                if let AssistantBlock::Thinking(block) = &mut self.output.content[content_index] {
+                    block.thinking = thinking.clone();
+                    block.thinking_signature = (!self.native_over_limit).then(|| item.to_string());
+                }
+                events.push(AssistantMessageEvent::ThinkingEnd {
+                    content_index,
+                    content: thinking,
+                    partial: self.output.clone(),
+                });
+            }
+        }
+        let native_index = index.or(open.output_index).unwrap_or(content_index as u64);
+        let mut native = item.clone();
+        if kind == ItemKind::Function
+            && let AssistantBlock::ToolCall(call) = &self.output.content[content_index]
+        {
+            native["arguments"] = json!(
+                serde_json::to_string(&call.arguments).map_err(|error| ProviderError::Stream(error.to_string()))?
+            );
+        }
+        if !self.native_over_limit {
+            self.native_items.insert(native_index, native);
         }
         if let Some(index) = index {
             self.done_indices.insert(index);
@@ -452,7 +545,9 @@ impl ResponsesStreamState {
                     Some("function_call") => {
                         self.add(ItemKind::Function, event, item, &mut events)?;
                     }
-                    Some("reasoning") => {}
+                    Some("reasoning") => {
+                        self.add(ItemKind::Reasoning, event, item, &mut events)?;
+                    }
                     _ => {
                         self.replay_unsafe_wire_event = true;
                         return Err(ProviderError::Stream("Unsupported Responses output item".into()));
@@ -478,6 +573,84 @@ impl ResponsesStreamState {
                         delta: delta.to_owned(),
                         partial: self.output.clone(),
                     });
+                }
+            }
+            "response.reasoning_summary_part.added"
+            | "response.reasoning_summary_part.done"
+            | "response.reasoning_summary_text.delta"
+            | "response.reasoning_summary_text.done"
+            | "response.reasoning_text.delta" => {
+                if let Some(key) = self.lookup(event, false)? {
+                    let open = self.open.get_mut(&key).expect("indexed item exists");
+                    if open.kind != ItemKind::Reasoning {
+                        return Err(ProviderError::Stream(
+                            "Responses reasoning event routed to non-reasoning item".into(),
+                        ));
+                    }
+                    let index = open.content_index;
+                    let part = event.get("summary_index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                    if part > 1024 {
+                        return Err(ProviderError::Stream("Responses reasoning has too many summary parts".into()));
+                    }
+                    if open.summary_parts.len() <= part {
+                        open.summary_parts.resize(part + 1, String::new());
+                    }
+                    let delta = event.get("delta").and_then(Value::as_str).unwrap_or("");
+                    let final_text = event.get("text").and_then(Value::as_str);
+                    if kind == "response.reasoning_summary_part.done"
+                        || !delta.is_empty()
+                        || (kind == "response.reasoning_summary_text.done"
+                            && final_text.is_some_and(|text| !text.is_empty()))
+                    {
+                        self.replay_unsafe_wire_event = true;
+                    }
+                    match kind {
+                        "response.reasoning_summary_text.delta" => open.summary_parts[part].push_str(delta),
+                        "response.reasoning_summary_text.done" => {
+                            if let Some(text) = final_text {
+                                open.summary_parts[part] = text.to_owned();
+                            }
+                        }
+                        "response.reasoning_summary_part.done" => {
+                            if open.summary_parts_done.insert(part)
+                                && !open.summary_parts[part].is_empty()
+                                && !open.summary_parts.iter().skip(part + 1).any(|part| !part.is_empty())
+                            {
+                                if let AssistantBlock::Thinking(block) = &mut self.output.content[index] {
+                                    block.thinking.push_str("\n\n");
+                                }
+                                events.push(AssistantMessageEvent::ThinkingDelta {
+                                    content_index: index,
+                                    delta: "\n\n".into(),
+                                    partial: self.output.clone(),
+                                });
+                                return Ok(events);
+                            }
+                        }
+                        "response.reasoning_text.delta" => open.raw_reasoning.push_str(delta),
+                        _ => {}
+                    }
+                    let thinking = if open.summary_parts.iter().any(|part| !part.is_empty()) {
+                        open.summary_parts.join("\n\n")
+                    } else {
+                        open.raw_reasoning.clone()
+                    };
+                    let previous = match &self.output.content[index] {
+                        AssistantBlock::Thinking(block) => block.thinking.clone(),
+                        _ => return Err(ProviderError::Stream("Responses reasoning block changed".into())),
+                    };
+                    if previous != thinking
+                        && let Some(suffix) = thinking.strip_prefix(&previous)
+                    {
+                        if let AssistantBlock::Thinking(block) = &mut self.output.content[index] {
+                            block.thinking = thinking.clone();
+                        }
+                        events.push(AssistantMessageEvent::ThinkingDelta {
+                            content_index: index,
+                            delta: suffix.to_owned(),
+                            partial: self.output.clone(),
+                        });
+                    }
                 }
             }
             "response.function_call_arguments.delta" => {
@@ -595,6 +768,25 @@ impl ResponsesStreamState {
                             StopReason::ToolUse
                         } else {
                             StopReason::Stop
+                        };
+                        if !self.native_over_limit
+                            && self.native_items.len() == self.output.content.len()
+                            && self.output.content.iter().any(|block| {
+                                matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                                    || matches!(block, AssistantBlock::ToolCall(_))
+                            })
+                        {
+                            let items = self.native_items.values().cloned().collect::<Vec<_>>();
+                            let size = serde_json::to_vec(&items)
+                                .map_err(|error| ProviderError::Stream(error.to_string()))?
+                                .len();
+                            if size <= 32 * 1024 * 1024 {
+                                self.output.provider_payload = Some(json!({
+                                    "type": "openaiResponsesHistory", "provider": self.output.provider,
+                                    "endpointSha256": self.endpoint_fingerprint,
+                                    "items": items,
+                                }));
+                            }
                         }
                     }
                     "incomplete"
@@ -700,6 +892,124 @@ mod tests {
 
     fn types(events: &[AssistantMessageEvent]) -> Vec<&'static str> {
         events.iter().map(AssistantMessageEvent::type_name).collect()
+    }
+
+    #[test]
+    fn reasoning_parts_keep_output_order_and_terminal_native_items() {
+        let mut state = ResponsesStreamState::new(&model());
+        let mut emitted = Vec::new();
+        for frame in [
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}),
+            json!({"type":"response.output_item.added","output_index":1,"item":{"type":"reasoning"}}),
+            json!({"type":"response.reasoning_summary_text.delta","output_index":1,"summary_index":0,"delta":"second"}),
+            json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"first "}),
+            json!({"type":"response.reasoning_summary_text.done","output_index":0,"summary_index":0,"text":"first "}),
+            json!({"type":"response.output_item.done","output_index":1,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"second"}],"encrypted_content":"secret_2"}}),
+            json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"first "}],"encrypted_content":"secret_1"}}),
+            json!({"type":"response.output_item.done","output_index":2,"item":{"type":"message","phase":"final_answer","content":[{"type":"output_text","text":"answer"}]}}),
+            json!({"type":"response.completed","response":{"status":"completed"}}),
+        ] {
+            emitted.extend(state.handle(&frame).unwrap());
+        }
+        assert!(types(&emitted).contains(&"thinking_delta"));
+        assert_eq!(state.output.content.len(), 3);
+        assert!(
+            matches!(&state.output.content[0], AssistantBlock::Thinking(block) if block.thinking == "first " && block.thinking_signature.as_ref().unwrap().contains("secret_1"))
+        );
+        assert!(
+            matches!(&state.output.content[1], AssistantBlock::Thinking(block) if block.thinking == "second" && block.thinking_signature.as_ref().unwrap().contains("secret_2"))
+        );
+        let items = state.output.provider_payload.as_ref().unwrap()["items"].as_array().unwrap();
+        assert_eq!(items[0]["encrypted_content"], "secret_1");
+        assert_eq!(items[1]["encrypted_content"], "secret_2");
+        assert_eq!(items[2]["phase"], "final_answer");
+    }
+
+    #[test]
+    fn incomplete_and_hidden_only_turns_have_no_native_history() {
+        let mut hidden = ResponsesStreamState::new(&model());
+        hidden.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","encrypted_content":"secret"}})).unwrap();
+        hidden.handle(&json!({"type":"response.completed","response":{"status":"completed"}})).unwrap();
+        assert!(hidden.output.provider_payload.is_none());
+        let mut incomplete = ResponsesStreamState::new(&model());
+        incomplete.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","encrypted_content":"secret"}})).unwrap();
+        incomplete.handle(&json!({"type":"response.output_item.done","output_index":1,"item":{"type":"message","content":[{"type":"output_text","text":"partial"}]}})).unwrap();
+        incomplete.handle(&json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})).unwrap();
+        assert!(incomplete.output.provider_payload.is_none());
+        assert_eq!(incomplete.output.stop_reason, StopReason::Length);
+    }
+
+    #[test]
+    fn session_payload_fingerprints_endpoint_without_persisting_url_credentials() {
+        let mut endpoint = model();
+        endpoint.base_url = "https://sample-user:sample-password@example.invalid/v1?route=private".into();
+        let mut state = ResponsesStreamState::new(&endpoint);
+        state.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"answer"}]}})).unwrap();
+        state.handle(&json!({"type":"response.completed","response":{"status":"completed"}})).unwrap();
+        let saved = serde_json::to_string(&state.output).unwrap();
+        assert!(!saved.contains("sample-password") && !saved.contains("route=private"));
+        assert_eq!(state.output.provider_payload.as_ref().unwrap()["endpointSha256"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn revised_reasoning_summary_does_not_emit_a_duplicate_delta() {
+        let mut state = ResponsesStreamState::new(&model());
+        state
+            .handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}))
+            .unwrap();
+        let first = state.handle(&json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"abc"})).unwrap();
+        assert!(matches!(&first[0], AssistantMessageEvent::ThinkingDelta { delta, .. } if delta == "abc"));
+        let revision = state
+            .handle(
+                &json!({"type":"response.reasoning_summary_text.done","output_index":0,"summary_index":0,"text":"abX"}),
+            )
+            .unwrap();
+        assert!(revision.is_empty());
+        assert!(matches!(&state.output.content[0], AssistantBlock::Thinking(block) if block.thinking == "abc"));
+        let final_events = state.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"abX"}]}})).unwrap();
+        assert!(matches!(&final_events[0], AssistantMessageEvent::ThinkingEnd { content, .. } if content == "abX"));
+    }
+
+    #[test]
+    fn reasoning_summary_parts_emit_one_separator() {
+        let mut state = ResponsesStreamState::new(&model());
+        let mut deltas = String::new();
+        for frame in [
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}),
+            json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"Plan"}),
+            json!({"type":"response.reasoning_summary_part.done","output_index":0,"summary_index":0}),
+            json!({"type":"response.reasoning_summary_part.added","output_index":0,"summary_index":1}),
+            json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":1,"delta":"Details"}),
+        ] {
+            for event in state.handle(&frame).unwrap() {
+                if let AssistantMessageEvent::ThinkingDelta { delta, .. } = event {
+                    deltas.push_str(&delta);
+                }
+            }
+        }
+        assert_eq!(deltas, "Plan\n\nDetails");
+        let final_events = state.handle(&json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"Plan"},{"type":"summary_text","text":"Details"}]}})).unwrap();
+        assert!(
+            matches!(&final_events[0], AssistantMessageEvent::ThinkingEnd { content, .. } if content == "Plan\n\nDetails")
+        );
+    }
+
+    #[test]
+    fn missing_final_reasoning_summary_keeps_streamed_part_boundary() {
+        let mut state = ResponsesStreamState::new(&model());
+        for frame in [
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}),
+            json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"Plan"}),
+            json!({"type":"response.reasoning_summary_part.done","output_index":0,"summary_index":0}),
+        ] {
+            state.handle(&frame).unwrap();
+        }
+        let end = state
+            .handle(
+                &json!({"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[]}}),
+            )
+            .unwrap();
+        assert!(matches!(&end[0], AssistantMessageEvent::ThinkingEnd { content, .. } if content == "Plan\n\n"));
     }
 
     #[test]
