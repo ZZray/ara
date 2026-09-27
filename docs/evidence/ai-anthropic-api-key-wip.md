@@ -2,7 +2,7 @@
 
 ## Scope and source
 
-Delivered WIP code: local commits d904ed7, da86da5 and 9d91223. Fixed OMP source:
+Delivered WIP code: local commits d904ed7, da86da5, 9d91223 and 26a2a2c. Fixed OMP source:
 packages/ai/src/providers/anthropic.ts at
 596f2da7101178214aa27a753529d15e6b7ad91d, especially buildParams
 (3886–4140), convertAnthropicMessages (4245–4550), stream envelope
@@ -100,6 +100,39 @@ requested a real-host negative case and a specific timeout assertion;
 both were added and passed. The reviewers did not run independent runtime
 tests. This WIP still lacks bounded real-model evidence and the full gate.
 
+## Stream envelope recovery follow-up (26a2a2c)
+
+Fixed OMP source: packages/ai/src/providers/anthropic.ts
+iterateAnthropicEvents (1483–1565) and message stream loop (2499–2915),
+with packages/ai/test/anthropic-stream-envelope.test.ts. ARA now skips
+unknown SSE events and malformed JSON in ordinary message frames, accepts
+raw ping keepalives, and reports an SSE event/body mismatch while using the
+body type. An in-stream `event:error` remains fatal and preserves its
+structured type and message. A duplicate `message_start` preserves the
+first response ID, usage and content. Closed text, tool and redacted-thinking
+indexes replayed after that splice are consumed without duplicating output
+or tool effects. Missing or mismatched block deltas are skipped. The first
+terminal stop reason and usage remain authoritative. An incomplete tool
+input or stream without a terminal signal still fails.
+
+| Check on 26a2a2c | Result and observed artifact |
+| --- | --- |
+| cargo test -p ara-ai --test anthropic_http --quiet | Exit 0 on committed code, 17/17. New cases preserve response ID `first`, input 3/output 7 and one `tool_once` call with `once.txt` despite replayed text/tool/redacted blocks and a later usage overwrite attempt. Mixed malformed, unknown and valid frames yield exactly `ok`; a malformed-only start is Error; structured `overloaded_error` is Error after the one replay-safe retry. |
+| cargo test -p ara-ai --quiet | Exit 0: 108 unit, 17 Anthropic HTTP, 48 Chat HTTP and 13 Responses HTTP. |
+| cargo test -p ara-cli --test e2e anthropic_ --quiet, Git Bash in PATH | Exit 0, 6/6 real-process Anthropic regressions. No actual Anthropic model was called. |
+| cargo clippy --workspace --all-targets --all-features -- -D warnings; cargo test --workspace --doc --quiet | Both exit 0. |
+| cargo deny check; python scripts/omp_inventory.py check | Both exit 0. Deny retains existing duplicate/license-field warnings. |
+| rustfmt --check on the two changed Rust files; git diff --check | Exit 0 before commit. Full cargo fmt --all -- --check exits 1 in unchanged vendored pi-* files. |
+| cargo test --workspace --all-targets --quiet, Git Bash in PATH | Exit 101: CLI e2e 33/34; only the known Windows `deadline_during_a_tool_and_zero_budget_exit_nonzero` elapsed <4s assertion fails. Transcript: `%TEMP%\ara-anthropic-envelope-wip-gate.log`. Full delivery gate remains red. |
+
+An independent Codex pre-implementation reviewer scoped provider and HTTP
+tests against the fixed OMP behavior. Independent diff review found that
+redacted thinking initially lacked a closed-index marker; the final code
+distinguishes it from ignored blocks, and the reviewer confirmed the
+regression is fixed with no further actionable finding. Reviewers did not
+run independent tests. ARA deliberately leaves OMP's partial-tool salvage
+for a separate Agent slice; no incomplete tool is made executable here.
+
 The focused HTTP negatives cover an incomplete tool JSON/EOF with no
 completed call, 401 with errorStatus, caller cancellation, and a missing
 message_stop after a valid stop_reason (best-effort Done). Forced tool
@@ -121,7 +154,8 @@ Still open: Anthropic strict tools and remaining generic schema postprocessing,
 model catalogue output limits (unknown models use a conservative 4096
 default rather than OMP's catalogue-derived ceiling), OAuth and beta
 features, cache controls, vendor dialects, server tools/fallback, complete
-signature/prefix rules and the remaining fixed OMP behavior inventory.
+signature/prefix rules, partial-tool salvage and the remaining fixed OMP
+behavior inventory.
 No bounded real-model task or full delivery audit passed. This row remains
 implementing (WIP); neither AI-ANTHROPIC nor P2 is accepted.
 
