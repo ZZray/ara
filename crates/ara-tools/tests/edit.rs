@@ -228,8 +228,13 @@ async fn tool_surface_and_read_edge_cases() {
     let raw = text(&run(&read, json!({"path": "a.py:raw"})).await);
     assert_eq!(raw, GREET.trim_end(), "raw reads carry no anchors");
     let range = text(&run(&read, json!({"path": "a.py:2-3"})).await);
-    assert!(range.starts_with(&format!("[a.py#{}]\n2:    msg", tag(r, "a.py"))), "{range}");
-    assert!(range.ends_with("[1 more lines in file. Use :4 to continue]"), "{range}");
+    assert_eq!(
+        range,
+        format!(
+            "[a.py#{}]\n1:def greet(name):\n2:    msg = \"Hello, \" + name\n3:    print(msg)\n4:greet(\"world\")",
+            tag(r, "a.py")
+        )
+    );
     let wide = format!("{}\n", "x".repeat(60 * 1024));
     std::fs::write(r.join("wide.txt"), &wide).unwrap();
     assert_eq!(
@@ -350,7 +355,7 @@ async fn hashline_write_notebooks_and_untaggable_reads() {
     std::fs::write(r.join("bin.txt"), bytes).unwrap();
     assert_eq!(
         text(&run(&read, json!({"path": "bin.txt:1-2"})).await),
-        "1|ok line\n2|ok line\n\n[1999 more lines in file. Use :3 to continue]"
+        "1|ok line\n2|ok line\n3|ok line\n4|ok line\n5|ok line\n\n[1996 more lines in file. Use :6 to continue]"
     );
 }
 

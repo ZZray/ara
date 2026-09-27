@@ -274,7 +274,7 @@ async fn read_skill_urls() {
     assert!(!body.contains("more lines in file"));
     assert_eq!(full.details.as_ref().unwrap()["resolvedPath"], json!(demo.file_path.display().to_string()));
 
-    assert_eq!(text(&r("skill://demo:-2").await.unwrap()), "body-line-3999\nbody-line-4000");
+    assert_eq!(text(&r("skill://demo:-2").await.unwrap()), "body-line-3998\nbody-line-3999\nbody-line-4000");
     assert_eq!(text(&r("skill://demo/scripts/hello.sh").await.unwrap()), "echo hello-from-skill");
     assert_eq!(text(&r("skill://demo/scripts/hello.sh:raw").await.unwrap()), "echo hello-from-skill\n");
     let mut numbered_ctx = read.ctx.clone();
@@ -283,7 +283,7 @@ async fn read_skill_urls() {
     let out = numbered.execute("c", args(json!({"path": "skill://demo:2-3"})), CancellationToken::new(), noop());
     assert_eq!(
         text(&out.await.unwrap()),
-        "2|name: demo\n3|description: demo skill.\n\n[4001 more lines in resource. Use :4 to continue]"
+        "1|---\n2|name: demo\n3|description: demo skill.\n4|---\n5|body-line-1\n6|body-line-2\n\n[3998 more lines in resource. Use :7 to continue]"
     );
 
     let err = |p: &'static str| async move { r(p).await.unwrap_err().0 };
@@ -295,6 +295,37 @@ async fn read_skill_urls() {
     std::fs::write(root.join("plain.txt"), &long_body).unwrap();
     let plain = text(&r("plain.txt").await.unwrap());
     assert!(plain.starts_with("[plain.txt#") && plain.contains("more lines in file"));
+}
+
+#[tokio::test]
+async fn read_skill_range_includes_context_but_raw_stays_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+    let references = demo.base_dir.join("references");
+    std::fs::create_dir_all(&references).unwrap();
+    for line in 1..=8 {
+        std::fs::write(references.join(format!("file-{line}.txt")), b"x").unwrap();
+    }
+    let mut ctx = ToolContext::new(&root).with_skills(vec![demo]);
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    let r = |path: &str| {
+        let read = &read;
+        let path = path.to_owned();
+        async move { read.execute("c", args(json!({"path":path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+    assert_eq!(
+        text(&r("skill://demo:6-6").await),
+        "5|one\n6|two\n7|three\n8|four\n9|five\n\n[2 more lines in resource. Use :10 to continue]"
+    );
+    let raw = text(&r("skill://demo:raw:6-6").await);
+    assert!(raw.starts_with("two\n\n[6 more lines in resource. Use :7 to continue]"), "{raw}");
+    assert!(!raw.contains("one") && !raw.contains("three"), "{raw}");
+    assert_eq!(
+        text(&r("skill://demo/references:4-4").await),
+        "3|file-3.txt\n4|file-4.txt\n5|file-5.txt\n6|file-6.txt\n7|file-7.txt\n\n[1 more lines in resource. Use :8 to continue]"
+    );
 }
 
 /// Fixed OMP resolves skill files as text resources and directory subpaths as

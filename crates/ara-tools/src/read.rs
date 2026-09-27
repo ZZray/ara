@@ -247,12 +247,14 @@ fn read_window<R: BufRead + Seek>(
         known_total = Some(count);
         reader.rewind().map_err(io)?;
     }
-    let (start, end) = match (&sel.range, known_total) {
+    let (requested_start, requested_end) = match (&sel.range, known_total) {
         (None, _) => (1usize, None),
         (Some(Range::Tail(n)), Some(total)) => (total.saturating_sub(*n) + 1, None),
         (Some(Range::Tail(_)), None) => unreachable!(),
         (Some(Range::From(s, e)), _) => (*s, *e),
     };
+    let mut start = if !sel.raw && requested_start > 1 { requested_start - 1 } else { requested_start };
+    let end = requested_end.map(|end| if sel.raw { end } else { end.saturating_add(3) });
 
     let mut out = String::new();
     let mut emitted = 0usize;
@@ -262,6 +264,7 @@ fn read_window<R: BufRead + Seek>(
     let mut buf = Vec::new();
     let mut scanned_after = 0u64;
     let mut reached_eof = false;
+    let mut requested_seen = false;
     loop {
         buf.clear();
         let k = reader.read_until(b'\n', &mut buf).map_err(io)?;
@@ -270,6 +273,9 @@ fn read_window<R: BufRead + Seek>(
             break;
         }
         line_no += 1;
+        if line_no == requested_start {
+            requested_seen = true;
+        }
         if line_no.is_multiple_of(4096) && cancel.is_cancelled() {
             return Err(aborted());
         }
@@ -292,6 +298,16 @@ fn read_window<R: BufRead + Seek>(
             Numbering::Hashline => format!("{line_no}:{line}"),
             Numbering::None => line.to_string(),
         };
+        if limits && line_no < requested_start && rendered.len() + 1 > DEFAULT_MAX_BYTES {
+            // Context must not consume the entire budget before the requested line.
+            start = requested_start;
+            continue;
+        }
+        if limits && line_no == requested_start && emitted > 0 && out.len() + rendered.len() + 1 > DEFAULT_MAX_BYTES {
+            out.clear();
+            emitted = 0;
+            start = requested_start;
+        }
         if limits && emitted >= DEFAULT_MAX_LINES {
             truncated_by = Some("lines");
             continue;
@@ -313,6 +329,24 @@ fn read_window<R: BufRead + Seek>(
         emitted += 1;
     }
     let total = if reached_eof { Some(line_no) } else { None };
+    if !requested_seen && requested_start > line_no {
+        let Some(total) = total else { return Err(format!("Cannot read {display}: scan budget exceeded")) };
+        let suggestion = if total == 0 {
+            if text_resource { "The resource is empty." } else { "The file is empty." }.to_string()
+        } else {
+            format!("Use :1 to read from the start, or :{total} to read the last line.")
+        };
+        return Ok(Window {
+            text: format!(
+                "Line {requested_start} is beyond end of {} ({total} lines total). {suggestion}",
+                if text_resource { "resource" } else { "file" }
+            ),
+            details: json!({"totalLines": total, "fileSize": size}),
+            emitted: 0,
+            start: requested_start,
+            oversized_first_line: None,
+        });
+    }
     if emitted == 0 {
         let Some(total) = total else { return Err(format!("Cannot read {display}: scan budget exceeded")) };
         if total == 0 && sel.range.is_none() {

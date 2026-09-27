@@ -43,9 +43,9 @@ async fn read_ranges_numbers_and_limits() {
         async move { read.execute("c", args(json!({"path": p})), CancellationToken::new(), noop()).await }
     };
     assert_eq!(text(&r("a.txt").await.unwrap()), "one\ntwo\nthree\nfour\nfive");
-    assert_eq!(text(&r("a.txt:2-3").await.unwrap()), "two\nthree\n\n[2 more lines in file. Use :4 to continue]");
-    assert_eq!(text(&r("a.txt:-2").await.unwrap()), "four\nfive");
-    assert_eq!(text(&r("a.txt:4+5").await.unwrap()), "four\nfive");
+    assert_eq!(text(&r("a.txt:2-3").await.unwrap()), "one\ntwo\nthree\nfour\nfive");
+    assert_eq!(text(&r("a.txt:-2").await.unwrap()), "three\nfour\nfive");
+    assert_eq!(text(&r("a.txt:4+5").await.unwrap()), "three\nfour\nfive");
     assert_eq!(
         text(&r("a.txt:9").await.unwrap()),
         "Line 9 is beyond end of file (5 lines total). Use :1 to read from the start, or :5 to read the last line."
@@ -57,7 +57,7 @@ async fn read_ranges_numbers_and_limits() {
     let numbered = read::ReadTool { ctx: numbered_ctx };
     let out =
         numbered.execute("c", args(json!({"path": "a.txt:2-3"})), CancellationToken::new(), noop()).await.unwrap();
-    assert!(text(&out).starts_with("2|two\n3|three"));
+    assert_eq!(text(&out), "1|one\n2|two\n3|three\n4|four\n5|five");
     let raw =
         numbered.execute("c", args(json!({"path": "a.txt:raw:2-2"})), CancellationToken::new(), noop()).await.unwrap();
     assert!(text(&raw).starts_with("two\n"), "raw drops line numbers");
@@ -72,6 +72,73 @@ async fn read_ranges_numbers_and_limits() {
     let out = r("wide.txt").await.unwrap();
     assert!(text(&out).len() <= DEFAULT_MAX_BYTES + 100);
     assert_eq!(out.details.unwrap()["truncation"]["truncatedBy"], json!("bytes"));
+}
+
+#[tokio::test]
+async fn read_explicit_range_context_keeps_requested_bounds_and_raw_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lines.txt"), (1..=12).map(|line| format!("line{line}\n")).collect::<String>())
+        .unwrap();
+    let mut ctx = plain(dir.path());
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    let r = |path: &str| {
+        let read = &read;
+        let path = path.to_owned();
+        async move { read.execute("c", args(json!({"path":path})), CancellationToken::new(), noop()).await.unwrap() }
+    };
+    assert_eq!(
+        text(&r("lines.txt:4-4").await),
+        "3|line3\n4|line4\n5|line5\n6|line6\n7|line7\n\n[5 more lines in file. Use :8 to continue]"
+    );
+    assert_eq!(
+        text(&r("lines.txt:1-1").await),
+        "1|line1\n2|line2\n3|line3\n4|line4\n\n[8 more lines in file. Use :5 to continue]"
+    );
+    assert_eq!(text(&r("lines.txt:10-10").await), "9|line9\n10|line10\n11|line11\n12|line12");
+    assert_eq!(text(&r("lines.txt:-2").await), "10|line10\n11|line11\n12|line12");
+    assert!(text(&r("lines.txt:4").await).starts_with("3|line3\n4|line4\n5|line5"));
+    assert_eq!(
+        text(&r("lines.txt:13").await),
+        "Line 13 is beyond end of file (12 lines total). Use :1 to read from the start, or :12 to read the last line."
+    );
+    let raw = text(&r("lines.txt:raw:4-4").await);
+    assert!(raw.starts_with("line4\n\n[8 more lines in file. Use :5 to continue]"), "{raw}");
+    assert!(!raw.contains("line3") && !raw.contains("line5"), "{raw}");
+
+    let hash_ctx = ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true);
+    let hash_read = read::ReadTool { ctx: hash_ctx };
+    let hash_out =
+        hash_read.execute("c", args(json!({"path":"lines.txt:4-4"})), CancellationToken::new(), noop()).await.unwrap();
+    let hash_text = text(&hash_out);
+    assert!(hash_text.starts_with("[lines.txt#") && hash_text.contains("\n3:line3\n4:line4\n5:line5"), "{hash_text}");
+    let key = pi_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
+    assert_eq!(
+        hash_read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
+        std::collections::BTreeSet::from([3, 4, 5, 6, 7])
+    );
+}
+
+#[tokio::test]
+async fn read_explicit_range_reaches_requested_line_when_leading_context_exhausts_byte_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = plain(dir.path());
+    ctx.line_numbers = true;
+    let read = read::ReadTool { ctx };
+    for (name, lead) in
+        [("oversized.txt", "x".repeat(DEFAULT_MAX_BYTES + 1)), ("nearly_full.txt", "x".repeat(DEFAULT_MAX_BYTES - 10))]
+    {
+        std::fs::write(dir.path().join(name), format!("{lead}\ntarget line\nnext line\n")).unwrap();
+        let out = read
+            .execute("c", args(json!({"path":format!("{name}:2-2")})), CancellationToken::new(), noop())
+            .await
+            .unwrap();
+        assert!(
+            text(&out).starts_with("2|target line\n3|next line"),
+            "{name}: {}",
+            &text(&out)[..text(&out).len().min(120)]
+        );
+    }
 }
 
 #[tokio::test]
