@@ -332,12 +332,73 @@ async fn stateful_baseline_is_scoped_to_credentials_and_session_state() {
             .await;
     assert_eq!(second.text(), "key changed");
     opts.session_state = Some(Arc::new(ProviderSessionState::default()));
-    let (_, third) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    let mut third_messages = context.messages;
+    third_messages.push(Message::Assistant(second));
+    third_messages.push(Message::User(UserMessage::text("third")));
+    let (_, third) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context { messages: third_messages, ..Context::default() },
+        opts,
+    ))
+    .await;
     assert_eq!(third.text(), "new state");
     let requests = server.requests.lock().await;
     assert_eq!(requests.len(), 3);
     assert!(requests.iter().all(|request| request["body"].get("previous_response_id").is_none()));
     assert!(requests.iter().all(|request| request["body"]["store"] == true));
+    assert_eq!(requests[2]["body"]["input"].as_array().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn changed_request_controls_force_full_replay_then_establish_a_new_baseline() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[completed_text("resp_seed", "seed"),
+            completed_text("resp_changed", "changed"), completed_text("resp_follow", "follow")]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.stateful_responses = true;
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let mut messages = vec![Message::User(UserMessage::text("seed"))];
+    let (_, seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: messages.clone(), ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    messages.push(Message::Assistant(seed));
+    messages.push(Message::User(UserMessage::text("next")));
+    opts.request.max_tokens = Some(123);
+    let (_, changed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: messages.clone(), ..Context::default() },
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(changed.text(), "changed");
+    messages.push(Message::Assistant(changed));
+    messages.push(Message::User(UserMessage::text("after change")));
+    let (_, follow) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context { messages, ..Context::default() },
+        opts,
+    ))
+    .await;
+    assert_eq!(follow.text(), "follow");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1]["body"].get("previous_response_id").is_none());
+    assert_eq!(requests[1]["body"]["max_output_tokens"], 123);
+    assert_eq!(requests[1]["body"]["input"].as_array().unwrap().len(), 3);
+    assert_eq!(requests[2]["body"]["previous_response_id"], "resp_changed");
+    assert_eq!(requests[2]["body"]["input"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
