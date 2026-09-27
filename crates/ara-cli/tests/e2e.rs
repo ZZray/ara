@@ -1166,6 +1166,37 @@ async fn tool_task_produces_file_and_receipts() {
 }
 
 #[tokio::test]
+async fn object_streamed_write_arguments_reach_tool_and_journal_once() {
+    let env = Env::new();
+    let tool_frame = |arguments: Value| {
+        json!({"data": {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_object_write", "function": {"name": "write", "arguments": arguments}}
+        ]}}]}})
+    };
+    let up = upstream(json!({"responses": [
+        {"events": [
+            tool_frame(json!({"path": "fragment.txt", "content": "hello "})),
+            tool_frame(json!({"content": "world\n"})),
+            finish("tool_calls"), done()
+        ]},
+        {"events": [text("Wrote fragment.txt."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "openai-completions", "--tools", "write", "Write fragment.txt"]))
+            .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Wrote fragment.txt.\n");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("fragment.txt")).unwrap(), "hello world\n");
+    assert_eq!(up.served(), 2);
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
+    assert_eq!(entries[3]["message"]["content"][0]["arguments"]["content"], json!("hello world\n"));
+    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_object_write"));
+}
+
+#[tokio::test]
 async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
     let env = Env::new();
     let up = upstream(json!({"responses": [

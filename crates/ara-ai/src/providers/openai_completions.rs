@@ -17,8 +17,7 @@
 //!
 //! Not ported (open ledger items): per-host compat policy tables (Mistral ids,
 //! DeepSeek token stripping, reasoning replay fields, strict tools, prompt cache
-//! keys, OpenRouter routing), markup healing, object-shaped streamed arguments
-//! merge beyond top-level keys, reasoning_details signatures, Copilot/Azure
+//! keys, OpenRouter routing), markup healing, reasoning_details signatures, Copilot/Azure
 //! setup, cost calculation, and complete replay-safe retry parity.
 
 use crate::error::{ProviderError, envelope_message, parse_error_envelope};
@@ -666,13 +665,86 @@ pub enum ChunkFlow {
     Break,
 }
 
+enum PartialToolArguments {
+    Text(String),
+    Object(JsonObject),
+}
+
+fn safe_argument_key(key: &str) -> bool {
+    !matches!(key, "__proto__" | "constructor" | "prototype")
+}
+
+fn clone_streaming_argument_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(merge_streaming_argument_objects(None, object)),
+        Value::Array(array) => Value::Array(array.iter().map(clone_streaming_argument_value).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn streaming_argument_array_starts_with(value: &[Value], prefix: &[Value]) -> bool {
+    value.len() >= prefix.len()
+        && value
+            .iter()
+            .zip(prefix)
+            .all(|(left, right)| clone_streaming_argument_value(left) == clone_streaming_argument_value(right))
+}
+
+fn merge_streaming_argument_values(previous: &Value, fragment: &Value) -> Value {
+    match (previous, fragment) {
+        (Value::String(previous), Value::String(fragment)) => {
+            if fragment.starts_with(previous) {
+                Value::String(fragment.clone())
+            } else {
+                Value::String(format!("{previous}{fragment}"))
+            }
+        }
+        (Value::Array(previous), Value::Array(fragment)) => {
+            let combined = if streaming_argument_array_starts_with(fragment, previous) {
+                fragment.clone()
+            } else if streaming_argument_array_starts_with(previous, fragment) {
+                previous.clone()
+            } else {
+                previous.iter().chain(fragment).cloned().collect()
+            };
+            Value::Array(combined.iter().map(clone_streaming_argument_value).collect())
+        }
+        (Value::Object(previous), Value::Object(fragment)) => {
+            Value::Object(merge_streaming_argument_objects(Some(previous), fragment))
+        }
+        _ => clone_streaming_argument_value(fragment),
+    }
+}
+
+fn merge_streaming_argument_objects(previous: Option<&JsonObject>, fragment: &JsonObject) -> JsonObject {
+    let mut merged = JsonObject::new();
+    if let Some(previous) = previous {
+        for (key, value) in previous {
+            if safe_argument_key(key) {
+                merged.insert(key.clone(), clone_streaming_argument_value(value));
+            }
+        }
+    }
+    for (key, value) in fragment {
+        if !safe_argument_key(key) {
+            continue;
+        }
+        let value = match merged.get(key) {
+            Some(previous) => merge_streaming_argument_values(previous, value),
+            None => clone_streaming_argument_value(value),
+        };
+        merged.insert(key.clone(), value);
+    }
+    merged
+}
+
 /// Chat Completions chunk state machine. Pure: returns the events to emit.
 pub struct ChunkState {
     pub output: AssistantMessage,
     current: Option<usize>,
     tool_by_index: HashMap<u64, usize>,
     pending_tools: Vec<usize>,
-    partial_args: HashMap<usize, String>,
+    partial_args: HashMap<usize, PartialToolArguments>,
     pub finished: bool,
     pub saw_usage: bool,
     await_trailing_usage: bool,
@@ -712,12 +784,26 @@ impl ChunkState {
     }
 
     fn finish_tool(&mut self, idx: usize, events: &mut Vec<AssistantMessageEvent>) {
-        let Some(raw) = self.partial_args.remove(&idx) else { return };
+        let Some(arguments) = self.partial_args.remove(&idx) else { return };
         self.last_display_parse.remove(&idx);
         self.pending_tools.retain(|i| *i != idx);
         self.tool_by_index.retain(|_, v| *v != idx);
+        let object_delta = match &arguments {
+            PartialToolArguments::Object(object) if !object.is_empty() => {
+                Some(serde_json::to_string(object).unwrap_or_default())
+            }
+            _ => None,
+        };
         if let Some(AssistantBlock::ToolCall(call)) = self.output.content.get_mut(idx) {
-            call.arguments = parse_final_arguments(&raw);
+            call.arguments = match arguments {
+                PartialToolArguments::Text(raw) => parse_final_arguments(&raw),
+                PartialToolArguments::Object(object) => object,
+            };
+        }
+        if let Some(delta) = object_delta {
+            events.push(AssistantMessageEvent::ToolcallDelta { content_index: idx, delta, partial: self.snapshot() });
+        }
+        if let Some(AssistantBlock::ToolCall(call)) = self.output.content.get(idx) {
             let tool_call = call.clone();
             events.push(AssistantMessageEvent::ToolcallEnd {
                 content_index: idx,
@@ -951,38 +1037,45 @@ impl ChunkState {
                     self.tool_by_index.insert(si, idx);
                 }
                 self.pending_tools.push(idx);
-                self.partial_args.insert(idx, String::new());
+                self.partial_args.insert(idx, PartialToolArguments::Text(String::new()));
                 self.current = Some(idx);
                 events.push(AssistantMessageEvent::ToolcallStart { content_index: idx, partial: self.snapshot() });
                 idx
             }
         };
         let mut delta = String::new();
-        let buffer = self.partial_args.entry(idx).or_default();
+        let mut display = None;
         match call.pointer("/function/arguments") {
             Some(Value::String(s)) if !s.is_empty() => {
+                let arguments =
+                    self.partial_args.entry(idx).or_insert_with(|| PartialToolArguments::Text(String::new()));
+                if !matches!(arguments, PartialToolArguments::Text(_)) {
+                    *arguments = PartialToolArguments::Text(String::new());
+                    self.last_display_parse.remove(&idx);
+                }
+                let PartialToolArguments::Text(buffer) = arguments else { unreachable!() };
                 buffer.push_str(s);
                 delta = s.clone();
+                let last = self.last_display_parse.get(&idx).copied().unwrap_or(0);
+                if last == 0 || buffer.len() >= last + (last / 2).max(256) {
+                    self.last_display_parse.insert(idx, buffer.len().max(1));
+                    display = Some(parse_streaming_json(buffer));
+                }
             }
             Some(Value::Object(obj)) => {
-                // MiniMax-style object arguments: merge top-level keys (deep merge not ported).
-                let mut merged = parse_streaming_json(buffer);
-                for (k, v) in obj {
-                    merged.insert(k.clone(), v.clone());
-                }
-                *buffer = serde_json::to_string(&merged).unwrap_or_default();
+                let arguments =
+                    self.partial_args.entry(idx).or_insert_with(|| PartialToolArguments::Object(JsonObject::new()));
+                let previous = match arguments {
+                    PartialToolArguments::Object(object) => Some(&*object),
+                    PartialToolArguments::Text(_) => None,
+                };
+                let merged = merge_streaming_argument_objects(previous, obj);
+                *arguments = PartialToolArguments::Object(merged.clone());
+                display = Some(merged);
+                self.last_display_parse.remove(&idx);
             }
             _ => {}
         }
-        // Re-parse the growing buffer only after geometric growth (OMP
-        // `parseStreamingJsonThrottled`); the final strict parse happens at toolcall_end.
-        let last = self.last_display_parse.get(&idx).copied().unwrap_or(0);
-        let display = if last == 0 || buffer.len() >= last + (last / 2).max(256) {
-            self.last_display_parse.insert(idx, buffer.len().max(1));
-            Some(parse_streaming_json(buffer))
-        } else {
-            None
-        };
         if let Some(AssistantBlock::ToolCall(tc)) = self.output.content.get_mut(idx) {
             if let Some(id) = id {
                 tc.id = id.to_string();
@@ -1429,6 +1522,62 @@ mod tests {
         assert_eq!(calls[1].name, "bash");
         assert_eq!(names(&events).iter().filter(|n| **n == "toolcall_end").count(), 2);
         assert!(state.output.usage.is_unknown());
+    }
+
+    #[test]
+    fn object_arguments_filter_unsafe_keys_at_every_depth() {
+        let chunks = vec![
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {
+                "name": "write", "arguments": {
+                    "path": "safe.txt", "__proto__": {"polluted": true},
+                    "nested": {"constructor": "drop", "keep": "yes"},
+                    "items": [{"prototype": "drop", "keep": 1}]
+                }
+            }}]}}]}),
+            json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        ];
+        let (state, events, result) = run_chunks(&chunks, true);
+        result.unwrap();
+        let expected = json!({"path": "safe.txt", "nested": {"keep": "yes"}, "items": [{"keep": 1}]});
+        assert_eq!(Value::Object(state.output.tool_calls().next().unwrap().arguments.clone()), expected);
+        let emitted = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolcallDelta { delta, .. } if !delta.is_empty() => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(serde_json::from_str::<Value>(&emitted).unwrap(), expected);
+    }
+
+    #[test]
+    fn interleaved_calls_keep_separate_arguments_when_one_switches_to_text() {
+        let chunks = vec![
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "a", "function": {"name": "write", "arguments": {"path": "a.txt", "content": "old"}}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "b", "function": {"name": "write", "arguments": {"path": "b.txt", "content": "B"}}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"path\":\"a.txt\",\"content\":\"A\"}"}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 1, "function": {"arguments": {"content": "!"}}}]}}]}),
+            json!({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        ];
+        let (state, events, result) = run_chunks(&chunks, true);
+        result.unwrap();
+        let calls: Vec<_> = state.output.tool_calls().collect();
+        assert_eq!(Value::Object(calls[0].arguments.clone()), json!({"path": "a.txt", "content": "A"}));
+        assert_eq!(Value::Object(calls[1].arguments.clone()), json!({"path": "b.txt", "content": "B!"}));
+        for (index, expected) in
+            [json!({"path": "a.txt", "content": "A"}), json!({"path": "b.txt", "content": "B!"})].iter().enumerate()
+        {
+            let emitted = events
+                .iter()
+                .filter_map(|event| match event {
+                    AssistantMessageEvent::ToolcallDelta { content_index, delta, .. } if *content_index == index => {
+                        Some(delta.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<String>();
+            assert_eq!(serde_json::from_str::<Value>(&emitted).unwrap(), *expected);
+        }
     }
 
     #[test]

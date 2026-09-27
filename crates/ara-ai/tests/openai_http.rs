@@ -1206,6 +1206,43 @@ async fn finish_with_usage_completes_without_done_sentinel() {
 }
 
 #[tokio::test]
+async fn object_tool_arguments_merge_fragments_and_emit_concat_safe_delta() {
+    let frame = |arguments: Value| {
+        json!({"data": {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "call_edit", "function": {"name": "edit", "arguments": arguments}}
+        ]}}]}})
+    };
+    let server = FakeUpstream::start(
+        script(json!({"responses": [{"events": [
+            frame(json!({"path": "a.txt", "oldText": "one ", "nested": {"text": "hel", "items": ["a"]}})),
+            frame(json!({"oldText": "two", "nested": {"text": "lo", "items": ["b"]}})),
+            frame(json!({"oldText": "one two", "nested": {"items": ["a", "b"], "extra": true}, "newText": "three"})),
+            finish("tool_calls"), done()
+        ]}]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (events, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    let call = msg.tool_calls().next().unwrap();
+    let expected = json!({
+        "path": "a.txt", "oldText": "one two", "newText": "three",
+        "nested": {"text": "hello", "items": ["a", "b"], "extra": true}
+    });
+    assert_eq!(Value::Object(call.arguments.clone()), expected);
+    let deltas = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolcallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(serde_json::from_str::<Value>(&deltas).unwrap(), expected);
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })).count(), 1);
+}
+
+#[tokio::test]
 async fn finish_without_usage_ends_after_grace() {
     let server = FakeUpstream::start(
         script(json!({"responses": [{"events": [text("done"), finish("stop")], "end": "hang"}]})),
