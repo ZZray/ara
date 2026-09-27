@@ -603,6 +603,7 @@ async fn run(args: Args) -> Result<i32> {
             client,
             base: ara_ai::providers::anthropic::StreamOptions {
                 api_key: stream_options.api_key,
+                provider_session_state: Some(Arc::new(Default::default())),
                 extra_headers: stream_options.extra_headers,
                 first_event_timeout: stream_options.first_event_timeout,
                 idle_timeout: stream_options.idle_timeout,

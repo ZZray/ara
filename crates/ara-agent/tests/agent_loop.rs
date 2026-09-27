@@ -1588,6 +1588,7 @@ async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
         base: ara_ai::providers::anthropic::StreamOptions {
             api_key: Some("anthropic-test-secret".into()),
             strict_tools: Some(true),
+            provider_session_state: Some(Arc::new(Default::default())),
             ..Default::default()
         },
     });
@@ -1623,6 +1624,7 @@ async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
     let requests = server.requests.lock().await;
     assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
     assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+    assert!(requests[2]["body"]["tools"][0].get("strict").is_none());
     assert_eq!(requests[0]["body"]["messages"], requests[1]["body"]["messages"]);
     let followup = requests[2]["body"]["messages"].as_array().unwrap();
     assert!(followup.iter().any(|message| {

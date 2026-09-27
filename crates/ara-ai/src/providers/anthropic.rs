@@ -40,6 +40,37 @@ const MAX_STRICT_OPTIONAL_PARAMETERS: usize = 24;
 const MAX_STRICT_UNION_PARAMETERS: usize = 16;
 const PING_PROGRESS_MAX_IDLE_MULTIPLIER: u32 = 3;
 
+/// In-memory Anthropic transport decisions for one logical Session. Hosts
+/// must not share this value between independent Sessions.
+#[derive(Default)]
+pub struct AnthropicProviderSessionState {
+    rejected_strict_tools: Mutex<HashSet<(String, String)>>,
+}
+
+impl std::fmt::Debug for AnthropicProviderSessionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnthropicProviderSessionState")
+            .field("rejected_strict_routes", &self.rejected_strict_tools.lock().unwrap().len())
+            .finish()
+    }
+}
+
+impl AnthropicProviderSessionState {
+    fn route_key(model: &Model) -> (String, String) {
+        let base = model.base_url.trim_end_matches('/');
+        let base = base.strip_suffix("/v1").unwrap_or(base);
+        (base.to_owned(), model.id.clone())
+    }
+
+    fn strict_rejected(&self, model: &Model) -> bool {
+        self.rejected_strict_tools.lock().unwrap().contains(&Self::route_key(model))
+    }
+
+    fn remember_strict_rejection(&self, model: &Model) {
+        self.rejected_strict_tools.lock().unwrap().insert(Self::route_key(model));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StreamOptions {
     pub api_key: Option<String>,
@@ -48,6 +79,8 @@ pub struct StreamOptions {
     pub tool_choice: Option<ToolChoice>,
     /// None uses the canonical official-route policy; custom routes opt in explicitly.
     pub strict_tools: Option<bool>,
+    /// Share within one logical Session so a rejected endpoint/model skips strict on later turns.
+    pub provider_session_state: Option<Arc<AnthropicProviderSessionState>>,
     pub cancel: CancellationToken,
     pub first_event_timeout: Option<Duration>,
     pub idle_timeout: Option<Duration>,
@@ -63,6 +96,7 @@ impl Default for StreamOptions {
             temperature: None,
             tool_choice: None,
             strict_tools: None,
+            provider_session_state: None,
             cancel: CancellationToken::new(),
             first_event_timeout: Some(Duration::from_secs(300)),
             idle_timeout: Some(Duration::from_secs(300)),
@@ -579,12 +613,9 @@ fn build_params_with_strict(
 }
 
 pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
-    build_params_with_strict(
-        model,
-        context,
-        options,
-        options.strict_tools.unwrap_or_else(|| official_api_key_route(model)),
-    )
+    let strict = options.strict_tools.unwrap_or_else(|| official_api_key_route(model))
+        && !options.provider_session_state.as_ref().is_some_and(|state| state.strict_rejected(model));
+    build_params_with_strict(model, context, options, strict)
 }
 
 fn has_strict_tools(params: &Value) -> bool {
@@ -613,6 +644,7 @@ fn strict_rejection(error: &PostError) -> bool {
 
 async fn post_with_strict_fallback(
     client: &reqwest::Client,
+    model: &Model,
     url: &str,
     headers: &[(String, String)],
     params: &Value,
@@ -622,6 +654,9 @@ async fn post_with_strict_fallback(
 ) -> Result<reqwest::Response, ProviderError> {
     match post_with_retry_detailed(client, url, headers, params, &options.retry, &options.cancel, retry_blocked).await {
         Err(error) if fallback.is_some() && has_strict_tools(params) && strict_rejection(&error) => {
+            if let Some(state) = &options.provider_session_state {
+                state.remember_strict_rejection(model);
+            }
             post_with_retry(
                 client,
                 url,
@@ -1128,12 +1163,13 @@ async fn run(
     let first_deadline = options.first_event_timeout.map(|timeout| started + timeout);
     let response = match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
+            result = post_with_strict_fallback(client, model, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Anthropic stream timed out before first event".into())),
         },
         None => {
             post_with_strict_fallback(
                 client,
+                model,
                 &url,
                 &headers,
                 &params,
@@ -1330,6 +1366,18 @@ mod strict_tool_tests {
     use super::*;
     use ara_testkit::{FakeUpstream, Script};
 
+    fn test_model(base_url: &str) -> Model {
+        Model {
+            id: "claude-fixture".into(),
+            api: API.into(),
+            provider: "anthropic".into(),
+            base_url: base_url.into(),
+            reasoning: false,
+            max_tokens: None,
+            tokenizer: None,
+        }
+    }
+
     fn script(error_type: &str, first_error: &str) -> Script {
         serde_json::from_value(json!({"responses":[
             {"status":400,"body":json!({"type":"error","error":{"type":error_type,"message":first_error}}).to_string()},
@@ -1393,6 +1441,7 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
+            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,
@@ -1422,6 +1471,7 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
+            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,
@@ -1444,6 +1494,7 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let error = post_with_strict_fallback(
             &reqwest::Client::new(),
+            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,

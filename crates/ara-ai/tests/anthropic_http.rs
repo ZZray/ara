@@ -2,10 +2,11 @@
 //! Frames follow fixed OMP packages/ai/src/providers/anthropic.ts at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use ara_ai::event::AssistantMessageEvent;
-use ara_ai::providers::anthropic::{self, StreamOptions};
+use ara_ai::providers::anthropic::{self, AnthropicProviderSessionState, StreamOptions};
 use ara_ai::providers::openai_completions::RetryPolicy;
 use ara_ai::{
     AssistantBlock, AssistantMessage, Context, ImageContent, Message, Model, StopReason, Tool, ToolResultMessage,
@@ -751,10 +752,123 @@ async fn public_stream_does_not_replay_an_unrelated_strict_400() {
     };
     let mut opts = options();
     opts.strict_tools = Some(true);
-    let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
+    opts.provider_session_state = Some(Arc::new(AnthropicProviderSessionState::default()));
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context.clone(), opts.clone()))
+            .await;
     assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
     assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 0);
     assert_eq!(server.served(), 1);
+    assert_eq!(
+        anthropic::build_params(&model(&server.base_url()), &context, &opts).unwrap()["tools"][0]["strict"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn strict_rejection_is_remembered_only_for_its_session_endpoint_and_model() {
+    fn reply(id: &str) -> Value {
+        json!({"events":[
+            frame(json!({"type":"message_start","message":{"id":id}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":id}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]})
+    }
+
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[
+            {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"The compiled grammar is too large"}}).to_string()},
+            reply("fallback"),
+            reply("same-route"),
+            reply("other-model"),
+            reply("other-endpoint"),
+            reply("fresh-session")
+        ]}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("Use edit"))],
+        tools: Some(vec![Tool {
+            name: "edit".into(),
+            description: "Edit".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        }]),
+        ..Default::default()
+    };
+    let base_model = model(&server.base_url());
+    let state = Arc::new(AnthropicProviderSessionState::default());
+    let mut opts = options();
+    opts.strict_tools = Some(true);
+    opts.provider_session_state = Some(state);
+    let run = |model: Model, options: StreamOptions| {
+        anthropic::stream(reqwest::Client::new(), model, context.clone(), options)
+    };
+    assert_eq!(message(&collect(run(base_model.clone(), opts.clone())).await).text(), "fallback");
+    assert_eq!(message(&collect(run(base_model.clone(), opts.clone())).await).text(), "same-route");
+    let mut other_model = base_model.clone();
+    other_model.id = "claude-other".into();
+    assert_eq!(message(&collect(run(other_model, opts.clone())).await).text(), "other-model");
+    let mut other_endpoint = base_model.clone();
+    other_endpoint.base_url = format!("{}/custom", server.base_url().trim_end_matches("/v1"));
+    assert_eq!(message(&collect(run(other_endpoint, opts.clone())).await).text(), "other-endpoint");
+    opts.provider_session_state = Some(Arc::new(AnthropicProviderSessionState::default()));
+    assert_eq!(message(&collect(run(base_model, opts)).await).text(), "fresh-session");
+
+    assert_eq!(server.served(), 6);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 6);
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+    assert!(requests[2]["body"]["tools"][0].get("strict").is_none());
+    assert_eq!(requests[3]["body"]["tools"][0]["strict"], true);
+    assert_eq!(requests[4]["body"]["tools"][0]["strict"], true);
+    assert_eq!(requests[5]["body"]["tools"][0]["strict"], true);
+}
+
+#[tokio::test]
+async fn strict_rejection_survives_failed_fallback_and_outer_retry() {
+    let server = FakeUpstream::start(
+        serde_json::from_value(json!({"responses":[
+            {"status":400,"body":json!({"error":{"type":"invalid_request_error","message":"The compiled grammar is too large"}}).to_string()},
+            {"status":503,"body":json!({"error":{"message":"temporary upstream failure"}}).to_string()},
+            {"events":[
+                frame(json!({"type":"message_start","message":{"id":"msg_after_failure"}})),
+                frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"recovered later"}})),
+                frame(json!({"type":"content_block_stop","index":0})),
+                frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+                frame(json!({"type":"message_stop"}))
+            ]}
+        ]}))
+        .unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context {
+        messages: vec![Message::User(UserMessage::text("Use edit"))],
+        tools: Some(vec![Tool {
+            name: "edit".into(),
+            description: "Edit".into(),
+            parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        }]),
+        ..Default::default()
+    };
+    let mut opts = options();
+    opts.strict_tools = Some(true);
+    opts.provider_session_state = Some(Arc::new(AnthropicProviderSessionState::default()));
+    let selected_model = model(&server.base_url());
+    let events = collect(anthropic::stream(reqwest::Client::new(), selected_model, context, opts)).await;
+    assert_eq!(message(&events).text(), "recovered later");
+    assert_eq!(server.served(), 3);
+    let requests = server.requests.lock().await;
+    assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
+    assert!(requests[1]["body"]["tools"][0].get("strict").is_none());
+    assert!(requests[2]["body"]["tools"][0].get("strict").is_none());
 }
 
 #[test]
