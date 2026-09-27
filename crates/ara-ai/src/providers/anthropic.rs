@@ -28,6 +28,9 @@ pub const API: &str = "anthropic-messages";
 // The CLI does not yet resolve OMP catalogue limits for every model.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 const MAX_TOOL_JSON_BYTES: usize = 1024 * 1024;
+// Snapshots are owned Rust values: keep the preview small when tiny SSE
+// deltas would otherwise clone a growing tool argument on every event.
+const MAX_TOOL_DISPLAY_BYTES: usize = 4 * 1024;
 const MAX_TOOL_SCHEMA_DEPTH: usize = 128;
 const PING_PROGRESS_MAX_IDLE_MULTIPLIER: u32 = 3;
 
@@ -496,7 +499,7 @@ enum OpenBlock {
     Text(usize),
     Thinking(usize),
     Redacted,
-    Tool { index: usize, id: String, name: String, input: Map<String, Value>, json: String },
+    Tool { index: usize, id: String, name: String, input: Map<String, Value>, json: String, last_parsed_len: usize },
     Ignored,
 }
 
@@ -622,8 +625,26 @@ impl MessageState {
                             .ok_or_else(|| ProviderError::Stream("tool_use missing name".into()))?
                             .to_owned();
                         let input = block["input"].as_object().cloned().unwrap_or_default();
+                        let display_input = serde_json::to_vec(&input)
+                            .ok()
+                            .filter(|bytes| bytes.len() <= MAX_TOOL_DISPLAY_BYTES)
+                            .map(|_| input.clone())
+                            .unwrap_or_default();
+                        self.output.content.push(AssistantBlock::ToolCall(ToolCall {
+                            id: id.clone(),
+                            name: name.clone(),
+                            arguments: display_input,
+                            thought_signature: None,
+                        }));
                         events.push(Event::ToolcallStart { content_index, partial: self.output.clone() });
-                        OpenBlock::Tool { index: content_index, id, name, input, json: String::new() }
+                        OpenBlock::Tool {
+                            index: content_index,
+                            id,
+                            name,
+                            input,
+                            json: String::new(),
+                            last_parsed_len: 0,
+                        }
                     }
                     _ => OpenBlock::Ignored,
                 };
@@ -671,12 +692,24 @@ impl MessageState {
                             thinking.thinking_signature.get_or_insert_with(String::new).push_str(delta);
                         }
                     }
-                    (OpenBlock::Tool { index: content_index, json, .. }, "input_json_delta") => {
+                    (OpenBlock::Tool { index: content_index, json, last_parsed_len, .. }, "input_json_delta") => {
                         let delta = frame.pointer("/delta/partial_json").and_then(Value::as_str).unwrap_or("");
                         if json.len().saturating_add(delta.len()) > MAX_TOOL_JSON_BYTES {
                             return Err(ProviderError::Stream("Anthropic tool arguments exceeded limit".into()));
                         }
                         json.push_str(delta);
+                        if json.len() > MAX_TOOL_DISPLAY_BYTES {
+                            if let AssistantBlock::ToolCall(call) = &mut self.output.content[*content_index] {
+                                call.arguments.clear();
+                            }
+                        } else if !json.is_empty()
+                            && (*last_parsed_len == 0 || json.len() - *last_parsed_len >= (json.len() / 32).max(256))
+                        {
+                            if let AssistantBlock::ToolCall(call) = &mut self.output.content[*content_index] {
+                                call.arguments = crate::json::parse_streaming_json(json);
+                            }
+                            *last_parsed_len = json.len();
+                        }
                         events.push(Event::ToolcallDelta {
                             content_index: *content_index,
                             delta: delta.into(),
@@ -718,7 +751,7 @@ impl MessageState {
                             partial: self.output.clone(),
                         });
                     }
-                    OpenBlock::Tool { index: content_index, id, name, input, json } => {
+                    OpenBlock::Tool { index: content_index, id, name, input, json, .. } => {
                         let arguments = if json.is_empty() {
                             input
                         } else {
@@ -731,7 +764,7 @@ impl MessageState {
                                 })?
                         };
                         let call = ToolCall { id, name, arguments, thought_signature: None };
-                        self.output.content.push(AssistantBlock::ToolCall(call.clone()));
+                        self.output.content[content_index] = AssistantBlock::ToolCall(call.clone());
                         events.push(Event::ToolcallEnd {
                             content_index,
                             tool_call: call,

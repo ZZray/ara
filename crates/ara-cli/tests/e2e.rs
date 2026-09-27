@@ -1095,6 +1095,56 @@ async fn anthropic_json_mode_emits_text_before_terminal() {
     assert_eq!(end["message"]["content"][0]["text"], json!("first second"));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn anthropic_tool_delta_reaches_json_client_before_execution() {
+    fn frame(value: Value) -> Value {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    }
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_live_tool"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_live","name":"write","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"live.txt\",\"content\":\"one\"}"}})),
+            {"sleep_ms":800},
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"}))
+        ]},
+        {"events":[
+            frame(json!({"type":"message_start","message":{"id":"msg_live_done"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Done."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"}))
+        ]}
+    ]})).await;
+    let mut command = env.cmd(&up.base_url(), &["--api", "anthropic-messages", "--tools", "write", "Write live.txt"]);
+    let mut child = spawn_json(&mut command);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let seen = tokio::task::block_in_place(|| {
+        read_until(
+            &mut reader,
+            |event| event["type"] == "message_update" && event["assistantMessageEvent"]["type"] == "toolcall_delta",
+            Duration::from_secs(10),
+        )
+    });
+    assert!(seen.iter().any(|event| event["assistantMessageEvent"]["type"] == "toolcall_start"));
+    assert_eq!(seen.last().unwrap()["assistantMessageEvent"]["contentIndex"], json!(0));
+    assert!(child.try_wait().unwrap().is_none(), "tool delta reached the client before the response ended");
+    assert!(!env.work.path().join("live.txt").exists(), "a partial tool call cannot run");
+    let rest: Vec<Value> = reader.lines().map(|line| serde_json::from_str(&line.unwrap()).unwrap()).collect();
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    let end_index = rest.iter().position(|event| event["assistantMessageEvent"]["type"] == "toolcall_end").unwrap();
+    let execute_index = rest.iter().position(|event| event["type"] == "tool_execution_start").unwrap();
+    assert!(end_index < execute_index);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("live.txt")).unwrap(), "one");
+    assert_eq!(up.served(), 2);
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 1);
+}
+
 #[tokio::test]
 async fn upstream_auth_failure_exits_nonzero_with_the_error() {
     let env = Env::new();

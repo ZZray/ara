@@ -77,6 +77,118 @@ fn message(events: &[AssistantMessageEvent]) -> &AssistantMessage {
 }
 
 #[tokio::test]
+async fn tool_stream_snapshots_keep_the_call_at_one_content_index_until_final_validation() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_tool_stream"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Preparing."}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_stream","name":"write","input":{"legacy":"value"}}})),
+            frame(json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"strea"}})),
+            frame(json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":"While streaming."}})),
+            frame(json!({"type":"content_block_stop","index":2})),
+            frame(json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"m.txt\",\"content\":\"ok\"}"}})),
+            frame(json!({"type":"content_block_stop","index":1})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("write"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    let tool_events: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AssistantMessageEvent::ToolcallStart { .. }
+                    | AssistantMessageEvent::ToolcallDelta { .. }
+                    | AssistantMessageEvent::ToolcallEnd { .. }
+            )
+        })
+        .collect();
+    assert_eq!(tool_events.len(), 4);
+    let (start_index, start) = match tool_events[0] {
+        AssistantMessageEvent::ToolcallStart { content_index, partial } => (*content_index, partial),
+        other => panic!("expected tool start, got {other:?}"),
+    };
+    assert_eq!(start_index, 1);
+    assert!(matches!(&start.content[0], AssistantBlock::Text(text) if text.text == "Preparing."));
+    let call = start.content[1].as_tool_call().unwrap();
+    assert_eq!((&call.id[..], &call.name[..]), ("toolu_stream", "write"));
+    assert_eq!(call.arguments["legacy"], "value");
+    let (delta_index, first_delta) = match tool_events[1] {
+        AssistantMessageEvent::ToolcallDelta { content_index, partial, .. } => (*content_index, partial),
+        other => panic!("expected tool delta, got {other:?}"),
+    };
+    assert_eq!(delta_index, start_index);
+    assert_eq!(first_delta.content[1].as_tool_call().unwrap().arguments["path"], "strea");
+    assert_eq!(
+        tool_events[2].partial().content[1].as_tool_call().unwrap().arguments["path"],
+        "strea",
+        "small follow-up deltas reuse the latest display parse until final validation"
+    );
+    let (end_index, final_call, final_partial) = match tool_events[3] {
+        AssistantMessageEvent::ToolcallEnd { content_index, tool_call, partial } => {
+            (*content_index, tool_call, partial)
+        }
+        other => panic!("expected tool end, got {other:?}"),
+    };
+    assert_eq!(end_index, start_index);
+    assert_eq!(final_call.arguments, final_partial.content[1].as_tool_call().unwrap().arguments);
+    assert_eq!(final_call.arguments["path"], "stream.txt");
+    assert_eq!(final_call.arguments["content"], "ok");
+    assert!(final_call.arguments.get("legacy").is_none());
+    assert!(matches!(&final_partial.content[2], AssistantBlock::Text(text) if text.text == "While streaming."));
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::ToolUse, .. })));
+}
+
+#[tokio::test]
+async fn large_tool_input_keeps_stream_snapshots_small_but_validates_the_full_final_json() {
+    let content = "x".repeat(16 * 1024);
+    let raw = json!({"path":"large.txt","content":content}).to_string();
+    let mut frames = vec![
+        frame(json!({"type":"message_start","message":{"id":"msg_large_tool"}})),
+        frame(
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_large","name":"write","input":{"seed":"y".repeat(8 * 1024)}}}),
+        ),
+    ];
+    for chunk in raw.as_bytes().chunks(128) {
+        let delta = std::str::from_utf8(chunk).unwrap();
+        frames.push(frame(
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":delta}}),
+        ));
+    }
+    frames.extend([
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}})),
+        frame(json!({"type":"message_stop"})),
+    ]);
+    let server = FakeUpstream::start(upstream(frames), None).await.unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("write"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    let snapshots: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            matches!(event, AssistantMessageEvent::ToolcallStart { .. } | AssistantMessageEvent::ToolcallDelta { .. })
+        })
+        .collect();
+    assert_eq!(snapshots.len(), 1 + raw.len().div_ceil(128));
+    assert!(snapshots[0].partial().content[0].as_tool_call().unwrap().arguments.is_empty());
+    assert!(snapshots[1].partial().content[0].as_tool_call().unwrap().arguments["content"].as_str().is_some());
+    assert!(
+        snapshots.iter().skip(34).all(|event| event.partial().content[0].as_tool_call().unwrap().arguments.is_empty())
+    );
+    let call = message(&events).tool_calls().next().unwrap();
+    assert_eq!(call.arguments["content"].as_str().unwrap().len(), 16 * 1024);
+    assert_eq!(call.arguments["path"], "large.txt");
+}
+
+#[tokio::test]
 async fn spliced_envelope_keeps_first_message_and_does_not_replay_closed_blocks() {
     let server = FakeUpstream::start(
         upstream(vec![
@@ -616,8 +728,32 @@ async fn incomplete_tool_input_is_never_a_completed_call() {
     let events =
         collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
     assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
-    assert_eq!(message(&events).tool_calls().count(), 0);
+    assert_eq!(message(&events).tool_calls().count(), 1, "error snapshot retains the in-flight call");
+    assert!(!events.iter().any(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })));
     assert!(message(&events).error_message.as_deref().unwrap().contains("before message_stop"));
+}
+
+#[tokio::test]
+async fn malformed_final_tool_json_never_emits_a_completed_call() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_bad_tool"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bad","name":"write","input":{}}})),
+            frame(json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":}"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let context = Context { messages: vec![Message::User(UserMessage::text("write"))], ..Default::default() };
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, options())).await;
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
+    assert_eq!(message(&events).tool_calls().count(), 1, "partial call remains visible on error");
+    assert!(message(&events).error_message.as_deref().unwrap().contains("invalid Anthropic tool input"));
+    assert!(!events.iter().any(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })));
+    assert_eq!(server.served(), 1);
 }
 
 #[test]
@@ -860,7 +996,8 @@ async fn pings_without_semantic_progress_end_a_partial_tool_call() {
     let events = collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context, opts)).await;
     let elapsed = started.elapsed();
     assert!(matches!(events.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Error, .. })));
-    assert_eq!(message(&events).tool_calls().count(), 0);
+    assert_eq!(message(&events).tool_calls().count(), 1, "error snapshot retains the stalled call");
+    assert!(!events.iter().any(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })));
     assert!(message(&events).error_message.as_deref().unwrap().contains("stalled"));
     assert!(elapsed >= Duration::from_millis(600), "pings were not honored: {elapsed:?}");
     assert!(elapsed < Duration::from_millis(1800), "ping cap did not end the stall: {elapsed:?}");
@@ -934,7 +1071,8 @@ async fn cancellation_during_ping_keepalives_stops_the_partial_tool_call() {
     cancel.cancel();
     observed.extend(collect(stream).await);
     assert!(matches!(observed.last(), Some(AssistantMessageEvent::Error { reason: StopReason::Aborted, .. })));
-    assert_eq!(message(&observed).tool_calls().count(), 0);
+    assert_eq!(message(&observed).tool_calls().count(), 1, "abort snapshot retains the cancelled call");
+    assert!(!observed.iter().any(|event| matches!(event, AssistantMessageEvent::ToolcallEnd { .. })));
     assert_eq!(server.served(), 1);
 }
 
