@@ -78,6 +78,93 @@ fn message(events: &[AssistantMessageEvent]) -> &AssistantMessage {
 }
 
 #[tokio::test]
+async fn foreign_tool_history_uses_valid_unique_anthropic_ids_with_paired_results() {
+    let server = FakeUpstream::start(
+        upstream(vec![
+            frame(json!({"type":"message_start","message":{"id":"msg_history"}})),
+            frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"ok"}})),
+            frame(json!({"type":"content_block_stop","index":0})),
+            frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+            frame(json!({"type":"message_stop"})),
+        ]),
+        None,
+    )
+    .await
+    .unwrap();
+    let long_id = format!("call_{}", "x".repeat(80));
+    let mut prior = AssistantMessage::empty("openai-responses", "openai", "responses-fixture");
+    let calls = [
+        ("call_X|fc_A".to_owned(), "first"),
+        ("call_X_fc_A".to_owned(), "collision"),
+        (long_id.clone(), "long"),
+        ("call_plain".to_owned(), "plain"),
+    ];
+    prior.content = calls
+        .iter()
+        .map(|(id, name)| {
+            AssistantBlock::ToolCall(ara_ai::ToolCall {
+                id: id.clone(),
+                name: (*name).to_owned(),
+                arguments: serde_json::Map::new(),
+                thought_signature: None,
+            })
+        })
+        .collect();
+    prior.stop_reason = StopReason::ToolUse;
+    let result_ids = ["call_X|fc_B".to_owned(), "call_X_fc_A".to_owned(), long_id, "call_plain|fc_R".to_owned()];
+    let context = Context {
+        messages: std::iter::once(Message::User(UserMessage::text("run")))
+            .chain(std::iter::once(Message::Assistant(prior)))
+            .chain(result_ids.into_iter().zip(calls.iter()).map(|(tool_call_id, (_, name))| {
+                Message::ToolResult(ToolResultMessage {
+                    tool_call_id,
+                    tool_name: (*name).to_owned(),
+                    content: vec![UserBlock::text(*name)],
+                    details: None,
+                    is_error: false,
+                    timestamp: 1,
+                })
+            }))
+            .chain(std::iter::once(Message::User(UserMessage::text("continue"))))
+            .collect(),
+        ..Default::default()
+    };
+    let original = context.clone();
+    let events =
+        collect(anthropic::stream(reqwest::Client::new(), model(&server.base_url()), context.clone(), options())).await;
+    assert_eq!(message(&events).text(), "ok");
+    assert_eq!(server.served(), 1);
+    assert_eq!(context, original, "request conversion must not rewrite stored history");
+
+    let requests = server.requests.lock().await;
+    let messages = requests[0]["body"]["messages"].as_array().unwrap();
+    let calls = messages
+        .iter()
+        .flat_map(|message| message["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_use")
+        .collect::<Vec<_>>();
+    let results = messages
+        .iter()
+        .flat_map(|message| message["content"].as_array().into_iter().flatten())
+        .filter(|block| block["type"] == "tool_result")
+        .collect::<Vec<_>>();
+    assert_eq!((calls.len(), results.len()), (4, 4));
+    let ids = calls.iter().map(|call| call["id"].as_str().unwrap()).collect::<Vec<_>>();
+    assert!(ids.iter().all(|id| {
+        !id.is_empty()
+            && id.len() <= 64
+            && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    }));
+    assert_eq!(ids.iter().copied().collect::<std::collections::HashSet<_>>().len(), ids.len());
+    for call in &calls {
+        let id = &call["id"];
+        let name = &call["name"];
+        let result = results.iter().find(|result| result["content"][0]["text"] == *name).unwrap();
+        assert_eq!(&result["tool_use_id"], id, "result for {name} must use its call's wire ID");
+    }
+}
+
+#[tokio::test]
 async fn tool_stream_snapshots_keep_the_call_at_one_content_index_until_final_validation() {
     let server = FakeUpstream::start(
         upstream(vec![

@@ -18,7 +18,7 @@ use crate::event::{AssistantMessageEvent as Event, AssistantStream, EventSink};
 use crate::providers::openai_completions::{PostError, RetryPolicy, post_with_retry, post_with_retry_detailed};
 use crate::schema_wire::postprocess_json_wire_schema;
 use crate::sse::SseDecoder;
-use crate::transform::transform_messages;
+use crate::transform::{ToolCallOriginScope, transform_messages};
 use crate::types::{
     AssistantBlock, AssistantMessage, Context, Message, Model, StopReason, TextContent, ThinkingContent, Tool,
     ToolCall, ToolChoice, Usage, UserBlock, UserContent,
@@ -143,7 +143,12 @@ fn result_content(blocks: &[UserBlock]) -> Value {
     Value::Array(converted)
 }
 
-fn assistant_content(message: &AssistantMessage, model: &Model) -> Vec<Value> {
+fn assistant_content(
+    message: &AssistantMessage,
+    model: &Model,
+    origin_scope: &ToolCallOriginScope,
+    wire_tool_ids: &HashMap<String, String>,
+) -> Vec<Value> {
     let same_origin = message.api == API && message.provider == model.provider && message.model == model.id;
     let mut blocks: Vec<Value> = message
         .content
@@ -162,7 +167,8 @@ fn assistant_content(message: &AssistantMessage, model: &Model) -> Vec<Value> {
                 Some(json!({"type":"redacted_thinking","data":data}))
             }
             AssistantBlock::ToolCall(call) if !call.id.is_empty() && !call.name.is_empty() => {
-                Some(json!({"type":"tool_use","id":call.id,"name":call.name,"input":call.arguments}))
+                let id = wire_tool_ids.get(origin_scope.pairing_key(&call.id)).map_or(call.id.as_str(), String::as_str);
+                Some(json!({"type":"tool_use","id":id,"name":call.name,"input":call.arguments}))
             }
             _ => None,
         })
@@ -185,9 +191,43 @@ fn assistant_content(message: &AssistantMessage, model: &Model) -> Vec<Value> {
     blocks
 }
 
+fn anthropic_tool_id(id: &str) -> String {
+    let normalized: String = id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') { ch } else { '_' })
+        .take(64)
+        .collect();
+    if normalized.is_empty() { "toolu".into() } else { normalized }
+}
+
+fn wire_tool_ids(messages: &[Message], origin_scope: &ToolCallOriginScope) -> HashMap<String, String> {
+    let mut planned = HashMap::new();
+    let mut used = HashSet::new();
+    for call in messages.iter().filter_map(Message::as_assistant).flat_map(AssistantMessage::tool_calls) {
+        let key = origin_scope.pairing_key(&call.id).to_owned();
+        if planned.contains_key(&key) {
+            continue;
+        }
+        let base = anthropic_tool_id(&call.id);
+        let mut candidate = base.clone();
+        let mut index = 1usize;
+        while used.contains(&candidate) {
+            let suffix = format!("_dup{index}");
+            let keep = 64usize.saturating_sub(suffix.len());
+            candidate = format!("{}{}", &base[..keep.min(base.len())], suffix);
+            index += 1;
+        }
+        used.insert(candidate.clone());
+        planned.insert(key, candidate);
+    }
+    planned
+}
+
 /// Current API-key path retains the fixed OMP user/assistant/tool-result shape.
 pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
     let messages = transform_messages(&context.messages);
+    let origin_scope = ToolCallOriginScope::collect(&messages);
+    let wire_tool_ids = wire_tool_ids(&messages, &origin_scope);
     let mut wire = Vec::new();
     let mut i = 0;
     while i < messages.len() {
@@ -207,7 +247,7 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
                 }
             }
             Message::Assistant(assistant) => {
-                let content = assistant_content(assistant, model);
+                let content = assistant_content(assistant, model, &origin_scope, &wire_tool_ids);
                 if !content.is_empty() {
                     if wire.last().is_some_and(|message| message["role"] == "assistant") {
                         wire.push(json!({"role":"user","content":"Continue."}));
@@ -240,7 +280,9 @@ pub fn convert_messages(model: &Model, context: &Context) -> Vec<Value> {
                     }
                     results.push(json!({
                         "type":"tool_result",
-                        "tool_use_id":result.tool_call_id,
+                        "tool_use_id":wire_tool_ids
+                            .get(origin_scope.pairing_key(&result.tool_call_id))
+                            .map_or(result.tool_call_id.as_str(), String::as_str),
                         "content":content,
                         "is_error":result.is_error
                     }));

@@ -1555,6 +1555,71 @@ async fn real_anthropic_wire_postprocess_matches_tool_argument_validation() {
 }
 
 #[tokio::test]
+async fn agent_replays_responses_tool_history_with_paired_anthropic_wire_ids() {
+    use ara_testkit::{FakeUpstream, Script};
+
+    let frame = |value: Value| {
+        let name = value["type"].as_str().unwrap();
+        json!({"raw":format!("event: {name}\ndata: {value}\n\n")})
+    };
+    let script: Script = serde_json::from_value(json!({"responses":[{"events":[
+        frame(json!({"type":"message_start","message":{"id":"msg_replay"}})),
+        frame(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"continued"}})),
+        frame(json!({"type":"content_block_stop","index":0})),
+        frame(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}})),
+        frame(json!({"type":"message_stop"}))
+    ]}]}))
+    .unwrap();
+    let server = FakeUpstream::start(script, None).await.unwrap();
+    let provider = Arc::new(AnthropicMessagesProvider {
+        client: reqwest::Client::new(),
+        base: ara_ai::providers::anthropic::StreamOptions {
+            api_key: Some("anthropic-test-secret".into()),
+            ..Default::default()
+        },
+    });
+    let mut cfg = config(provider, Vec::new(), Arc::new(NoHooks));
+    cfg.model.api = "anthropic-messages".into();
+    cfg.model.base_url = server.base_url();
+    cfg.max_model_calls = Some(1);
+    let mut previous = AssistantMessage::empty("openai-responses", "openai", "responses-fixture");
+    previous.content = vec![AssistantBlock::ToolCall(call_block("call_1|fc_A", "read", &json!({"path":"a"})))];
+    previous.stop_reason = StopReason::ToolUse;
+    let agent = Agent::new(
+        cfg,
+        vec![
+            user("read a"),
+            Message::Assistant(previous),
+            Message::ToolResult(ToolResultMessage {
+                tool_call_id: "call_1|fc_B".into(),
+                tool_name: "read".into(),
+                content: vec![UserBlock::text("file contents")],
+                details: None,
+                is_error: false,
+                timestamp: 1,
+            }),
+        ],
+    );
+    let report = agent.prompt(vec![user("continue")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
+    assert_eq!(report.end, RunEnd::Completed);
+    assert_eq!(report.messages.last().unwrap().as_assistant().unwrap().text(), "continued");
+    assert_eq!(server.served(), 1);
+    let requests = server.requests.lock().await;
+    let messages = requests[0]["body"]["messages"].as_array().unwrap();
+    let call = messages
+        .iter()
+        .find_map(|message| message["content"].as_array()?.iter().find(|block| block["type"] == "tool_use"))
+        .unwrap();
+    let result = messages
+        .iter()
+        .find_map(|message| message["content"].as_array()?.iter().find(|block| block["type"] == "tool_result"))
+        .unwrap();
+    assert_eq!(call["id"], "call_1_fc_A");
+    assert_eq!(result["tool_use_id"], call["id"]);
+    assert_eq!(result["content"][0]["text"], "file contents");
+}
+
+#[tokio::test]
 async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
     use ara_testkit::{FakeUpstream, Script};
 
