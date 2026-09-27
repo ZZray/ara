@@ -1711,6 +1711,19 @@ mod tests {
     }
 
     #[test]
+    fn mistral_profile_keeps_same_source_thinking_only_turn() {
+        let mut assistant = AssistantMessage::empty(API, "test", "m");
+        assistant.content =
+            vec![AssistantBlock::Thinking(ThinkingContent { thinking: "inspect".into(), thinking_signature: None })];
+        let context = Context { messages: vec![Message::Assistant(assistant)], ..Context::default() };
+        let compat = OpenAICompat { requires_thinking_as_text: true, ..Default::default() };
+        assert_eq!(
+            convert_messages(&model(), &context, &compat),
+            vec![json!({"role":"assistant","content":"<thinking>\ninspect\n</thinking>"})]
+        );
+    }
+
+    #[test]
     fn mistral_profile_normalizes_whole_responses_composite_id() {
         let mut assistant = AssistantMessage::empty("openai-responses", "elsewhere", "other");
         assistant.content = vec![AssistantBlock::ToolCall(ToolCall {
