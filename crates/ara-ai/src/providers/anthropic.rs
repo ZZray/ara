@@ -57,17 +57,15 @@ impl std::fmt::Debug for AnthropicProviderSessionState {
 
 impl AnthropicProviderSessionState {
     fn route_key(model: &Model) -> (String, String) {
-        let base = model.base_url.trim_end_matches('/');
-        let base = base.strip_suffix("/v1").unwrap_or(base);
-        (base.to_owned(), model.id.clone())
+        (messages_url(&model.base_url), model.id.clone())
     }
 
     fn strict_rejected(&self, model: &Model) -> bool {
         self.rejected_strict_tools.lock().unwrap().contains(&Self::route_key(model))
     }
 
-    fn remember_strict_rejection(&self, model: &Model) {
-        self.rejected_strict_tools.lock().unwrap().insert(Self::route_key(model));
+    fn remember_strict_rejection(&self, url: &str, model_id: &str) {
+        self.rejected_strict_tools.lock().unwrap().insert((url.to_owned(), model_id.to_owned()));
     }
 }
 
@@ -415,6 +413,11 @@ fn official_api_key_route(model: &Model) -> bool {
         && url.fragment().is_none()
 }
 
+fn messages_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") { format!("{base}/messages") } else { format!("{base}/v1/messages") }
+}
+
 fn strict_incompatible_keyword(value: &Value, depth: usize) -> bool {
     if depth > MAX_TOOL_SCHEMA_DEPTH {
         return true;
@@ -644,7 +647,6 @@ fn strict_rejection(error: &PostError) -> bool {
 
 async fn post_with_strict_fallback(
     client: &reqwest::Client,
-    model: &Model,
     url: &str,
     headers: &[(String, String)],
     params: &Value,
@@ -655,7 +657,8 @@ async fn post_with_strict_fallback(
     match post_with_retry_detailed(client, url, headers, params, &options.retry, &options.cancel, retry_blocked).await {
         Err(error) if fallback.is_some() && has_strict_tools(params) && strict_rejection(&error) => {
             if let Some(state) = &options.provider_session_state {
-                state.remember_strict_rejection(model);
+                let model_id = params["model"].as_str().expect("built Anthropic params contain a model ID");
+                state.remember_strict_rejection(url, model_id);
             }
             post_with_retry(
                 client,
@@ -1149,7 +1152,7 @@ async fn run(
     if base.is_empty() {
         return Err(ProviderError::Config("Anthropic request setup did not resolve a base URL".into()));
     }
-    let url = if base.ends_with("/v1") { format!("{base}/messages") } else { format!("{base}/v1/messages") };
+    let url = messages_url(base);
     let key = options
         .api_key
         .as_deref()
@@ -1163,13 +1166,12 @@ async fn run(
     let first_deadline = options.first_event_timeout.map(|timeout| started + timeout);
     let response = match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_strict_fallback(client, model, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
+            result = post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Anthropic stream timed out before first event".into())),
         },
         None => {
             post_with_strict_fallback(
                 client,
-                model,
                 &url,
                 &headers,
                 &params,
@@ -1366,18 +1368,6 @@ mod strict_tool_tests {
     use super::*;
     use ara_testkit::{FakeUpstream, Script};
 
-    fn test_model(base_url: &str) -> Model {
-        Model {
-            id: "claude-fixture".into(),
-            api: API.into(),
-            provider: "anthropic".into(),
-            base_url: base_url.into(),
-            reasoning: false,
-            max_tokens: None,
-            tokenizer: None,
-        }
-    }
-
     fn script(error_type: &str, first_error: &str) -> Script {
         serde_json::from_value(json!({"responses":[
             {"status":400,"body":json!({"type":"error","error":{"type":error_type,"message":first_error}}).to_string()},
@@ -1441,7 +1431,6 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
-            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,
@@ -1471,7 +1460,6 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
-            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,
@@ -1494,7 +1482,6 @@ mod strict_tool_tests {
         let mut retry_blocked = false;
         let error = post_with_strict_fallback(
             &reqwest::Client::new(),
-            &test_model(&server.base_url()),
             &format!("{}/messages", server.base_url()),
             &[],
             &params,
