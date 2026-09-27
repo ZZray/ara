@@ -175,6 +175,29 @@ impl Usage {
     }
 }
 
+/// Outer replay attempts for one provider call. `usage` on the delivered
+/// assistant message still describes only the delivered attempt. A missing
+/// bucket in any attempt remains unknown when these records are added up.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetryAccounting {
+    pub attempts: Vec<RetryAttempt>,
+    #[serde(rename = "elapsedMs")]
+    pub elapsed_ms: u64,
+}
+
+/// One attempt observed by ARA's replay-safe wrapper. Inner HTTP retries that
+/// never produced an assistant message cannot report token usage here.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetryAttempt {
+    pub usage: Usage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u64>,
+    #[serde(rename = "elapsedMs")]
+    pub elapsed_ms: u64,
+    #[serde(rename = "stopReason")]
+    pub stop_reason: StopReason,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub content: UserContent,
@@ -210,6 +233,10 @@ pub struct AssistantMessage {
     #[serde(rename = "providerPayload", default, skip_serializing_if = "Option::is_none")]
     pub provider_payload: Option<Value>,
     pub usage: Usage,
+    /// Present only after a replay was planned or started. These are outer
+    /// attempts, including discarded ones; they are not a billing verdict.
+    #[serde(rename = "retryAccounting", default, skip_serializing_if = "Option::is_none")]
+    pub retry_accounting: Option<RetryAccounting>,
     #[serde(rename = "stopReason")]
     pub stop_reason: StopReason,
     #[serde(rename = "stopDetails", default, skip_serializing_if = "Option::is_none")]
@@ -238,6 +265,7 @@ impl AssistantMessage {
             upstream_provider: None,
             provider_payload: None,
             usage: Usage::unknown(),
+            retry_accounting: None,
             stop_reason: StopReason::Stop,
             stop_details: None,
             error_message: None,

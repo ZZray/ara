@@ -1378,6 +1378,39 @@ async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
 }
 
 #[tokio::test]
+async fn retried_usage_reaches_json_and_journal_with_one_tool_effect() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [finish("stop"), usage(4, 0), done()]},
+        {"events": [tool_call(0, "call_w", "write", "{\"path\":\"retry-accounting.txt\",\"content\":\"once\\n\"}"), finish("tool_calls"), usage(5, 2), done()]},
+        {"events": [text("Written once."), finish("stop"), usage(6, 3), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["--mode", "json", "Write retry-accounting.txt with once"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("retry-accounting.txt")).unwrap(), "once\n");
+    assert_eq!(up.served(), 3);
+    let events: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let assistant_ends: Vec<_> = events
+        .iter()
+        .filter(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant")
+        .collect();
+    assert_eq!(assistant_ends.len(), 2);
+    let receipt = &assistant_ends[0]["message"]["retryAccounting"];
+    assert_eq!(assistant_ends[0]["message"]["usage"]["input"], 5);
+    assert_eq!(receipt["attempts"].as_array().unwrap().len(), 2);
+    assert_eq!(receipt["attempts"][0]["usage"]["input"], 4);
+    assert_eq!(receipt["attempts"][1]["usage"]["input"], 5);
+    assert_eq!(assistant_ends[1]["message"]["retryAccounting"], Value::Null);
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
+    assert_eq!(entries[3]["message"]["retryAccounting"], *receipt);
+    assert_eq!(entries[3]["message"]["content"][0]["id"], "call_w");
+    assert_eq!(entries[4]["message"]["toolCallId"], "call_w");
+}
+
+#[tokio::test]
 async fn pre_start_http_retry_reaches_one_tool_task_without_duplicate_effects() {
     let env = Env::new();
     let mut responses = vec![

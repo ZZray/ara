@@ -5,14 +5,14 @@
 //! irrevocable as soon as it emits meaningful content or a tool-call event.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
-use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason};
+use crate::types::{AssistantBlock, AssistantMessage, Model, RetryAccounting, RetryAttempt, StopReason};
 use crate::usage_limit::account_usage_limit;
 
 const MAX_EMPTY_RETRIES: u32 = 2;
@@ -154,7 +154,7 @@ async fn finish(
 ) {
     if !flush(sink, buffered, sent_start, cancel).await {
         if cancel.is_cancelled() {
-            send_abort(sink, model, Some(terminal.partial().clone())).await;
+            send_abort(sink, model, Some(terminal.partial().clone()), None).await;
         }
         return;
     }
@@ -163,12 +163,12 @@ async fn finish(
         && !send(sink, AssistantMessageEvent::Start { partial: terminal.partial().clone() }, cancel).await
     {
         if cancel.is_cancelled() {
-            send_abort(sink, model, Some(terminal.partial().clone())).await;
+            send_abort(sink, model, Some(terminal.partial().clone()), None).await;
         }
         return;
     }
     if !send(sink, terminal.clone(), cancel).await && cancel.is_cancelled() {
-        send_abort(sink, model, Some(terminal.partial().clone())).await;
+        send_abort(sink, model, Some(terminal.partial().clone()), None).await;
     }
 }
 
@@ -179,10 +179,61 @@ fn aborted(model: &Model, partial: Option<AssistantMessage>) -> AssistantMessage
     AssistantMessageEvent::Error { reason: StopReason::Aborted, error: message }
 }
 
-async fn send_abort(sink: &EventSink, model: &Model, partial: Option<AssistantMessage>) {
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn attempt_record(message: &AssistantMessage, stop_reason: StopReason, started: Instant) -> RetryAttempt {
+    RetryAttempt {
+        usage: message.usage.clone(),
+        duration: message.duration,
+        elapsed_ms: elapsed_ms(started),
+        stop_reason,
+    }
+}
+
+fn retry_accounting(attempts: Vec<RetryAttempt>, started: Instant) -> RetryAccounting {
+    RetryAccounting { attempts, elapsed_ms: elapsed_ms(started) }
+}
+
+fn interrupted_accounting(
+    attempts: &[RetryAttempt],
+    partial: Option<&AssistantMessage>,
+    attempt_started: Option<Instant>,
+    started: Instant,
+) -> Option<RetryAccounting> {
+    if attempts.is_empty() {
+        return None;
+    }
+    let mut records = attempts.to_vec();
+    if let (Some(message), Some(attempt_started)) = (partial, attempt_started) {
+        records.push(attempt_record(message, StopReason::Aborted, attempt_started));
+    }
+    Some(retry_accounting(records, started))
+}
+
+fn with_accounting(mut event: AssistantMessageEvent, accounting: RetryAccounting) -> AssistantMessageEvent {
+    match &mut event {
+        AssistantMessageEvent::Done { message, .. } => message.retry_accounting = Some(accounting),
+        AssistantMessageEvent::Error { error, .. } => error.retry_accounting = Some(accounting),
+        _ => unreachable!("only terminal events carry retry accounting"),
+    }
+    event
+}
+
+async fn send_abort(
+    sink: &EventSink,
+    model: &Model,
+    partial: Option<AssistantMessage>,
+    accounting: Option<RetryAccounting>,
+) {
     // The active HTTP attempt is cancelled before this call. If the consumer
     // is behind a full channel, retain the terminal until it drains or drops.
-    let _ = sink.push(aborted(model, partial)).await;
+    let mut event = aborted(model, partial);
+    if let Some(accounting) = accounting {
+        event = with_accounting(event, accounting);
+    }
+    let _ = sink.push(event).await;
 }
 
 /// Wrap one-attempt streams. Buffered lifecycle markers from discarded
@@ -199,13 +250,17 @@ where
 {
     let (sink, rx) = EventSink::channel();
     tokio::spawn(async move {
+        let started = Instant::now();
+        let mut attempts = Vec::new();
         let mut empty_retries = 0u32;
         let mut error_retries = 0u32;
         loop {
             if cancel.is_cancelled() {
-                send_abort(&sink, &model, None).await;
+                let accounting = interrupted_accounting(&attempts, None, None, started);
+                send_abort(&sink, &model, None, accounting).await;
                 return;
             }
+            let attempt_started = Instant::now();
             let attempt_cancel = cancel.child_token();
             let _attempt_guard = attempt_cancel.clone().drop_guard();
             let AttemptStream { mut events, error } = attempt(attempt_cancel.clone());
@@ -218,7 +273,8 @@ where
                     biased;
                     _ = cancel.cancelled() => {
                         attempt_cancel.cancel();
-                        send_abort(&sink, &model, Some(last_partial)).await;
+                        let accounting = interrupted_accounting(&attempts, Some(&last_partial), Some(attempt_started), started);
+                        send_abort(&sink, &model, Some(last_partial), accounting).await;
                         return;
                     }
                     event = events.recv() => event,
@@ -227,15 +283,12 @@ where
                     let mut message = last_partial;
                     message.stop_reason = StopReason::Error;
                     message.error_message = Some("Provider stream ended without a terminal event".into());
-                    finish(
-                        &sink,
-                        &mut buffered,
-                        &mut sent_start,
-                        AssistantMessageEvent::Error { reason: StopReason::Error, error: message },
-                        &model,
-                        &cancel,
-                    )
-                    .await;
+                    attempts.push(attempt_record(&message, StopReason::Error, attempt_started));
+                    let mut terminal = AssistantMessageEvent::Error { reason: StopReason::Error, error: message };
+                    if attempts.len() > 1 {
+                        terminal = with_accounting(terminal, retry_accounting(attempts, started));
+                    }
+                    finish(&sink, &mut buffered, &mut sent_start, terminal, &model, &cancel).await;
                     return;
                 };
                 last_partial = event.partial().clone();
@@ -250,7 +303,9 @@ where
                 if !flush(&sink, &mut buffered, &mut sent_start, &cancel).await {
                     attempt_cancel.cancel();
                     if cancel.is_cancelled() {
-                        send_abort(&sink, &model, Some(last_partial)).await;
+                        let accounting =
+                            interrupted_accounting(&attempts, Some(&last_partial), Some(attempt_started), started);
+                        send_abort(&sink, &model, Some(last_partial), accounting).await;
                     }
                     return;
                 }
@@ -262,7 +317,9 @@ where
                     if !send(&sink, AssistantMessageEvent::Start { partial: last_partial.clone() }, &cancel).await {
                         attempt_cancel.cancel();
                         if cancel.is_cancelled() {
-                            send_abort(&sink, &model, Some(last_partial)).await;
+                            let accounting =
+                                interrupted_accounting(&attempts, Some(&last_partial), Some(attempt_started), started);
+                            send_abort(&sink, &model, Some(last_partial), accounting).await;
                         }
                         return;
                     }
@@ -270,7 +327,9 @@ where
                 if !send(&sink, event, &cancel).await {
                     attempt_cancel.cancel();
                     if cancel.is_cancelled() {
-                        send_abort(&sink, &model, Some(last_partial)).await;
+                        let accounting =
+                            interrupted_accounting(&attempts, Some(&last_partial), Some(attempt_started), started);
+                        send_abort(&sink, &model, Some(last_partial), accounting).await;
                     }
                     return;
                 }
@@ -303,11 +362,16 @@ where
             } else {
                 None
             };
+            let terminal_reason = match &terminal {
+                AssistantMessageEvent::Done { reason, .. } | AssistantMessageEvent::Error { reason, .. } => *reason,
+                _ => unreachable!("attempt completed with a terminal event"),
+            };
+            attempts.push(attempt_record(terminal.partial(), terminal_reason, attempt_started));
             if let Some(delay) = delay {
                 tokio::select! {
                     _ = cancel.cancelled() => {
                         attempt_cancel.cancel();
-                        send_abort(&sink, &model, None).await;
+                        send_abort(&sink, &model, None, Some(retry_accounting(attempts, started))).await;
                         return;
                     }
                     _ = tokio::time::sleep(delay) => continue,
@@ -315,9 +379,15 @@ where
             }
             if cancel.is_cancelled() {
                 attempt_cancel.cancel();
-                send_abort(&sink, &model, Some(last_partial)).await;
+                let accounting = (attempts.len() > 1).then(|| retry_accounting(attempts, started));
+                send_abort(&sink, &model, Some(last_partial), accounting).await;
                 return;
             }
+            let terminal = if attempts.len() > 1 {
+                with_accounting(terminal, retry_accounting(attempts, started))
+            } else {
+                terminal
+            };
             finish(&sink, &mut buffered, &mut sent_start, terminal, &model, &cancel).await;
             return;
         }

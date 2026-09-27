@@ -1459,6 +1459,11 @@ async fn pings_before_message_start_do_not_satisfy_the_first_event_watchdog() {
     assert_eq!(message(&events).response_id.as_deref(), Some("msg_recovered"));
     assert_eq!(message(&events).text(), "recovered");
     assert_eq!(server.served(), 2);
+    let attempts = &message(&events).retry_accounting.as_ref().unwrap().attempts;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].usage.input, None, "timed-out first attempt has unknown usage");
+    assert_eq!(attempts[0].stop_reason, StopReason::Error);
+    assert_eq!(attempts[1].stop_reason, StopReason::Stop);
 }
 
 #[tokio::test]

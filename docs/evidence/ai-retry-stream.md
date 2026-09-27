@@ -28,10 +28,12 @@ explicit provider output count of 0 or 1. Unknown usage is not zero in ARA.
 The inner HTTP layer can still repeat account-cap 429s before the final error
 is classified. ARA now has the OMP `image_end` event shape and commits the
 outer retry attempt on it, but its current OpenAI Chat adapter does not emit
-output images. OMP's wider AI-RETRY surface remains open. The final
-assistant message contains only the delivered attempt's usage and duration;
-these are not aggregate cost or end-to-end latency across discarded attempts.
-Do not infer total usage from them.
+output images. OMP's wider AI-RETRY surface remains open. The final assistant
+message keeps the delivered attempt's `usage` and `duration`. An optional
+`retryAccounting` receipt now records every outer attempt once a replay is
+planned or started. It is not a billing total: inner HTTP attempts without a
+terminal message may have unknown usage. Do not infer total cost from the
+delivered message or fill absent receipt buckets with zero.
 
 ## Entry and observed behavior
 
@@ -286,3 +288,50 @@ both changed files and reported no remaining confirmed defect; it did not run
 the full host chain or real-model trial. The unfiltered Windows backend gate,
 bounded real-model task, and wider AI-RETRY surface remain open. AI-RETRYa is
 still **implementing (WIP)**, and no acceptance count changes.
+
+## Outer-attempt accounting follow-up (2026-09-28, WIP)
+
+Fixed OMP `packages/ai/src/utils/empty-completion-retry.ts` drops superseded
+terminals and does not aggregate their usage. ARA adds an intentional
+accounting receipt in `ara-ai::replay_safe_retry` and `AssistantMessage`.
+`retryAccounting.attempts` contains each outer attempt's provider-reported
+usage and duration, elapsed time observed by the wrapper, and stop reason.
+The receipt also carries total wrapper elapsed time. It appears only after a
+replay is planned or started; ordinary one-attempt messages retain their old
+JSON shape. The public stream still exposes only the delivered attempt.
+
+The delivered message's `usage` and `duration` remain unchanged. The receipt
+is a list rather than a silently computed total: e.g. an empty attempt with
+input/output `3/0` followed by a delivered `5/2` has known reported subtotals
+`8/2`, but any missing bucket in any attempt remains unknown. A pre-Start 503
+has unknown usage even when the recovery succeeds. Inner HTTP retries without
+an assistant terminal are not individually counted. This is evidence for
+review, not a billing or budget-settlement rule.
+
+Cancellation during the retry wait retains the discarded attempt in the
+Provider's Aborted terminal; cancellation during a later active attempt also
+records its last partial usage as Aborted. This does not guarantee a host
+journal receipt on caller cancellation: the current Agent loop can choose its
+own cancellation branch before consuming the Provider terminal. Changing that
+priority belongs to a separate Agent loop scope decision. No Agent loop,
+Session writer, CLI resume, tool dispatcher or retry decision changed here.
+
+| Check on the working tree based on `e0d42fe` | Observed result |
+| --- | --- |
+| `rustfmt --edition 2024 --check` on the six changed Rust files | Exit 0 |
+| `cargo test -p ara-ai --test openai_http replay_safe_retry -- --nocapture` | Exit 0: 24/24; known/partial/unknown usage, exhausted replay, cancellation and committed tool |
+| `cargo test -p ara-ai --test anthropic_http pings_before_message_start_do_not_satisfy_the_first_event_watchdog --quiet` | Exit 0: Anthropic retry receipt, 1/1 |
+| `cargo test -p ara-ai --test openai_responses_http empty_reasoning_start_can_retry_a_disconnected_stream --quiet` | Exit 0: Responses retry receipt, 1/1 |
+| `cargo test -p ara-ai --all-targets --all-features --quiet` | Exit 0: 128 unit, 34 Anthropic HTTP, 50 Chat HTTP, 31 Responses HTTP |
+| `cargo test -p ara-cli --test e2e retried_usage_reaches_json_and_journal_with_one_tool_effect -- --nocapture` | Exit 0: real `ara` process, three upstream requests, one file write, matching JSON `message_end` and Session receipt |
+| `python scripts/verify_backend.py` | Owned formatting and strict workspace Clippy passed; all-target suite failed the existing Windows Bash deadline assertion, CLI 50/51; later verifier phases not reached |
+| `cargo test --workspace --doc --all-features --quiet`; `cargo deny check`; `python scripts/omp_inventory.py check`; `git diff --check` | Exit 0; doc phase had no cases; deny reported existing duplicate-version warnings |
+
+Independent Codex pre-review selected this narrow receipt boundary. A separate
+Codex post-diff reviewer covered the four production/initial test files,
+the Provider → Agent → CLI → Session path and fixed OMP source; it reported no
+confirmed reachable defect after retracting one mistaken concern about an
+already-attached cancellation receipt. A follow-up review covered the later
+Anthropic and Responses assertions and the evidence/plan/ledger/handoff diff;
+it found no confirmed issue. Full Windows gate, bounded real-model proof, billing integration,
+and complete AI-RETRY parity remain open; AI-RETRYa stays **WIP**.

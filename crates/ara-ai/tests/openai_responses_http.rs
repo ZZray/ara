@@ -1362,6 +1362,11 @@ async fn empty_reasoning_start_can_retry_a_disconnected_stream() {
             .await;
     assert_eq!(output.text(), "recovered");
     assert_eq!(server.served(), 2);
+    let attempts = &output.retry_accounting.as_ref().unwrap().attempts;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].usage.input, None);
+    assert_eq!(attempts[0].stop_reason, StopReason::Error);
+    assert_eq!(attempts[1].stop_reason, StopReason::Stop);
 }
 
 #[tokio::test]

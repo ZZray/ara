@@ -298,6 +298,11 @@ async fn replay_safe_retry_reissues_pre_start_transient_http_once() {
         assert_eq!(server.served(), 2, "status {status}: {msg:?}");
         assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
         assert_eq!(msg.text(), "recovered");
+        let accounting = msg.retry_accounting.as_ref().expect("outer replay must retain both attempts");
+        assert_eq!(accounting.attempts.len(), 2);
+        assert_eq!(accounting.attempts[0].usage.input, None, "failed HTTP attempt has unknown usage");
+        assert_eq!(accounting.attempts[0].stop_reason, StopReason::Error);
+        assert_eq!(accounting.attempts[1].stop_reason, StopReason::Stop);
     }
 }
 
@@ -542,7 +547,7 @@ async fn replay_safe_retry_discards_known_empty_stop_before_text() {
     let server = FakeUpstream::start(
         script(json!({"responses": [
             {"events": [finish("stop"), usage(3, 0), done()]},
-            {"events": [text("answer"), finish("stop"), usage(3, 2), done()]}
+            {"events": [text("answer"), finish("stop"), usage(5, 2), done()]}
         ]})),
         None,
     )
@@ -553,7 +558,15 @@ async fn replay_safe_retry_discards_known_empty_stop_before_text() {
     assert_eq!(server.served(), 2);
     assert_eq!(events.iter().filter(|e| matches!(e, AssistantMessageEvent::Start { .. })).count(), 1);
     assert_eq!(msg.text(), "answer");
+    assert_eq!(msg.usage.input, Some(5), "delivered usage is unchanged");
     assert_eq!(msg.usage.output, Some(2));
+    let accounting = msg.retry_accounting.as_ref().unwrap();
+    assert_eq!(accounting.attempts.len(), 2);
+    assert_eq!(accounting.attempts[0].usage.input, Some(3));
+    assert_eq!(accounting.attempts[0].usage.output, Some(0));
+    assert_eq!(accounting.attempts[1].usage.input, Some(5));
+    assert_eq!(accounting.attempts[1].usage.output, Some(2));
+    assert!(accounting.elapsed_ms >= accounting.attempts[0].elapsed_ms);
 }
 
 #[tokio::test]
@@ -575,6 +588,32 @@ async fn replay_safe_retry_exhausts_two_known_empty_stops() {
     assert_eq!(msg.stop_reason, StopReason::Stop);
     assert_eq!(msg.text(), "");
     assert_eq!(msg.usage.output, Some(1));
+    let accounting = msg.retry_accounting.as_ref().unwrap();
+    assert_eq!(accounting.attempts.len(), 3);
+    assert!(accounting.attempts.iter().all(|attempt| attempt.usage.input == Some(3)));
+}
+
+#[tokio::test]
+async fn replay_safe_retry_records_partial_usage_without_filling_unknown_buckets() {
+    let server = FakeUpstream::start(
+        script(json!({"responses": [
+            {"events": [finish("stop"), {"data": {"choices": [], "usage": {"completion_tokens": 0}}}, done()]},
+            {"events": [text("answer"), finish("stop"), {"data": {"choices": [], "usage": {"prompt_tokens": 5}}}, done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, msg) =
+        collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), opts())).await;
+    assert_eq!(server.served(), 2);
+    assert_eq!(msg.text(), "answer");
+    let attempts = &msg.retry_accounting.as_ref().unwrap().attempts;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].usage.input, None);
+    assert_eq!(attempts[0].usage.output, Some(0));
+    assert_eq!(attempts[1].usage.input, Some(5));
+    assert_eq!(attempts[1].usage.output, None);
 }
 
 #[tokio::test]
@@ -842,6 +881,10 @@ async fn replay_safe_retry_cancellation_during_backoff_stops_requests() {
     let (_, msg) = collect(rx).await;
     assert_eq!(server.served(), 1);
     assert_eq!(msg.stop_reason, StopReason::Aborted);
+    let accounting = msg.retry_accounting.as_ref().expect("cancelled backoff retains discarded usage");
+    assert_eq!(accounting.attempts.len(), 1);
+    assert_eq!(accounting.attempts[0].usage.input, Some(3));
+    assert_eq!(accounting.attempts[0].usage.output, Some(0));
 }
 
 #[tokio::test]
@@ -862,6 +905,7 @@ async fn replay_safe_retry_never_reissues_after_tool_event() {
     assert!(events.iter().any(|e| matches!(e, AssistantMessageEvent::ToolcallStart { .. })));
     assert_eq!(msg.stop_reason, StopReason::Error);
     assert_eq!(server.served(), 1, "a tool call must commit its provider attempt");
+    assert!(msg.retry_accounting.is_none(), "one committed attempt needs no replay receipt");
 }
 
 #[tokio::test]
@@ -894,6 +938,10 @@ async fn replay_safe_retry_streams_recovered_text_before_terminal() {
     let (_, msg) = collect(rx).await;
     assert_eq!(msg.stop_reason, StopReason::Aborted);
     assert_eq!(msg.text(), "live");
+    let accounting = msg.retry_accounting.as_ref().expect("cancelled second attempt retains both records");
+    assert_eq!(accounting.attempts.len(), 2);
+    assert_eq!(accounting.attempts[0].usage.input, Some(3));
+    assert_eq!(accounting.attempts[1].stop_reason, StopReason::Aborted);
 }
 
 #[tokio::test]
