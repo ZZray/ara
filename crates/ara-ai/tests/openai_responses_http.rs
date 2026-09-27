@@ -92,6 +92,123 @@ async fn response_terminal_ends_a_hanging_socket_and_records_the_native_request(
 }
 
 #[tokio::test]
+async fn warmed_full_snapshot_replaces_prior_request_history_on_the_wire() {
+    let server = FakeUpstream::start(
+        script(json!({"responses":[
+            {"events":[
+                {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"seed"}]}}},
+                {"data":{"type":"response.completed","response":{"status":"completed"}}}
+            ]},
+            {"events":[
+                {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}},
+                {"data":{"type":"response.completed","response":{"status":"completed"}}}
+            ]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, mut seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Default::default() },
+        opts.clone(),
+    ))
+    .await;
+    assert_eq!(seed.text(), "seed");
+    let payload = seed.provider_payload.as_mut().expect("first response saved native history");
+    payload["dt"] = json!(false);
+    payload["items"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"canonical user"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"canonical answer"}]},
+        {"type":"function_call","call_id":"call_branch","name":"read","arguments":"{}"}
+    ]);
+    let (_, output) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint,
+        Context {
+            messages: vec![
+                Message::User(UserMessage::text("old user")),
+                Message::Assistant(seed),
+                Message::User(UserMessage::text("follow up")),
+            ],
+            ..Default::default()
+        },
+        opts,
+    ))
+    .await;
+    assert_eq!(output.text(), "done");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let input = requests[1]["body"]["input"].as_array().unwrap();
+    assert_eq!(input.len(), 5);
+    assert_eq!(input[0]["content"][0]["text"], "canonical user");
+    assert_eq!(input[1]["content"][0]["text"], "canonical answer");
+    assert_eq!(input[2]["type"], "function_call");
+    assert_eq!(input[3]["type"], "function_call_output");
+    assert_eq!(input[3]["call_id"], "call_branch");
+    assert!(input[3]["output"].as_str().unwrap().contains("interrupted"));
+    assert_eq!(input[4]["content"][0]["text"], "follow up");
+    assert!(!requests[1]["body"].to_string().contains("old user"));
+}
+
+#[tokio::test]
+async fn full_snapshot_tool_images_follow_the_host_vision_capability() {
+    let response = json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}},
+        {"data":{"type":"response.completed","response":{"status":"completed"}}}
+    ]});
+    let server = FakeUpstream::start(script(json!({"responses":[response.clone(), response.clone(), response]})), None)
+        .await
+        .unwrap();
+    let endpoint = model(&server.base_url());
+    let mut opts = options();
+    opts.session_state = Some(Arc::new(ProviderSessionState::default()));
+    let (_, mut seed) = collect(openai_responses::stream(
+        reqwest::Client::new(),
+        endpoint.clone(),
+        Context { messages: vec![Message::User(UserMessage::text("seed"))], ..Default::default() },
+        opts.clone(),
+    ))
+    .await;
+    let payload = seed.provider_payload.as_mut().expect("first response saved native history");
+    payload["dt"] = json!(false);
+    payload["items"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"canonical"}]},
+        {"type":"function_call","call_id":"call_image","name":"read","arguments":"{}"},
+        {"type":"function_call_output","call_id":"call_image","output":[
+            {"type":"input_image","image_url":"data:image/png;base64,AAEC"}
+        ]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"canonical answer"}]}
+    ]);
+    let context = Context {
+        messages: vec![
+            Message::User(UserMessage::text("old user")),
+            Message::Assistant(seed),
+            Message::User(UserMessage::text("follow up")),
+        ],
+        ..Default::default()
+    };
+    let (_, no_vision) =
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint.clone(), context.clone(), opts.clone()))
+            .await;
+    assert_eq!(no_vision.text(), "ok");
+    opts.request.supports_images = true;
+    let (_, vision) = collect(openai_responses::stream(reqwest::Client::new(), endpoint, context, opts)).await;
+    assert_eq!(vision.text(), "ok");
+    let requests = server.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["input"][0]["content"][0]["text"], "old user");
+    assert!(!requests[1]["body"].to_string().contains("data:image/png"));
+    assert_eq!(requests[2]["body"]["input"][0]["content"][0]["text"], "canonical");
+    assert_eq!(requests[2]["body"]["input"][2]["output"][0]["image_url"], "data:image/png;base64,AAEC");
+    assert!(!requests[2]["body"].to_string().contains("old user"));
+}
+
+#[tokio::test]
 async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request() {
     let server = FakeUpstream::start(script(json!({"responses":[{"events":[
         {"data":{"type":"response.output_item.done","output_index":0,

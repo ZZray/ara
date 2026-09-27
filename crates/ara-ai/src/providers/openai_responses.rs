@@ -27,6 +27,10 @@ use super::openai_completions::{RetryPolicy, post_with_retry};
 
 pub const API: &str = "openai-responses";
 const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
+const MAX_NATIVE_SNAPSHOT_ITEMS: usize = 1024;
+const MAX_NATIVE_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+const INTERRUPTED_TOOL_OUTPUT: &str =
+    "[No tool output recorded: the tool call was interrupted before it produced a result.]";
 
 /// Request fields supported by the stateless Responses path.
 #[derive(Clone, Debug, Default)]
@@ -268,6 +272,169 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
     Some(sanitized)
 }
 
+struct FullNativeHistory {
+    items: Vec<Value>,
+    pending_calls: Vec<(String, String)>,
+}
+
+fn repair_full_snapshot_orphan_calls(input: Vec<Value>) -> Vec<Value> {
+    let mut later_outputs = HashSet::new();
+    let mut orphans = HashSet::new();
+    for (index, item) in input.iter().enumerate().rev() {
+        if item["type"] == "function_call_output" {
+            if let Some(id) = item["call_id"].as_str() {
+                later_outputs.insert(id.to_owned());
+            }
+        } else if item["type"] == "function_call"
+            && let Some(id) = item["call_id"].as_str()
+            && !later_outputs.contains(id)
+        {
+            orphans.insert(index);
+        }
+    }
+    if orphans.is_empty() {
+        return input;
+    }
+    let mut repaired = Vec::with_capacity(input.len() + orphans.len());
+    for (index, item) in input.into_iter().enumerate() {
+        let id = if orphans.contains(&index) { item["call_id"].as_str().map(str::to_owned) } else { None };
+        repaired.push(item);
+        if let Some(id) = id {
+            repaired.push(json!({"type":"function_call_output","call_id":id,"output":INTERRUPTED_TOOL_OUTPUT}));
+        }
+    }
+    repaired
+}
+
+// A full snapshot replaces the earlier input, so it cannot be checked against
+// only this assistant's visible blocks as an incremental payload can.
+fn full_native_history(message: &AssistantMessage, model: &Model, supports_images: bool) -> Option<FullNativeHistory> {
+    if !same_responses_origin(message, model) {
+        return None;
+    }
+    let payload = message.provider_payload.as_ref()?;
+    if payload.get("type")?.as_str()? != "openaiResponsesHistory"
+        || payload.get("provider")?.as_str()? != model.provider
+        || payload.get("endpointSha256")?.as_str()? != responses_endpoint_fingerprint(&model.base_url)
+        || payload.get("dt") != Some(&Value::Bool(false))
+    {
+        return None;
+    }
+    let source = payload.get("items")?.as_array()?;
+    if source.is_empty()
+        || source.len() > MAX_NATIVE_SNAPSHOT_ITEMS
+        || serde_json::to_vec(source).ok()?.len() > MAX_NATIVE_SNAPSHOT_BYTES
+    {
+        return None;
+    }
+    let mut items = Vec::with_capacity(source.len());
+    let mut call_ids = HashMap::<String, String>::new();
+    let mut pending = HashSet::new();
+    for item in source {
+        let wire = match item.get("type")?.as_str()? {
+            "message" => {
+                let role = item.get("role")?.as_str()?;
+                if !matches!(role, "user" | "assistant" | "developer") {
+                    return None;
+                }
+                let content = item.get("content")?;
+                match content {
+                    Value::String(_) => {}
+                    Value::Array(parts) => {
+                        for part in parts {
+                            match (role, part.get("type")?.as_str()?) {
+                                ("user" | "developer", "input_text") if part.get("text")?.is_string() => {}
+                                ("user" | "developer", "input_image")
+                                    if supports_images && part.get("image_url")?.is_string() => {}
+                                ("assistant", "output_text") if part.get("text")?.is_string() => {}
+                                ("assistant", "refusal") if part.get("refusal")?.is_string() => {}
+                                _ => return None,
+                            }
+                        }
+                    }
+                    _ => return None,
+                }
+                let mut wire = json!({"type":"message","role":role,"content":content});
+                if let Some(phase) = item.get("phase") {
+                    if role != "assistant" {
+                        return None;
+                    }
+                    match phase {
+                        Value::String(phase) if matches!(phase.as_str(), "commentary" | "final_answer") => {
+                            wire["phase"] = json!(phase);
+                        }
+                        Value::Null => {}
+                        _ => return None,
+                    }
+                }
+                wire
+            }
+            "reasoning" => {
+                let mut wire = json!({"type":"reasoning"});
+                for field in ["summary", "content", "encrypted_content"] {
+                    if let Some(value) = item.get(field) {
+                        if !(if field == "encrypted_content" {
+                            value.is_string() || value.is_null()
+                        } else {
+                            value.is_array()
+                        }) {
+                            return None;
+                        }
+                        wire[field] = value.clone();
+                    }
+                }
+                wire
+            }
+            "function_call" => {
+                let raw_id = item.get("call_id")?.as_str()?.to_owned();
+                let name = item.get("name")?.as_str()?;
+                let arguments = item.get("arguments")?.as_str()?;
+                if raw_id.is_empty() || name.is_empty() || serde_json::from_str::<Value>(arguments).is_err() {
+                    return None;
+                }
+                let wire_id = call_id(&raw_id, API);
+                if wire_id.is_empty() || call_ids.values().any(|existing| existing == &wire_id) {
+                    return None;
+                }
+                call_ids.insert(raw_id, wire_id.clone());
+                pending.insert(wire_id.clone());
+                json!({"type":"function_call","call_id":wire_id,"name":name,"arguments":arguments})
+            }
+            "function_call_output" => {
+                let raw_id = item.get("call_id")?.as_str()?;
+                let wire_id = call_ids.get(raw_id)?;
+                if !pending.remove(wire_id) {
+                    return None;
+                }
+                let output = item.get("output")?;
+                if !output.is_string() && !output.is_array() {
+                    return None;
+                }
+                if let Value::Array(parts) = output {
+                    for part in parts {
+                        match part.get("type")?.as_str()? {
+                            "input_text" if part.get("text")?.is_string() => {}
+                            "input_image" if supports_images && part.get("image_url")?.is_string() => {}
+                            _ => return None,
+                        }
+                    }
+                }
+                json!({"type":"function_call_output","call_id":wire_id,"output":output})
+            }
+            "compaction" => json!({"type":"compaction","encrypted_content":item.get("encrypted_content")?.as_str()?}),
+            "compaction_summary" => json!({"type":"compaction_summary","summary":item.get("summary")?.as_str()?}),
+            "item_reference" => continue,
+            _ => return None,
+        };
+        items.push(wire);
+    }
+    if !items.iter().any(|item| item["type"] != "reasoning") {
+        return None;
+    }
+    let pending_calls = call_ids.into_iter().filter(|(_, wire_id)| pending.contains(wire_id)).collect();
+    Some(FullNativeHistory { items, pending_calls })
+}
+
 enum ReplayedCall {
     Function(String),
     Filtered(String),
@@ -501,6 +668,7 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
     }
 
     let mut input = Vec::new();
+    let mut saw_full_snapshot = false;
     let transformed = transform_messages(&context.messages);
     let scope = ToolCallOriginScope::collect(&transformed);
     let mut remapped: HashMap<String, VecDeque<ReplayedCall>> = HashMap::new();
@@ -520,6 +688,34 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 }
             }
             Message::Assistant(assistant) => {
+                if options.native_history_replay.unwrap_or(true)
+                    && let Some(snapshot) = full_native_history(assistant, model, options.supports_images)
+                {
+                    saw_full_snapshot = true;
+                    input = snapshot.items;
+                    remapped.clear();
+                    used_call_ids = input
+                        .iter()
+                        .filter(|item| item["type"] == "function_call")
+                        .filter_map(|item| item["call_id"].as_str().map(str::to_owned))
+                        .collect();
+                    let mut pending_keys = HashSet::new();
+                    for (raw_id, wire_id) in snapshot.pending_calls {
+                        let key = scope.pairing_key(&raw_id).to_owned();
+                        pending_keys.insert(key.clone());
+                        remapped.entry(key).or_default().push_back(ReplayedCall::Function(wire_id));
+                    }
+                    for call in assistant.tool_calls() {
+                        let key = scope.pairing_key(&call.id).to_owned();
+                        if !pending_keys.contains(&key) {
+                            remapped
+                                .entry(key)
+                                .or_default()
+                                .push_back(ReplayedCall::Filtered(call_id(&call.id, &assistant.api)));
+                        }
+                    }
+                    continue;
+                }
                 if options.native_history_replay.unwrap_or(true)
                     && let Some(items) = native_history(assistant, model)
                 {
@@ -587,6 +783,10 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
                 });
             }
         }
+    }
+
+    if saw_full_snapshot {
+        input = repair_full_snapshot_orphan_calls(input);
     }
 
     let mut body = json!({"model": model.id, "input": input, "stream": true, "store": false});
@@ -1112,6 +1312,183 @@ mod tests {
         reasoning_model.reasoning = true;
         let body = build_request(&reasoning_model, &Context::default(), &RequestOptions::default()).unwrap();
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    fn full_snapshot(endpoint: &Model, items: Vec<Value>) -> AssistantMessage {
+        let mut assistant = AssistantMessage::empty(API, &endpoint.provider, &endpoint.id);
+        assistant.content = vec![AssistantBlock::text("visible fallback")];
+        assistant.provider_payload = Some(json!({
+            "type":"openaiResponsesHistory", "provider":endpoint.provider,
+            "endpointSha256":responses_endpoint_fingerprint(&endpoint.base_url),
+            "dt":false, "items":items
+        }));
+        assistant
+    }
+
+    #[test]
+    fn explicit_full_snapshot_replaces_prior_input_but_keeps_followup_and_instructions() {
+        let endpoint = model();
+        let snapshot = full_snapshot(
+            &endpoint,
+            vec![
+                json!({"type":"message","role":"user","content":[{"type":"input_text","text":"canonical user"}]}),
+                json!({"type":"compaction","encrypted_content":"opaque summary","status":"completed"}),
+                json!({"type":"reasoning","id":"rs_1","encrypted_content":"opaque reasoning"}),
+                json!({"type":"message","role":"assistant","id":"msg_1","status":"completed","phase":"final_answer","content":[{"type":"output_text","text":"canonical answer"}]}),
+            ],
+        );
+        let context = Context {
+            system_prompt: vec!["stable instruction".into()],
+            messages: vec![
+                Message::User(UserMessage::text("old user")),
+                Message::Assistant(snapshot),
+                Message::User(UserMessage::text("follow up")),
+            ],
+            ..Default::default()
+        };
+        let body = build_request(&endpoint, &context, &RequestOptions::default()).unwrap();
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(body["instructions"], "stable instruction");
+        assert_eq!(input.len(), 5);
+        assert_eq!(input[0]["content"][0]["text"], "canonical user");
+        assert_eq!(input[1]["encrypted_content"], "opaque summary");
+        assert_eq!(input[2]["encrypted_content"], "opaque reasoning");
+        assert!(input[2].get("id").is_none());
+        assert_eq!(input[3]["content"][0]["text"], "canonical answer");
+        assert!(input[3].get("id").is_none() && input[3].get("status").is_none());
+        assert_eq!(input[3]["phase"], "final_answer");
+        assert_eq!(input[4]["content"][0]["text"], "follow up");
+        assert!(!body.to_string().contains("old user"));
+
+        let cold = build_request(
+            &endpoint,
+            &context,
+            &RequestOptions { native_history_replay: Some(false), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(cold["input"][0]["content"][0]["text"], "old user");
+        assert_eq!(cold["input"][1]["content"][0]["text"], "visible fallback");
+        assert!(!cold.to_string().contains("opaque reasoning"));
+    }
+
+    #[test]
+    fn latest_full_snapshot_wins_and_later_incremental_turn_is_appended() {
+        let endpoint = model();
+        let first = full_snapshot(
+            &endpoint,
+            vec![json!({"type":"message","role":"user","content":[{"type":"input_text","text":"first snapshot"}]})],
+        );
+        let second = full_snapshot(
+            &endpoint,
+            vec![json!({"type":"message","role":"user","content":[{"type":"input_text","text":"second snapshot"}]})],
+        );
+        let mut incremental = AssistantMessage::empty(API, &endpoint.provider, &endpoint.id);
+        incremental.content = vec![AssistantBlock::text("incremental")];
+        incremental.provider_payload = Some(json!({
+            "type":"openaiResponsesHistory", "provider":endpoint.provider,
+            "endpointSha256":responses_endpoint_fingerprint(&endpoint.base_url), "dt":true,
+            "items":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"incremental"}]}]
+        }));
+        let context = Context {
+            messages: vec![
+                Message::User(UserMessage::text("before")),
+                Message::Assistant(first),
+                Message::User(UserMessage::text("between")),
+                Message::Assistant(second),
+                Message::Assistant(incremental),
+                Message::User(UserMessage::text("after")),
+            ],
+            ..Default::default()
+        };
+        let body = build_request(&endpoint, &context, &RequestOptions::default()).unwrap();
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["content"][0]["text"], "second snapshot");
+        assert_eq!(input[1]["content"][0]["text"], "incremental");
+        assert_eq!(input[2]["content"][0]["text"], "after");
+    }
+
+    #[test]
+    fn full_snapshot_rebuilds_tool_pairing_and_invalid_snapshot_falls_back() {
+        let endpoint = model();
+        let mut snapshot = full_snapshot(
+            &endpoint,
+            vec![
+                json!({"type":"message","role":"user","content":[{"type":"input_text","text":"canonical"}]}),
+                json!({"type":"function_call","call_id":"call_pending","name":"read","arguments":"{\"path\":\"a.txt\"}"}),
+            ],
+        );
+        snapshot.content.push(call("call_pending|fc_pending"));
+        let mut old = AssistantMessage::empty(API, &endpoint.provider, &endpoint.id);
+        old.content = vec![call("call_old|fc_old")];
+        let context = Context {
+            messages: vec![
+                Message::User(UserMessage::text("old user")),
+                Message::Assistant(old),
+                result("call_old|fc_old"),
+                Message::Assistant(snapshot.clone()),
+                result("call_pending|fc_pending"),
+            ],
+            ..Default::default()
+        };
+        let body = build_request(&endpoint, &context, &RequestOptions::default()).unwrap();
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["content"][0]["text"], "canonical");
+        assert_eq!(input[1]["call_id"], "call_pending");
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_pending");
+        assert_eq!(input[2]["output"], "file contents");
+        assert!(!body.to_string().contains("call_old"));
+
+        snapshot.provider_payload.as_mut().unwrap()["items"][1]["arguments"] = json!("{bad json");
+        let bad_context = Context {
+            messages: vec![
+                Message::User(UserMessage::text("old user")),
+                Message::Assistant(snapshot.clone()),
+                result("call_pending|fc_pending"),
+            ],
+            ..Default::default()
+        };
+        let bad = build_request(&endpoint, &bad_context, &RequestOptions::default()).unwrap();
+        assert_eq!(bad["input"][0]["content"][0]["text"], "old user");
+        assert_eq!(bad["input"][1]["content"][0]["text"], "visible fallback");
+        snapshot.provider_payload.as_mut().unwrap()["items"][1]["arguments"] = json!("{}");
+        snapshot.provider_payload.as_mut().unwrap()["items"][0]["content"][0] =
+            json!({"type":"output_text","text":"invalid user content"});
+        let wrong_role = build_request(
+            &endpoint,
+            &Context {
+                messages: vec![Message::User(UserMessage::text("old user")), Message::Assistant(snapshot)],
+                ..Default::default()
+            },
+            &RequestOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(wrong_role["input"][0]["content"][0]["text"], "old user");
+        let invalid_phase_snapshot = full_snapshot(
+            &endpoint,
+            vec![
+                json!({"type":"message","role":"assistant","phase":"unsupported","content":[{"type":"output_text","text":"canonical"}]}),
+            ],
+        );
+        let invalid_phase = build_request(
+            &endpoint,
+            &Context {
+                messages: vec![
+                    Message::User(UserMessage::text("old user")),
+                    Message::Assistant(invalid_phase_snapshot),
+                ],
+                ..Default::default()
+            },
+            &RequestOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(invalid_phase["input"][0]["content"][0]["text"], "old user");
+        let mut moved = endpoint.clone();
+        moved.base_url = "https://other.invalid/v1".into();
+        let foreign = build_request(&moved, &context, &RequestOptions::default()).unwrap();
+        assert_eq!(foreign["input"][0]["content"][0]["text"], "old user");
     }
 
     #[test]
