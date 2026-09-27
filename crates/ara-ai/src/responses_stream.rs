@@ -6,7 +6,7 @@
 
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
-use crate::json::parse_final_arguments;
+use crate::json::{parse_final_arguments, parse_streaming_json};
 use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ToolCall};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -171,6 +171,14 @@ impl ResponsesStreamState {
             let alias = format!("fc_{call}");
             if self.by_prefixed_call.get(&alias) == Some(&key) {
                 self.by_prefixed_call.remove(&alias);
+            }
+        }
+    }
+
+    fn finalize_partial_function_arguments(&mut self) {
+        for item in self.open.values().filter(|item| item.kind == ItemKind::Function) {
+            if let AssistantBlock::ToolCall(call) = &mut self.output.content[item.content_index] {
+                call.arguments = parse_streaming_json(&item.argument_bytes);
             }
         }
     }
@@ -481,16 +489,14 @@ impl ResponsesStreamState {
                         if response.pointer("/incomplete_details/reason").and_then(Value::as_str)
                             == Some("max_output_tokens") =>
                     {
-                        if self.open.values().any(|item| item.kind == ItemKind::Function) {
-                            return Err(ProviderError::Incomplete(
-                                "Responses terminal left a function call unfinished".into(),
-                            ));
-                        }
-                        self.output.stop_reason = if !self.completed_tool_args.is_empty()
+                        let has_unfinished = self.open.values().any(|item| item.kind == ItemKind::Function);
+                        self.output.stop_reason = if !has_unfinished
+                            && !self.completed_tool_args.is_empty()
                             && self.completed_tool_args.iter().all(|complete| *complete)
                         {
                             StopReason::ToolUse
                         } else {
+                            self.finalize_partial_function_arguments();
                             StopReason::Length
                         }
                     }
@@ -501,11 +507,7 @@ impl ResponsesStreamState {
                         return Err(ProviderError::Stream("Responses output was blocked by content_filter".into()));
                     }
                     "incomplete" => {
-                        if self.open.values().any(|item| item.kind == ItemKind::Function) {
-                            return Err(ProviderError::Incomplete(
-                                "Responses terminal left a function call unfinished".into(),
-                            ));
-                        }
+                        self.finalize_partial_function_arguments();
                         self.output.stop_reason = StopReason::Length;
                     }
                     "failed" | "cancelled" => return Err(ProviderError::Stream(response_error(response))),
@@ -654,9 +656,11 @@ mod tests {
         state
             .handle(&json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}))
             .unwrap();
-        let result = state.handle(&json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}));
-        assert!(matches!(result, Err(ProviderError::Incomplete(_))));
-        assert!(!state.terminal);
+        let events = state.handle(&json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})).unwrap();
+        assert!(events.is_empty(), "partial arguments cannot emit toolcall_end");
+        assert_eq!(state.output.stop_reason, StopReason::Length);
+        assert!(state.terminal);
+        assert!(state.output.tool_calls().next().unwrap().arguments.contains_key("path"));
     }
 
     #[test]
@@ -734,6 +738,22 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_terminal_snapshot_with_partial_arguments_stays_at_length() {
+        let mut state = ResponsesStreamState::new(&model());
+        state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"read"}})).unwrap();
+        state
+            .handle(
+                &json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":\"a\""}),
+            )
+            .unwrap();
+        state.handle(&json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"function_call","id":"fc_a","call_id":"call_a","name":"read","arguments":"{\"path\":\"a\""}]}})).unwrap();
+        assert_eq!(state.output.stop_reason, StopReason::Length);
+        let call = state.output.tool_calls().next().unwrap();
+        assert_eq!(call.arguments["__rawJson"], "{\"path\":\"a\"");
+        assert!(call.arguments.contains_key("__parseError"));
+    }
+
+    #[test]
     fn a_complete_call_cannot_promote_an_open_partial_sibling() {
         let mut state = ResponsesStreamState::new(&model());
         state.handle(&json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"read"}})).unwrap();
@@ -743,11 +763,16 @@ mod tests {
         state
             .handle(&json!({"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"command\":"}))
             .unwrap();
-        let result = state.handle(
-            &json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}),
-        );
-        assert!(matches!(result, Err(ProviderError::Incomplete(_))));
-        assert_ne!(state.output.stop_reason, StopReason::ToolUse);
+        state
+            .handle(
+                &json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}),
+            )
+            .unwrap();
+        assert_eq!(state.output.stop_reason, StopReason::Length);
+        let calls = state.output.tool_calls().collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments["path"], "a");
+        assert!(calls[1].arguments.contains_key("command"));
     }
 
     #[test]

@@ -203,24 +203,95 @@ async fn responses_route_runs_a_real_tool_and_replays_it_after_host_restart() {
 #[tokio::test]
 async fn responses_truncated_parallel_call_does_not_execute_either_write() {
     let env = Env::new();
-    let up = upstream(json!({"responses": [{"events": [
-        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write"}}},
-        {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"first.txt\",\"content\":\"unsafe\"}"}},
-        {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write", "arguments": ""}}},
-        {"data": {"type": "response.output_item.added", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write"}}},
-        {"data": {"type": "response.function_call_arguments.delta", "output_index": 1, "delta": "{\"path\":\"second.txt\","}},
-        {"data": {"type": "response.incomplete", "response": {"incomplete_details": {"reason": "max_output_tokens"}}}}
-    ]}]})).await;
-    let out =
-        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write two files"])).await;
-    assert!(!out.status.success());
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.done", "output_index": 0, "arguments": "{\"path\":\"first.txt\",\"content\":\"unsafe\"}"}},
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_a", "call_id": "call_a", "name": "write", "arguments": ""}}},
+            {"data": {"type": "response.output_item.added", "output_index": 1, "item": {"type": "function_call", "id": "fc_b", "call_id": "call_b", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.delta", "output_index": 1, "delta": "{\"path\":\"second.txt\","}},
+            {"data": {"type": "response.incomplete", "response": {"incomplete_details": {"reason": "max_output_tokens"}}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_recovered", "content": [{"type": "output_text", "text": "No files were written."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--tools", "write", "--max-model-calls", "1", "Write two files"],
+    ))
+    .await;
+    assert_eq!(first.status.code(), Some(1));
     assert!(!env.work.path().join("first.txt").exists());
     assert!(!env.work.path().join("second.txt").exists());
     assert_eq!(up.served(), 1);
-    let entries = journal(&env.session_files()[0]);
-    let persisted = serde_json::to_string(&entries).unwrap();
-    assert!(persisted.contains("call_a|fc_a"));
-    assert!(!persisted.contains("call_b|fc_b"));
+    let session = env.session_files();
+    assert_eq!(session.len(), 1);
+    let entries = journal(&session[0]);
+    let assistant = entries.iter().find(|entry| entry["message"]["role"] == "assistant").unwrap();
+    assert_eq!(assistant["message"]["stopReason"], json!("length"));
+    let calls = assistant["message"]["content"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["id"], json!("call_a|fc_a"));
+    assert_eq!(calls[1]["id"], json!("call_b|fc_b"));
+    assert_eq!(calls[1]["arguments"]["path"], json!("second.txt"));
+    let results = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    for (result, id) in results.iter().zip(["call_a|fc_a", "call_b|fc_b"]) {
+        assert_eq!(result["message"]["toolCallId"], json!(id));
+        assert_eq!(result["message"]["details"]["source"], json!("assistant_stop_length"));
+        assert_eq!(result["message"]["details"]["executed"], json!(false));
+    }
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-responses", "--tools", "write", "--resume", session[0].to_str().unwrap(), "Continue safely"],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&resumed);
+    assert_eq!(resumed.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "No files were written.\n");
+    assert!(!env.work.path().join("first.txt").exists());
+    assert!(!env.work.path().join("second.txt").exists());
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let input = requests[1]["body"]["input"].as_array().unwrap();
+    for (call_id, path) in [("call_a", "first.txt"), ("call_b", "second.txt")] {
+        let call = input.iter().find(|item| item["type"] == "function_call" && item["call_id"] == call_id).unwrap();
+        assert!(call["arguments"].as_str().unwrap().contains(path));
+        let result =
+            input.iter().find(|item| item["type"] == "function_call_output" && item["call_id"] == call_id).unwrap();
+        assert!(result["output"].as_str().unwrap().contains("not executed"));
+    }
+}
+
+#[tokio::test]
+async fn responses_truncated_call_resamples_without_executing_it() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "function_call", "id": "fc_partial", "call_id": "call_partial", "name": "write"}}},
+            {"data": {"type": "response.function_call_arguments.delta", "output_index": 0, "delta": "{\"path\":\"never.txt\","}},
+            {"data": {"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}}}
+        ]},
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_safe", "content": [{"type": "output_text", "text": "The partial write was skipped."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]})).await;
+    let out =
+        output(env.cmd(&up.base_url(), &["--api", "openai-responses", "--tools", "write", "Write never.txt"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "The partial write was skipped.\n");
+    assert!(!env.work.path().join("never.txt").exists());
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let input = requests[1]["body"]["input"].as_array().unwrap();
+    assert!(input.iter().any(|item| item["type"] == "function_call" && item["call_id"] == "call_partial"));
+    assert!(input.iter().any(|item| item["type"] == "function_call_output"
+        && item["call_id"] == "call_partial"
+        && item["output"].as_str().unwrap().contains("not executed")));
 }
 
 #[tokio::test]
@@ -357,6 +428,44 @@ async fn json_mode_streams_events_before_the_run_ends() {
     assert_eq!(child.wait().unwrap().code(), Some(0));
     assert_eq!(rest.last().unwrap()["type"], json!("agent_end"));
     let end = rest.iter().find(|v| v["type"] == "message_end" && v["message"]["role"] == "assistant").unwrap();
+    assert_eq!(end["message"]["content"][0]["text"], json!("first second"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn responses_json_mode_emits_text_before_terminal() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [
+        {"data": {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "msg_live"}}},
+        {"data": {"type": "response.output_text.delta", "output_index": 0, "item_id": "msg_live", "delta": "first "}},
+        {"sleep_ms": 1500},
+        {"data": {"type": "response.output_text.delta", "output_index": 0, "item_id": "msg_live", "delta": "second"}},
+        {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_live", "content": [{"type": "output_text", "text": "first second"}]}}},
+        {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+    ]}]})).await;
+    let mut command = env.cmd(&up.base_url(), &["--api", "openai-responses", "stream please"]);
+    let mut child = spawn_json(&mut command);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let seen = tokio::task::block_in_place(|| {
+        read_until(
+            &mut reader,
+            |event| event["type"] == "message_update" && event["assistantMessageEvent"]["delta"] == "first ",
+            Duration::from_secs(10),
+        )
+    });
+    assert!(seen.iter().any(|event| event["assistantMessageEvent"]["delta"] == "first "));
+    let start_index = seen.iter().position(|event| event["type"] == "message_start").unwrap();
+    let delta_index = seen.iter().position(|event| event["assistantMessageEvent"]["delta"] == "first ").unwrap();
+    assert!(start_index < delta_index);
+    assert!(child.try_wait().unwrap().is_none(), "Responses delta reached the client before the terminal frame");
+    let rest: Vec<Value> = reader.lines().map(|line| serde_json::from_str(&line.unwrap()).unwrap()).collect();
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    assert_eq!(rest.iter().filter(|event| event["type"] == "agent_end").count(), 1);
+    assert_eq!(
+        rest.iter().filter(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant").count(),
+        1
+    );
+    let end =
+        rest.iter().find(|event| event["type"] == "message_end" && event["message"]["role"] == "assistant").unwrap();
     assert_eq!(end["message"]["content"][0]["text"], json!("first second"));
 }
 

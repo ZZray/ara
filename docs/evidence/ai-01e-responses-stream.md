@@ -30,12 +30,21 @@ process resumed the journal with `--api openai-responses`. The third request
 contained the matching `function_call` and `function_call_output` using
 `call_write`. The host test checks all three wire requests and the file.
 
-The failure-path host fixture sends two `write` calls: the first completes,
+The truncated-turn host fixture sends two `write` calls: the first completes,
 the second ends with a JSON prefix at `response.incomplete/max_output_tokens`.
-The process exits unsuccessfully, neither file is created, only one HTTP
-request is made, and the journal retains only the completed call. The Agent
-already filters calls without `ToolcallEnd` on error; the provider never
-promotes this turn to `ToolUse`.
+With a one-call budget, neither file is created. The Session records the
+assistant `Length` turn with both calls and two `assistant_stop_length`
+synthetic results marked `executed:false`. A new `ara` process resumes it;
+the second wire request contains both call IDs and their paired non-execution
+results, and the model returns `No files were written.` A separate uncapped
+real-process fixture proves the Agent resamples within the same run without
+executing the partial `write`.
+
+The JSON-mode live fixture holds the fake upstream between text delta and
+terminal. The client pipe receives `message_update` after `message_start`
+while the `ara` process is still running; one assistant `message_end` and
+one `agent_end` follow. Cancelling a partially streamed tool call through
+the HTTP provider remains `Aborted`, not `Length`.
 
 The state fixtures cover split UTF-8/CRLF, malformed/oversize SSE, final
 snapshot replacement, refusal text, parallel index/ID routing, a prefixed
@@ -46,18 +55,23 @@ events that cannot extend the idle deadline.
 
 ## Verification and review
 
-- `cargo test -p ara-ai`: final worktree 77 unit, 48 existing Chat fake
-  HTTP, 4 Responses fake HTTP, and 0 doc tests passed.
-- `cargo test -p ara-cli --test e2e`: earlier candidate 18/21 passed. The
-  new Responses success and truncated-tool tests passed; existing Windows
-  failures were `deadline_during_a_tool_and_zero_budget_exit_nonzero`,
-  `tool_task_produces_file_and_receipts` and
-  `resume_runs_tools_in_the_session_cwd` (the latter two need `bash`).
-- `cargo test -p ara-cli --test e2e responses_`: final worktree 2/2 passed.
+- `cargo test -p ara-ai --quiet`: current worktree 78 unit, 48 existing Chat
+  fake HTTP, 5 Responses fake HTTP, and 0 doc tests passed.
+- `cargo test -p ara-cli --test e2e --quiet`: 20/23 passed with the ambient
+  Windows PATH; two failures could not start `bash` and one was the existing
+  tool-deadline case. With `C:\Program Files\Git\bin` and `usr\bin` prepended
+  to PATH, 22/23 passed; only
+  `deadline_during_a_tool_and_zero_budget_exit_nonzero` remained red.
+- The four Responses-specific real-process e2e cases passed: tool effect and
+  restart replay; mixed complete/partial Length turn and restart replay;
+  same-run resampling without a tool effect; terminal-before-exit JSON text
+  stream.
 - `cargo clippy -p ara-ai -p ara-cli --all-targets -- -D warnings`: passed
-  on the final worktree.
+  on the current worktree.
 - Targeted `rustfmt --check --edition 2024` on the eight changed Rust files
-  and `git diff --check`: passed on the final worktree. A workspace
+  passed on the earlier stream increment. The three Rust files changed in
+  this continuation and `git diff --check` passed on the current worktree.
+  A workspace
   `cargo fmt --all -- --check` reports unrelated vendored formatting, so
   that command is not a passing gate.
 
@@ -74,14 +88,24 @@ No real-model trial or
 full backend verification has passed on this worktree. This point and all
 acceptance counts remain open.
 
+For the Length recovery continuation, independent Codex reviewers
+`/root/responses_parallel_plan` and `/root/responses_live_plan` reviewed the
+scope and diff. Both found no high-confidence P0/P1 issue after tracing
+`ara-agent` synthetic results and Session replay. The final snapshot test
+proves that a truncated `response.output[]` function item remains `Length`;
+its strict `__parseError/__rawJson` representation differs from an open
+item's best-effort JSON object. Neither is executed on `Length`.
+
 ## Known bounds and next gate
 
 - Parallel argument events with no `output_index` or `item_id` fail closed
   when multiple items are open. Pinned OMP can route some of these by arrival
   order and JSON-prefix matching; ARA does not yet claim that parity.
-- A partial open function on an incomplete terminal is an error in ARA.
-  Pinned OMP can retain a `Length` turn and continue; this is a deliberate
-  safe-side WIP difference pending complete recovery semantics.
+- A partial open function on an incomplete terminal now records a `Length`
+  turn and continues with synthetic non-execution results. A completed
+  terminal with an unfinished function, EOF without a terminal, content
+  filtering, ambiguous identifierless parallel arguments and cancellation
+  remain separate error or aborted paths.
 - Native reasoning item replay, provider-hosted tools, strict tool-schema
   normalization, target-specific call-ID spelling, `previous_response_id`
   state, and broad Responses-family model variants remain open.

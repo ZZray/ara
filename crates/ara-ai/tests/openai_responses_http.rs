@@ -169,3 +169,33 @@ async fn unknown_events_do_not_extend_the_idle_deadline() {
     assert!(output.error_message.as_deref().unwrap_or("").contains("stalled"), "{:?}", output.error_message);
     assert!(started.elapsed() < Duration::from_millis(240), "unknown events extended the idle deadline");
 }
+
+#[tokio::test]
+async fn cancelling_after_a_partial_tool_start_remains_aborted() {
+    let server = FakeUpstream::start(script(json!({"responses":[{"events":[
+        {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_cancel","call_id":"call_cancel","name":"read"}}},
+        {"data":{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}}
+    ],"end":"hang"}]})), None).await.unwrap();
+    let opts = options();
+    let cancel = opts.cancel.clone();
+    let mut stream =
+        openai_responses::stream(reqwest::Client::new(), model(&server.base_url()), Context::default(), opts);
+    let mut saw_partial_tool = false;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(event) = stream.recv().await {
+            if matches!(event, AssistantMessageEvent::ToolcallDelta { .. }) {
+                saw_partial_tool = true;
+                cancel.cancel();
+            }
+            if let AssistantMessageEvent::Error { error, .. } = event {
+                assert_eq!(error.stop_reason, StopReason::Aborted);
+                return;
+            }
+        }
+        panic!("cancelled Responses stream ended without Error");
+    })
+    .await
+    .expect("cancellation should end the stream");
+    assert!(saw_partial_tool);
+    assert_eq!(server.served(), 1);
+}
