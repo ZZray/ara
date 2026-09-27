@@ -364,6 +364,7 @@ async fn actual_messages_request_applies_shared_tool_wire_postprocessing() {
         "bare":{"enum":[true,false]},
         "mode":{"anyOf":[{"const":"a","description":"mode"},{"const":"b","description":"mode"}]},
         "literal":{"default":{"anyOf":[{"const":"x"},{"const":"y"}]}},
+        "unconstrained":{"not":{}},
         "typed":{"type":"object","anyOf":[{"type":"string"},{"type":"null"}]}
     },"required":["skip","mode","bare"]});
     let context = Context {
@@ -388,6 +389,7 @@ async fn actual_messages_request_applies_shared_tool_wire_postprocessing() {
     assert_eq!(schema["properties"]["bare"], json!({"type":"boolean","enum":[true,false]}));
     assert_eq!(schema["properties"]["mode"], json!({"type":"string","enum":["a","b"],"description":"mode"}));
     assert_eq!(schema["properties"]["literal"]["default"], original["properties"]["literal"]["default"]);
+    assert_eq!(schema["properties"]["unconstrained"]["description"], "{not: true}");
     assert_eq!(schema["properties"]["typed"]["type"], "object");
     assert_eq!(schema["properties"]["typed"]["anyOf"].as_array().unwrap().len(), 2);
 }

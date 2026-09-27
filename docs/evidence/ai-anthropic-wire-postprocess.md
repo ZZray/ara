@@ -52,3 +52,34 @@ defect. Neither review nor the controlled upstream is real-model evidence.
 
 No model quota was used. The full delivery gate and point audit remain open;
 accepted counts do not change.
+
+## Empty child schemas (subsequent WIP slice, 2026-09-27)
+
+Fixed OMP `packages/ai/src/utils/schema/wire.ts::normalizeEmptySchemas`
+rewrites an empty child schema `{}` as boolean `true` at schema-valued
+positions. ARA's shared wire helper now does this for property/map values,
+array alternatives and single schema children. The root schema, map
+containers and literal instance data (`default`, `examples`, `enum`, `const`)
+retain their input shape. Agent tool parameters and argument validation remain
+unchanged. This is an intentional narrower traversal than OMP's generic
+object walk, consistent with the existing Responses wire difference.
+
+The Anthropic fake HTTP request adds `not:{}` and observes the normalized
+`{not: true}` in its final description; before the fix it observed
+`{not: {}}` and the test failed. A unit test also covers `properties`,
+`items`, `additionalProperties`, `anyOf`, literal data and root/container
+preservation.
+
+| Check on candidate diff | Result |
+| --- | --- |
+| `cargo test -p ara-ai --test anthropic_http actual_messages_request_applies_shared_tool_wire_postprocessing -- --exact` | Exit 0, 1/1; failed on prior code as above. |
+| `cargo test -p ara-ai --all-targets --quiet` | Exit 0: 114 unit, 18 Anthropic HTTP, 48 Chat HTTP, 29 Responses HTTP. |
+| `cargo clippy -p ara-ai --all-targets --all-features -- -D warnings`; changed-file `rustfmt --edition 2024 --check`; `git diff --check` | Exit 0 each. |
+
+Independent Codex plan reviewer `/root/schema_empty_plan_review` checked
+the fixed OMP behavior and identified the Anthropic HTTP case as the
+observable new wire effect. Independent Codex diff reviewer
+`/root/schema_empty_diff_review` reviewed both changed Rust files and their
+Anthropic/Responses callers against fixed OMP; it found no confirmed defect.
+The complete backend gate, real-model task and point audit remain open, so no
+accepted count changes.

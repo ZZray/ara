@@ -166,21 +166,67 @@ fn postprocess_json_wire_schema_in_place(value: &mut Value, depth: usize) -> Res
     for key in SCHEMA_MAP_KEYS {
         if let Some(map) = output.get_mut(*key).and_then(Value::as_object_mut) {
             for child in map.values_mut() {
-                postprocess_json_wire_schema_in_place(child, depth + 1)?;
+                normalize_schema_child(child, depth + 1)?;
             }
         }
     }
     for key in SCHEMA_ARRAY_KEYS {
         if let Some(items) = output.get_mut(*key).and_then(Value::as_array_mut) {
             for child in items {
-                postprocess_json_wire_schema_in_place(child, depth + 1)?;
+                normalize_schema_child(child, depth + 1)?;
             }
         }
     }
     for key in SCHEMA_VALUE_KEYS {
         if let Some(child) = output.get_mut(*key) {
-            postprocess_json_wire_schema_in_place(child, depth + 1)?;
+            normalize_schema_child(child, depth + 1)?;
         }
     }
     Ok(())
+}
+
+// JSON Schema treats `{}` and `true` alike, but tool grammar samplers often
+// interpret `{}` as an empty object. Only schema children are rewritten: the
+// root, map containers, and literal instance data keep their original shape.
+fn normalize_schema_child(value: &mut Value, depth: usize) -> Result<(), ()> {
+    if depth > 128 {
+        return Err(());
+    }
+    if value.as_object().is_some_and(serde_json::Map::is_empty) {
+        *value = Value::Bool(true);
+        Ok(())
+    } else {
+        postprocess_json_wire_schema_in_place(value, depth)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::postprocess_json_wire_schema;
+    use serde_json::json;
+
+    #[test]
+    fn empty_schema_children_become_true_without_touching_literal_data_or_containers() {
+        let source = json!({
+            "type":"object",
+            "properties":{
+                "free":{},
+                "nested":{"type":"array","items":{}},
+                "literal":{"default":{},"examples":[{}],"const":{},"enum":[{}]}
+            },
+            "additionalProperties":{},
+            "anyOf":[{}, {"type":"object","properties":{}}],
+            "$defs":{}
+        });
+        let wire = postprocess_json_wire_schema(&source, 0).unwrap();
+        assert_eq!(wire["properties"]["free"], true);
+        assert_eq!(wire["properties"]["nested"]["items"], true);
+        assert_eq!(wire["additionalProperties"], true);
+        assert_eq!(wire["anyOf"][0], true);
+        assert_eq!(wire["anyOf"][1]["properties"], json!({}));
+        assert_eq!(wire["$defs"], json!({}));
+        assert_eq!(wire["properties"]["literal"], source["properties"]["literal"]);
+        assert_eq!(source["properties"]["free"], json!({}));
+        assert_eq!(postprocess_json_wire_schema(&json!({}), 0).unwrap(), json!({}));
+    }
 }
