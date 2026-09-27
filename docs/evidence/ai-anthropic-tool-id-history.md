@@ -1,7 +1,8 @@
 # AI-ANTHROPICa: cross-provider tool ID replay (WIP)
 
-Date: 2026-09-28. This is provider request conversion and host evidence, not an
-accepted AI-ANTHROPICa point. Fixed OMP commit:
+Date: 2026-09-28. Code commit `f6ec81a` on local `dev`, not pushed. This is
+provider request conversion and host evidence, not an accepted
+AI-ANTHROPICa point. Fixed OMP commit:
 `596f2da7101178214aa27a753529d15e6b7ad91d`.
 
 ## Source and observed gap
