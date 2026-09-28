@@ -45,6 +45,24 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 - TOOLS-01a multi-range `read` extension (WIP): comma-separated spans sort/merge and return exact selected lines, skipped-range notices and edit provenance through the CLI tool/Session path. Buffered local UTF-8 reads and immutable `skill://` resources now add non-raw AST/lexical block boundaries. Resource text and notices retain their uncapped semantics. A bounded real-model task and the full Windows backend gate remain open; [evidence](evidence/tools-01a-multi-range-read.md).
 - A2 TOOLS-02d `ast_grep` (WIP): the fixed OMP default-disabled structural search is available only through explicit CLI tool selection. Local and loaded `skill://` scopes, AST captures, global paging, parse diagnostics, cancellation and hashline source receipts have focused and real CLI fake-upstream evidence. Other internal URL transports, TUI rendering, the no-skip backend gate and a bounded live task remain open; [evidence](evidence/tools-02d-ast-grep.md).
 
+## Priority: daily-driver v1
+
+**User decision, 2026-09-28.** The user wants to use `ara` for daily command-line work in place of OMP as early as possible. V1 comes before the remaining Track A parity work; parity points it does not need (for example Anthropic-specific A4 work) are parked, not dropped.
+
+**Routes.** V1 targets OpenAI-compatible Chat Completions (`--api openai-completions`): OpenRouter and compatible endpoints, with credentials from environment variables. An OpenAI Codex account login (Responses API with OAuth) is a later option after v1. Anthropic account login is out of scope; the existing Anthropic and proxy WIP stays as is.
+
+**Already present** (print host, WIP or accepted per the ledger): one-shot print mode with streamed text, `--continue`/`--resume` on the JSONL Session journal, Ctrl+C abort of a print run, the six default tools plus opt-in `ast_grep`, context files and skills, MCP stdio tools, and pre-output retry.
+
+| Point | Scope | Observable exit criteria |
+| --- | --- | --- |
+| V1-REPL | `ara` without a prompt on a terminal starts a line-based session: read a line, run a turn with streamed text and tool progress, repeat in one Session. Minimal commands: `/help`, `/new`, `/exit`. Not a port of OMP's TUI; the ledger records it as a reference-host subset. | A multi-turn edit-and-test task in one process with every turn in one journal; EOF and `/exit` leave a valid Session |
+| V1-CANCEL | Ctrl+C during a turn aborts that turn, keeps the process and returns to the prompt; Ctrl+C at an idle prompt exits. Tool effects in flight are recorded as unknown, never replayed. | Interrupting a running `bash` tool returns to the prompt, the journal shows the abort, and the next turn works |
+| V1-RESUME | `--continue` and `--resume <path>` enter the same REPL on the recovered Session. A failed resume is reported and never replaced by a new conversation. | Exit, restart with `--continue`, and the model uses the earlier turn's result |
+| V1-COMPACT | Basic compaction from the A3 AGT-COMPACTION pieces: a threshold from the model's context window (or an explicit host value) and a manual `/compact`; the summary is persisted in the Session with source IDs, and resume uses it. Not full A3 parity. | A long session compacts, keeps working, and resumes after restart from the persisted summary |
+| V1-TRIAL | Bounded real-model daily task through the REPL on an OpenAI-compatible route | Evidence per [acceptance](acceptance.md): artifact check, receipts, usage with unknowns kept, latency |
+
+**Estimate:** 4–8 working weeks, low confidence: REPL, cancel and resume 1–2 weeks; basic compaction 2–4 weeks (its persistence and resume are still open in A3); hardening and the real-model trial 1–2 weeks. A full OMP replacement (A3–A8 parity) remains 4–8+ months.
+
 ## Track A: OMP parity (G1)
 
 Each slice is a set of bounded points. Every point goes through implement → fake-upstream tests → independent review → evidence → push. Every slice ends with a real-model task through `ara`.
