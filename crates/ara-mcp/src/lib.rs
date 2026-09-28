@@ -15,10 +15,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(windows)]
@@ -32,6 +34,9 @@ const MAX_TOOLS: usize = 64;
 const MAX_INTERLEAVED: usize = 64;
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const IDLE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_IDLE_MESSAGES_PER_SECOND: usize = 64;
+const ERROR_MESSAGE_MAX: usize = 4096;
 
 /// The CLI host approves launching one direct executable and explicitly maps
 /// child environment names to parent environment variable names. Values never
@@ -93,25 +98,38 @@ fn valid_env_name(s: &str) -> bool {
 }
 
 struct Connection {
-    child: Child,
+    _child: Child,
     #[cfg(windows)]
-    job: Option<windows_child::Job>,
+    _job: windows_child::Job,
     stdin: ChildStdin,
     stdout: ChildStdout,
     pending: Vec<u8>,
     next_id: u64,
-    healthy: bool,
+}
+
+struct PreparedRequest {
+    id: u64,
+    frame: Vec<u8>,
 }
 
 impl Connection {
-    async fn write(&mut self, message: &Value) -> Result<(), String> {
+    fn encode_frame(message: &Value) -> Result<Vec<u8>, String> {
         let mut bytes = serde_json::to_vec(message).map_err(|e| e.to_string())?;
         if bytes.len() >= FRAME_MAX {
             return Err("MCP outbound frame exceeds 1 MiB".into());
         }
         bytes.push(b'\n');
-        self.stdin.write_all(&bytes).await.map_err(|e| format!("MCP stdin write failed: {e}"))?;
+        Ok(bytes)
+    }
+
+    async fn write_frame(&mut self, frame: &[u8]) -> Result<(), String> {
+        self.stdin.write_all(frame).await.map_err(|e| format!("MCP stdin write failed: {e}"))?;
         self.stdin.flush().await.map_err(|e| format!("MCP stdin flush failed: {e}"))
+    }
+
+    async fn write(&mut self, message: &Value) -> Result<(), String> {
+        let frame = Self::encode_frame(message)?;
+        self.write_frame(&frame).await
     }
 
     async fn read(&mut self) -> Result<Value, String> {
@@ -135,48 +153,131 @@ impl Connection {
         }
     }
 
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})).await?;
+    fn prepare_request(id: u64, method: &str, params: Value) -> Result<PreparedRequest, String> {
+        let frame = Self::encode_frame(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
+        Ok(PreparedRequest { id, frame })
+    }
+
+    async fn handle_server_message(&mut self, message: &Value) -> Result<bool, String> {
+        if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+            return Err("MCP server sent an invalid JSON-RPC version".into());
+        }
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+        if let Some(id) = message.get("id") {
+            if method == "ping" {
+                self.write(&json!({"jsonrpc":"2.0","id":id,"result":{}})).await?;
+            } else {
+                // No roots, sampling or elicitation capability is advertised.
+                self.write(&json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":format!("Unsupported client method: {method}")}})).await?;
+            }
+        }
+        Ok(true)
+    }
+
+    async fn send_request(&mut self, prepared: PreparedRequest) -> Result<Value, String> {
+        self.write_frame(&prepared.frame).await?;
         for _ in 0..MAX_INTERLEAVED {
             let reply = self.read().await?;
-            if reply.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-                return Err("MCP server sent an invalid JSON-RPC version".into());
-            }
-            if let Some(server_method) = reply.get("method").and_then(Value::as_str) {
-                if let Some(request_id) = reply.get("id") {
-                    // No roots, sampling or elicitation capability is advertised.
-                    self.write(&json!({"jsonrpc":"2.0","id":request_id,"error":{"code":-32601,"message":format!("Unsupported client method: {server_method}")}})).await?;
-                }
+            if self.handle_server_message(&reply).await? {
                 continue;
             }
-            if reply.get("id").and_then(Value::as_u64) != Some(id) {
+            if reply.get("id").and_then(Value::as_u64) != Some(prepared.id) {
                 return Err("MCP server replied with an unexpected request ID".into());
             }
             if let Some(error) = reply.get("error") {
                 let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
                 let message = error.get("message").and_then(Value::as_str).unwrap_or("unknown error");
-                return Err(format!("MCP JSON-RPC error {code}: {message}"));
+                return Err(format!("MCP JSON-RPC error {code}: {}", bounded_error_message(message)));
             }
             return reply.get("result").cloned().ok_or_else(|| "MCP response has no result".into());
         }
         Err("MCP server sent too many messages before the response".into())
     }
 
-    fn stop(&mut self) {
-        self.healthy = false;
-        #[cfg(windows)]
-        drop(self.job.take());
-        let _ = self.child.start_kill();
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let prepared = Self::prepare_request(self.next_id, method, params)?;
+        self.next_id += 1;
+        self.send_request(prepared).await
     }
+}
+
+fn bounded_error_message(message: &str) -> String {
+    if message.len() <= ERROR_MESSAGE_MAX {
+        return message.to_owned();
+    }
+    let end = message.floor_char_boundary(ERROR_MESSAGE_MAX);
+    format!("{} [truncated]", &message[..end])
+}
+
+struct ActorCommand {
+    prepared: PreparedRequest,
+    reply: oneshot::Sender<Result<Value, String>>,
+}
+
+struct Owner {
+    sender: mpsc::Sender<ActorCommand>,
+    gate: Arc<Semaphore>,
+    alive: Arc<AtomicBool>,
+    next_id: AtomicU64,
+    abort: AbortHandle,
+}
+
+impl Owner {
+    fn stop(&self) {
+        self.alive.store(false, Ordering::Release);
+        self.abort.abort();
+    }
+}
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
+
+async fn run_actor(mut connection: Connection, mut commands: mpsc::Receiver<ActorCommand>, alive: Arc<AtomicBool>) {
+    let mut idle_window = Instant::now();
+    let mut idle_messages = 0;
+    loop {
+        tokio::select! {
+            command = commands.recv() => {
+                let Some(command) = command else { break };
+                let ActorCommand { prepared, mut reply } = command;
+                tokio::select! {
+                    _ = reply.closed() => break,
+                    result = connection.send_request(prepared) => {
+                        let failed = result.is_err();
+                        let delivered = reply.send(result).is_ok();
+                        if failed || !delivered { break; }
+                        idle_messages = 0;
+                    }
+                }
+            }
+            incoming = connection.read() => {
+                let Ok(message) = incoming else { break };
+                if idle_window.elapsed() >= Duration::from_secs(1) {
+                    idle_window = Instant::now();
+                    idle_messages = 0;
+                }
+                idle_messages += 1;
+                if idle_messages > MAX_IDLE_MESSAGES_PER_SECOND { break; }
+                match tokio::time::timeout(IDLE_WRITE_TIMEOUT, connection.handle_server_message(&message)).await {
+                    Ok(Ok(true)) => {}
+                    _ => break,
+                }
+            }
+        }
+    }
+    alive.store(false, Ordering::Release);
 }
 
 pub struct McpTool {
     definition: Tool,
     server: String,
     original_name: String,
-    connection: Arc<Mutex<Connection>>,
+    owner: Arc<Owner>,
 }
 
 #[async_trait]
@@ -197,20 +298,41 @@ impl AgentTool for McpTool {
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
         if cancel.is_cancelled() {
-            return Ok(ToolOutput::error("MCP tool cancelled before dispatch"));
+            return Ok(not_dispatched("MCP tool cancelled before dispatch".into()));
         }
-        let mut connection = tokio::select! {
-            _ = cancel.cancelled() => return Ok(ToolOutput::error("MCP tool cancelled before dispatch")),
-            guard = self.connection.lock() => guard,
+        let _permit = tokio::select! {
+            _ = cancel.cancelled() => return Ok(not_dispatched("MCP tool cancelled before dispatch".into())),
+            permit = self.owner.gate.clone().acquire_owned() => match permit {
+                Ok(permit) => permit,
+                Err(_) => return Ok(not_dispatched("MCP server unavailable".into())),
+            },
         };
-        if !connection.healthy {
-            return Ok(ToolOutput::error("MCP server unavailable; the call was not dispatched"));
+        if !self.owner.alive.load(Ordering::Acquire) {
+            return Ok(not_dispatched("MCP server unavailable".into()));
         }
-        let request = connection.request("tools/call", json!({"name":self.original_name,"arguments":args}));
+        let id = self.owner.next_id.fetch_add(1, Ordering::Relaxed);
+        let prepared =
+            match Connection::prepare_request(id, "tools/call", json!({"name":self.original_name,"arguments":args})) {
+                Ok(prepared) => prepared,
+                Err(error) => return Ok(not_dispatched(error)),
+            };
+        let (reply, received) = oneshot::channel();
+        let slot = tokio::select! {
+            _ = cancel.cancelled() => return Ok(not_dispatched("MCP tool cancelled before dispatch".into())),
+            slot = self.owner.sender.reserve() => match slot {
+                Ok(slot) => slot,
+                Err(_) => return Ok(not_dispatched("MCP server unavailable".into())),
+            },
+        };
+        if !self.owner.alive.load(Ordering::Acquire) {
+            return Ok(not_dispatched("MCP server unavailable".into()));
+        }
+        slot.send(ActorCommand { prepared, reply });
         let result = tokio::select! {
             _ = cancel.cancelled() => Err("MCP tool cancelled after dispatch; effect unknown".to_owned()),
-            result = tokio::time::timeout(CALL_TIMEOUT, request) => match result {
-                Ok(result) => result,
+            result = tokio::time::timeout(CALL_TIMEOUT, received) => match result {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("MCP server closed after dispatch; effect unknown".into()),
                 Err(_) => Err("MCP tool timed out after dispatch; effect unknown".to_owned()),
             },
         };
@@ -218,12 +340,12 @@ impl AgentTool for McpTool {
             Ok(value) => match parse_tool_result(&value, &self.server, &self.original_name) {
                 Ok(output) => Ok(output),
                 Err(error) => {
-                    connection.stop();
+                    self.owner.stop();
                     Ok(unknown_effect(error))
                 }
             },
             Err(error) => {
-                connection.stop();
+                self.owner.stop();
                 Ok(unknown_effect(error))
             }
         }
@@ -233,6 +355,12 @@ impl AgentTool for McpTool {
 fn unknown_effect(message: String) -> ToolOutput {
     ToolOutput::error(format!("MCP call effect unknown; do not replay automatically: {message}")).with_details(
         json!({"__synthetic":true,"source":"interrupted_unknown_effect","executed":"unknown","transport":"mcp_stdio"}),
+    )
+}
+
+fn not_dispatched(message: String) -> ToolOutput {
+    ToolOutput::error(format!("MCP call was not dispatched: {message}")).with_details(
+        json!({"__synthetic":true,"source":"mcp_request_preflight","executed":false,"transport":"mcp_stdio"}),
     )
 }
 
@@ -358,14 +486,13 @@ pub async fn connect(
     let stdin = child.stdin.take().ok_or("MCP child has no stdin")?;
     let stdout = child.stdout.take().ok_or("MCP child has no stdout")?;
     let mut connection = Connection {
-        child,
+        _child: child,
         #[cfg(windows)]
-        job: Some(job),
+        _job: job,
         stdin,
         stdout,
         pending: Vec::new(),
         next_id: 1,
-        healthy: true,
     };
     let catalog = tokio::time::timeout(START_TIMEOUT, async {
         let initialized = connection
@@ -409,10 +536,9 @@ pub async fn connect(
     })
     .await
     .map_err(|_| "MCP initialization exceeded 15 seconds".to_owned())??;
-    let connection = Arc::new(Mutex::new(connection));
     let mut names: HashSet<String> = reserved_names.iter().map(|s| (*s).to_owned()).collect();
     let mut found = HashSet::new();
-    let mut tools: Vec<Arc<dyn AgentTool>> = Vec::new();
+    let mut definitions = Vec::new();
     for item in catalog {
         let original = item.get("name").and_then(Value::as_str).ok_or("MCP tool has no name")?;
         if !grants.contains(original) {
@@ -437,16 +563,32 @@ pub async fn connect(
         if description.len() > 8192 {
             return Err(format!("MCP tool {original:?} description exceeds 8 KiB"));
         }
-        tools.push(Arc::new(McpTool {
-            definition: Tool { name: public, description: description.to_owned(), parameters: schema },
-            server: config.name.clone(),
-            original_name: original.to_owned(),
-            connection: connection.clone(),
-        }));
+        definitions.push((
+            Tool { name: public, description: description.to_owned(), parameters: schema },
+            original.to_owned(),
+        ));
     }
     if found.len() != grants.len() {
         let missing = grants.difference(&found).cloned().collect::<Vec<_>>();
         return Err(format!("MCP granted tool(s) missing from server catalog: {}", missing.join(", ")));
     }
+    let (sender, commands) = mpsc::channel(1);
+    let alive = Arc::new(AtomicBool::new(true));
+    let next_id = connection.next_id;
+    let task = tokio::spawn(run_actor(connection, commands, alive.clone()));
+    let owner = Arc::new(Owner {
+        sender,
+        gate: Arc::new(Semaphore::new(1)),
+        alive,
+        next_id: AtomicU64::new(next_id),
+        abort: task.abort_handle(),
+    });
+    let tools: Vec<Arc<dyn AgentTool>> = definitions
+        .into_iter()
+        .map(|(definition, original_name)| {
+            Arc::new(McpTool { definition, server: config.name.clone(), original_name, owner: owner.clone() })
+                as Arc<dyn AgentTool>
+        })
+        .collect();
     Ok(tools)
 }

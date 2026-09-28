@@ -125,6 +125,35 @@ fn windows_force_exit_reaps_mcp_server() {
     assert_eq!(result, WAIT_OBJECT_0, "MCP server survived parent process::exit");
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn dropping_last_tool_reaps_idle_mcp_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.json");
+    let tools = connect(config("linger-after-list", &record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let receipt: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let pid = receipt["pid"].as_u64().unwrap() as u32;
+    // SAFETY: OpenProcess returns a new handle that OwnedHandle closes.
+    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+    assert!(!raw.is_null(), "could not open running MCP fixture: {}", std::io::Error::last_os_error());
+    let server = unsafe { OwnedHandle::from_raw_handle(raw) };
+    assert_eq!(unsafe { WaitForSingleObject(server.as_raw_handle(), 0) }, WAIT_TIMEOUT);
+    drop(tools);
+    let start = Instant::now();
+    let result = loop {
+        let result = unsafe { WaitForSingleObject(server.as_raw_handle(), 0) };
+        if result != WAIT_TIMEOUT || start.elapsed() >= Duration::from_secs(3) {
+            break result;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    if result != WAIT_OBJECT_0 {
+        // SAFETY: clean up a server left running by a failed assertion.
+        unsafe { TerminateProcess(server.as_raw_handle(), 1) };
+    }
+    assert_eq!(result, WAIT_OBJECT_0, "MCP server survived its last tool");
+}
+
 #[tokio::test]
 async fn grants_protocol_and_client_capabilities_are_bounded() {
     let dir = tempfile::tempdir().unwrap();
@@ -142,6 +171,37 @@ async fn grants_protocol_and_client_capabilities_are_bounded() {
     assert_eq!(receipt["ambient_key_present"], false);
     assert_eq!(receipt["call"]["name"], "echo");
     assert_eq!(receipt["root_denied"], true);
+}
+
+#[tokio::test]
+async fn server_ping_is_answered_while_idle_and_during_a_tool_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let idle_record = dir.path().join("idle.json");
+    let idle =
+        connect(config("ping-after-list", &idle_record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let idle_pong = idle_record.with_extension("pong");
+    let start = Instant::now();
+    while !idle_pong.exists() && start.elapsed() < Duration::from_secs(2) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(idle_pong.exists(), "MCP server did not receive idle ping response");
+    let response: Value = serde_json::from_str(&std::fs::read_to_string(idle_pong).unwrap()).unwrap();
+    assert_eq!(response["id"], "idle-ping");
+    assert_eq!(response["result"], json!({}));
+    let mut args = ara_ai::JsonObject::new();
+    args.insert("text".into(), json!("after idle ping"));
+    let result = idle[0].execute("call-idle", args, CancellationToken::new(), update()).await.unwrap();
+    assert!(!result.is_error);
+
+    let call_record = dir.path().join("call.json");
+    let call =
+        connect(config("ping-during-call", &call_record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let result = call[0].execute("call-ping", Default::default(), CancellationToken::new(), update()).await.unwrap();
+    assert!(!result.is_error);
+    let response: Value =
+        serde_json::from_str(&std::fs::read_to_string(call_record.with_extension("pong")).unwrap()).unwrap();
+    assert_eq!(response["id"], "call-ping");
+    assert_eq!(response["result"], json!({}));
 }
 
 #[tokio::test]
@@ -218,6 +278,92 @@ async fn cancellation_after_dispatch_marks_unknown_effect() {
 }
 
 #[tokio::test]
+async fn cancellation_while_waiting_for_server_does_not_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.json");
+    let first_marker = dir.path().join("first.txt");
+    let second_marker = dir.path().join("second.txt");
+    let tools = connect(config("hang", &record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let mut first_args = ara_ai::JsonObject::new();
+    first_args.insert("marker".into(), json!(first_marker));
+    let first_cancel = CancellationToken::new();
+    let first = {
+        let tool = tools[0].clone();
+        let cancel = first_cancel.clone();
+        tokio::spawn(async move { tool.execute("first", first_args, cancel, update()).await.unwrap() })
+    };
+    let start = Instant::now();
+    while !first_marker.exists() && start.elapsed() < Duration::from_secs(3) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(first_marker.exists(), "first call was not dispatched");
+    let mut second_args = ara_ai::JsonObject::new();
+    second_args.insert("marker".into(), json!(second_marker));
+    let second_cancel = CancellationToken::new();
+    let second = tools[0].execute("second", second_args, second_cancel.clone(), update());
+    tokio::pin!(second);
+    assert!(tokio::time::timeout(Duration::from_millis(50), &mut second).await.is_err(), "second call was not waiting");
+    second_cancel.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(2), second).await.unwrap().unwrap();
+    assert!(result.is_error);
+    assert_eq!(result.details.unwrap()["executed"], false);
+    assert!(!second_marker.exists(), "cancelled call reached the server");
+    first_cancel.cancel();
+    let first_result = tokio::time::timeout(Duration::from_secs(2), first).await.unwrap().unwrap();
+    assert_eq!(first_result.details.unwrap()["executed"], "unknown");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn dropped_dispatched_call_closes_server_before_another_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.json");
+    let marker = dir.path().join("effect.txt");
+    let tools = connect(config("hang", &record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let receipt: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let pid = receipt["pid"].as_u64().unwrap() as u32;
+    // SAFETY: OpenProcess returns a new handle that OwnedHandle closes.
+    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+    assert!(!raw.is_null(), "could not open running MCP fixture: {}", std::io::Error::last_os_error());
+    let server = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut args = ara_ai::JsonObject::new();
+    args.insert("marker".into(), json!(marker));
+    let first = {
+        let tool = tools[0].clone();
+        tokio::spawn(async move { tool.execute("first", args, CancellationToken::new(), update()).await.unwrap() })
+    };
+    let start = Instant::now();
+    while !marker.exists() && start.elapsed() < Duration::from_secs(3) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(marker.exists(), "first call was not dispatched");
+    first.abort();
+    assert!(first.await.is_err());
+    let start = Instant::now();
+    let exit = loop {
+        let result = unsafe { WaitForSingleObject(server.as_raw_handle(), 0) };
+        if result != WAIT_TIMEOUT || start.elapsed() >= Duration::from_secs(3) {
+            break result;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    if exit != WAIT_OBJECT_0 {
+        // SAFETY: clean up a server left running by a failed assertion.
+        unsafe { TerminateProcess(server.as_raw_handle(), 1) };
+    }
+    assert_eq!(exit, WAIT_OBJECT_0, "abandoned call kept the MCP server alive");
+    let second = tokio::time::timeout(
+        Duration::from_secs(2),
+        tools[0].execute("second", Default::default(), CancellationToken::new(), update()),
+    )
+    .await
+    .expect("another call waited on the abandoned request")
+    .unwrap();
+    assert!(second.is_error);
+    assert_eq!(second.details.unwrap()["executed"], false);
+}
+
+#[tokio::test]
 async fn oversized_result_is_not_exposed_as_success() {
     let dir = tempfile::tempdir().unwrap();
     let record = dir.path().join("record.json");
@@ -225,6 +371,50 @@ async fn oversized_result_is_not_exposed_as_success() {
     let result = tools[0].execute("call-large", Default::default(), CancellationToken::new(), update()).await.unwrap();
     assert!(result.is_error);
     assert_eq!(result.details.unwrap()["executed"], "unknown");
+}
+
+#[tokio::test]
+async fn large_server_error_does_not_fill_tool_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.json");
+    let tools =
+        connect(config("large-jsonrpc-error", &record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let result = tools[0].execute("call-error", Default::default(), CancellationToken::new(), update()).await.unwrap();
+    assert!(result.is_error);
+    assert_eq!(result.details.unwrap()["executed"], "unknown");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ara_ai::UserBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(text.contains("777"), "{text}");
+    assert!(text.contains("truncated"), "{text}");
+    assert!(text.len() < 5000, "error grew to {} bytes", text.len());
+}
+
+#[tokio::test]
+async fn oversized_outbound_frame_is_not_dispatched_and_keeps_server_available() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.json");
+    let tools = connect(config("normal", &record), dir.path(), &["fixture:echo".into()], &[]).await.unwrap();
+    let mut large = ara_ai::JsonObject::new();
+    large.insert("text".into(), json!("x".repeat(1024 * 1024)));
+    let rejected = tools[0].execute("call-too-large", large, CancellationToken::new(), update()).await.unwrap();
+    assert!(rejected.is_error);
+    assert_eq!(rejected.details.unwrap()["executed"], false);
+    let before: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert!(before.get("call").is_none(), "the large request reached the server");
+
+    let mut small = ara_ai::JsonObject::new();
+    small.insert("text".into(), json!("still alive"));
+    let accepted = tools[0].execute("call-small", small, CancellationToken::new(), update()).await.unwrap();
+    assert!(!accepted.is_error);
+    assert_eq!(accepted.content, vec![ara_ai::UserBlock::text("echo: still alive")]);
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(after["call"]["arguments"]["text"], "still alive");
 }
 
 #[tokio::test]
