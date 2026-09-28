@@ -44,6 +44,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+mod proxy_discovery;
+
 const TOOL_NAMES: [&str; 6] = ["read", "write", "edit", "bash", "grep", "glob"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -62,6 +64,9 @@ enum Api {
     OpenaiCompletions,
     #[value(name = "openai-responses")]
     OpenaiResponses,
+    /// Discover this model's wire protocol from a dual-protocol proxy.
+    #[value(name = "proxy-auto")]
+    ProxyAuto,
 }
 
 impl Api {
@@ -70,6 +75,7 @@ impl Api {
             Self::AnthropicMessages => "anthropic-messages",
             Self::OpenaiCompletions => "openai-completions",
             Self::OpenaiResponses => "openai-responses",
+            Self::ProxyAuto => "proxy-auto",
         }
     }
 }
@@ -88,7 +94,7 @@ struct Args {
     /// Model id sent on the wire. Env: ARA_MODEL, ARA_TEST_MODEL_ID.
     #[arg(long)]
     model: Option<String>,
-    /// Model wire protocol. Defaults to Chat Completions.
+    /// Model wire protocol. proxy-auto probes an explicit dual-protocol proxy before starting a session.
     #[arg(long, value_enum, default_value_t = Api::OpenaiCompletions)]
     api: Api,
     /// Local Claude content tokenizer metadata (no context gate yet): auto,
@@ -351,6 +357,23 @@ struct Route {
 
 /// Validate every argument that does not need the journal (no I/O side effects).
 fn resolve_route(args: &Args) -> Result<Route> {
+    if args.api == Api::ProxyAuto {
+        if args.resume.is_some() || args.continue_session {
+            bail!("--api proxy-auto cannot resume a session; select an explicit --api and verify its endpoint");
+        }
+        if args.reasoning
+            || args.responses_stateful
+            || args.anthropic_strict_tools
+            || args.chat_replay_reasoning_content
+            || args.chat_mistral_compat
+            || args.report_request_text_tokens
+        {
+            bail!("--api proxy-auto cannot use protocol-specific flags; select an explicit --api");
+        }
+        if matches!(args.provider.as_deref(), Some("opencode-go" | "opencode-zen" | "umans")) {
+            bail!("--api proxy-auto cannot use a provider label with a different authentication scheme");
+        }
+    }
     if args.reasoning && args.api != Api::OpenaiResponses {
         bail!("--reasoning requires --api openai-responses");
     }
@@ -387,6 +410,9 @@ fn resolve_route(args: &Args) -> Result<Route> {
         .clone()
         .or_else(|| env_first(&["ARA_BASE_URL", "ARA_TEST_BASE_URL", "OPENROUTER_BASE_URL"]).map(|(_, v)| v))
         .context("no base URL: pass --base-url or set ARA_BASE_URL")?;
+    if args.api == Api::ProxyAuto && is_official_anthropic(&base_url) {
+        bail!("--api proxy-auto requires a dual-protocol proxy, not the official Anthropic route");
+    }
     let openrouter = is_openrouter(&base_url);
     // Route-specific keys stay on their own hosts. ARA keys or an explicit
     // --api-key-env may be used for another endpoint.
@@ -404,6 +430,8 @@ fn resolve_route(args: &Args) -> Result<Route> {
             "anthropic".into()
         } else if openrouter {
             "openrouter".into()
+        } else if args.api == Api::ProxyAuto {
+            "proxy".into()
         } else {
             "openai-compatible".into()
         }
@@ -447,7 +475,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
 
 async fn run(args: Args) -> Result<i32> {
     let _ = args.print;
-    let route = resolve_route(&args)?;
+    let mut route = resolve_route(&args)?;
     if args.mcp_config.is_none() && !args.mcp_allow.is_empty() {
         bail!("--mcp-allow requires --mcp-config");
     }
@@ -469,6 +497,20 @@ async fn run(args: Args) -> Result<i32> {
         None => None,
     };
     let launch_cwd = explicit_cwd.clone().map(Ok).unwrap_or_else(std::env::current_dir)?;
+
+    let selected_api = if args.api == Api::ProxyAuto {
+        let api = proxy_discovery::discover_proxy_api(
+            &route.model.base_url,
+            &route.model.id,
+            route.stream_options.api_key.as_deref(),
+            &route.stream_options.extra_headers,
+        )
+        .await?;
+        route.model.api = api.as_str().into();
+        api
+    } else {
+        args.api
+    };
 
     // Session journal (first journal I/O happens only after validation above).
     let mut cwd = launch_cwd.clone();
@@ -642,8 +684,12 @@ async fn run(args: Args) -> Result<i32> {
     } else {
         None
     };
-    let client = reqwest::Client::builder().build().context("building HTTP client")?;
-    let provider: Arc<dyn ModelProvider> = match args.api {
+    let mut client_builder = reqwest::Client::builder();
+    if args.api == Api::ProxyAuto {
+        client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
+    }
+    let client = client_builder.build().context("building HTTP client")?;
+    let provider: Arc<dyn ModelProvider> = match selected_api {
         Api::AnthropicMessages => Arc::new(AnthropicMessagesProvider {
             client,
             base: ara_ai::providers::anthropic::StreamOptions {
@@ -671,6 +717,7 @@ async fn run(args: Args) -> Result<i32> {
                 ..ResponsesStreamOptions::default()
             },
         }),
+        Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
     };
     let cancel = CancellationToken::new();
     let sink = HostSink {
