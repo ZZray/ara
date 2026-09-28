@@ -153,3 +153,28 @@ and the registered ledger remains 27/36 accepted. Conditional estimate for
 both fixes, regressions, unfiltered gate, and evidence review: 2–4 working
 days, low confidence; it excludes real-model availability and later product
 phases.
+
+## 2026-09-28 Windows gate continuation (WIP)
+
+The authorized Windows Bash Job repair is local WIP commit `8940f3c`.
+`python scripts/verify_backend.py` on that code passed owned formatting,
+workspace Clippy, CLI e2e 51/51, proxy discovery 6/6 and `ara-tools` tool
+integration 16/16. It then failed in vendored `pi-edit` hashline streaming
+preview parity (9/10 in that test binary). A separate focused run of
+`cargo test -p pi-edit --test hashline_patcher patcher_apply_cases -- --nocapture`
+failed one nested-file recovery fixture: `a.txt` was reported missing and
+`nested/a.txt` remained unchanged. An exploratory all-target run that skipped
+only those two named failing tests exited 0; it is not a delivery-gate pass.
+
+Read-only diagnosis traced both failures to `path_policy.rs`:
+`Workspace::new` uses a Windows canonical cwd with a `\\?\` prefix, while
+`canonical_key` removes that prefix from the snapshot path. The
+`allow_tag_path_recovery` containment comparison therefore rejects a valid
+child file. The streaming preview hides the last section's resulting error,
+yielding zero preview files; apply reports the missing authored basename.
+An independent Codex reviewer reproduced both failures and agreed on this
+cause. The reviewer cautioned that the existing generic prefix stripper would
+turn verbatim UNC paths into relative paths, so a fix must normalize drive
+forms narrowly and keep out-of-root recovery denied. The shared editor's
+write-target boundary is a stable flow under `AGENTS.md`; implementation is
+pending the separate explicit scope request. No point acceptance changed.
