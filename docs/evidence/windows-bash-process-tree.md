@@ -87,3 +87,42 @@ elapsed time and absence of delayed marker effects. The prior gate remains
 open until the delivered code passes these checks and independent diff review.
 Estimate after scope confirmation: 2–5 working days, including the unfiltered
 verifier and independent review.
+
+## Authorized Windows-only repair (WIP)
+
+The user explicitly authorized this bounded Windows Bash lifecycle change on
+2026-09-28. `ara-tools::bash` now starts Git Bash with `CREATE_SUSPENDED`,
+assigns it to a per-call Job Object with `KILL_ON_JOB_CLOSE`, locates its one
+initial thread through ToolHelp, and resumes only after assignment succeeds.
+The existing Tokio command builder still owns quoting, environment, cwd and
+the merged output pipe. A failed Job assignment has no uncontained fallback;
+the suspended child is killed. Closing the Job on normal exit, timeout,
+cancellation or Future drop ends descendants before the output reader waits
+for EOF. The Unix process-group path and CLI deadline logic were not changed.
+The only new dependency is the already locked `windows-sys` crate, enabled
+for Windows in `ara-tools`.
+
+Microsoft documents suspended creation and Job inheritance/termination:
+[suspended threads](https://learn.microsoft.com/en-us/windows/win32/procthread/suspending-thread-execution),
+[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[assignment](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject).
+
+Executed on Windows with Git Bash on `PATH`, `CARGO_TARGET_DIR=C:\Temp\ara-verify-target`,
+test/dev debug info and incremental builds disabled, two build jobs:
+
+| Check | Observed result |
+| --- | --- |
+| `cargo test -p ara-tools --test tools bash_ -- --nocapture` | 5/5 pass: normal merged output/background cleanup, timeout, cancellation plus delayed marker, dropped Future plus delayed marker, ordinary success/error/env/cwd. |
+| `cargo test -p ara-cli --test e2e deadline_during_a_tool_and_zero_budget_exit_nonzero -- --exact --nocapture` | 1/1 pass in 1.39 s; previously 5.43 s and failed the `< 4 s` bound. |
+| Direct `Git\bin\bash.exe -c 'kill -9 $$'` | Windows process exit code 2304. The test now checks this observed Git Bash code on Windows while retaining the Unix 137 assertion; production exit-code mapping is unchanged. |
+| `cargo test -p ara-tools --lib failed_job_assignment_never_runs_suspended_bash -- --nocapture` | 1/1 pass after bounding child reaps at 2 s: an active-process-limited Job with an occupied slot rejects a second suspended Bash; no `uncontained` file is written. |
+| `python scripts/verify_backend.py` on the final repair snapshot | Owned format and workspace Clippy passed. CLI e2e 51/51, proxy discovery 6/6, ara-tools `tools` 16/16 and the failed-assignment unit passed. Full workspace test then failed in the existing vendored `pi-edit` `hashline_streaming_preview_cases_preserve_partial_and_final_contracts` case (9/10 in that binary, exit 101). The assertion was `streaming: recovers the bare header onto its nested file instead of blanking`, observed 0 vs expected 1. This is outside the approved Windows Bash scope and was already listed in the handoff. |
+| `cargo test --workspace --doc --all-features --quiet`; `cargo deny check`; `python scripts/omp_inventory.py check`; `python scripts/verify_bootstrap.py`; `git diff --check` | All exited 0. Doc tests contain no cases; `cargo deny` retained existing duplicate-version and license-field warnings. |
+
+Independent Codex plan reviewer recommended the suspended spawn/Job/ToolHelp
+path and fail-closed assignment. Independent Codex post-diff review covered
+Cargo.lock, `ara-tools` manifest, Bash implementation and tests; it found no
+confirmed production defect. The independent post-diff reviewer also checked
+the failed-assignment test and found no blocker; its suggestion to bound
+`wait()` calls was applied and retested. The full backend gate is not green,
+so this repair remains WIP and no point acceptance is claimed.

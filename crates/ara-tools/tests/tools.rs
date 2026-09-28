@@ -437,6 +437,7 @@ async fn bash_timeout_kills_process_group() {
 async fn bash_cancel_aborts_and_streams_updates() {
     let dir = tempfile::tempdir().unwrap();
     let (_, _, bash) = tools(dir.path());
+    let marker = dir.path().join("after-cancel");
     let updates = Arc::new(Mutex::new(Vec::<String>::new()));
     let u2 = updates.clone();
     let update: UpdateFn = Arc::new(move |o| u2.lock().unwrap().push(text(&o)));
@@ -457,7 +458,7 @@ async fn bash_cancel_aborts_and_streams_updates() {
     let err = bash
         .execute(
             "c",
-            args(json!({"command": "for i in 1 2 3 4 5 6 7 8 9; do echo tick $i; sleep 1; done"})),
+            args(json!({"command": "(sleep 2; touch after-cancel) & for i in 1 2 3 4 5 6 7 8 9; do echo tick $i; sleep 1; done"})),
             cancel,
             update,
         )
@@ -465,6 +466,8 @@ async fn bash_cancel_aborts_and_streams_updates() {
         .unwrap_err();
     assert!(started.elapsed() < Duration::from_secs(4));
     assert!(err.0.starts_with("tick 1") && err.0.ends_with("[Command aborted]"), "{}", err.0);
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(!marker.exists(), "background child continued after cancellation");
 }
 
 #[tokio::test]
@@ -489,7 +492,11 @@ async fn bash_keeps_stream_order_and_reaps_background_children() {
     assert!(!marker.exists(), "background child killed with the call");
     let out = b(json!({"command": "kill -9 $$"})).await.unwrap();
     assert!(out.is_error);
-    assert!(text(&out).ends_with("Command exited with code 137"), "{}", text(&out));
+    #[cfg(unix)]
+    let signal_exit = 137;
+    #[cfg(windows)]
+    let signal_exit = 2304; // Git Bash returns the raw Windows exit code (9 << 8).
+    assert!(text(&out).ends_with(&format!("Command exited with code {signal_exit}")), "{}", text(&out));
     let out = b(json!({"command": "head -c 30000000 /dev/zero | tr '\\0' 'x' | fold -w 100"})).await.unwrap();
     assert!(text(&out).len() < DEFAULT_MAX_BYTES + 200);
     assert!(text(&out).ends_with("of 300000]"), "{}", &text(&out)[text(&out).len() - 60..]);

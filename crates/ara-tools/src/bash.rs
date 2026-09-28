@@ -32,6 +32,24 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(windows)]
+use std::io;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE};
+#[cfg(windows)]
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 pub const MAX_TIMEOUT_SECS: u64 = 3600;
@@ -220,17 +238,156 @@ fn kill_group(pid: Option<u32>) {
     }
 }
 
-/// Kills the call's process group on Unix when dropped (normal end, error, or
-/// the execute future being dropped by the host).
+/// Kills the call's process tree when dropped (normal end, error, or the
+/// execute future being dropped by the host).
 struct GroupGuard {
     #[cfg(unix)]
     pid: Option<u32>,
+    #[cfg(windows)]
+    job: Option<WindowsJob>,
+}
+
+#[cfg(windows)]
+impl GroupGuard {
+    fn kill_windows(&mut self) {
+        // KILL_ON_JOB_CLOSE terminates Bash and every descendant in the Job.
+        self.job.take();
+    }
+}
+
+#[cfg(windows)]
+struct WindowsJob(OwnedHandle);
+
+#[cfg(windows)]
+impl WindowsJob {
+    fn new() -> io::Result<Self> {
+        // This handle is not inherited. Closing it ends every process in the
+        // call's Job, including when the execute future is dropped.
+        let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let job = Self(unsafe { OwnedHandle::from_raw_handle(raw) });
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = unsafe {
+            SetInformationJobObject(
+                job.0.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(job)
+    }
+
+    fn assign_and_resume(&self, child: &tokio::process::Child) -> io::Result<()> {
+        let process = child.raw_handle().ok_or_else(|| io::Error::other("suspended Bash has no process handle"))?;
+        let pid = child.id().ok_or_else(|| io::Error::other("suspended Bash has no process ID"))?;
+        if unsafe { AssignProcessToJobObject(self.0.as_raw_handle(), process) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // std/Tokio closes CreateProcess's primary-thread handle. A suspended
+        // process has only that thread; identify it before it can run.
+        let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let snapshot = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut entry = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };
+        if unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut thread_id = None;
+        loop {
+            if entry.th32OwnerProcessID == pid && thread_id.replace(entry.th32ThreadID).is_some() {
+                return Err(io::Error::other("suspended Bash has multiple initial threads"));
+            }
+            if unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) } == 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_NO_MORE_FILES as i32) {
+                    return Err(error);
+                }
+                break;
+            }
+        }
+        let thread_id = thread_id.ok_or_else(|| io::Error::other("suspended Bash has no initial thread"))?;
+        let raw = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let thread = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let prior = unsafe { ResumeThread(thread.as_raw_handle()) };
+        if prior != 1 {
+            return Err(if prior == u32::MAX {
+                io::Error::last_os_error()
+            } else {
+                io::Error::other(format!("unexpected Bash initial-thread suspend count: {prior}"))
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_job_tests {
+    use super::*;
+    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+
+    #[tokio::test]
+    async fn failed_job_assignment_never_runs_suspended_bash() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = WindowsJob::new().unwrap();
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+        limits.BasicLimitInformation.ActiveProcessLimit = 1;
+        assert_ne!(
+            unsafe {
+                SetInformationJobObject(
+                    job.0.as_raw_handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            },
+            0
+        );
+        let system_root = std::env::var_os("SystemRoot").expect("Windows SystemRoot");
+        let mut first = tokio::process::Command::new(std::path::PathBuf::from(system_root).join("System32/ping.exe"));
+        first.args(["-n", "10", "127.0.0.1"]).stdout(Stdio::null()).creation_flags(CREATE_SUSPENDED).kill_on_drop(true);
+        let mut first = first.spawn().unwrap();
+        job.assign_and_resume(&first).unwrap();
+        assert!(first.try_wait().unwrap().is_none(), "first Job process must still occupy the slot");
+
+        let mut command = tokio::process::Command::new("bash");
+        command.arg("-c").arg("touch uncontained").current_dir(dir.path()).creation_flags(CREATE_SUSPENDED);
+        command.kill_on_drop(true);
+        let mut child = command.spawn().unwrap();
+        assert!(job.assign_and_resume(&child).is_err());
+        let _ = child.start_kill();
+        tokio::time::timeout(Duration::from_secs(2), child.wait())
+            .await
+            .expect("suspended child reaped before timeout")
+            .unwrap();
+        drop(job);
+        tokio::time::timeout(Duration::from_secs(2), first.wait())
+            .await
+            .expect("Job child reaped before timeout")
+            .unwrap();
+        assert!(!dir.path().join("uncontained").exists());
+    }
 }
 
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
         kill_group(self.pid);
+        #[cfg(windows)]
+        self.kill_windows();
     }
 }
 
@@ -303,13 +460,27 @@ impl AgentTool for BashTool {
         }
         #[cfg(unix)]
         cmd.process_group(0);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_SUSPENDED);
         cmd.kill_on_drop(true);
+        #[cfg(windows)]
+        let job = WindowsJob::new().map_err(|e| ToolError(format!("Failed to create Bash process job: {e}")))?;
         let started = Instant::now();
         let mut child = cmd.spawn().map_err(|e| ToolError(format!("Failed to start bash: {e}")))?;
         drop(cmd); // release the parent's copies of the pipe's write end
-        let _group = GroupGuard {
+        #[cfg(windows)]
+        if let Err(e) = job.assign_and_resume(&child) {
+            // The initial thread has not run on every ordinary setup failure.
+            // Never execute this command without its Job as a fallback.
+            let _ = child.start_kill();
+            return Err(ToolError(format!("Failed to contain Bash process tree: {e}")));
+        }
+        #[allow(unused_mut)]
+        let mut group = GroupGuard {
             #[cfg(unix)]
             pid: child.id(),
+            #[cfg(windows)]
+            job: Some(job),
         };
         #[cfg(unix)]
         let pid = child.id();
@@ -350,6 +521,8 @@ impl AgentTool for BashTool {
         // still holding the pipe), then the reader sees EOF.
         #[cfg(unix)]
         kill_group(pid);
+        #[cfg(windows)]
+        group.kill_windows();
         let _ = child.start_kill();
         let _ = tokio::time::timeout(Duration::from_secs(2), done_rx).await;
         let (body, notice, total_bytes) = {
