@@ -46,3 +46,6 @@ ara-testkit.workspace = true
 libc = "0.2"
 serde_json.workspace = true
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

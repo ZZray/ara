@@ -21,7 +21,7 @@ fn main() {
         match request.get("method").and_then(Value::as_str) {
             Some("initialize") => {
                 if let Some(path) = &record {
-                    std::fs::write(path, json!({"initialize":request["params"],"ambient_key_present":std::env::var_os("ARA_API_KEY").is_some()}).to_string()).unwrap();
+                    std::fs::write(path, json!({"initialize":request["params"],"ambient_key_present":std::env::var_os("ARA_API_KEY").is_some(),"pid":std::process::id()}).to_string()).unwrap();
                 }
                 send(
                     json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fake-mcp","version":"1"}}}),
@@ -31,9 +31,32 @@ fn main() {
                 send(json!({"jsonrpc":"2.0","id":400,"method":"roots/list","params":{}}));
             }
             Some("tools/list") => {
-                let names = if mode == "collision" { vec!["foo-bar", "foo_bar"] } else { vec!["echo"] };
+                if mode == "malformed-frame" || mode == "truncated-frame" {
+                    let mut out = std::io::stdout().lock();
+                    if mode == "malformed-frame" {
+                        out.write_all(b"{broken\n").unwrap();
+                    } else {
+                        out.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":").unwrap();
+                    }
+                    out.flush().unwrap();
+                    std::process::exit(1);
+                }
+                if mode == "catalog-cycle" {
+                    send(json!({"jsonrpc":"2.0","id":id,"result":{"tools":[],"nextCursor":"again"}}));
+                    continue;
+                }
+                let names = if mode == "collision" {
+                    vec!["foo-bar".to_owned(), "foo_bar".to_owned()]
+                } else if mode == "catalog-overflow" {
+                    (0..65).map(|n| format!("tool_{n}")).collect()
+                } else {
+                    vec!["echo".to_owned()]
+                };
                 let tools: Vec<Value> = names.iter().map(|name| json!({"name":name,"description":"Echo text","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"marker":{"type":"string"}}}})).collect();
                 send(json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}}));
+                if mode == "linger-after-list" {
+                    std::thread::sleep(std::time::Duration::from_secs(120));
+                }
             }
             Some("tools/call") => {
                 if let Some(path) = request["params"]["arguments"]["marker"].as_str() {

@@ -11,6 +11,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+};
+
 const CLI: &str = env!("CARGO_BIN_EXE_ara");
 const MCP: &str = env!("CARGO_BIN_EXE_ara-mcp-fixture");
 
@@ -25,6 +34,95 @@ fn config(mode: &str, record: &Path) -> ServerConfig {
 
 fn update() -> Arc<dyn Fn(ToolOutput) + Send + Sync> {
     Arc::new(|_| {})
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_force_exit_helper() {
+    let Some(root) = std::env::var_os("ARA_TEST_MCP_EXIT_DIR").map(PathBuf::from) else {
+        return;
+    };
+    let record = root.join("record.json");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let tools =
+        runtime.block_on(connect(config("linger-after-list", &record), &root, &["fixture:echo".into()], &[])).unwrap();
+    assert_eq!(tools.len(), 1);
+    std::fs::write(root.join("ready"), "ready").unwrap();
+    let start = Instant::now();
+    while !root.join("go").exists() && start.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(root.join("go").exists(), "parent did not release helper");
+    std::hint::black_box(&tools);
+    std::process::exit(130);
+}
+
+#[cfg(windows)]
+struct ReapHelper(std::process::Child);
+
+#[cfg(windows)]
+impl Drop for ReapHelper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_force_exit_reaps_mcp_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut parent = ReapHelper(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "windows_force_exit_helper", "--nocapture"])
+            .env("ARA_TEST_MCP_EXIT_DIR", dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let ready = dir.path().join("ready");
+    let start = Instant::now();
+    while !ready.exists() && start.elapsed() < Duration::from_secs(10) {
+        if let Some(status) = parent.0.try_wait().unwrap() {
+            panic!("MCP helper exited before readiness: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !ready.exists() {
+        panic!("MCP helper did not become ready");
+    }
+    let receipt: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("record.json")).unwrap()).unwrap();
+    let pid = receipt["pid"].as_u64().unwrap() as u32;
+    // SAFETY: OpenProcess returns a new handle that OwnedHandle closes.
+    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+    assert!(!raw.is_null(), "could not open running MCP fixture: {}", std::io::Error::last_os_error());
+    let server = unsafe { OwnedHandle::from_raw_handle(raw) };
+    // SAFETY: the process handle is valid for this synchronous wait.
+    assert_eq!(unsafe { WaitForSingleObject(server.as_raw_handle(), 0) }, WAIT_TIMEOUT);
+    std::fs::write(dir.path().join("go"), "go").unwrap();
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = parent.0.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() >= Duration::from_secs(5) {
+            // SAFETY: the process handle is valid; this is failure cleanup.
+            unsafe { TerminateProcess(server.as_raw_handle(), 1) };
+            panic!("MCP helper did not force-exit");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status.code(), Some(130));
+    // SAFETY: the process handle remains valid after parent exit.
+    let result = unsafe { WaitForSingleObject(server.as_raw_handle(), 3000) };
+    if result != WAIT_OBJECT_0 {
+        // SAFETY: clean up a server left running by a failed assertion.
+        unsafe { TerminateProcess(server.as_raw_handle(), 1) };
+    }
+    assert_eq!(result, WAIT_OBJECT_0, "MCP server survived parent process::exit");
 }
 
 #[tokio::test]
@@ -58,6 +156,21 @@ async fn collision_and_missing_grant_fail_before_tool_exposure() {
     assert!(err.contains("collision"), "{err}");
     let err = connect(config("normal", &record), dir.path(), &["fixture:other".into()], &[]).await.err().unwrap();
     assert!(err.contains("missing"), "{err}");
+}
+
+#[tokio::test]
+async fn malformed_frames_and_catalog_bounds_fail_before_tool_exposure() {
+    let dir = tempfile::tempdir().unwrap();
+    for (mode, expected) in [
+        ("malformed-frame", "invalid MCP JSON-RPC frame"),
+        ("truncated-frame", "closed stdout"),
+        ("catalog-cycle", "cursor is invalid or repeated"),
+        ("catalog-overflow", "exceeds 64 tools"),
+    ] {
+        let record = dir.path().join(format!("{mode}.json"));
+        let error = connect(config(mode, &record), dir.path(), &["fixture:echo".into()], &[]).await.err().unwrap();
+        assert!(error.contains(expected), "{mode}: {error}");
+    }
 }
 
 #[tokio::test]

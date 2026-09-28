@@ -21,6 +21,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+#[cfg(windows)]
+mod windows_child;
+
 const FRAME_MAX: usize = 1024 * 1024;
 const RESULT_MAX: usize = 256 * 1024;
 const SCHEMA_MAX: usize = 64 * 1024;
@@ -91,6 +94,8 @@ fn valid_env_name(s: &str) -> bool {
 
 struct Connection {
     child: Child,
+    #[cfg(windows)]
+    job: Option<windows_child::Job>,
     stdin: ChildStdin,
     stdout: ChildStdout,
     pending: Vec<u8>,
@@ -161,6 +166,8 @@ impl Connection {
 
     fn stop(&mut self) {
         self.healthy = false;
+        #[cfg(windows)]
+        drop(self.job.take());
         let _ = self.child.start_kill();
     }
 }
@@ -339,10 +346,27 @@ pub async fn connect(
         let value = std::env::var_os(parent).ok_or_else(|| format!("MCP environment source {parent} is not set"))?;
         cmd.env(child, value);
     }
+    #[cfg(windows)]
+    let job = windows_child::Job::new().map_err(|e| format!("creating MCP process job: {e}"))?;
     let mut child = cmd.spawn().map_err(|e| format!("starting MCP server {}: {e}", config.name))?;
+    #[cfg(windows)]
+    if let Err(error) = job.assign(&child) {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        return Err(format!("assigning MCP server to Windows process job: {error}"));
+    }
     let stdin = child.stdin.take().ok_or("MCP child has no stdin")?;
     let stdout = child.stdout.take().ok_or("MCP child has no stdout")?;
-    let mut connection = Connection { child, stdin, stdout, pending: Vec::new(), next_id: 1, healthy: true };
+    let mut connection = Connection {
+        child,
+        #[cfg(windows)]
+        job: Some(job),
+        stdin,
+        stdout,
+        pending: Vec::new(),
+        next_id: 1,
+        healthy: true,
+    };
     let catalog = tokio::time::timeout(START_TIMEOUT, async {
         let initialized = connection
             .request(
