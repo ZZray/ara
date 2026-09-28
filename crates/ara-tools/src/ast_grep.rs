@@ -30,7 +30,20 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 // A model can request an arbitrarily large page. Bound retained match memory.
 const MAX_SKIP: usize = 10_000;
 
-pub const DESCRIPTION: &str = "Search source files using AST patterns. Use `$NAME` for a named node, `$_` for any single node, and `$$$ARGS` for zero or more nodes. `path` accepts a file, directory, glob, `skill://` URL, or semicolon-delimited list. The tool returns at most 50 matches per call; use `skip` for the next page.";
+pub const DESCRIPTION: &str = r"Structural code search: use when syntax shape matters more than text.
+
+<instruction>
+- Narrow each call to one language. `pat` is one AST pattern; use separate calls for unrelated patterns.
+- `$NAME` captures one node; `$_` matches one node without binding; `$$$NAME` captures zero or more nodes. Use `$$$NAME`, not `$$NAME`.
+- Repeated metavariables must match the same code. Patterns must parse as one AST node; wrap fragments in their language's enclosing construct when needed.
+- C++ expression-statement calls need a trailing semicolon, for example `ns::doThing($ARG);`.
+- `path` accepts a file, directory, glob, loaded `skill://` URL, or semicolon-delimited list. Results have 50 matches per page; use `skip` for the next page (maximum 10,000).
+</instruction>
+
+<critical>
+- Narrow `path` before searching. Avoid a repository-root scan when a subsystem is known.
+- Parse issues mean the query may be wrong or mis-scoped; fix the pattern or path before concluding absence.
+</critical>";
 
 pub struct AstGrepTool {
     pub ctx: ToolContext,

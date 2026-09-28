@@ -12,6 +12,9 @@ ARA owner: `crates/ara-tools/src/ast_grep.rs` with CLI selection in
 `ara-walk` and vendored `pi-ast` language/pattern helpers, then matches AST
 nodes directly to retain captures and syntax diagnostics. It does not change
 the Agent loop, Session writer, existing tool defaults, or vendored editor.
+The tool description carries OMP's metavariable, AST syntax, narrow-scope and
+parse-issue guidance while omitting its Task-tool advice because that host
+capability is not present in this CLI.
 The CLI test exercises the real `ara` process against a controlled fake
 upstream, sees the explicit tool schema, one AST result in the next request,
 and one matching Session tool receipt. Its fixture is
@@ -34,6 +37,7 @@ this conservatively avoids attributing hidden grouped rows to a file.
 | `cargo test -p ara-tools --lib ast_grep::tests` | 7/7 pass: captures/paging, parse error cap, glob/validation, limit/cancel, `skill://` and hashline, grouped directory layout, PlusCal/TLA parser. |
 | `cargo clippy -p ara-tools --all-targets -- -D warnings` | Exit 0. |
 | `cargo test -p ara-cli --test e2e ast_grep_is_opt_in_and_reaches_model_and_session_journal -- --exact --nocapture` | 1/1 pass after grouped-output change: default schema excludes the tool, explicit schema includes it, a real process forwards its result and journals its receipt. |
+| Tool-description follow-up: `cargo fmt -p ara-tools`; `cargo clippy -p ara-tools --all-targets -- -D warnings`; focused CLI e2e; seven AST unit tests; `git diff --check` | All exit 0. Only the model-facing description changed; search behavior and defaults are unchanged. |
 | `python scripts/verify_backend.py` | Owned formatting and workspace Clippy passed; CLI e2e 52/52, AST unit 7/7, tools integration 16/16. Stopped at the existing vendored `pi-edit` hashline preview parity case (9/10 in that binary; exit 101). |
 | `cargo test --workspace --all-targets --all-features -- --skip hashline_streaming_preview_cases_preserve_partial_and_final_contracts --skip patcher_apply_cases` | Exit 0 on the final code. Exploratory only: the two skipped editor failures are not waived. |
 | `cargo test --workspace --doc --all-features --quiet`; `cargo deny check`; `python scripts/omp_inventory.py check`; `python scripts/verify_bootstrap.py`; `git diff --check` | All exited 0. Doc tests contain no cases; deny retains existing duplicate-version and license-field warnings. |
