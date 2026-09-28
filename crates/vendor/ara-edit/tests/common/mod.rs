@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use pi_edit::{
+use ara_edit::{
 	ApplyOutcome, ApplyRequest, EditError, EditMode, EditResult, EditStore, EditWriter, FileOp,
 	PathPolicy, Session, WriteRequest, WriteResponse, session::SessionConfig, store::Clipboard,
 };
@@ -142,10 +142,10 @@ impl Workspace {
 
 	/// Record a snapshot (LF-normalized) and return its tag.
 	pub fn snapshot(&self, rel: &str, text: &str, seen: Option<&[u32]>) -> String {
-		let key = pi_edit::path_policy::canonical_key(&self.cwd().join(rel));
+		let key = ara_edit::path_policy::canonical_key(&self.cwd().join(rel));
 		self
 			.store
-			.record(&key, &pi_edit::text::normalize_to_lf(text), seen)
+			.record(&key, &ara_edit::text::normalize_to_lf(text), seen)
 	}
 
 	pub fn session(&self) -> Session {

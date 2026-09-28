@@ -1,15 +1,15 @@
-//! `edit` against real files through the vendored pi-edit engine, and the
+//! `edit` against real files through the vendored ara-edit engine, and the
 //! hashline anchors `read`/`grep` hand to it (OMP `edit/index.ts`,
 //! `read.ts`/`grep.ts` hashline display).
 
 use ara_agent::{AgentTool, Concurrency, ToolOutput};
 use ara_ai::{JsonObject, UserBlock};
+use ara_edit::EditMode;
 use ara_tools::edit::EditTool;
 use ara_tools::grep::GrepTool;
 use ara_tools::read::ReadTool;
 use ara_tools::write::WriteTool;
 use ara_tools::{ToolContext, builtin_tools};
-use pi_edit::EditMode;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ async fn run(t: &dyn AgentTool, v: Value) -> ToolOutput {
 }
 
 fn tag(root: &Path, rel: &str) -> String {
-    pi_edit::store::file_hash(&std::fs::read_to_string(root.join(rel)).unwrap())
+    ara_edit::store::file_hash(&std::fs::read_to_string(root.join(rel)).unwrap())
 }
 
 const GREET: &str = "def greet(name):\n    msg = \"Hello, \" + name\n    print(msg)\ngreet(\"world\")\n";
@@ -227,7 +227,7 @@ async fn tool_surface_and_read_edge_cases() {
     let edit = EditTool::new(ctx.clone());
     let def = edit.definition();
     assert_eq!(def.name, "edit");
-    assert_eq!(def.description, pi_edit::description(EditMode::Hashline));
+    assert_eq!(def.description, ara_edit::description(EditMode::Hashline));
     assert_eq!(def.parameters["required"], json!(["input"]));
     assert_eq!(edit.concurrency(&JsonObject::new()), Concurrency::Exclusive);
     let replace = EditTool::new(ToolContext::new(r).with_edit(EditMode::Replace, true));
@@ -332,7 +332,7 @@ async fn hashline_write_notebooks_and_untaggable_reads() {
     let body = "def f():\n    return 1\n";
     assert_eq!(std::fs::read_to_string(r.join("w.py")).unwrap(), body);
     assert!(!r.join("[w.py#ABCD]").exists());
-    let fresh = pi_edit::store::file_hash(body);
+    let fresh = ara_edit::store::file_hash(body);
     assert_eq!(
         text(&out),
         format!(
@@ -388,7 +388,7 @@ async fn engine_level_guards_cover_recovery_and_ordering() {
     assert_eq!(std::fs::read(r.join("sub/legacy.txt")).unwrap(), latin1);
     // Deleting such a file re-encodes nothing and stays allowed.
     let t = tools(r, EditMode::Hashline);
-    let lossy_tag = pi_edit::store::file_hash(&String::from_utf8_lossy(&latin1));
+    let lossy_tag = ara_edit::store::file_hash(&String::from_utf8_lossy(&latin1));
     let out = run(&t.edit, json!({"input": format!("[sub/legacy.txt#{lossy_tag}]\nREM\n")})).await;
     assert!(!out.is_error, "{}", text(&out));
     assert!(!r.join("sub/legacy.txt").exists());
@@ -438,7 +438,7 @@ async fn write_stripping_gate_and_notebook_tags() {
     let out = run(&write, json!({"path": "n.ipynb", "content": serde_json::to_string_pretty(&nb).unwrap()})).await;
     let header = text(&out).lines().next().unwrap().to_string();
     let cells =
-        pi_edit::notebook::notebook_to_editable_text(&std::fs::read_to_string(r.join("n.ipynb")).unwrap(), "n.ipynb")
+        ara_edit::notebook::notebook_to_editable_text(&std::fs::read_to_string(r.join("n.ipynb")).unwrap(), "n.ipynb")
             .unwrap();
     let line = cells.lines().position(|l| l == "x = 1").unwrap() + 1;
     let out = run(&edit, json!({"input": format!("{header}\nPUT {line}.={line}:\n+x = 2\n")})).await;

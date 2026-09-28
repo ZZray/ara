@@ -2,8 +2,8 @@ mod common;
 
 use common::run_fixture;
 #[cfg(unix)]
-use pi_edit::EditStore;
-use pi_edit::{
+use ara_edit::EditStore;
+use ara_edit::{
 	EditMode, PathPolicy,
 	fuzzy::{FindMatchOptions, find_match},
 	path_policy::canonical_key,

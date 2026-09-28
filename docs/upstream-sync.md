@@ -26,7 +26,7 @@ Read source in `packages/agent`, `packages/ai`, and `packages/coding-agent` plus
 
 1. Choose a **specific new SHA**. Preserve the previous `ported_through_commit`; never track rolling `main` as a target.
 2. In the separate OMP checkout, run `git diff --name-status <old-sha> <new-sha>` and inspect relevant hunks/tests. Record added, changed, removed, and unchanged behaviors in [`docs/upstream/changes.md`](upstream/changes.md).
-3. Update source maps and the feature ledger. Implement one bounded group in Rust; run direct comparison, actual Rust host tests, negative cases, and selected real-model trials. Record intentional differences and reasons.
+3. For a vendored crate, copy the new upstream crate into `crates/vendor/ara-*` and apply the [ARA rename](knowledge/naming.md) recorded in `crates/vendor/README.md` before comparing. Update source maps and the feature ledger. Implement one bounded group in Rust; run direct comparison, actual Rust host tests, negative cases, and selected real-model trials. Record intentional differences and reasons.
 4. Advance `reviewed_upstream_commit` after source review. Advance `ported_through_commit` to the new SHA **only when all selected differences through that SHA pass the full acceptance gate**. Partial work remains visible in the ledger without claiming the marker.
 5. Keep ARA-specific behavior behind explicit interfaces or documented differences so an upstream change can be evaluated rather than blindly merged.
 

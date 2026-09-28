@@ -1,6 +1,6 @@
 mod common;
 
-use pi_edit::{
+use ara_edit::{
 	EditMode, ModeEngine,
 	diff_string::parse_diff_hunks,
 	files::FileCache,
@@ -522,7 +522,7 @@ async fn apply_patch_streaming_preview_parity() {
 
 #[test]
 fn partial_json_edit_entries_parity() {
-	let complete = pi_edit::stream_json::snapshot_from_text(
+	let complete = ara_edit::stream_json::snapshot_from_text(
 		r#"{"path":"a","edits":[{"op":"delete"},{"op":"delete"}]}"#,
 		false,
 		false,
@@ -533,7 +533,7 @@ fn partial_json_edit_entries_parity() {
 		"keeps all entries when the trailing object is closed"
 	);
 
-	let trailing_open = pi_edit::stream_json::snapshot_from_text(
+	let trailing_open = ara_edit::stream_json::snapshot_from_text(
 		r#"{"path":"a","edits":[{"op":"delete"},{"op":"delete""#,
 		false,
 		false,
@@ -552,7 +552,7 @@ fn partial_json_edit_entries_parity() {
 		"drops the last entry when its closing }} has not arrived"
 	);
 
-	let newly_opened = pi_edit::stream_json::snapshot_from_text(
+	let newly_opened = ara_edit::stream_json::snapshot_from_text(
 		r#"{"path":"a","edits":[{"op":"delete"},{"op""#,
 		false,
 		false,
@@ -567,7 +567,7 @@ fn partial_json_edit_entries_parity() {
 		"drops the last entry when a new {{}} has opened after the last close"
 	);
 
-	let empty = pi_edit::stream_json::snapshot_from_text(r#"{"edits":["#, false, false);
+	let empty = ara_edit::stream_json::snapshot_from_text(r#"{"edits":["#, false, false);
 	assert!(empty.edits.is_empty(), "leaves empty edits alone");
 
 	let mut absent = ArgStream::new(false);

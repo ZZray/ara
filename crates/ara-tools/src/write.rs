@@ -52,7 +52,7 @@ fn looks_like_read_rows(lines: &[String]) -> bool {
     let numbers: Vec<u64> = lines
         .iter()
         .filter(|l| !l.trim().is_empty() && !is_loose_hashline_header(l))
-        .filter(|l| !pi_edit::modes::hashline::prefixes::is_read_metadata_line(l))
+        .filter(|l| !ara_edit::modes::hashline::prefixes::is_read_metadata_line(l))
         .filter_map(|l| row_number(l))
         .collect();
     match numbers.as_slice() {
@@ -68,7 +68,7 @@ fn strip_write_content(content: &str) -> (String, bool) {
     if !looks_like_read_rows(&lines) {
         return (content.to_string(), false);
     }
-    let cleaned = pi_edit::modes::hashline::prefixes::strip_hashline_prefixes(&lines).join("\n");
+    let cleaned = ara_edit::modes::hashline::prefixes::strip_hashline_prefixes(&lines).join("\n");
     if cleaned != content {
         return (cleaned, true);
     }
@@ -78,7 +78,7 @@ fn strip_write_content(content: &str) -> (String, bool) {
     }
     let without: Vec<String> = lines[..header].iter().chain(&lines[header + 1..]).cloned().collect();
     let joined = without.join("\n");
-    let cleaned = pi_edit::modes::hashline::prefixes::strip_hashline_prefixes(&without).join("\n");
+    let cleaned = ara_edit::modes::hashline::prefixes::strip_hashline_prefixes(&without).join("\n");
     if cleaned == joined { (content.to_string(), false) } else { (cleaned, true) }
 }
 
@@ -117,7 +117,7 @@ impl AgentTool for WriteTool {
     ) -> Result<ToolOutput, ToolError> {
         let hashlines = self.ctx.hashlines();
         let raw_path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
-        let path = pi_edit::path_policy::unwrap_hashline_header_path(raw_path);
+        let path = ara_edit::path_policy::unwrap_hashline_header_path(raw_path);
         if crate::internal_urls::is_internal_url(path) {
             let (_, selector) = crate::internal_urls::split_skill_url_selector(path);
             if let Some(sel) = selector
@@ -171,15 +171,15 @@ impl AgentTool for WriteTool {
             // A write shows no numbered lines, so the tag carries no seen lines.
             // The tag hashes what the edit engine will see: BOM-stripped text,
             // or a notebook's editable cells.
-            let key = pi_edit::path_policy::canonical_key(&abs);
-            let seen_text = if pi_edit::notebook::is_notebook_path(&abs) {
-                pi_edit::notebook::notebook_to_editable_text(content, &display).unwrap_or_else(|_| content.to_string())
+            let key = ara_edit::path_policy::canonical_key(&abs);
+            let seen_text = if ara_edit::notebook::is_notebook_path(&abs) {
+                ara_edit::notebook::notebook_to_editable_text(content, &display).unwrap_or_else(|_| content.to_string())
             } else {
-                pi_edit::text::strip_bom(content).1.to_string()
+                ara_edit::text::strip_bom(content).1.to_string()
             };
-            let tag = self.ctx.edit_store.record(&key, &pi_edit::text::normalize_to_lf(&seen_text), Some(&[]));
+            let tag = self.ctx.edit_store.record(&key, &ara_edit::text::normalize_to_lf(&seen_text), Some(&[]));
             let header_path = crate::paths::format_path_relative_to_cwd(&abs, &self.ctx.cwd, false);
-            text = format!("{}\n{text}", pi_edit::modes::hashline::format::format_hashline_header(&header_path, &tag));
+            text = format!("{}\n{text}", ara_edit::modes::hashline::format::format_hashline_header(&header_path, &tag));
         }
         if stripped {
             text.push('\n');

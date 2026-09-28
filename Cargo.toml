@@ -12,9 +12,9 @@ members = [
   "crates/ara-tools",
   "crates/ara-testkit",
   "crates/ara-walk",
-  "crates/vendor/pi-ast",
-  "crates/vendor/pi-diff",
-  "crates/vendor/pi-edit",
+  "crates/vendor/ara-ast",
+  "crates/vendor/ara-diff",
+  "crates/vendor/ara-edit",
 ]
 resolver = "3"
 
@@ -38,9 +38,9 @@ ara-discovery = { path = "crates/ara-discovery" }
 ara-context = { path = "crates/ara-context" }
 ara-ctok = { path = "crates/ara-ctok" }
 # Vendored OMP crates (crates/vendor, see crates/vendor/README.md).
-pi-ast = { path = "crates/vendor/pi-ast" }
-pi-diff = { path = "crates/vendor/pi-diff" }
-pi-edit = { path = "crates/vendor/pi-edit" }
+ara-ast = { path = "crates/vendor/ara-ast" }
+ara-diff = { path = "crates/vendor/ara-diff" }
+ara-edit = { path = "crates/vendor/ara-edit" }
 anyhow = "1"
 async-trait = "0.1"
 bytes = "1"

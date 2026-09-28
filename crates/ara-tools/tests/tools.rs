@@ -24,7 +24,7 @@ fn text(o: &ToolOutput) -> String {
 
 /// Plain display (no edit tool exposed), as these read/write/bash cases assert.
 fn plain(dir: &std::path::Path) -> ToolContext {
-    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
+    ToolContext::new(dir).with_edit(ara_edit::EditMode::Hashline, false)
 }
 
 fn tools(dir: &std::path::Path) -> (read::ReadTool, write::WriteTool, bash::BashTool) {
@@ -106,13 +106,13 @@ async fn read_explicit_range_context_keeps_requested_bounds_and_raw_exact() {
     assert!(raw.starts_with("line4\n\n[8 more lines in file. Use :5 to continue]"), "{raw}");
     assert!(!raw.contains("line3") && !raw.contains("line5"), "{raw}");
 
-    let hash_ctx = ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true);
+    let hash_ctx = ToolContext::new(dir.path()).with_edit(ara_edit::EditMode::Hashline, true);
     let hash_read = read::ReadTool { ctx: hash_ctx };
     let hash_out =
         hash_read.execute("c", args(json!({"path":"lines.txt:4-4"})), CancellationToken::new(), noop()).await.unwrap();
     let hash_text = text(&hash_out);
     assert!(hash_text.starts_with("[lines.txt#") && hash_text.contains("\n3:line3\n4:line4\n5:line5"), "{hash_text}");
-    let key = pi_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
+    let key = ara_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
     assert_eq!(
         hash_read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
         std::collections::BTreeSet::from([3, 4, 5, 6, 7])
@@ -137,14 +137,14 @@ async fn read_multiple_ranges_keep_exact_lines_and_edit_provenance() {
     );
     assert_eq!(text(&run("lines.txt:raw:3-3,9-9").await), "line3\n\n…\n\nline9");
 
-    let hash_read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true) };
+    let hash_read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(ara_edit::EditMode::Hashline, true) };
     let out = hash_read
         .execute("c", args(json!({"path":"lines.txt:3-4,9-9"})), CancellationToken::new(), noop())
         .await
         .unwrap();
     let body = text(&out);
     assert!(body.starts_with("[lines.txt#") && body.contains("\n3:line3\n4:line4\n…\n9:line9"), "{body}");
-    let key = pi_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
+    let key = ara_edit::path_policy::canonical_key(&dir.path().join("lines.txt"));
     assert_eq!(
         hash_read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
         std::collections::BTreeSet::from([3, 4, 9])
@@ -181,13 +181,13 @@ async fn read_disjoint_ranges_include_syntax_boundaries_and_record_visible_ancho
         .join("\n"),
     )
     .unwrap();
-    let read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(pi_edit::EditMode::Hashline, true) };
+    let read = read::ReadTool { ctx: ToolContext::new(dir.path()).with_edit(ara_edit::EditMode::Hashline, true) };
     let out =
         read.execute("c", args(json!({"path":"blocks.ts:1-1,6-6"})), CancellationToken::new(), noop()).await.unwrap();
     let body = text(&out);
     assert!(body.contains("\n1:function first() {\n…\n5:}\n6:function second() {\n…\n9:}"), "{body}");
     assert!(!body.contains("2:  const a") && !body.contains("8:  return c"), "{body}");
-    let key = pi_edit::path_policy::canonical_key(&dir.path().join("blocks.ts"));
+    let key = ara_edit::path_policy::canonical_key(&dir.path().join("blocks.ts"));
     assert_eq!(
         read.ctx.edit_store.head(&key).unwrap().seen_lines.unwrap(),
         std::collections::BTreeSet::from([1, 5, 6, 9])

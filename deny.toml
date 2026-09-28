@@ -19,7 +19,8 @@ allow = [
   "ISC",
   "Unicode-3.0",
   # Boost 1.0 (permissive, OSI-approved): `xxhash-rust`, which the vendored
-  # OMP pi-edit/pi-ast crates use for hashline tags (xxh32) and parse caches.
+  # ara-edit/ara-ast crates (OMP pi-edit/pi-ast) use for hashline tags (xxh32)
+  # and parse caches.
   # Added 2026-09-25 with TOOLS-03.
   "BSL-1.0",
   # Zlib: permissive (OSI-approved). foldhash, via yaml-rust2 -> hashlink, the

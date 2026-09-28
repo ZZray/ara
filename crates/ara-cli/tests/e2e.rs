@@ -1151,7 +1151,7 @@ async fn tool_task_produces_file_and_receipts() {
         vec!["model_change", "user", "assistant", "toolResult", "assistant", "toolResult", "assistant"]
     );
     // Hashline mode (the default edit mode) returns a fresh snapshot header.
-    let tag = pi_edit::store::file_hash("hi from ara\n");
+    let tag = ara_edit::store::file_hash("hi from ara\n");
     assert_eq!(
         entries[4]["message"]["content"][0]["text"],
         json!(format!("[hello.txt#{tag}]\nSuccessfully wrote 12 bytes to hello.txt"))

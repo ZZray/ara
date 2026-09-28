@@ -13,10 +13,10 @@ use crate::paths::{self, SearchScope};
 use crate::{DEFAULT_MAX_BYTES, ToolContext};
 use ara_agent::{AgentTool, ToolError, ToolOutput, UpdateFn};
 use ara_ai::{JsonObject, Tool};
+use ara_ast::{SupportLang, ops};
 use ara_walk::{self, Budget, EntryKind, Visit, WalkError, WalkOptions};
 use ast_grep_core::{MatchStrictness, matcher::Pattern, tree_sitter::LanguageExt};
 use async_trait::async_trait;
-use pi_ast::{SupportLang, ops};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -428,7 +428,7 @@ impl AstGrepTool {
             let file = &files[0];
             let mut lines = Vec::new();
             if let Some((_, tag)) = tags.get(file) {
-                lines.push(pi_edit::modes::hashline::format::format_hashline_header(file, tag));
+                lines.push(ara_edit::modes::hashline::format::format_hashline_header(file, tag));
             }
             lines.extend(bodies[file].iter().cloned());
             lines.join("\n")
@@ -446,9 +446,13 @@ impl AstGrepTool {
         // leave its snapshot unmarked rather than claim unseen lines were read.
         if !truncated.truncated {
             for (file, (absolute, tag)) in tags {
-                let seen = pi_edit::store::seen_lines_from_body(&bodies[&file].join("\n"));
+                let seen = ara_edit::store::seen_lines_from_body(&bodies[&file].join("\n"));
                 if !seen.is_empty() {
-                    self.ctx.edit_store.record_seen_lines(&pi_edit::path_policy::canonical_key(&absolute), &tag, &seen);
+                    self.ctx.edit_store.record_seen_lines(
+                        &ara_edit::path_policy::canonical_key(&absolute),
+                        &tag,
+                        &seen,
+                    );
                 }
             }
         }
@@ -592,7 +596,7 @@ mod tests {
         let text = body(&regular);
         assert!(text.contains("#"));
         assert!(text.contains("*1:console.log(value)"));
-        let snapshot = ctx.edit_store.head(&pi_edit::path_policy::canonical_key(&script)).unwrap();
+        let snapshot = ctx.edit_store.head(&ara_edit::path_policy::canonical_key(&script)).unwrap();
         assert!(snapshot.seen_lines.as_ref().is_some_and(|lines| lines.contains(&1)));
 
         let fresh = ToolContext::new(temp.path()).with_skills(vec![internal_urls::SkillRef {
@@ -603,7 +607,7 @@ mod tests {
         let immutable = call(&fresh, json!({"pat": "console.log($X)", "path": "skill://demo/sample.ts"})).unwrap();
         assert_eq!(immutable.details.as_ref().unwrap()["matchCount"], 1);
         assert!(body(&immutable).contains("*1|console.log(value)"));
-        assert!(fresh.edit_store.head(&pi_edit::path_policy::canonical_key(&script)).is_none());
+        assert!(fresh.edit_store.head(&ara_edit::path_policy::canonical_key(&script)).is_none());
     }
 
     #[test]

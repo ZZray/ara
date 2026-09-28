@@ -5,7 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use pi_edit::{
+use ara_edit::{
 	EditMode, ModeEngine,
 	modes::apply_patch::{ApplyPatchEngine, parse_apply_patch, parse_apply_patch_streaming},
 };
@@ -155,7 +155,7 @@ fn streaming_parser_tolerates_an_incomplete_update() {
 #[test]
 fn matcher_paths_entries_and_file_ops_follow_the_envelope() {
 	let engine = ApplyPatchEngine { allow_fuzzy: true, fuzzy_threshold: 0.95 };
-	let args = pi_edit::stream_json::ArgSnapshot {
+	let args = ara_edit::stream_json::ArgSnapshot {
 		input: Some(
 			"*** Begin Patch\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-old\n+new\n*** Delete \
 			 File: c.txt\n*** End Patch"

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
-use pi_edit::{
+use ara_edit::{
 	modes::hashline::{
 		apply::{ApplyOptions, EmptyPaste, apply_edits},
 		block::{Unresolved, native_block_resolver, resolve_block_edits},
@@ -59,7 +59,7 @@ fn apply(
 	text: &str,
 	edits: &[Edit],
 	path: Option<&str>,
-) -> pi_edit::modes::hashline::types::ApplyResult {
+) -> ara_edit::modes::hashline::types::ApplyResult {
 	apply_edits(text, edits, ApplyOptions {
 		clipboard: None,
 		path,

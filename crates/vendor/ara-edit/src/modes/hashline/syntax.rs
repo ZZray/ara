@@ -5,7 +5,7 @@ use std::{
 	sync::{LazyLock, Mutex},
 };
 
-use pi_ast::{
+use ara_ast::{
 	block::{
 		BlockRangeOptions, EnclosingBoundaryOptions, LineRange, NodeSpan, enclosing_block_boundaries,
 		node_chain_at,

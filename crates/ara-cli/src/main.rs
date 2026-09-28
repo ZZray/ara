@@ -189,7 +189,7 @@ struct Args {
     line_numbers: bool,
     /// Edit tool mode: hashline (default; anchored reads), replace, patch, apply_patch or sloppy.
     #[arg(long, default_value = "hashline", value_parser = parse_edit_mode)]
-    edit_mode: pi_edit::EditMode,
+    edit_mode: ara_edit::EditMode,
     /// Include thinking blocks in text output.
     #[arg(long)]
     print_thoughts: bool,
@@ -201,8 +201,8 @@ struct Args {
     stream_idle_timeout: Option<f64>,
 }
 
-fn parse_edit_mode(value: &str) -> Result<pi_edit::EditMode, String> {
-    pi_edit::EditMode::parse(value)
+fn parse_edit_mode(value: &str) -> Result<ara_edit::EditMode, String> {
+    ara_edit::EditMode::parse(value)
         .ok_or_else(|| format!("unknown edit mode {value:?} (hashline, replace, patch, apply_patch, sloppy)"))
 }
 

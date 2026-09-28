@@ -1,6 +1,6 @@
 mod common;
 
-use pi_edit::{EditMode, ModeEngine, modes::patch::PatchEngine, stream_json::ArgSnapshot};
+use ara_edit::{EditMode, ModeEngine, modes::patch::PatchEngine, stream_json::ArgSnapshot};
 
 #[tokio::test]
 async fn patch_core_fixtures() {
@@ -13,13 +13,13 @@ fn matcher_digest_uses_added_lines_and_whole_create_content() {
 	let args = ArgSnapshot {
 		path: Some("a.txt".into()),
 		edits: vec![
-			pi_edit::stream_json::EditEntry {
+			ara_edit::stream_json::EditEntry {
 				op: Some("update".into()),
 				diff: Some("@@\n-old\n+new".into()),
 				closed: true,
 				..Default::default()
 			},
-			pi_edit::stream_json::EditEntry {
+			ara_edit::stream_json::EditEntry {
 				op: Some("create".into()),
 				rename: Some("ignored.txt".into()),
 				diff: Some("whole content".into()),

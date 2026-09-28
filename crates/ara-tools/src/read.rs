@@ -16,7 +16,7 @@
 //! or not valid UTF-8 get display-only `N|text` rows and no tag (upstream
 //! prints `N:` rows without a header there). A first line over the byte cap
 //! gets the upstream "Hashline output requires full lines" message plus the
-//! continuation notice. `.ipynb` files read as pi-edit's editable cell text
+//! continuation notice. `.ipynb` files read as ara-edit's editable cell text
 //! (`notebookToEditableText`), so their tags match what `edit` sees.
 //!
 //! Not ported (open): structural summaries and bracket context around
@@ -530,9 +530,9 @@ fn multi_block_context(
     }
     let mut used_bytes = render_multi_rows(&rows).len();
     let path = path.to_str();
-    let source = pi_edit::diff_string::BlockContextSource { path, lang: None };
+    let source = ara_edit::diff_string::BlockContextSource { path, lang: None };
     let mut added = false;
-    for (line, content) in pi_edit::diff_string::find_block_context_lines(&lines, selected, &source) {
+    for (line, content) in ara_edit::diff_string::find_block_context_lines(&lines, selected, &source) {
         if rows.contains_key(&line) || line == 0 || line as usize > lines.len() || rows.len() >= max_lines {
             continue;
         }
@@ -916,13 +916,13 @@ impl AgentTool for ReadTool {
             let editable: Option<String> = if notebook {
                 let json = std::fs::read_to_string(&abs2).map_err(io)?;
                 let cells =
-                    pi_edit::notebook::notebook_to_editable_text(&json, &display2).map_err(|e| e.to_string())?;
-                Some(pi_edit::text::normalize_to_lf(&cells).into_owned())
+                    ara_edit::notebook::notebook_to_editable_text(&json, &display2).map_err(|e| e.to_string())?;
+                Some(ara_edit::text::normalize_to_lf(&cells).into_owned())
             } else if (hashlines || (!raw && !sel.multi_ranges.is_empty()))
-                && file_size <= pi_edit::store::MAX_SNAPSHOT_FILE_BYTES
+                && file_size <= ara_edit::store::MAX_SNAPSHOT_FILE_BYTES
             {
                 match String::from_utf8(std::fs::read(&abs2).map_err(io)?) {
-                    Ok(text) => Some(pi_edit::text::normalize_to_lf(pi_edit::text::strip_bom(&text).1).into_owned()),
+                    Ok(text) => Some(ara_edit::text::normalize_to_lf(ara_edit::text::strip_bom(&text).1).into_owned()),
                     Err(e) => {
                         undecodable = Some(e.into_bytes());
                         None
@@ -966,7 +966,7 @@ impl AgentTool for ReadTool {
                             block_context: (!notebook
                                 && !raw
                                 && !sel.multi_ranges.is_empty()
-                                && text.len() as u64 <= pi_edit::store::MAX_SNAPSHOT_FILE_BYTES)
+                                && text.len() as u64 <= ara_edit::store::MAX_SNAPSHOT_FILE_BYTES)
                                 .then_some((text.as_str(), abs2.as_path())),
                         },
                         &cancel2,
@@ -995,13 +995,13 @@ impl AgentTool for ReadTool {
             };
             let mut text = window.text.clone();
             if window.emitted > 0 && window.oversized_first_line.is_none() {
-                let key = pi_edit::path_policy::canonical_key(&abs2);
+                let key = ara_edit::path_policy::canonical_key(&abs2);
                 if let (true, Some(content)) = (taggable, &editable) {
                     let tag = store.record(&key, content, None);
                     let header =
-                        pi_edit::modes::hashline::format::format_hashline_header(&ctx.hashline_display(&abs2), &tag);
+                        ara_edit::modes::hashline::format::format_hashline_header(&ctx.hashline_display(&abs2), &tag);
                     text = format!("{header}\n{text}");
-                    let seen = pi_edit::store::seen_lines_from_body(&text);
+                    let seen = ara_edit::store::seen_lines_from_body(&text);
                     if !seen.is_empty() {
                         store.record_seen_lines(&key, &tag, &seen);
                     }

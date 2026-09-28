@@ -8,8 +8,8 @@ reported as `ignored-upstream` (upstream runs them on demand).
 
     python scripts/vendored_behaviors.py [--out docs/evidence/vendored-behaviors.tsv] [--corpus OMP_CHECKOUT]
 
-`--corpus` points pi-ast's repository-corpus sweeps at an OMP checkout
-(`PI_AST_CORPUS_ROOT`); without it the sample sweep skips itself in this tree.
+`--corpus` points ara-ast's (upstream pi-ast) repository-corpus sweeps at an OMP checkout
+(`ARA_AST_CORPUS_ROOT`); without it the sample sweep skips itself in this tree.
 """
 
 from __future__ import annotations
@@ -25,12 +25,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BEHAVIORS = ROOT / "docs/upstream/inventory/behaviors.tsv"
 # Upstream crate directory -> vendored package name.
-CRATES = {"crates/pi-diff": "pi-diff", "crates/pi-ast": "pi-ast", "crates/pi-edit": "pi-edit"}
+CRATES = {"crates/pi-diff": "ara-diff", "crates/pi-ast": "ara-ast", "crates/pi-edit": "ara-edit"}
 
 # Tests that return early (and pass) unless an OMP corpus is supplied.
 CORPUS_SWEEPS = {("crates/pi-ast", "pruned_walk_matches_unpruned_on_repo_corpus_sample")}
 
-RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+) \((?:\S*/)?deps/([A-Za-z0-9_]+)-[0-9a-f]+\)")
+# Windows prints `src\lib.rs` and `...\deps\name-hash.exe`.
+RUNNING = re.compile(r"^\s*Running (?:unittests )?(\S+) \((?:\S*[\\/])?deps[\\/]([A-Za-z0-9_]+)-[0-9a-f]+(?:\.exe)?\)")
 RESULT = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)")
 
 
@@ -47,7 +48,7 @@ def run_tests(corpus: str | None) -> dict[tuple[str, str], str]:
     packages = [arg for name in CRATES.values() for arg in ("-p", name)]
     env = dict(os.environ)
     if corpus:
-        env["PI_AST_CORPUS_ROOT"] = corpus
+        env["ARA_AST_CORPUS_ROOT"] = corpus
     # stderr carries the "Running <target>" headers; merge to keep the order.
     proc = subprocess.run(
         ["cargo", "test", *packages, "--no-fail-fast"],
@@ -60,6 +61,7 @@ def run_tests(corpus: str | None) -> dict[tuple[str, str], str]:
         running = RUNNING.match(line)
         if running:
             target, binary = running.groups()
+            target = target.replace("\\", "/")
             # Integration test binaries are named after the test file.
             crate_dir = by_binary.get(binary)
             if crate_dir is None:
@@ -91,7 +93,7 @@ def run_tests(corpus: str | None) -> dict[tuple[str, str], str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="docs/evidence/vendored-behaviors.tsv")
-    parser.add_argument("--corpus", help="OMP checkout for pi-ast corpus sweeps")
+    parser.add_argument("--corpus", help="OMP checkout for ara-ast corpus sweeps")
     args = parser.parse_args()
     results = run_tests(args.corpus)
     rows = []

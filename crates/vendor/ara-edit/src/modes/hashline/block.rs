@@ -6,7 +6,7 @@ use std::{
 	sync::{LazyLock, Mutex},
 };
 
-use pi_ast::block::{BlockRangeOptions, block_range_at};
+use ara_ast::block::{BlockRangeOptions, block_range_at};
 use xxhash_rust::xxh64::xxh64;
 
 use super::{

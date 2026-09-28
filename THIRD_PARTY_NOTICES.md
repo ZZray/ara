@@ -8,7 +8,7 @@ ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/ca
 - `crates/ara-session`: from `packages/coding-agent` session storage.
 - `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`, `edit.rs`).
 - `crates/ara-walk`: from `crates/pi-walker` (ignore-state traversal).
-- `crates/vendor/pi-diff`, `crates/vendor/pi-ast`, `crates/vendor/pi-edit`: upstream crates copied verbatim except for the local modifications listed in `crates/vendor/README.md` (`pi-ast` also carries its own `LICENSE`).
+- `crates/vendor/ara-diff`, `crates/vendor/ara-ast`, `crates/vendor/ara-edit`: upstream crates `crates/pi-diff`, `crates/pi-ast` and `crates/pi-edit`, copied verbatim except for the ARA renaming and the local modifications listed in `crates/vendor/README.md` (`ara-ast` also carries upstream `pi-ast`'s own `LICENSE`).
 - `crates/ara-cli`: from `packages/coding-agent` print mode and `main.ts` prompt-file discovery.
 - `crates/ara-prompt`: from `packages/utils` (`template.ts`, `prompt.ts`). `tests/fixtures/template/` holds upstream prompt templates used as goldens.
 - `crates/ara-discovery`: from the `packages/coding-agent` capability, discovery, `config.ts` and skills code and from `packages/utils` `frontmatter.ts`. `tests/fixtures/skills*` are copied from upstream `test/fixtures/skills*`.

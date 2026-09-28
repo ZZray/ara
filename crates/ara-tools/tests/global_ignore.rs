@@ -36,5 +36,5 @@ async fn global_gitignore_needs_a_repository() {
 
 /// Plain display (no edit tool exposed): these cases assert `*N|line` rows.
 fn plain_ctx(dir: impl Into<std::path::PathBuf>) -> ToolContext {
-    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
+    ToolContext::new(dir).with_edit(ara_edit::EditMode::Hashline, false)
 }

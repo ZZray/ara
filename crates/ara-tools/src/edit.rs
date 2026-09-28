@@ -2,7 +2,7 @@
 //! `EditSession` binding in `crates/pi-natives/src/edit.rs`, at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d).
 //!
-//! The edit engine is the vendored OMP `pi-edit` crate: every mode's parser,
+//! The edit engine is the vendored OMP `ara-edit` crate: every mode's parser,
 //! matcher, staging, diff and model-facing text. This module is the host
 //! part: it builds the session policy, feeds the finished arguments, and owns
 //! the file writes (create, update, move, delete), including upstream's
@@ -10,7 +10,7 @@
 //!
 //! Intentional differences (data safety):
 //! - Re-encoding a file that is not valid UTF-8 is refused while staging, so
-//!   nothing is written (vendored `pi-edit` `FileRead::persist`, marked
+//!   nothing is written (vendored `ara-edit` `FileRead::persist`, marked
 //!   `ARA:`). Upstream decodes lossily and writes U+FFFD over every
 //!   undecodable byte. Deletes are unaffected.
 //! - Hashline `MV` onto an existing file is refused while staging (vendored
@@ -33,11 +33,11 @@
 use crate::ToolContext;
 use ara_agent::{AgentTool, Concurrency, ToolError, ToolOutput, UpdateFn};
 use ara_ai::{JsonObject, Tool, UserBlock};
-use async_trait::async_trait;
-use pi_edit::session::SessionConfig;
-use pi_edit::{
+use ara_edit::session::SessionConfig;
+use ara_edit::{
     ApplyRequest, EditError, EditMode, EditResult, EditWriter, FileOp, Session, WriteRequest, WriteResponse,
 };
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -212,7 +212,7 @@ impl EditTool {
     fn config(&self) -> SessionConfig {
         SessionConfig {
             mode: self.ctx.edit_mode(),
-            policy: pi_edit::PathPolicy {
+            policy: ara_edit::PathPolicy {
                 cwd: self.ctx.cwd.clone(),
                 home_dir: std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default(),
                 local_sandbox_root: None,
@@ -228,7 +228,7 @@ impl EditTool {
     }
 }
 
-fn file_details(file: &pi_edit::FileOutcome) -> Value {
+fn file_details(file: &ara_edit::FileOutcome) -> Value {
     let mut d = json!({
         "path": file.move_to.as_ref().unwrap_or(&file.absolute).to_string_lossy(),
         "diff": file.diff,
@@ -257,18 +257,18 @@ fn file_details(file: &pi_edit::FileOutcome) -> Value {
 }
 
 /// `aggregateDetails` with the multi-file snapshot budget (`capPerFileSnapshots`).
-fn details(files: &[pi_edit::FileOutcome]) -> Option<Value> {
+fn details(files: &[ara_edit::FileOutcome]) -> Option<Value> {
     match files {
         [] => None,
         [one] => Some(file_details(one)),
         many => {
-            let mut remaining = pi_edit::session::MAX_EDIT_SNAPSHOT_TEXT_CHARS;
+            let mut remaining = ara_edit::session::MAX_EDIT_SNAPSHOT_TEXT_CHARS;
             let per_file: Vec<Value> = many
                 .iter()
                 .map(|f| {
                     let mut d = file_details(f);
-                    let kept = f.old_text.as_deref().map_or(0, pi_edit::text::utf16_len)
-                        + f.new_text.as_deref().map_or(0, pi_edit::text::utf16_len);
+                    let kept = f.old_text.as_deref().map_or(0, ara_edit::text::utf16_len)
+                        + f.new_text.as_deref().map_or(0, ara_edit::text::utf16_len);
                     if kept > 0 {
                         if kept <= remaining {
                             remaining -= kept;
@@ -293,7 +293,7 @@ impl AgentTool for EditTool {
     fn definition(&self) -> Tool {
         Tool {
             name: "edit".into(),
-            description: pi_edit::description(self.ctx.edit_mode()).into(),
+            description: ara_edit::description(self.ctx.edit_mode()).into(),
             parameters: parameters(self.ctx.edit_mode()),
         }
     }

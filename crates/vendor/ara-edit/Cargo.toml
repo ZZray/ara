@@ -1,5 +1,5 @@
 [package]
-name = "pi-edit"
+name = "ara-edit"
 version.workspace = true
 edition.workspace = true
 license = "MIT"
@@ -9,8 +9,8 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 parking_lot.workspace = true
-pi-ast.workspace = true
-pi-diff.workspace = true
+ara-ast.workspace = true
+ara-diff.workspace = true
 ara-walk.workspace = true
 globset.workspace = true
 regex.workspace = true

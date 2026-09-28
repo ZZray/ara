@@ -985,9 +985,9 @@ mod tests {
 	/// budget, files are taken on a stride so the sample spans the whole tree
 	/// instead of one directory, skipping anything over 64 KiB.
 	fn repo_files(byte_budget: Option<usize>) -> Vec<PathBuf> {
-		// ARA: vendored one level deeper (`crates/vendor/pi-ast`); the corpus is
-		// the repository root, or `PI_AST_CORPUS_ROOT` (e.g. an OMP checkout).
-		let root = std::env::var_os("PI_AST_CORPUS_ROOT").map_or_else(
+		// ARA: vendored one level deeper (`crates/vendor/ara-ast`); the corpus is
+		// the repository root, or `ARA_AST_CORPUS_ROOT` (e.g. an OMP checkout).
+		let root = std::env::var_os("ARA_AST_CORPUS_ROOT").map_or_else(
 			|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
 			PathBuf::from,
 		);
@@ -1045,9 +1045,9 @@ mod tests {
 		// farm the walker cannot see through). Both surface as an empty scan —
 		// skip then. Whenever the scan finds anything, the evidence assert below
 		// still guards against a broken/undersized sample.
-		// ARA: vendored one level deeper (`crates/vendor/pi-ast`); the corpus is
-		// the repository root, or `PI_AST_CORPUS_ROOT` (e.g. an OMP checkout).
-		let root = std::env::var_os("PI_AST_CORPUS_ROOT").map_or_else(
+		// ARA: vendored one level deeper (`crates/vendor/ara-ast`); the corpus is
+		// the repository root, or `ARA_AST_CORPUS_ROOT` (e.g. an OMP checkout).
+		let root = std::env::var_os("ARA_AST_CORPUS_ROOT").map_or_else(
 			|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
 			PathBuf::from,
 		);
@@ -1066,7 +1066,7 @@ mod tests {
 	}
 
 	#[test]
-	#[ignore = "full repository sweep; run with `cargo nextest run --release -p pi-ast \
+	#[ignore = "full repository sweep; run with `cargo nextest run --release -p ara-ast \
 	            --run-ignored ignored-only`"]
 	fn pruned_walk_matches_unpruned_on_full_repo_corpus() {
 		let files = repo_files(None);

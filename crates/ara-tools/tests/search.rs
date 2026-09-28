@@ -497,5 +497,5 @@ async fn special_files_symlinked_roots_and_multiline_merging() {
 
 /// Plain display (no edit tool exposed): these cases assert `*N|line` rows.
 fn plain_ctx(dir: impl Into<std::path::PathBuf>) -> ToolContext {
-    ToolContext::new(dir).with_edit(pi_edit::EditMode::Hashline, false)
+    ToolContext::new(dir).with_edit(ara_edit::EditMode::Hashline, false)
 }

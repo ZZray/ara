@@ -161,7 +161,7 @@ async fn grep_skill_urls() {
     let root = dir.path().canonicalize().unwrap();
     let demo = write_skill(&root.join("skills"), "demo", "needle-in-skill\n");
     std::fs::write(root.join("ordinary.txt"), "needle-in-ordinary\n").unwrap();
-    let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, true).with_skills(vec![demo]);
+    let ctx = ToolContext::new(&root).with_edit(ara_edit::EditMode::Hashline, true).with_skills(vec![demo]);
     let grep = grep::GrepTool::new(ctx);
     let search = |path: &str| {
         grep.execute(
@@ -261,7 +261,7 @@ async fn read_skill_urls() {
     let root = dir.path().canonicalize().unwrap();
     let long_body: String = (1..=4000).map(|i| format!("body-line-{i}\n")).collect();
     let demo = write_skill(&root.join("skills"), "demo", &long_body);
-    let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, true).with_skills(vec![demo.clone()]);
+    let ctx = ToolContext::new(&root).with_edit(ara_edit::EditMode::Hashline, true).with_skills(vec![demo.clone()]);
     let read = read::ReadTool { ctx };
     let r = |p: &str| read.execute("c", args(json!({"path": p})), CancellationToken::new(), noop());
 
@@ -342,7 +342,7 @@ async fn read_skill_disjoint_ranges_include_block_boundaries_without_changing_re
     let demo = write_skill(&root.join("skills"), "demo", "body\n");
     let source = "function one() {\n  return 1;\n}\nfunction two() {\n  return 2;\n}\n";
     std::fs::write(demo.base_dir.join("blocks.ts"), source).unwrap();
-    let mut ctx = ToolContext::new(&root).with_skills(vec![demo.clone()]).with_edit(pi_edit::EditMode::Hashline, true);
+    let mut ctx = ToolContext::new(&root).with_skills(vec![demo.clone()]).with_edit(ara_edit::EditMode::Hashline, true);
     ctx.line_numbers = true;
     let read = read::ReadTool { ctx };
     let r = |path: &str| {
@@ -353,7 +353,9 @@ async fn read_skill_disjoint_ranges_include_block_boundaries_without_changing_re
 
     let body = text(&r("skill://demo/blocks.ts:1-1,4-4").await);
     assert_eq!(body, "1|function one() {\n…\n3|}\n4|function two() {\n…\n6|}");
-    assert!(read.ctx.edit_store.head(&pi_edit::path_policy::canonical_key(&demo.base_dir.join("blocks.ts"))).is_none());
+    assert!(
+        read.ctx.edit_store.head(&ara_edit::path_policy::canonical_key(&demo.base_dir.join("blocks.ts"))).is_none()
+    );
     assert_eq!(text(&r("skill://demo/blocks.ts:raw:1-1,4-4").await), "function one() {\n\n…\n\nfunction two() {");
 
     std::fs::write(demo.base_dir.join("blocks.ts"), source.replace('\n', "\r\n")).unwrap();
@@ -453,7 +455,7 @@ async fn bash_expands_skill_urls() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let demo = write_skill(&root.join("my skills"), "demo", "body\n");
-    let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, false).with_skills(vec![demo.clone()]);
+    let ctx = ToolContext::new(&root).with_edit(ara_edit::EditMode::Hashline, false).with_skills(vec![demo.clone()]);
     let bash = bash::BashTool { ctx };
     let b = |v: Value| bash.execute("c", args(v), CancellationToken::new(), noop());
 
@@ -525,7 +527,7 @@ async fn bash_expansion_never_turns_quoted_text_into_commands() {
         ["echo skill://demo/x\\\" '\" ; touch F2 ; \"' skill://demo/y\\\"", "echo '\"skill://demo/x;touch${IFS}F3\"'"];
     for skills in [Vec::new(), vec![demo.clone()]] {
         let loaded = !skills.is_empty();
-        let ctx = ToolContext::new(&root).with_edit(pi_edit::EditMode::Hashline, false).with_skills(skills);
+        let ctx = ToolContext::new(&root).with_edit(ara_edit::EditMode::Hashline, false).with_skills(skills);
         let bash = bash::BashTool { ctx };
         for command in commands {
             let _ = bash.execute("c", args(json!({"command": command})), CancellationToken::new(), noop()).await;

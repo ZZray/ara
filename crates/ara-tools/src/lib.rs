@@ -33,12 +33,12 @@ pub struct ToolContext {
     /// `N|text` line prefixes on reads (OMP `readLineNumbers`, default off).
     pub line_numbers: bool,
     /// Edit mode of the `edit` tool (OMP `edit.mode`, default hashline).
-    edit_mode: pi_edit::EditMode,
+    edit_mode: ara_edit::EditMode,
     /// Whether the host exposes the `edit` tool (OMP `hasEditTool`, default true).
     edit_enabled: bool,
     /// File snapshots shared by `read`, `grep` and `edit` for one session
     /// (OMP `getEditStore(session)`): tags, seen lines, clipboard registers.
-    pub edit_store: pi_edit::EditStore,
+    pub edit_store: ara_edit::EditStore,
     /// Skills `skill://` URLs resolve against (the host's loaded skills).
     pub skills: std::sync::Arc<std::sync::RwLock<Vec<internal_urls::SkillRef>>>,
 }
@@ -63,9 +63,9 @@ impl ToolContext {
         ToolContext {
             cwd: normalize(&cwd),
             line_numbers: false,
-            edit_mode: pi_edit::EditMode::Hashline,
+            edit_mode: ara_edit::EditMode::Hashline,
             edit_enabled: true,
-            edit_store: pi_edit::EditStore::new(),
+            edit_store: ara_edit::EditStore::new(),
             skills: Default::default(),
         }
     }
@@ -90,13 +90,13 @@ impl ToolContext {
     }
 
     /// Select the edit mode and whether the `edit` tool is exposed.
-    pub fn with_edit(mut self, mode: pi_edit::EditMode, edit_enabled: bool) -> Self {
+    pub fn with_edit(mut self, mode: ara_edit::EditMode, edit_enabled: bool) -> Self {
         self.edit_mode = mode;
         self.edit_enabled = edit_enabled;
         self
     }
 
-    pub fn edit_mode(&self) -> pi_edit::EditMode {
+    pub fn edit_mode(&self) -> ara_edit::EditMode {
         self.edit_mode
     }
 
@@ -104,7 +104,7 @@ impl ToolContext {
     /// and `N:text` rows (OMP `resolveFileDisplayMode`: the edit tool is
     /// exposed in hashline mode).
     pub fn hashlines(&self) -> bool {
-        self.edit_enabled && self.edit_mode == pi_edit::EditMode::Hashline
+        self.edit_enabled && self.edit_mode == ara_edit::EditMode::Hashline
     }
 
     /// Header path for a hashline read (`formatReadHashlineHeader`): cwd-relative

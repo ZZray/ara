@@ -440,9 +440,9 @@ impl GrepTool {
         };
         let record_seen = |rel: &str, body: &[String]| {
             if let Some((abs, tag)) = tags.get(rel) {
-                let seen = pi_edit::store::seen_lines_from_body(&body.join("\n"));
+                let seen = ara_edit::store::seen_lines_from_body(&body.join("\n"));
                 if !seen.is_empty() {
-                    ctx.edit_store.record_seen_lines(&pi_edit::path_policy::canonical_key(abs), tag, &seen);
+                    ctx.edit_store.record_seen_lines(&ara_edit::path_policy::canonical_key(abs), tag, &seen);
                 }
             }
         };
@@ -464,7 +464,7 @@ impl GrepTool {
                     output.push(String::new());
                 }
                 if let Some((_, tag)) = tags.get(rel) {
-                    output.push(pi_edit::modes::hashline::format::format_hashline_header(rel, tag));
+                    output.push(ara_edit::modes::hashline::format::format_hashline_header(rel, tag));
                 }
                 output.extend(body);
             }

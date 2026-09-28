@@ -4,7 +4,7 @@
 mod common;
 
 use common::{DiskWriter, Workspace};
-use pi_edit::{ApplyRequest, EditMode, session::PreviewBatch};
+use ara_edit::{ApplyRequest, EditMode, session::PreviewBatch};
 
 const SOURCE: &str = "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n";
 

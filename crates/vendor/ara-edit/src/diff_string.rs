@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, sync::LazyLock};
 
-use pi_ast::block::{EnclosingBoundaryOptions, LineRange, enclosing_block_boundaries};
+use ara_ast::block::{EnclosingBoundaryOptions, LineRange, enclosing_block_boundaries};
 use regex::Regex;
 
 use crate::error::EditError;
@@ -243,7 +243,7 @@ pub fn generate_diff_string(
 	context_lines: Option<usize>,
 	source: &BlockContextSource<'_>,
 ) -> DiffOutput {
-	let parts = pi_diff::line_changes_str(old, new);
+	let parts = ara_diff::line_changes_str(old, new);
 	let context_lines = context_lines.unwrap_or(2);
 	let mut output = Vec::new();
 	let mut old_line_number = 1_u32;
@@ -346,7 +346,7 @@ pub fn generate_unified_diff_string(
 	let old_utf16 = old.encode_utf16().collect::<Vec<_>>();
 	let new_utf16 = new.encode_utf16().collect::<Vec<_>>();
 	let context_lines = context_lines.unwrap_or(3);
-	let hunks = pi_diff::structured_patch_hunks_u16(
+	let hunks = ara_diff::structured_patch_hunks_u16(
 		&old_utf16,
 		&new_utf16,
 		Some(u32::try_from(context_lines).unwrap_or(u32::MAX)),

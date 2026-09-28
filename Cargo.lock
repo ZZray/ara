@@ -113,6 +113,76 @@ dependencies = [
 ]
 
 [[package]]
+name = "ara-ast"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ast-grep-core",
+ "globset",
+ "ignore",
+ "phf",
+ "serde",
+ "tree-sitter",
+ "tree-sitter-astro-next",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-c-sharp",
+ "tree-sitter-clojure",
+ "tree-sitter-cmake",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-dart",
+ "tree-sitter-diff",
+ "tree-sitter-dockerfile-updated",
+ "tree-sitter-elisp",
+ "tree-sitter-elixir",
+ "tree-sitter-erlang",
+ "tree-sitter-fortran",
+ "tree-sitter-go",
+ "tree-sitter-graphql",
+ "tree-sitter-haskell",
+ "tree-sitter-hcl",
+ "tree-sitter-html",
+ "tree-sitter-ini",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-julia",
+ "tree-sitter-just",
+ "tree-sitter-kotlin-sg",
+ "tree-sitter-lua",
+ "tree-sitter-make",
+ "tree-sitter-md",
+ "tree-sitter-nix",
+ "tree-sitter-objc",
+ "tree-sitter-ocaml",
+ "tree-sitter-odin",
+ "tree-sitter-php",
+ "tree-sitter-powershell",
+ "tree-sitter-proto",
+ "tree-sitter-python",
+ "tree-sitter-r",
+ "tree-sitter-regex",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-scala",
+ "tree-sitter-sequel",
+ "tree-sitter-solidity",
+ "tree-sitter-starlark",
+ "tree-sitter-svelte-next",
+ "tree-sitter-swift",
+ "tree-sitter-tlaplus",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-verilog",
+ "tree-sitter-vue-next",
+ "tree-sitter-xml",
+ "tree-sitter-yaml",
+ "tree-sitter-zig",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "ara-cli"
 version = "0.1.0"
 dependencies = [
@@ -121,6 +191,7 @@ dependencies = [
  "ara-ai",
  "ara-context",
  "ara-discovery",
+ "ara-edit",
  "ara-mcp",
  "ara-session",
  "ara-testkit",
@@ -129,7 +200,6 @@ dependencies = [
  "chrono",
  "clap",
  "libc",
- "pi-edit",
  "reqwest",
  "serde_json",
  "tempfile",
@@ -162,6 +232,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ara-diff"
+version = "0.1.0"
+
+[[package]]
 name = "ara-discovery"
 version = "0.1.0"
 dependencies = [
@@ -172,6 +246,26 @@ dependencies = [
  "serde_json",
  "tempfile",
  "yaml-rust2",
+]
+
+[[package]]
+name = "ara-edit"
+version = "0.1.0"
+dependencies = [
+ "ara-ast",
+ "ara-diff",
+ "ara-walk",
+ "async-trait",
+ "globset",
+ "parking_lot",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "unicode-normalization",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -225,6 +319,8 @@ version = "0.1.0"
 dependencies = [
  "ara-agent",
  "ara-ai",
+ "ara-ast",
+ "ara-edit",
  "ara-walk",
  "ast-grep-core",
  "async-trait",
@@ -236,8 +332,6 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "libc",
- "pi-ast",
- "pi-edit",
  "regex",
  "serde_json",
  "tempfile",
@@ -1279,100 +1373,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
-]
-
-[[package]]
-name = "pi-ast"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ast-grep-core",
- "globset",
- "ignore",
- "phf",
- "serde",
- "tree-sitter",
- "tree-sitter-astro-next",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-c-sharp",
- "tree-sitter-clojure",
- "tree-sitter-cmake",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-dart",
- "tree-sitter-diff",
- "tree-sitter-dockerfile-updated",
- "tree-sitter-elisp",
- "tree-sitter-elixir",
- "tree-sitter-erlang",
- "tree-sitter-fortran",
- "tree-sitter-go",
- "tree-sitter-graphql",
- "tree-sitter-haskell",
- "tree-sitter-hcl",
- "tree-sitter-html",
- "tree-sitter-ini",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-julia",
- "tree-sitter-just",
- "tree-sitter-kotlin-sg",
- "tree-sitter-lua",
- "tree-sitter-make",
- "tree-sitter-md",
- "tree-sitter-nix",
- "tree-sitter-objc",
- "tree-sitter-ocaml",
- "tree-sitter-odin",
- "tree-sitter-php",
- "tree-sitter-powershell",
- "tree-sitter-proto",
- "tree-sitter-python",
- "tree-sitter-r",
- "tree-sitter-regex",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-scala",
- "tree-sitter-sequel",
- "tree-sitter-solidity",
- "tree-sitter-starlark",
- "tree-sitter-svelte-next",
- "tree-sitter-swift",
- "tree-sitter-tlaplus",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-verilog",
- "tree-sitter-vue-next",
- "tree-sitter-xml",
- "tree-sitter-yaml",
- "tree-sitter-zig",
- "xxhash-rust",
-]
-
-[[package]]
-name = "pi-diff"
-version = "0.1.0"
-
-[[package]]
-name = "pi-edit"
-version = "0.1.0"
-dependencies = [
- "ara-walk",
- "async-trait",
- "globset",
- "parking_lot",
- "pi-ast",
- "pi-diff",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "unicode-normalization",
- "xxhash-rust",
 ]
 
 [[package]]

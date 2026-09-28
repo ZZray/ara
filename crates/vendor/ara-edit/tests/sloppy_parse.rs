@@ -1,4 +1,4 @@
-use pi_edit::modes::sloppy::{
+use ara_edit::modes::sloppy::{
 	parse::{
 		extract_inline_sloppy_regions, ir_to_xml, normalize_input, parse_operations,
 		split_sloppy_sections, strip_envelope_noise,

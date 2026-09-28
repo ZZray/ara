@@ -6,7 +6,7 @@ use std::{
 };
 
 use common::Workspace;
-use pi_edit::{
+use ara_edit::{
 	EditMode,
 	diff_string::{CompactDiffOptions, build_compact_diff_preview},
 	modes::{
@@ -933,7 +933,7 @@ fn preview_for(
 	workspace: &Workspace,
 	input: String,
 	finished: bool,
-) -> pi_edit::session::PreviewBatch {
+) -> ara_edit::session::PreviewBatch {
 	let mut session = workspace.session();
 	session.set_args_json(&json!({ "input": input }).to_string());
 	if finished {

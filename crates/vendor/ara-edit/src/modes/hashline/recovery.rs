@@ -65,7 +65,7 @@ fn build_line_map(previous: &str, current: &str) -> HashMap<u32, u32> {
 	let mut map = HashMap::new();
 	let mut previous_line = 1_u32;
 	let mut current_line = 1_u32;
-	for run in pi_diff::line_runs_str(previous, current) {
+	for run in ara_diff::line_runs_str(previous, current) {
 		if run.added {
 			current_line += run.count;
 		} else if run.removed {
