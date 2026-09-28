@@ -6,6 +6,7 @@
 //! sandbox: the host decides which calls may run (`LoopHooks::before_tool_call`)
 //! and which directory is the working root.
 
+pub mod ast_grep;
 pub mod bash;
 pub mod edit;
 pub mod engine;

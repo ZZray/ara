@@ -2260,3 +2260,50 @@ async fn relative_ara_home_user_skills_resolve() {
     let result = &reqs[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"];
     assert!(result.as_str().unwrap().contains("User skill body."), "{result}");
 }
+
+#[tokio::test]
+async fn ast_grep_is_opt_in_and_reaches_model_and_session_journal() {
+    let env = Env::new();
+    std::fs::write(env.work.path().join("search.ts"), "const sharedSymbol = 1;\n").unwrap();
+
+    let plain = upstream(json!({"responses": [
+        {"events": [text("No search requested."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&plain.base_url(), &["-p", "Say hello"])).await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let requests = plain.requests.lock().await;
+    let default_tools = requests[0]["body"]["tools"].as_array().unwrap();
+    assert!(!default_tools.iter().any(|tool| tool["function"]["name"] == "ast_grep"));
+    drop(requests);
+
+    let searching = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_ast", "ast_grep", "{\"pat\":\"sharedSymbol\",\"path\":\"search.ts\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Found sharedSymbol."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&searching.base_url(), &["--tools", "edit,ast_grep", "Find sharedSymbol"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Found sharedSymbol.\n");
+    let requests = searching.requests.lock().await;
+    let enabled_tools = requests[0]["body"]["tools"].as_array().unwrap();
+    assert_eq!(
+        enabled_tools.iter().map(|tool| tool["function"]["name"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["edit", "ast_grep"]
+    );
+    let forwarded = requests[1]["body"]["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+    assert!(forwarded.contains("sharedSymbol") && forwarded.contains("search.ts#"), "{forwarded}");
+    drop(requests);
+    let sessions = env.session_files();
+    assert_eq!(sessions.len(), 2);
+    let entries = sessions
+        .iter()
+        .map(|path| journal(path))
+        .find(|entries| entries.iter().any(|entry| entry["message"]["toolCallId"] == "call_ast"))
+        .unwrap();
+    let result = entries.iter().find(|entry| entry["message"]["role"] == "toolResult").unwrap();
+    assert_eq!(result["message"]["toolCallId"], json!("call_ast"));
+    assert_eq!(result["message"]["details"]["matchCount"], json!(1));
+}

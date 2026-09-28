@@ -6,7 +6,8 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
 //! The host binds the Core ports: model route (OpenAI-compatible Chat
-//! Completions), tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` rooted at the session cwd), the
+//! Completions), tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` rooted at the session cwd,
+//! plus opt-in `ast_grep`), the
 //! event sink (JSON output + session journal), cancellation (SIGINT) and
 //! budgets (`--max-time`, `--max-model-calls`). Credentials come only from the
 //! environment and are never printed; a key is only sent to its own route.
@@ -46,7 +47,7 @@ use tokio_util::sync::CancellationToken;
 
 mod proxy_discovery;
 
-const TOOL_NAMES: [&str; 6] = ["read", "write", "edit", "bash", "grep", "glob"];
+const TOOL_NAMES: [&str; 7] = ["read", "write", "edit", "bash", "grep", "glob", "ast_grep"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Mode {
@@ -174,7 +175,7 @@ struct Args {
     /// Only include skills whose names match these globs (comma separated).
     #[arg(long)]
     skills: Option<String>,
-    /// Tools to enable (comma separated): read,write,edit,bash,grep,glob. Empty disables tools.
+    /// Tools to enable (comma separated): read,write,edit,bash,grep,glob,ast_grep. Empty disables tools.
     #[arg(long, default_value = "read,write,edit,bash,grep,glob")]
     tools: String,
     /// Explicit JSON config for one local MCP stdio server.
@@ -616,8 +617,12 @@ async fn run(args: Args) -> Result<i32> {
             .collect(),
     );
     tool_ctx.line_numbers = args.line_numbers;
+    let ast_ctx = tool_ctx.clone();
     let mut tools: Vec<_> =
         builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
+    if enabled.contains(&"ast_grep") {
+        tools.push(Arc::new(ara_tools::ast_grep::AstGrepTool { ctx: ast_ctx }));
+    }
     if let Some(config) = mcp_config {
         let mcp_tools =
             ara_mcp::connect(config, &cwd, &args.mcp_allow, &TOOL_NAMES).await.map_err(anyhow::Error::msg)?;
