@@ -1,6 +1,6 @@
 # CA-MCP stdio first slice — WIP, 2026-09-28
 
-Target: fixed OMP v18.1.8 commit `596f2da7101178214aa27a753529d15e6b7ad91d`, especially `packages/coding-agent/src/mcp/{client,tool-bridge,transports/stdio}.ts`. This is a bounded host path, not CA-MCP acceptance. The exact OMP checkout was verified at that SHA. The upstream marker remains unchanged.
+Target: fixed OMP v18.1.8 commit `596f2da7101178214aa27a753529d15e6b7ad91d`, especially `packages/coding-agent/src/mcp/{client,tool-bridge,transports/stdio}.ts`. The latest tested ARA code is local WIP `4b71aef`. This is a bounded host path, not CA-MCP acceptance. The exact OMP checkout was verified at that SHA. The upstream marker remains unchanged.
 
 ## Scope and observable path
 
