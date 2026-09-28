@@ -1937,6 +1937,74 @@ async fn search_and_hashline_edit_fix_a_seeded_bug() {
 }
 
 #[tokio::test]
+async fn bare_tagged_hashline_header_recovers_the_nested_file() {
+    // The CLI canonicalizes `--cwd`; on Windows that adds the `\\?\` prefix the
+    // snapshot keys do not carry, which used to reject every nested recovery.
+    let env = Env::new();
+    let w = env.work.path();
+    std::fs::create_dir_all(w.join("src")).unwrap();
+    std::fs::write(w.join("src/math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
+    let edit = json!({"input": "[math.py#450E]\nPUT 2.=2:\n+    return a + b\n"}).to_string();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_r", "read", "{\"path\":\"src/math.py\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "call_e", "edit", &edit), finish("tool_calls"), done()]},
+        {"events": [text("Fixed add()."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Fix the bug marked BUG"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Fixed add().\n");
+    assert_eq!(std::fs::read_to_string(w.join("src/math.py")).unwrap(), "def add(a, b):\n    return a + b\n");
+    assert!(!w.join("math.py").exists());
+    let entries = journal(&env.session_files()[0]);
+    let receipt = entries.iter().find(|entry| entry["message"]["toolCallId"] == json!("call_e")).unwrap();
+    assert_eq!(receipt["message"]["isError"], json!(false), "{receipt}");
+    let body = receipt["message"]["content"][0]["text"].as_str().unwrap();
+    assert!(body.contains("math.py#") && body.contains("return a + b"), "{body}");
+}
+
+#[tokio::test]
+async fn deleted_tag_target_drops_its_own_snapshot_from_recovery() {
+    // `math.py` is deleted outside the edit tool. Its own stale snapshot must not
+    // count as a candidate: alone it reports the authored path, and next to a
+    // same-content nested copy it leaves exactly one recovery target.
+    let edit = json!({"input": "[math.py#450E]\nPUT 2.=2:\n+    return a + b\n"}).to_string();
+    for nested in [false, true] {
+        let env = Env::new();
+        let w = env.work.path();
+        std::fs::write(w.join("math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
+        let mut responses = vec![json!({"events": [
+            tool_call(0, "call_r", "read", "{\"path\":\"math.py\"}"), finish("tool_calls"), done()]})];
+        if nested {
+            std::fs::create_dir_all(w.join("src")).unwrap();
+            std::fs::write(w.join("src/math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
+            responses.push(json!({"events": [
+                tool_call(0, "call_n", "read", "{\"path\":\"src/math.py\"}"), finish("tool_calls"), done()]}));
+        }
+        responses.push(json!({"events": [
+            tool_call(0, "call_rm", "bash", "{\"command\":\"rm math.py\"}"), finish("tool_calls"), done()]}));
+        responses.push(json!({"events": [tool_call(0, "call_e", "edit", &edit), finish("tool_calls"), done()]}));
+        responses.push(json!({"events": [text("done"), finish("stop"), done()]}));
+        let up = upstream(json!({ "responses": responses })).await;
+        let out = output(env.cmd(&up.base_url(), &["Fix the bug marked BUG"])).await;
+        assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+        assert!(!w.join("math.py").exists());
+        let entries = journal(&env.session_files()[0]);
+        let receipt = entries.iter().find(|entry| entry["message"]["toolCallId"] == json!("call_e")).unwrap();
+        let body = receipt["message"]["content"][0]["text"].as_str().unwrap();
+        if nested {
+            assert_eq!(receipt["message"]["isError"], json!(false), "{receipt}");
+            let fixed = std::fs::read_to_string(w.join("src/math.py")).unwrap();
+            assert_eq!(fixed, "def add(a, b):\n    return a + b\n");
+        } else {
+            assert_eq!(receipt["message"]["isError"], json!(true), "{receipt}");
+            assert!(body.contains("File not found: math.py."), "{body}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn read_multiple_ranges_reaches_model_and_session_journal() {
     let env = Env::new();
     std::fs::write(env.work.path().join("lines.txt"), (1..=12).map(|n| format!("line{n}\n")).collect::<String>())

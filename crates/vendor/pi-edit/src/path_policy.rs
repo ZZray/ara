@@ -209,8 +209,13 @@ impl PathPolicy {
 			return false;
 		}
 		let recovered = lexical_absolute(recovered, &self.cwd);
-		is_within(&recovered, &lexical_absolute(&self.cwd, &self.cwd))
-			|| self.targets_local_sandbox(&recovered)
+		// ARA: snapshot paths come from `canonical_key` (verbatim prefix
+		// stripped) while a canonicalized cwd keeps `\\?\C:\`; compare both in
+		// the plain drive form.
+		is_within(
+			&plain_drive_path(&recovered),
+			&plain_drive_path(&lexical_absolute(&self.cwd, &self.cwd)),
+		) || self.targets_local_sandbox(&recovered)
 	}
 
 	/// Return the model-facing generated-file rejection, when applicable.
@@ -362,6 +367,21 @@ fn strip_windows_verbatim(value: &str) -> &str {
 
 fn strip_windows_verbatim_path(path: PathBuf) -> PathBuf {
 	PathBuf::from(strip_windows_verbatim(&path.to_string_lossy()))
+}
+
+// ARA: rewrite only a verbatim drive prefix (`\\?\C:\x` → `C:\x`) for
+// containment comparisons. Verbatim UNC and device paths keep their spelling,
+// so they never turn into relative paths.
+fn plain_drive_path(path: &Path) -> PathBuf {
+	let mut components = path.components();
+	if let Some(Component::Prefix(prefix)) = components.next()
+		&& let std::path::Prefix::VerbatimDisk(letter) = prefix.kind()
+	{
+		let mut plain = PathBuf::from(format!("{}:", letter as char));
+		plain.extend(components);
+		return plain;
+	}
+	path.to_path_buf()
 }
 
 fn split_url_authority(rest: &str) -> EditResult<(String, String)> {
@@ -710,5 +730,37 @@ mod tests {
 			canonical_key(&missing),
 			strip_windows_verbatim_path(std::fs::canonicalize(tmp.path()).unwrap().join("missing.txt"))
 		);
+	}
+
+	// ARA: Windows canonical cwd (`\\?\C:\`) versus plain snapshot keys.
+	#[cfg(windows)]
+	#[test]
+	fn tag_recovery_matches_verbatim_drive_cwd_and_keeps_outside_denied() {
+		let tmp = tempfile::tempdir().unwrap();
+		let verbatim_cwd = std::fs::canonicalize(tmp.path()).unwrap();
+		assert!(verbatim_cwd.to_string_lossy().starts_with(r"\\?\"));
+		let plain_cwd = strip_windows_verbatim_path(verbatim_cwd.clone());
+		let nested = canonical_key(&verbatim_cwd.join("nested").join("a.txt"));
+		assert!(nested.starts_with(&plain_cwd));
+
+		let verbatim = policy(&verbatim_cwd);
+		assert!(verbatim.allow_tag_path_recovery("a.txt", &nested));
+		assert!(verbatim.allow_tag_path_recovery("a.txt", &verbatim_cwd.join("nested").join("a.txt")));
+		let similar_prefix =
+			PathBuf::from(format!("{}2", plain_cwd.display())).join("a.txt");
+		assert!(!verbatim.allow_tag_path_recovery("a.txt", &similar_prefix));
+		assert!(!verbatim.allow_tag_path_recovery("a.txt", &plain_cwd.parent().unwrap().join("a.txt")));
+		assert!(!verbatim.allow_tag_path_recovery("a.txt", &nested.join("..").join("..").join("..").join("a.txt")));
+		assert!(!verbatim.allow_tag_path_recovery("skill://demo/a.txt", &nested));
+
+		let plain = policy(&plain_cwd);
+		assert!(plain.allow_tag_path_recovery("a.txt", &verbatim_cwd.join("nested").join("a.txt")));
+
+		assert_eq!(plain_drive_path(Path::new(r"\\?\C:\a\b")), PathBuf::from(r"C:\a\b"));
+		assert_eq!(
+			plain_drive_path(Path::new(r"\\?\UNC\server\share\a")),
+			PathBuf::from(r"\\?\UNC\server\share\a")
+		);
+		assert_eq!(plain_drive_path(Path::new(r"C:\a")), PathBuf::from(r"C:\a"));
 	}
 }

@@ -33,7 +33,7 @@ expected_skill_body="$(cat "$work/.ara/skills/release-notes/SKILL.md")"
 cargo build -q --manifest-path "$root/Cargo.toml" --bin ara
 start=$(date +%s)
 set +e
-HOME="$out/home" ARA_HOME="$out/home/.ara" "$root/target/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
+HOME="$out/home" ARA_HOME="$out/home/.ara" "${CARGO_TARGET_DIR:-$root/target}/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
   --cwd "$work" --session-dir "$out/sessions" --mode json \
   --max-model-calls 12 --max-time 300 --max-tokens 2048 \
   "Add a Python function double(x) that returns 2*x in a new file mathx.py, then record the change in the release notes. Follow the repository's rules and skills." \

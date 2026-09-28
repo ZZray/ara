@@ -178,3 +178,77 @@ turn verbatim UNC paths into relative paths, so a fix must normalize drive
 forms narrowly and keep out-of-root recovery denied. The shared editor's
 write-target boundary is a stable flow under `AGENTS.md`; implementation is
 pending the separate explicit scope request. No point acceptance changed.
+
+## 2026-09-28 pi-edit Windows tag-recovery fix (WIP)
+
+Scope: the user's "continue implementing" instruction was taken as approval
+for the narrow `path_policy.rs` change named in the handoff. The change is
+limited to the hashline tag-recovery comparison:
+
+- `PathPolicy::allow_tag_path_recovery` compares the recovered path and the
+  cwd after rewriting only a verbatim drive prefix (`\?\C:\x` → `C:\x`).
+  Verbatim UNC and device paths keep their spelling. Outside-cwd, similar-
+  prefix, `..` and internal-URL denials are unchanged.
+- An independent review found that `recover_target` had the same mismatch.
+  It kept the authored target's own snapshot as a candidate, and this fix made
+  that reachable. It now compares that snapshot through `canonical_key`.
+  Before, a file deleted outside the edit tool reported its absolute path, and
+  a same-content nested copy became a second, ambiguous candidate.
+- Both edits carry `// ARA:` markers and are listed in `crates/vendor/README.md`.
+  `canonical_key`'s textual strip of `\?\UNC\` keys is not addressed here.
+
+| Check on the final worktree | Observed result |
+| --- | --- |
+| `cargo test -p pi-edit --lib path_policy` | 8/8. The new Windows test fails on the old comparison: it covers verbatim/plain cwd × nested target, and denial for similar-prefix, parent, `..` and `skill://`. |
+| `cargo test -p pi-edit --test hashline_parity`; `--test hashline_patcher` | 10/10 and 6/6. These are the two diagnosed failures, now including nested streaming preview and `patcher_apply_cases`. |
+| `cargo test -p pi-edit --all-targets` | 13 binaries, all pass. |
+| CLI e2e `bare_tagged_hashline_header_recovers_the_nested_file` | Real `ara` process with a canonicalized `--cwd`. A `[math.py#450E]` edit recovers onto `src/math.py`. It fails on the old `path_policy.rs` (file unchanged). |
+| CLI e2e `deleted_tag_target_drops_its_own_snapshot_from_recovery` | `math.py` removed by the bash tool: alone, the receipt says `File not found: math.py.`; with a same-content `src/math.py`, the edit recovers onto it. On the old `patcher.rs` it reported the absolute Windows path. |
+| `cargo test -p ara-cli --test e2e` | 54/54. |
+| `python scripts/verify_backend.py` (unfiltered, no skips) | **Exit 0.** Owned formatting, workspace Clippy, all targets and doc tests passed: 73 test suites, 1004 passed, 0 failed, 1 ignored. The ignored case is upstream's `pi-ast` full-repository sweep, which upstream also ignores. |
+| `cargo deny check`; `python scripts/omp_inventory.py check`; `git diff --check` | All exit 0. |
+
+Build environment: `CARGO_TARGET_DIR=C:\Temp\ara-verify-target`,
+`CARGO_PROFILE_{TEST,DEV}_DEBUG=0`, `CARGO_INCREMENTAL=0` (MSVC PDB limit).
+The trial scripts now honor `CARGO_TARGET_DIR` for the `ara` binary and read
+UTF-8 explicitly, because a GBK Windows locale broke their summary step.
+
+Independent review: a read-only Opus reviewer used `ara-git-review` and
+`ara-rust-core-review` on the `path_policy.rs` diff. It ran the focused tests
+and throwaway probes (5 cwd spellings × 22 recovered paths; a real on-disk
+hashline Session). It found no Critical or Important defect and no widened
+authorization. It raised one Minor finding: the `recover_target` candidate
+filter above, which is now fixed and regression-tested. Its optional
+bare-`\?\C:` root hardening was not applied, because no production path
+produces that cwd.
+
+### Bounded real-model task on the delivered code
+
+`openrouter/free` is the OpenAI Chat Completions route at
+`https://openrouter.ai/api/v1`. Its `GET /models` listed it with `tools`
+support, among 458 models. The task was `scripts/real_model_trial_a2.sh` with
+`ARA_TRIAL_TOOLS=read,edit,bash,grep,glob,ast_grep`. The prompt asked the
+model to locate `apply_discount` with `ast_grep`, fix it with `edit`, and
+confirm with the tests. The bounds were 12 calls, 300 s and 2048 output tokens
+per call.
+
+| Observation | Result |
+| --- | --- |
+| Exit, wall time | 0, 16 s |
+| Model calls | 7. The router chose AtlasCloud, Nvidia, Novita, Nvidia, Novita, Cohere, then Novita. Per-call duration was 1.1–4.4 s, and TTFT 0.3–1.4 s. |
+| Tool receipts | `ast_grep` (`def apply_discount($$$)` → `shop/pricing.py#8D33` line 14), `read`, `edit` **error** (it passed an unsupported `path` property, which failed schema validation and was surfaced to the model), `edit` OK with header `[shop/pricing.py#8D33]`, `bash` `python3 -m unittest -q` → `OK`, `read`. |
+| Artifact | `return amount - amount * percent / 100`. An independent run afterwards gave `Ran 2 tests … OK` (before the task: `FAILED (failures=2)`). The test file was byte-identical. |
+| Usage | Reported on every call; 53,036 total tokens, including a `cacheRead` of 7,808 on the last call. Free-tier cost was 0. |
+| Session | One journal with 17 entries (1 user, 7 assistant, 6 toolResult messages). A scan of the artifact directory for both route keys found nothing. |
+
+This live task put a nested, tag-headed edit through a canonicalized
+Windows cwd. The file existed, so it did **not** use the tag-recovery branch.
+That branch has controlled host proof through the two CLI e2e cases above.
+One free-router trial is evidence for the chain, not for model quality or
+route stability.
+
+No point acceptance changed. TOOLS-01c's Windows Bash repair, TOOLS-02d
+`ast_grep` and this TOOLS-03a modification now each have an unfiltered gate
+pass and a live task. Each still needs its `point-delivery-audit` before
+acceptance. The roadmap stays at 1/7 gates (14.3%) and registered points at
+27/40 (67.5%).

@@ -63,7 +63,7 @@ cp "$work/tests/test_pricing.py" "$out/test_pricing.orig"
 cargo build -q --manifest-path "$root/Cargo.toml" --bin ara
 start=$(date +%s)
 set +e
-"$root/target/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
+"${CARGO_TARGET_DIR:-$root/target}/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
   --cwd "$work" --session-dir "$out/sessions" --mode json \
   --max-model-calls 12 --max-time 300 --max-tokens 2048 \
   ${ARA_TRIAL_TOOLS:+--tools "$ARA_TRIAL_TOOLS"} \
@@ -79,14 +79,14 @@ cmp -s "$out/test_pricing.orig" "$work/tests/test_pricing.py" && echo "tests unt
 python3 - "$out" <<'PY'
 import json, pathlib, sys
 out = pathlib.Path(sys.argv[1])
-events = [json.loads(l) for l in (out / "events.jsonl").read_text().splitlines() if l.strip()]
+events = [json.loads(l) for l in (out / "events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
 tools = [e for e in events if e.get("type") == "tool_execution_end"]
 assistants = [e["message"] for e in events if e.get("type") == "message_end" and e["message"].get("role") == "assistant"]
 print("model calls:", len(assistants))
 print("tool calls:", [(t["toolName"], t["isError"]) for t in tools])
 for a in assistants:
     print("usage:", a.get("usage"), "stop:", a.get("stopReason"), "model:", a.get("model"))
-src = (out / "work" / "shop" / "pricing.py").read_text()
+src = (out / "work" / "shop" / "pricing.py").read_text(encoding="utf-8")
 print("fixed line present:", "amount * percent / 100" in src or "percent / 100" in src)
 print("final text:", "".join(b.get("text", "") for b in assistants[-1]["content"] if b.get("type") == "text")[:600] if assistants else None)
 PY

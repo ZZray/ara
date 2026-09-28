@@ -285,12 +285,13 @@ pub(crate) fn recover_target(
 		return (section.with_path(&section.path), initial.clone());
 	};
 	let authored_name = initial.absolute.file_name();
+	// ARA: snapshot paths are `canonical_key`s; compare the authored target in
+	// that form so a verbatim Windows cwd still drops the target's own snapshot.
+	let authored_key = crate::path_policy::canonical_key(&initial.absolute);
 	let mut candidates = store
 		.find_by_hash(tag)
 		.into_iter()
-		.filter(|snapshot| {
-			snapshot.path.file_name() == authored_name && snapshot.path != initial.absolute
-		})
+		.filter(|snapshot| snapshot.path.file_name() == authored_name && snapshot.path != authored_key)
 		.map(|snapshot| snapshot.path)
 		.collect::<Vec<_>>();
 	candidates.sort();

@@ -13,7 +13,7 @@ mkdir -p "$out/work"
 cargo build -q --manifest-path "$root/Cargo.toml" --bin ara
 start=$(date +%s)
 set +e
-"$root/target/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
+"${CARGO_TARGET_DIR:-$root/target}/debug/ara" --model "$ARA_TEST_MODEL_ID" --base-url "$base" \
   --cwd "$out/work" --session-dir "$out/sessions" --mode json \
   --max-model-calls 6 --max-time 180 --max-tokens 1024 \
   "Create a file named fib.txt containing the first 10 Fibonacci numbers starting 0 1, one per line. Then run 'wc -l fib.txt' with the bash tool and report the line count." \
@@ -24,7 +24,7 @@ echo "exit=$code elapsed=$(( $(date +%s) - start ))s out=$out"
 python3 - "$out" <<'PY'
 import json, pathlib, sys
 out = pathlib.Path(sys.argv[1])
-events = [json.loads(l) for l in (out / "events.jsonl").read_text().splitlines() if l.strip()]
+events = [json.loads(l) for l in (out / "events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
 tools = [e for e in events if e.get("type") == "tool_execution_end"]
 assistants = [e["message"] for e in events if e.get("type") == "message_end" and e["message"].get("role") == "assistant"]
 print("model calls:", len(assistants))
@@ -33,7 +33,7 @@ for a in assistants:
     print("usage:", a.get("usage"), "stop:", a.get("stopReason"), "model:", a.get("model"), "upstream:", a.get("upstreamProvider"))
 fib = out / "work" / "fib.txt"
 expected = "\n".join(str(x) for x in [0, 1, 1, 2, 3, 5, 8, 13, 21, 34])
-actual = fib.read_text().strip() if fib.exists() else None
+actual = fib.read_text(encoding="utf-8").strip() if fib.exists() else None
 print("artifact ok:", actual == expected, repr(actual))
 print("final text:", "".join(b.get("text", "") for b in assistants[-1]["content"] if b.get("type") == "text") if assistants else None)
 PY

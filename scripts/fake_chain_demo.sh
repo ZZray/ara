@@ -6,13 +6,13 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:-$(mktemp -d)}"
 mkdir -p "$out/work"
 cargo build -q --manifest-path "$root/Cargo.toml" --bins
-"$root/target/debug/ara-fake-upstream" --script "$root/crates/ara-cli/tests/fixtures/plan-task.json" \
+"${CARGO_TARGET_DIR:-$root/target}/debug/ara-fake-upstream" --script "$root/crates/ara-cli/tests/fixtures/plan-task.json" \
   --record "$out/requests.jsonl" --port-file "$out/url" >"$out/upstream.log" 2>&1 &
 up=$!
 trap 'kill $up 2>/dev/null || true' EXIT
 for _ in $(seq 100); do [ -s "$out/url" ] && break; sleep 0.1; done
 set +e
-ARA_API_KEY=sk-fake-demo "$root/target/debug/ara" --model fake-model --base-url "$(cat "$out/url")" \
+ARA_API_KEY=sk-fake-demo "${CARGO_TARGET_DIR:-$root/target}/debug/ara" --model fake-model --base-url "$(cat "$out/url")" \
   --cwd "$out/work" --session-dir "$out/sessions" --mode json \
   "Write a short plan to notes/plan.md and check it" </dev/null >"$out/events.jsonl" 2>"$out/stderr.txt"
 code=$?
