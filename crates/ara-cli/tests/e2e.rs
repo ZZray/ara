@@ -2166,6 +2166,23 @@ async fn usage_errors_exit_2() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown tool \"teleport\""));
 }
 
+/// `--max-tokens 0` must be a clap usage error that names the flag, before
+/// any session or model work: the run used to send `max_tokens: 0` and only
+/// `/compact` failed, as `InvalidMaxTokens` with no hint at the flag.
+#[tokio::test]
+async fn max_tokens_zero_is_rejected_by_the_flag_parser() {
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let out = output(env.cmd(&up.base_url(), &["--max-tokens", "0", "hi"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(2), "0 is not a valid budget: {stderr}");
+    assert!(stderr.contains("--max-tokens"), "the error names the flag: {stderr}");
+    assert_eq!(stdout, "");
+    assert_eq!(up.served(), 0, "no request is sent for a usage error");
+    assert!(env.session_files().is_empty(), "no session is created for a usage error");
+}
+
 #[tokio::test]
 async fn deadline_during_a_tool_and_zero_budget_exit_nonzero() {
     let env = Env::new();

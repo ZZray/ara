@@ -153,7 +153,11 @@ struct Args {
     /// Estimated recent tokens to keep raw when compacting.
     #[arg(long, default_value_t = 4_000)]
     compact_keep_tokens: usize,
-    #[arg(long)]
+    /// Output token cap for each model call; also caps the compaction summary
+    /// budget. Must be at least 1.
+    // Rejecting 0 here names the flag; accepted, it sent `max_tokens: 0` and
+    // `/compact` failed later with an unexplained InvalidMaxTokens.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     max_tokens: Option<u64>,
     /// Confirm that the selected Responses model supports reasoning items.
     /// Requests encrypted reasoning for same-endpoint continuation.

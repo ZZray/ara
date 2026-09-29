@@ -8,8 +8,8 @@ entry records the task, the route, the result and an independent check.
 
 - **Route:** B.AI `https://api.b.ai/v1`, `--api openai-completions`,
   `--api-key-env BAI_API_KEY`, `deepseek-v4.1-flash`.
-- **Binary:** `ara.exe` built from the `b179087` code (dogfood 1 and 2) and
-  from `a6b6bd0` (dogfood 3).
+- **Binary:** `ara.exe` built from the `b179087` code (dogfood 1 and 2),
+  `a6b6bd0` (dogfood 3), and `fdd91a7` (dogfood 4).
 - **Workspace:** a fresh local clone under `C:\Temp`, not the working
   repository. A useful change is ported back after it is checked.
 
@@ -121,6 +121,49 @@ entry records the task, the route, the result and an independent check.
     the model, not ARA.
 - **Review:** the session's own model (Claude Opus 5.5) checked the diff and
   each OMP line against the source. Doc-only, with no separate review.
+- **Blockers seen:** none.
+
+## Dogfood 4: reject zero max tokens at CLI
+
+- **Task:** have the REPL fix V1-COMPACT review finding 4: a zero output
+  budget later made `/compact` report `InvalidMaxTokens` without identifying
+  `--max-tokens`. Add a regression test.
+- **Run:** one real REPL turn on the common B.AI route, using a clone at
+  `fdd91a7`, bounded to 40 model calls and 30 minutes. The journal spans
+  about 104 s, with 15 assistant messages and 22 tool results: `read` 8,
+  `bash` 11, `grep` 1, `edit` 2. All assistant messages have usage: input
+  41,312, output 5,861, cache read 363,520, total 410,693 tokens. The model
+  ran the new e2e test (1 passed) and strict `ara-cli` Clippy. It initially
+  used the wrong local binary path, then ran the correct binary and saw the
+  clap error naming `--max-tokens`. The final assistant message reports the
+  change with stop reason `stop`; the Session was written.
+- **Result:** the clone changed only `ara-cli` `main.rs` and `tests/e2e.rs`.
+  `clap::value_parser!(u64).range(1..)` rejects zero before route, Session,
+  or model work. The test uses the shared CLI parser in print mode; it checks
+  exit 2, the flag in stderr, empty stdout, zero fake-upstream requests, and
+  no Session file. The port into the working repository tightened the model's
+  nonzero exit assertion to exit 2 and shortened the help text. A positive
+  `--max-tokens 8192` host request and 700/100000 summary-budget cases
+  already have e2e coverage.
+- **Independent check in the working repository:**
+  - Removing `range(1..)` made the new test fail at its exit-code assertion;
+    the source was then reapplied after a mistaken `git checkout` in the
+    mutation workflow.
+  - `python scripts/verify_backend.py` on the restored code passed owned
+    Rust formatting, strict workspace Clippy, all-target tests (1,042
+    passed, 0 failed, 1 ignored; `ara-cli` e2e 79/79) and doc tests.
+  - The two preceding Linux CI runs passed: 36575161870 on `b0216c7` and
+    36576405071 on `fdd91a7`. CI for this follow-up is a separate check
+    after its push.
+- **Local artifacts:** `C:\Temp\ara-dogfood4-run\stdout.txt`, `stderr.txt`,
+  and `sessions\2026-09-29T13-38-06-667Z_01a0ed63-0ccb-7411-8e44-0c8452849f55.jsonl`
+  (journal SHA-256
+  `5dde4dc6397272661fe75e26e2025871856ea3fd004d8eb790a95c703ecc9d65`);
+  the working-tree gate log is `C:\Temp\ara-dogfood4-gate.log`.
+- **Review:** an independent Codex subagent reviewed the plan before the
+  port and the complete five-file diff after it, at base `fdd91a7`. Both
+  rounds approved it with no actionable finding. The reviewer inspected the
+  journal, gate log and links but ran no tests.
 - **Blockers seen:** none.
 
 ## Follow-up: the edit progress line names its file
