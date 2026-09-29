@@ -342,3 +342,28 @@ exercises the actual 256 MiB boundary for all three selector paths, but
 its expected strings are source-backed assertions rather than a direct
 invocation of the full OMP selector renderer. No new real-model task ran
 on this repair. **CTX-01d stays implementing (WIP); P1/P3 do not advance.**
+
+The repair was committed and pushed as WIP `96dc781`. On its exact SHA
+`96dc7814c7695fd205388113b227f7dfa3e2c5af`,
+[repository checks 36634726173](https://github.com/ZZray/ara/actions/runs/36634726173)
+and the [three-platform oracle 36634726158](https://github.com/ZZray/ara/actions/runs/36634726158)
+both completed successfully. This verifies the delivered code without
+changing the point's WIP verdict.
+The queried run receipts are saved in
+`C:\Temp\ara-ctx-resource-scan\ci-96dc781.json`, SHA-256
+`51f9b1a7b41972ed9fa548807eada6821b1beeeb28bca8194039306d0a1ec734`.
+
+The final independent point audit assigns the remaining evidence narrowly:
+
+- CTX-01d needs an actual fixed-OMP renderer comparison for representative
+  raw/non-raw Skill selectors, plus a controlled post-open directory I/O
+  fault receipt. The complete general selector surface stays with TOOLS-01a.
+- Sorting is evidenced for observed Windows zh-CN/en-US, macOS en-US and
+  Linux en-US fixtures. Other locales remain unverified; this is not an
+  exhaustive Unicode claim.
+- Fixed `skill-protocol.ts:80-92` applies `containRoot` only to plugin
+  Skills. Plugin/managed Skills remain open under CTX-01c, outside the
+  non-plugin routes exercised here. `/skill:` remains CTX-01e; the other
+  internal URL schemes keep their own source rows.
+- Final CTX-01d acceptance still requires applicable checks on its final
+  snapshot, a targeted real-model task and an independent point audit.
