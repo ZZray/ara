@@ -19,20 +19,21 @@ jobs:
           set -euo pipefail
           curl -fsSL 'https://raw.githubusercontent.com/can1357/oh-my-pi/596f2da7101178214aa27a753529d15e6b7ad91d/packages/coding-agent/src/internal-urls/filesystem-resource.ts' -o "$RUNNER_TEMP/filesystem-resource.ts"
           npm install --prefix "$RUNNER_TEMP/bun" --no-save --no-package-lock --no-audit --no-fund bun@1.4.0
-          "$RUNNER_TEMP/bun/node_modules/bun/bin/bun" --version
+          test -x "$RUNNER_TEMP/bun/node_modules/@oven/bun-linux-x64/bin/bun"
+          "$RUNNER_TEMP/bun/node_modules/@oven/bun-linux-x64/bin/bun" --version
       - name: Run fixed OMP oracle with runner locale
         shell: bash
         run: |
           set -euo pipefail
           locale
-          "$RUNNER_TEMP/bun/node_modules/bun/bin/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-default.json"
+          "$RUNNER_TEMP/bun/node_modules/@oven/bun-linux-x64/bin/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-default.json"
       - name: Run fixed OMP oracle with Chinese locale
         shell: bash
         run: |
           set -euo pipefail
           sudo locale-gen zh_CN.UTF-8
           locale -a | grep -i '^zh_CN\.utf8$'
-          LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 "$RUNNER_TEMP/bun/node_modules/bun/bin/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-zh-cn.json"
+          LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 "$RUNNER_TEMP/bun/node_modules/@oven/bun-linux-x64/bin/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-zh-cn.json"
           jq -e '.collator.locale == "zh-CN"' "$RUNNER_TEMP/oracle-linux-zh-cn.json"
       - uses: actions/upload-artifact@v4
         with:
