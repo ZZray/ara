@@ -115,12 +115,51 @@ entry records the task, the route, the result and an independent check.
   - The REPL progress line for `edit` names no file (`ara: tool edit`). The
     hashline `edit` takes a single `input` whose `[path#hash]` header holds
     the path, and `tool_summary` only looks at `command`, `path` and
-    `pattern`.
+    `pattern`. Fixed in the
+    [next follow-up](#follow-up-the-edit-progress-line-names-its-file).
   - The turn 2 answer paraphrased the new cell instead of quoting it. That is
     the model, not ARA.
 - **Review:** the session's own model (Claude Opus 5.5) checked the diff and
   each OMP line against the source. Doc-only, with no separate review.
 - **Blockers seen:** none.
+
+## Follow-up: the edit progress line names its file
+
+- **Why:** every edit in daily use printed a bare `ara: tool edit`, so the
+  REPL did not show which file the model was changing (dogfood 3).
+- **OMP:** `editToolRenderer.activitySummary`
+  (`packages/coding-agent/src/edit/renderer.ts:889-902` at `596f2da`) shows
+  the operation and the target path instead of the payload's first line, and
+  adds `(+N more)` for more files. `resolveEditCallFacts` (lines 728-774)
+  takes the path from `path` or the first parsed `input` entry.
+- **Change (`ara-cli` `main.rs`):**
+  - `HostSink` keeps the `--edit-mode`.
+  - For an `edit` call with only `input`, `tool_summary` names the first file
+    that the existing `ara-edit` parser for that mode finds (hashline
+    `Patch::parse`, `parse_apply_patch_streaming` or
+    `split_sloppy_sections`), plus `(+N more)`.
+  - A payload that does not parse, and an `input` on another tool, keep the
+    bare line. Replace and patch modes still show their `path`.
+  - Intentional difference: the line keeps its `ara: tool edit` prefix and
+    has no operation label (OMP's create, delete or move title).
+  - The line is REPL progress on stderr only; no tool, request or journal
+    data changes.
+- **Tests:**
+  - Unit test `edit_progress_names_the_target_file`: hashline with one and
+    two files, apply_patch, sloppy, an unparseable payload, another tool,
+    and patch mode.
+  - e2e test `repl_edit_progress_names_the_target_file`: with
+    `--edit-mode apply_patch`, a real `edit` call adds `notes.txt` and stderr
+    shows `ara: tool edit: notes.txt`.
+- **Mutations:**
+  - Passing a fixed hashline mode to the sink fails the e2e test.
+  - Dropping the `input` fallback fails both tests.
+  - The source was restored, with matching sha256.
+- **Checks:** `python scripts/verify_backend.py` (fmt, strict Clippy, all
+  tests): PASS, 1041 passed, 0 failed, 1 ignored; e2e 78/78.
+- **Review:** the session's own model (Claude Opus 5.5) implemented and
+  checked it. This is a small display change, so it had no separate
+  review.
 
 ## Follow-up: a timed-out tool no longer blocks compaction
 
@@ -180,6 +219,7 @@ every later cut had to include.
   - `cargo test -p ara-session --test compaction_projection`: 8/8.
   - `python scripts/verify_backend.py`: PASS, 1039 passed, 0 failed,
     1 ignored; e2e 77/77.
+  - Linux CI run 36573002679 on `a6b6bd0`: success.
 - **Review:** the session's own model (Claude Opus 5.5) was the implementer.
   Sonnet 5.5 independent static review: approve, no critical or important
   finding. Its six minor findings were resolved: the panicked wording, the

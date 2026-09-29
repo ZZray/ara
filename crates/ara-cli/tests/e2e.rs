@@ -2033,6 +2033,43 @@ async fn repl_streams_text_and_reports_tool_progress() {
     assert_eq!(up.served(), 2);
 }
 
+/// OMP `editToolRenderer.activitySummary`: an `edit` whose payload is one
+/// `input` string names its target file, parsed in the configured edit mode.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_edit_progress_names_the_target_file() {
+    let env = Env::new();
+    let patch = "*** Begin Patch
+*** Add File: notes.txt
++hello
+*** End Patch";
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_e", "edit", &json!({"input": patch}).to_string()), finish("tool_calls"), done()]},
+        {"events": [text("Added."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--edit-mode", "apply_patch"]),
+        "add notes
+",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains(
+            "ara: tool edit: notes.txt
+"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("ara: tool edit done"), "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(env.work.path().join("notes.txt")).unwrap(),
+        "hello
+"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_shows_text_a_provider_sent_without_deltas() {
     let env = Env::new();

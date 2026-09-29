@@ -352,10 +352,18 @@ struct HostSink {
     /// Auto-compaction already said why it cannot run; it says so once per process.
     compaction_notice_shown: AtomicBool,
     cancel: CancellationToken,
+    /// How `edit` payloads are written, to name their target files in progress lines.
+    edit_mode: ara_edit::EditMode,
 }
 
 impl HostSink {
-    fn new(mode: Mode, stream: bool, journal: Option<SessionJournal>, cancel: CancellationToken) -> HostSink {
+    fn new(
+        mode: Mode,
+        stream: bool,
+        journal: Option<SessionJournal>,
+        cancel: CancellationToken,
+        edit_mode: ara_edit::EditMode,
+    ) -> HostSink {
         HostSink {
             mode,
             stream,
@@ -365,6 +373,7 @@ impl HostSink {
             persist_failed: AtomicBool::new(false),
             compaction_notice_shown: AtomicBool::new(false),
             cancel,
+            edit_mode,
         }
     }
 
@@ -411,7 +420,7 @@ impl HostSink {
             }
             AgentEvent::ToolExecutionStart { tool_name, args, .. } => {
                 self.end_stream_line();
-                eprintln!("ara: tool {}{}", sanitize_text(tool_name), tool_summary(args));
+                eprintln!("ara: tool {}{}", sanitize_text(tool_name), tool_summary(tool_name, args, self.edit_mode));
             }
             AgentEvent::ToolExecutionEnd { tool_name, is_error, .. } => {
                 eprintln!("ara: tool {} {}", sanitize_text(tool_name), if *is_error { "failed" } else { "done" });
@@ -422,16 +431,47 @@ impl HostSink {
 }
 
 /// One-line summary of a tool call for REPL progress: its command, path or
-/// pattern, with whitespace folded and cut to 120 characters.
-fn tool_summary(args: &ara_ai::JsonObject) -> String {
-    let Some(value) =
-        ["command", "path", "pattern", "pat"].iter().find_map(|k| args.get(*k).and_then(serde_json::Value::as_str))
-    else {
+/// pattern, with whitespace folded and cut to 120 characters. An `edit` whose
+/// payload is one `input` names its target file instead, as OMP's
+/// `editToolRenderer.activitySummary` does.
+fn tool_summary(tool_name: &str, args: &ara_ai::JsonObject, edit_mode: ara_edit::EditMode) -> String {
+    let named = ["command", "path", "pattern", "pat"]
+        .iter()
+        .find_map(|k| args.get(*k).and_then(serde_json::Value::as_str))
+        .map(str::to_owned);
+    let edit_target = || {
+        let input = args.get("input").and_then(serde_json::Value::as_str)?;
+        (tool_name == "edit").then(|| edit_input_target(edit_mode, input)).flatten()
+    };
+    let Some(value) = named.or_else(edit_target) else {
         return String::new();
     };
-    let flat = sanitize_text(value).split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = sanitize_text(&value).split_whitespace().collect::<Vec<_>>().join(" ");
     let cut: String = flat.chars().take(120).collect();
     if cut.len() < flat.len() { format!(": {cut}...") } else { format!(": {cut}") }
+}
+
+/// The first target file of an `edit` `input` payload, with `(+N more)` for
+/// the rest (OMP `resolveEditCallFacts`). `None` when the payload does not
+/// parse, so the progress line stays bare as before.
+fn edit_input_target(mode: ara_edit::EditMode, input: &str) -> Option<String> {
+    use ara_edit::EditMode;
+    use ara_edit::modes::{apply_patch, hashline::input as hashline, sloppy};
+    let paths: Vec<String> = match mode {
+        EditMode::Hashline => hashline::Patch::parse(input, &hashline::SplitOptions::default())
+            .ok()?
+            .sections
+            .into_iter()
+            .map(|s| s.path)
+            .collect(),
+        EditMode::ApplyPatch => {
+            apply_patch::parse_apply_patch_streaming(input).ok()?.into_iter().map(|e| e.path).collect()
+        }
+        EditMode::Sloppy => sloppy::parse::split_sloppy_sections(input).into_iter().map(|s| s.path).collect(),
+        EditMode::Replace | EditMode::Patch => return None,
+    };
+    let first = paths.first()?;
+    Some(if paths.len() > 1 { format!("{first} (+{} more)", paths.len() - 1) } else { first.clone() })
 }
 
 #[async_trait]
@@ -1207,7 +1247,7 @@ async fn run(args: Args) -> Result<i32> {
         Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
     };
     let cancel = CancellationToken::new();
-    let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone());
+    let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
     }
@@ -1347,6 +1387,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn edit_progress_names_the_target_file() {
+        use ara_edit::EditMode;
+        use serde_json::json;
+        let edit = |input: &str, mode: EditMode| {
+            let args = json!({ "input": input }).as_object().cloned().unwrap();
+            tool_summary("edit", &args, mode)
+        };
+        let one = "[docs/a.md#1A2B]
+PUT 3.=3:
++x
+";
+        assert_eq!(edit(one, EditMode::Hashline), ": docs/a.md");
+        let two = "[src/a.rs#1A2B]
+PUT 1.=1:
++x
+[src/b.rs#3C4D]
+PUT 2.=2:
++y
+";
+        assert_eq!(edit(two, EditMode::Hashline), ": src/a.rs (+1 more)");
+        let codex = "*** Begin Patch
+*** Update File: src/x.rs
+@@
+-a
++b
+*** End Patch";
+        assert_eq!(edit(codex, EditMode::ApplyPatch), ": src/x.rs");
+        let sloppy = "<SM:EDIT path=\"src/s.ts\">
+<SM:FIND>
+const x = 1;
+</SM:FIND>
+<SM:PUT>
+const x = 2;
+</SM:PUT>";
+        assert_eq!(edit(sloppy, EditMode::Sloppy), ": src/s.ts");
+        // A payload that does not parse, and an `input` on another tool, stay bare.
+        assert_eq!(edit("no header", EditMode::Hashline), "");
+        let args = json!({ "input": one }).as_object().cloned().unwrap();
+        assert_eq!(tool_summary("mcp_tool", &args, EditMode::Hashline), "");
+        // Modes with a `path` argument keep showing it.
+        let args = json!({ "path": "src/p.rs", "edits": [] }).as_object().cloned().unwrap();
+        assert_eq!(tool_summary("edit", &args, EditMode::Patch), ": src/p.rs");
+    }
+
+    #[test]
     fn sanitize_strips_ansi_and_controls() {
         assert_eq!(sanitize_text("a\x1b[31mred\x1b[0m\tb\nc\x07\r"), "ared\tb\nc");
         assert_eq!(sanitize_text("x\x1b]52;c;ZXZpbA==\x07y"), "xy");
@@ -1364,7 +1449,7 @@ mod tests {
         let path = j.path().to_path_buf();
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        let sink = HostSink::new(Mode::Text, false, Some(j), CancellationToken::new());
+        let sink = HostSink::new(Mode::Text, false, Some(j), CancellationToken::new(), ara_edit::EditMode::Hashline);
         sink.emit(AgentEvent::MessageEnd { message: Message::Assistant(a) }).await;
         assert!(sink.persist_failed.load(Ordering::SeqCst));
         assert!(sink.cancel.is_cancelled(), "tools of an unrecorded message must not run");
