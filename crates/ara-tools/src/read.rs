@@ -823,8 +823,18 @@ impl AgentTool for ReadTool {
             let mut entries = Vec::new();
             let mut rd =
                 tokio::fs::read_dir(&abs).await.map_err(|e| ToolError(format!("Cannot list {display}: {e}")))?;
-            while let Ok(Some(entry)) = rd.next_entry().await {
-                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+            loop {
+                let entry = match rd.next_entry().await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(e) if internal => return Err(ToolError(format!("Cannot list {display}: {e}"))),
+                    Err(_) => break,
+                };
+                let is_dir = match entry.file_type().await {
+                    Ok(file_type) => file_type.is_dir(),
+                    Err(e) if internal => return Err(ToolError(format!("Cannot list {display}: {e}"))),
+                    Err(_) => false,
+                };
                 entries.push((is_dir, entry.file_name().to_string_lossy().into_owned()));
             }
             if internal {
