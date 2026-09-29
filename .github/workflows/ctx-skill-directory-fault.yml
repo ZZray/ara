@@ -66,3 +66,4 @@ jobs:
           name: ctx-skill-directory-fault-linux-gnu
           path: ${{ runner.temp }}/ctx-directory-fault/
           if-no-files-found: error
+          include-hidden-files: true
