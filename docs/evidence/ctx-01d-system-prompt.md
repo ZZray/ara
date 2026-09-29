@@ -1,5 +1,10 @@
 # CTX-01d: system prompt assembly, skill:// and CLI integration
 
+The 2026-09-29 section below is a historical checkpoint. The later
+[`skill://` directory-order repair](ctx-01d-skill-directory-sort.md) and
+[current handoff](../handoffs/2026-09-30.md) record the fixed-OMP Bun
+oracles, delivered-code tests and real-model tasks. CTX-01d remains WIP.
+
 ## 2026-09-29 current-head B.AI trial and gate (WIP)
 
 Target `dev` at `9390d76`, fixed OMP source `596f2da`. The historical

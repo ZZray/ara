@@ -6,7 +6,7 @@
 
 1. **G1: port OMP as the ARA Core.** Port the fixed OMP commit's Agent behavior to Rust surface by surface, with source-backed evidence. The [inventory](upstream/inventory.md) is the denominator.
 2. **G2: build a next-generation task Agent on that Core.** The direction is in [agent evolution](knowledge/agent-evolution.md): move from answering to finishing tasks, with memory, reasoning, autonomous planning, decisions, execution, feedback, and unified Omni perception for text, images, audio, video, documents and sensors, in Chinese and English. This lays the ground for understanding the physical world.
-3. **G3: validate against real models.** Every integration point runs a bounded real task through the actual host chain. Configured routes are OpenRouter (`openrouter/free`) and Agnes AI (`agnes-2.5-flash`, `agnes-2.5-pro`), both OpenAI-compatible. Credentials come only from the environment; each model ID is verified against the live catalogue before a trial.
+3. **G3: validate against real models.** Every integration point runs a bounded real task through the actual host chain. Trials have used OpenRouter (`openrouter/free`), Agnes AI (`agnes-2.5-flash`, `agnes-2.5-pro`) and B.AI (`deepseek-v4.1-flash`) on OpenAI-compatible routes. Credentials come only from the environment; each model ID is verified against the live catalogue before a trial.
 
 ## Where we are
 
@@ -24,7 +24,7 @@ P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 
 Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](evidence/real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`). Context points (A2 CTX-01) carry their own [real-model trial](evidence/ctx-01d-system-prompt.md) on both routes: an `AGENTS.md` rule and a skill's format must be followed.
 - Accepted: CTX-01a (`ara-prompt`), CTX-01b (`ara-discovery` context files) and CTX-01c (frontmatter and skills).
-- Changes requested: CTX-01d (`ara-context` system prompt, date/cwd reminder, `skill://` in `read`/`bash`, CLI wiring). F1–F9 are in WIP `b920852`; the reminder follow-up is in WIP `c9f9e24`; the `grep`/`glob`/`write` skill URL routes and matching prompt guidance are in local WIPs `41cb9a7` and `ca2a076`. Independent review and focused host tests pass for the new routes. Earlier Windows real-model tasks passed on Agnes and on one OpenRouter retry, while the first OpenRouter task failed its skill format; a new-code live trial and the full backend gate remain open. Local Ubuntu is not a prerequisite (see the [evidence](evidence/ctx-01d-system-prompt.md) and [current handoff](handoffs/2026-09-28.md)).
+- CTX-01d remains implementing (WIP): system prompt, date/cwd reminder, and `skill://` tool routes have controlled host and real-model evidence. Fixed-OMP Bun oracles for Windows `zh-CN` and Linux `en-US`, a narrow ICU4X repair, Windows and Linux backend gates, independent review and two delivered-code B.AI tasks are recorded in the [sort evidence and point audit](evidence/ctx-01d-skill-directory-sort.md). WIP `acf79e9` failed Linux CI in the new oracle test's platform-specific index; WIP `34a2360` corrected it and Linux CI passed. The point audit keeps CTX-01d open because other Windows locales, macOS and broader Unicode cases lack direct fixed-OMP comparisons. Do not advance P1 or P3 from this slice. See the [CTX-01d evidence](evidence/ctx-01d-system-prompt.md) and [current handoff](handoffs/2026-09-30.md).
 - Open: CTX-01e (`/skill:` invocation), which needs the interactive/RPC host and session custom messages.
 - A4 MODEL-01a (WIP): opt-in `--api proxy-auto` selects the exact model's Anthropic or OpenAI Chat endpoint from a dual-protocol proxy before Session creation. Controlled CLI tests cover a tool effect, Session receipts and fail-closed discovery; model capability metadata, source-bound resume, the full Windows gate and a bounded live task remain open. [Evidence](evidence/model-01a-proxy-protocol.md).
 - A3 preparation (WIP): the isolated AGT-TOKENIZERa text/message estimate is under implementation; [evidence](evidence/agt-tokenizer-estimate.md). The initial byte-based budget probe was removed after pinned Claude fixtures disproved its claimed token upper bound. CTX-01d still gates A2 acceptance, and A3 compaction/long-task behavior is not claimed.
@@ -48,6 +48,8 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 ## Priority: daily-driver v1
 
 **User decision, 2026-09-28.** The user wants to use `ara` for daily command-line work in place of OMP as early as possible. V1 comes before the remaining Track A parity work; parity points it does not need (for example Anthropic-specific A4 work) are parked, not dropped.
+
+**Status, 2026-09-29:** the five V1 points are accepted on `b179087` with their [audit](evidence/v1-audit.md). V1 is a host milestone; the remaining Track A parity work and P1/P3 gates continue separately.
 
 **Routes.** V1 targets OpenAI-compatible Chat Completions (`--api openai-completions`): OpenRouter and compatible endpoints, with credentials from environment variables. An OpenAI Codex account login (Responses API with OAuth) is a later option after v1. Anthropic account login is out of scope; the existing Anthropic and proxy WIP stays as is.
 
@@ -124,7 +126,7 @@ Run `scripts/real_model_trial.sh` (extended per slice) through the `ara` binary.
 - usage, with unknown values kept as unknown
 - latency
 
-Use OpenRouter `openrouter/free` as the primary route and Agnes `agnes-2.5-flash` as the second. A route failure keeps the point open.
+The initial trials used OpenRouter `openrouter/free` and Agnes `agnes-2.5-flash`. Current bounded V1/CTX trials also use B.AI `deepseek-v4.1-flash` when its live catalogue and route are available. A route failure keeps a point open when its required real-model evidence is still missing.
 
 ## Open inputs
 
