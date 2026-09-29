@@ -1,0 +1,41 @@
+[package]
+name = "ara-lite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+publish = false
+description = "Local master/worker task and chat coordination service (Rust port of the Go ara-lite tool)"
+
+# Standalone crate: deliberately NOT a member of the repository root workspace.
+[workspace]
+
+[lib]
+name = "ara_lite"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ara-lite"
+path = "src/main.rs"
+
+[dependencies]
+# Durable state (tasks, clients, messages, receipts). `bundled` avoids a system SQLite.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# JSON wire format and on-disk blobs.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+# Go-flag-compatible command line parsing.
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+# RFC 3339 timestamps compatible with Go's time.Time JSON.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# CSPRNG for client IDs, tokens, join keys and request IDs.
+getrandom = "0.3"
+# Git snapshot digest and send-receipt payload digest.
+sha2 = "0.10"
+# Cross-platform single-instance data-directory lock (LockFileEx / flock).
+fs4 = "0.13"
+# Canonical paths without the Windows `\?\` prefix.
+dunce = "1"
+
+[dev-dependencies]
+tempfile = "3"
