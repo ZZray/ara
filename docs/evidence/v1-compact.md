@@ -577,6 +577,6 @@ Each file was restored, and its sha256 matched the saved hash.
 | Finding | Resolution |
 | --- | --- |
 | 1 A summary with stop reason `stop` and an HTTP error status prints `stop reason stop, HTTP 500` | Follow-up: true but reads oddly. Not reached on the daily route |
-| 2 No test that a `--max-tokens` above 13,107 does not raise the budget | Follow-up (test gap). The cap mutation above is caught; a plain `cap` is not |
+| 2 No test that a `--max-tokens` above 13,107 does not raise the budget | **Fixed after acceptance** by [dogfood 1](v1-dogfood.md#dogfood-1-the-upper-cap-test-for-the-summary-budget): a `--max-tokens 100000` case; a plain `cap` now fails it |
 | 3 A route whose output limit is below 13,107 may answer HTTP 400 to `/compact`, where 1,024 fit | Follow-up: OMP sends the same default. `--max-tokens` lowers it. B.AI `deepseek-v4.1-flash` accepted it (run10) |
 | 4 `--max-tokens 0` gives `InvalidMaxTokens` with no hint that the flag caused it | Follow-up; unlikely in use |

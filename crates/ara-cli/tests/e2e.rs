@@ -3387,6 +3387,29 @@ async fn repl_compact_uses_the_omp_summary_budget_and_names_a_truncated_summary(
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 3);
     assert_eq!(reqs[2]["body"]["max_tokens"], 700, "{}", reqs[2]);
+
+    // A --max-tokens above the default does not raise the summary budget.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(
+            &up.base_url(),
+            &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1", "--max-tokens", "100000"],
+        ),
+        "first prompt\nsecond prompt\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs[2]["body"]["max_tokens"], 13107, "{}", reqs[2]);
 }
 
 /// A prompt line that is not UTF-8 ends the REPL with exit 1 and a message;

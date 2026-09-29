@@ -95,8 +95,10 @@ implementer ran the gate and the mutations.
 - **Combined review:** 2, print-mode auto-compaction deadline; 5,
   `--print-thoughts` in the REPL; 7, the `--report-request-text-tokens`
   flush.
-- **Run9-fix recheck:** 1–4 (stop-reason wording with an HTTP status, an
-  upper-cap test, routes with a lower output limit, `--max-tokens 0`).
+- **Run9-fix recheck:** 1, 3 and 4 (stop-reason wording with an HTTP status,
+  routes with a lower output limit, `--max-tokens 0`). Finding 2, the
+  upper-cap test, was fixed after acceptance by
+  [dogfood 1](v1-dogfood.md).
 - **Cancel and resume:**
   - the stale-interrupt race;
   - a physical keypress in a visible terminal (ConPTY covers the console
