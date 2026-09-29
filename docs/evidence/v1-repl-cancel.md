@@ -1,9 +1,11 @@
 # V1-REPL + V1-CANCEL: line REPL with turn cancellation (WIP)
 
 Status: **implementing (WIP)**. The REPL and cancel code is in WIP commit
-`6a6ef96`. The streaming follow-up below is on the working tree after
-`7aa59b2`. No independent review has run yet and there is no real-model
-trial, so nothing is marked tested or accepted.
+`6a6ef96`; the streaming follow-up is in `43e79e2`, and the failed-turn cause
+(F6 in [V1-TRIAL](v1-trial.md)) is in `111c325`. Linux CI and the Windows
+gate pass on `111c325`. A real-console Ctrl+C check through ConPTY passes
+(below). No independent review has run, so nothing is marked tested or
+accepted.
 
 ## Scope
 
@@ -132,21 +134,68 @@ sha256 afterwards:
 
 This follow-up has no independent review.
 
+## Follow-up: real-console Ctrl+C through ConPTY (2026-09-29)
+
+**Why:** the e2e tests use piped stdin and Ctrl+Break, so they cover neither
+a console `stdin` (`ReadConsoleW` pending in `read_line`) nor the Ctrl+C
+event itself.
+
+**Method:** [`scripts/windows_conpty_ctrl_c.py`](../../scripts/windows_conpty_ctrl_c.py)
+starts `ara` inside a pseudoconsole (ConPTY), the host Windows Terminal uses.
+It passes no `--repl` flag, so the REPL is chosen by `stdin.is_terminal()`.
+The script writes the prompt lines and Ctrl+C (`\x03`) to the pseudoconsole
+input pipe, as a terminal does for a key press. The console host turns
+`\x03` into a CTRL_C_EVENT. The model is the controlled fake upstream: a
+`bash` call `echo started; sleep 30`, then `After the abort.`, then a third
+response that must not be requested. The binary is the debug build of the
+committed `111c325` sources.
+
+**Inherited ignore flag.** A process created with `CREATE_NEW_PROCESS_GROUP`
+has Ctrl+C disabled, and its children inherit that. The process that ran the
+script (this session's tool runner) passed the flag on, as the A/B below
+shows. A shell in Windows Terminal has Ctrl+C enabled. `--enable-ctrl-c`
+calls `SetConsoleCtrlHandler(NULL, FALSE)` before `ara` starts, so `ara`
+inherits the enabled state.
+
+| Run | Observed |
+| --- | --- |
+| `--enable-ctrl-c`, six runs: four with a scratch copy of the script, then two with the committed script (one before the mutation below, one after the restore) | All checks pass every time. Ctrl+C during the Bash tool prints `ara: interrupt received, aborting …`, `ara: tool bash failed` and `ara: turn 1 cancelled; session kept, type the next prompt` about 0.05 s after the byte is written. The process survives, the next prompt answers `After the abort.`, and Ctrl+C at the idle prompt exits 130 within about 0.01 s. There are 2 model calls, and each run takes about 2.8 s. The journal is `session, model_change, user, assistant, toolResult, assistant, user, assistant` with stop reasons `toolUse, aborted, stop`. The tool result ends with `[Command aborted]` and has `isError: true`. |
+| Flag kept (A/B control) | FAIL, as expected. Ctrl+C has no effect: `sleep 30` runs to completion (tool result `started`, not an error), the canned second response becomes turn 1's answer, 3 model calls are made, and Ctrl+C at the idle prompt does not exit within 10 s |
+
+After the runs, no `sleep.exe` or `bash.exe` process was left.
+
+This check also asserts the tool-result text, which the Windows e2e test
+cannot (see Gaps).
+
+**Mutation** (`main.rs`, restored and checked by sha256 afterwards): the
+Windows listener waits only on Ctrl+Break (`let got = b.recv().await`), and
+the Ctrl+C handler stays installed. `cargo test -p ara-cli --test e2e
+repl_interrupt` still passes 3/3, because the e2e tests send Ctrl+Break. The
+ConPTY check fails on the same six checks as the A/B control. After the
+restore, both pass again on a rebuilt binary.
+
+**Observation (not changed):** when `ara` inherits the ignore flag (for
+example from a runner that uses `CREATE_NEW_PROCESS_GROUP`), Ctrl+C in its
+console neither cancels a turn nor exits at the idle prompt. Ctrl+Break still
+works. `ara` does not clear the flag itself.
+
+**Limits:** these are bytes on the ConPTY input pipe, not a physical key
+press, and the model is the fake upstream. The legacy console window
+(conhost without ConPTY) was not tested.
+
 ## Gaps
 
-- **Real console:** Ctrl+C was not tested in a real interactive console
-  (`ReadConsole` behavior with a pending `read_line`). The tests use piped
-  stdin and Ctrl+Break. This belongs to V1-TRIAL.
-- **Unix:** Linux CI run 36533531131 on `7aa59b2` compiled the `cfg(unix)`
-  test code (`libc::kill` with `SIGINT`, the `[Command aborted]` assertion)
-  under strict Clippy. The test phase stopped at an `ara-ai` test first
-  ([AI-RETRYa follow-up](ai-retry-stream.md#linux-ci-follow-up-reset-test-depended-on-the-platform-2026-09-29-wip)),
-  so the REPL tests have not run on Linux.
+- ~~**Real console**~~: shown through ConPTY (above). A physical key press in
+  a visible window has not been done.
+- ~~**Unix**~~: done. Linux CI ran the REPL tests on `43e79e2` (e2e 73/73,
+  both `repl_interrupt_*` tests) and on `111c325` (every step green, e2e
+  74/74).
 - **Windows Bash result text:** on Windows, Ctrl+Break also reaches Bash in
-  the same process group, so the test does not assert the tool-result text.
+  the same process group, so the e2e test does not assert the tool-result
+  text. The ConPTY check does assert it.
 - **Review:** no independent review has run. A Sonnet subagent attempt failed
   immediately with HTTP 429, because the alias routed to a model that needs
   usage credits, and it made no changes. This is an explicit review gap.
-- **Full gate:** `python scripts/verify_backend.py` has not run on this
-  snapshot.
-- **Counts:** unchanged at 28/40 registered points and 1/7 gates.
+- ~~**Full gate**~~: done. `python scripts/verify_backend.py` passed on
+  `111c325`.
+- **Counts:** unchanged at 28 accepted points and 1/7 gates.

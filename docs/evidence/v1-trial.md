@@ -8,7 +8,8 @@ attempts on OpenRouter got HTTP 429. Run 6, on B.AI
 that summary; a replay of the same file shows what the request held.
 Earlier, the fixed qwen pool answered 429 to every summary call, and the free
 router returned a safety-classifier line as the "summary". No independent
-review has run; nothing is marked tested or accepted.
+review has run; nothing is marked tested or accepted. F2 and F3 are decided
+by OMP parity, and the Ctrl+C console path is covered by a ConPTY check.
 
 ## Point and scope
 
@@ -85,8 +86,10 @@ keeps its own evidence file.
     (`clear_ignore=1` in each driver log), as a normal terminal would start
     ara.
 - **Caveat:** the interrupt is a console-delivered `CTRL_C_EVENT` on ara's
-  `ctrl_c()` path, not a human keypress in a visible terminal. A manual
-  keypress check is still open.
+  `ctrl_c()` path, not a human keypress in a visible terminal. A later
+  ConPTY check ([V1-CANCEL](v1-repl-cancel.md#follow-up-real-console-ctrlc-through-conpty-2026-09-29))
+  drives Ctrl+C through a pseudoconsole with a console `stdin`; a physical
+  keypress is still not run.
 
 ## Runs
 
@@ -227,25 +230,42 @@ generation time 0.75–14.1 s.
     `summarize_sources`).
   - Evidence: [v1-compact](v1-compact.md) "Follow-up: summary failure
     cause".
-- **F2 (open, question for the user):** compaction accepts any non-empty
-  final text as the summary.
+- **F2 (decided 2026-09-29: keep, OMP parity):** compaction accepts any
+  non-empty final text as the summary.
   - With `openrouter/free`, the summary call returned a safety-classifier
     line. It was persisted and now stands in for 22 entries in the model
     context. The raw entries stay in the journal.
   - The source model of that line is inferred from its format, not verified
     (see F3).
-  - Whether V1 should check summary content, or refuse router models for
-    compaction, is a product decision. Upstream OMP behavior for this case
-    was not checked.
-- **F3 (open, question for the user):** the `compaction` entry does not
-  record the summary call's provenance.
+  - Fixed OMP does not check the content either.
+    `summarizeConversationWindow`
+    (`packages/agent/src/compaction/compaction.ts:931-1016` at `596f2da`)
+    throws only on `stopReason === "error"`, then returns the text blocks
+    joined with newlines, even when that text is empty. ARA already differs
+    in one way: it refuses an empty summary.
+  - The user left the choice to this session ("按照目标推进就行了。不用问我").
+    V1 follows OMP, adds no content check and does not refuse router
+    models. The practical guidance is to compact with a fixed model, not
+    `openrouter/free`. A later check would be ARA's own evolution
+    ([agent-evolution](../knowledge/agent-evolution.md)), not parity.
+- **F3 (decided 2026-09-29: keep, OMP parity):** the `compaction` entry does
+  not record the summary call's provenance.
   - `AcceptedSummary` carries `model_id`, `response_id`, `usage`,
     `duration_ms` and `ttft_ms` (`crates/ara-agent/src/compaction.rs:484-494`).
   - `run_compaction` persists only the text, the first-kept ID, the source
     IDs and `tokensBefore` (the `append_compaction` call in
     `crates/ara-cli/src/main.rs`).
   - So the summary's served model and usage are unknown after the fact.
-  - Whether OMP persists these was not checked.
+  - Fixed OMP does not persist them either. Its `CompactionEntry`
+    (`appendCompaction`, `packages/coding-agent/src/session/session-manager.ts:2409-2438`)
+    stores `summary`, `shortSummary`, `firstKeptEntryId`, `tokensBefore`,
+    `tokensAfter`, `method`, `providerReplayThroughEntryId`, `details`,
+    `fromExtension` and `preserveData`. There is no model, response ID or
+    usage. The summary call's usage goes only to OMP telemetry
+    (`instrumentedCompleteSimple` with `oneshotKind: "compaction_summary"`),
+    and ARA has no telemetry sink (AGT-TELEMETRY is open).
+  - V1 keeps the entry as it is. Trial receipts record the summary call's
+    usage as **unknown**, never zero.
 - **F4 (observation):** tool progress lines.
   - `ara: tool edit` prints no argument summary, because the edit argument
     key is `input`.
@@ -310,7 +330,9 @@ Linux long literal path".
   succeeded. Each failed model call may send up to 6 HTTP requests
   (`RetryPolicy` default: the first plus 5 retries); the exact count was not
   logged.
-- The manual keypress Ctrl+C in a visible terminal is not run.
+- Ctrl+C through a real console input path is shown by the ConPTY check in
+  [V1-CANCEL](v1-repl-cancel.md#follow-up-real-console-ctrlc-through-conpty-2026-09-29)
+  (fake upstream). A physical keypress in a visible terminal is not run.
 - The trial ran on Windows only. On Linux CI for `43e79e2` (GitHub Actions
   run 36538669183), `ara-cli` e2e passed 73/73, including
   `repl_interrupt_during_bash_returns_to_prompt` and
@@ -321,6 +343,7 @@ Linux long literal path".
   (`verify_backend.py`) on `111c325` also passed: 1028 passed, 0 failed, 1
   ignored; e2e 72/72.
 - F2 (any non-empty summary text is accepted) and F3 (the summary call's
-  model, response ID and usage are not persisted) are open for the user.
+  model, response ID and usage are not persisted) are decided: V1 keeps OMP
+  parity, with no code change (see Findings).
 - No independent review.
 - **Decision:** changes requested (WIP). The counts are unchanged.
