@@ -254,14 +254,15 @@ On snapshot `f20393d`, three independent read-only reviews
 
 | Point | Verdict | Focused recheck |
 | --- | --- | --- |
-| TOOLS-01c Windows Bash Job repair (`8940f3c`) | **changes requested** (2026-09-29): Linux CI run 36396583296 on `f20393d` failed to compile `bash.rs:479` | Windows: `bash_` 5/5, failed-assignment 1/1, CLI deadline 1/1 |
+| TOOLS-01c Windows Bash Job repair (`8940f3c`) | **changes requested** (2026-09-29): Linux CI run 36396583296 on `f20393d` failed to compile `bash.rs:479`. Re-audit on `111c325` **accepted** ([details](windows-bash-process-tree.md#point-delivery-audit-2026-09-29-accepted)) | Windows: `bash_` 5/5, failed-assignment 1/1, CLI deadline 1/1 |
 | TOOLS-02d opt-in `ast_grep` (`91fce93`/`5d7b40b`) | **accepted** | unit 7/7, CLI e2e 1/1 |
 | TOOLS-03a Windows tag-recovery (`8b953b1`) | **accepted** (narrow WIP closed) | `path_policy` 8/8, hashline_parity 10/10, hashline_patcher 6/6, two CLI e2e |
 
 Registered accepted points move from 27/40 to **28/40 (70%)** because
 TOOLS-02d was newly accepted; TOOLS-03a and TOOLS-01c's prior slice were
-already counted. TOOLS-01c's Windows repair stays WIP after the corrected
-audit ([details](windows-bash-process-tree.md#point-delivery-audit-2026-09-28-changes-requested)).
+already counted. TOOLS-01c's Windows repair stayed WIP after the corrected
+audit ([details](windows-bash-process-tree.md#point-delivery-audit-2026-09-28-changes-requested))
+and was accepted on `111c325` on 2026-09-29, with no change to the counts.
 The same `ubuntu-latest` run shows no Linux result for TOOLS-02d or TOOLS-03a,
 because `ara-tools` did not compile; their changed code is platform-neutral
 or Windows-only, and their acceptance rests on the Windows gate above.

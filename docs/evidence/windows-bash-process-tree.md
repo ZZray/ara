@@ -174,3 +174,43 @@ at a platform-dependent `ara-ai` reset test
 ([AI-RETRYa follow-up](ai-retry-stream.md#linux-ci-follow-up-reset-test-depended-on-the-platform-2026-09-29-wip)),
 so the `ara-tools` Bash tests did not run on Linux. TOOLS-01c stays
 **changes requested** until a run executes them.
+
+## Point delivery audit (2026-09-29): accepted
+
+Audited snapshot `111c325446e479db4c23c34339f18474e6bfd1af` (`dev`). The
+requirement is unchanged: every `bash` call's process tree is contained and
+killed when the call ends (exit, timeout, cancel, dropped Future); on Windows
+a failed Job assignment never runs the command. The Unix process-group path
+must keep passing.
+
+**Diff since the reviewed snapshot.** `git diff f20393d 111c325` touches only
+`crates/ara-tools/src/bash.rs`, in `6a6ef96`: the module doc, the
+`cfg_attr(not(windows), allow(unused_mut, unused_variables))` on the `group`
+binding, and the strengthened failed-assignment test. `bash.rs` is unchanged
+from `7aa59b2` to `111c325`.
+
+| Check | Result |
+| --- | --- |
+| Linux: GitHub Actions `bootstrap` run 36541328597 on `111c325` (`ubuntu-latest`) | **success**. Owned fmt, workspace Clippy `-D warnings`, then `cargo test --workspace --all-targets --all-features`: 74 test binaries, 1030 passed, 0 failed, 1 ignored. `tools.rs` 16/16, including `bash_success_error_env_cwd`, `bash_timeout_kills_process_group`, `bash_cancel_aborts_and_streams_updates`, `dropping_a_bash_call_kills_its_group` and `bash_keeps_stream_order_and_reaps_background_children`. ara-cli e2e 74/74. |
+| Windows: `python scripts/verify_backend.py` on `111c325` (Git Bash on the child `PATH`, `CARGO_TARGET_DIR=C:\Temp\ara-verify-target`) | **PASS**: 74 test binaries, 1028 passed, 0 failed, 1 ignored. The same `bash_` tests and `dropping_a_bash_call_kills_its_group` pass, plus `bash::windows_job_tests::failed_job_assignment_never_runs_suspended_bash` (Windows-only) and the CLI `deadline_during_a_tool_and_zero_budget_exit_nonzero`. ara-cli e2e 72/72. |
+| Negative cases | Failed Job assignment (Bash stays suspended for 1 s, writes no `uncontained` marker, then is killed); timeout; cancellation; dropped Future with a delayed marker; a background child reaped at call end. |
+| Real model, delivered `bash.rs` | [V1-TRIAL](v1-trial.md) run1 on Windows (`qwen/qwen3.8-27b:free`): bash tool calls ran the fixture's tests, and a console `CTRL_C_EVENT` cancelled `python slow.py` mid-call, then the next turn worked. That trial did not inspect the process table after the cancel; tree termination rests on the focused tests above. |
+
+**Review.** The non-trivial repair was independently reviewed on
+`f20393d`: a Codex plan review, a Codex post-diff review, and a read-only
+Cursor agent (`ara-git-review` + `ara-rust-core-review`). No independent
+reviewer ran on the `6a6ef96` delta. The coordinating session (Opus 5.5)
+inspected it:
+
+- the attribute has no runtime effect, and the binding stays named, so the
+  guard's `Drop` still runs at scope end on Unix;
+- the test change only adds assertions before the existing kill;
+- the doc matches the implementation.
+
+| Field | Value |
+| --- | --- |
+| Audited snapshot | `111c325` (repair `8940f3c`, Linux fix `6a6ef96`) |
+| Linux CI | pass (run 36541328597) |
+| Windows gate | pass |
+| Independent review | on `f20393d`; gap for the `6a6ef96` delta (attribute, test, doc) |
+| Decision | **accepted**: the Windows repair closes. Point counts are unchanged, since TOOLS-01c was already counted through its prior slice. |

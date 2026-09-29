@@ -2,8 +2,10 @@
 
 Status: **partial (WIP)**. The coding task, turn cancel, resume and a real
 failed-summary path ran on a real model through the REPL. Run 5 produced a
-*useful* real-model summary (`google/gemma-4-31b-it:free`). A recall that
-depends on that summary is **not** shown: both recall attempts got HTTP 429.
+*useful* real-model summary (`google/gemma-4-31b-it:free`). Three recall
+attempts on OpenRouter got HTTP 429. Run 6, on B.AI
+`deepseek-v4.1-flash`, then recalled a fact that the request carried only in
+that summary; a replay of the same file shows what the request held.
 Earlier, the fixed qwen pool answered 429 to every summary call, and the free
 router returned a safety-classifier line as the "summary". No independent
 review has run; nothing is marked tested or accepted.
@@ -18,16 +20,16 @@ keeps its own evidence file.
 
 ## Snapshot
 
-- Base commit `7aa59b2` plus the uncommitted working-tree diff of this date
-  (REPL streaming and tool progress, the reset-test fix in
+- Base commit `7aa59b2` plus the working-tree diff of this date (REPL
+  streaming and tool progress, the reset-test fix in
   `crates/ara-ai/tests/openai_http.rs`, and the summary-error diagnostic
-  below). The trial binaries were copied out of `C:\Temp\ara-verify-target`.
+  below), later committed as `43e79e2` and `111c325`. The trial binaries were copied out of `C:\Temp\ara-verify-target`.
 
 | Runs | `ara.exe` sha256 | `crates/ara-cli/src/main.rs` sha256 |
 | --- | --- | --- |
 | run1, run2, run3a | `1d77a281…6f56783` | `cfdf3f92…d4470b27` (streaming, before the diagnostic fix) |
 | run3b, run3c, run4, run5 | `66f87802…6da442b27` | `11039ec3…d1e40e1d9` (with the diagnostic fix; committed as `43e79e2`) |
-| run5b | `febb5f10…83325209` | `602920a8…a2813d619` (`43e79e2` plus the REPL failed-turn cause, F6; `ara-tools/src/read.rs` `1a60b2ea…71894d35`) |
+| run5b, run5b2, run6 | `febb5f10…83325209` | `602920a8…a2813d619` (`43e79e2` plus the REPL failed-turn cause, F6; `ara-tools/src/read.rs` `1a60b2ea…71894d35`; committed as `111c325`) |
 
 ## Route and model (checked live before use)
 
@@ -47,8 +49,14 @@ keeps its own evidence file.
   saved after run5b as `logs/gemma-endpoints.json`, shows one endpoint:
   - Google AI Studio, context 262,144, `tools`, `tool_choice` and
     `max_tokens`, price 0/0.
-  - The served model of the run5 summary call is not recorded (F3). Both
-    recall calls failed with 429, so they have no generation record.
+  - The served model of the run5 summary call is not recorded (F3). The
+    three recall calls failed with 429, so they have no generation record.
+- B.AI (run6, suggested by the user after the 429s):
+  `https://api.b.ai/v1`, `--api openai-completions`, key from
+  `BAI_API_KEY` via `--api-key-env`. `GET /models` returned 200 with 58
+  models, including `deepseek-v4.1-flash` (`supported_endpoint_types`
+  `openai`, `anthropic`). The journal records the response model as
+  `deepseek-v4.1-flash`; no generation lookup exists for this route.
 - A scan of the 2,753 trial and scratch files (binaries excluded) found no key
   value. The probe logs held an account `user_id` in OpenRouter's error body;
   it was redacted in place and is not reproduced here.
@@ -84,7 +92,7 @@ keeps its own evidence file.
 
 All runs use one Session file name,
 `2026-09-29T07-24-40-285Z_01a0ec0d-….jsonl`. Runs 1–4 append to it in
-`sessions/`. Run 5 and run5b use `sessions-run5/`, which holds a copy of the
+`sessions/`. Runs 5, 5b, 5b2 and 6 use `sessions-run5/`, which holds a copy of the
 file saved before run4 (`logs/session-before-run4.jsonl`), so run4's bad
 summary is not in it. Journal entry numbers are line indexes in the file.
 "Calls" counts assistant messages; "usage" is the sum of the journal's
@@ -106,7 +114,9 @@ summary is not in it. Journal entry numbers are line indexes in the file.
 | run4 follow-up | same question | 10.4 s | 1 | A correct answer, served by the Nvidia model above. It does **not** show that the summary carried context: the kept raw tail (entries 25–44) already restates both facts in entries 34–44. |
 | run5 `/compact` | `--model google/gemma-4-31b-it:free --continue --compact-keep-tokens 300` | 11.6 s | summary accepted | Entry 45 is `model_change` (`openrouter/google/gemma-4-31b-it:free`). Entry 46 is a `compaction` with `method: soft`, `tokensBefore` 4119, `firstKeptEntryId` = entry 25 and 22 source IDs (entries 3–24). stderr: `compacted 4119 estimated tokens down to 1888; summary persisted with source IDs`. The summary is a structured task summary; see "Summary coverage". |
 | run5 recall | two facts found only in entries 3–24: the tie-test input list and the blank-line fix | 36.3 s | 1 failed | Entry 48: `stopReason: error`, `errorStatus` 429, `errorMessage` `429 Provider returned error`, `usage {}`. stderr showed only `ara: turn 1 ended in error; session kept` (F6). |
-| run5b recall | `--continue` on the compacted file, no second `/compact`: "quote the expression your `mode()` uses to break ties", no tools | 36.1 s | 1 failed | Entry 50: the same 429. With the F6 fix, stderr shows `ara: turn 1 ended in error (429 Provider returned error); session kept`. Exit 0. Not retried, to keep within the free-tier request budget. |
+| run5b recall | `--continue` on the compacted file, no second `/compact`: "quote the expression your `mode()` uses to break ties", no tools | 36.1 s | 1 failed | Entry 50: the same 429. With the F6 fix, stderr shows `ara: turn 1 ended in error (429 Provider returned error); session kept`. Exit 0. |
+| run5b2 recall | the same prompt and binary, on the file after run5b (51 entries; copy `logs/session-before-run5b2.jsonl`) | 35.5 s | 1 failed | Entries 52–53: the same 429, with the same stderr line. Exit 0. Logs `logs/run5b2.*`. |
+| run6 recall | the same prompt and binary, `--model deepseek-v4.1-flash --base-url https://api.b.ai/v1 --api-key-env BAI_API_KEY --continue`, on the file after run5b2 (53 entries; copy `logs/session-before-run6.jsonl`) | 7.8 s | 1 | Entry 54 `model_change`, 55 the prompt, 56 the answer (`stopReason: stop`, thinking + text). It quotes `min(counts, key=lambda v: (-counts[v], v))`, which matches `work/stats.py:26`. It also answers the two unanswered run5 questions with "I don't know": the summary omits both facts. Exit 0. Logs `logs/run6.*`. |
 
 ### Summary coverage (run5, entry 46)
 
@@ -123,6 +133,34 @@ Critical Context. Checked against the journal and `work/`:
 - **Omitted:** the tie-test input list `[4, 1, 3, 1]` and the blank-line fix
   to `test_stats.py`. The run5 recall asked for both, so a correct answer
   there would have come from somewhere other than the summary.
+
+### Replay of run6's request (controlled fake upstream)
+
+The real request body is not logged. To see what run6 sent, the same binary
+(`ara-run5b.exe`) ran the same REPL command on a copy of
+`logs/session-before-run6.jsonl`, against `ara-fake-upstream --record`.
+Only the base URL and the key variable differed. Script: `replay6.py`
+(scratchpad); output under `C:\Temp\ara-v1-trial\replay6`.
+
+- One request: model `deepseek-v4.1-flash`, 6 tools, 26 messages.
+- Messages 0–1: system prompt and project context.
+- Message 2 is a user message: the date/cwd reminder, then
+  `[Compacted summary of earlier turns; source entries withheld]` and the run5
+  summary text (entry 46).
+- Messages 3–21 are the kept tail, from the run1 `slow.py` prompt (entry 25)
+  onward, with its tool calls and results.
+- Messages 22–25 are four user prompts in a row: the run5, run5b and run5b2
+  prompts, whose assistant turns ended in error, and the new prompt. The
+  errored assistant messages are not sent.
+- The tie-breaking expression occurs **once** in the whole body, inside the
+  summary. The tie list `[4, 1, 3, 1]` does not occur.
+
+So run6's answer came from the persisted summary, not from the raw entries
+16–17. This is a reconstruction on the same inputs, not a capture of the real
+request.
+
+Observation, not a finding: because the failed turns' prompts stay in
+context, the model answered them too in run6.
 
 ### Direct probes of the qwen pool
 
@@ -157,7 +195,8 @@ routing explains that was not tested.
 | failed summary calls (run3a–c) | — | **unknown** (no response) | — | — | — | — |
 | run4 summary call | — | **unknown** (not persisted, F3) | — | — | — | — |
 | run5 summary call | — | **unknown** (not persisted, F3) | — | — | — | — |
-| run5, run5b recall (429) | 0 | **2** (`usage {}`) | — | — | — | — |
+| run5, run5b, run5b2 recall (429) | 0 | **3** (`usage {}`) | — | — | — | — |
+| run6 recall (B.AI) | 1 | 0 | 7,584 | 650 | 0 | 453 |
 
 OpenRouter's normalized `tokens_prompt` is 5,645–8,076 for the qwen calls.
 This is a different count from the journal's input + cacheRead; both are kept
@@ -236,7 +275,7 @@ generation time 0.75–14.1 s.
 - **Not observed:** whether the `python slow.py` process was killed after the
   cancel. The trial did not inspect the process table. Process-tree
   termination belongs to [windows-bash-process-tree](windows-bash-process-tree.md)
-  (TOOLS-01c, changes requested).
+  (TOOLS-01c, accepted on `111c325`).
 
 ## Checks on the diagnostic change
 
@@ -262,16 +301,26 @@ Linux long literal path".
 
 ## Gaps and decision
 
-- A real-model compaction with a useful summary is shown (run5). A recall
-  that depends on that summary is **not shown**: run5 and run5b both got
-  HTTP 429. The next attempt is one run5b retry on the same file.
+- A real-model compaction with a useful summary is shown (run5), and a
+  real-model recall that depends on it is shown (run6, B.AI
+  `deepseek-v4.1-flash`, with the replay above). The summary and the recall
+  came from different models; the Session carried the fact between them.
+- On OpenRouter, run5, run5b and run5b2 all got HTTP 429 from the single
+  gemma endpoint, while the run5 `/compact` call on the same model
+  succeeded. Each failed model call may send up to 6 HTTP requests
+  (`RetryPolicy` default: the first plus 5 retries); the exact count was not
+  logged.
 - The manual keypress Ctrl+C in a visible terminal is not run.
 - The trial ran on Windows only. On Linux CI for `43e79e2` (GitHub Actions
   run 36538669183), `ara-cli` e2e passed 73/73, including
   `repl_interrupt_during_bash_returns_to_prompt` and
   `repl_interrupt_during_compact_leaves_no_compaction_entry`. The workflow
-  failed later, in `ara-tools` `tools.rs`, on the read long-path case. That
-  case is fixed in the working tree and has not run on CI yet. Cargo stops at
-  the first failing test target, so the targets after it did not run.
+  failed later, in `ara-tools` `tools.rs`, on the read long-path case. With
+  that fix, run 36541328597 on `111c325` passed every step: 74 test binaries,
+  1030 passed, 0 failed, 1 ignored; `ara-cli` e2e 74/74. The Windows gate
+  (`verify_backend.py`) on `111c325` also passed: 1028 passed, 0 failed, 1
+  ignored; e2e 72/72.
+- F2 (any non-empty summary text is accepted) and F3 (the summary call's
+  model, response ID and usage are not persisted) are open for the user.
 - No independent review.
 - **Decision:** changes requested (WIP). The counts are unchanged.
