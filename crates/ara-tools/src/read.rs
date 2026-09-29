@@ -58,7 +58,7 @@ fn skill_directory_collator() -> Result<CollatorBorrowed<'static>, ToolError> {
 
 const MAX_DIR_ENTRIES: usize = 500;
 const SNIFF_BYTES: usize = 8192;
-/// Bytes scanned past the emitted window to count remaining lines.
+/// Bytes scanned past an ordinary file window to count remaining lines.
 const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
 const READ_DESCRIPTION: &str = "Read a local file or directory via `path`. Append a selector to `path` to read part of a file: `:50` (from line 50), `:50-200` (inclusive), `:50+150` (150 lines from 50), `:5-7,20-24` (separate ranges), `:-60` (last 60 lines), `:raw` (verbatim), or a range with raw (`:raw:2-4`). Encode a literal `:` in a path as `%3A`. Directories return a listing; images return image content. Output is capped at 3000 lines / 50KB; follow the continuation notice to read more.";
 /// Hashline mode adds the snapshot-header rule (`read.md`, `IS_HL_MODE`).
@@ -259,6 +259,17 @@ struct ReadRender<'a> {
 /// Stream the requested line window from `reader` (a file or in-memory
 /// bytes of `size`); blocking, checks `cancel` while scanning.
 fn read_window<R: BufRead + Seek>(
+    reader: R,
+    size: u64,
+    display: &str,
+    sel: &Selector,
+    render: ReadRender<'_>,
+    cancel: &CancellationToken,
+) -> Result<Window, String> {
+    read_window_with_scan_limit::<_, MAX_SCAN_BYTES>(reader, size, display, sel, render, cancel)
+}
+
+fn read_window_with_scan_limit<R: BufRead + Seek, const SCAN_LIMIT: u64>(
     mut reader: R,
     size: u64,
     display: &str,
@@ -287,7 +298,7 @@ fn read_window<R: BufRead + Seek>(
     }
     reader.rewind().map_err(io)?;
     if !sel.multi_ranges.is_empty() {
-        return read_multi_window::<_, MAX_SCAN_BYTES>(reader, size, display, sel, render, cancel);
+        return read_multi_window::<_, SCAN_LIMIT>(reader, size, display, sel, render, cancel);
     }
     let aborted = || format!("Read of {display} was aborted");
 
@@ -305,7 +316,7 @@ fn read_window<R: BufRead + Seek>(
             }
             count += 1;
             scanned += k as u64;
-            if scanned > MAX_SCAN_BYTES {
+            if !text_resource && scanned > SCAN_LIMIT {
                 return Err(format!(
                     "{display} is too large to count lines for a tail selector ({})",
                     format_bytes(size)
@@ -354,7 +365,7 @@ fn read_window<R: BufRead + Seek>(
         if !in_window {
             if line_no > start || truncated_by.is_some() {
                 scanned_after += k as u64;
-                if scanned_after > MAX_SCAN_BYTES {
+                if !text_resource && scanned_after > SCAN_LIMIT {
                     break;
                 }
             }
@@ -672,10 +683,11 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
             break;
         }
         // A late requested span is still reachable, as with a single-range
-        // read. Bound only the post-selection scan for EOF/total-line notes.
+        // read. Only ordinary files bound the post-selection scan; immutable
+        // Skill resources have already been loaded in full, as in fixed OMP.
         if truncated_by.is_some() || range_index >= sel.multi_ranges.len() {
             scanned_after += bytes as u64;
-            if scanned_after > POST_SCAN_LIMIT {
+            if !text_resource && scanned_after > POST_SCAN_LIMIT {
                 break;
             }
         }
@@ -1127,6 +1139,82 @@ mod tests {
         let mut cut = "é".repeat(10).into_bytes();
         cut.pop();
         assert!(!sniff_binary(&cut), "sequence cut at the sniff boundary is not binary");
+    }
+
+    #[test]
+    fn skill_resource_tail_and_line_totals_ignore_file_scan_budget() {
+        let content = (1..=60).map(|n| format!("line{n}")).collect::<Vec<_>>().join("\n");
+        let run = |range, text_resource| {
+            read_window_with_scan_limit::<_, 8>(
+                std::io::Cursor::new(content.as_bytes()),
+                content.len() as u64,
+                "lines.txt",
+                &Selector { range, multi_ranges: vec![], raw: true },
+                ReadRender { numbering: Numbering::None, text_resource, block_context: None },
+                &CancellationToken::new(),
+            )
+        };
+        let tail = run(Some(Range::Tail(2)), true).unwrap();
+        assert_eq!(tail.text, "line59\nline60");
+        assert_eq!(tail.details["totalLines"], 60);
+        let ordinary_tail = run(Some(Range::Tail(2)), false).err().unwrap();
+        assert!(ordinary_tail.contains("too large to count lines for a tail selector"), "{ordinary_tail}");
+
+        let head = run(Some(Range::From(1, Some(1))), true).unwrap();
+        assert_eq!(head.text, "line1\n\n[59 more lines in resource. Use :2 to continue]");
+        assert_eq!(head.details["totalLines"], 60);
+        let ordinary_head = run(Some(Range::From(1, Some(1))), false).unwrap();
+        assert!(ordinary_head.text.contains("not scanned to EOF"), "{}", ordinary_head.text);
+        assert!(ordinary_head.details["totalLines"].is_null());
+    }
+
+    #[test]
+    fn skill_resource_multi_range_counts_to_eof_beyond_file_scan_budget() {
+        let content = (1..=60).map(|n| format!("line{n}")).collect::<Vec<_>>().join("\n");
+        let sel =
+            Selector { range: None, multi_ranges: vec![Range::From(3, Some(3)), Range::From(5, Some(5))], raw: true };
+        for text_resource in [true, false] {
+            let window = read_window_with_scan_limit::<_, 8>(
+                std::io::Cursor::new(content.as_bytes()),
+                content.len() as u64,
+                "lines.txt",
+                &sel,
+                ReadRender { numbering: Numbering::None, text_resource, block_context: None },
+                &CancellationToken::new(),
+            )
+            .unwrap();
+            assert_eq!(window.text, "line3\n\n…\n\nline5");
+            assert_eq!(window.raw_seen_lines, Some(vec![3, 5]));
+            if text_resource {
+                assert_eq!(window.details["totalLines"], 60);
+            } else {
+                assert!(window.details["totalLines"].is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn unbounded_skill_resource_scans_still_honor_cancellation() {
+        let content = "line\n".repeat(5000);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        for sel in [
+            Selector { range: Some(Range::Tail(2)), multi_ranges: vec![], raw: true },
+            Selector { range: Some(Range::From(1, Some(1))), multi_ranges: vec![], raw: true },
+            Selector { range: None, multi_ranges: vec![Range::From(1, Some(1)), Range::From(3, Some(3))], raw: true },
+        ] {
+            let error = read_window_with_scan_limit::<_, 8>(
+                std::io::Cursor::new(content.as_bytes()),
+                content.len() as u64,
+                "large-resource.txt",
+                &sel,
+                ReadRender { numbering: Numbering::None, text_resource: true, block_context: None },
+                &cancel,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(error, "Read of large-resource.txt was aborted");
+        }
     }
 
     #[test]

@@ -274,3 +274,71 @@ passed bootstrap, inventory and the Linux backend gate. The
 passed its native same-host Rust comparison steps on macOS, Linux and Windows.
 These green runs verify the delivered success paths; they do not inject the
 post-open directory I/O fault or close the remaining CTX-01d boundaries.
+
+## Skill resource scan-budget repair (WIP), 2026-09-30
+
+Requirement: a fully loaded immutable `skill://` resource must count all
+its lines for tail, single-range and multi-range reads. Fixed OMP
+`596f2da7101178214aa27a753529d15e6b7ad91d`,
+`tools/read.ts:2368-2374`, passes the complete resource to the in-memory
+renderer with Skill result limits disabled. `tools/read-format.ts:314-327`,
+`339-341` and `529-531` calculate the complete line count before selecting
+or rendering. No 256 MiB post-window scan budget applies to this path.
+
+The tested worktree follows `c341f291`. Its only production change is
+`crates/ara-tools/src/read.rs`: the three scan-budget exits now apply only
+to ordinary files, with the existing cancellation checks retained. A
+private const-generic wrapper lets tests use an 8-byte budget through the
+same implementation. Ordinary-file budgets, resource discovery/loading,
+directory ordering, providers and product state are unchanged. Plugin
+containment and complete selector-renderer parity remain separate open
+boundaries.
+
+| Check | Actual result |
+| --- | --- |
+| `cargo test --locked -p ara-tools --lib skill_resource` | Exit 0, 3/3. Checks tail, complete single/multi line totals, ordinary-file budget behavior and cancellation after more than 4,096 lines. |
+| Restore the three prior resource-budget exits temporarily | Exit 101, all three new tests fail. `read.rs` was restored byte-for-byte by SHA-256. Script/log: `C:\Temp\ara-ctx-resource-scan\mutation.py` and `mutation.log`; log SHA-256 `b66dd51ae9ac54759486f735966ce0acf92dca86f9e8cf1be751b1b0d6443b89`. |
+| `python scripts/ctx_skill_resource_scan_trial.py --binary E:\repos\ara-github\target\debug\ara.exe --output C:\Temp\ara-ctx-resource-scan` | Exit 0 on the final script. A real CLI process reads a 269,484,288-byte Skill asset (65,778 lines) against a controlled local OpenAI Chat SSE upstream. Tail `:raw:-2`, head `:raw:1-1` and multi `:raw:1-1,3-3` all return exact expected text to the next model request and to three successful Session tool receipts; every receipt records `totalLines=65778`. |
+| `python scripts/verify_backend.py` | Exit 0; owned formatting, strict workspace all-target/all-feature Clippy, target and doc tests pass: 1,048 passed, 0 failed, 1 ignored across 74 suites. Log `C:\Temp\ara-ctx-resource-scan\backend-gate.log`, SHA-256 `dbb93b1a0c1d1e197c714f2d4e60a7bcfe9abd5fbbbec8f5ff23a894a3bbc05a`. |
+| `cargo deny --offline --locked check` | Exit 0; advisories, bans, licenses and sources pass with existing warnings. Cached advisory database only; the earlier online RustSec refresh failed its TLS handshake. Log `C:\Temp\ara-ctx-resource-scan\cargo-deny-offline.log`, SHA-256 `9c186629d4ae76c1b555db3f36f90d0f3a46e7afad161b543e895218581c6679`. |
+
+The final controlled trial artifacts are under
+`C:\Temp\ara-ctx-resource-scan\host-ffy345v8`: `events.jsonl`,
+`stderr.txt`, `requests.json`, `summary.json`, and the Session journal
+`sessions\2026-09-29T21-12-57-219Z_01a0ef03-7883-7304-878b-76b160d5ee0d.jsonl`.
+It used four logical model calls/four HTTP requests, three tool receipts,
+0.929 seconds, a 120-second Run limit, a 150-second process limit and
+256 output tokens per call. The upstream is controlled, not a real model;
+usage remains unknown. Only the generated large asset was deleted after
+the run. Timeout handling also preserves captured output and requests
+before re-raising failure; that branch was reviewed but not fault-executed.
+
+Final hashes: `read.rs`
+`ce283ab4ce473ec55bbc0c3c218f400c99692a541d6a3e31ab7e5bfdeb259494`,
+trial script
+`11c58ba3bfb830580f8f9269ebd6ca48b7c43892d906c81eb30e0783fd3fbb44`,
+tested debug binary
+`a20e48a8b9b26dd09e50b14a1878f1cf8cbaafa4d46885c718d720512c2607f8`,
+fixture
+`84faf46391e315f39a7556678a821da0484bbc4740d93ec52b38c8cc3e90e92c`,
+and final summary
+`108ef4acb339d5e6c42bc7d394a7e06d5ecc6d3a9e38674e6075d95c95fbd188`.
+
+Independent Codex subagent `resource_scan_plan` approved the narrow plan.
+`resource_scan_diff_review` reviewed all seven `read.rs` hunks against
+`c341f291` using the fixed OMP source, found no actionable defect and
+independently passed the new resource tests (3/3), Skill read entrance
+tests (4/4), ordinary-file scan-budget test (1/1) and `git diff --check`.
+Its script review found no false-positive PASS path; the observed timeout
+evidence gap was repaired, the final script was rerun as above, and its
+independent re-review passed. Independent Codex point auditor
+`ctx_point_audit` checked both final file hashes and the actual artifacts
+and found no new production defect: this evidence supports WIP delivery,
+not full point acceptance.
+
+This cancels an already-set token while scanning more than 4,096 lines;
+it does not measure mid-scan cancellation latency. The large-file trial
+exercises the actual 256 MiB boundary for all three selector paths, but
+its expected strings are source-backed assertions rather than a direct
+invocation of the full OMP selector renderer. No new real-model task ran
+on this repair. **CTX-01d stays implementing (WIP); P1/P3 do not advance.**
