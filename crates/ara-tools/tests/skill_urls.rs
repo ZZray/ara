@@ -453,7 +453,7 @@ async fn read_skill_resource_types() {
 }
 
 /// Bun 1.4.0 executing fixed OMP `buildDirectoryResource` at 596f2da:
-/// Windows zh-CN and Linux en-US oracles in `ctx-01d-skill-directory-sort.md`.
+/// Windows zh-CN/en-US and Linux en-US oracles in `ctx-01d-skill-directory-sort.md`.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 #[tokio::test]
 async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
@@ -496,20 +496,25 @@ async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
     directory_names.sort_unstable();
     assert_eq!(directory_names, ["A-dir/", "z-dir/", "é-dir/"]);
 
-    // Bun uses the host locale on Windows. Exact fixed-source comparison is
-    // available for zh-CN; other Windows locales keep the selector and
-    // directories-first checks below, with their parity boundary explicit.
+    // Bun uses the host locale on Windows. Exact fixed-source comparisons
+    // cover zh-CN and en-US; other locales keep the generic path checks.
     #[cfg(windows)]
-    let has_exact_oracle = match sys_locale::get_locale().as_deref() {
-        Some("zh-CN") => true,
+    let host_locale = sys_locale::get_locale();
+    #[cfg(windows)]
+    let has_exact_oracle = match host_locale.as_deref() {
+        Some("zh-CN" | "en-US") => true,
         other => {
             eprintln!("No fixed OMP Bun listing oracle for Windows locale {other:?}");
             false
         }
     };
+    #[cfg(windows)]
+    let chinese_order = host_locale.as_deref() == Some("zh-CN");
     #[cfg(target_os = "linux")]
     let has_exact_oracle = true;
-    let expected = if cfg!(windows) {
+    #[cfg(target_os = "linux")]
+    let chinese_order = false;
+    let expected = if chinese_order {
         [
             "A-dir/", "é-dir/", "z-dir/", ".hidden", "📄.txt", "1.txt", "中.txt", "a_1.txt", "a-1.txt", "ä.txt",
             "a10.txt", "A2.txt", "b.txt", "B2.txt", "", "", "Ω.txt",
@@ -533,7 +538,7 @@ async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .filter(|name| name == "é.txt" || name == "e\u{301}.txt")
             .collect();
-        let equivalent_start = if cfg!(windows) { 14 } else { 13 };
+        let equivalent_start = if chinese_order { 14 } else { 13 };
         assert_eq!(&lines[equivalent_start..equivalent_start + 2], raw_equivalent);
     }
 
@@ -543,7 +548,7 @@ async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
             .await
             .unwrap(),
     );
-    let selected_name = if has_exact_oracle && cfg!(windows) {
+    let selected_name = if has_exact_oracle && chinese_order {
         "中.txt"
     } else if has_exact_oracle {
         "a_1.txt"
@@ -581,6 +586,79 @@ async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
     let plain =
         text(&read.execute("c", args(json!({"path": ordinary})), CancellationToken::new(), noop()).await.unwrap());
     assert_eq!(plain, "a-1.txt\na_1.txt");
+}
+
+/// Compare the native Rust tool with the fixed-source Bun oracle produced on
+/// this same runner. The environment variable is supplied by the oracle CI.
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn skill_directory_order_matches_same_host_omp_oracle() {
+    let Some(oracle_path) = std::env::var_os("ARA_CTX_SKILL_ORACLE_JSON") else {
+        eprintln!("Set ARA_CTX_SKILL_ORACLE_JSON to run the same-host fixed OMP comparison");
+        return;
+    };
+    let oracle: Value = serde_json::from_slice(&std::fs::read(oracle_path).unwrap()).unwrap();
+    assert_eq!(oracle["upstreamCommit"], "596f2da7101178214aa27a753529d15e6b7ad91d");
+    assert_eq!(oracle["sourceSha256"], "a20c01f819dac9d33f14ba588a76d814193f7ec0d64aee60089d27e5a5322625");
+    assert_eq!(oracle["bunVersion"], "1.4.0");
+    let bun_platform = match std::env::consts::OS {
+        "windows" => "win32",
+        "macos" => "darwin",
+        other => other,
+    };
+    assert_eq!(oracle["platform"], bun_platform);
+    #[cfg(target_os = "linux")]
+    let rust_locale = "en-US".to_owned();
+    #[cfg(not(target_os = "linux"))]
+    let rust_locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".to_owned());
+    assert_eq!(oracle["collator"]["locale"], rust_locale, "Bun and Rust selected different locales");
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    let read = read::ReadTool { ctx: ToolContext::new(&root).with_skills(vec![demo.clone()]) };
+    for name in ["portable-no-equivalent", "unicode-expanded"] {
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == name)
+            .unwrap_or_else(|| panic!("Missing fixed OMP case {name}"));
+        assert_eq!(case["status"], "ok", "{name}: fixed OMP fixture was not created");
+        let fixture = demo.base_dir.join(name);
+        std::fs::create_dir(&fixture).unwrap();
+        for entry in case["requestedDirs"].as_array().unwrap() {
+            std::fs::create_dir(fixture.join(entry.as_str().unwrap())).unwrap();
+        }
+        for entry in case["requestedFiles"].as_array().unwrap() {
+            let name = entry.as_str().unwrap();
+            std::fs::write(fixture.join(name), name).unwrap();
+        }
+        let mut actual_names: Vec<_> = std::fs::read_dir(&fixture)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        actual_names.sort_unstable();
+        let mut oracle_names: Vec<_> = case["sampledRawBefore"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap().to_owned())
+            .collect();
+        oracle_names.sort_unstable();
+        assert_eq!(actual_names, oracle_names, "{name}: filesystem did not preserve the fixture names");
+
+        let url = format!("skill://demo/{name}:raw");
+        let listing =
+            text(&read.execute("c", args(json!({"path": url})), CancellationToken::new(), noop()).await.unwrap());
+        assert_eq!(listing, case["content"].as_str().unwrap(), "{name}: full directory text differs from fixed OMP");
+        let selected_url = format!("skill://demo/{name}:raw:7-7");
+        let selected = text(
+            &read.execute("c", args(json!({"path": selected_url})), CancellationToken::new(), noop()).await.unwrap(),
+        );
+        let expected_row = case["projectedRows"]["7"].as_str().unwrap();
+        assert_eq!(selected.lines().next().unwrap(), expected_row, "{name}: selected row differs from fixed OMP");
+    }
 }
 
 /// `bash`: `skill://` in the command, env values and cwd resolve to paths.
