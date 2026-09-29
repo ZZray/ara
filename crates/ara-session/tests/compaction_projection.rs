@@ -350,20 +350,24 @@ fn projection_rejects_panic_receipts_but_keeps_completed_failures() {
         Err(CompactionProjectionError::UnsafeSummaryBoundary { id: "c1".into() })
     );
 
-    let mut receipt = tool_result("t1", Some(json!({"exitCode": 1})));
-    let Message::ToolResult(result) = &mut receipt else { unreachable!() };
-    result.is_error = true;
-    let entries = vec![
-        message("q1", Value::Null, user("run a command")),
-        message("a1", json!("q1"), tool_call("t1")),
-        message("r1", json!("a1"), receipt),
-        message("a2", json!("r1"), assistant("continued")),
-        message("q2", json!("a2"), user("next question")),
-        message("a3", json!("q2"), assistant("answer")),
-        compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1", "a2"])),
-    ];
-    write_journal(&path, &entries);
-    assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
+    // A non-zero exit and a Bash timeout (its process group is killed) both
+    // keep the tool's own result and are summarized.
+    for details in [json!({"exitCode": 1}), json!({"timedOut": true, "timeoutSeconds": 300})] {
+        let mut receipt = tool_result("t1", Some(details.clone()));
+        let Message::ToolResult(result) = &mut receipt else { unreachable!() };
+        result.is_error = true;
+        let entries = vec![
+            message("q1", Value::Null, user("run a command")),
+            message("a1", json!("q1"), tool_call("t1")),
+            message("r1", json!("a1"), receipt),
+            message("a2", json!("r1"), assistant("continued")),
+            message("q2", json!("a2"), user("next question")),
+            message("a3", json!("q2"), assistant("answer")),
+            compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1", "a2"])),
+        ];
+        write_journal(&path, &entries);
+        assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"], "{details}");
+    }
 }
 
 /// The Session guard agrees with the Agent's span rule: turns that ended

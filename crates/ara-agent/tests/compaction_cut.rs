@@ -68,7 +68,7 @@ fn tool_result(id: &str, unknown_effect: bool) -> Message {
         tool_call_id: id.into(),
         tool_name: "write".into(),
         content: vec![UserBlock::text("receipt")],
-        details: unknown_effect.then(|| json!({"timedOut":true})),
+        details: unknown_effect.then(|| json!({"panicked":true})),
         is_error: unknown_effect,
         timestamp: 0,
     })
@@ -262,6 +262,37 @@ fn a_cancelled_call_is_summarized_with_its_own_abort_result() {
     assert_eq!(record["is_error"], true);
     assert_eq!(record["unknown_effect"], false);
     assert!(text.lines().nth(3).unwrap().contains("\"stop_reason\":\"aborted\""));
+}
+
+#[test]
+fn a_timed_out_call_does_not_block_later_cuts() {
+    // Bash kills the process group on timeout as on a cancel and returns its
+    // own error result; the turn and every later one can be summarized.
+    let timed_out = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c1".into(),
+        tool_name: "write".into(),
+        content: vec![UserBlock::text("building\n\n[Command timed out after 300 seconds]")],
+        details: Some(json!({"timedOut":true,"timeoutSeconds":300})),
+        is_error: true,
+        timestamp: 0,
+    });
+    let messages = [
+        user("build"),
+        assistant(StopReason::ToolUse, Some("c1")),
+        timed_out,
+        assistant(StopReason::Stop, None),
+        user("two"),
+        assistant(StopReason::Stop, None),
+        user("three"),
+    ];
+    let ids = ["e1", "e2", "e3", "e4", "e5", "e6", "e7"];
+    assert_eq!(cuts(&ids, &messages), vec![at(4, "e5"), at(6, "e7")]);
+    let text = serialize_sources_for_summary(&sources_of(&ids, &messages)[..4]).unwrap();
+    let record: serde_json::Value =
+        text.lines().map(|line| serde_json::from_str(line).unwrap()).nth(2).expect("tool result record");
+    assert!(record["content"].as_str().unwrap().ends_with("[Command timed out after 300 seconds]"));
+    assert_eq!(record["is_error"], true);
+    assert_eq!(record["unknown_effect"], false);
 }
 
 #[test]

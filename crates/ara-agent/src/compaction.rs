@@ -164,8 +164,7 @@ fn truncate_tool_result(text: &str) -> String {
 
 fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
     result.details.as_ref().is_some_and(|details| {
-        details.get("timedOut").and_then(serde_json::Value::as_bool) == Some(true)
-            || details.get("panicked").and_then(serde_json::Value::as_bool) == Some(true)
+        details.get("panicked").and_then(serde_json::Value::as_bool) == Some(true)
             || (details.get("__synthetic").and_then(serde_json::Value::as_bool) == Some(true)
                 && details.get("source").and_then(serde_json::Value::as_str) == Some("interrupted_unknown_effect")
                 && details.get("executed").and_then(serde_json::Value::as_str) == Some("unknown"))
@@ -182,10 +181,12 @@ fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
 /// with an ordinary error result. A call that was running when the user
 /// cancelled it keeps the tool's own error result (for Bash, the partial
 /// output and `[Command aborted]`, or `Command aborted` with no output) and is
-/// summarized like any failed call, as in OMP. Timed-out, panicked and
-/// interrupted-unknown results are refused, which is stricter than OMP. The
-/// Session owner must still prove IDs and messages correspond to the current
-/// branch and commit against that branch's leaf.
+/// summarized like any failed call, as in OMP. A Bash call that timed out ends
+/// the same way (the tool kills its process group) and keeps its own result
+/// with `[Command timed out after N seconds]`, so it is summarized too.
+/// Panicked and interrupted-unknown results are refused, which is stricter
+/// than OMP. The Session owner must still prove IDs and messages correspond to
+/// the current branch and commit against that branch's leaf.
 pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<(), SummaryInputError> {
     if sources.is_empty() {
         return Err(SummaryInputError::EmptySources);

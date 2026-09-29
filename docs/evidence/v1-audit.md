@@ -75,7 +75,8 @@ implementer ran the gate and the mutations.
     (`packages/coding-agent/src/tools/bash.ts:657-658` at `596f2da`).
   - A tool that a crash or kill interrupts is paired on resume with a
     synthetic `interrupted_unknown_effect` result. It is never replayed.
-  - Compaction refuses timed-out, panicked and interrupted-unknown results.
+  - Compaction refuses panicked and interrupted-unknown results. (Timed-out
+    results were refused at acceptance; the dogfood log changes that.)
   - **Plan wording:** the plan row says in-flight effects "are recorded as
     unknown". By OMP parity, a live cancel keeps the tool's aborted result
     instead. The ledger row states this.
@@ -104,7 +105,8 @@ implementer ran the gate and the mutations.
   - a physical keypress in a visible terminal (ConPTY covers the console
     path).
 - **Compaction:**
-  - a timed-out tool result blocks every later cut;
+  - ~~a timed-out tool result blocks every later cut~~: fixed after
+    acceptance ([dogfood log](v1-dogfood.md));
   - an M1 e2e test with a hand-written non-soft compaction entry;
   - the summarizer reads a user Ctrl+C `[Command aborted]` as an unexpected
     abort, and OMP has the same text;

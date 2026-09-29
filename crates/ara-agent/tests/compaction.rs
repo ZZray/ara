@@ -284,22 +284,23 @@ fn prompt_requires_matched_tool_receipts() {
         validate_completed_summary_span(&[a, b, SummarySource { entry_id: "e3", message: &unknown }, d]),
         Err(SummaryInputError::UnknownToolEffect)
     );
+    // A timed-out Bash call was killed like a cancelled one and keeps its own
+    // result, so it is summarized, as in OMP.
     let timed_out = Message::ToolResult(ToolResultMessage {
         tool_call_id: "c5".into(),
         tool_name: "write".into(),
-        content: vec![UserBlock::text("partial output")],
+        content: vec![UserBlock::text("partial output\n\n[Command timed out after 1 seconds]")],
         details: Some(serde_json::json!({"timedOut":true,"timeoutSeconds":1})),
         is_error: true,
         timestamp: 0,
     });
     let timeout_source = SummarySource { entry_id: "e3", message: &timed_out };
-    assert_eq!(
-        build_summary_prompt(&[a, b, timeout_source, d], None).err(),
-        Some(SummaryInputError::UnknownToolEffect)
-    );
+    assert!(build_summary_prompt(&[a, b, timeout_source, d], None).is_ok());
     let serialized = serialize_sources_for_summary(&[timeout_source]).unwrap();
     let receipt: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-    assert_eq!(receipt["unknown_effect"], true);
+    assert_eq!(receipt["unknown_effect"], false);
+    assert_eq!(receipt["is_error"], true);
+    assert!(receipt["content"].as_str().unwrap().ends_with("[Command timed out after 1 seconds]"));
 }
 
 #[test]

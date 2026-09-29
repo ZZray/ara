@@ -184,8 +184,7 @@ fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
             Message::ToolResult(result) => {
                 if result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
                     || result.details.as_ref().is_some_and(|details| {
-                        details.get("timedOut").and_then(Value::as_bool) == Some(true)
-                            || details.get("panicked").and_then(Value::as_bool) == Some(true)
+                        details.get("panicked").and_then(Value::as_bool) == Some(true)
                             || (details.get("__synthetic").and_then(Value::as_bool) == Some(true)
                                 && details.get("source").and_then(Value::as_str) == Some("interrupted_unknown_effect")
                                 && details.get("executed").and_then(Value::as_str) == Some("unknown"))

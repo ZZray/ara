@@ -82,3 +82,68 @@ entry records the task, the route, the result and an independent check.
   still opens them.
 - **Blockers seen:** none. The REPL finished a two-file fix with the test
   update on its own; only the vacuous header check needed a human review.
+
+## Follow-up: a timed-out tool no longer blocks compaction
+
+This follow-up was implemented directly in the working repository, not
+through the REPL. The audit named it, and in daily use it stops compaction
+for the rest of a long session: a Bash call that hits its timeout (the
+default is 300 s, and a long `cargo` build can hit it) left a result that
+every later cut had to include.
+
+- **Why it was refused:** the result carried `timedOut: true`, and both
+  `has_unknown_tool_effect` (`ara-agent`) and `safe_soft_summary_prefix`
+  (`ara-session`) treated that as an unknown effect.
+- **Why it is not unknown:** in `crates/ara-tools/src/bash.rs` a timeout and
+  a cancel leave the same `select!` loop and run the same process-group kill
+  (a Job object on Windows). `bash_timeout_kills_process_group` in
+  `crates/ara-tools/tests/tools.rs` shows that a background child does not
+  survive. The tool returns its own error result, which is the output plus
+  `[Command timed out after N seconds]`. Fix review I1 already decided that a
+  cancelled call is summarized with its own result, as in OMP. OMP has no
+  refusal of this kind.
+- **Partial effects:** the AGT-COMPACTIONa review noted that a timed-out
+  command may have partial effects. That holds for a cancel or a non-zero
+  exit too. The effects are the tool's own, and the output and marker record
+  them; nothing keeps running after the kill.
+- **Long output:** the summary input keeps the first 2,000 characters of any
+  tool result, as it does for every result. A trailing marker after longer
+  output is dropped there, but `is_error: true` still reaches the summarizer.
+  The kept session entry keeps the full result.
+- **Decision (OMP parity):** timed-out results are summarized like cancelled
+  ones. Panicked and synthetic `interrupted_unknown_effect` results are still
+  refused, because the tool did not finish normally and its state is unknown.
+- **Change:**
+  - `timedOut` was removed from both guards, and the doc comment on
+    `validate_completed_summary_span` was updated.
+  - `prompt_requires_matched_tool_receipts` now expects a timed-out receipt
+    to be summarized with `unknown_effect: false`.
+  - The cut tests' unknown-effect fixture uses `panicked` instead.
+  - New test `a_timed_out_call_does_not_block_later_cuts` in `ara-agent`.
+  - New e2e test `repl_compact_summarizes_past_a_timed_out_tool`:
+    - a real Bash call times out after 1 s;
+    - `/compact` then cuts past that turn;
+    - the summarizer sees `[Command timed out after 1 seconds]` and
+      `"unknown_effect":false`.
+- **Mutations:**
+  - Putting `timedOut` back into only the Agent guard fails the new e2e test
+    and `prompt_requires_matched_tool_receipts`.
+  - Putting it back into only the Session guard fails the new e2e test and
+    `projection_rejects_panic_receipts_but_keeps_completed_failures`, which
+    now also expects a `timedOut` receipt to be kept.
+  - The reviewer found that the Agent-guard mutation also fails
+    `a_timed_out_call_does_not_block_later_cuts`.
+  - The sources were restored, with matching sha256.
+- **Checks:**
+  - `cargo test -p ara-agent --test compaction --test compaction_cut`:
+    13/13 and 16/16.
+  - `cargo test -p ara-cli --test e2e repl_compact`: 4/4.
+  - `cargo test -p ara-session --test compaction_projection`: 8/8.
+  - `python scripts/verify_backend.py`: PASS, 1039 passed, 0 failed,
+    1 ignored; e2e 77/77.
+- **Review:** the session's own model (Claude Opus 5.5) was the implementer.
+  Sonnet 5.5 independent static review: approve, no critical or important
+  finding. Its six minor findings were resolved: the panicked wording, the
+  superseded notes in the AGT-COMPACTIONa evidence, V1-COMPACT and the
+  2026-09-26 handoff, the partial-effects and long-output notes, the Session
+  projection test, the mutation list and the ledger note.

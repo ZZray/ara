@@ -3183,6 +3183,44 @@ async fn repl_compact_summarizes_past_an_interrupted_turn() {
     assert_eq!(resumed.len(), fourth.len() + 2, "plus the fourth answer and the new prompt");
 }
 
+/// Dogfood follow-up: a Bash call that timed out (the tool killed its process
+/// group, as on a cancel) is summarized like any failed call and does not
+/// block later compaction.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_compact_summarizes_past_a_timed_out_tool() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_t", "bash", "{\"command\":\"echo started; sleep 30\",\"timeout\":1}"), finish("tool_calls"), done()]},
+        {"events": [text("After the timeout."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Summary past the timeout."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "build it\nsecond prompt\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+
+    let entries = journal(&env.session_files()[0]);
+    let result = entries.iter().find(|e| e["message"]["toolCallId"] == "call_t").expect("tool result");
+    assert_eq!(result["message"]["details"]["timedOut"], json!(true), "{result}");
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1, "{entries:?}");
+    let first_kept = compactions[0]["firstKeptEntryId"].as_str().unwrap();
+    let kept = entries.iter().find(|e| e["id"] == first_kept).unwrap();
+    assert_eq!(user_texts([&kept["message"]]), vec!["second prompt"], "the cut is past the timed-out turn");
+
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 4, "two turns (three calls) and one summary");
+    let summary_text = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    assert!(summary_text.contains("[Command timed out after 1 seconds]"), "{summary_text}");
+    assert!(summary_text.contains("\"unknown_effect\":false"), "{summary_text}");
+}
+
 /// V1-COMPACT failure paths: second /compact, failed summary, --no-session,
 /// and a history too small to cut. Each leaves the session usable.
 #[tokio::test(flavor = "multi_thread")]
