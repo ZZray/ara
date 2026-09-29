@@ -661,6 +661,209 @@ async fn skill_directory_order_matches_same_host_omp_oracle() {
     }
 }
 
+/// Execute representative Skill selectors against outputs from the complete,
+/// fixed-OMP in-memory renderer. An explicit oracle is required for comparison.
+#[tokio::test]
+async fn skill_selectors_match_fixed_omp_renderer() {
+    let Some(oracle_path) = std::env::var_os("ARA_CTX_SKILL_SELECTOR_ORACLE_JSON") else {
+        eprintln!("Set ARA_CTX_SKILL_SELECTOR_ORACLE_JSON to run the fixed OMP renderer comparison");
+        return;
+    };
+    let oracle: Value = serde_json::from_slice(&std::fs::read(oracle_path).unwrap()).unwrap();
+    assert_eq!(oracle["schemaVersion"], 1);
+    assert_eq!(oracle["upstreamCommit"], "596f2da7101178214aa27a753529d15e6b7ad91d");
+    assert_eq!(oracle["bunVersion"], "1.4.0");
+    let bun_platform = match std::env::consts::OS {
+        "windows" => "win32",
+        "macos" => "darwin",
+        other => other,
+    };
+    assert_eq!(oracle["platform"], bun_platform, "The oracle must run on the Rust test host");
+    assert_eq!(oracle["native"]["marker"], "__piNativesV18_1_8");
+    assert_eq!(oracle["native"]["buildProvenance"], "unverified");
+    assert_eq!(oracle["mocks"]["totalCalls"], 0, "A dead import was called by the upstream renderer");
+    assert!(oracle["nativeCalls"].as_u64().unwrap() > 0, "The real native context path was not exercised");
+    #[cfg(windows)]
+    assert_eq!(oracle["native"]["sha256"], "fd757d36c44b8fa4cb184adc979f39b6aedabf8341d5a5316bf36f3c3949aa20");
+
+    let manifest = oracle["sourceManifest"].as_array().unwrap();
+    for (path, blob, sha256) in [
+        (
+            "packages/coding-agent/src/tools/read-format.ts",
+            "9a889f8195f07046b37aa5ce4c090d67bf3cfdf3",
+            "22fca4b0777a839744a9cd18b53d8b3994b85062b1c4f0d81d826a3c841964fd",
+        ),
+        (
+            "packages/coding-agent/src/tools/read-selector.ts",
+            "a72a9c3bf0a0be5744e1dfdb4dcd10e4b76b1e60",
+            "de689a702a90e36486d149213b68b3f428a45730dcdccf7ce2ff31db99fae91d",
+        ),
+        (
+            "packages/coding-agent/src/tools/path-utils.ts",
+            "858db82b48e009bdbc933252ea2657e85c807ff6",
+            "82cee185d76f6013458104a7095b6e35c38ea80aa5056ab24b81bf70c5c941c6",
+        ),
+        (
+            "packages/coding-agent/src/tools/hashline-format.ts",
+            "5d89c1216a4b25b625226d20c37e96c864409aac",
+            "085c68ac13e772ae003efbc9e24663b974186f7852b67f0d6427b97ec2e3f7cc",
+        ),
+        (
+            "packages/coding-agent/src/tools/tool-result.ts",
+            "a44ec695e8d3601ccbc1785bd26daa7f4c85aa43",
+            "6d0fcb80c1e12a6a34c938d6c9bb1b520eec3b1e6daa7bf59ee930e8c312079f",
+        ),
+        (
+            "packages/coding-agent/src/tools/output-meta.ts",
+            "d11f31ec5e0105823eb7e8cc276715f468511148",
+            "84f149c63e2d0b2508d97fcb7238d0913c982b71750c42e33beee0380bf37a9a",
+        ),
+        (
+            "packages/coding-agent/src/tools/tool-errors.ts",
+            "f4a38e0b7aa6a792c4ba5a7ac255f5c0243cd268",
+            "1bbb052538b5a8d16e759580dfce670ea5bfe496b5991d8c9f15627fa06d353d",
+        ),
+        (
+            "packages/coding-agent/src/utils/block-context.ts",
+            "5949ece5be77b4e5efdb9ef6f7e655b08bbfb9ec",
+            "bfa492d6a106dce1b17e8430c6d27ba9e7b828e751a0d69d72e31b19e895fae9",
+        ),
+        (
+            "packages/coding-agent/src/utils/file-display-mode.ts",
+            "894fb982ce8287451881f46f3f65c1f3db421ffc",
+            "44ccda6d3a5966de82611b760fb005dad251965861fe26f602fc43bf4d944683",
+        ),
+        (
+            "packages/coding-agent/src/utils/edit-mode.ts",
+            "5a877b1538920e7cf076d1f4fcf0c30b9e82f857",
+            "a906e15451d6710d161fd7057fcaa5504e133d01ca3ae3d3f11570f5ed818f4b",
+        ),
+        (
+            "packages/coding-agent/src/session/streaming-output.ts",
+            "45e48ac850f713c586db7e4d740fb891a493f5e9",
+            "e5f9cb0958ebfcbb0c27483c3ba1040f9844e16fba16522e0611b9e6566b03d1",
+        ),
+        (
+            "packages/coding-agent/src/internal-urls/filesystem-resource.ts",
+            "c9d67d33ffbdc26bacb5d6aeaf3a68d18cb3e403",
+            "a20c01f819dac9d33f14ba588a76d814193f7ec0d64aee60089d27e5a5322625",
+        ),
+    ] {
+        let source = manifest
+            .iter()
+            .find(|source| source["path"] == path)
+            .unwrap_or_else(|| panic!("Missing executed fixed source {path}"));
+        assert_eq!(source["gitBlob"], blob, "{path}: wrong Git source");
+        assert_eq!(source["sha256"], sha256, "{path}: wrong executed bytes");
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "oracle", "body\n");
+    let fixtures = oracle["fixtures"].as_array().unwrap();
+    assert_eq!(fixtures.len(), 5);
+    let plain_content = (1..=12).map(|line| format!("line{line}\n")).collect::<String>();
+    let blocks_content = "function one() {\n  return 1;\n}\nfunction two() {\n  return 2;\n}\n";
+    for name in ["plain.txt", "empty.txt", "crlf.txt", "blocks.ts", "listing"] {
+        let fixture = fixtures
+            .iter()
+            .find(|fixture| fixture["name"] == name)
+            .unwrap_or_else(|| panic!("Missing required fixture {name}"));
+        let target = demo.base_dir.join(name);
+        if name == "listing" {
+            assert_eq!(fixture["kind"], "directory");
+            assert_eq!(fixture["dirs"], json!(["alpha-dir", "z-dir"]));
+            assert_eq!(fixture["files"], json!((1..=10).map(|line| format!("file-{line:02}.txt")).collect::<Vec<_>>()));
+            std::fs::create_dir(&target).unwrap();
+            for entry in fixture["dirs"].as_array().unwrap() {
+                let name = entry.as_str().unwrap();
+                std::fs::create_dir(target.join(name)).unwrap();
+            }
+            for entry in fixture["files"].as_array().unwrap() {
+                let name = entry.as_str().unwrap();
+                std::fs::write(target.join(name), name).unwrap();
+            }
+        } else {
+            assert_eq!(fixture["kind"], "file");
+            let content = fixture["text"].as_str().unwrap();
+            if name == "plain.txt" {
+                assert_eq!(content, plain_content);
+            }
+            if name == "empty.txt" {
+                assert!(content.is_empty());
+            }
+            if name == "crlf.txt" {
+                assert_eq!(content, plain_content.replace('\n', "\r\n"));
+            }
+            if name == "blocks.ts" {
+                assert_eq!(content, blocks_content);
+            }
+            std::fs::write(target, content).unwrap();
+        }
+    }
+
+    let cases = oracle["cases"].as_array().unwrap();
+    for (fixture, selector) in [
+        ("plain.txt", ""),
+        ("plain.txt", "3-4"),
+        ("plain.txt", "raw:3-4"),
+        ("plain.txt", "raw:-2"),
+        ("plain.txt", "raw:1-1,8-9"),
+        ("plain.txt", "1-1,8-8,99-99"),
+        ("empty.txt", ""),
+        ("empty.txt", "raw"),
+        ("crlf.txt", "raw:2-2"),
+        ("crlf.txt", "3-4"),
+        ("listing", ""),
+        ("listing", "3-3"),
+        ("listing", "raw:3-3"),
+        ("listing", "raw:-2"),
+        ("listing", "raw:1-1,8-8"),
+        ("blocks.ts", "1-1,4-4"),
+    ] {
+        assert!(
+            cases.iter().any(|case| case["fixture"] == fixture && case["selector"] == selector),
+            "Missing representative renderer comparison {fixture}:{selector}"
+        );
+    }
+    for line_numbers in [false, true] {
+        assert!(
+            cases.iter().any(|case| case["fixture"] == "plain.txt"
+                && case["selector"] == "3-4"
+                && case["lineNumbers"] == line_numbers),
+            "Missing numbered-mode comparison {line_numbers}"
+        );
+    }
+
+    for case in cases {
+        let id = case["id"].as_str().unwrap();
+        let fixture = case["fixture"].as_str().unwrap();
+        assert!(fixtures.iter().any(|row| row["name"] == fixture), "{id}: unknown fixture");
+        let selector = case["selector"].as_str().unwrap();
+        let url = if selector.is_empty() {
+            format!("skill://oracle/{fixture}")
+        } else {
+            format!("skill://oracle/{fixture}:{selector}")
+        };
+        let mut ctx =
+            ToolContext::new(&root).with_skills(vec![demo.clone()]).with_edit(ara_edit::EditMode::Hashline, true);
+        ctx.line_numbers = case["lineNumbers"].as_bool().unwrap();
+        let read = read::ReadTool { ctx };
+        assert_eq!(case["expected"]["isError"], false, "{id}: fixture must have a successful upstream result");
+        let actual = read
+            .execute(id, args(json!({"path": url})), CancellationToken::new(), noop())
+            .await
+            .unwrap_or_else(|error| panic!("{id}: Rust returned {}", error.0));
+        assert_eq!(text(&actual), case["expected"]["text"].as_str().unwrap(), "{id}: complete renderer text");
+        assert_eq!(actual.details.as_ref().unwrap()["totalLines"], case["expected"]["totalLines"], "{id}: line count");
+        assert!(
+            read.ctx.edit_store.head(&ara_edit::path_policy::canonical_key(&demo.base_dir.join(fixture))).is_none(),
+            "{id}: immutable resource must not create an editable snapshot"
+        );
+    }
+    eprintln!("Compared {} complete Skill renderer cases against fixed OMP", cases.len());
+}
+
 /// `bash`: `skill://` in the command, env values and cwd resolve to paths.
 #[tokio::test]
 async fn bash_expands_skill_urls() {

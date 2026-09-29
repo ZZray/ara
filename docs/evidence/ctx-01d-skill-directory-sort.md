@@ -367,3 +367,10 @@ The final independent point audit assigns the remaining evidence narrowly:
   internal URL schemes keep their own source rows.
 - Final CTX-01d acceptance still requires applicable checks on its final
   snapshot, a targeted real-model task and an independent point audit.
+
+The subsequent [representative Skill renderer comparison](ctx-01d-skill-selector-renderer.md)
+now directly invokes the fixed OMP parser/renderer and matches 22 complete
+cases against Rust on Windows. It supersedes the projected-row-only
+evidence for those representative inputs, with source and result
+mutation controls. Directory I/O fault execution and final CTX-01d
+acceptance remain open.
