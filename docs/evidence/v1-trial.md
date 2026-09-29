@@ -10,6 +10,8 @@ Earlier, the fixed qwen pool answered 429 to every summary call, and the free
 router returned a safety-classifier line as the "summary". No independent
 review has run; nothing is marked tested or accepted. F2 and F3 are decided
 by OMP parity, and the Ctrl+C console path is covered by a ConPTY check.
+Run7 (below) repeats the whole task on the delivered code (`c07bb3c`, code
+equal to `111c325`) through B.AI `deepseek-v4.1-flash`. All steps pass.
 
 ## Point and scope
 
@@ -319,7 +321,77 @@ The read-probe fix is recorded in
 [tools-01a-multi-range-read](tools-01a-multi-range-read.md), "Follow-up:
 Linux long literal path".
 
+## Final run on the delivered code (run7, 2026-09-29)
+
+Runs 1–3a used a binary built before `43e79e2`, so the coding task and the
+turn cancel had not run on the delivered code. Run7 repeats the whole task
+once on it.
+
+- **Code:** `c07bb3c`, whose `crates/` tree equals `111c325`. `main.rs`
+  sha256 is `602920a8…2813d619`, and `ara.exe` sha256 is
+  `7e08ac01…48075c37`, a debug build copied from `C:\Temp\ara-verify-target`.
+- **Route:** B.AI `https://api.b.ai/v1`, `--api openai-completions`, key
+  from `BAI_API_KEY`. `GET /models` returned 200, listing 58 models,
+  including `deepseek-v4.1-flash` (types `openai`, `anthropic`). Every
+  assistant entry records `deepseek-v4.1-flash`.
+- **Fixture:** a fresh clone of the fixture repo at `6a93b52` under
+  `C:\Temp\ara-v1-final` (local, not committed).
+- **Driver:** the run1 driver with a new root, using `--max-model-calls 8
+  --max-time 300` per process.
+- **Interrupt:** a console CTRL_C_EVENT, as in run1.
+
+| Step | Observed | Time |
+| --- | --- | --- |
+| a1 fix `median` | The test run shows 1 failure; the fix is an `edit`; the rerun passes 4/4 | 14.0 s |
+| a2 add `mode` | 3 tests added; 7/7 pass | 16.4 s |
+| a3 cancel `python slow.py` | Ctrl+C about 3 s after `slow.started` appears. stderr: `interrupt received`, `tool bash failed`, `turn 3 cancelled; session kept`. Journal: `toolResult` `Command aborted` with `isError: true`, then `assistant(aborted)` | 5.9 s |
+| a4 recall after cancel | Names the `median` fix, reruns the tests (7/7), and says the `slow.py` run was aborted. `/exit` returns 0 | 5.6 s |
+| b1 `--continue`, recall | Names `mode(values)` without tools | 2.4 s |
+| b2 `/compact` (`--compact-keep-tokens 300`) | `compacted 2659 estimated tokens down to 1149`. Entry 38 is `compaction`: `method: soft`, `tokensBefore` 2659, 25 source IDs (entries 3–27), first kept = entry 28 | 6.8 s |
+| b3 recall after compaction | Names the `median` fix, then `mode`. Ctrl+C at the idle prompt exits 130 | 2.8 s |
+| c1 restart `--continue`, recall | Without tools: `lambda value: (-counts[value], value)`, which matches `work/stats.py`. `/exit` returns 0 | 3.0 s |
+
+- **Artifact check (independent):**
+  - `python -m unittest` in `work/` passes 7/7.
+  - `git diff`: `median` now averages the two middle values, and `mode`
+    uses `min(counts, key=lambda value: (-counts[value], value))`.
+  - The `test_stats.py` diff is only the `mode` import and the three new
+    tests. Turn 1 left the file unchanged, as asked.
+  - No `slow.py` or `ara` process from the run was left.
+- **The recall in c1 came from the summary:**
+  - The expression is in the persisted summary. It is in none of the
+    context entries sent next to it: the kept tail (entries 28–37) and the
+    entries after the compaction.
+  - A fake-upstream replay of the file as c1 found it (its first 41 lines)
+    with the same binary sent 15 messages:
+    - two system messages;
+    - the summary message: `[Compacted summary of earlier turns; source
+      entries withheld]` plus the exact persisted text, after the date and
+      cwd reminder;
+    - the kept tail from the `slow.py` prompt onward;
+    - the new prompt.
+  - The expression occurs once in that request body, inside the summary.
+    The first turn's prompt is absent.
+- **Usage** (journal, per process):
+
+  | Process | Assistant messages | Usage known | Input | Output | Cache read | Total |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | a | 15 | 14 | 14,057 | 1,536 | 95,616 | 111,209 |
+  | b | 2 | 2 | 1,615 | 92 | 15,232 | 16,939 |
+  | c | 1 | 1 | 223 | 84 | 7,296 | 7,603 |
+
+  - The aborted message has no usage, and it is counted as unknown, not 0.
+  - The b2 summary call's usage is **unknown**, because it is not persisted
+    (F3).
+- **Secrets:** a scan of the 52 non-binary files under
+  `C:\Temp\ara-v1-final` found no `BAI_API_KEY` or `OPENROUTER_API_KEY`
+  value.
+
 ## Gaps and decision
+
+- Run7 shows the whole V1 task on the delivered code: a coding task, a turn
+  cancel, resume, a compaction with a useful summary, and a recall after
+  restart that depends on it.
 
 - A real-model compaction with a useful summary is shown (run5), and a
   real-model recall that depends on it is shown (run6, B.AI
