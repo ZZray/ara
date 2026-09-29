@@ -26,7 +26,7 @@
 //! labels, custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
 //! listing/search, forking, moving, title generation, blob externalization.
 
-use ara_ai::{AssistantBlock, Message, StopReason, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
+use ara_ai::{AssistantBlock, Message, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
@@ -143,13 +143,15 @@ impl Entry {
 }
 
 /// Storage-side guard for a soft summary's replaced prefix. It mirrors the
-/// Agent's completed-turn/tool-receipt boundary without making Session depend
-/// on the Agent crate. The raw prefix stays available for audit.
+/// Agent's `validate_completed_summary_span` without making Session depend on
+/// the Agent crate: every tool call is paired with its result, the prefix does
+/// not end with an unanswered prompt, and no unknown-effect result is hidden.
+/// Turns that ended aborted, errored or length-stopped are summarized, as in
+/// fixed OMP. The raw prefix stays available for audit.
 fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
     let mut saw_message = false;
     let mut pending: HashMap<String, String> = HashMap::new();
-    let mut awaiting_assistant = false;
-    let mut last_complete_assistant = false;
+    let mut ends_with_user = false;
     for entry in branch {
         let Some(message) = entry.message() else { continue };
         if !saw_message && !matches!(message, Message::User(_)) {
@@ -159,12 +161,11 @@ fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
         match &message {
             Message::User(user) => {
                 if !pending.is_empty()
-                    || awaiting_assistant
                     || matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
                 {
                     return false;
                 }
-                last_complete_assistant = false;
+                ends_with_user = true;
             }
             Message::Developer(_) => return false,
             Message::Assistant(assistant) => {
@@ -173,20 +174,11 @@ fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
                 {
                     return false;
                 }
-                awaiting_assistant = false;
-                let calls: Vec<_> = assistant.tool_calls().collect();
-                match assistant.stop_reason {
-                    StopReason::Stop if calls.is_empty() => last_complete_assistant = true,
-                    StopReason::Stop | StopReason::ToolUse if !calls.is_empty() => {
-                        last_complete_assistant = false;
-                        awaiting_assistant = true;
-                        for call in calls {
-                            if pending.insert(call.id.clone(), call.name.clone()).is_some() {
-                                return false;
-                            }
-                        }
+                ends_with_user = false;
+                for call in assistant.tool_calls() {
+                    if pending.insert(call.id.clone(), call.name.clone()).is_some() {
+                        return false;
                     }
-                    _ => return false,
                 }
             }
             Message::ToolResult(result) => {
@@ -205,11 +197,11 @@ fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
                     Some(name) if name == result.tool_name => {}
                     _ => return false,
                 }
-                last_complete_assistant = false;
+                ends_with_user = false;
             }
         }
     }
-    saw_message && pending.is_empty() && !awaiting_assistant && last_complete_assistant
+    saw_message && pending.is_empty() && !ends_with_user
 }
 
 /// One decoded message tied to its actual journal entry ID. This is an

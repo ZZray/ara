@@ -2910,6 +2910,21 @@ fn tools_absent_or_empty(body: &Value) -> bool {
     }
 }
 
+/// A compaction's `sourceEntryIds` are exactly the message entries before
+/// `firstKeptEntryId`, which is a user message, and `tokensBefore` is a
+/// positive estimate.
+fn assert_compaction_provenance(entries: &[Value], compaction: &Value) {
+    let first_kept = compaction["firstKeptEntryId"].as_str().unwrap();
+    let kept_index = entries.iter().position(|e| e["id"] == first_kept).expect("firstKeptEntryId exists");
+    assert_eq!(entries[kept_index]["message"]["role"], json!("user"), "firstKeptEntryId is a user entry");
+    let expected: Vec<&str> =
+        entries[..kept_index].iter().filter(|e| e["type"] == "message").map(|e| e["id"].as_str().unwrap()).collect();
+    let sources: Vec<&str> =
+        compaction["sourceEntryIds"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(sources, expected, "sourceEntryIds are the summarized message entries");
+    assert!(compaction["tokensBefore"].as_u64().is_some_and(|t| t > 0), "{compaction}");
+}
+
 /// V1-COMPACT: manual `/compact` then keep working.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_manual_compact_then_keep_working() {
@@ -2951,6 +2966,7 @@ async fn repl_manual_compact_then_keep_working() {
         let index = entries.iter().position(|e| e["id"] == id).unwrap_or_else(|| panic!("source {id} exists"));
         assert!(index < compaction_index, "source {id} precedes the compaction entry");
     }
+    assert_compaction_provenance(&entries, compaction);
 
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 4, "two turns + summary + third turn");
@@ -3050,6 +3066,90 @@ async fn repl_continue_uses_the_persisted_summary() {
     assert!(first.contains("Fake summary of earlier work."), "{first}");
     assert!(!first.contains("first prompt"), "summarized raw text is not resent: {first}");
     assert!(first.contains("second prompt"), "kept turn remains: {first}");
+}
+
+/// V1-COMPACT after V1-CANCEL: an interrupted turn does not block a later
+/// `/compact` (fixed OMP summarizes aborted turns). The summary covers the
+/// aborted turn, and a resumed process sends the same context the compacting
+/// process built in memory.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_compact_summarizes_past_an_interrupted_turn() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_s", "bash", "{\"command\":\"echo started; sleep 30\"}"), finish("tool_calls"), done()]},
+        {"events": [text("After the abort."), finish("stop"), done()]},
+        {"events": [text("Third answer."), finish("stop"), done()]},
+        {"events": [text("Summary past the abort."), finish("stop"), done()]},
+        {"events": [text("Fourth answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let mut c = env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]);
+    let mut child = spawn_repl(&mut c);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let out = StderrLog::reading(child.stdout.take().unwrap());
+    let code = tokio::task::block_in_place(|| {
+        writeln!(stdin, "run something slow").unwrap();
+        assert!(log.wait_for("ara: tool bash: echo started; sleep 30", Duration::from_secs(15)), "tool started");
+        std::thread::sleep(Duration::from_millis(300));
+        interrupt(&child);
+        assert!(log.wait_for("ara: turn 1 cancelled; session kept", Duration::from_secs(10)));
+        writeln!(stdin, "after").unwrap();
+        writeln!(stdin, "third prompt").unwrap();
+        writeln!(stdin, "/compact").unwrap();
+        writeln!(stdin, "fourth prompt").unwrap();
+        drop(stdin);
+        wait_exit(&mut child, Duration::from_secs(20))
+    });
+    let stderr = log.finish();
+    let stdout = out.finish();
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(!stderr.contains("nothing to compact"), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    assert!(stdout.ends_with("After the abort.\nThird answer.\nFourth answer.\n"), "{stdout:?}");
+
+    let session = env.session_files()[0].clone();
+    let entries = journal(&session);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1, "{entries:?}");
+    assert_compaction_provenance(&entries, compactions[0]);
+    let first_kept = compactions[0]["firstKeptEntryId"].as_str().unwrap();
+    let kept = entries.iter().find(|e| e["id"] == first_kept).unwrap();
+    assert_eq!(user_texts([&kept["message"]]), vec!["third prompt"], "the cut is past the aborted turn");
+    let summarized: Vec<&Value> = compactions[0]["sourceEntryIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| entries.iter().find(|e| e["id"] == *id).unwrap())
+        .collect();
+    assert!(
+        summarized.iter().any(|e| e["message"]["stopReason"] == json!("aborted")),
+        "the aborted assistant is summarized: {summarized:?}"
+    );
+
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 5, "three turns, one summary, one turn after it");
+    let summary_text = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    assert!(summary_text.contains("run something slow"), "{summary_text}");
+    assert!(summary_text.contains("aborted"), "the summarizer sees the abort: {summary_text}");
+    assert!(summary_text.contains("After the abort."), "{summary_text}");
+    let fourth: Vec<Value> = reqs[4]["body"]["messages"].as_array().unwrap().clone();
+    drop(reqs);
+    let fourth_text = request_text(&fourth);
+    assert!(fourth_text.contains("Summary past the abort."), "{fourth_text}");
+    assert!(!fourth_text.contains("run something slow"), "{fourth_text}");
+    assert!(fourth_text.contains("third prompt") && fourth_text.contains("Third answer."), "{fourth_text}");
+
+    // A resumed process rebuilds the same context from the journal.
+    let up2 = upstream(json!({"responses": [{"events": [text("Fifth answer."), finish("stop"), done()]}]})).await;
+    let out =
+        repl_output(env.cmd(&up2.base_url(), &["--repl", "--continue", "--compact-threshold", "0"]), "fifth\n").await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let reqs2 = up2.requests.lock().await;
+    let resumed = reqs2[0]["body"]["messages"].as_array().unwrap();
+    assert_eq!(&resumed[..fourth.len()], &fourth[..], "resume sends the in-memory compacted context");
+    assert_eq!(user_texts(&resumed[fourth.len()..]), vec!["fifth"]);
+    assert_eq!(resumed.len(), fourth.len() + 2, "plus the fourth answer and the new prompt");
 }
 
 /// V1-COMPACT failure paths: second /compact, failed summary, --no-session,
@@ -3172,10 +3272,10 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     .await;
     let (_stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert!(stderr.contains("compaction needs a session"), "{stderr}");
+    assert!(stderr.contains("compaction skipped: it needs a session"), "{stderr}");
     assert_eq!(up.served(), 1, "no summary call under --no-session");
 
-    // History too small to cut: "nothing to compact", no model call.
+    // One turn only: no earlier turn to summarize, no model call.
     let env = Env::new();
     let up = upstream(json!({"responses": [{"events": [text("Only answer."), finish("stop"), done()]}]})).await;
     let out = repl_output(
@@ -3185,9 +3285,27 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     .await;
     let (_stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert!(stderr.contains("history is already small; nothing to compact"), "{stderr}");
+    assert!(stderr.contains("compaction skipped: there is no earlier turn to summarize"), "{stderr}");
+    assert!(!stderr.contains("already small"), "{stderr}");
     assert_eq!(up.served(), 1, "no summary call when there is no cut");
     assert!(compaction_entries(&journal(&env.session_files()[0])).is_empty());
+
+    // History within the keep target: "already small", no model call.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("One."), finish("stop"), done()]},
+        {"events": [text("Two."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "100000"]),
+        "first\nsecond\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("history is already small; nothing to compact"), "{stderr}");
+    assert_eq!(up.served(), 2, "no summary call within the target");
 }
 
 /// V1-COMPACT: interrupt during the summary call returns to the prompt, leaves

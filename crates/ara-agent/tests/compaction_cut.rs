@@ -1,6 +1,6 @@
 use ara_agent::compaction::{
-    SummaryInputError, SummarySource, WholeTurnCutCandidate, WholeTurnCutSelection, select_whole_turn_cut,
-    serialize_sources_for_summary, whole_turn_cut_candidates,
+    SummaryInputError, SummarySource, WholeTurnCutCandidate, WholeTurnCutSelection, explain_no_whole_turn_cut,
+    select_whole_turn_cut, serialize_sources_for_summary, whole_turn_cut_candidates,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, JsonObject, Message, StopReason, ToolCall,
@@ -30,6 +30,37 @@ fn assistant(reason: StopReason, call: Option<&str>) -> Message {
         message.content.push(AssistantBlock::text("done"));
     }
     Message::Assistant(message)
+}
+
+/// A call the agent loop did not run, paired as `synthetic_tool_result` does.
+fn synthetic_result(id: &str, source: &str) -> Message {
+    Message::ToolResult(ToolResultMessage {
+        tool_call_id: id.into(),
+        tool_name: "write".into(),
+        content: vec![UserBlock::text("Tool execution was aborted")],
+        details: Some(json!({"__synthetic": true, "source": source, "executed": false})),
+        is_error: true,
+        timestamp: 0,
+    })
+}
+
+fn aborted(call: Option<&str>) -> Message {
+    let mut message = AssistantMessage::empty("openai-completions", "fake", "m");
+    message.stop_reason = StopReason::Aborted;
+    message.error_message = Some("Request was aborted".into());
+    if let Some(id) = call {
+        message.content.push(AssistantBlock::ToolCall(ToolCall {
+            id: id.into(),
+            name: "write".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        }));
+    }
+    Message::Assistant(message)
+}
+
+fn sources_of<'a>(ids: &'a [&'a str], messages: &'a [Message]) -> Vec<SummarySource<'a>> {
+    ids.iter().zip(messages).map(|(entry_id, message)| SummarySource { entry_id, message }).collect()
 }
 
 fn tool_result(id: &str, unknown_effect: bool) -> Message {
@@ -87,12 +118,79 @@ fn never_cuts_between_tool_call_receipt_and_final_assistant() {
     ];
     assert_eq!(cuts(&["e1", "e2", "e3", "e4", "e5"], &messages), vec![at(4, "e5")]);
 
-    let unfinished = [user("run"), assistant(StopReason::ToolUse, Some("c1")), tool_result("c1", false), user("next")];
-    assert!(cuts(&["e1", "e2", "e3", "e4"], &unfinished).is_empty());
+    let unpaired = [user("run"), assistant(StopReason::ToolUse, Some("c1")), user("next")];
+    assert!(cuts(&["e1", "e2", "e3"], &unpaired).is_empty());
+
+    // A host budget or deadline can end the loop right after tool results; the
+    // tool cycle is closed, so the turn is summarized (OMP findValidCutPoints).
+    let budget_stopped =
+        [user("run"), assistant(StopReason::ToolUse, Some("c1")), tool_result("c1", false), user("next")];
+    assert_eq!(cuts(&["e1", "e2", "e3", "e4"], &budget_stopped), vec![at(3, "e4")]);
 }
 
 #[test]
-fn rejects_unknown_effects_and_failed_turns_from_summary_prefix() {
+fn summarizes_aborted_errored_and_length_stopped_turns() {
+    // The V1-TRIAL run7 shape: Ctrl+C during a Bash call, then more turns.
+    let interrupted = [
+        user("run slow.py"),
+        assistant(StopReason::ToolUse, Some("c1")),
+        tool_result("c1", false),
+        aborted(None),
+        user("next"),
+        assistant(StopReason::Stop, None),
+        user("latest"),
+    ];
+    let ids = ["e1", "e2", "e3", "e4", "e5", "e6", "e7"];
+    assert_eq!(cuts(&ids, &interrupted), vec![at(4, "e5"), at(6, "e7")]);
+
+    // Aborted while streaming a completed tool call: the loop pairs it with a
+    // synthetic `executed: false` result.
+    let aborted_call =
+        [user("run"), aborted(Some("c1")), synthetic_result("c1", "assistant_stop_aborted"), user("next")];
+    assert_eq!(cuts(&["e1", "e2", "e3", "e4"], &aborted_call), vec![at(3, "e4")]);
+    let aborted_unpaired = [user("run"), aborted(Some("c1")), user("next")];
+    assert!(cuts(&["e1", "e2", "e3"], &aborted_unpaired).is_empty());
+
+    let errored = [user("run"), assistant(StopReason::Error, None), user("next")];
+    assert_eq!(cuts(&["e1", "e2", "e3"], &errored), vec![at(2, "e3")]);
+
+    let length_then_retry = [
+        user("write"),
+        assistant(StopReason::Length, Some("c1")),
+        synthetic_result("c1", "assistant_stop_length"),
+        assistant(StopReason::Stop, None),
+        user("next"),
+    ];
+    assert_eq!(cuts(&["e1", "e2", "e3", "e4", "e5"], &length_then_retry), vec![at(4, "e5")]);
+    let length_text = [user("write"), assistant(StopReason::Length, None), user("next")];
+    assert_eq!(cuts(&["e1", "e2", "e3"], &length_text), vec![at(2, "e3")]);
+}
+
+#[test]
+fn explains_why_no_cut_exists() {
+    let one_turn = [user("run"), assistant(StopReason::Stop, None)];
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&["e1", "e2"], &one_turn)), Some(SummaryInputError::EmptySources));
+
+    let unknown = [
+        user("run"),
+        assistant(StopReason::ToolUse, Some("c1")),
+        tool_result("c1", true),
+        assistant(StopReason::Stop, None),
+        user("next"),
+    ];
+    let ids = ["e1", "e2", "e3", "e4", "e5"];
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&ids, &unknown)), Some(SummaryInputError::UnknownToolEffect));
+
+    let developer_first = [developer("high priority"), user("one"), assistant(StopReason::Stop, None), user("two")];
+    let ids = ["e1", "e2", "e3", "e4"];
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&ids, &developer_first)), Some(SummaryInputError::UnfinishedTurn));
+
+    let ok = [user("one"), assistant(StopReason::Stop, None), user("two")];
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&["e1", "e2", "e3"], &ok)), None);
+}
+
+#[test]
+fn rejects_unknown_effects_from_summary_prefix() {
     let unknown = [
         user("run"),
         assistant(StopReason::ToolUse, Some("c1")),
@@ -101,9 +199,6 @@ fn rejects_unknown_effects_and_failed_turns_from_summary_prefix() {
         user("next"),
     ];
     assert!(cuts(&["e1", "e2", "e3", "e4", "e5"], &unknown).is_empty());
-
-    let failed = [user("run"), assistant(StopReason::Error, None), user("next")];
-    assert!(cuts(&["e1", "e2", "e3"], &failed).is_empty());
 }
 
 #[test]

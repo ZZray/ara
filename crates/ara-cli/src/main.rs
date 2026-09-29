@@ -334,6 +334,8 @@ struct HostSink {
     streamed: AtomicBool,
     journal: tokio::sync::Mutex<Option<SessionJournal>>,
     persist_failed: AtomicBool,
+    /// Auto-compaction already said why it cannot run; it says so once per process.
+    compaction_notice_shown: AtomicBool,
     cancel: CancellationToken,
 }
 
@@ -346,6 +348,7 @@ impl HostSink {
             streamed: AtomicBool::new(false),
             journal: tokio::sync::Mutex::new(journal),
             persist_failed: AtomicBool::new(false),
+            compaction_notice_shown: AtomicBool::new(false),
             cancel,
         }
     }
@@ -585,21 +588,36 @@ async fn run_compaction(
     cancel: &CancellationToken,
     manual: bool,
 ) -> Result<bool> {
-    use ara_agent::compaction::{SummarySource, select_whole_turn_cut, summarize_sources};
-    use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+    use ara_agent::compaction::{
+        SummaryInputError, SummarySource, explain_no_whole_turn_cut, select_whole_turn_cut, summarize_sources,
+    };
+    use ara_agent::tokenizer::{MessageCountOptions, count_message, count_messages};
+    use ara_session::CompactionSourceError;
     let tokens = count_messages(context, MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
     }
+    // A manual /compact always explains a refusal; auto-compaction explains
+    // it once, not after every turn.
+    let notice = |text: String| {
+        if manual || !sink.compaction_notice_shown.swap(true, Ordering::SeqCst) {
+            let prefix = if manual { "" } else { "auto-" };
+            eprintln!("ara: {prefix}compaction skipped: {text}");
+        }
+    };
     let mut guard = sink.journal.lock().await;
     let Some(journal) = guard.as_mut() else {
-        eprintln!("ara: compaction needs a session (refusing under --no-session)");
+        notice("it needs a session (--no-session is set)".into());
         return Ok(false);
     };
     let snapshot = match journal.compaction_source_snapshot() {
         Ok(s) => s,
+        Err(CompactionSourceError::UnsupportedContextEntry { kind, .. }) if kind == "compaction" => {
+            notice("this session is already compacted, and V1 keeps a single level per session".into());
+            return Ok(false);
+        }
         Err(e) => {
-            eprintln!("ara: compaction source unavailable ({e}); V1 keeps a single level per session");
+            notice(format!("the session source is unavailable ({e})"));
             return Ok(false);
         }
     };
@@ -611,8 +629,16 @@ async fn run_compaction(
     let Some(cut) =
         select_whole_turn_cut(&sources, args.compact_keep_tokens, None).map_err(|e| anyhow::anyhow!("{e}"))?
     else {
-        if manual {
-            eprintln!("ara: history is already small; nothing to compact");
+        let raw: usize = sources.iter().map(|s| count_message(s.message, MessageCountOptions::default())).sum();
+        match explain_no_whole_turn_cut(&sources) {
+            _ if raw <= args.compact_keep_tokens => {
+                if manual {
+                    eprintln!("ara: history is already small; nothing to compact");
+                }
+            }
+            None => {}
+            Some(SummaryInputError::EmptySources) => notice("there is no earlier turn to summarize".into()),
+            Some(e) => notice(format!("no earlier turn can be summarized ({e})")),
         }
         return Ok(false);
     };
@@ -634,6 +660,12 @@ async fn run_compaction(
         &accepted.window_source_entry_ids,
         tokens as u64,
     )?;
+    // `model_context` falls back to the raw history when the Session cannot
+    // project the summary, so check it rather than claim a compaction.
+    if let Err(e) = journal.compacted_context_projection() {
+        eprintln!("ara: compaction entry written, but the session cannot use it ({e}); context unchanged");
+        return Ok(false);
+    }
     *context = journal.model_context();
     let kept = count_messages(context, MessageCountOptions::default());
     eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");
@@ -705,7 +737,7 @@ struct ReplSession<'a> {
 /// same Session journal. In text mode the answer streams to stdout and each
 /// tool call is reported on stderr as it starts and ends. Ctrl+C during a turn cancels only that turn (its
 /// child token) and returns to the prompt; Ctrl+C at the idle prompt exits
-/// with 130; EOF and `/exit` exit with 0. `/new` starts a fresh Session file
+/// with 130; EOF and `/exit` exit with 0, and an unreadable line exits with 1. `/new` starts a fresh Session file
 /// and keeps the previous one intact.
 #[allow(clippy::too_many_arguments)]
 async fn run_repl_loop(
@@ -735,20 +767,30 @@ async fn run_repl_loop(
         let read = tokio::task::spawn_blocking(|| {
             let mut buf = String::new();
             match std::io::stdin().read_line(&mut buf) {
-                Ok(0) | Err(_) => None,
-                Ok(_) => Some(buf),
+                Ok(0) => Ok(None),
+                Ok(_) => Ok(Some(buf)),
+                Err(e) => Err(e.to_string()),
             }
         });
         let line = tokio::select! {
-            line = read => line.unwrap_or(None),
+            line = read => line.unwrap_or_else(|e| Err(e.to_string())),
             Some(()) = interrupts.recv() => {
                 eprintln!();
                 break 130;
             }
         };
-        let Some(raw) = line else {
-            eprintln!();
-            break 0;
+        let raw = match line {
+            Ok(Some(raw)) => raw,
+            Ok(None) => {
+                eprintln!();
+                break 0;
+            }
+            // For example input that is not UTF-8: say so instead of a silent exit 0.
+            Err(e) => {
+                eprintln!();
+                eprintln!("ara: cannot read the next prompt ({e}); session kept");
+                break 1;
+            }
         };
         let input = sanitize_text(raw.trim());
         if input.is_empty() {

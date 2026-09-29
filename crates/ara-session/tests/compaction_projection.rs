@@ -365,3 +365,54 @@ fn projection_rejects_panic_receipts_but_keeps_completed_failures() {
     write_journal(&path, &entries);
     assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
 }
+
+/// The Session guard agrees with the Agent's span rule: turns that ended
+/// aborted, errored or length-stopped, or after tool results, are summarized
+/// (fixed OMP `findValidCutPoints`); an unanswered prompt is not.
+#[test]
+fn projection_summarizes_aborted_errored_and_budget_stopped_turns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let stopped = |reason: StopReason| {
+        let Message::Assistant(mut message) = assistant("") else { unreachable!() };
+        message.content.clear();
+        message.stop_reason = reason;
+        Message::Assistant(message)
+    };
+    for reason in [StopReason::Aborted, StopReason::Error, StopReason::Length] {
+        let entries = vec![
+            message("q1", Value::Null, user("run slow")),
+            message("a1", json!("q1"), tool_call("t1")),
+            message("r1", json!("a1"), tool_result("t1", None)),
+            message("a2", json!("r1"), stopped(reason)),
+            message("q2", json!("a2"), user("next")),
+            message("a3", json!("q2"), assistant("answer")),
+            compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1", "a2"])),
+        ];
+        write_journal(&path, &entries);
+        assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"], "{reason:?}");
+    }
+
+    let budget_stopped = vec![
+        message("q1", Value::Null, user("run")),
+        message("a1", json!("q1"), tool_call("t1")),
+        message("r1", json!("a1"), tool_result("t1", None)),
+        message("q2", json!("r1"), user("next")),
+        message("a3", json!("q2"), assistant("answer")),
+        compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1"])),
+    ];
+    write_journal(&path, &budget_stopped);
+    assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
+
+    let unanswered = vec![
+        message("q1", Value::Null, user("never answered")),
+        message("q2", json!("q1"), user("next")),
+        message("a3", json!("q2"), assistant("answer")),
+        compaction("c1", json!("a3"), "q2", json!(["q1"])),
+    ];
+    write_journal(&path, &unanswered);
+    assert_eq!(
+        SessionJournal::open(&path).unwrap().compacted_context_projection(),
+        Err(CompactionProjectionError::UnsafeSummaryBoundary { id: "c1".into() })
+    );
+}

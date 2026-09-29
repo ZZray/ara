@@ -75,7 +75,9 @@ impl std::fmt::Display for SummaryInputError {
             Self::TooLarge => f.write_str("compaction input is too large for one summary request"),
             Self::DuplicateSourceId => f.write_str("compaction source entry IDs must be unique"),
             Self::DeveloperInSummary => f.write_str("compaction cannot lower a developer message into summary text"),
-            Self::UnfinishedTurn => f.write_str("compaction source span does not end at a completed assistant turn"),
+            Self::UnfinishedTurn => {
+                f.write_str("compaction source span ends with an unanswered prompt or a tool call without its result")
+            }
             Self::UnpairedToolResult => f.write_str("compaction source span has an unmatched tool result"),
             Self::UnknownToolEffect => {
                 f.write_str("compaction cannot hide a tool call whose execution effect is unknown")
@@ -168,10 +170,14 @@ fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
     })
 }
 
-/// Check that a proposed span ends after a completed assistant turn and does
-/// not hide an unpaired or unknown-effect tool call. The Session owner must
-/// still prove IDs and messages correspond to the current branch and commit
-/// against that branch's leaf.
+/// Check that a proposed span pairs every tool call with its result, does not
+/// end with an unanswered prompt, and does not hide an unknown-effect tool
+/// call. As in fixed OMP `findValidCutPoints`, a turn that ended with an
+/// aborted, errored or length-stopped assistant, or after tool results when a
+/// host budget stopped the loop, is still summarized: the agent loop pairs
+/// each call it did not run with a synthetic `executed: false` result. The
+/// Session owner must still prove IDs and messages correspond to the current
+/// branch and commit against that branch's leaf.
 pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<(), SummaryInputError> {
     if sources.is_empty() {
         return Err(SummaryInputError::EmptySources);
@@ -181,8 +187,7 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
     }
     let mut seen_ids = HashSet::new();
     let mut pending: HashMap<&str, &str> = HashMap::new();
-    let mut awaiting_assistant = false;
-    let mut last_complete_assistant = false;
+    let mut ends_with_user = false;
     for source in sources {
         if source.entry_id.is_empty() || !source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
             return Err(SummaryInputError::InvalidSourceId);
@@ -192,30 +197,21 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
         }
         match source.message {
             Message::User(_) => {
-                if !pending.is_empty() || awaiting_assistant {
+                if !pending.is_empty() {
                     return Err(SummaryInputError::UnfinishedTurn);
                 }
-                last_complete_assistant = false;
+                ends_with_user = true;
             }
             Message::Developer(_) => return Err(SummaryInputError::DeveloperInSummary),
             Message::Assistant(assistant) => {
                 if !pending.is_empty() {
                     return Err(SummaryInputError::UnfinishedTurn);
                 }
-                awaiting_assistant = false;
-                let calls: Vec<_> = assistant.tool_calls().collect();
-                match assistant.stop_reason {
-                    StopReason::Stop if calls.is_empty() => last_complete_assistant = true,
-                    StopReason::Stop | StopReason::ToolUse if !calls.is_empty() => {
-                        last_complete_assistant = false;
-                        awaiting_assistant = true;
-                        for call in calls {
-                            if pending.insert(&call.id, &call.name).is_some() {
-                                return Err(SummaryInputError::UnfinishedTurn);
-                            }
-                        }
+                ends_with_user = false;
+                for call in assistant.tool_calls() {
+                    if pending.insert(&call.id, &call.name).is_some() {
+                        return Err(SummaryInputError::UnfinishedTurn);
                     }
-                    _ => return Err(SummaryInputError::UnfinishedTurn),
                 }
             }
             Message::ToolResult(result) => {
@@ -226,11 +222,11 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
                     Some(name) if name == result.tool_name => {}
                     _ => return Err(SummaryInputError::UnpairedToolResult),
                 }
-                last_complete_assistant = false;
+                ends_with_user = false;
             }
         }
     }
-    if !pending.is_empty() || awaiting_assistant || !last_complete_assistant {
+    if !pending.is_empty() || ends_with_user {
         return Err(SummaryInputError::UnfinishedTurn);
     }
     Ok(())
@@ -268,6 +264,23 @@ pub fn whole_turn_cut_candidates(sources: &[SummarySource<'_>]) -> Vec<WholeTurn
         seen_ids.insert(source.entry_id);
     }
     candidates
+}
+
+/// Why `whole_turn_cut_candidates` offers no cut, so a host can say so
+/// instead of calling the history small. `None` when a cut exists.
+/// `EmptySources` means no later prompt can start a kept tail. Otherwise it is
+/// the validation error of the prefix before the latest prompt.
+pub fn explain_no_whole_turn_cut(sources: &[SummarySource<'_>]) -> Option<SummaryInputError> {
+    if !whole_turn_cut_candidates(sources).is_empty() {
+        return None;
+    }
+    let Some(latest_prompt) = (1..sources.len()).rev().find(|&i| matches!(sources[i].message, Message::User(_))) else {
+        return Some(SummaryInputError::EmptySources);
+    };
+    if !sources.first().is_some_and(|source| matches!(source.message, Message::User(_))) {
+        return Some(SummaryInputError::UnfinishedTurn);
+    }
+    Some(validate_completed_summary_span(&sources[..latest_prompt]).err().unwrap_or(SummaryInputError::InvalidSourceId))
 }
 
 /// Keep as much recent raw history as the approximate target permits, using

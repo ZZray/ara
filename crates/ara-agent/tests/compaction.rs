@@ -186,17 +186,20 @@ fn initial_and_update_prompt_keep_lower_trust_sections_separate() {
 }
 
 #[test]
-fn prompt_rejects_incomplete_or_failed_turns() {
+fn prompt_rejects_an_unanswered_prompt_but_summarizes_failed_turns() {
     let user = Message::User(UserMessage::text("source"));
     let user_source = SummarySource { entry_id: "e1", message: &user };
     assert_eq!(build_summary_prompt(&[user_source], None).err(), Some(SummaryInputError::UnfinishedTurn));
-    let mut failed = AssistantMessage::empty("openai-completions", "fake", "m");
-    failed.stop_reason = StopReason::Length;
-    let failed = Message::Assistant(failed);
-    assert_eq!(
-        build_summary_prompt(&[user_source, SummarySource { entry_id: "e2", message: &failed }], None).err(),
-        Some(SummaryInputError::UnfinishedTurn)
-    );
+    // Fixed OMP summarizes turns whatever their stop reason; the serialized
+    // stop reason tells the summarizer the turn did not finish normally.
+    for reason in [StopReason::Length, StopReason::Error, StopReason::Aborted] {
+        let mut failed = AssistantMessage::empty("openai-completions", "fake", "m");
+        failed.stop_reason = reason;
+        let failed = Message::Assistant(failed);
+        let span = [user_source, SummarySource { entry_id: "e2", message: &failed }];
+        let prompt = build_summary_prompt(&span, None).unwrap();
+        assert!(prompt.user_prompt.contains(&format!("\"stop_reason\":\"{}\"", reason.as_str())), "{reason:?}");
+    }
     assert_eq!(validate_completed_summary_span(&[user_source, user_source]), Err(SummaryInputError::DuplicateSourceId));
 }
 
@@ -227,7 +230,7 @@ fn prompt_rejects_developer_priority_downgrade_but_raw_serializer_preserves_sour
 }
 
 #[test]
-fn prompt_requires_matched_tool_receipts_and_following_assistant() {
+fn prompt_requires_matched_tool_receipts() {
     let user = Message::User(UserMessage::text("write it"));
     let mut calling = AssistantMessage::empty("openai-completions", "fake", "m");
     calling.stop_reason = StopReason::ToolUse;
@@ -252,7 +255,8 @@ fn prompt_requires_matched_tool_receipts_and_following_assistant() {
     let c = SummarySource { entry_id: "e3", message: &receipt };
     let d = SummarySource { entry_id: "e4", message: &answer };
     assert_eq!(validate_completed_summary_span(&[a, b]), Err(SummaryInputError::UnfinishedTurn));
-    assert_eq!(validate_completed_summary_span(&[a, b, c]), Err(SummaryInputError::UnfinishedTurn));
+    // A host budget may end the loop after tool results; the cycle is closed.
+    assert_eq!(validate_completed_summary_span(&[a, b, c]), Ok(()));
     assert!(build_summary_prompt(&[a, b, c, d], None).is_ok());
     let wrong = Message::ToolResult(ToolResultMessage {
         tool_call_id: "c5".into(),
