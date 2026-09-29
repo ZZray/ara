@@ -2602,6 +2602,49 @@ async fn skill_url_search_and_read_only_write_reach_cli() {
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[tokio::test]
+async fn skill_directory_locale_order_reaches_cli_and_journal() {
+    let env = Env::new();
+    let skill_dir = env.work.path().join(".ara/skills/greeting");
+    let assets = skill_dir.join("assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: Greeting\n---\nbody\n").unwrap();
+    // This punctuation pair has the same order in the two recorded Bun locales.
+    for name in ["a_1.txt", "a-1.txt"] {
+        std::fs::write(assets.join(name), b"").unwrap();
+    }
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_read", "read", "{\"path\":\"skill://greeting/assets:raw:1-1\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Done."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = output(env.cmd(&up.base_url(), &["Read the first asset"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Done.\n");
+    // Linux's recorded Bun locale is en-US. Other Windows locales have no
+    // fixed-source oracle, so only assert the host-to-journal-to-model path.
+    #[cfg(target_os = "linux")]
+    let expected = Some("a_1.txt");
+    #[cfg(windows)]
+    let expected: Option<&str> = None;
+    let entries = journal(&env.session_files()[0]);
+    let result = entries.iter().find(|entry| entry["message"]["role"] == "toolResult").unwrap();
+    let content = result["message"]["content"][0]["text"].as_str().unwrap();
+    let selected = content.lines().next().unwrap();
+    assert!(["a_1.txt", "a-1.txt"].contains(&selected), "{content:?}");
+    if let Some(expected) = expected {
+        assert_eq!(selected, expected);
+    }
+    assert!(content.contains("[1 more lines in resource. Use :2 to continue]"));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let messages = requests[1]["body"]["messages"].as_array().unwrap();
+    let carried = messages.iter().find(|m| m["role"] == "tool" && m["tool_call_id"] == "call_read").unwrap();
+    assert!(carried["content"].as_str().unwrap().starts_with(selected));
+}
+
 #[tokio::test]
 async fn skill_flags_filter_listing_and_resolution() {
     let env = Env::new();

@@ -19,11 +19,14 @@ grep-matcher = "0.1"
 grep-pcre2 = "0.1"
 grep-regex = "0.1"
 grep-searcher = "0.1"
+icu_collator = "=2.3.1"
+icu_locale_core = "=2.3.0"
 libc = "0.2"
 ara-edit.workspace = true
 ara-ast.workspace = true
 regex = "1"
 serde_json.workspace = true
+sys-locale = "=0.3.2"
 tokio.workspace = true
 tokio-util.workspace = true
 

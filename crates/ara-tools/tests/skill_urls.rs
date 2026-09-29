@@ -393,7 +393,10 @@ async fn read_skill_disjoint_ranges_include_block_boundaries_without_changing_re
     for name in ["a {", "b", "c", "}"] {
         std::fs::write(listing.join(name), b"").unwrap();
     }
-    assert_eq!(text(&r("skill://demo/braces:1-1,3-3").await), "1|a {\n…\n3|c\n4|}");
+    let brace_listing = text(&r("skill://demo/braces:raw").await);
+    let brace_lines: Vec<&str> = brace_listing.lines().collect();
+    assert_eq!(brace_lines.len(), 4);
+    assert_eq!(text(&r("skill://demo/braces:1-1,3-3").await), format!("1|{}\n…\n3|{}", brace_lines[0], brace_lines[2]));
 
     let cancel = CancellationToken::new();
     cancel.cancel();
@@ -447,6 +450,136 @@ async fn read_skill_resource_types() {
         text(&r("skill://demo/references:raw:1-1").await.unwrap()),
         "zdir/\n\n[501 more lines in resource. Use :2 to continue]"
     );
+}
+
+/// Bun 1.4.0 executing fixed OMP `buildDirectoryResource` at 596f2da:
+/// Windows zh-CN and Linux en-US oracles in `ctx-01d-skill-directory-sort.md`.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[tokio::test]
+async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let demo = write_skill(&root.join("skills"), "demo", "body\n");
+    let fixture = demo.base_dir.join("collation");
+    std::fs::create_dir_all(&fixture).unwrap();
+    for name in ["z-dir", "A-dir", "é-dir"] {
+        std::fs::create_dir(fixture.join(name)).unwrap();
+    }
+    for name in [
+        "a_1.txt",
+        "a-1.txt",
+        "A2.txt",
+        "a10.txt",
+        "b.txt",
+        "B2.txt",
+        "é.txt",
+        "e\u{301}.txt",
+        "ä.txt",
+        "中.txt",
+        "Ω.txt",
+        "📄.txt",
+        ".hidden",
+        "1.txt",
+    ] {
+        std::fs::write(fixture.join(name), name).unwrap();
+    }
+    let read = read::ReadTool { ctx: ToolContext::new(&root).with_skills(vec![demo]) };
+    let listing = text(
+        &read
+            .execute("c", args(json!({"path": "skill://demo/collation:raw"})), CancellationToken::new(), noop())
+            .await
+            .unwrap(),
+    );
+    let lines: Vec<&str> = listing.lines().collect();
+    assert_eq!(lines.len(), 17);
+    let mut directory_names = lines[..3].to_vec();
+    directory_names.sort_unstable();
+    assert_eq!(directory_names, ["A-dir/", "z-dir/", "é-dir/"]);
+
+    // Bun uses the host locale on Windows. Exact fixed-source comparison is
+    // available for zh-CN; other Windows locales keep the selector and
+    // directories-first checks below, with their parity boundary explicit.
+    #[cfg(windows)]
+    let has_exact_oracle = match sys_locale::get_locale().as_deref() {
+        Some("zh-CN") => true,
+        other => {
+            eprintln!("No fixed OMP Bun listing oracle for Windows locale {other:?}");
+            false
+        }
+    };
+    #[cfg(target_os = "linux")]
+    let has_exact_oracle = true;
+    let expected = if cfg!(windows) {
+        [
+            "A-dir/", "é-dir/", "z-dir/", ".hidden", "📄.txt", "1.txt", "中.txt", "a_1.txt", "a-1.txt", "ä.txt",
+            "a10.txt", "A2.txt", "b.txt", "B2.txt", "", "", "Ω.txt",
+        ]
+    } else {
+        [
+            "A-dir/", "é-dir/", "z-dir/", ".hidden", "📄.txt", "1.txt", "a_1.txt", "a-1.txt", "ä.txt", "a10.txt",
+            "A2.txt", "b.txt", "B2.txt", "", "", "Ω.txt", "中.txt",
+        ]
+    };
+    if has_exact_oracle {
+        for (actual, expected) in lines.iter().zip(expected) {
+            if !expected.is_empty() {
+                assert_eq!(*actual, expected);
+            }
+        }
+        // NFC/NFD compare equal; upstream's stable sort leaves their relative
+        // order as enumerated by the filesystem.
+        let raw_equivalent: Vec<_> = std::fs::read_dir(&fixture)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name == "é.txt" || name == "e\u{301}.txt")
+            .collect();
+        assert_eq!(&lines[14..16], raw_equivalent);
+    }
+
+    let selected = text(
+        &read
+            .execute("c", args(json!({"path": "skill://demo/collation:raw:7-7"})), CancellationToken::new(), noop())
+            .await
+            .unwrap(),
+    );
+    let selected_name = if has_exact_oracle && cfg!(windows) {
+        "中.txt"
+    } else if has_exact_oracle {
+        "a_1.txt"
+    } else {
+        lines[6]
+    };
+    assert!(selected.starts_with(selected_name), "{selected:?}");
+    assert!(selected.contains("[10 more lines in resource. Use :8 to continue]"), "{selected:?}");
+
+    #[cfg(target_os = "linux")]
+    {
+        let collision = fixture.parent().unwrap().join("case-collision");
+        std::fs::create_dir(&collision).unwrap();
+        for name in ["a.txt", "A.txt", "ä.txt", "Ä.txt"] {
+            std::fs::write(collision.join(name), name).unwrap();
+        }
+        let listing = text(
+            &read
+                .execute(
+                    "c",
+                    args(json!({"path": "skill://demo/case-collision:raw"})),
+                    CancellationToken::new(),
+                    noop(),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(listing, "a.txt\nA.txt\nä.txt\nÄ.txt");
+    }
+
+    let ordinary = root.join("ordinary");
+    std::fs::create_dir(&ordinary).unwrap();
+    std::fs::write(ordinary.join("a_1.txt"), b"").unwrap();
+    std::fs::write(ordinary.join("a-1.txt"), b"").unwrap();
+    let plain =
+        text(&read.execute("c", args(json!({"path": ordinary})), CancellationToken::new(), noop()).await.unwrap());
+    assert_eq!(plain, "a-1.txt\na_1.txt");
 }
 
 /// `bash`: `skill://` in the command, env values and cwd resolve to paths.

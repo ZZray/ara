@@ -32,6 +32,8 @@ use ara_agent::{AgentTool, ToolError, ToolOutput, UpdateFn};
 use ara_ai::{ImageContent, JsonObject, Tool, UserBlock};
 use async_trait::async_trait;
 use base64::Engine;
+use icu_collator::{Collator, CollatorBorrowed, options::CollatorOptions};
+use icu_locale_core::Locale;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Seek};
@@ -39,6 +41,21 @@ use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+fn skill_directory_collator() -> Result<CollatorBorrowed<'static>, ToolError> {
+    // Bun 1.4.0 resolves the unspecified locale to en-US on Linux even with
+    // LANG/LC_ALL set to zh_CN.UTF-8. On Windows it follows the OS locale.
+    #[cfg(target_os = "linux")]
+    let locale_name = "en-US".to_owned();
+    #[cfg(not(target_os = "linux"))]
+    let locale_name = sys_locale::get_locale().unwrap_or_else(|| "en-US".to_owned());
+    let locale: Locale = locale_name
+        .parse()
+        .map_err(|e| ToolError(format!("Cannot parse host locale {locale_name} for skill directory: {e}")))?;
+    Collator::try_new(locale.into(), CollatorOptions::default())
+        .map_err(|e| ToolError(format!("Cannot sort skill directory for locale {locale_name}: {e}")))
+}
+
 const MAX_DIR_ENTRIES: usize = 500;
 const SNIFF_BYTES: usize = 8192;
 /// Bytes scanned past the emitted window to count remaining lines.
@@ -811,9 +828,8 @@ impl AgentTool for ReadTool {
                 entries.push((is_dir, entry.file_name().to_string_lossy().into_owned()));
             }
             if internal {
-                entries.sort_by(|a, b| {
-                    b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())).then_with(|| a.1.cmp(&b.1))
-                });
+                let collator = skill_directory_collator()?;
+                entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| collator.compare(&a.1, &b.1)));
             } else {
                 entries.sort_by(|a, b| a.1.cmp(&b.1));
             }
