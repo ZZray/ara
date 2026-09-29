@@ -108,7 +108,8 @@ implementer ran the gate and the mutations.
   - an M1 e2e test with a hand-written non-soft compaction entry;
   - the summarizer reads a user Ctrl+C `[Command aborted]` as an unexpected
     abort, and OMP has the same text;
-  - the `//?/C:` working directory appears in prompts and summaries;
+  - ~~the `//?/C:` working directory appears in prompts and summaries~~:
+    fixed after acceptance by [dogfood 2](v1-dogfood.md);
   - the "down to" wording.
 
 ## Decision

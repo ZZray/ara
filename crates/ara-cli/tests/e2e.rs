@@ -2299,6 +2299,35 @@ async fn bare_tagged_hashline_header_recovers_the_nested_file() {
     assert!(body.contains("math.py#") && body.contains("return a + b"), "{body}");
 }
 
+/// Windows `canonicalize` adds a verbatim `\\?\` prefix; OMP's `setProjectDir`
+/// keeps a plain absolute path. Neither the session header nor the model
+/// request may carry the prefix from `--cwd`.
+#[tokio::test]
+async fn absolute_cwd_flag_never_reaches_the_header_or_the_model_request_verbatim() {
+    let env = Env::new();
+    let dir = tempfile::Builder::new().prefix("ara-e2e-plain-cwd-").tempdir().unwrap();
+    let up = upstream(json!({"responses": [{"events": [text("ok"), finish("stop"), done()]}]})).await;
+    let out = output(env.cmd_in(dir.path(), &up.base_url(), &["--cwd", dir.path().to_str().unwrap(), "hi"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "ok\n");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    // The journal starts with a title entry; the Session header follows it.
+    let entries = journal(&files[0]);
+    let header = entries.iter().find(|e| e["type"] == "session").expect("session header");
+    let canonical = dir.path().canonicalize().unwrap().display().to_string();
+    let plain = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical);
+    assert_eq!(header["cwd"], json!(plain), "{header}");
+    let requests = up.requests.lock().await;
+    let body = requests[0]["body"].to_string();
+    // In the JSON body every backslash is escaped, so `\\?\` also appears as
+    // `\\\\?\\`.
+    for needle in [r"\\?\", "//?/", r"\\\\?\\"] {
+        assert!(!body.contains(needle), "the request body carries {needle:?}: {body}");
+    }
+}
+
 #[tokio::test]
 async fn deleted_tag_target_drops_its_own_snapshot_from_recovery() {
     // `math.py` is deleted outside the edit tool. Its own stale snapshot must not
@@ -2448,7 +2477,9 @@ async fn context_files_and_skills_reach_the_model_and_skill_urls_resolve() {
     assert!(system.contains("`skill://<name>`"), "skill:// advertised");
     assert!(!system.contains("history://") && !system.contains("omp://"), "unported URLs not advertised");
     assert!(system.contains("<repo-rules>") && system.contains("Always answer in French."), "AGENTS.md included");
-    let displayed_path = work.canonicalize().unwrap().join("AGENTS.md").display().to_string().replace('\\', "/");
+    // The CLI strips the verbatim drive prefix `canonicalize` adds on Windows.
+    let canonical = work.join("AGENTS.md").canonicalize().unwrap().display().to_string();
+    let displayed_path = canonical.strip_prefix(r"\\?\").unwrap_or(&canonical).replace('\\', "/");
     assert!(system.contains(&format!("<file path=\"{displayed_path}\">")));
 
     let entries = journal(&env.session_files()[0]);

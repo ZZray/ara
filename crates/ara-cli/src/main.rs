@@ -44,7 +44,7 @@ use ara_tools::{ToolContext, builtin_tools};
 use async_trait::async_trait;
 use clap::{Parser, ValueEnum};
 use std::io::{IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -319,6 +319,21 @@ fn default_session_dir(cwd: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".ara"));
     let encoded = format!("--{}--", cwd.to_string_lossy().trim_matches('/').replace(['/', '\\', ':', '?'], "-"));
     home.join("sessions").join(encoded)
+}
+
+/// Rewrite only a verbatim drive prefix (`\\?\C:\x` → `C:\x`) that Windows
+/// `canonicalize` adds, as OMP's `setProjectDir` keeps a plain absolute path.
+/// Verbatim UNC and device paths keep their spelling, so none turns relative.
+fn plain_drive_path(path: PathBuf) -> PathBuf {
+    let mut components = path.components();
+    if let Some(Component::Prefix(prefix)) = components.next()
+        && let std::path::Prefix::VerbatimDisk(letter) = prefix.kind()
+    {
+        let mut plain = PathBuf::from(format!("{}:", letter as char));
+        plain.extend(components);
+        return plain;
+    }
+    path
 }
 
 /// Writes JSON events and journals every completed message. A journal write
@@ -957,7 +972,10 @@ async fn run(args: Args) -> Result<i32> {
         bail!("no prompt given (pass it as an argument or on stdin)");
     }
     let explicit_cwd = match &args.cwd {
-        Some(c) => Some(std::fs::canonicalize(c).with_context(|| format!("--cwd {}", c.display()))?),
+        Some(c) => {
+            let canonical = std::fs::canonicalize(c).with_context(|| format!("--cwd {}", c.display()))?;
+            Some(plain_drive_path(canonical))
+        }
         None => None,
     };
     let launch_cwd = explicit_cwd.clone().map(Ok).unwrap_or_else(std::env::current_dir)?;
