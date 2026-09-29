@@ -16,15 +16,24 @@ if (sourceSha256 !== SOURCE_SHA256) throw new Error(`Fixed OMP source hash misma
 const { buildDirectoryResource } = await import(pathToFileURL(sourcePath).href);
 
 const cases = [
-  { name: "portable", dirs: ["z-dir", "A-dir", "é-dir"], files: [
+  { name: "portable", allowDarwinCollapse: true, dirs: ["z-dir", "A-dir", "é-dir"], files: [
     "a_1.txt", "a-1.txt", "A2.txt", "a10.txt", "b.txt", "B2.txt",
     "é.txt", "e\u0301.txt", "ä.txt", "中.txt", "Ω.txt", "📄.txt",
     ".hidden", "1.txt",
   ] },
+  { name: "portable-no-equivalent", dirs: ["z-dir", "A-dir", "é-dir"], files: [
+    "a_1.txt", "a-1.txt", "A2.txt", "a10.txt", "b.txt", "B2.txt",
+    "é.txt", "ä.txt", "中.txt", "Ω.txt", "📄.txt", ".hidden", "1.txt",
+  ] },
   { name: "braces", dirs: [], files: ["a {", "b", "c", "}"] },
+  { name: "unicode-expanded", dirs: ["_dir", "É-dir", "中-dir"], files: [
+    ".dot", "1.txt", "2.txt", "10.txt", "a b.txt", "a.b.txt",
+    "a-b.txt", "a_b.txt", "Å.txt", "ß.txt", "İ.txt", "λ.txt",
+    "中.txt", "𐐀.txt", "🧪.txt", "😀.txt",
+  ] },
 ];
 if (process.platform !== "win32") {
-  cases.push({ name: "case-collision", dirs: [], files: ["a.txt", "A.txt", "ä.txt", "Ä.txt"] });
+  cases.push({ name: "case-collision", allowDarwinCollapse: true, dirs: [], files: ["a.txt", "A.txt", "ä.txt", "Ä.txt"] });
 }
 
 const output = {
@@ -48,8 +57,19 @@ for (const fixture of cases) {
       name: entry.name,
       isDirectory: entry.isDirectory(),
     }));
-    if (sampledRawBefore.length !== fixture.dirs.length + fixture.files.length) {
-      throw new Error(`${fixture.name}: filesystem collapsed distinct names`);
+    const requestedCount = fixture.dirs.length + fixture.files.length;
+    if (sampledRawBefore.length !== requestedCount) {
+      if (process.platform !== "darwin" || !fixture.allowDarwinCollapse || sampledRawBefore.length > requestedCount) {
+        throw new Error(`${fixture.name}: filesystem collapsed distinct names`);
+      }
+      output.cases.push({
+        name: fixture.name,
+        status: "filesystem-collapsed",
+        requestedDirs: fixture.dirs,
+        requestedFiles: fixture.files,
+        sampledRawBefore,
+      });
+      continue;
     }
     const resource = await buildDirectoryResource("skill://oracle", root);
     const sampledRawAfter = (await fs.readdir(root, { withFileTypes: true })).map(entry => ({
@@ -62,6 +82,9 @@ for (const fixture of cases) {
     const lines = resource.content.split("\n");
     output.cases.push({
       name: fixture.name,
+      status: "ok",
+      requestedDirs: fixture.dirs,
+      requestedFiles: fixture.files,
       sampledRawBefore,
       sampledRawAfter,
       content: resource.content,

@@ -6,6 +6,10 @@ on:
     paths:
       - scripts/ctx_skill_sort_oracle.mjs
       - .github/workflows/ctx-skill-sort-oracle.yml
+      - crates/ara-tools/src/read.rs
+      - crates/ara-tools/tests/skill_urls.rs
+      - crates/ara-tools/Cargo.toml
+      - Cargo.lock
   workflow_dispatch:
 
 jobs:
@@ -42,3 +46,58 @@ jobs:
           path: |
             ${{ runner.temp }}/oracle-linux-default.json
             ${{ runner.temp }}/oracle-linux-zh-env.json
+
+  macos-bun:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact fixed OMP source and Bun 1.4.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL 'https://raw.githubusercontent.com/can1357/oh-my-pi/596f2da7101178214aa27a753529d15e6b7ad91d/packages/coding-agent/src/internal-urls/filesystem-resource.ts' -o "$RUNNER_TEMP/filesystem-resource.ts"
+          case "$(uname -m)" in
+            x86_64) bun_arch=x64 ;;
+            arm64) bun_arch=aarch64 ;;
+            *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-darwin-${bun_arch}.zip" -o "$RUNNER_TEMP/bun-darwin.zip"
+          unzip -q "$RUNNER_TEMP/bun-darwin.zip" -d "$RUNNER_TEMP/bun"
+          echo "$RUNNER_TEMP/bun/bun-darwin-${bun_arch}" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bun/bun-darwin-${bun_arch}/bun" --version
+      - name: Run fixed OMP oracle with host default locale
+        shell: bash
+        run: |
+          set -euo pipefail
+          locale
+          defaults read -g AppleLocale || true
+          bun scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-macos-default.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctx-skill-sort-oracle-macos
+          path: ${{ runner.temp }}/oracle-macos-default.json
+
+  windows-bun:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact fixed OMP source and Bun 1.4.0
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://raw.githubusercontent.com/can1357/oh-my-pi/596f2da7101178214aa27a753529d15e6b7ad91d/packages/coding-agent/src/internal-urls/filesystem-resource.ts' -OutFile "$env:RUNNER_TEMP/filesystem-resource.ts"
+          Invoke-WebRequest 'https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-windows-x64.zip' -OutFile "$env:RUNNER_TEMP/bun-windows-x64.zip"
+          Expand-Archive "$env:RUNNER_TEMP/bun-windows-x64.zip" "$env:RUNNER_TEMP/bun"
+          & "$env:RUNNER_TEMP/bun/bun-windows-x64/bun.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Bun version check failed' }
+      - name: Run fixed OMP oracle with host default locale
+        shell: pwsh
+        run: |
+          Get-Culture
+          & "$env:RUNNER_TEMP/bun/bun-windows-x64/bun.exe" scripts/ctx_skill_sort_oracle.mjs "$env:RUNNER_TEMP/filesystem-resource.ts" | Tee-Object -FilePath "$env:RUNNER_TEMP/oracle-windows-default.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed OMP oracle failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctx-skill-sort-oracle-windows
+          path: ${{ runner.temp }}/oracle-windows-default.json
