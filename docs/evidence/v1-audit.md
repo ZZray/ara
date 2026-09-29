@@ -9,8 +9,8 @@ user's faster V1 strategy decided.
 
 - **Source:** OMP v18.1.8 at `596f2da` ([lock](../../upstream/omp.lock.json)),
   plus the ARA decisions in the plan (user decision 2026-09-28).
-- **Delivered code:** the commit that carries this audit. Its code is the
-  tree after `74b80cb` plus the run9 fix
+- **Delivered code:** `b179087`, the commit that first carried this audit.
+  Its code is the tree after `74b80cb` plus the run9 fix
   ([V1-COMPACT](v1-compact.md#run9-fix-the-omp-summary-budget-2026-09-29)).
   Run10's `ara.exe` was built from this code. The later edits were a test
   string fix and mutations, each restored with a matching sha256.
@@ -39,7 +39,7 @@ user's faster V1 strategy decided.
 | `python scripts/verify_backend.py` (fmt, strict Clippy, all tests) | PASS: 74 test binaries, 1036 passed, 0 failed, 1 ignored; e2e 75/75 |
 | `cargo test -p ara-cli --test e2e repl_` | 21/21 |
 | `cargo test -p ara-agent --test compaction_cut --test compaction_call` | 15/15 and 8/8 |
-| Linux CI on the pushed commit | See Decision |
+| Linux CI (GitHub Actions run 36567392227, `verify_backend.py` on `b179087`) | PASS: 74 test binaries, 1038 passed, 0 failed, 1 ignored; e2e 77/77 (the `cfg(unix)` tests included) |
 
 ## Reviews
 
@@ -87,8 +87,8 @@ implementer ran the gate and the mutations.
   - Unknown usage is kept unknown; the aborted message has none.
   - The summary call's model, response ID and usage are not persisted, as
     in OMP (F3).
-- **Regression:** the full Windows gate on the delivered code, Linux CI (see
-  Decision), and mutation checks on each fix.
+- **Regression:** the full gate on the delivered code on Windows and on
+  Linux CI, and mutation checks on each fix.
 
 ## Follow-ups (not blocking daily use)
 
@@ -111,5 +111,16 @@ implementer ran the gate and the mutations.
 
 ## Decision
 
-**Pending:** Linux CI on the pushed commit. The Windows evidence passes for
-every point. The ledger rows stay `implementing` until that check.
+**Accepted on `b179087`:** V1-REPL, V1-CANCEL, V1-RESUME, V1-COMPACT and
+V1-TRIAL. The mandatory execution and audit evidence passes on the delivered
+code:
+
+- the Windows gate and Linux CI;
+- the focused tests with their failure paths and mutations;
+- run10 through the REPL on B.AI `deepseek-v4.1-flash`, with an
+  independent artifact check;
+- four scoped reviews, with every critical and important finding resolved.
+
+The follow-ups above do not block daily use. Registered points move from
+28/45 to 33/45 (73.3%). The formal gates stay at 1/7. `ported_through_commit`
+is unchanged.
