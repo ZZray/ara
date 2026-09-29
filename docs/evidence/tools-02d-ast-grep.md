@@ -1,4 +1,4 @@
-# TOOLS-02d: opt-in structural search (WIP)
+# TOOLS-02d: opt-in structural search
 
 Fixed OMP source: commit `596f2da7101178214aa27a753529d15e6b7ad91d`,
 `packages/coding-agent/src/tools/ast-grep.ts` (`AstGrepTool.execute`,
@@ -48,5 +48,15 @@ and post-diff reviews covered the fixed OMP source, exact ARA diff, CLI
 defaults, read-only paths, paging,
 diagnostics, cancellation and hashline provenance; no confirmed production
 defect was found. A prior Windows gate failure in vendored `pi-edit` is
-independent of this search tool. This point and the enclosing surface remain
-WIP pending the no-skip gate, a bounded live task and point audit.
+independent of this search tool and was later closed on `f20393d`.
+
+## Point delivery audit (2026-09-28)
+
+| Field | Value |
+| --- | --- |
+| Delivered snapshot | `f20393d27606b0077b43e2a59a9aa63dd9708ba7` |
+| Point commits | `91fce93`, `5d7b40b` (later `e7f94b6` rename-only) |
+| Independent review | Cursor agent (`ara-git-review` + `ara-rust-core-review`): **accept**; no reachable defects |
+| Focused recheck | `ast_grep::tests` 7/7; CLI e2e `ast_grep_is_opt_in_…` 1/1 |
+| Gate / live task | Unfiltered Windows gate exit 0; bounded `openrouter/free` task used `ast_grep` then `edit`/`bash` ([gate receipt](windows-backend-gate-20260926.md#bounded-real-model-task-on-the-delivered-code)) |
+| Decision | **accepted** for this bounded opt-in slice. Other internal URL transports, TUI rendering and the rest of CA-TOOL-SEARCH remain open. |

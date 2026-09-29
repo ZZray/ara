@@ -26,7 +26,7 @@
 //! labels, custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
 //! listing/search, forking, moving, title generation, blob externalization.
 
-use ara_ai::{AssistantBlock, Message, StopReason, ToolResultMessage, UserBlock, UserContent, now_ms};
+use ara_ai::{AssistantBlock, Message, StopReason, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
@@ -818,6 +818,53 @@ impl SessionJournal {
     /// counted by [`undecodable_messages`](Self::undecodable_messages).
     pub fn build_context(&self) -> Vec<Message> {
         self.branch().into_iter().filter_map(Entry::message).collect()
+    }
+
+    /// Append a soft-compaction summary. The summarized prefix stays raw in
+    /// the journal; readers must use [`model_context`](Self::model_context)
+    /// so the prefix is replaced by this summary. `first_kept_entry_id` must
+    /// be the user message where raw context resumes, and `source_entry_ids`
+    /// the summarized entry IDs for provenance.
+    pub fn append_compaction(
+        &mut self,
+        summary: &str,
+        first_kept_entry_id: &str,
+        source_entry_ids: &[String],
+        tokens_before: u64,
+    ) -> Result<String> {
+        let mut f = serde_json::Map::new();
+        f.insert("method".into(), json!("soft"));
+        f.insert("summary".into(), json!(summary));
+        f.insert("firstKeptEntryId".into(), json!(first_kept_entry_id));
+        f.insert("sourceEntryIds".into(), json!(source_entry_ids));
+        f.insert("tokensBefore".into(), json!(tokens_before));
+        self.append_raw("compaction", f)
+    }
+
+    /// Model-visible messages honoring the latest valid soft summary: the
+    /// summarized prefix is replaced by the summary text (sent as a user
+    /// message so the model treats it as lower-trust prior context), kept and
+    /// later messages stay raw. Falls back to [`build_context`](Self::build_context)
+    /// when no valid compaction entry exists.
+    pub fn model_context(&self) -> Vec<Message> {
+        let projection = match self.compacted_context_projection() {
+            Ok(p) => p,
+            Err(_) => return self.build_context(),
+        };
+        if !projection.items.iter().any(|i| matches!(i, CompactedContextItem::Summary(_))) {
+            return self.build_context();
+        }
+        projection
+            .items
+            .into_iter()
+            .map(|item| match item {
+                CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
+                    "[Compacted summary of earlier turns; source entries withheld]\n{}",
+                    s.summary
+                ))),
+                CompactedContextItem::Message(m) => m.message.clone(),
+            })
+            .collect()
     }
 
     pub fn undecodable_messages(&self) -> usize {

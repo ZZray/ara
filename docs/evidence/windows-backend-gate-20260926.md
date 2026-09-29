@@ -247,8 +247,25 @@ That branch has controlled host proof through the two CLI e2e cases above.
 One free-router trial is evidence for the chain, not for model quality or
 route stability.
 
-No point acceptance changed. TOOLS-01c's Windows Bash repair, TOOLS-02d
-`ast_grep` and this TOOLS-03a modification now each have an unfiltered gate
-pass and a live task. Each still needs its `point-delivery-audit` before
-acceptance. The roadmap stays at 1/7 gates (14.3%) and registered points at
-27/40 (67.5%).
+### Point delivery audits (2026-09-28)
+
+On snapshot `f20393d`, three independent read-only reviews
+(`ara-git-review` + `ara-rust-core-review`) and focused rechecks completed:
+
+| Point | Verdict | Focused recheck |
+| --- | --- | --- |
+| TOOLS-01c Windows Bash Job repair (`8940f3c`) | **changes requested** (2026-09-29): Linux CI run 36396583296 on `f20393d` failed to compile `bash.rs:479` | Windows: `bash_` 5/5, failed-assignment 1/1, CLI deadline 1/1 |
+| TOOLS-02d opt-in `ast_grep` (`91fce93`/`5d7b40b`) | **accepted** | unit 7/7, CLI e2e 1/1 |
+| TOOLS-03a Windows tag-recovery (`8b953b1`) | **accepted** (narrow WIP closed) | `path_policy` 8/8, hashline_parity 10/10, hashline_patcher 6/6, two CLI e2e |
+
+Registered accepted points move from 27/40 to **28/40 (70%)** because
+TOOLS-02d was newly accepted; TOOLS-03a and TOOLS-01c's prior slice were
+already counted. TOOLS-01c's Windows repair stays WIP after the corrected
+audit ([details](windows-bash-process-tree.md#point-delivery-audit-2026-09-28-changes-requested)).
+The same `ubuntu-latest` run shows no Linux result for TOOLS-02d or TOOLS-03a,
+because `ara-tools` did not compile; their changed code is platform-neutral
+or Windows-only, and their acceptance rests on the Windows gate above.
+TOOLS registered acceptance is **10/10** (TOOLS-01c through its prior slice). Formal P0–P6 remains **1/7
+(14.3%)**. CA-TOOL-SEARCH other transports/TUI stay open. Evidence:
+[Bash](windows-bash-process-tree.md#point-delivery-audit-2026-09-28-changes-requested),
+[`ast_grep`](tools-02d-ast-grep.md#point-delivery-audit-2026-09-28).

@@ -1,4 +1,4 @@
-//! `ara` — reference host for the ARA Core (print mode).
+//! `ara` — reference host for the ARA Core (print mode and a line REPL).
 //!
 //! Ported behavior: OMP `packages/coding-agent/src/modes/print-mode.ts`
 //! (`runPrintMode`, `printableEvent`), `cli/initial-message.ts` (stdin is
@@ -8,7 +8,8 @@
 //! The host binds the Core ports: model route (OpenAI-compatible Chat
 //! Completions), tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` rooted at the session cwd,
 //! plus opt-in `ast_grep`), the
-//! event sink (JSON output + session journal), cancellation (SIGINT) and
+//! event sink (JSON output + session journal), cancellation (SIGINT; Ctrl+C
+//! or Ctrl+Break on Windows) and
 //! budgets (`--max-time`, `--max-model-calls`). Credentials come only from the
 //! environment and are never printed; a key is only sent to its own route.
 //!
@@ -20,6 +21,10 @@
 //! - A journal write failure cancels the run before any further tool runs;
 //!   an unrecorded tool effect would be unknowable on resume.
 //! - Deadline and model-call budget stops are reported on stderr with exit 1.
+//! - The line REPL is a reference-host subset, not OMP's TUI. A line reader
+//!   cannot see Esc, so Ctrl+C during a turn aborts that turn (OMP: Esc) and
+//!   Ctrl+C at the idle prompt exits (OMP: a double Ctrl+C); a second Ctrl+C
+//!   while a turn is still aborting exits at once, as in print mode.
 
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
@@ -82,11 +87,16 @@ impl Api {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "ara", version, about = "ARA agent (print mode)")]
+#[command(name = "ara", version, about = "ARA agent (print mode, or a line REPL on a terminal)")]
 struct Args {
     /// Prompts, sent in order. Piped stdin is prepended to the first prompt
-    /// (or used alone when no prompt is given).
+    /// (or used alone when no prompt is given). With no prompt on a terminal,
+    /// a line REPL starts instead.
     prompts: Vec<String>,
+    /// Run the line REPL even when stdin is not a terminal, reading one
+    /// prompt per line from stdin (scripted sessions and tests).
+    #[arg(long, conflicts_with = "prompts")]
+    repl: bool,
     /// Print mode (the only mode this host implements; accepted for OMP parity).
     #[arg(short = 'p', long)]
     print: bool,
@@ -137,6 +147,12 @@ struct Args {
     /// Maximum model calls per prompt (budget gate).
     #[arg(long)]
     max_model_calls: Option<usize>,
+    /// Auto-compact when estimated context exceeds this many tokens (0 disables).
+    #[arg(long, default_value_t = 32_000)]
+    compact_threshold: usize,
+    /// Estimated recent tokens to keep raw when compacting.
+    #[arg(long, default_value_t = 4_000)]
+    compact_keep_tokens: usize,
     #[arg(long)]
     max_tokens: Option<u64>,
     /// Confirm that the selected Responses model supports reasoning items.
@@ -301,7 +317,7 @@ fn default_session_dir(cwd: &Path) -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ara")))
         .unwrap_or_else(|| PathBuf::from(".ara"));
-    let encoded = format!("--{}--", cwd.to_string_lossy().trim_matches('/').replace(['/', '\\', ':'], "-"));
+    let encoded = format!("--{}--", cwd.to_string_lossy().trim_matches('/').replace(['/', '\\', ':', '?'], "-"));
     home.join("sessions").join(encoded)
 }
 
@@ -474,6 +490,296 @@ fn resolve_route(args: &Args) -> Result<Route> {
     })
 }
 
+/// V1-COMPACT: single-level soft compaction from the A3 pieces. The summary
+/// is persisted in the Session with its source entry IDs; raw history stays
+/// in the journal and resume reads the projected context. A second compaction
+/// on an already-compacted session is refused: chained summaries need the
+/// still-open A3 persistence decision, so V1 keeps one level.
+#[allow(clippy::too_many_arguments)]
+async fn run_compaction(
+    args: &Args,
+    model: &ara_ai::Model,
+    provider: &Arc<dyn ModelProvider>,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    manual: bool,
+) -> Result<bool> {
+    use ara_agent::compaction::{SummarySource, select_whole_turn_cut, summarize_sources};
+    use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+    let tokens = count_messages(context, MessageCountOptions::default());
+    if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
+        return Ok(false);
+    }
+    let mut guard = sink.journal.lock().await;
+    let Some(journal) = guard.as_mut() else {
+        eprintln!("ara: compaction needs a session (refusing under --no-session)");
+        return Ok(false);
+    };
+    let snapshot = match journal.compaction_source_snapshot() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("ara: compaction source unavailable ({e}); V1 keeps a single level per session");
+            return Ok(false);
+        }
+    };
+    let sources: Vec<SummarySource<'_>> = snapshot
+        .messages
+        .iter()
+        .map(|m| SummarySource { entry_id: m.entry_id.as_str(), message: &m.message })
+        .collect();
+    let Some(cut) =
+        select_whole_turn_cut(&sources, args.compact_keep_tokens, None).map_err(|e| anyhow::anyhow!("{e}"))?
+    else {
+        if manual {
+            eprintln!("ara: history is already small; nothing to compact");
+        }
+        return Ok(false);
+    };
+    let span = &sources[..cut.candidate.first_kept_index];
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let accepted = match summarize_sources(span, None, model, provider.as_ref(), 1024, deadline, cancel).await {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("ara: summary call failed ({e}); session untouched");
+            return Ok(false);
+        }
+    };
+    journal.append_compaction(
+        &accepted.text,
+        &cut.candidate.first_kept_entry_id,
+        &accepted.window_source_entry_ids,
+        tokens as u64,
+    )?;
+    *context = journal.model_context();
+    let kept = count_messages(context, MessageCountOptions::default());
+    eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");
+    Ok(true)
+}
+
+/// Ctrl+C, plus Ctrl+Break on Windows (the console event another process can
+/// deliver to a separate process group), as one stream of interrupts.
+type Interrupts = tokio::sync::mpsc::UnboundedReceiver<()>;
+
+fn listen_for_interrupts() -> Result<Interrupts> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = signal(SignalKind::interrupt()).context("installing the SIGINT handler")?;
+        tokio::spawn(async move { while sigint.recv().await.is_some() && tx.send(()).is_ok() {} });
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_c};
+        let mut c = ctrl_c().context("installing the Ctrl+C handler")?;
+        let mut b = ctrl_break().context("installing the Ctrl+Break handler")?;
+        tokio::spawn(async move {
+            loop {
+                let got = tokio::select! { v = c.recv() => v, v = b.recv() => v };
+                if got.is_none() || tx.send(()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    Ok(rx)
+}
+
+/// Drive one REPL step (a turn or a compaction). The first interrupt cancels
+/// `token` so the step winds down and records its own abort; a second one
+/// exits at once with 130, as in print mode.
+async fn interruptible<F: Future>(step: F, token: &CancellationToken, interrupts: &mut Interrupts) -> F::Output {
+    tokio::pin!(step);
+    let mut listening = true;
+    loop {
+        tokio::select! {
+            out = &mut step => return out,
+            got = interrupts.recv(), if listening => match got {
+                None => listening = false,
+                Some(()) if token.is_cancelled() => {
+                    eprintln!("ara: second interrupt, exiting");
+                    std::process::exit(130);
+                }
+                Some(()) => {
+                    eprintln!("ara: interrupt received, aborting (press Ctrl-C again to exit immediately)");
+                    token.cancel();
+                }
+            },
+        }
+    }
+}
+
+/// Where the REPL keeps its Session, for `/new`.
+struct ReplSession<'a> {
+    /// `None` under `--no-session`.
+    dir: Option<PathBuf>,
+    cwd: &'a Path,
+    model_ref: &'a str,
+}
+
+/// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
+/// same Session journal. Ctrl+C during a turn cancels only that turn (its
+/// child token) and returns to the prompt; Ctrl+C at the idle prompt exits
+/// with 130; EOF and `/exit` exit with 0. `/new` starts a fresh Session file
+/// and keeps the previous one intact.
+#[allow(clippy::too_many_arguments)]
+async fn run_repl_loop(
+    args: &Args,
+    model: &ara_ai::Model,
+    provider: &Arc<dyn ModelProvider>,
+    system_prompt: &[String],
+    tools: &[Arc<dyn ara_agent::AgentTool>],
+    hooks: &Arc<dyn LoopHooks>,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    session: ReplSession<'_>,
+    mut interrupts: Interrupts,
+) -> Result<i32> {
+    eprintln!("ara: interactive session ({}). /help for commands.", model.id);
+    let current_path = || async { sink.journal.lock().await.as_ref().map(|j| j.path().to_path_buf()) };
+    if let Some(path) = current_path().await
+        && path.exists()
+    {
+        eprintln!("ara: session {}", path.display());
+    }
+    let mut turn: usize = 0;
+    let code = loop {
+        eprint!("> ");
+        let _ = std::io::stderr().flush();
+        let read = tokio::task::spawn_blocking(|| {
+            let mut buf = String::new();
+            match std::io::stdin().read_line(&mut buf) {
+                Ok(0) | Err(_) => None,
+                Ok(_) => Some(buf),
+            }
+        });
+        let line = tokio::select! {
+            line = read => line.unwrap_or(None),
+            Some(()) = interrupts.recv() => {
+                eprintln!();
+                break 130;
+            }
+        };
+        let Some(raw) = line else {
+            eprintln!();
+            break 0;
+        };
+        let input = sanitize_text(raw.trim());
+        if input.is_empty() {
+            continue;
+        }
+        match input.as_str() {
+            "/exit" | "/quit" => break 0,
+            "/help" => {
+                eprintln!("commands: /help, /new, /compact, /exit");
+                eprintln!("Ctrl+C during a turn cancels it; Ctrl+C at the prompt exits.");
+                continue;
+            }
+            "/compact" => {
+                let token = cancel.child_token();
+                let step = run_compaction(args, model, provider, context, sink, &token, true);
+                if let Err(e) = interruptible(step, &token, &mut interrupts).await {
+                    eprintln!("ara: compaction failed ({e:#}); session kept");
+                }
+                continue;
+            }
+            "/new" => {
+                let mut guard = sink.journal.lock().await;
+                match (guard.as_mut(), &session.dir) {
+                    (Some(journal), Some(dir)) => {
+                        let fresh = SessionJournal::create(dir, session.cwd).and_then(|mut j| {
+                            j.append_model_change(session.model_ref)?;
+                            Ok(j)
+                        });
+                        match fresh {
+                            Ok(fresh) => {
+                                let previous = std::mem::replace(journal, fresh);
+                                if args.mode == Mode::Json {
+                                    sink.write_line(&journal.header().to_string());
+                                }
+                                if previous.path().exists() {
+                                    eprintln!(
+                                        "ara: new session; the previous one stays at {}",
+                                        previous.path().display()
+                                    );
+                                } else {
+                                    eprintln!("ara: new session");
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("ara: could not start a new session ({e:#}); keeping the current one");
+                                continue;
+                            }
+                        }
+                    }
+                    _ => eprintln!("ara: new conversation (not persisted)"),
+                }
+                context.clear();
+                turn = 0;
+                continue;
+            }
+            _ => {}
+        }
+        turn += 1;
+        eprintln!("Working... (turn {turn})");
+        let config = AgentConfig {
+            model: model.clone(),
+            provider: provider.clone(),
+            system_prompt: system_prompt.to_vec(),
+            tools: tools.to_vec(),
+            tool_choice: None,
+            max_tokens: args.max_tokens,
+            temperature: args.temperature,
+            deadline: args.max_time.map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0))),
+            max_model_calls: args.max_model_calls,
+            hooks: hooks.clone(),
+        };
+        let token = cancel.child_token();
+        let step = agent_loop(vec![Message::User(UserMessage::text(input))], context, &config, &token, sink);
+        let report = interruptible(step, &token, &mut interrupts).await;
+        match report.end {
+            RunEnd::Completed => {
+                if let Some(a) = context.iter().rev().find_map(Message::as_assistant) {
+                    if let Some(e) = &a.error_message {
+                        eprintln!("{}", sanitize_text(e));
+                    }
+                    if args.mode == Mode::Text {
+                        for block in &a.content {
+                            if let ara_ai::AssistantBlock::Text(t) = block {
+                                sink.write_line(&sanitize_text(&t.text));
+                            }
+                        }
+                    }
+                }
+            }
+            RunEnd::Aborted => eprintln!("ara: turn {turn} cancelled; session kept, type the next prompt"),
+            RunEnd::Deadline => eprintln!("ara: turn {turn} hit the deadline; session kept"),
+            RunEnd::ModelCallBudget => {
+                eprintln!("ara: model call limit reached ({})", args.max_model_calls.unwrap_or_default())
+            }
+            RunEnd::Error => eprintln!("ara: turn {turn} ended in error; session kept"),
+        }
+        if sink.persist_failed.load(Ordering::SeqCst) {
+            break 1;
+        }
+        if report.end == RunEnd::Completed {
+            let token = cancel.child_token();
+            let step = run_compaction(args, model, provider, context, sink, &token, false);
+            if let Err(e) = interruptible(step, &token, &mut interrupts).await {
+                eprintln!("ara: auto-compaction failed ({e:#}); session kept");
+            }
+        }
+    };
+    if let Some(path) = current_path().await
+        && path.exists()
+    {
+        eprintln!("ara: session {}", path.display());
+    }
+    Ok(code)
+}
+
 async fn run(args: Args) -> Result<i32> {
     let _ = args.print;
     let mut route = resolve_route(&args)?;
@@ -483,14 +789,18 @@ async fn run(args: Args) -> Result<i32> {
     let mcp_config =
         args.mcp_config.as_deref().map(McpServerConfig::from_file).transpose().map_err(anyhow::Error::msg)?;
     let mut prompts = args.prompts.clone();
-    if let Some(stdin) = read_stdin()? {
+    // Under `--repl`, stdin is the REPL's line input, not a prompt.
+    if !args.repl
+        && let Some(stdin) = read_stdin()?
+    {
         // OMP buildInitialMessage: `${stdin}\n${firstPrompt}`.
         match prompts.first_mut() {
             Some(first) => *first = format!("{stdin}\n{first}"),
             None => prompts.push(stdin),
         }
     }
-    if prompts.is_empty() {
+    let repl_mode = args.repl || (prompts.is_empty() && std::io::stdin().is_terminal());
+    if prompts.is_empty() && !repl_mode {
         bail!("no prompt given (pass it as an argument or on stdin)");
     }
     let explicit_cwd = match &args.cwd {
@@ -515,14 +825,13 @@ async fn run(args: Args) -> Result<i32> {
 
     // Session journal (first journal I/O happens only after validation above).
     let mut cwd = launch_cwd.clone();
-    let mut journal = if args.no_session {
-        None
-    } else {
-        let dir = args.session_dir.clone().unwrap_or_else(|| default_session_dir(&launch_cwd));
+    let session_dir =
+        (!args.no_session).then(|| args.session_dir.clone().unwrap_or_else(|| default_session_dir(&launch_cwd)));
+    let mut journal = if let Some(dir) = &session_dir {
         let path = match (&args.resume, args.continue_session) {
             (Some(p), _) => Some(p.clone()),
             (None, true) => {
-                Some(latest_session(&dir).with_context(|| format!("no session to continue in {}", dir.display()))?)
+                Some(latest_session(dir).with_context(|| format!("no session to continue in {}", dir.display()))?)
             }
             _ => None,
         };
@@ -568,11 +877,13 @@ async fn run(args: Args) -> Result<i32> {
                 }
                 j
             }
-            None => SessionJournal::create(&dir, &cwd)?,
+            None => SessionJournal::create(dir, &cwd)?,
         })
+    } else {
+        None
     };
     let model_ref = format!("{}/{}", route.model.provider, route.model.id);
-    let mut context: Vec<Message> = journal.as_ref().map(SessionJournal::build_context).unwrap_or_default();
+    let mut context: Vec<Message> = journal.as_ref().map(SessionJournal::model_context).unwrap_or_default();
     if let Some(j) = journal.as_mut()
         && j.current_model().as_deref() != Some(model_ref.as_str())
     {
@@ -735,12 +1046,30 @@ async fn run(args: Args) -> Result<i32> {
         sink.write_line(&header.to_string());
     }
 
+    let mut interrupts = listen_for_interrupts()?;
+    if repl_mode {
+        let session = ReplSession { dir: session_dir, cwd: &cwd, model_ref: &model_ref };
+        return run_repl_loop(
+            &args,
+            &route.model,
+            &provider,
+            &system_prompt,
+            &tools,
+            &hooks,
+            &mut context,
+            &sink,
+            &cancel,
+            session,
+            interrupts,
+        )
+        .await;
+    }
     let c2 = cancel.clone();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
+        if interrupts.recv().await.is_some() {
             eprintln!("ara: interrupt received, aborting (press Ctrl-C again to exit immediately)");
             c2.cancel();
-            if tokio::signal::ctrl_c().await.is_ok() {
+            if interrupts.recv().await.is_some() {
                 std::process::exit(130);
             }
         }
@@ -768,6 +1097,9 @@ async fn run(args: Args) -> Result<i32> {
         end = report.end;
         if end != RunEnd::Completed {
             break;
+        }
+        if let Err(e) = run_compaction(&args, &route.model, &provider, &mut context, &sink, &cancel, false).await {
+            eprintln!("ara: auto-compaction failed ({e:#}); session kept");
         }
     }
     drop(provider);

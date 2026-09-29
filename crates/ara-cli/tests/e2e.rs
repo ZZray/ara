@@ -1734,6 +1734,261 @@ async fn crash_mid_tool_resume_reports_unknown_effect_without_replay() {
     assert!(tool_msg["content"].as_str().unwrap().contains("effects are unknown"));
 }
 
+/// Spawn the REPL with piped stdio. On Windows it gets its own process group
+/// so the test can deliver Ctrl+Break to it (Ctrl+C cannot target a group).
+fn spawn_repl(c: &mut Command) -> Child {
+    c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+    }
+    c.spawn().unwrap()
+}
+
+/// The REPL's interrupt: SIGINT on Unix, Ctrl+Break on Windows.
+fn interrupt(child: &Child) {
+    #[cfg(unix)]
+    signal(child, libc::SIGINT);
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+        let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+        assert_ne!(sent, 0, "GenerateConsoleCtrlEvent: {}", std::io::Error::last_os_error());
+    }
+}
+
+/// Run the REPL to completion on `input` (stdin then closes: EOF).
+async fn repl_output(mut c: Command, input: &'static str) -> Output {
+    tokio::task::spawn_blocking(move || {
+        let mut child = spawn_repl(&mut c);
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap()
+}
+
+/// A child's stderr collected on a thread (the `> ` prompt has no newline).
+struct StderrLog(std::sync::Arc<std::sync::Mutex<String>>, std::thread::JoinHandle<()>);
+
+impl StderrLog {
+    fn start(child: &mut Child) -> StderrLog {
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let mut err = child.stderr.take().unwrap();
+        let sink = buf.clone();
+        let reader = std::thread::spawn(move || {
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = std::io::Read::read(&mut err, &mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap().push_str(&String::from_utf8_lossy(&chunk[..n]));
+            }
+        });
+        StderrLog(buf, reader)
+    }
+
+    fn wait_for(&self, needle: &str, limit: Duration) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < limit {
+            if self.0.lock().unwrap().contains(needle) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    fn finish(self) -> String {
+        self.1.join().unwrap();
+        self.0.lock().unwrap().clone()
+    }
+}
+
+fn wait_exit(child: &mut Child, limit: Duration) -> Option<i32> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            panic!("ara did not exit within {limit:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Text of every user message, from a journal or a Chat Completions request.
+fn user_texts<'a>(messages: impl IntoIterator<Item = &'a Value>) -> Vec<String> {
+    messages
+        .into_iter()
+        .filter(|m| m["role"] == "user")
+        .map(|m| match &m["content"] {
+            Value::String(s) => s.clone(),
+            Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(""),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+fn journal_user_texts(entries: &[Value]) -> Vec<String> {
+    user_texts(entries.iter().filter(|e| e["type"] == "message").map(|e| &e["message"]))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_runs_turns_in_one_journal_and_exits_on_eof() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl"]), "alpha-turn\nbeta-turn\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "First answer.\nSecond answer.\n");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1, "both turns share one Session");
+    let entries = journal(&files[0]);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "user", "assistant"]);
+    assert_eq!(journal_user_texts(&entries), vec!["alpha-turn", "beta-turn"]);
+    assert!(stderr.contains(&format!("ara: session {}", files[0].display())), "{stderr}");
+    let reqs = up.requests.lock().await;
+    let second = reqs[1]["body"]["messages"].as_array().unwrap();
+    assert!(user_texts(second).iter().any(|t| t.contains("alpha-turn")), "{second:?}");
+    assert!(
+        second.iter().any(|m| m["role"] == "assistant" && m["content"].to_string().contains("First answer.")),
+        "{second:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_help_and_exit_run_no_turn() {
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl"]), "/help\n/exit\nnot sent\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "");
+    assert!(stderr.contains("commands: /help, /new, /compact, /exit"), "{stderr}");
+    assert_eq!(up.served(), 0);
+    assert!(env.session_files().is_empty(), "no turn, so the lazy Session was never written");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_new_starts_a_fresh_session_file() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("Answer alpha."), finish("stop"), done()]},
+        {"events": [text("Answer beta."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl"]), "alpha-turn\n/new\nbeta-turn\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Answer alpha.\nAnswer beta.\n");
+    let files = env.session_files();
+    assert_eq!(files.len(), 2, "{files:?}");
+    let first = journal(&files[0]);
+    let second = journal(&files[1]);
+    assert_eq!(journal_user_texts(&first), vec!["alpha-turn"]);
+    assert_eq!(roles(&first), vec!["model_change", "user", "assistant"]);
+    assert_eq!(journal_user_texts(&second), vec!["beta-turn"]);
+    assert_eq!(roles(&second), vec!["model_change", "user", "assistant"]);
+    assert!(
+        stderr.contains(&format!("ara: new session; the previous one stays at {}", files[0].display())),
+        "{stderr}"
+    );
+    let reqs = up.requests.lock().await;
+    let texts = user_texts(reqs[1]["body"]["messages"].as_array().unwrap());
+    assert!(texts.iter().all(|t| !t.contains("alpha-turn")), "{texts:?}");
+}
+
+#[tokio::test]
+async fn repl_rejects_prompt_arguments() {
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let out = output(env.cmd(&up.base_url(), &["--repl", "some prompt"])).await;
+    assert_eq!(out.status.code(), Some(2), "{}", text_of(&out).1);
+    assert_eq!(up.served(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_interrupt_during_bash_returns_to_prompt() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [tool_call(0, "call_s", "bash", "{\"command\":\"echo started; sleep 30\"}"), finish("tool_calls"), done()]},
+        {"events": [text("After the abort."), finish("stop"), done()]},
+        {"events": [text("must not be requested"), finish("stop"), done()]}
+    ]}))
+    .await;
+    let mut c = env.cmd(&up.base_url(), &["--repl", "--mode", "json"]);
+    let mut child = spawn_repl(&mut c);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let started = Instant::now();
+    let (turn1, rest, code) = tokio::task::block_in_place(|| {
+        writeln!(stdin, "run something slow").unwrap();
+        let mut turn1 = read_until(&mut reader, |v| v["type"] == "tool_execution_update", Duration::from_secs(15));
+        assert_eq!(turn1.last().unwrap()["type"], json!("tool_execution_update"), "{turn1:?}");
+        interrupt(&child);
+        turn1.extend(read_until(&mut reader, |v| v["type"] == "agent_end", Duration::from_secs(10)));
+        assert!(log.wait_for("ara: turn 1 cancelled; session kept", Duration::from_secs(5)));
+        assert!(child.try_wait().unwrap().is_none(), "the REPL survives a turn interrupt");
+        writeln!(stdin, "after").unwrap();
+        drop(stdin);
+        let rest: Vec<Value> = reader.lines().map(|l| serde_json::from_str(&l.unwrap()).unwrap()).collect();
+        (turn1, rest, wait_exit(&mut child, Duration::from_secs(15)))
+    });
+    let stderr = log.finish();
+    assert!(started.elapsed() < Duration::from_secs(20), "sleep 30 was not waited out: {:?}", started.elapsed());
+    assert_eq!(code, Some(0), "EOF after the second turn: {stderr}");
+    assert!(stderr.contains("ara: interrupt received, aborting"), "{stderr}");
+    assert_eq!(turn1.last().unwrap()["type"], json!("agent_end"), "{turn1:?}");
+    let answer = rest.iter().find(|v| v["type"] == "message_end" && v["message"]["role"] == "assistant").unwrap();
+    assert_eq!(answer["message"]["content"][0]["text"], json!("After the abort."));
+    assert_eq!(up.served(), 2, "no model call after the abort; one for the next turn");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let entries = journal(&files[0]);
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "user", "assistant", "toolResult", "assistant", "user", "assistant"]
+    );
+    // Windows: Ctrl+Break reaches the whole process group, Bash included, so
+    // the tool may report its own exit instead of `[Command aborted]`; the
+    // turn-level abort below is deterministic on both platforms.
+    #[cfg(unix)]
+    assert!(entries[4]["message"]["content"][0]["text"].as_str().unwrap().ends_with("[Command aborted]"));
+    assert_eq!(entries[5]["message"]["stopReason"], json!("aborted"));
+    assert_eq!(journal_user_texts(&entries), vec!["run something slow", "after"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_interrupt_at_idle_prompt_exits_130() {
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let mut c = env.cmd(&up.base_url(), &["--repl"]);
+    let mut child = spawn_repl(&mut c);
+    let _stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let code = tokio::task::block_in_place(|| {
+        assert!(log.wait_for("> ", Duration::from_secs(15)), "no prompt");
+        std::thread::sleep(Duration::from_millis(300));
+        interrupt(&child);
+        wait_exit(&mut child, Duration::from_secs(5))
+    });
+    let stderr = log.finish();
+    assert_eq!(code, Some(130), "{stderr}");
+    assert_eq!(up.served(), 0);
+}
+
 #[tokio::test]
 async fn deadline_and_model_call_budget() {
     let env = Env::new();

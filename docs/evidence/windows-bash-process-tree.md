@@ -124,5 +124,44 @@ path and fail-closed assignment. Independent Codex post-diff review covered
 Cargo.lock, `ara-tools` manifest, Bash implementation and tests; it found no
 confirmed production defect. The independent post-diff reviewer also checked
 the failed-assignment test and found no blocker; its suggestion to bound
-`wait()` calls was applied and retested. The full backend gate is not green,
-so this repair remains WIP and no point acceptance is claimed.
+`wait()` calls was applied and retested. The full backend gate was later
+made green by the separate vendored editor tag-recovery fix on `f20393d`.
+
+## Point delivery audit (2026-09-28): changes requested
+
+A read-only Cursor agent review (`ara-git-review` + `ara-rust-core-review`)
+of snapshot `f20393d27606b0077b43e2a59a9aa63dd9708ba7` accepted the diff, and
+the focused Windows rechecks passed: `bash_` tools tests 5/5,
+`failed_job_assignment_never_runs_suspended_bash` 1/1 and the CLI deadline
+e2e 1/1, plus the unfiltered Windows gate and live task
+([gate receipt](windows-backend-gate-20260926.md#2026-09-28-pi-edit-windows-tag-recovery-fix-wip)).
+
+That acceptance is withdrawn. `ara-backend-verification` requires the
+relevant platform checks, and the same snapshot does not compile `ara-tools`
+on Linux. GitHub Actions `bootstrap` run 36396583296 on `f20393d`
+(`ubuntu-latest`) failed with `error: unused variable: group` at
+`crates/ara-tools/src/bash.rs:479:13` under `-D warnings`: the `GroupGuard`
+binding is only read by the Windows kill paths. The Unix process-group
+behavior of this point therefore has no passing evidence on the delivered
+snapshot.
+
+| Field | Value |
+| --- | --- |
+| Audited snapshot | `f20393d` (point commit `8940f3c`) |
+| Windows focused recheck | pass (above) |
+| Linux CI | **fail**: run 36396583296, `unused variable: group` (`bash.rs:479`) |
+| Decision | **changes requested**; the Windows repair stays WIP |
+
+Uncommitted follow-up on 2026-09-29 (working tree after `f20393d`):
+
+- `let mut group` carries `#[cfg_attr(not(windows), allow(unused_mut,
+  unused_variables))]`; Unix only needs the guard's `Drop`.
+- `failed_job_assignment_never_runs_suspended_bash` now waits 1 s after the
+  rejected assignment and asserts the suspended child is still alive
+  (`try_wait()` is `None`) and wrote no `uncontained` marker before it is
+  killed.
+- The module doc describes the Job containment.
+
+On Windows the focused tests still pass with this change. Acceptance needs a
+new audit on the committed fix plus a green `ubuntu-latest` run, which needs
+a push.

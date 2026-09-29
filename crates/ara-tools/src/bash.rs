@@ -8,12 +8,15 @@
 //! `[Command timed out after N seconds]` as an error result, cancellation as
 //! an aborted error, live partial output updates, shared concurrency.
 //!
-//! Intentional differences: each call runs a fresh `bash -c` in its own
-//! process group instead of OMP's persistent embedded brush shell, so shell
-//! state such as `cd` or variables does not carry across calls; the whole
-//! group is killed when the call ends (exit, timeout, cancel, or the call
-//! being dropped), so no background process outlives the call with unknown
-//! effects (long-running services need a host job facility, not ported).
+//! Intentional differences: each call runs a fresh `bash -c` instead of OMP's
+//! persistent embedded brush shell, so shell state such as `cd` or variables
+//! does not carry across calls. The call's process tree is contained — a Unix
+//! process group, or on Windows a `KILL_ON_JOB_CLOSE` Job Object that Bash is
+//! spawned suspended into and resumed only after assignment succeeds (a
+//! failed assignment kills it unrun) — and the whole tree is killed when the
+//! call ends (exit, timeout, cancel, or the call being dropped), so no
+//! background process outlives the call with unknown effects (long-running
+//! services need a host job facility, not ported).
 //! stdout and stderr share one pipe so their order is preserved, and only a
 //! bounded tail of the output is kept in memory.
 //!
@@ -368,6 +371,11 @@ mod windows_job_tests {
         command.kill_on_drop(true);
         let mut child = command.spawn().unwrap();
         assert!(job.assign_and_resume(&child).is_err());
+        // A wrongly resumed `touch` exits and creates the marker well within
+        // this window; a contained failure leaves Bash suspended.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(child.try_wait().unwrap().is_none(), "Bash must stay suspended after failed assignment");
+        assert!(!dir.path().join("uncontained").exists(), "Bash ran without its Job");
         let _ = child.start_kill();
         tokio::time::timeout(Duration::from_secs(2), child.wait())
             .await
@@ -475,7 +483,8 @@ impl AgentTool for BashTool {
             let _ = child.start_kill();
             return Err(ToolError(format!("Failed to contain Bash process tree: {e}")));
         }
-        #[allow(unused_mut)]
+        // Unix only needs the guard's Drop; Windows also kills through it below.
+        #[cfg_attr(not(windows), allow(unused_mut, unused_variables))]
         let mut group = GroupGuard {
             #[cfg(unix)]
             pid: child.id(),
