@@ -21,6 +21,7 @@ const cases = [
     "é.txt", "e\u0301.txt", "ä.txt", "中.txt", "Ω.txt", "📄.txt",
     ".hidden", "1.txt",
   ] },
+  { name: "braces", dirs: [], files: ["a {", "b", "c", "}"] },
 ];
 if (process.platform !== "win32") {
   cases.push({ name: "case-collision", dirs: [], files: ["a.txt", "A.txt", "ä.txt", "Ä.txt"] });
