@@ -2050,6 +2050,25 @@ async fn repl_shows_text_a_provider_sent_without_deltas() {
     assert_eq!(up.served(), 1);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_failed_turn_shows_the_provider_cause_and_keeps_the_session() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"status": 400, "body": "{\"error\":{\"message\":\"turn backend down\"}}"},
+        {"events": [text("Recovered."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl"]), "first prompt\nsecond prompt\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Recovered.\n");
+    assert!(stderr.contains("ara: turn 1 ended in error (400 turn backend down); session kept"), "{stderr}");
+    assert!(!stderr.contains("turn 2 ended in error"), "{stderr}");
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt"]);
+    assert_eq!(up.served(), 2);
+}
+
 #[tokio::test]
 async fn deadline_and_model_call_budget() {
     let env = Env::new();

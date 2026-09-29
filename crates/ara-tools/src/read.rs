@@ -157,12 +157,14 @@ pub fn split_selector(input: &str, exists: impl Fn(&str) -> bool) -> Result<(Str
 
 /// lstat-based probe: a dangling symlink or an unreadable entry still counts
 /// as an existing literal path, so it is never reinterpreted as a selector.
+/// As upstream `probeLiteralPathExists`, a missing entry, a non-directory
+/// parent, or a name the OS cannot hold (too long; invalid on Windows) is not
+/// an entry.
 fn path_exists(p: &Path) -> bool {
+    use std::io::ErrorKind;
     match std::fs::symlink_metadata(p) {
         Ok(_) => true,
-        #[cfg(windows)]
-        Err(e) if matches!(e.raw_os_error(), Some(123 | 206)) => false,
-        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        Err(e) => !matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory | ErrorKind::InvalidFilename),
     }
 }
 
@@ -1039,6 +1041,17 @@ impl AgentTool for ReadTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literal_probe_treats_unnameable_paths_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert!(path_exists(&file));
+        assert!(!path_exists(&dir.path().join("missing.txt")));
+        assert!(!path_exists(&file.join("child")), "a file cannot be a parent");
+        assert!(!path_exists(&dir.path().join("a".repeat(300))), "name past the OS limit");
+    }
 
     #[test]
     fn selectors() {

@@ -132,3 +132,55 @@ multi-range task with tool result and artifact inspection remain open. No module
 advances. Windows Bash work is a separate stable lifecycle change awaiting
 the explicit scope decision recorded in
 [`windows-bash-process-tree.md`](windows-bash-process-tree.md).
+
+## Follow-up: Linux long literal path (2026-09-29, WIP)
+
+**Failure.** Linux CI for `43e79e2` (GitHub Actions run 36538669183) failed
+`read_multiple_ranges_raw_eof_and_limits` at `crates/ara-tools/tests/tools.rs:275`.
+The case reads `crlf.txt:` followed by 4,001 ranges (`100-100,102-102,…,8100-8100`)
+and expects out-of-bounds notices. The tool returned
+`Cannot read crlf.txt:…: File name too long (os error 36)` instead.
+
+**Cause.** `path_exists` in `crates/ara-tools/src/read.rs` decides whether the
+whole input names a literal file before the selector is split off.
+- It treated only `NotFound`, plus Windows raw codes 123 and 206, as "missing".
+- On Linux, `lstat` of the joined string fails with `ENAMETOOLONG`, which Rust
+  maps to `ErrorKind::InvalidFilename`. So the long string was kept as a
+  literal path.
+- On Windows the same string fails with 206, which was already handled. That
+  is why the case passed locally.
+
+**Upstream.** The fixed commit's `probeLiteralPathExists`
+(`packages/coding-agent/src/tools/path-utils.ts:393-401`) returns "missing" for
+`ENOENT`, `ENOTDIR` and `ENAMETOOLONG`, and "unknown" (the literal wins) for
+any other error. Its comment gives the reason: a name past the OS limit cannot
+name an entry.
+
+**Change.** `path_exists` now treats `NotFound`, `NotADirectory` and
+`InvalidFilename` as missing on every platform. The Windows raw-code branch is
+gone; a local probe showed that std maps 123 and 206 to `InvalidFilename`
+(`f.txt:1-1` gives `NotFound`/2, a 300-character name gives
+`InvalidFilename`/123, the 4,001-range path gives `InvalidFilename`/206, and a
+path under a file gives `NotFound`/3). Other errors still keep the literal path.
+
+**Test.** Unit test `read::tests::literal_probe_treats_unnameable_paths_as_missing`:
+an existing file is present; a missing file, a path under a file, and a
+300-character name are missing. The existing `tools.rs` case covers the tool
+path.
+
+**Mutation.** Dropping `InvalidFilename` from the predicate fails the unit
+test (`name past the OS limit`) and fails `read_multiple_ranges_raw_eof_and_limits`
+on Windows with the same `Cannot read crlf.txt:…` shape as Linux CI. The source
+was restored and its sha256 re-checked.
+
+| Command (Windows) | Result |
+| --- | --- |
+| `cargo fmt -p ara-tools -p ara-cli -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | exit 0 |
+| `cargo test -p ara-tools --lib read::tests` | 5/5 |
+| `cargo test -p ara-tools --all-targets --all-features` | all targets pass (lib 30/30, `tools.rs` 16/16, `skill_urls` 16/16) |
+| `cargo test -p ara-cli --all-targets --all-features` | all targets pass (e2e 72/72) |
+
+**Not verified yet.** The Linux case itself (`ENAMETOOLONG`, and `ENOTDIR` for
+the path-under-a-file assertion) runs only on CI. It has not run on the new
+code. No independent review.

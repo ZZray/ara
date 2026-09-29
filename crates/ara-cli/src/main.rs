@@ -621,7 +621,7 @@ async fn run_compaction(
     let accepted = match summarize_sources(span, None, model, provider.as_ref(), 1024, deadline, cancel).await {
         Ok(a) => a,
         Err(e) => {
-            // Show the provider's status and message, as a failed turn does.
+            // Show the provider's status and message so the cause is visible.
             let status = e.provider_status.map(|s| format!(", HTTP {s}")).unwrap_or_default();
             let detail = e.provider_message.as_deref().map(|m| format!(": {}", sanitize_text(m))).unwrap_or_default();
             eprintln!("ara: summary call failed ({e}{status}{detail}); session untouched");
@@ -820,6 +820,7 @@ async fn run_repl_loop(
             max_model_calls: args.max_model_calls,
             hooks: hooks.clone(),
         };
+        let turn_start = context.len();
         let token = cancel.child_token();
         let step = agent_loop(vec![Message::User(UserMessage::text(input))], context, &config, &token, sink);
         let report = interruptible(step, &token, &mut interrupts).await;
@@ -838,7 +839,20 @@ async fn run_repl_loop(
             RunEnd::ModelCallBudget => {
                 eprintln!("ara: model call limit reached ({})", args.max_model_calls.unwrap_or_default())
             }
-            RunEnd::Error => eprintln!("ara: turn {turn} ended in error; session kept"),
+            RunEnd::Error => {
+                // Show this turn's provider cause, as print mode does.
+                let cause = context
+                    .get(turn_start..)
+                    .unwrap_or_default()
+                    .iter()
+                    .rev()
+                    .find_map(Message::as_assistant)
+                    .filter(|a| matches!(a.stop_reason, StopReason::Error))
+                    .and_then(|a| a.error_message.as_deref())
+                    .map(|m| format!(" ({})", sanitize_text(m)))
+                    .unwrap_or_default();
+                eprintln!("ara: turn {turn} ended in error{cause}; session kept")
+            }
         }
         if sink.persist_failed.load(Ordering::SeqCst) {
             break 1;

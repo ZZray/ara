@@ -1,11 +1,12 @@
 # V1-TRIAL: bounded real-model REPL task (2026-09-29, WIP)
 
 Status: **partial (WIP)**. The coding task, turn cancel, resume and a real
-failed-summary path ran on a real model through the REPL. Compaction with a
-*useful* real-model summary was **not** shown: the fixed model's pool
-answered 429 to every summary call, and the free router accepted the call but
-returned a safety-classifier line as the "summary". No independent review has
-run; nothing is marked tested or accepted.
+failed-summary path ran on a real model through the REPL. Run 5 produced a
+*useful* real-model summary (`google/gemma-4-31b-it:free`). A recall that
+depends on that summary is **not** shown: both recall attempts got HTTP 429.
+Earlier, the fixed qwen pool answered 429 to every summary call, and the free
+router returned a safety-classifier line as the "summary". No independent
+review has run; nothing is marked tested or accepted.
 
 ## Point and scope
 
@@ -25,7 +26,8 @@ keeps its own evidence file.
 | Runs | `ara.exe` sha256 | `crates/ara-cli/src/main.rs` sha256 |
 | --- | --- | --- |
 | run1, run2, run3a | `1d77a281…6f56783` | `cfdf3f92…d4470b27` (streaming, before the diagnostic fix) |
-| run3b, run3c, run4 | `66f87802…6da442b27` | `11039ec3…d1e40e1d9` (with the diagnostic fix) |
+| run3b, run3c, run4, run5 | `66f87802…6da442b27` | `11039ec3…d1e40e1d9` (with the diagnostic fix; committed as `43e79e2`) |
+| run5b | `febb5f10…83325209` | `602920a8…a2813d619` (`43e79e2` plus the REPL failed-turn cause, F6; `ara-tools/src/read.rs` `1a60b2ea…71894d35`) |
 
 ## Route and model (checked live before use)
 
@@ -41,6 +43,12 @@ keeps its own evidence file.
   - the run4 recall turn on `openrouter/free`:
     `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning-20260428:free` via Nvidia,
     cost 0.
+- `google/gemma-4-31b-it:free` (run5, run5b). The public endpoint list,
+  saved after run5b as `logs/gemma-endpoints.json`, shows one endpoint:
+  - Google AI Studio, context 262,144, `tools`, `tool_choice` and
+    `max_tokens`, price 0/0.
+  - The served model of the run5 summary call is not recorded (F3). Both
+    recall calls failed with 429, so they have no generation record.
 - A scan of the 2,753 trial and scratch files (binaries excluded) found no key
   value. The probe logs held an account `user_id` in OpenRouter's error body;
   it was redacted in place and is not reproduced here.
@@ -74,10 +82,13 @@ keeps its own evidence file.
 
 ## Runs
 
-All runs share one Session file,
-`2026-09-29T07-24-40-285Z_01a0ec0d-….jsonl`. Journal entry numbers are line
-indexes in that file. "Calls" counts assistant messages; "usage" is the sum of
-the journal's `usage` fields.
+All runs use one Session file name,
+`2026-09-29T07-24-40-285Z_01a0ec0d-….jsonl`. Runs 1–4 append to it in
+`sessions/`. Run 5 and run5b use `sessions-run5/`, which holds a copy of the
+file saved before run4 (`logs/session-before-run4.jsonl`), so run4's bad
+summary is not in it. Journal entry numbers are line indexes in the file.
+"Calls" counts assistant messages; "usage" is the sum of the journal's
+`usage` fields.
 
 | Step | Input | Wall time | Calls | Result |
 | --- | --- | --- | --- | --- |
@@ -93,6 +104,25 @@ the journal's `usage` fields.
 | run3a, b, c follow-up | which bug first, then which function (no tools) | 4.2, 1.8, 1.8 s | 1 each | Correct answers in the same process, with the full history intact. |
 | run4 `/compact` | `--model openrouter/free --continue --compact-keep-tokens 300` | 6.0 s | summary accepted | Journal entry 45 is `model_change` (`openrouter/openrouter/free`). Entry 46 is a `compaction` with `method: soft`, `tokensBefore` 4119, `firstKeptEntryId` = entry 25, and 22 source IDs (entries 3–24). stderr: `compacted 4119 estimated tokens down to 1587`. **The summary text is `User Safety: safe` / `Response Safety: safe`**. See F2. |
 | run4 follow-up | same question | 10.4 s | 1 | A correct answer, served by the Nvidia model above. It does **not** show that the summary carried context: the kept raw tail (entries 25–44) already restates both facts in entries 34–44. |
+| run5 `/compact` | `--model google/gemma-4-31b-it:free --continue --compact-keep-tokens 300` | 11.6 s | summary accepted | Entry 45 is `model_change` (`openrouter/google/gemma-4-31b-it:free`). Entry 46 is a `compaction` with `method: soft`, `tokensBefore` 4119, `firstKeptEntryId` = entry 25 and 22 source IDs (entries 3–24). stderr: `compacted 4119 estimated tokens down to 1888; summary persisted with source IDs`. The summary is a structured task summary; see "Summary coverage". |
+| run5 recall | two facts found only in entries 3–24: the tie-test input list and the blank-line fix | 36.3 s | 1 failed | Entry 48: `stopReason: error`, `errorStatus` 429, `errorMessage` `429 Provider returned error`, `usage {}`. stderr showed only `ara: turn 1 ended in error; session kept` (F6). |
+| run5b recall | `--continue` on the compacted file, no second `/compact`: "quote the expression your `mode()` uses to break ties", no tools | 36.1 s | 1 failed | Entry 50: the same 429. With the F6 fix, stderr shows `ara: turn 1 ended in error (429 Provider returned error); session kept`. Exit 0. Not retried, to keep within the free-tier request budget. |
+
+### Summary coverage (run5, entry 46)
+
+Headings: Goal, Constraints & Preferences, Progress/Done, Key Decisions,
+Critical Context. Checked against the journal and `work/`:
+
+- **Correct:** the even-length `median` fix; the `mode` contract; the four
+  `mode` test names (they match `test_stats.py`); "8 tests passed"; the
+  functions `mean`, `median` and `mode` (they match `stats.py`).
+- **Summarized-only fact kept:** the tie-breaking expression
+  `min(counts, key=lambda v: (-counts[v], v))`. In the journal it appears
+  only in entries 16–17 (summarized span) and in entry 46. It is not in the
+  kept tail (entries 25–44). This is what the run5b recall asked for.
+- **Omitted:** the tie-test input list `[4, 1, 3, 1]` and the blank-line fix
+  to `test_stats.py`. The run5 recall asked for both, so a correct answer
+  there would have come from somewhere other than the summary.
 
 ### Direct probes of the qwen pool
 
@@ -126,6 +156,8 @@ routing explains that was not tested.
 | run4 follow-up | 1 | 0 | 7,476 | 388 | 0 | 387 |
 | failed summary calls (run3a–c) | — | **unknown** (no response) | — | — | — | — |
 | run4 summary call | — | **unknown** (not persisted, F3) | — | — | — | — |
+| run5 summary call | — | **unknown** (not persisted, F3) | — | — | — | — |
+| run5, run5b recall (429) | 0 | **2** (`usage {}`) | — | — | — | — |
 
 OpenRouter's normalized `tokens_prompt` is 5,645–8,076 for the qwen calls.
 This is a different count from the journal's input + cacheRead; both are kept
@@ -183,6 +215,24 @@ generation time 0.75–14.1 s.
 - **F5 (observation):** `model_change` records
   `openrouter/openrouter/free`, the provider prefix plus the router's own
   ID.
+- **F6 (fixed, WIP):** a failed REPL turn showed no cause. In run5 the
+  journal held `429 Provider returned error`, but stderr said only
+  `ara: turn 1 ended in error; session kept`. Print mode already printed the
+  message.
+  - The REPL `RunEnd::Error` arm now appends the sanitized `errorMessage` of
+    this turn's last assistant message when its stop reason is `error`
+    (`crates/ara-cli/src/main.rs`, the REPL match on `report.end`). It only
+    looks at messages added in this turn, so an earlier turn's error is never
+    shown again.
+  - Test: `repl_failed_turn_shows_the_provider_cause_and_keeps_the_session`
+    in `crates/ara-cli/tests/e2e.rs`. A fake upstream returns HTTP 400
+    `turn backend down`, then a normal answer. The test checks the stderr
+    line `ara: turn 1 ended in error (400 turn backend down); session kept`,
+    that turn 2 is answered, and that both prompts are journaled.
+  - Mutation: restoring the old line fails that test (the panic message
+    prints the old stderr line). The source was restored and its sha256
+    re-checked.
+  - Real binary: run5b, above.
 - **Not observed:** whether the `python slow.py` process was killed after the
   cancel. The trial did not inspect the process table. Process-tree
   termination belongs to [windows-bash-process-tree](windows-bash-process-tree.md)
@@ -197,13 +247,31 @@ generation time 0.75–14.1 s.
 | `cargo test -p ara-cli --bin ara` | **8/8** |
 | `cargo test -p ara-cli --test e2e` | **71/71** |
 
+## Checks on the F6 change (with the read-probe fix in the same tree)
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt -p ara-cli -p ara-tools -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | exit 0 |
+| `cargo test -p ara-cli --all-targets --all-features` | bin **8/8**, e2e **72/72**; the other ara-cli targets 17/17, 6/6, 3/3 |
+| `cargo test -p ara-tools --all-targets --all-features` | all targets pass (lib 30/30, `tools.rs` 16/16) |
+
+The read-probe fix is recorded in
+[tools-01a-multi-range-read](tools-01a-multi-range-read.md), "Follow-up:
+Linux long literal path".
+
 ## Gaps and decision
 
-- A real-model compaction with a useful summary, followed by a recall that
-  depends on that summary, is **not shown**. It needs a model that serves
-  the summary call.
+- A real-model compaction with a useful summary is shown (run5). A recall
+  that depends on that summary is **not shown**: run5 and run5b both got
+  HTTP 429. The next attempt is one run5b retry on the same file.
 - The manual keypress Ctrl+C in a visible terminal is not run.
-- The trial ran on Windows only. The REPL e2e `cfg(unix)` paths still need a
-  green Linux CI run.
+- The trial ran on Windows only. On Linux CI for `43e79e2` (GitHub Actions
+  run 36538669183), `ara-cli` e2e passed 73/73, including
+  `repl_interrupt_during_bash_returns_to_prompt` and
+  `repl_interrupt_during_compact_leaves_no_compaction_entry`. The workflow
+  failed later, in `ara-tools` `tools.rs`, on the read long-path case. That
+  case is fixed in the working tree and has not run on CI yet. Cargo stops at
+  the first failing test target, so the targets after it did not run.
 - No independent review.
 - **Decision:** changes requested (WIP). The counts are unchanged.
