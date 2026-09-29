@@ -8,7 +8,8 @@ entry records the task, the route, the result and an independent check.
 
 - **Route:** B.AI `https://api.b.ai/v1`, `--api openai-completions`,
   `--api-key-env BAI_API_KEY`, `deepseek-v4.1-flash`.
-- **Binary:** `ara.exe` built from the `b179087` code.
+- **Binary:** `ara.exe` built from the `b179087` code (dogfood 1 and 2) and
+  from `a6b6bd0` (dogfood 3).
 - **Workspace:** a fresh local clone under `C:\Temp`, not the working
   repository. A useful change is ported back after it is checked.
 
@@ -82,6 +83,44 @@ entry records the task, the route, the result and an independent check.
   still opens them.
 - **Blockers seen:** none. The REPL finished a two-file fix with the test
   update on its own; only the vacuous header check needed a human review.
+
+## Dogfood 3: `--print-thoughts` by OMP parity, with a compaction in the middle
+
+- **Task:** finding 5 of the combined V1-COMPACT review (the REPL ignores
+  `--print-thoughts`). Read OMP to see where the flag applies, record the
+  decision in `v1-compact.md`, run `/compact`, then ask about the earlier
+  turn with no tool.
+- **Run:** four inputs and `/exit` on piped stdin, with
+  `--max-model-calls 30 --max-time 900 --compact-keep-tokens 2000`. Exit 0
+  after about 200 s.
+  - 11 assistant messages, all with usage: input 18,424, output 2,754,
+    cache read 109,952, total 131,130.
+  - Tools: `grep` 4, `read` 4, `bash` 2, `edit` 1. The model read the OMP
+    checkout by absolute path.
+  - Turn 1 cited `packages/coding-agent/src/main.ts:1562`
+    (`printThoughts && !isProtocolMode && !isInteractive`), plus lines 1478
+    and 1482. Those lines match the source at `596f2da`, and so does
+    `modes/print-mode.ts:232`, which it cited in turn 2.
+  - Turn 2 changed one table cell and reported `git diff --stat`
+    (1 file, +1 −1).
+  - `/compact` summarized turn 1 (13 source entries, 6,385 estimated
+    tokens down to 2,595). The first kept entry is the turn 2 prompt.
+  - The question after the compaction was answered correctly with no tool
+    call, from the summary (turn 1) and the kept turn 2.
+- **Result:** OMP applies the flag only in single-shot print mode, so the
+  REPL ignoring it is parity. No code change. The ported cell says "Decided
+  by OMP parity" instead of the model's "Accepted as parity" and links this
+  entry; the rest is the model's text.
+- **Seen, not blocking:**
+  - The REPL progress line for `edit` names no file (`ara: tool edit`). The
+    hashline `edit` takes a single `input` whose `[path#hash]` header holds
+    the path, and `tool_summary` only looks at `command`, `path` and
+    `pattern`.
+  - The turn 2 answer paraphrased the new cell instead of quoting it. That is
+    the model, not ARA.
+- **Review:** the session's own model (Claude Opus 5.5) checked the diff and
+  each OMP line against the source. Doc-only, with no separate review.
+- **Blockers seen:** none.
 
 ## Follow-up: a timed-out tool no longer blocks compaction
 

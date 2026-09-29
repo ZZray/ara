@@ -344,7 +344,7 @@ explicit host value)".
 | 2 Print-mode auto-compaction runs after the last prompt, with a fixed 120 s deadline | Follow-up; not needed for the REPL daily driver |
 | 3 The single-level refusal repeats every turn and mislabels other snapshot errors | Fixed as above |
 | 4 Weak asserts (`tokensBefore`, `sourceEntryIds`, resume against the in-memory context) | Fixed: `assert_compaction_provenance` (source IDs equal the message entries before a user `firstKeptEntryId`, `tokensBefore > 0`). The new e2e test asserts that the resumed request starts with the exact in-memory compacted request |
-| 5 REPL text mode ignores `--print-thoughts` | Follow-up |
+| 5 REPL text mode ignores `--print-thoughts` | Decided by OMP parity: OMP un-hides thinking (`override("omitThinking", false)`) only when `parsedArgs.printThoughts && !isProtocolMode && !isInteractive` (rpc/rpc-ui/acp excluded) and emits thinking only from the print-mode branch, so `packages/coding-agent/src/main.ts:1562` and `modes/print-mode.ts:232` leave the interactive REPL/TUI out of scope — no ARA change ([dogfood 3](v1-dogfood.md#dogfood-3---print-thoughts-by-omp-parity-with-a-compaction-in-the-middle)) |
 | 6 A `read_line` error ends the REPL with exit 0 and no message | Fixed: `cannot read the next prompt (...); session kept`, exit 1 |
 | 7 The REPL return skips the `--report-request-text-tokens` flush | Follow-up |
 

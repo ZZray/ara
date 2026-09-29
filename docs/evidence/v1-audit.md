@@ -93,9 +93,10 @@ implementer ran the gate and the mutations.
 
 ## Follow-ups (not blocking daily use)
 
-- **Combined review:** 2, print-mode auto-compaction deadline; 5,
-  `--print-thoughts` in the REPL; 7, the `--report-request-text-tokens`
-  flush.
+- **Combined review:** 2, print-mode auto-compaction deadline; 7, the
+  `--report-request-text-tokens` flush. ~~5, `--print-thoughts` in the
+  REPL~~: decided by OMP parity after acceptance, the flag is print-mode only
+  ([dogfood 3](v1-dogfood.md#dogfood-3---print-thoughts-by-omp-parity-with-a-compaction-in-the-middle)).
 - **Run9-fix recheck:** 1, 3 and 4 (stop-reason wording with an HTTP status,
   routes with a lower output limit, `--max-tokens 0`). Finding 2, the
   upper-cap test, was fixed after acceptance by
