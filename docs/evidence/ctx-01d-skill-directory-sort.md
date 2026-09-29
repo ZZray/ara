@@ -266,3 +266,11 @@ source-level review but no injected-fault execution receipt; a controlled
 faulting filesystem or syscall injection would be needed for that check.
 Keep CTX-01d implementing (WIP) while the remaining point-level boundaries
 above are resolved. This repair does not advance P1 or P3.
+
+The repair and this evidence were committed as WIP `e96dc5a` and pushed to
+`dev`. On that exact SHA, [repository checks 36613800339](https://github.com/ZZray/ara/actions/runs/36613800339)
+passed bootstrap, inventory and the Linux backend gate. The
+[fixed OMP oracle workflow 36613800340](https://github.com/ZZray/ara/actions/runs/36613800340)
+passed its native same-host Rust comparison steps on macOS, Linux and Windows.
+These green runs verify the delivered success paths; they do not inject the
+post-open directory I/O fault or close the remaining CTX-01d boundaries.
