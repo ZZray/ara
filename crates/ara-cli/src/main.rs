@@ -613,7 +613,11 @@ async fn run_compaction(
     let snapshot = match journal.compaction_source_snapshot() {
         Ok(s) => s,
         Err(CompactionSourceError::UnsupportedContextEntry { kind, .. }) if kind == "compaction" => {
-            notice("this session is already compacted, and V1 keeps a single level per session".into());
+            // An entry the Session cannot project is not a usable compaction.
+            match journal.compacted_context_projection() {
+                Ok(_) => notice("this session is already compacted, and V1 keeps a single level per session".into()),
+                Err(e) => notice(format!("the session has a compaction entry it cannot use ({e})")),
+            }
             return Ok(false);
         }
         Err(e) => {
@@ -636,7 +640,8 @@ async fn run_compaction(
                     eprintln!("ara: history is already small; nothing to compact");
                 }
             }
-            None => {}
+            // Not expected: a cut exists but none was selected above the target.
+            None => notice("no cut was selected".into()),
             Some(SummaryInputError::EmptySources) => notice("there is no earlier turn to summarize".into()),
             Some(e) => notice(format!("no earlier turn can be summarized ({e})")),
         }

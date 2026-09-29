@@ -387,6 +387,71 @@ once on it.
   `C:\Temp\ara-v1-final` found no `BAI_API_KEY` or `OPENROUTER_API_KEY`
   value.
 
+## Run8: compaction past an interrupted turn (2026-09-29)
+
+Run7's `/compact` could cut only before the `slow.py` turn. The Ctrl+C
+recorded an `aborted` assistant, and the old span rule refused to summarize
+it. That was review Finding 1
+([V1-COMPACT](v1-compact.md#combined-v1-review-finding-1-and-fixes-2026-09-29)).
+Run8 checks the fix with a real model.
+
+- **Code:** `4de4ce1`. `ara.exe` sha256 is `55bf1714488dfac7…`, a debug
+  build.
+- **Route:** B.AI `https://api.b.ai/v1`, `openai-completions`, key from
+  `BAI_API_KEY`. Every assistant entry records `deepseek-v4.1-flash`.
+- **Fixture:** a fresh clone at `6a93b52` under `C:\Temp\ara-v1-compact2`.
+- **Driver:** `v1_compact2.py` (scratch, not committed), which reuses the
+  run1 console driver with `--max-model-calls 8 --max-time 300`.
+- **Process a flags:** `--compact-threshold 0 --compact-keep-tokens 1`, so
+  there is no auto-compaction and a manual `/compact` keeps only the latest
+  turn.
+
+| Step | Observed | Time |
+| --- | --- | --- |
+| a1 read `stats.py` | `read` tool; the answer names `mean(values)` and `median(values)` | 7.6 s |
+| a2 cancel `python slow.py` | The model reads `slow.py`, then runs Bash. Ctrl+C 3 s after `slow.started`. stderr: `interrupt received`, `tool bash failed`, `turn 2 cancelled; session kept`. Journal: `toolResult` with progress output, then `assistant(aborted)` (entry 12) | ≈10 s |
+| a3 short turn | `READY` | 2.8 s |
+| a4 `/compact` | `compacted 644 estimated tokens down to 816; summary persisted with source IDs`. Entry 15 is the `compaction`: `method: soft`, `tokensBefore` 644, sources entries 3–12 (including the aborted assistant), first kept entry 13 (`READY` prompt). `/exit` returns 0 | 7.4 s |
+| b1 restart `--continue`, recall | Without tools, names `mean(values)` and `median(values)`, and says the `slow.py` Bash call was aborted after about 6 s at `progress 6/90`. `/exit` returns 0 | 7.4 s |
+
+- **The summary records the abort:**
+  - Goal 2 is marked incomplete.
+  - Under Blocked: the call was aborted after 6 s of output, ending in
+    `[Command aborted]`.
+  - The empty `aborted` assistant is noted.
+- **The recall in b1 came from the summary:**
+  - A fake-upstream replay of the journal as b1 found it (entries 0–15)
+    with the same binary sent 6 messages:
+    - two system messages;
+    - the summary message (`[Compacted summary of earlier turns; source
+      entries withheld]`, after the date and cwd reminder);
+    - the kept `READY` turn;
+    - the new prompt.
+  - Both facts (the two function names and the abort) occur only in the
+    summary message.
+  - The `slow.py` prompt text is present only inside the summary's Goal
+    list. The first prompt is absent.
+- **Artifacts:** the task was read-only. `git status` in `work/` is clean at
+  `6a93b52`, and no `slow.py` or `ara` process from the run was left.
+- **Usage (journal):**
+
+  | Process | Assistant messages | Usage known | Input | Output | Cache read | Total |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | a | 6 | 5 | 2,816 | 442 | 28,928 | 32,186 |
+  | b | 1 | 1 | 964 | 602 | 6,016 | 7,582 |
+
+  The aborted message has no usage (unknown, not 0). The summary call's
+  usage is not persisted (F3).
+- **Secrets:** a scan of the 47 non-binary files under
+  `C:\Temp\ara-v1-compact2` found no `BAI_API_KEY` or `OPENROUTER_API_KEY`
+  value.
+- **Seen, not fixed:**
+  - `--cwd` is canonicalized to a verbatim path, so the model sees
+    `//?/C:/temp/...` as the working directory in the date/cwd reminder.
+    This predates V1. Tool calls in runs 7 and 8 worked with it. It is
+    recorded as a daily-use follow-up.
+  - When the summary is larger than a small source, `down to` is misleading.
+
 ## Gaps and decision
 
 - Run7 shows the whole V1 task on the delivered code: a coding task, a turn

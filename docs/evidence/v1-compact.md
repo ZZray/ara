@@ -42,7 +42,10 @@ keeps one level. This is a reference-host subset, not full A3 parity.
 - A session whose tail holds an interrupted/unknown-effect tool call yields
   no valid cut (the A3 unknown-effect rule); the host reports nothing on
   auto and keeps the session. A budget-aborted first turn poisoned the first
-  trial session this way; a clean session compacted fine.
+  trial session this way; a clean session compacted fine. (Superseded for
+  aborted, errored and length-stopped turns by
+  [Finding 1](#combined-v1-review-finding-1-and-fixes-2026-09-29): those are
+  now summarized, and the host says why when no cut exists.)
 - `default_session_dir` now also replaces `?` (verbatim `\\?\` prefix made
   the default dir illegal under Windows; found during this work).
 
@@ -77,7 +80,7 @@ nothing is marked tested or accepted.
 | `repl_manual_compact_then_keep_working` | `--compact-threshold 0 --compact-keep-tokens 1`, two turns, `/compact`, third turn. Summary request has no tools and its prompt contains `first prompt`. Journal has exactly one `compaction` (`method: soft`, fake summary); `firstKeptEntryId` is a user entry; every `sourceEntryIds` id precedes that entry. The third request carries the summary and kept turn (`second prompt` / `Second answer.`) and drops the summarized raw `first prompt` / `First answer.`. Exit 0, stderr `ara: compacted`. |
 | `repl_auto_compact_threshold_and_disabled_companion` | `--compact-threshold 1` after two turns runs a summary call (served 3) and writes one `compaction`. Companion `--compact-threshold 0` makes no summary call (served 2) and no `compaction`. |
 | `repl_continue_uses_the_persisted_summary` | After `/compact`, restart with `--repl --continue`. The first model request of the new process carries `[Compacted summary of earlier turns` and the fake summary, not the summarized raw `first prompt`, and does carry the kept turn. The answer is appended to the same Session file; still one `compaction`. |
-| `repl_compact_failure_paths_leave_the_session_usable` | (1) Second `/compact` prints `V1 keeps a single level per session`, no second summary call, still one `compaction`. (2) Summary HTTP 400: stderr `session untouched`, journal bytes identical across the failed `/compact`, next resume turn is answered, still no `compaction`. (3) `/compact` under `--no-session`: `compaction needs a session`, no summary call. (4) One-turn history: `history is already small; nothing to compact`, no summary call. |
+| `repl_compact_failure_paths_leave_the_session_usable` | (1) Second `/compact` prints `V1 keeps a single level per session`, no second summary call, still one `compaction`. (2) Summary HTTP 400: stderr `session untouched`, journal bytes identical across the failed `/compact`, next resume turn is answered, still no `compaction`. (3) `/compact` under `--no-session`: `compaction needs a session`, no summary call. (4) One-turn history: `history is already small; nothing to compact`, no summary call. (Messages (3) and (4) changed in `4de4ce1`; see Finding 1 below.) |
 | `repl_interrupt_during_compact_leaves_no_compaction_entry` | Hang summary + `interrupt`: stderr `session untouched`, REPL returns to the prompt, no `compaction` entry, the next line is answered (served 4). Deterministic on Windows within one attempt. |
 
 ### Commands and pass counts (Windows, 2026-09-29)
@@ -255,3 +258,214 @@ explicit host value)".
   - F2: any non-empty summary text is accepted;
   - F3: the summary call's model, response ID and usage are not persisted.
 - **Review gap:** no independent review.
+
+## Combined V1 review, Finding 1 and fixes (2026-09-29)
+
+### Review
+
+- **Reviewer:** a Sonnet 5.5 subagent, one combined static review of the V1
+  host and Session diff, `e7f94b6..111c325`. HEAD `c07bb3c` had the same
+  code.
+- **Checks it ran:** read-only `git show`, `git diff` and `grep`. It ran no
+  build or tests.
+- **Verdict:** changes requested, because of Finding 1. Findings 2–7 were
+  minor.
+- **No defect found in:**
+  - cancellation;
+  - journal consistency on cancel or failure;
+  - streaming;
+  - `/new`;
+  - failed resume;
+  - exit codes.
+
+### Finding 1 (important): compaction blocked after an aborted or failed turn
+
+- **Before:** `validate_completed_summary_span` rejected every assistant
+  whose stop reason was not `stop` or `toolUse`. So after one Ctrl+C
+  (`aborted`) or provider error (`error`), no later cut existed:
+  - `/compact` said `history is already small`;
+  - auto-compaction said nothing.
+- **Decision, by OMP parity.**
+  - OMP `findValidCutPoints`
+    (`packages/agent/src/compaction/compaction.ts:415` at `596f2da`) accepts
+    any user or assistant message as a cut point and never a `toolResult`.
+    It has no stop-reason filter.
+  - ARA now summarizes:
+    - aborted, errored and length-stopped turns;
+    - a turn that a host budget or deadline ended right after tool results.
+  - ARA still refuses:
+    - a tool call without its result;
+    - a span that ends with an unanswered prompt;
+    - developer messages;
+    - unknown-effect results (`timedOut`, `panicked`, synthetic
+      `interrupted_unknown_effect`).
+  - The agent loop already pairs the retained calls of an aborted, errored
+    or length-stopped assistant with synthetic `executed: false` results.
+    A call that was running when the user cancelled keeps the tool's own
+    error result and is summarized
+    ([fix review I1](#fix-review-e809a354de4ce1-2026-09-29)).
+  - The serialized `stop_reason` tells the summarizer that the turn did not
+    finish.
+- **Found while testing the fix:**
+  - `ara-session` mirrors the rule in `safe_soft_summary_prefix`. The mirror
+    still rejected aborted turns.
+  - `model_context()` then fell back silently to the raw history: the host
+    printed `ara: compacted`, but the next request still carried the whole
+    history.
+  - The new e2e test caught this before the mirror was fixed.
+  - `run_compaction` now checks `compacted_context_projection()` after
+    `append_compaction`. On failure it prints `compaction entry written, but
+    the session cannot use it (...)`, and the context stays unchanged.
+- **Host messages (with Finding 3):**
+  - Auto-compaction explains a refusal once per process; `/compact` always
+    explains it.
+  - The messages are:
+    - `there is no earlier turn to summarize`;
+    - `no earlier turn can be summarized (<cause>)`, from
+      `explain_no_whole_turn_cut`;
+    - `this session is already compacted, and V1 keeps a single level per
+      session`, only for a `compaction` entry;
+    - other snapshot errors, with their own text;
+    - `it needs a session (--no-session is set)`.
+  - `history is already small` is printed only when the history is within
+    `--compact-keep-tokens`.
+
+### Other findings
+
+| Finding | Resolution |
+| --- | --- |
+| 2 Print-mode auto-compaction runs after the last prompt, with a fixed 120 s deadline | Follow-up; not needed for the REPL daily driver |
+| 3 The single-level refusal repeats every turn and mislabels other snapshot errors | Fixed as above |
+| 4 Weak asserts (`tokensBefore`, `sourceEntryIds`, resume against the in-memory context) | Fixed: `assert_compaction_provenance` (source IDs equal the message entries before a user `firstKeptEntryId`, `tokensBefore > 0`). The new e2e test asserts that the resumed request starts with the exact in-memory compacted request |
+| 5 REPL text mode ignores `--print-thoughts` | Follow-up |
+| 6 A `read_line` error ends the REPL with exit 0 and no message | Fixed: `cannot read the next prompt (...); session kept`, exit 1 |
+| 7 The REPL return skips the `--report-request-text-tokens` flush | Follow-up |
+
+The reviewer also raised a stale-interrupt race: a Ctrl+C that arrives just
+as a step ends stays queued, and the next idle prompt exits with 130. The
+Session is kept, so this is a follow-up.
+
+### Code (`4de4ce1`)
+
+- `ara-agent/src/compaction.rs`: the new span rule and
+  `explain_no_whole_turn_cut`.
+- `ara-session/src/lib.rs`: the mirrored `safe_soft_summary_prefix`.
+- `ara-cli/src/main.rs`: refusal causes, the once-per-process notice, the
+  projection guard and the `read_line` error exit.
+
+### Tests
+
+- **`compaction_cut`:**
+  - `summarizes_aborted_errored_and_length_stopped_turns` covers:
+    - the run7 shape (Ctrl+C during Bash, then more turns);
+    - an aborted assistant with a synthetically paired call;
+    - an aborted assistant with an unpaired call (no cut);
+    - errored;
+    - length with a retry;
+    - length text.
+  - `explains_why_no_cut_exists`.
+  - The budget-stopped case now gives a cut.
+- **`compaction`:** `prompt_rejects_an_unanswered_prompt_but_summarizes_failed_turns`
+  covers length, error and aborted; the serialized prompt carries the stop
+  reason.
+- **`compaction_projection`:**
+  `projection_summarizes_aborted_errored_and_budget_stopped_turns`. An
+  unanswered prompt still gives `UnsafeSummaryBoundary`.
+- **`e2e`:** `repl_compact_summarizes_past_an_interrupted_turn`, with a fake
+  upstream and a real interrupt:
+  - the cut lands on `third prompt`;
+  - the aborted assistant is among the sources;
+  - the summarizer sees `aborted`;
+  - the fourth request carries the summary and not the aborted prompt;
+  - a `--continue` process sends the same messages, plus the new prompt.
+- **Changed failure-path expectations:**
+  - `compaction skipped: it needs a session`;
+  - `compaction skipped: there is no earlier turn to summarize`;
+  - a new within-target case: `history is already small`.
+
+### Commands (Windows, `4de4ce1` tree)
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt` for the ARA-owned packages, `--check` | exit 0 |
+| `cargo clippy -p ara-agent -p ara-session -p ara-cli --all-targets -- -D warnings` | exit 0 |
+| `cargo test -p ara-agent` | 77/77 (lib 1, agent_loop 38, compaction 13, compaction_call 8, compaction_cut 13, tokenizer 4) |
+| `cargo test -p ara-session` | 34/34 |
+| `cargo test -p ara-cli --bin ara` / `--test e2e` | 8/8 and 73/73 |
+| `python scripts/verify_backend.py` | PASS: 74 test binaries, 1032 passed, 0 failed, 1 ignored |
+
+### Mutations
+
+Each mutation was applied by a script, then the named tests ran, then the
+file was restored and its sha256 compared with the saved hash.
+
+| Mutation | Result |
+| --- | --- |
+| Agent: restore the stop-reason filter in `validate_completed_summary_span` | **fails**: `summarizes_aborted_…`, `prompt_rejects_an_unanswered_…`, and e2e `repl_compact_summarizes_past_…` (no `ara: compacted`) |
+| Session: restore the stop-reason filter in `safe_soft_summary_prefix` | **fails**: `projection_summarizes_aborted_…`, and the e2e test (the host guard reports the unusable entry, so `ara: compacted` is absent) |
+| Host: report every manual no-cut case as `already small` | **fails**: the one-turn case (`!stderr.contains("already small")`) |
+
+### Real model
+
+- [V1-TRIAL run8](v1-trial.md#run8-compaction-past-an-interrupted-turn-2026-09-29)
+  used B.AI `deepseek-v4.1-flash` on the new binary:
+  - Ctrl+C during `python slow.py`, then one more turn;
+  - `/compact` cut past the aborted turn;
+  - after a restart, the model recalled two facts that were present only in
+    the summary.
+- **Open wording issue:** the run printed `compacted 644 estimated tokens
+  down to 816`. The source was small, so the summary plus the kept tail
+  were larger than the source. The cut is correct; the wording is a
+  follow-up.
+
+### Fix review (`e809a35..4de4ce1`, 2026-09-29)
+
+- **Reviewer:** a separate Sonnet 5.5 subagent. It made a static review of
+  `git diff e809a35 4de4ce1` (7 files) and checked the pinned OMP
+  `findValidCutPoints`. It ran no build or tests.
+- **Verdict:** changes requested (small). No Critical finding.
+- **No defect found in:**
+  - removing the stop-reason filter, given the loop's pairing rules;
+  - `pending`, duplicate-ID and tool-name handling (the Agent rule and the
+    Session mirror agree);
+  - the `sourceEntryIds` check;
+  - the `already compacted` match;
+  - a manual `/compact` notice, which the once-per-process flag never hides;
+  - the read-error exit path.
+
+| Finding | Resolution |
+| --- | --- |
+| **I1** (important) Ctrl+C during a running tool: Bash returns an error result with the partial output and `[Command aborted]`, with no unknown-effect flag. It is summarized, while a timed-out Bash (the same kill) is refused. The evidence claimed that no possibly-run tool is summarized | **Decided by OMP parity:** a cancelled call keeps the tool's own result and is summarized. Its text tells the summarizer that the command was aborted, and run8's summary said so. The sentence above and the doc comment on `validate_completed_summary_span` are corrected. New test `a_cancelled_call_is_summarized_with_its_own_abort_result`: the serialized record carries `[Command aborted]`, `is_error: true` and `unknown_effect: false`, and the assistant record carries `aborted`. The timed-out and panicked refusals stay (ARA-stricter than OMP). A timeout therefore still blocks every later cut, and the refusal names the cause. Recorded as a dogfood follow-up |
+| **I2** (important) `explain_no_whole_turn_cut` gave a wrong cause: `UnfinishedTurn` for a leading developer message, and `TooManySources` for any history over 256 messages, even when an early blocker caused the refusal | **Fixed:** a leading developer message gives `DeveloperInSummary`; another non-user first message gives the new `NoLeadingPrompt`. The scan now stops at the source limit, as the candidate scan does, so an early blocker is named. `TooManySources` is returned only when no later prompt lies within the limit. Tests: `explains_why_no_cut_exists` (developer first, assistant first) and `explains_an_early_blocker_in_a_history_past_the_source_limit` (305 messages with an early timeout; 303 messages with no prompt inside the limit) |
+| M1 An entry the Session cannot project was reported as `already compacted` | **Fixed:** that arm checks `compacted_context_projection()` first and prints `the session has a compaction entry it cannot use (...)`. Defensive and untested: the guard is unreachable while the mirror matches the Agent rule |
+| M2 The once-per-process auto notice had no test | **Test added:** `--no-session` with three turns and `/compact`. `auto-compaction skipped: it needs a session` appears once, and the manual `compaction skipped: it needs a session` also appears once. The notice is still once per process, not once per cause |
+| M3 The `None` arm printed nothing | **Fixed:** `no cut was selected`. Not expected to occur |
+| M4 The read-error exit had no test | **Test added:** `repl_unreadable_prompt_exits_1_and_keeps_the_session`. After one turn, a line of invalid UTF-8 gives exit 1 and `cannot read the next prompt (...); session kept`. The journal keeps the first turn, and the line after is not sent |
+| M5 `agt-compaction-input.md` still described the old rule | **Fixed:** a superseded-rule note. The ledger row lists the intentional differences |
+| M6 `UnfinishedTurn` text is also used for a duplicate open call ID | No change: the first call with that ID has no result, so the text holds |
+| M7 The Session mirror tests were thinner than the Agent tests | **Tests added:** aborted and length assistants with a call paired by a synthetic `executed: false` result are projected; the same call without its result is refused (`UnsafeSummaryBoundary`) |
+
+The reviewer also noted that `error_message` is not serialized, so the
+summarizer sees `error` without its text. OMP behaves the same, so there is no
+change.
+
+#### Mutations on the fix
+
+| Mutation | Result |
+| --- | --- |
+| The explanation scans past the source limit again | **fails** `explains_an_early_blocker_…` |
+| A leading developer message gives `UnfinishedTurn` again | **fails** `explains_why_no_cut_exists` |
+| Auto-compaction explains every refusal (`load` instead of `swap`) | **fails** `repl_compact_failure_paths_…` (count 1) |
+| An unreadable prompt exits 0 | **fails** `repl_unreadable_prompt_…` |
+| The Session mirror accepts a prefix that ends with an unpaired call | **fails** `projection_summarizes_aborted_…` |
+
+Each file was restored, and its sha256 matched the saved hash.
+
+#### Commands on the fix tree (Windows)
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p ara-agent --test compaction_cut` | 15/15 |
+| `cargo test -p ara-session --test compaction_projection` | 8/8 |
+| `cargo test -p ara-cli --test e2e repl_` | 20/20 |
+| `python scripts/verify_backend.py` (fmt, strict Clippy, all tests) | PASS: 74 test binaries, 1035 passed, 0 failed, 1 ignored; e2e 74/74 |

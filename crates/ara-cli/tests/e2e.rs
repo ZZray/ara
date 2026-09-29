@@ -3306,6 +3306,50 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("history is already small; nothing to compact"), "{stderr}");
     assert_eq!(up.served(), 2, "no summary call within the target");
+
+    // Auto-compaction explains a refusal once per process; /compact always does.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("One."), finish("stop"), done()]},
+        {"events": [text("Two."), finish("stop"), done()]},
+        {"events": [text("Three."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--no-session", "--compact-threshold", "1"]),
+        "first\nsecond\nthird\n/compact\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "One.\nTwo.\nThree.\n");
+    assert_eq!(stderr.matches("ara: auto-compaction skipped: it needs a session").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("ara: compaction skipped: it needs a session").count(), 1, "{stderr}");
+    assert_eq!(up.served(), 3, "no summary call under --no-session");
+}
+
+/// A prompt line that is not UTF-8 ends the REPL with exit 1 and a message;
+/// the Session keeps the turns before it.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_unreadable_prompt_exits_1_and_keeps_the_session() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [text("First answer."), finish("stop"), done()]}]})).await;
+    let mut c = env.cmd(&up.base_url(), &["--repl"]);
+    let out = tokio::task::spawn_blocking(move || {
+        let mut child = spawn_repl(&mut c);
+        child.stdin.take().unwrap().write_all(b"first prompt\n\xff\xfe not text\nnot sent\n").unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(stdout, "First answer.\n");
+    assert!(stderr.contains("ara: cannot read the next prompt ("), "{stderr}");
+    assert!(stderr.contains("session kept"), "{stderr}");
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(journal_user_texts(&entries), vec!["first prompt"]);
 }
 
 /// V1-COMPACT: interrupt during the summary call returns to the prompt, leaves

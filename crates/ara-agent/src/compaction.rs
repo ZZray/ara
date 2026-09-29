@@ -61,6 +61,7 @@ pub enum SummaryInputError {
     UnfinishedTurn,
     UnpairedToolResult,
     UnknownToolEffect,
+    NoLeadingPrompt,
 }
 
 impl std::fmt::Display for SummaryInputError {
@@ -82,6 +83,7 @@ impl std::fmt::Display for SummaryInputError {
             Self::UnknownToolEffect => {
                 f.write_str("compaction cannot hide a tool call whose execution effect is unknown")
             }
+            Self::NoLeadingPrompt => f.write_str("compaction source span does not start with a user prompt"),
         }
     }
 }
@@ -175,7 +177,11 @@ fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
 /// call. As in fixed OMP `findValidCutPoints`, a turn that ended with an
 /// aborted, errored or length-stopped assistant, or after tool results when a
 /// host budget stopped the loop, is still summarized: the agent loop pairs
-/// each call it did not run with a synthetic `executed: false` result. The
+/// each call it did not run with a synthetic `executed: false` result. A call
+/// that was running when the user cancelled it keeps the tool's own error
+/// result (for Bash, the partial output and `[Command aborted]`) and is
+/// summarized like any failed call, as in OMP. Timed-out, panicked and
+/// interrupted-unknown results are refused, which is stricter than OMP. The
 /// Session owner must still prove IDs and messages correspond to the current
 /// branch and commit against that branch's leaf.
 pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<(), SummaryInputError> {
@@ -268,18 +274,28 @@ pub fn whole_turn_cut_candidates(sources: &[SummarySource<'_>]) -> Vec<WholeTurn
 
 /// Why `whole_turn_cut_candidates` offers no cut, so a host can say so
 /// instead of calling the history small. `None` when a cut exists.
-/// `EmptySources` means no later prompt can start a kept tail. Otherwise it is
-/// the validation error of the prefix before the latest prompt.
+/// `EmptySources` means no later prompt can start a kept tail, and
+/// `TooManySources` that the only later prompts lie past the source limit.
+/// Otherwise it is the first validation error of the longest prefix a cut
+/// could summarize, so an early blocker is named even in a long history.
 pub fn explain_no_whole_turn_cut(sources: &[SummarySource<'_>]) -> Option<SummaryInputError> {
     if !whole_turn_cut_candidates(sources).is_empty() {
         return None;
     }
-    let Some(latest_prompt) = (1..sources.len()).rev().find(|&i| matches!(sources[i].message, Message::User(_))) else {
-        return Some(SummaryInputError::EmptySources);
-    };
-    if !sources.first().is_some_and(|source| matches!(source.message, Message::User(_))) {
-        return Some(SummaryInputError::UnfinishedTurn);
+    match sources.first().map(|source| source.message) {
+        None => return Some(SummaryInputError::EmptySources),
+        Some(Message::User(_)) => {}
+        Some(Message::Developer(_)) => return Some(SummaryInputError::DeveloperInSummary),
+        Some(_) => return Some(SummaryInputError::NoLeadingPrompt),
     }
+    let window = sources.len().min(MAX_SUMMARY_SOURCES + 1);
+    let Some(latest_prompt) = (1..window).rev().find(|&i| matches!(sources[i].message, Message::User(_))) else {
+        return Some(if sources.len() > window {
+            SummaryInputError::TooManySources
+        } else {
+            SummaryInputError::EmptySources
+        });
+    };
     Some(validate_completed_summary_span(&sources[..latest_prompt]).err().unwrap_or(SummaryInputError::InvalidSourceId))
 }
 

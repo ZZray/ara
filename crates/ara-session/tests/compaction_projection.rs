@@ -404,6 +404,43 @@ fn projection_summarizes_aborted_errored_and_budget_stopped_turns() {
     write_journal(&path, &budget_stopped);
     assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"]);
 
+    // A call the loop did not run after an aborted or length stop is paired
+    // with a synthetic `executed: false` result, as in the Agent rule.
+    for (reason, source) in
+        [(StopReason::Aborted, "assistant_stop_aborted"), (StopReason::Length, "assistant_stop_length")]
+    {
+        let Message::Assistant(mut stopped_call) = tool_call("t1") else { unreachable!() };
+        stopped_call.stop_reason = reason;
+        let paired = vec![
+            message("q1", Value::Null, user("run")),
+            message("a1", json!("q1"), Message::Assistant(stopped_call.clone())),
+            message(
+                "r1",
+                json!("a1"),
+                tool_result("t1", Some(json!({"__synthetic": true, "source": source, "executed": false}))),
+            ),
+            message("q2", json!("r1"), user("next")),
+            message("a3", json!("q2"), assistant("answer")),
+            compaction("c1", json!("a3"), "q2", json!(["q1", "a1", "r1"])),
+        ];
+        write_journal(&path, &paired);
+        assert_eq!(projected_ids(&SessionJournal::open(&path).unwrap()), ["summary:c1", "q2", "a3"], "{reason:?}");
+
+        let unpaired = vec![
+            message("q1", Value::Null, user("run")),
+            message("a1", json!("q1"), Message::Assistant(stopped_call)),
+            message("q2", json!("a1"), user("next")),
+            message("a3", json!("q2"), assistant("answer")),
+            compaction("c1", json!("a3"), "q2", json!(["q1", "a1"])),
+        ];
+        write_journal(&path, &unpaired);
+        assert_eq!(
+            SessionJournal::open(&path).unwrap().compacted_context_projection(),
+            Err(CompactionProjectionError::UnsafeSummaryBoundary { id: "c1".into() }),
+            "{reason:?}"
+        );
+    }
+
     let unanswered = vec![
         message("q1", Value::Null, user("never answered")),
         message("q2", json!("q1"), user("next")),

@@ -183,10 +183,79 @@ fn explains_why_no_cut_exists() {
 
     let developer_first = [developer("high priority"), user("one"), assistant(StopReason::Stop, None), user("two")];
     let ids = ["e1", "e2", "e3", "e4"];
-    assert_eq!(explain_no_whole_turn_cut(&sources_of(&ids, &developer_first)), Some(SummaryInputError::UnfinishedTurn));
+    assert_eq!(
+        explain_no_whole_turn_cut(&sources_of(&ids, &developer_first)),
+        Some(SummaryInputError::DeveloperInSummary)
+    );
+    let assistant_first =
+        [assistant(StopReason::Stop, None), user("one"), assistant(StopReason::Stop, None), user("two")];
+    assert_eq!(
+        explain_no_whole_turn_cut(&sources_of(&ids, &assistant_first)),
+        Some(SummaryInputError::NoLeadingPrompt)
+    );
 
     let ok = [user("one"), assistant(StopReason::Stop, None), user("two")];
     assert_eq!(explain_no_whole_turn_cut(&sources_of(&["e1", "e2", "e3"], &ok)), None);
+}
+
+#[test]
+fn explains_an_early_blocker_in_a_history_past_the_source_limit() {
+    // An unknown effect in the first turn, then more turns than one summary
+    // request can hold: the early cause is named, not the length.
+    let mut messages = vec![
+        user("run"),
+        assistant(StopReason::ToolUse, Some("c1")),
+        tool_result("c1", true),
+        assistant(StopReason::Stop, None),
+    ];
+    for i in 0..150 {
+        messages.push(user(&format!("turn {i}")));
+        messages.push(assistant(StopReason::Stop, None));
+    }
+    messages.push(user("latest"));
+    let ids: Vec<String> = (0..messages.len()).map(|i| format!("e{i}")).collect();
+    let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    assert!(messages.len() > 300);
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&id_refs, &messages)), Some(SummaryInputError::UnknownToolEffect));
+
+    // No later prompt within the limit: the length is the cause.
+    let mut messages = vec![user("run")];
+    for i in 0..150 {
+        let id = format!("c{i}");
+        messages.push(assistant(StopReason::ToolUse, Some(&id)));
+        messages.push(tool_result(&id, false));
+    }
+    messages.push(assistant(StopReason::Stop, None));
+    messages.push(user("latest"));
+    let ids: Vec<String> = (0..messages.len()).map(|i| format!("e{i}")).collect();
+    let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(&id_refs, &messages)), Some(SummaryInputError::TooManySources));
+}
+
+#[test]
+fn a_cancelled_call_is_summarized_with_its_own_abort_result() {
+    // Ctrl+C while Bash runs: the tool returns an error with the partial
+    // output and `[Command aborted]`, not an unknown-effect receipt.
+    let cancelled = Message::ToolResult(ToolResultMessage {
+        tool_call_id: "c1".into(),
+        tool_name: "write".into(),
+        content: vec![UserBlock::text("progress 6/90\n\n[Command aborted]")],
+        details: Some(json!({})),
+        is_error: true,
+        timestamp: 0,
+    });
+    let messages =
+        [user("run slow.py"), assistant(StopReason::ToolUse, Some("c1")), cancelled, aborted(None), user("next")];
+    let ids = ["e1", "e2", "e3", "e4", "e5"];
+    assert_eq!(cuts(&ids, &messages), vec![at(4, "e5")]);
+    let text = serialize_sources_for_summary(&sources_of(&ids, &messages)[..4]).unwrap();
+    let record: serde_json::Value =
+        text.lines().map(|line| serde_json::from_str(line).unwrap()).nth(2).expect("tool result record");
+    assert_eq!(record["role"], "tool_result");
+    assert!(record["content"].as_str().unwrap().ends_with("[Command aborted]"));
+    assert_eq!(record["is_error"], true);
+    assert_eq!(record["unknown_effect"], false);
+    assert!(text.lines().nth(3).unwrap().contains("\"stop_reason\":\"aborted\""));
 }
 
 #[test]
