@@ -177,9 +177,11 @@ fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
 /// call. As in fixed OMP `findValidCutPoints`, a turn that ended with an
 /// aborted, errored or length-stopped assistant, or after tool results when a
 /// host budget stopped the loop, is still summarized: the agent loop pairs
-/// each call it did not run with a synthetic `executed: false` result. A call
-/// that was running when the user cancelled it keeps the tool's own error
-/// result (for Bash, the partial output and `[Command aborted]`) and is
+/// the calls such an assistant did not run with a synthetic `executed: false`
+/// result, and a call it blocked, failed to validate or skipped after a cancel
+/// with an ordinary error result. A call that was running when the user
+/// cancelled it keeps the tool's own error result (for Bash, the partial
+/// output and `[Command aborted]`, or `Command aborted` with no output) and is
 /// summarized like any failed call, as in OMP. Timed-out, panicked and
 /// interrupted-unknown results are refused, which is stricter than OMP. The
 /// Session owner must still prove IDs and messages correspond to the current
@@ -290,11 +292,8 @@ pub fn explain_no_whole_turn_cut(sources: &[SummarySource<'_>]) -> Option<Summar
     }
     let window = sources.len().min(MAX_SUMMARY_SOURCES + 1);
     let Some(latest_prompt) = (1..window).rev().find(|&i| matches!(sources[i].message, Message::User(_))) else {
-        return Some(if sources.len() > window {
-            SummaryInputError::TooManySources
-        } else {
-            SummaryInputError::EmptySources
-        });
+        let later_prompt = sources[window..].iter().any(|source| matches!(source.message, Message::User(_)));
+        return Some(if later_prompt { SummaryInputError::TooManySources } else { SummaryInputError::EmptySources });
     };
     Some(validate_completed_summary_span(&sources[..latest_prompt]).err().unwrap_or(SummaryInputError::InvalidSourceId))
 }
@@ -544,6 +543,8 @@ pub struct SummaryCallError {
     pub kind: SummaryCallErrorKind,
     pub usage: Option<Box<Usage>>,
     pub provider_status: Option<u16>,
+    /// Stop reason of the terminal model message, when one was received.
+    pub stop_reason: Option<StopReason>,
     /// Bounded provider diagnostic. Callers must still redact it before logs
     /// or user display because an upstream may echo request content.
     pub provider_message: Option<String>,
@@ -558,12 +559,19 @@ impl std::fmt::Display for SummaryCallError {
 impl std::error::Error for SummaryCallError {}
 
 fn rejected(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallError {
-    SummaryCallError { kind, usage: usage.map(Box::new), provider_status: None, provider_message: None }
+    SummaryCallError {
+        kind,
+        usage: usage.map(Box::new),
+        provider_status: None,
+        stop_reason: None,
+        provider_message: None,
+    }
 }
 
 fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> SummaryCallError {
     let mut failure = rejected(kind, Some(message.usage.clone()));
     failure.provider_status = message.error_status;
+    failure.stop_reason = Some(message.stop_reason);
     failure.provider_message = message.error_message.as_deref().map(|text| text.chars().take(512).collect());
     failure
 }
@@ -580,7 +588,11 @@ fn accept_summary_response(
         || message.error_message.is_some()
         || message.error_status.is_some()
     {
-        return Err(rejected_terminal(SummaryCallErrorKind::IncompleteResponse, &message));
+        let mut failure = rejected_terminal(SummaryCallErrorKind::IncompleteResponse, &message);
+        if reason != StopReason::Stop {
+            failure.stop_reason = Some(reason);
+        }
+        return Err(failure);
     }
     if saw_tool_call_event || message.tool_calls().next().is_some() {
         return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));

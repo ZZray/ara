@@ -649,13 +649,26 @@ async fn run_compaction(
     };
     let span = &sources[..cut.candidate.first_kept_index];
     let deadline = Instant::now() + Duration::from_secs(120);
-    let accepted = match summarize_sources(span, None, model, provider.as_ref(), 1024, deadline, cancel).await {
+    // OMP's default summary budget, floor(0.8 * reserveTokens) with the default
+    // 16384 reserve; ARA knows no context window, so it keeps the default.
+    // A reasoning model spends part of it on thinking. `--max-tokens` caps it.
+    const SUMMARY_MAX_TOKENS: u64 = 16_384 * 4 / 5;
+    let max_tokens = args.max_tokens.map_or(SUMMARY_MAX_TOKENS, |cap| cap.min(SUMMARY_MAX_TOKENS));
+    let accepted = match summarize_sources(span, None, model, provider.as_ref(), max_tokens, deadline, cancel).await {
         Ok(a) => a,
         Err(e) => {
-            // Show the provider's status and message so the cause is visible.
+            // Show the stop reason, output tokens and the provider's status and
+            // message so the cause is visible.
+            let stop = e.stop_reason.map(|r| format!(", stop reason {}", r.as_str())).unwrap_or_default();
+            let output = e
+                .usage
+                .as_ref()
+                .and_then(|u| u.output)
+                .map(|n| format!(", {n} of {max_tokens} output tokens"))
+                .unwrap_or_default();
             let status = e.provider_status.map(|s| format!(", HTTP {s}")).unwrap_or_default();
             let detail = e.provider_message.as_deref().map(|m| format!(": {}", sanitize_text(m))).unwrap_or_default();
-            eprintln!("ara: summary call failed ({e}{status}{detail}); session untouched");
+            eprintln!("ara: summary call failed ({e}{stop}{output}{status}{detail}); session untouched");
             return Ok(false);
         }
     };

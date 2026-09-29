@@ -193,7 +193,12 @@ async fn one_shot_rejects_incomplete_empty_tool_and_error_responses() {
         let result = call(&ScriptedProvider::new(Script::Events(events))).await;
         let error = result.unwrap_err();
         assert_eq!(error.kind, expected);
+        // A cut-off summary names its stop reason, from the message or the event.
+        if expected == SummaryCallErrorKind::IncompleteResponse && error.provider_status.is_none() {
+            assert_eq!(error.stop_reason, Some(StopReason::Length));
+        }
         if expected == SummaryCallErrorKind::ProviderError {
+            assert_eq!(error.stop_reason, Some(StopReason::Error));
             assert_eq!(error.provider_status, Some(401));
             assert_eq!(error.provider_message.as_deref(), Some("authentication failed"));
             assert_eq!(error.usage.unwrap().output, Some(3));

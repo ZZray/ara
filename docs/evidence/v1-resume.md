@@ -1,8 +1,12 @@
-# V1-RESUME: `--continue` / `--resume` on the recovered Session (WIP)
+# V1-RESUME: `--continue` / `--resume` on the recovered Session
 
-Status: **implementing (WIP)**. Evidence is from the working tree after
-`6a6ef96`. No independent review has run and there is no real-model trial, so
-nothing is marked tested or accepted.
+Status: **evidence complete; the decision is in the
+[V1 audit](v1-audit.md)**. The tests below first ran on the working tree
+after `6a6ef96`. Linux CI and the Windows gate later passed on `111c325`,
+real-model runs resumed the Session (V1-TRIAL runs 6, 7, 9 and 10), and
+the combined V1 review (`e7f94b6..111c325`, a separate Sonnet 5.5 subagent,
+static) found no defect in cancellation, journal consistency on cancel or
+failure, streaming, `/new`, failed resume or exit codes.
 
 ## Scope
 
@@ -88,13 +92,15 @@ saved copy after each.
 
 ## Gaps
 
-- **Unix not compiled:** `kill_mid_tool`'s `cfg(unix)` arm (`child.kill` +
-  `pkill -f`) and the existing `cfg(unix)` crash/interrupt tests were not
-  compiled here. Linux CI with `-D warnings` is still required. The Windows
-  `taskkill` arm is the one exercised above.
-- **No real model:** every request went to the controlled fake upstream.
-- **No real console:** the REPL tests use piped stdin and EOF; Ctrl+C at a
-  real console is V1-TRIAL territory.
-- **Full gate:** `python scripts/verify_backend.py` has not run on this
-  snapshot.
-- **Counts:** unchanged; nothing is marked tested or accepted.
+- ~~**Unix not compiled**~~: done. Linux CI (GitHub Actions run
+  36541328597 on `111c325`, with `-D warnings`) compiled and ran the
+  `cfg(unix)` arms: every step green, `ara-cli` e2e 74/74.
+- ~~**No real model**~~: done. V1-TRIAL runs 6, 7, 9 and 10 resumed the
+  Session with `--continue` on B.AI `deepseek-v4.1-flash`, twice per run
+  in runs 7, 9 and 10.
+- ~~**No real console**~~: done. The ConPTY check in
+  [V1-CANCEL](v1-repl-cancel.md#follow-up-real-console-ctrlc-through-conpty-2026-09-29)
+  and the V1-TRIAL runs send Ctrl+C through a real console.
+- ~~**Full gate**~~: done. `python scripts/verify_backend.py` passed on
+  `111c325` and on the V1 delivery tree (see [V1 audit](v1-audit.md)).
+- **Counts:** set by the [V1 audit](v1-audit.md).

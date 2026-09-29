@@ -230,12 +230,18 @@ fn explains_an_early_blocker_in_a_history_past_the_source_limit() {
     let ids: Vec<String> = (0..messages.len()).map(|i| format!("e{i}")).collect();
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     assert_eq!(explain_no_whole_turn_cut(&sources_of(&id_refs, &messages)), Some(SummaryInputError::TooManySources));
+
+    // One long turn and no later prompt at all: there is no earlier turn.
+    messages.pop();
+    let id_refs = &id_refs[..messages.len()];
+    assert!(messages.len() > 300);
+    assert_eq!(explain_no_whole_turn_cut(&sources_of(id_refs, &messages)), Some(SummaryInputError::EmptySources));
 }
 
 #[test]
 fn a_cancelled_call_is_summarized_with_its_own_abort_result() {
-    // Ctrl+C while Bash runs: the tool returns an error with the partial
-    // output and `[Command aborted]`, not an unknown-effect receipt.
+    // Ctrl+C while a call runs: the tool returns an error with its partial
+    // output and, in Bash's words, `[Command aborted]`; no unknown-effect receipt.
     let cancelled = Message::ToolResult(ToolResultMessage {
         tool_call_id: "c1".into(),
         tool_name: "write".into(),

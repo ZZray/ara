@@ -1,11 +1,14 @@
-# V1-REPL + V1-CANCEL: line REPL with turn cancellation (WIP)
+# V1-REPL + V1-CANCEL: line REPL with turn cancellation
 
 Status: **implementing (WIP)**. The REPL and cancel code is in WIP commit
 `6a6ef96`; the streaming follow-up is in `43e79e2`, and the failed-turn cause
 (F6 in [V1-TRIAL](v1-trial.md)) is in `111c325`. Linux CI and the Windows
 gate pass on `111c325`. A real-console Ctrl+C check through ConPTY passes
-(below). No independent review has run, so nothing is marked tested or
-accepted.
+(below). Review: the combined V1 review (`e7f94b6..111c325`, a separate Sonnet 5.5 subagent,
+static) found no defect in cancellation, journal consistency on cancel or
+failure, streaming, `/new`, failed resume or exit codes
+([V1-COMPACT](v1-compact.md#combined-v1-review-finding-1-and-fixes-2026-09-29)).
+The decision is in the [V1 audit](v1-audit.md).
 
 ## Scope
 
@@ -132,7 +135,7 @@ sha256 afterwards:
 | m2: no fallback print at `MessageEnd` | `repl_shows_text_a_provider_sent_without_deltas` fails |
 | m3: no tool start line | `repl_streams_text_and_reports_tool_progress` fails at `no tool start line` |
 
-This follow-up has no independent review.
+The combined V1 review (`e7f94b6..111c325`) covers this follow-up.
 
 ## Follow-up: real-console Ctrl+C through ConPTY (2026-09-29)
 
@@ -193,9 +196,16 @@ press, and the model is the fake upstream. The legacy console window
 - **Windows Bash result text:** on Windows, Ctrl+Break also reaches Bash in
   the same process group, so the e2e test does not assert the tool-result
   text. The ConPTY check does assert it.
-- **Review:** no independent review has run. A Sonnet subagent attempt failed
-  immediately with HTTP 429, because the alias routed to a model that needs
-  usage credits, and it made no changes. This is an explicit review gap.
+- ~~**Review**~~: done. An early Sonnet subagent attempt failed with HTTP
+  429 and made no changes. Later, the combined V1 review (`e7f94b6..111c325`, a separate Sonnet 5.5 subagent,
+static) found no defect in cancellation, journal consistency on cancel or
+failure, streaming, `/new`, failed resume or exit codes.
+- **Tool result on cancel:** the plan row says the running tool is recorded
+  as unknown. The implementation keeps the tool's own aborted result, by OMP
+  parity (`packages/coding-agent/src/tools/bash.ts:657-658` at `596f2da`:
+  the partial output and `[Command aborted]`). Run10 in
+  [V1-TRIAL](v1-trial.md#run9-and-run10-compaction-on-the-delivered-code-2026-09-29)
+  shows it in the journal.
 - ~~**Full gate**~~: done. `python scripts/verify_backend.py` passed on
   `111c325`.
-- **Counts:** unchanged at 28 accepted points and 1/7 gates.
+- **Counts:** set by the [V1 audit](v1-audit.md).

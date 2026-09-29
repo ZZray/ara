@@ -1,17 +1,16 @@
 # V1-TRIAL: bounded real-model REPL task (2026-09-29, WIP)
 
-Status: **partial (WIP)**. The coding task, turn cancel, resume and a real
-failed-summary path ran on a real model through the REPL. Run 5 produced a
-*useful* real-model summary (`google/gemma-4-31b-it:free`). Three recall
-attempts on OpenRouter got HTTP 429. Run 6, on B.AI
-`deepseek-v4.1-flash`, then recalled a fact that the request carried only in
-that summary; a replay of the same file shows what the request held.
-Earlier, the fixed qwen pool answered 429 to every summary call, and the free
-router returned a safety-classifier line as the "summary". No independent
-review has run; nothing is marked tested or accepted. F2 and F3 are decided
+Status: **evidence complete; the decision is in the
+[V1 audit](v1-audit.md)**. The coding task, turn cancel, resume, compaction
+and a recall that depends on the summary ran on a real model through the
+REPL. Run 5 produced the first *useful* real-model summary
+(`google/gemma-4-31b-it:free`); OpenRouter then answered HTTP 429 to three
+recall attempts. Run 6, on B.AI `deepseek-v4.1-flash`, recalled a fact that
+the request carried only in that summary. Run7 repeated the whole task on
+`111c325`, run8 checked the compaction of aborted turns, and run9 found that
+the summary budget was too small for the reasoning model. Run10 repeats the
+whole task on the fixed code, and every step passes. F2 and F3 are decided
 by OMP parity, and the Ctrl+C console path is covered by a ConPTY check.
-Run7 (below) repeats the whole task on the delivered code (`c07bb3c`, code
-equal to `111c325`) through B.AI `deepseek-v4.1-flash`. All steps pass.
 
 ## Point and scope
 
@@ -452,11 +451,99 @@ Run8 checks the fix with a real model.
     recorded as a daily-use follow-up.
   - When the summary is larger than a small source, `down to` is misleading.
 
+## Run9 and run10: compaction on the delivered code (2026-09-29)
+
+Run9 repeats the run7 task on `74b80cb`, which summarizes aborted turns. Its
+`/compact` failed on the real model. Run10 repeats the task after the fix.
+
+- **Route:** B.AI `https://api.b.ai/v1`, `openai-completions`, key from
+  `BAI_API_KEY`, `deepseek-v4.1-flash`. Every assistant entry records that
+  model.
+- **Fixture and driver:** a fresh clone at `6a93b52` for each run, and the
+  run7 driver with a new root (`--max-model-calls 8 --max-time 300`; process
+  b adds `--compact-keep-tokens 300`).
+
+### Run9 (`74b80cb`, `ara.exe` sha256 `c9884ecfb4f7cf5e…`)
+
+- Process a passed every step: the `median` fix (4/4), `mode` with tests
+  (8/8), the `slow.py` cancel, and recall with a rerun of the tests.
+- Process b: the recall passed. **`/compact` failed:** `summary call failed
+  (summary call failed: IncompleteResponse); session untouched`. The next
+  turn answered from the raw history, and Ctrl+C at the idle prompt exited
+  130.
+- Process c answered the tie-break question, but from the raw history,
+  because nothing was compacted.
+- **Cause and fix:** the summary call had 1024 output tokens, against OMP's
+  default of 13,107. See
+  [V1-COMPACT, run9 fix](v1-compact.md#run9-fix-the-omp-summary-budget-2026-09-29).
+  A probe on the run9 journal as the failing `/compact` found it (its first
+  47 lines), with the fixed binary, compacted 3,694 estimated tokens to
+  1,149. Its sources include the aborted turn.
+
+### Run10 (fix tree, `ara.exe` sha256 `530780098168e157…`)
+
+The binary was built from the tree that the gate and the mutations then ran
+on; the code is committed unchanged with this evidence.
+
+| Step | Observed | Time |
+| --- | --- | --- |
+| a1 fix `median` | The first run shows 1 failure. One `edit` fails (a malformed edit anchor), and the model retries. The rerun passes 4/4 | 19.8 s |
+| a2 add `mode` | Two `edit`s; the suite passes 7/7 | 22.8 s |
+| a3 cancel `python slow.py` | Ctrl+C 3 s after `slow.started`. stderr: `interrupt received`, `tool bash failed`, `turn 3 cancelled; session kept`. Journal: `toolResult` ending in `progress 6/90` and `[Command aborted]` with `isError: true` (entry 34), then `assistant(aborted)` (entry 35) | 8.5 s |
+| a4 recall after cancel | Names the `median` fix and reruns the tests (7/7). `/exit` returns 0 | 6.2 s |
+| b1 `--continue`, recall | Names `mode(values)` without tools | 2.2 s |
+| b2 `/compact` | `compacted 3234 estimated tokens down to 977`. Entry 42 is the `compaction`: `method: soft`, `tokensBefore` 3234, 37 source IDs (entries 3–39, including the aborted turn), first kept entry 40 (b1's prompt). Summary 3,618 bytes | 9.6 s |
+| b3 recall after compaction | Names the `median` fix, then `mode`. Ctrl+C at the idle prompt exits 130 | 2.8 s |
+| c1 restart `--continue`, recall | Without tools: a dict of counts, `max(counts.values())`, then `min` over the values with that count, which matches `work/stats.py`. `/exit` returns 0 | 3.2 s |
+
+- **The summary records the abort.** Task 3 is "aborted" and "In Progress",
+  and a Blocked entry quotes `[Command aborted]` after `progress 6/90`. The
+  summarizer did not know that the user cancelled it: it calls the abort
+  unexpected and suggests a longer timeout. The tool text does not say who
+  aborted, and OMP's text is the same.
+- **The recall in c1 came from the summary.** A fake-upstream replay of the
+  journal as c1 found it (its first 45 lines), with the same binary, sent 8
+  messages:
+  - two system messages;
+  - the summary message, after the date and cwd reminder;
+  - the kept b1 and b3 turns;
+  - the new prompt.
+
+  `max(counts.values())` occurs once in the request body, inside the
+  summary. The first turn's prompt is absent, and `python slow.py` occurs
+  only in the summary (5 times).
+- **Artifact check (independent):**
+  - `python -m unittest` in `work/` passes 7/7.
+  - `git diff`: `median` averages the two middle values for even lengths,
+    and `mode` raises `ValueError` on empty input and returns the smallest
+    value with the top count.
+  - The `test_stats.py` diff is the `mode` import and three new tests. The
+    `median` fix left the file unchanged, as asked.
+  - No `python` process was left. The `ara.exe` processes running afterwards
+    were all `E:\repos\ara\bin\ara.exe`, which the run did not start.
+- **Usage** (journal, per process):
+
+  | Process | Assistant messages | Usage known | Input | Output | Cache read | Total |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | a | 17 | 16 | 4,521 | 2,138 | 124,800 | 131,459 |
+  | b | 2 | 2 | 1,351 | 118 | 15,616 | 17,085 |
+  | c | 1 | 1 | 1,284 | 77 | 6,016 | 7,377 |
+
+  The aborted message has no usage, and it is counted as unknown, not 0.
+  The summary call's usage is not persisted (F3).
+- **Secrets:** scans of the non-binary files under `C:\Temp\ara-v1-run10`
+  (50), `C:\Temp\ara-v1-run9` (46) and the probe copy (39) found no
+  `BAI_API_KEY` or `OPENROUTER_API_KEY` value.
+- **Seen, not fixed** (daily-use follow-ups): the summary carries the
+  `//?/C:/temp/...` working directory, as the run8 note says.
+
 ## Gaps and decision
 
-- Run7 shows the whole V1 task on the delivered code: a coding task, a turn
-  cancel, resume, a compaction with a useful summary, and a recall after
-  restart that depends on it.
+- Run10 shows the whole V1 task on the delivered code: a coding task, a turn
+  cancel, resume, a compaction that summarizes the aborted turn, and a
+  recall after restart that the replay ties to the summary. Run7 showed the
+  same on `111c325`, before aborted turns were summarized. Run9 found the
+  summary-budget defect that run10 closes.
 
 - A real-model compaction with a useful summary is shown (run5), and a
   real-model recall that depends on it is shown (run6, B.AI
@@ -482,5 +569,10 @@ Run8 checks the fix with a real model.
 - F2 (any non-empty summary text is accepted) and F3 (the summary call's
   model, response ID and usage are not persisted) are decided: V1 keeps OMP
   parity, with no code change (see Findings).
-- No independent review.
-- **Decision:** changes requested (WIP). The counts are unchanged.
+- The trial code after `111c325` is gated on Windows. Linux CI runs on the
+  push of this evidence.
+- Review: the combined V1 review (`e7f94b6..111c325`), the fix review
+  (`e809a35..4de4ce1`) and the recheck (`4de4ce1..74b80cb`), each by a
+  separate Sonnet 5.5 subagent (static). See [V1-COMPACT](v1-compact.md) and
+  the [V1 audit](v1-audit.md).
+- **Decision:** see the [V1 audit](v1-audit.md).

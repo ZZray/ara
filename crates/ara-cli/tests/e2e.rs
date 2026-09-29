@@ -3328,6 +3328,67 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert_eq!(up.served(), 3, "no summary call under --no-session");
 }
 
+/// The summary call gets OMP's default output budget, floor(0.8 * 16384),
+/// capped by `--max-tokens`. A summary cut off by that budget is refused, and
+/// the message names the stop reason and the output tokens.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_compact_uses_the_omp_summary_budget_and_names_a_truncated_summary() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Cut off sum"), finish("length"), usage(900, 13107), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n/compact\n/compact\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "First answer.\nSecond answer.\n");
+    assert!(
+        stderr.contains(
+            "summary call failed (summary call failed: IncompleteResponse, stop reason length, \
+             13107 of 13107 output tokens); session untouched"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("ara: compacted"), "the second /compact succeeds: {stderr}");
+    assert_eq!(up.served(), 4);
+    let reqs = up.requests.lock().await;
+    for summary in [&reqs[2], &reqs[3]] {
+        assert_eq!(summary["body"]["max_tokens"], 13107, "{summary}");
+    }
+    drop(reqs);
+    assert_eq!(compaction_entries(&journal(&env.session_files()[0])).len(), 1);
+
+    // --max-tokens caps the summary budget.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(
+            &up.base_url(),
+            &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1", "--max-tokens", "700"],
+        ),
+        "first prompt\nsecond prompt\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs[2]["body"]["max_tokens"], 700, "{}", reqs[2]);
+}
+
 /// A prompt line that is not UTF-8 ends the REPL with exit 1 and a message;
 /// the Session keeps the turns before it.
 #[tokio::test(flavor = "multi_thread")]

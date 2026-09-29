@@ -1,4 +1,8 @@
-# V1-COMPACT: basic compaction from the A3 pieces (WIP)
+# V1-COMPACT: basic compaction from the A3 pieces
+
+Status: **evidence complete; the decision is in the [V1 audit](v1-audit.md)**.
+The sections below are in time order. Later sections supersede the gaps of
+earlier ones.
 
 ## Scope
 
@@ -21,8 +25,10 @@ keeps one level. This is a reference-host subset, not full A3 parity.
   `/compact` in the REPL, auto-compact after each completed turn (REPL and
   print), startup/resume context via `model_context`.
 - Reuses A3 WIP unchanged: `compaction_source_snapshot`,
-  `select_whole_turn_cut`, `summarize_sources` (1024 output tokens, 120 s
-  deadline), strict projection validation.
+  `select_whole_turn_cut`, `summarize_sources` (120 s deadline), strict
+  projection validation. The output budget was 1024 tokens until the
+  [run9 fix](#run9-fix-the-omp-summary-budget-2026-09-29); it is now OMP's
+  default, 13,107, capped by `--max-tokens`.
 
 ## Real-model trial (2026-09-28, `openrouter/free`, OpenAI-compatible)
 
@@ -134,15 +140,16 @@ explicit host value)".
 
 ### Gaps
 
-- **Unix not compiled:** the `cfg(unix)` interrupt paths in e2e were not
-  compiled here. Linux CI with `-D warnings` is still required.
-- **No real model:** every request went to the controlled fake upstream.
-- **No independent review:** self-reported.
+- ~~**Unix not compiled**~~: done later. Linux CI ran them on `43e79e2` and
+  `111c325` (see [V1-REPL/CANCEL](v1-repl-cancel.md#gaps)).
+- ~~**No real model**~~: done later, in [V1-TRIAL](v1-trial.md) (runs 5–10).
+- ~~**No independent review**~~: done later (the combined V1 review, the fix
+  review and both rechecks below).
 - **Interrupt determinism:** the hang-summary interrupt case was green on
   this Windows host in the three-run check; a flaky console or slow machine
   could still race `up.served()` vs. the summary request. No second attempt
   was needed.
-- **Counts:** unchanged; nothing is marked tested or accepted.
+- **Counts:** set by the [V1 audit](v1-audit.md).
 
 ### Review (2026-09-29)
 
@@ -435,9 +442,9 @@ file was restored and its sha256 compared with the saved hash.
 
 | Finding | Resolution |
 | --- | --- |
-| **I1** (important) Ctrl+C during a running tool: Bash returns an error result with the partial output and `[Command aborted]`, with no unknown-effect flag. It is summarized, while a timed-out Bash (the same kill) is refused. The evidence claimed that no possibly-run tool is summarized | **Decided by OMP parity:** a cancelled call keeps the tool's own result and is summarized. Its text tells the summarizer that the command was aborted, and run8's summary said so. The sentence above and the doc comment on `validate_completed_summary_span` are corrected. New test `a_cancelled_call_is_summarized_with_its_own_abort_result`: the serialized record carries `[Command aborted]`, `is_error: true` and `unknown_effect: false`, and the assistant record carries `aborted`. The timed-out and panicked refusals stay (ARA-stricter than OMP). A timeout therefore still blocks every later cut, and the refusal names the cause. Recorded as a dogfood follow-up |
+| **I1** (important) Ctrl+C during a running tool: Bash returns an error result with the partial output and `[Command aborted]`, with no unknown-effect flag. It is summarized, while a timed-out Bash (the same kill) is refused. The evidence claimed that no possibly-run tool is summarized | **Decided by OMP parity:** a cancelled call keeps the tool's own result and is summarized. OMP Bash (`packages/coding-agent/src/tools/bash.ts:657-658` at `596f2da`) throws a `ToolError` with the output plus `[Command aborted]`, or `Command aborted` with no output; ARA Bash `Ending::Cancelled` gives the same text. Its text tells the summarizer that the command was aborted, and run8's summary said so. The sentence above and the doc comment on `validate_completed_summary_span` are corrected. New test `a_cancelled_call_is_summarized_with_its_own_abort_result`: the serialized record carries `[Command aborted]`, `is_error: true` and `unknown_effect: false`, and the assistant record carries `aborted`. The timed-out and panicked refusals stay (ARA-stricter than OMP). A timeout therefore still blocks every later cut, and the refusal names the cause. Recorded as a dogfood follow-up |
 | **I2** (important) `explain_no_whole_turn_cut` gave a wrong cause: `UnfinishedTurn` for a leading developer message, and `TooManySources` for any history over 256 messages, even when an early blocker caused the refusal | **Fixed:** a leading developer message gives `DeveloperInSummary`; another non-user first message gives the new `NoLeadingPrompt`. The scan now stops at the source limit, as the candidate scan does, so an early blocker is named. `TooManySources` is returned only when no later prompt lies within the limit. Tests: `explains_why_no_cut_exists` (developer first, assistant first) and `explains_an_early_blocker_in_a_history_past_the_source_limit` (305 messages with an early timeout; 303 messages with no prompt inside the limit) |
-| M1 An entry the Session cannot project was reported as `already compacted` | **Fixed:** that arm checks `compacted_context_projection()` first and prints `the session has a compaction entry it cannot use (...)`. Defensive and untested: the guard is unreachable while the mirror matches the Agent rule |
+| M1 An entry the Session cannot project was reported as `already compacted` | **Fixed:** that arm checks `compacted_context_projection()` first and prints `the session has a compaction entry it cannot use (...)`. Untested at the CLI level. The recheck showed the guard is reachable: a `compaction` entry the Session cannot project, such as a non-soft or replay-data entry written by another host, takes this arm. An e2e test with a hand-written journal is a follow-up |
 | M2 The once-per-process auto notice had no test | **Test added:** `--no-session` with three turns and `/compact`. `auto-compaction skipped: it needs a session` appears once, and the manual `compaction skipped: it needs a session` also appears once. The notice is still once per process, not once per cause |
 | M3 The `None` arm printed nothing | **Fixed:** `no cut was selected`. Not expected to occur |
 | M4 The read-error exit had no test | **Test added:** `repl_unreadable_prompt_exits_1_and_keeps_the_session`. After one turn, a line of invalid UTF-8 gives exit 1 and `cannot read the next prompt (...); session kept`. The journal keeps the first turn, and the line after is not sent |
@@ -469,3 +476,107 @@ Each file was restored, and its sha256 matched the saved hash.
 | `cargo test -p ara-session --test compaction_projection` | 8/8 |
 | `cargo test -p ara-cli --test e2e repl_` | 20/20 |
 | `python scripts/verify_backend.py` (fmt, strict Clippy, all tests) | PASS: 74 test binaries, 1035 passed, 0 failed, 1 ignored; e2e 74/74 |
+
+### Recheck (`4de4ce1..74b80cb`, 2026-09-29)
+
+- **Reviewer:** a separate Sonnet 5.5 subagent. It made a static review of
+  `git diff 4de4ce1 74b80cb -- crates` and the evidence above. It ran no
+  build or tests.
+- **Verdict:** approve. No Critical or Important finding.
+- It confirmed:
+  - `explain_no_whole_turn_cut` returns a cause whenever the candidate scan
+    is empty, and cannot index out of range;
+  - no exhaustive match breaks on `NoLeadingPrompt`;
+  - the new tests fail on the old code, and the stdin and notice-count tests
+    are deterministic;
+  - the I1 text matches the code.
+
+| Finding | Resolution |
+| --- | --- |
+| 1 `TooManySources` for one long turn with no later prompt at all | **Fixed:** `TooManySources` only when a prompt lies past the limit; otherwise `EmptySources`. The test gains a 304-message single-turn case |
+| 2 A kept prompt with a duplicate ID is reported as `InvalidSourceId` | No change: unreachable from the CLI, because the Session rejects duplicate IDs |
+| 3 The M1 guard is reachable (see M1 above) | Evidence reworded; the e2e test is a follow-up |
+| 4 The doc comment said every call not run gets a synthetic result | **Fixed:** blocked, invalid and skipped-after-cancel calls get ordinary error results, and are summarized too |
+| Nit: Bash with no output returns `Command aborted` without brackets | Doc comment updated |
+| Nit: the cancelled-call test named Bash but used the helper's `write` call | Comment reworded |
+
+### Run9 fix: the OMP summary budget (2026-09-29)
+
+- **Found by:** [V1-TRIAL run9](v1-trial.md#run9-and-run10-compaction-on-the-delivered-code-2026-09-29).
+  On B.AI `deepseek-v4.1-flash`, `/compact` over the history with the
+  aborted turn printed `summary call failed (summary call failed:
+  IncompleteResponse); session untouched`. The session was kept, but nothing
+  was compacted.
+- **Cause:** the host gave the summary call 1024 output tokens. OMP gives
+  `min(floor(0.8 * reserveTokens), 16384)`, 13,107 with the default 16,384
+  reserve (`packages/agent/src/compaction/compaction.ts:191,203,857` at
+  `596f2da`). The summary that later succeeded on the same history is 4,195
+  bytes of text, about 1,000 tokens before any reasoning tokens. The failure
+  message did not name the stop reason, so a cut-off (`length`) summary is
+  the inferred cause, not an observed one.
+- **Fix:**
+  - The summary budget is now OMP's default, 13,107 tokens. ARA knows no
+    context window, so it keeps the default reserve. `--max-tokens`, when
+    set, caps it.
+  - `SummaryCallError` carries the terminal stop reason. The host message
+    now names the stop reason and the output tokens, for example
+    `IncompleteResponse, stop reason length, 13107 of 13107 output tokens`.
+  - **Intentional difference:** OMP accepts a length-stopped summary and
+    rejects only `error`. ARA still refuses a cut-off summary, because it may
+    drop facts. The session is untouched and the message says why.
+- **Probe:** the run9 journal as the failing `/compact` found it (its first
+  47 lines), with the fixed binary and one B.AI call: `compacted 3694
+  estimated tokens down to 1149`. The 42 source IDs include the aborted
+  `slow.py` turn, and the summary lists that task as "Attempted, aborted".
+- **Tests:**
+  - e2e `repl_compact_uses_the_omp_summary_budget_and_names_a_truncated_summary`:
+    - a summary cut off with `length` prints the stop reason and
+      `13107 of 13107 output tokens`, and leaves the session untouched;
+    - the next `/compact` succeeds;
+    - both summary requests carry `max_tokens: 13107`;
+    - with `--max-tokens 700`, the summary request carries 700.
+  - `compaction_call`: a cut-off summary reports `length`, from the message
+    or from the event; a provider error reports `error`.
+
+#### Mutations on the run9 fix
+
+| Mutation | Result |
+| --- | --- |
+| The summary budget is 1024 again | **fails** `repl_compact_uses_the_omp_summary_budget_…` |
+| `--max-tokens` no longer caps it | **fails** the same test (700 expected) |
+| A cut-off summary reports only the message's stop reason | **fails** `one_shot_rejects_incomplete_empty_tool_and_error_responses` |
+| `TooManySources` for any history past the limit (recheck 1) | **fails** `explains_an_early_blocker_…` (the new single-turn case) |
+
+Each file was restored, and its sha256 matched the saved hash.
+
+#### Commands on the run9 fix tree (Windows)
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p ara-agent --test compaction_cut --test compaction_call` | 15/15 and 8/8 |
+| `cargo test -p ara-cli --test e2e repl_` | 21/21 |
+| `python scripts/verify_backend.py` (fmt, strict Clippy, all tests) | PASS: 74 test binaries, 1036 passed, 0 failed, 1 ignored; e2e 75/75 |
+
+#### Recheck of the run9 fix (`74b80cb..` delivery tree, 2026-09-29)
+
+- **Reviewer:** a separate Sonnet 5.5 subagent. It made a static review of
+  the uncommitted diff against `74b80cb` in the five code and test files.
+  It ran no build or tests.
+- **Verdict:** approve. No critical or important finding.
+- **No defect found in:**
+  - the budget constant (13,107 = floor(0.8 × 16,384)) and the cap (a
+    smaller `--max-tokens` lowers it, a larger one never raises it);
+  - the single `summarize_sources` call site, which covers manual `/compact`
+    and both auto-compaction paths;
+  - `stop_reason` on every error path;
+  - the failure message when a part is missing (unknown output usage is
+    left out, not shown as 0);
+  - the `later_prompt` slice, which cannot panic;
+  - reversion detection by the tests.
+
+| Finding | Resolution |
+| --- | --- |
+| 1 A summary with stop reason `stop` and an HTTP error status prints `stop reason stop, HTTP 500` | Follow-up: true but reads oddly. Not reached on the daily route |
+| 2 No test that a `--max-tokens` above 13,107 does not raise the budget | Follow-up (test gap). The cap mutation above is caught; a plain `cap` is not |
+| 3 A route whose output limit is below 13,107 may answer HTTP 400 to `/compact`, where 1,024 fit | Follow-up: OMP sends the same default. `--max-tokens` lowers it. B.AI `deepseek-v4.1-flash` accepted it (run10) |
+| 4 `--max-tokens 0` gives `InvalidMaxTokens` with no hint that the flag caused it | Follow-up; unlikely in use |
