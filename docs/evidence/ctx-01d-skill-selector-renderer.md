@@ -125,3 +125,15 @@ evidence; controlled post-open directory I/O fault receipts, final
 point-snapshot checks and targeted real-model/point acceptance are still
 pending. Plugin/managed Skill containment remains assigned to the open
 CTX-01c follow-up; `/skill:` remains CTX-01e.
+
+## Delivered snapshot
+
+WIP `81d036e1903327f07fa034099871c780caeda729` was pushed to `dev`.
+[Repository checks 36643619576](https://github.com/ZZray/ara/actions/runs/36643619576)
+and the [three-platform directory oracle 36643619584](https://github.com/ZZray/ara/actions/runs/36643619584)
+both completed successfully on that exact SHA. These workflows run the
+Linux backend gate and the existing same-host directory comparison;
+they do not supply the new selector-oracle JSON. The explicit Windows
+22-case comparison above remains this slice's dynamic renderer evidence.
+CI receipts: `C:\Temp\ara-ctx-skill-selector-oracle\ci-81d036e.json`,
+SHA-256 `d6748db28f615204cfcbd59a12e75ac7eb14d863455a6bf39094aeb6162dfa9e`.
