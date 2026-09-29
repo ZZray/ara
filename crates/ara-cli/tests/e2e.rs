@@ -2806,3 +2806,360 @@ async fn repl_resume_after_interrupted_tool_reports_unknown_effect_without_repla
     assert_eq!(tool_msg["tool_call_id"], json!("call_crash"));
     assert!(tool_msg["content"].as_str().unwrap().contains("effects are unknown"));
 }
+
+/// Compaction entries in a journal (after the session header).
+fn compaction_entries(entries: &[Value]) -> Vec<&Value> {
+    entries.iter().filter(|e| e["type"] == "compaction").collect()
+}
+
+/// Concatenated text of every message in a Chat Completions request body.
+fn request_text(messages: &[Value]) -> String {
+    user_texts(messages)
+        .into_iter()
+        .chain(messages.iter().filter(|m| m["role"] == "assistant").map(|m| m["content"].to_string()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the request carries no tool definitions.
+fn tools_absent_or_empty(body: &Value) -> bool {
+    match body.get("tools") {
+        None => true,
+        Some(Value::Array(a)) => a.is_empty(),
+        Some(_) => false,
+    }
+}
+
+/// V1-COMPACT: manual `/compact` then keep working.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_manual_compact_then_keep_working() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary of earlier work."), finish("stop"), done()]},
+        {"events": [text("Third answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n/compact\nthird prompt\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "First answer.\nSecond answer.\nThird answer.\n");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let entries = journal(&files[0]);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1, "{entries:?}");
+    let compaction = compactions[0];
+    assert_eq!(compaction["method"], json!("soft"));
+    assert!(compaction["summary"].as_str().unwrap().contains("Fake summary of earlier work."), "{compaction}");
+    let first_kept = compaction["firstKeptEntryId"].as_str().unwrap();
+    let kept = entries.iter().find(|e| e["id"] == first_kept).expect("firstKeptEntryId exists");
+    assert_eq!(kept["type"], json!("message"));
+    assert_eq!(kept["message"]["role"], json!("user"), "firstKeptEntryId is a user entry");
+    let sources = compaction["sourceEntryIds"].as_array().unwrap();
+    assert!(!sources.is_empty());
+    let compaction_index = entries.iter().position(|e| e["id"] == compaction["id"]).unwrap();
+    for source in sources {
+        let id = source.as_str().unwrap();
+        let index = entries.iter().position(|e| e["id"] == id).unwrap_or_else(|| panic!("source {id} exists"));
+        assert!(index < compaction_index, "source {id} precedes the compaction entry");
+    }
+
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 4, "two turns + summary + third turn");
+    let summary = &reqs[2]["body"];
+    assert!(tools_absent_or_empty(summary), "summary request has no tools: {summary}");
+    assert!(request_text(summary["messages"].as_array().unwrap()).contains("first prompt"), "{summary}");
+    let third = reqs[3]["body"]["messages"].as_array().unwrap();
+    let third_text = request_text(third);
+    assert!(third_text.contains("[Compacted summary of earlier turns"), "{third_text}");
+    assert!(third_text.contains("Fake summary of earlier work."), "{third_text}");
+    assert!(!third_text.contains("first prompt"), "summarized raw user text is gone: {third_text}");
+    assert!(!third_text.contains("First answer."), "summarized raw answer is gone: {third_text}");
+    assert!(third_text.contains("second prompt"), "kept turn remains: {third_text}");
+    assert!(third_text.contains("Second answer."), "kept answer remains: {third_text}");
+}
+
+/// V1-COMPACT: auto threshold fires after a completed turn; a disabled
+/// threshold makes no summary call.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_auto_compact_threshold_and_disabled_companion() {
+    // Auto: threshold exceeded after the second turn.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Auto summary."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "1", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    assert_eq!(up.served(), 3, "two turns plus one summary call");
+    let entries = journal(&env.session_files()[0]);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1, "{entries:?}");
+    assert_eq!(compactions[0]["method"], json!("soft"));
+    assert!(compactions[0]["summary"].as_str().unwrap().contains("Auto summary."), "{entries:?}");
+
+    // Companion: auto disabled, no summary call.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(!stderr.contains("ara: compacted"), "{stderr}");
+    assert_eq!(up.served(), 2, "no summary call when auto is off");
+    assert!(compaction_entries(&journal(&env.session_files()[0])).is_empty());
+}
+
+/// V1-COMPACT: restart from the persisted summary.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_continue_uses_the_persisted_summary() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary of earlier work."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n/compact\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let session = files[0].clone();
+    assert_eq!(compaction_entries(&journal(&session)).len(), 1);
+
+    let up2 = upstream(json!({"responses": [{"events": [text("After restart."), finish("stop"), done()]}]})).await;
+    let out = repl_output(env.cmd(&up2.base_url(), &["--repl", "--continue"]), "after restart\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "After restart.\n");
+    assert_eq!(env.session_files(), vec![session.clone()]);
+    let entries = journal(&session);
+    assert_eq!(compaction_entries(&entries).len(), 1, "no second compaction");
+    assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt", "after restart"]);
+    let reqs = up2.requests.lock().await;
+    assert_eq!(reqs.len(), 1);
+    let first = request_text(reqs[0]["body"]["messages"].as_array().unwrap());
+    assert!(first.contains("[Compacted summary of earlier turns"), "{first}");
+    assert!(first.contains("Fake summary of earlier work."), "{first}");
+    assert!(!first.contains("first prompt"), "summarized raw text is not resent: {first}");
+    assert!(first.contains("second prompt"), "kept turn remains: {first}");
+}
+
+/// V1-COMPACT failure paths: second /compact, failed summary, --no-session,
+/// and a history too small to cut. Each leaves the session usable.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_compact_failure_paths_leave_the_session_usable() {
+    // A second /compact is refused; no second summary call; one compaction entry.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]},
+        {"events": [text("After refuse."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n/compact\n/compact\nafter refuse\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "First answer.\nSecond answer.\nAfter refuse.\n");
+    assert!(stderr.contains("V1 keeps a single level per session"), "{stderr}");
+    assert_eq!(up.served(), 4, "two turns, one summary, one follow-up; no second summary");
+    assert_eq!(compaction_entries(&journal(&env.session_files()[0])).len(), 1);
+
+    // Failed summary call: session bytes unchanged by /compact; the next turn
+    // is answered on a later resume.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let session = env.session_files()[0].clone();
+    let before = std::fs::read(&session).unwrap();
+    let up2 = upstream(json!({"responses": [
+        {"status": 400, "body": "{\"error\":{\"message\":\"summary backend down\"}}"}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up2.base_url(), &["--repl", "--continue", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "/compact\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "");
+    assert!(stderr.contains("session untouched"), "{stderr}");
+    assert_eq!(std::fs::read(&session).unwrap(), before, "failed summary left the journal untouched");
+    assert!(compaction_entries(&journal(&session)).is_empty());
+
+    let up3 = upstream(json!({"responses": [{"events": [text("Still works."), finish("stop"), done()]}]})).await;
+    let out = repl_output(env.cmd(&up3.base_url(), &["--repl", "--continue"]), "still works\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Still works.\n");
+    assert_eq!(journal_user_texts(&journal(&session)), vec!["first prompt", "second prompt", "still works"]);
+    assert!(compaction_entries(&journal(&session)).is_empty());
+
+    // Failed summary call, next turn in the same process: the in-memory
+    // history survives and the journal only grows.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "first prompt\nsecond prompt\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let session = env.session_files()[0].clone();
+    let before = std::fs::read(&session).unwrap();
+    let up2 = upstream(json!({"responses": [
+        {"status": 400, "body": "{\"error\":{\"message\":\"summary backend down\"}}"},
+        {"events": [text("Next answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up2.base_url(), &["--repl", "--continue", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "/compact\nnext turn\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("session untouched"), "{stderr}");
+    assert_eq!(stdout, "Next answer.\n");
+    assert_eq!(up2.served(), 2, "one failed summary call, one follow-up turn");
+    let after = std::fs::read(&session).unwrap();
+    assert!(after.starts_with(&before), "failed summary rewrote earlier journal bytes");
+    let entries = journal(&session);
+    assert!(compaction_entries(&entries).is_empty(), "{entries:?}");
+    assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt", "next turn"]);
+    let reqs = up2.requests.lock().await;
+    let follow_up = request_text(reqs[1]["body"]["messages"].as_array().unwrap());
+    for kept in ["first prompt", "First answer.", "second prompt", "Second answer."] {
+        assert!(follow_up.contains(kept), "{kept} survives the failed summary: {follow_up}");
+    }
+    assert!(!follow_up.contains("[Compacted summary of earlier turns"), "{follow_up}");
+    drop(reqs);
+
+    // /compact under --no-session is refused with no model call.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [text("Hello."), finish("stop"), done()]}]})).await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--no-session", "--compact-threshold", "0"]),
+        "hello\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("compaction needs a session"), "{stderr}");
+    assert_eq!(up.served(), 1, "no summary call under --no-session");
+
+    // History too small to cut: "nothing to compact", no model call.
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [text("Only answer."), finish("stop"), done()]}]})).await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "only prompt\n/compact\n",
+    )
+    .await;
+    let (_stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("history is already small; nothing to compact"), "{stderr}");
+    assert_eq!(up.served(), 1, "no summary call when there is no cut");
+    assert!(compaction_entries(&journal(&env.session_files()[0])).is_empty());
+}
+
+/// V1-COMPACT: interrupt during the summary call returns to the prompt, leaves
+/// no compaction entry, and the next line is answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [{"data": {"choices": [{"delta": {"content": "partial"}}]}}, {"sleep_ms": 30000}], "end": "hang"},
+        {"events": [text("After compact."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let mut c = env
+        .cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1", "--mode", "json"]);
+    let mut child = spawn_repl(&mut c);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let started = Instant::now();
+    let code = tokio::task::block_in_place(|| {
+        writeln!(stdin, "first prompt").unwrap();
+        writeln!(stdin, "second prompt").unwrap();
+        writeln!(stdin, "/compact").unwrap();
+        // Wait until both turns finished and the summary request is in flight.
+        let t0 = Instant::now();
+        while up.served() < 3 && t0.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(up.served(), 3, "summary request started");
+        interrupt(&child);
+        assert!(log.wait_for("session untouched", Duration::from_secs(8)), "summary cancel reported");
+        writeln!(stdin, "after compact").unwrap();
+        drop(stdin);
+        let _rest: Vec<String> = reader.lines().map(|l| l.unwrap()).collect();
+        wait_exit(&mut child, Duration::from_secs(15))
+    });
+    let stderr = log.finish();
+    assert!(started.elapsed() < Duration::from_secs(25), "{:?}", started.elapsed());
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stderr.contains("ara: interrupt received, aborting"), "{stderr}");
+    assert!(stderr.contains("session untouched"), "{stderr}");
+    assert_eq!(up.served(), 4, "the follow-up turn is answered; no second summary");
+    let entries = journal(&env.session_files()[0]);
+    assert!(compaction_entries(&entries).is_empty(), "{entries:?}");
+    // The follow-up turn is in the journal.
+    assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt", "after compact"]);
+    // The follow-up request still carries the whole in-process history.
+    let reqs = up.requests.lock().await;
+    let follow_up = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    for kept in ["first prompt", "First answer.", "second prompt", "Second answer."] {
+        assert!(follow_up.contains(kept), "{kept} survives the cancelled summary: {follow_up}");
+    }
+    assert!(!follow_up.contains("[Compacted summary of earlier turns"), "{follow_up}");
+}
