@@ -31,8 +31,8 @@ use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agen
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
 use ara_ai::{
-    AnthropicMessagesProvider, Message, Model, ModelProvider, ModelTokenizer, OpenAICompletionsProvider,
-    OpenAIResponsesProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
+    AnthropicMessagesProvider, AssistantMessageEvent, Message, Model, ModelProvider, ModelTokenizer,
+    OpenAICompletionsProvider, OpenAIResponsesProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
 };
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
@@ -325,18 +325,95 @@ fn default_session_dir(cwd: &Path) -> PathBuf {
 /// failure cancels the run so no further effect goes unrecorded.
 struct HostSink {
     mode: Mode,
+    /// REPL text mode: stream assistant text to stdout and report tool
+    /// progress on stderr while the turn runs.
+    stream: bool,
+    /// A streamed text line is open on stdout (no trailing newline yet).
+    line_open: AtomicBool,
+    /// The current assistant message has streamed text.
+    streamed: AtomicBool,
     journal: tokio::sync::Mutex<Option<SessionJournal>>,
     persist_failed: AtomicBool,
     cancel: CancellationToken,
 }
 
 impl HostSink {
+    fn new(mode: Mode, stream: bool, journal: Option<SessionJournal>, cancel: CancellationToken) -> HostSink {
+        HostSink {
+            mode,
+            stream,
+            line_open: AtomicBool::new(false),
+            streamed: AtomicBool::new(false),
+            journal: tokio::sync::Mutex::new(journal),
+            persist_failed: AtomicBool::new(false),
+            cancel,
+        }
+    }
+
     fn write_line(&self, line: &str) {
         let mut out = std::io::stdout().lock();
         // A closed stdout (e.g. `| head`) must not abort the run or the journal.
         let _ = writeln!(out, "{line}");
         let _ = out.flush();
     }
+
+    /// Close a streamed text line, so the next output starts on its own line.
+    fn end_stream_line(&self) {
+        if self.line_open.swap(false, Ordering::SeqCst) {
+            self.write_line("");
+        }
+    }
+
+    fn stream_progress(&self, event: &AgentEvent) {
+        match event {
+            AgentEvent::MessageStart { .. } => self.streamed.store(false, Ordering::SeqCst),
+            AgentEvent::MessageUpdate { event: AssistantMessageEvent::TextStart { .. }, .. } => self.end_stream_line(),
+            AgentEvent::MessageUpdate { event: AssistantMessageEvent::TextDelta { delta, .. }, .. } => {
+                let text = sanitize_text(delta);
+                if !text.is_empty() {
+                    let mut out = std::io::stdout().lock();
+                    let _ = write!(out, "{text}");
+                    let _ = out.flush();
+                    self.line_open.store(!text.ends_with('\n'), Ordering::SeqCst);
+                    self.streamed.store(true, Ordering::SeqCst);
+                }
+            }
+            AgentEvent::MessageEnd { message: Message::Assistant(a) } => {
+                self.end_stream_line();
+                // A provider that delivered its text without deltas still shows it.
+                if !self.streamed.swap(false, Ordering::SeqCst) {
+                    for block in &a.content {
+                        if let ara_ai::AssistantBlock::Text(t) = block
+                            && !t.text.is_empty()
+                        {
+                            self.write_line(&sanitize_text(&t.text));
+                        }
+                    }
+                }
+            }
+            AgentEvent::ToolExecutionStart { tool_name, args, .. } => {
+                self.end_stream_line();
+                eprintln!("ara: tool {}{}", sanitize_text(tool_name), tool_summary(args));
+            }
+            AgentEvent::ToolExecutionEnd { tool_name, is_error, .. } => {
+                eprintln!("ara: tool {} {}", sanitize_text(tool_name), if *is_error { "failed" } else { "done" });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// One-line summary of a tool call for REPL progress: its command, path or
+/// pattern, with whitespace folded and cut to 120 characters.
+fn tool_summary(args: &ara_ai::JsonObject) -> String {
+    let Some(value) =
+        ["command", "path", "pattern", "pat"].iter().find_map(|k| args.get(*k).and_then(serde_json::Value::as_str))
+    else {
+        return String::new();
+    };
+    let flat = sanitize_text(value).split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = flat.chars().take(120).collect();
+    if cut.len() < flat.len() { format!(": {cut}...") } else { format!(": {cut}") }
 }
 
 #[async_trait]
@@ -349,6 +426,9 @@ impl AgentEventSink for HostSink {
             self.persist_failed.store(true, Ordering::SeqCst);
             eprintln!("ara: session persistence failed ({e}); aborting the run");
             self.cancel.cancel();
+        }
+        if self.stream {
+            self.stream_progress(&event);
         }
         if self.mode == Mode::Json {
             self.write_line(&event.printable().to_string());
@@ -541,7 +621,10 @@ async fn run_compaction(
     let accepted = match summarize_sources(span, None, model, provider.as_ref(), 1024, deadline, cancel).await {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("ara: summary call failed ({e}); session untouched");
+            // Show the provider's status and message, as a failed turn does.
+            let status = e.provider_status.map(|s| format!(", HTTP {s}")).unwrap_or_default();
+            let detail = e.provider_message.as_deref().map(|m| format!(": {}", sanitize_text(m))).unwrap_or_default();
+            eprintln!("ara: summary call failed ({e}{status}{detail}); session untouched");
             return Ok(false);
         }
     };
@@ -619,7 +702,8 @@ struct ReplSession<'a> {
 }
 
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
-/// same Session journal. Ctrl+C during a turn cancels only that turn (its
+/// same Session journal. In text mode the answer streams to stdout and each
+/// tool call is reported on stderr as it starts and ends. Ctrl+C during a turn cancels only that turn (its
 /// child token) and returns to the prompt; Ctrl+C at the idle prompt exits
 /// with 130; EOF and `/exit` exit with 0. `/new` starts a fresh Session file
 /// and keeps the previous one intact.
@@ -739,19 +823,14 @@ async fn run_repl_loop(
         let token = cancel.child_token();
         let step = agent_loop(vec![Message::User(UserMessage::text(input))], context, &config, &token, sink);
         let report = interruptible(step, &token, &mut interrupts).await;
+        // Text mode streamed the answer while the turn ran.
+        sink.end_stream_line();
         match report.end {
             RunEnd::Completed => {
-                if let Some(a) = context.iter().rev().find_map(Message::as_assistant) {
-                    if let Some(e) = &a.error_message {
-                        eprintln!("{}", sanitize_text(e));
-                    }
-                    if args.mode == Mode::Text {
-                        for block in &a.content {
-                            if let ara_ai::AssistantBlock::Text(t) = block {
-                                sink.write_line(&sanitize_text(&t.text));
-                            }
-                        }
-                    }
+                if let Some(e) =
+                    context.iter().rev().find_map(Message::as_assistant).and_then(|a| a.error_message.as_ref())
+                {
+                    eprintln!("{}", sanitize_text(e));
                 }
             }
             RunEnd::Aborted => eprintln!("ara: turn {turn} cancelled; session kept, type the next prompt"),
@@ -1036,12 +1115,7 @@ async fn run(args: Args) -> Result<i32> {
         Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
     };
     let cancel = CancellationToken::new();
-    let sink = HostSink {
-        mode: args.mode,
-        journal: tokio::sync::Mutex::new(journal),
-        persist_failed: AtomicBool::new(false),
-        cancel: cancel.clone(),
-    };
+    let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone());
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
     }
@@ -1198,12 +1272,7 @@ mod tests {
         let path = j.path().to_path_buf();
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        let sink = HostSink {
-            mode: Mode::Text,
-            journal: tokio::sync::Mutex::new(Some(j)),
-            persist_failed: AtomicBool::new(false),
-            cancel: CancellationToken::new(),
-        };
+        let sink = HostSink::new(Mode::Text, false, Some(j), CancellationToken::new());
         sink.emit(AgentEvent::MessageEnd { message: Message::Assistant(a) }).await;
         assert!(sink.persist_failed.load(Ordering::SeqCst));
         assert!(sink.cancel.is_cancelled(), "tools of an unrecorded message must not run");

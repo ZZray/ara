@@ -335,3 +335,33 @@ already-attached cancellation receipt. A follow-up review covered the later
 Anthropic and Responses assertions and the evidence/plan/ledger/handoff diff;
 it found no confirmed issue. Full Windows gate, bounded real-model proof, billing integration,
 and complete AI-RETRY parity remain open; AI-RETRYa stays **WIP**.
+
+## Linux CI follow-up: reset test depended on the platform (2026-09-29, WIP)
+
+GitHub Actions `bootstrap` run 36533531131 on `7aa59b2` (`ubuntu-latest`)
+passed formatting and strict workspace Clippy. It then failed
+`reset_without_confirmed_frames_never_completes_or_dispatches_tools` in
+`crates/ara-ai/tests/openai_http.rs` with `left: 1, right: 2` on "one
+bounded replay before any confirmed content". Cargo stopped at this test
+binary, so later crates' tests did not run on Linux.
+
+Cause: the scripted response sent `text("half")` and then reset the socket
+at once. Windows discards unread data when an RST arrives, so the client saw
+no frame and replayed once (2 requests). Linux delivered the frame first, so
+the attempt was committed and correctly not replayed (1 request). The test
+named "without confirmed frames" therefore depended on the platform, not on
+ARA. The two other reset tests in the file already sleep 50 ms before the
+reset, so their frames are always read.
+
+Fix (test input only; the expected values are unchanged): both scripted
+responses now send no frame before the reset. No production code changed.
+
+| Check on the working tree after `7aa59b2` (Windows) | Observed result |
+| --- | --- |
+| `reset_without_confirmed_frames_never_completes_or_dispatches_tools` 5× | Pass each time: `Error`, no tool call, 2 requests |
+| `cargo test -p ara-ai --test openai_http` | 50/50 |
+| `cargo fmt -p ara-ai --check`; `cargo clippy -p ara-ai --all-targets --all-features -- -D warnings` | Exit 0 |
+| Mutation: `MAX_ERROR_RETRIES` 1 → 0, then restored and compared by `cmp` | The test fails with `left: 1, right: 2` |
+
+The Linux result needs a push and a new run. This fix has no independent
+review.

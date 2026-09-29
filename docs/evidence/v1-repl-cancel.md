@@ -1,7 +1,8 @@
 # V1-REPL + V1-CANCEL: line REPL with turn cancellation (WIP)
 
-Status: **implementing (WIP)**. The code and tests are on the working tree
-after `f20393d`. No independent review has run yet and there is no real-model
+Status: **implementing (WIP)**. The REPL and cancel code is in WIP commit
+`6a6ef96`. The streaming follow-up below is on the working tree after
+`7aa59b2`. No independent review has run yet and there is no real-model
 trial, so nothing is marked tested or accepted.
 
 ## Scope
@@ -77,14 +78,70 @@ Mutation checks, each restored and compared byte-for-byte afterwards:
 | `/new` clears the context but keeps the old journal | `repl_new_starts_a_fresh_session_file` fails |
 | No Ctrl+Break listener on Windows | both interrupt tests fail |
 
+## Follow-up: streamed text and tool progress (2026-09-29)
+
+**Gap found:** the REPL printed nothing on stdout until a turn ended, and then
+printed only the text of the last assistant message. A user had no sign of
+progress during a long turn, and any text before a tool call was never shown.
+No earlier record listed this gap.
+
+**Change** (`crates/ara-cli/src/main.rs`, REPL text mode only):
+
+- `HostSink` gains a `stream` flag. When it is set:
+  - each `TextDelta` is written to stdout at once;
+  - a new text block or a tool call first closes an open line;
+  - each tool call prints `ara: tool <name>: <summary>` on stderr when it
+    starts, and `ara: tool <name> done|failed` when it ends. The summary is
+    the first string among `command`, `path`, `pattern` and `pat`, with
+    whitespace folded and cut to 120 characters.
+- If a provider delivered an assistant message's text with no delta (for
+  example Responses with only `response.output_item.done`), the text is
+  printed at `MessageEnd`.
+- The REPL loop no longer prints the final answer after the turn. It only
+  closes the open line and still prints the last assistant's
+  `error_message`.
+- Print mode and JSON mode are unchanged. Print mode still prints the final
+  text once, as before.
+
+**Changed behavior:** REPL text mode now shows the text of every assistant
+message in a turn, including text before a tool call, and no longer only the
+last message's text.
+
+| Test | Observed |
+| --- | --- |
+| `repl_streams_text_and_reports_tool_progress` | The first response streams `Checking first.`, then waits 4 s before its Bash tool call. The text appears on stdout in under 3 s after the prompt line is sent. The start line `ara: tool bash: echo progress-ran; sleep 3` appears while the 3 s tool still runs. stderr order is `Working... (turn 1)` < start < `ara: tool bash done`. stdout is exactly `Checking first.\nAll done.\n`: two deltas join into one line, and nothing is printed twice. 2 model calls |
+| `repl_shows_text_a_provider_sent_without_deltas` | `--api openai-responses` with only `response.output_item.done` and `response.completed`: stdout is exactly `Whole answer.\n`; 1 model call |
+
+- The two tests passed three consecutive runs, both before and after the
+  string literals in the first test were rewritten with `\n` escapes.
+- `cargo test -p ara-cli --test e2e`: 71/71. `cargo test -p ara-cli --bin ara`:
+  8/8.
+- `cargo clippy -p ara-cli --all-targets --all-features -- -D warnings` and
+  `cargo fmt -p ara-cli --check` exit 0.
+- `StderrLog::reading` now also collects stdout in the first test; the other
+  tests are unchanged.
+
+Mutation checks on `main.rs`, restored from a saved copy and checked by
+sha256 afterwards:
+
+| Mutation | Caught by |
+| --- | --- |
+| m1: deltas are not written (`write!(out, "")`, and `streamed`/`line_open` are not set) | `repl_streams_text_and_reports_tool_progress` fails at `text waited for the message end: 4.02s` |
+| m2: no fallback print at `MessageEnd` | `repl_shows_text_a_provider_sent_without_deltas` fails |
+| m3: no tool start line | `repl_streams_text_and_reports_tool_progress` fails at `no tool start line` |
+
+This follow-up has no independent review.
+
 ## Gaps
 
 - **Real console:** Ctrl+C was not tested in a real interactive console
   (`ReadConsole` behavior with a pending `read_line`). The tests use piped
   stdin and Ctrl+Break. This belongs to V1-TRIAL.
-- **Unix:** the `cfg(unix)` test code (`libc::kill` with `SIGINT`, the
-  `[Command aborted]` assertion) was not compiled on this host. It needs a
-  green `ubuntu-latest` run, which requires a push.
+- **Unix:** Linux CI run 36533531131 on `7aa59b2` compiled the `cfg(unix)`
+  test code (`libc::kill` with `SIGINT`, the `[Command aborted]` assertion)
+  under strict Clippy. The test phase stopped at an `ara-ai` test first
+  ([AI-RETRYa follow-up](ai-retry-stream.md#linux-ci-follow-up-reset-test-depended-on-the-platform-2026-09-29-wip)),
+  so the REPL tests have not run on Linux.
 - **Windows Bash result text:** on Windows, Ctrl+Break also reaches Bash in
   the same process group, so the test does not assert the tool-result text.
 - **Review:** no independent review has run. A Sonnet subagent attempt failed

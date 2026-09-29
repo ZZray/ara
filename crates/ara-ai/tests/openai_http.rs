@@ -1220,9 +1220,11 @@ async fn dropped_stream_is_incomplete() {
 #[tokio::test]
 async fn reset_without_confirmed_frames_never_completes_or_dispatches_tools() {
     let server = FakeUpstream::start(
+        // No frame before the reset: a frame sent just before an RST is dropped
+        // on Windows but delivered on Linux, where it would count as content.
         script(json!({"responses": [
-            {"events": [text("half")], "end": "drop"},
-            {"events": [text("half again")], "end": "drop"}
+            {"events": [], "end": "drop"},
+            {"events": [], "end": "drop"}
         ]})),
         None,
     )

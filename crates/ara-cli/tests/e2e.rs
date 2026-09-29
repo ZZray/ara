@@ -1774,8 +1774,12 @@ struct StderrLog(std::sync::Arc<std::sync::Mutex<String>>, std::thread::JoinHand
 
 impl StderrLog {
     fn start(child: &mut Child) -> StderrLog {
+        StderrLog::reading(child.stderr.take().unwrap())
+    }
+
+    /// The same collector for any child pipe (stdout without newlines too).
+    fn reading(mut err: impl std::io::Read + Send + 'static) -> StderrLog {
         let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let mut err = child.stderr.take().unwrap();
         let sink = buf.clone();
         let reader = std::thread::spawn(move || {
             let mut chunk = [0u8; 4096];
@@ -1987,6 +1991,63 @@ async fn repl_interrupt_at_idle_prompt_exits_130() {
     let stderr = log.finish();
     assert_eq!(code, Some(130), "{stderr}");
     assert_eq!(up.served(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_streams_text_and_reports_tool_progress() {
+    let env = Env::new();
+    // The tool call arrives 4 s after the text, so text shown earlier was streamed.
+    let up = upstream(json!({"responses": [
+        {"events": [text("Checking first."), {"sleep_ms": 4000}, tool_call(0, "call_p", "bash", "{\"command\":\"echo progress-ran; sleep 3\"}"), finish("tool_calls"), done()]},
+        {"events": [text("All "), text("done."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let mut c = env.cmd(&up.base_url(), &["--repl"]);
+    let mut child = spawn_repl(&mut c);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let out = StderrLog::reading(child.stdout.take().unwrap());
+    let (shown_after, done_early, code) = tokio::task::block_in_place(|| {
+        assert!(log.wait_for("> ", Duration::from_secs(15)), "no prompt");
+        let sent = Instant::now();
+        writeln!(stdin, "check it").unwrap();
+        assert!(out.wait_for("Checking first.", Duration::from_secs(15)), "no streamed text");
+        let shown_after = sent.elapsed();
+        let start = "ara: tool bash: echo progress-ran; sleep 3\n";
+        assert!(log.wait_for(start, Duration::from_secs(15)), "no tool start line");
+        let done_early = log.0.lock().unwrap().contains("ara: tool bash done");
+        // EOF is read only after the turn ends.
+        drop(stdin);
+        (shown_after, done_early, wait_exit(&mut child, Duration::from_secs(30)))
+    });
+    let stderr = log.finish();
+    let stdout = out.finish();
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(shown_after < Duration::from_secs(3), "text waited for the message end: {shown_after:?}");
+    assert!(!done_early, "the start line appeared only after the tool ended: {stderr}");
+    assert_eq!(stdout, "Checking first.\nAll done.\n", "two deltas form one line; nothing is printed twice");
+    let working = stderr.find("Working... (turn 1)").unwrap();
+    let start = stderr.find("ara: tool bash: echo progress-ran; sleep 3").unwrap();
+    let end = stderr.find("ara: tool bash done").unwrap_or_else(|| panic!("{stderr}"));
+    assert!(working < start && start < end, "{stderr}");
+    assert_eq!(up.served(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_shows_text_a_provider_sent_without_deltas() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [
+            {"data": {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_whole", "content": [{"type": "output_text", "text": "Whole answer."}]}}},
+            {"data": {"type": "response.completed", "response": {"status": "completed"}}}
+        ]}
+    ]}))
+    .await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl", "--api", "openai-responses"]), "hello\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Whole answer.\n", "shown once, although no text delta was streamed");
+    assert_eq!(up.served(), 1);
 }
 
 #[tokio::test]
@@ -3026,6 +3087,7 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert_eq!(stdout, "");
     assert!(stderr.contains("session untouched"), "{stderr}");
+    assert!(stderr.contains("HTTP 400") && stderr.contains("summary backend down"), "provider cause shown: {stderr}");
     assert_eq!(std::fs::read(&session).unwrap(), before, "failed summary left the journal untouched");
     assert!(compaction_entries(&journal(&session)).is_empty());
 

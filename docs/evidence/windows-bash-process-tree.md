@@ -165,3 +165,12 @@ Uncommitted follow-up on 2026-09-29 (working tree after `f20393d`):
 On Windows the focused tests still pass with this change. Acceptance needs a
 new audit on the committed fix plus a green `ubuntu-latest` run, which needs
 a push.
+
+The follow-up was committed in `6a6ef96` and pushed. Linux CI run
+36533531131 on `7aa59b2` passed formatting and
+`clippy --workspace --all-targets --all-features -D warnings`, so the
+`cfg_attr` fix compiles on `ubuntu-latest`. The test phase stopped earlier,
+at a platform-dependent `ara-ai` reset test
+([AI-RETRYa follow-up](ai-retry-stream.md#linux-ci-follow-up-reset-test-depended-on-the-platform-2026-09-29-wip)),
+so the `ara-tools` Bash tests did not run on Linux. TOOLS-01c stays
+**changes requested** until a run executes them.

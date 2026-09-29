@@ -219,3 +219,39 @@ explicit host value)".
   identical.
 - **Review gap:** the reviewer wrote this fix, so it has no independent
   review.
+
+### Follow-up: summary failure cause (2026-09-29, WIP)
+
+- **Gap:**
+  - In the V1-TRIAL real-model run ([v1-trial](v1-trial.md), run3a),
+    `/compact` printed only `summary call failed (summary call failed:
+    ProviderError); session untouched`.
+  - `SummaryCallError` already carries `provider_status` and
+    `provider_message`, but the REPL dropped them.
+- **Change:**
+  - The `summarize_sources` error arm of `run_compaction`
+    (`crates/ara-cli/src/main.rs`) now appends `, HTTP {status}` and
+    `: {message}`.
+  - The message goes through `sanitize_text`, as `SummaryCallError`'s doc
+    comment asks callers to do before display.
+  - Nothing else changed: the session is still untouched and the REPL
+    continues.
+- **Test:** `repl_compact_failure_paths_leave_the_session_usable` now also
+  asserts that stderr contains `HTTP 400` and the fake body's message,
+  `summary backend down` (e2e.rs:3090).
+- **Mutation:**
+  - Reverting the print to the old line makes the test **fail** at
+    e2e.rs:3090 (`provider cause shown: …`).
+  - `main.rs` was restored from a saved copy; `sha256sum -c` reports OK.
+- **Checks:**
+  - `cargo fmt -p ara-cli --check` exit 0;
+  - `cargo clippy -p ara-cli --all-targets --all-features -- -D warnings`
+    exit 0;
+  - `--bin ara` **8/8**;
+  - `--test e2e` **71/71**.
+- **Real model:** runs 3b and 3c then showed `HTTP 429: 429 Provider
+  returned error`. That is the upstream free-pool limit, not an ARA fault.
+- **Open from the same trial:** F2 and F3 in [v1-trial](v1-trial.md):
+  - F2: any non-empty summary text is accepted;
+  - F3: the summary call's model, response ID and usage are not persisted.
+- **Review gap:** no independent review.
