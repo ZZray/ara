@@ -1,6 +1,11 @@
 name: CTX-01d fixed OMP directory oracle
 
 on:
+  push:
+    branches: [dev]
+    paths:
+      - scripts/ctx_skill_sort_oracle.mjs
+      - .github/workflows/ctx-skill-sort-oracle.yml
   workflow_dispatch:
 
 jobs:
