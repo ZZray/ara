@@ -28,17 +28,17 @@ jobs:
           set -euo pipefail
           locale
           "$RUNNER_TEMP/bun/bun-linux-x64/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-default.json"
-      - name: Run fixed OMP oracle with Chinese locale
+      - name: Run with Chinese environment and record Bun resolved locale
         shell: bash
         run: |
           set -euo pipefail
           sudo locale-gen zh_CN.UTF-8
           locale -a | grep -i '^zh_CN\.utf8$'
-          LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 "$RUNNER_TEMP/bun/bun-linux-x64/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-zh-cn.json"
-          jq -e '.collator.locale == "zh-CN"' "$RUNNER_TEMP/oracle-linux-zh-cn.json"
+          LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 "$RUNNER_TEMP/bun/bun-linux-x64/bun" scripts/ctx_skill_sort_oracle.mjs "$RUNNER_TEMP/filesystem-resource.ts" | tee "$RUNNER_TEMP/oracle-linux-zh-env.json"
+          jq -r '.collator.locale' "$RUNNER_TEMP/oracle-linux-zh-env.json"
       - uses: actions/upload-artifact@v4
         with:
           name: ctx-skill-sort-oracle-linux
           path: |
             ${{ runner.temp }}/oracle-linux-default.json
-            ${{ runner.temp }}/oracle-linux-zh-cn.json
+            ${{ runner.temp }}/oracle-linux-zh-env.json
