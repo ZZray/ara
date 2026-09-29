@@ -1,5 +1,65 @@
 # CTX-01d: system prompt assembly, skill:// and CLI integration
 
+## 2026-09-29 current-head B.AI trial and gate (WIP)
+
+Target `dev` at `9390d76`, fixed OMP source `596f2da`. The historical
+`c9f9e24`, `41cb9a7` and `ca2a076` fixes are ancestors of this target; the
+Agnes/OpenRouter trials below used older code. On this target, Linux CI
+36579715665 passed bootstrap, inventory and `verify_backend.py`. The local
+backend gate passed 1,042 tests, 0 failed, 1 ignored (CLI e2e 79/79), strict
+workspace Clippy, owned formatting and doc tests.
+
+The current route was checked before the trial: authenticated B.AI
+`GET /v1/models` returned 200 and listed the exact `deepseek-v4.1-flash` ID
+among 58 models. `ara` used `openai-completions`; only the short-lived trial
+process mapped `BAI_API_KEY` to the CLI's `ARA_API_KEY` for this custom route.
+No key was printed or saved. `scripts/real_model_trial_ctx.sh` ran the same
+owner-rule and release-notes-skill task in a fresh local Git repository under
+`C:\Temp\ara-ctx-9390d76-bai`, bounded to 12 calls, 300 seconds and 2,048
+output tokens per call. The CLI and checker exited 0 after 31 seconds and
+six model calls. All eight tool start IDs have matching end receipts. The
+model successfully read `skill://release-notes`, wrote `mathx.py` with the
+`AGENTS.md` owner line and a working `double(21) == 42`, and wrote
+`RELEASE_NOTES.md` with `## vNEXT` and a `- [ara]` entry. One Bash call
+returned an error; the Run continued and finished with `agent_end`.
+
+The provider reported 12,786 input, 848 output and 23,040 cache-read tokens
+(36,674 total); billing cost was unavailable. The JSON events and Session
+journal are local artifacts at that trial path. The journal records one user
+message, six assistant messages and eight tool results for Session
+`01a0ed82-780f-739e-ad3d-7f173e58756e`; it names the exact model and
+protocol. SHA-256: `mathx.py`
+`a0287c0f34415d0853fe56417aa19c1f9f3bcbd2f691df9d64584f5912d4f122`,
+`RELEASE_NOTES.md`
+`717f1fb6b765a4dc3636f5d22f86a6128d714ac196ff299eb074a1f05f11b7d7`,
+`events.jsonl`
+`265f0d892ac26a83d99cb92f9761473e474e80312663d3a0273ee4a6c93c1efa`.
+An exact-key scan of the 26 files in the trial directory found no match.
+The live HTTP request body was not captured; the current-head fake-upstream
+CLI tests below check that tool receipts reach the next model request.
+
+Focused checks on the same commit passed: `cargo test -p ara-context --test
+upstream` 21/21; `cargo test -p ara-tools --test skill_urls` 16/16; CLI e2e
+filter `skill_url` 2/2 and `discovered_system_md_and_prompt_flags` 1/1.
+Those cover the system prompt, immutable skill search/write failure with no
+file effect, traversal rejection and receipt propagation. `cargo deny check`
+exited 0 with existing duplicate-dependency and missing-license-field
+warnings. An independent Codex reviewer inspected current CTX-relevant code
+since `ca2a076` and found no new actionable defect; it ran no tests or model
+call. The older claim below that skill images, binary files, directory text
+and range context remain unported was superseded by `bc1f5db`, `59cc41e`
+and `2e58b97`, with separate tests and reviews.
+
+**Decision: still WIP, not accepted.** The fixed source at
+`packages/coding-agent/src/internal-urls/filesystem-resource.ts:16-20` was
+rechecked at `596f2da`: it sorts directories first, then names with
+`localeCompare`. ARA uses case-folded ordinal ordering
+([resource review](ctx-01d-skill-read-resources.md#review-and-remaining-differences)).
+That can change a selected line. No fixed-OMP Bun directory-order oracle was
+run on this host. Keep this parity gap explicit until it is resolved or
+assigned as a reviewed intentional difference; do not claim the whole OMP
+directory-read surface, P1 or P3 from this task trial.
+
 ## 2026-09-27 skill URL search/write follow-up
 
 Local WIP `41cb9a7` routes `skill://` through `grep` and `glob`, rejects it
