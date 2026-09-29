@@ -533,7 +533,8 @@ async fn skill_directory_order_matches_fixed_omp_bun_oracle() {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .filter(|name| name == "é.txt" || name == "e\u{301}.txt")
             .collect();
-        assert_eq!(&lines[14..16], raw_equivalent);
+        let equivalent_start = if cfg!(windows) { 14 } else { 13 };
+        assert_eq!(&lines[equivalent_start..equivalent_start + 2], raw_equivalent);
     }
 
     let selected = text(
