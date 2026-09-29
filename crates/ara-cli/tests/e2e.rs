@@ -2630,3 +2630,179 @@ async fn ast_grep_is_opt_in_and_reaches_model_and_session_journal() {
     assert_eq!(result["message"]["toolCallId"], json!("call_ast"));
     assert_eq!(result["message"]["details"]["matchCount"], json!(1));
 }
+
+/// Terminate a run mid-tool (and its process tree) so the Session ends with a
+/// tool call that has no recorded result — the same end state as SIGKILL in
+/// `crash_mid_tool_resume_reports_unknown_effect_without_replay`.
+fn kill_mid_tool(child: &mut Child, tag: &str) {
+    // `tag` is on the tool command line so an orphaned process can be found.
+    assert!(!tag.is_empty(), "the tool command must carry a unique tag");
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill").args(["/F", "/T", "/PID", &child.id().to_string()]).status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = child.kill();
+        let _ = Command::new("pkill").args(["-f", tag]).status();
+    }
+    let _ = child.wait();
+}
+
+/// V1-RESUME: exit, restart with `--repl --continue`, and the second process
+/// still sees the first turn's user text and assistant answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_continue_replays_the_prior_turn_in_the_model_request() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("First answer."), finish("stop"), done()]},
+        {"events": [text("Second answer."), finish("stop"), done()]}
+    ]}))
+    .await;
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl"]), "alpha-turn\n").await;
+    let (first_stdout, first_stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{first_stderr}");
+    assert_eq!(first_stdout, "First answer.\n");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1, "the first process wrote one Session");
+    let session = files[0].clone();
+
+    let out = repl_output(env.cmd(&up.base_url(), &["--repl", "--continue"]), "beta-turn\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Second answer.\n");
+    assert!(stderr.contains(&format!("ara: session {}", session.display())), "{stderr}");
+    assert_eq!(env.session_files(), vec![session.clone()], "still exactly one Session file");
+    let entries = journal(&session);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "user", "assistant"]);
+    assert_eq!(journal_user_texts(&entries), vec!["alpha-turn", "beta-turn"]);
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 2);
+    let second = reqs[1]["body"]["messages"].as_array().unwrap();
+    assert!(user_texts(second).iter().any(|t| t.contains("alpha-turn")), "{second:?}");
+    assert!(
+        second.iter().any(|m| m["role"] == "assistant" && m["content"].to_string().contains("First answer.")),
+        "{second:?}"
+    );
+}
+
+/// V1-RESUME: `--repl --resume <older file>` appends the turn to that file,
+/// not to the newest Session in the directory.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_resume_named_file_appends_to_that_session() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [
+        {"events": [text("Answer one."), finish("stop"), done()]},
+        {"events": [text("Answer two."), finish("stop"), done()]},
+        {"events": [text("Answer three."), finish("stop"), done()]}
+    ]}))
+    .await;
+    assert_eq!(output(env.cmd(&up.base_url(), &["first turn"])).await.status.code(), Some(0));
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(output(env.cmd(&up.base_url(), &["second turn"])).await.status.code(), Some(0));
+    let files = env.session_files();
+    assert_eq!(files.len(), 2, "{files:?}");
+    let older = files[0].clone();
+    let newer = files[1].clone();
+
+    let out =
+        repl_output(env.cmd(&up.base_url(), &["--repl", "--resume", older.to_str().unwrap()]), "third turn\n").await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Answer three.\n");
+    assert_eq!(env.session_files(), vec![older.clone(), newer.clone()], "no extra Session file");
+    assert_eq!(journal_user_texts(&journal(&older)), vec!["first turn", "third turn"]);
+    assert_eq!(journal_user_texts(&journal(&newer)), vec!["second turn"], "the newest file is untouched");
+    let reqs = up.requests.lock().await;
+    let third = reqs[2]["body"]["messages"].as_array().unwrap();
+    assert!(user_texts(third).iter().any(|t| t.contains("first turn")), "{third:?}");
+    assert!(user_texts(third).iter().all(|t| !t.contains("second turn")), "{third:?}");
+}
+
+/// V1-RESUME: a failed resume is reported and never replaced by a new
+/// conversation — nonzero exit, no model call, no new Session file.
+#[tokio::test]
+async fn repl_failed_resume_exits_without_a_new_session() {
+    // --resume of a missing path
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let missing = env.sessions.join("no-such-session.jsonl");
+    let out = output(env.cmd(&up.base_url(), &["--repl", "--resume", missing.to_str().unwrap()])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert_eq!(stdout, "");
+    assert_eq!(up.served(), 0, "a failed resume never calls the model");
+    assert!(env.session_files().is_empty(), "a failed resume never creates a Session file");
+    assert!(stderr.contains("opening session") && stderr.contains(&missing.display().to_string()), "{stderr}");
+
+    // --continue with an empty session directory
+    let env = Env::new();
+    let up =
+        upstream(json!({"responses": [{"events": [text("must not be requested"), finish("stop"), done()]}]})).await;
+    let out = output(env.cmd(&up.base_url(), &["--repl", "--continue"])).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert_eq!(stdout, "");
+    assert_eq!(up.served(), 0);
+    assert!(env.session_files().is_empty(), "an empty --continue never creates a Session file");
+    assert!(
+        stderr.contains("no session to continue") && stderr.contains(&env.sessions.display().to_string()),
+        "{stderr}"
+    );
+}
+
+/// V1-RESUME: a Session that ends with a tool call and no result is resumed in
+/// the REPL with the unknown-effect warning; the tool is not re-run and the
+/// synthesized result is journaled.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_resume_after_interrupted_tool_reports_unknown_effect_without_replay() {
+    let env = Env::new();
+    let token = format!("ara-e2e-{}", std::process::id());
+    let cmd = format!("echo run >> runs.log; sleep 30 # {token}");
+    let args = json!({"command": cmd}).to_string();
+    let up = upstream(
+        json!({"responses": [{"events": [tool_call(0, "call_crash", "bash", &args), finish("tool_calls"), done()]}]}),
+    )
+    .await;
+    let mut c = env.cmd(&up.base_url(), &["do the long thing"]);
+    let mut child = spawn_json(&mut c);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    tokio::task::block_in_place(|| {
+        read_until(&mut reader, |v| v["type"] == "tool_execution_start", Duration::from_secs(10));
+    });
+    let runs = env.work.path().join("runs.log");
+    let t0 = Instant::now();
+    while !runs.exists() && t0.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    kill_mid_tool(&mut child, &token);
+    let session = env.session_files().pop().expect("journal materialized before the tool started");
+
+    let up2 =
+        upstream(json!({"responses": [{"events": [text("Resumed after checking."), finish("stop"), done()]}]})).await;
+    let out = repl_output(
+        env.cmd(&up2.base_url(), &["--repl", "--resume", session.to_str().unwrap()]),
+        "continue carefully\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Resumed after checking.\n");
+    assert!(
+        stderr.contains("call_crash were interrupted before a result was recorded; their effects are unknown and they were not re-run"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\n", "the command was not replayed");
+    let entries = journal(&session);
+    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "user", "assistant"]);
+    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_crash"));
+    assert_eq!(entries[4]["message"]["details"]["source"], json!("interrupted_unknown_effect"));
+    assert!(entries[4]["message"]["isError"].as_bool().unwrap_or(false), "{entries:?}");
+    assert_eq!(journal_user_texts(&entries), vec!["do the long thing", "continue carefully"]);
+    let reqs = up2.requests.lock().await;
+    let msgs = reqs[0]["body"]["messages"].as_array().unwrap();
+    let tool_msg = msgs.iter().find(|m| m["role"] == "tool").unwrap();
+    assert_eq!(tool_msg["tool_call_id"], json!("call_crash"));
+    assert!(tool_msg["content"].as_str().unwrap().contains("effects are unknown"));
+}
