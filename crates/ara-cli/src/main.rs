@@ -53,6 +53,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 mod proxy_discovery;
+mod rpc_host;
 
 const TOOL_NAMES: [&str; 7] = ["read", "write", "edit", "bash", "grep", "glob", "ast_grep"];
 
@@ -62,6 +63,8 @@ enum Mode {
     Text,
     /// Every agent event as one JSON line.
     Json,
+    /// JSONL RPC commands and live Agent events.
+    Rpc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -99,7 +102,7 @@ struct Args {
     /// prompt per line from stdin (scripted sessions and tests).
     #[arg(long, conflicts_with = "prompts")]
     repl: bool,
-    /// Print mode (the only mode this host implements; accepted for OMP parity).
+    /// Run print mode (accepted for OMP parity).
     #[arg(short = 'p', long)]
     print: bool,
     #[arg(long, value_enum, default_value_t = Mode::Text)]
@@ -1032,6 +1035,10 @@ async fn run_repl_loop(
 
 async fn run(args: Args) -> Result<i32> {
     let _ = args.print;
+    let rpc_mode = args.mode == Mode::Rpc;
+    if rpc_mode && (args.repl || !args.prompts.is_empty() || args.print) {
+        bail!("--mode rpc reads commands from stdin; omit --repl, --print and positional prompts");
+    }
     let mut route = resolve_route(&args)?;
     if args.mcp_config.is_none() && !args.mcp_allow.is_empty() {
         bail!("--mcp-allow requires --mcp-config");
@@ -1041,6 +1048,7 @@ async fn run(args: Args) -> Result<i32> {
     let mut prompts = args.prompts.clone();
     // Under `--repl`, stdin is the REPL's line input, not a prompt.
     if !args.repl
+        && !rpc_mode
         && let Some(stdin) = read_stdin()?
     {
         // OMP buildInitialMessage: `${stdin}\n${firstPrompt}`.
@@ -1049,8 +1057,8 @@ async fn run(args: Args) -> Result<i32> {
             None => prompts.push(stdin),
         }
     }
-    let repl_mode = args.repl || (prompts.is_empty() && std::io::stdin().is_terminal());
-    if prompts.is_empty() && !repl_mode {
+    let repl_mode = !rpc_mode && (args.repl || (prompts.is_empty() && std::io::stdin().is_terminal()));
+    if prompts.is_empty() && !repl_mode && !rpc_mode {
         bail!("no prompt given (pass it as an argument or on stdin)");
     }
     let explicit_cwd = match &args.cwd {
@@ -1289,6 +1297,21 @@ async fn run(args: Args) -> Result<i32> {
         Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
     };
     let cancel = CancellationToken::new();
+    if rpc_mode {
+        let config = AgentConfig {
+            model: route.model,
+            provider,
+            system_prompt,
+            tools,
+            tool_choice: None,
+            max_tokens: args.max_tokens,
+            temperature: args.temperature,
+            deadline: None,
+            max_model_calls: args.max_model_calls,
+            hooks,
+        };
+        return rpc_host::run(config, context, journal, header, args.max_time).await;
+    }
     let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());

@@ -194,6 +194,7 @@ dependencies = [
  "ara-edit",
  "ara-mcp",
  "ara-prompt",
+ "ara-rpc",
  "ara-session",
  "ara-testkit",
  "ara-tools",

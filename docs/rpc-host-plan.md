@@ -104,6 +104,10 @@ events are additional contracts, not commands omitted from this denominator.
    new/switch Session early to prove identity, late-preparation and provider-state
    isolation. The current Rust route requires model/base URL; fixed OMP can
    become ready before login/model selection. Keep model-less startup mapped.
+   The first [entry snapshot](evidence/rpc-host-entry.md) implements twelve
+   bounded commands and actual owned Run/sink/mirror/output binding. It remains
+   WIP; runtime adoption, Skill provenance and remaining task-chain contracts
+   are next, with explicit unsupported errors in the interim.
 3. **Bidirectional execution and maintenance:** host tools/URI/extension UI,
    background bash, live configuration, compaction/retry and command metadata.
    Unsupported known commands fail explicitly until implemented.

@@ -107,6 +107,16 @@ its queues, but does not implement mid-run live settings or any production RPC
 command. The plan records additional Session/compaction/Skill interfaces and
 nonblocking input/output ownership. CA-RPC/A5 and the full marker stay open.
 
+**Production Host entry, 2026-09-30 (WIP):** the real `--mode rpc` process now
+binds one persistent Agent after existing route/tool/Session initialization.
+The first twelve commands cover protocol, prompt/direct images, canonical
+queues/modes, live queries and joined abort/replacement. An independent stdout
+actor preserves control responsiveness, while the Run sink journals completed
+messages and exposes full partial events. Runtime Session adoption and owned
+RPC Skill provenance remain next; unsupported contracts return explicit errors.
+The [entry evidence](evidence/rpc-host-entry.md) distinguishes executed tests
+from remaining whole-surface acceptance. Formal gates remain P0 only.
+
 ## Track B: next-generation Agent (G2), design v1
 
 ARA features sit behind explicit Core interfaces and never weaken an OMP behavior. B points start once A3 is tested, because they need compaction and recovery. B1 foundations may start earlier as additive types.

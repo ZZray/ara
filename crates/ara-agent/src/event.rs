@@ -80,6 +80,17 @@ impl AgentEvent {
     /// JSON line for `--mode json` (OMP `printableEvent`: `message_update`
     /// carries only the incremental delta, never the partial snapshot).
     pub fn printable(&self) -> Value {
+        self.project(false)
+    }
+
+    /// Complete public event for an observing host. Unlike print mode, live
+    /// observers need both the message and the provider's current snapshot.
+    /// Provider replay payloads/signatures retain the public redaction boundary.
+    pub fn full(&self) -> Value {
+        self.project(true)
+    }
+
+    fn project(&self, include_snapshot: bool) -> Value {
         let t = self.type_name();
         match self {
             AgentEvent::AgentStart | AgentEvent::TurnStart => json!({"type": t}),
@@ -90,7 +101,21 @@ impl AgentEvent {
             AgentEvent::MessageStart { message } | AgentEvent::MessageEnd { message } => {
                 public_event(json!({"type": t, "message": message}))
             }
-            AgentEvent::MessageUpdate { event, .. } => json!({"type": t, "assistantMessageEvent": event.printable()}),
+            AgentEvent::MessageUpdate { message, event } => {
+                let mut assistant_event = event.printable();
+                if include_snapshot {
+                    let snapshot = public_event(json!({"message": Message::Assistant(event.partial().clone())}));
+                    let field = match event {
+                        AssistantMessageEvent::Done { .. } => "message",
+                        AssistantMessageEvent::Error { .. } => "error",
+                        _ => "partial",
+                    };
+                    assistant_event[field] = snapshot["message"].clone();
+                    public_event(json!({"type": t, "message": message, "assistantMessageEvent": assistant_event}))
+                } else {
+                    json!({"type": t, "assistantMessageEvent": assistant_event})
+                }
+            }
             AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
                 json!({"type": t, "toolCallId": tool_call_id, "toolName": tool_name, "args": args})
             }
@@ -149,5 +174,39 @@ mod tests {
         assert!(event["message"]["content"][0].get("thinkingSignature").is_none());
         assert_eq!(event["message"]["content"][1]["arguments"]["providerPayload"], "business value");
         assert_eq!(event["toolResults"][0]["details"]["providerPayload"], "tool detail");
+    }
+
+    #[test]
+    fn full_updates_keep_snapshots_without_changing_print_or_exposing_replay_data() {
+        use ara_ai::{AssistantMessage, ThinkingContent};
+        let mut assistant = AssistantMessage::empty("openai-responses", "fixture", "model");
+        assistant.provider_payload = Some(json!({"private":"native continuation"}));
+        assistant.content.push(ara_ai::AssistantBlock::Thinking(ThinkingContent {
+            thinking: "visible summary".into(),
+            thinking_signature: Some("private signature".into()),
+        }));
+        let events = [
+            AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "summary".into(),
+                partial: assistant.clone(),
+            },
+            AssistantMessageEvent::Done { reason: ara_ai::StopReason::Stop, message: assistant.clone() },
+            AssistantMessageEvent::Error { reason: ara_ai::StopReason::Error, error: assistant.clone() },
+        ];
+        for (event, field) in events.into_iter().zip(["partial", "message", "error"]) {
+            let update = AgentEvent::MessageUpdate { message: Message::Assistant(assistant.clone()), event };
+            let full = update.full();
+            assert_eq!(full["message"]["content"][0]["thinking"], "visible summary");
+            assert!(full["message"].get("providerPayload").is_none());
+            assert!(full["message"]["content"][0].get("thinkingSignature").is_none());
+            let snapshot = &full["assistantMessageEvent"][field];
+            assert_eq!(snapshot["content"][0]["thinking"], "visible summary");
+            assert!(snapshot.get("providerPayload").is_none());
+            assert!(snapshot["content"][0].get("thinkingSignature").is_none());
+            let print = update.printable();
+            assert!(print.get("message").is_none());
+            assert!(print["assistantMessageEvent"].get(field).is_none());
+        }
     }
 }

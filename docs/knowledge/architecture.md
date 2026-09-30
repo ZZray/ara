@@ -52,6 +52,20 @@ have independent owners. The [Host plan](../rpc-host-plan.md) maps all 42 comman
 and remaining lifecycle/provenance interfaces; [API evidence](../evidence/rpc-host-run-config.md)
 does not accept production RPC, durable queue receipts or native resume.
 
+**Decision, 2026-09-30 (first production RPC entry, WIP):** the reference Host
+has a separate command/Run owner and ordered output actor after shared CLI
+initialization. Live state reads an event mirror of completed messages, with
+partial snapshots separate, rather than waiting for the Agent transcript lock.
+Each Run's sink permanently retains its Session journal and cancels before
+further tools when persistence fails. Reconcile canonical queues after both
+admission and completion; explicit abort suppresses autonomous queue drain.
+EOF joins accepted Runs and awaits queued output, so a connected peer which
+never reads stdout can hold final shutdown. Startup native recovery is reused;
+the initial mirror uses provider-context projection and does not preserve all
+custom/compaction public roles. Runtime Session adoption, RPC Skill provenance,
+live settings and remaining commands retain the [full-plan](../rpc-host-plan.md)
+boundary. See [actual entry evidence](../evidence/rpc-host-entry.md).
+
 **Decision, 2026-09-28 (implemented WIP, not accepted):** The CLI owns MCP server launch and exact `(server, tool)` grants. `ara-mcp` translates a granted stdio tool into the existing `AgentTool` port; the Agent loop and Session writer retain their existing ordering and recovery behavior. The child receives only explicitly mapped environment variables plus the Windows OS installation path, and a call with an uncertain effect is recorded as unknown without reconnect or replay. This first path covers a direct executable and pinned MCP `2025-11-25`; HTTP/SSE, OAuth, catalog resources/prompts and Windows process-tree containment are separate work. See [CA-MCP stdio evidence](../evidence/ca-mcp-stdio.md).
 
 **Decision, 2026-09-28 (implemented WIP, not accepted):** Each MCP stdio connection has one task that owns its child, pipes and Windows Job Object and reads server messages while tools are idle. Granted tools share a single-call permit and bounded command channel; dropping the last tool or abandoning an in-flight call closes the connection and releases the child. The task answers server `ping` with `{}` even without an active call, matching the [fixed OMP client and transport](upstream.md). Outbound frame validation occurs before queueing: a rejected or cancelled pre-dispatch call reports `executed: false`, while interruption after queueing remains `executed: unknown` and is never replayed automatically. See the [real-child and host evidence](../evidence/ca-mcp-stdio.md). This decision does not claim race-free descendant containment or point acceptance.

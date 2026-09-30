@@ -120,3 +120,14 @@ provenance, actual RPC task/cancellation/restart/shutdown and real-model task
 remain open. Linux delivered-code CI is recorded separately when available.
 CA-RPC, A5, P2 and the full OMP marker do not
 advance.
+
+## Delivered-code Linux gate, 2026-09-30
+
+Exact `600cf762f33c39053f710e32b0d677862c819452` repository run
+[36666427491](https://github.com/ZZray/ara/actions/runs/36666427491), job
+`109731963935`, completed successfully. Its actual log records **1,101 passed,
+0 failed, 1 ignored across 85 suites**, including CLI e2e **90/90**.
+The backend step took 228 seconds (03:53:38–03:57:26 UTC). Downloaded log:
+`C:\Temp\ara-rpc-host-run-config-validation\github\logs-36666427491\verify\7_Run python scripts_verify_backend.py.txt`.
+This closes the predecessor's Linux compilation/regression check; production
+Host acceptance remains separate.
