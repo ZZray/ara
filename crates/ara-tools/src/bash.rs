@@ -399,6 +399,122 @@ impl Drop for GroupGuard {
     }
 }
 
+/// Typed process facts (OMP `exec/bash-executor.ts` `BashResult`). Counts
+/// describe decoded UTF-8 output, including a final empty newline segment;
+/// display notices are not included. This fresh process runner does not report
+/// a final shell directory because it does not track persistent shell state.
+#[derive(Clone, Debug)]
+pub struct BashResult {
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub cancelled: bool,
+    pub timed_out: bool,
+    pub truncated: bool,
+    pub total_lines: u64,
+    pub total_bytes: u64,
+    pub output_lines: u64,
+    pub output_bytes: u64,
+    pub working_dir: Option<String>,
+    wall_time_ms: u64,
+    timeout_seconds: Option<u64>,
+    truncation_notice: Option<String>,
+}
+
+/// A live typed snapshot. Until settlement its exit code is unknown; callers
+/// may display output without parsing model-facing `ToolOutput` strings.
+pub type BashUpdateFn = Arc<dyn Fn(BashResult) + Send + Sync>;
+
+impl OutputSink {
+    fn snapshot(&self) -> BashResult {
+        let (output, truncation_notice) = self.render(DEFAULT_MAX_BYTES);
+        let output_bytes = output.len() as u64;
+        let output_lines =
+            if output.is_empty() { 0 } else { output.bytes().filter(|&b| b == b'\n').count() as u64 + 1 };
+        BashResult {
+            output,
+            exit_code: None,
+            cancelled: false,
+            timed_out: false,
+            truncated: truncation_notice.is_some(),
+            total_lines: if self.total_bytes == 0 { 0 } else { self.total_newlines + 1 },
+            total_bytes: self.total_bytes,
+            output_lines,
+            output_bytes,
+            working_dir: None,
+            wall_time_ms: 0,
+            timeout_seconds: None,
+            truncation_notice,
+        }
+    }
+}
+
+impl BashResult {
+    /// Fixed `OutputSink.dump(notice)` prefixes terminal status for native
+    /// user-shell receipts. Output counters continue to describe captured
+    /// process bytes/lines, excluding this status line.
+    pub fn output_with_status_notice(&self) -> String {
+        if self.timed_out {
+            let notice = self.timeout_seconds.map_or_else(
+                || "Command timed out".to_owned(),
+                |seconds| format!("Command timed out after {seconds} seconds"),
+            );
+            format!("[{notice}]\n{}", self.output)
+        } else if self.cancelled {
+            format!("[Command cancelled]\n{}", self.output)
+        } else {
+            self.output.clone()
+        }
+    }
+
+    fn tool_text(&self) -> String {
+        let body = self.output.trim_end_matches('\n');
+        let mut text = if body.is_empty() { "(no output)".to_owned() } else { body.to_owned() };
+        if let Some(notice) = &self.truncation_notice {
+            text.push_str("\n\n");
+            text.push_str(notice);
+        }
+        text
+    }
+
+    fn into_tool_output(self) -> Result<ToolOutput, ToolError> {
+        let mut text = self.tool_text();
+        let mut details = json!({"wallTimeMs": self.wall_time_ms});
+        match self.timeout_seconds {
+            Some(seconds) => details["timeoutSeconds"] = json!(seconds),
+            None => details["timeoutDisabled"] = json!(true),
+        }
+        if self.truncated {
+            details["truncation"] = json!({"truncated": true, "direction": "tail", "totalBytes": self.total_bytes});
+        }
+        // Timeout is also a cancellation in the typed protocol; retain the
+        // Bash tool's established timeout error before handling user aborts.
+        if self.timed_out {
+            details["timedOut"] = json!(true);
+            text.push_str(&format!(
+                "\n\n[Command timed out after {} seconds]",
+                self.timeout_seconds.unwrap_or_default()
+            ));
+            return Ok(ToolOutput::error(text).with_details(details));
+        }
+        if self.cancelled {
+            return Err(ToolError(if self.total_bytes == 0 {
+                "Command aborted".into()
+            } else {
+                format!("{text}\n\n[Command aborted]")
+            }));
+        }
+        match self.exit_code {
+            Some(0) => Ok(ToolOutput::text(text).with_details(details)),
+            Some(code) => {
+                details["exitCode"] = json!(code);
+                text.push_str(&format!("\n\nCommand exited with code {code}"));
+                Ok(ToolOutput::error(text).with_details(details))
+            }
+            None => Err(ToolError(format!("{text}\n\nCommand failed: missing exit status"))),
+        }
+    }
+}
+
 pub struct BashTool {
     pub ctx: ToolContext,
 }
@@ -438,162 +554,293 @@ impl AgentTool for BashTool {
         cancel: CancellationToken,
         update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
-        // `skill://` URLs in the command, env values and cwd resolve to paths
-        // (OMP `expandInternalUrls`).
-        let skills = self.ctx.skills.read().unwrap_or_else(|e| e.into_inner()).clone();
-        let expand = |text: &str, no_escape: bool| crate::internal_urls::expand_skill_urls(text, &skills, no_escape);
-        let command = expand(args.get("command").and_then(Value::as_str).unwrap_or_default(), false);
-        let timeout = resolve_timeout(args.get("timeout").and_then(Value::as_f64));
-        let cwd = args
-            .get("cwd")
-            .and_then(Value::as_str)
-            .map(|c| self.ctx.resolve(&expand(c, true)))
-            .unwrap_or_else(|| self.ctx.cwd.clone());
-        if !cwd.is_dir() {
-            return Err(ToolError(format!("Working directory does not exist: {}", self.ctx.display(&cwd))));
-        }
-        let (reader, writer) = std::io::pipe().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
-        let writer_err = writer.try_clone().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
-        let mut cmd = tokio::process::Command::new("bash");
-        cmd.arg("-c").arg(&command).current_dir(&cwd).stdin(Stdio::null()).stdout(writer).stderr(writer_err);
-        for (k, v) in NON_INTERACTIVE_ENV {
-            cmd.env(k, v);
-        }
-        if let Some(Value::Object(env)) = args.get("env") {
-            for (k, v) in env {
-                if let Some(v) = v.as_str() {
-                    cmd.env(k, expand(v, true));
-                }
-            }
-        }
-        #[cfg(unix)]
-        cmd.process_group(0);
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_SUSPENDED);
-        cmd.kill_on_drop(true);
-        #[cfg(windows)]
-        let job = WindowsJob::new().map_err(|e| ToolError(format!("Failed to create Bash process job: {e}")))?;
-        let started = Instant::now();
-        let mut child = cmd.spawn().map_err(|e| ToolError(format!("Failed to start bash: {e}")))?;
-        drop(cmd); // release the parent's copies of the pipe's write end
-        #[cfg(windows)]
-        if let Err(e) = job.assign_and_resume(&child) {
-            // The initial thread has not run on every ordinary setup failure.
-            // Never execute this command without its Job as a fallback.
-            let _ = child.start_kill();
-            return Err(ToolError(format!("Failed to contain Bash process tree: {e}")));
-        }
-        // Unix only needs the guard's Drop; Windows also kills through it below.
-        #[cfg_attr(not(windows), allow(unused_mut, unused_variables))]
-        let mut group = GroupGuard {
-            #[cfg(unix)]
-            pid: child.id(),
-            #[cfg(windows)]
-            job: Some(job),
-        };
-        #[cfg(unix)]
-        let pid = child.id();
-        let sink = Arc::new(Mutex::new(OutputSink::default()));
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
-        let reader_sink = sink.clone();
-        std::thread::spawn(move || {
-            let mut reader = reader;
-            let mut buf = [0u8; 16 * 1024];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => reader_sink.lock().unwrap().push_bytes(&buf[..n]),
-                }
-            }
-            let _ = done_tx.send(());
-        });
+        let typed_update: BashUpdateFn = Arc::new(move |partial| update(ToolOutput::text(partial.output)));
+        execute_bash(&self.ctx, &args, cancel, typed_update).await?.into_tool_output()
+    }
+}
 
-        let deadline = timeout.map(|t| started + Duration::from_secs(t));
-        let mut ticker = tokio::time::interval(UPDATE_INTERVAL);
-        ticker.tick().await;
-        let mut last_sent = 0u64;
-        let ending = loop {
-            tokio::select! {
-                status = child.wait() => break Ending::Exited(status.ok()),
-                _ = cancel.cancelled() => break Ending::Cancelled,
-                _ = async { match deadline { Some(d) => tokio::time::sleep_until(d.into()).await, None => std::future::pending().await } } => break Ending::TimedOut,
-                _ = ticker.tick() => {
-                    let (bytes, rendered) = { let s = sink.lock().unwrap(); (s.total_bytes, s.render(DEFAULT_MAX_BYTES).0) };
-                    if bytes != last_sent {
-                        last_sent = bytes;
-                        update(ToolOutput::text(rendered));
-                    }
-                }
+/// Execute one contained process and return typed settlement and output facts.
+/// Host callers need not infer process status from model-facing tool text.
+/// Output is the captured tail only; no display/error sentinel is appended.
+pub async fn execute_bash(
+    ctx: &ToolContext,
+    args: &JsonObject,
+    cancel: CancellationToken,
+    update: BashUpdateFn,
+) -> Result<BashResult, ToolError> {
+    let timeout = resolve_timeout(args.get("timeout").and_then(Value::as_f64));
+    if cancel.is_cancelled() {
+        let mut result = OutputSink::default().snapshot();
+        result.cancelled = true;
+        result.timeout_seconds = timeout;
+        return Ok(result);
+    }
+    // `skill://` URLs in the command, env values and cwd resolve to paths
+    // (OMP `expandInternalUrls`).
+    let skills = ctx.skills.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let expand = |text: &str, no_escape: bool| crate::internal_urls::expand_skill_urls(text, &skills, no_escape);
+    let command = expand(args.get("command").and_then(Value::as_str).unwrap_or_default(), false);
+    let cwd = args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(|c| ctx.resolve(&expand(c, true)))
+        .unwrap_or_else(|| ctx.cwd.clone());
+    if !cwd.is_dir() {
+        return Err(ToolError(format!("Working directory does not exist: {}", ctx.display(&cwd))));
+    }
+    let (reader, writer) = std::io::pipe().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
+    let writer_err = writer.try_clone().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
+    let mut cmd = tokio::process::Command::new("bash");
+    cmd.arg("-c").arg(&command).current_dir(&cwd).stdin(Stdio::null()).stdout(writer).stderr(writer_err);
+    for (k, v) in NON_INTERACTIVE_ENV {
+        cmd.env(k, v);
+    }
+    if let Some(Value::Object(env)) = args.get("env") {
+        for (k, v) in env {
+            if let Some(v) = v.as_str() {
+                cmd.env(k, expand(v, true));
             }
-        };
-        // End of call: the whole group goes (including background children
-        // still holding the pipe), then the reader sees EOF.
-        #[cfg(unix)]
-        kill_group(pid);
-        #[cfg(windows)]
-        group.kill_windows();
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(2), done_rx).await;
-        let (body, notice, total_bytes) = {
-            let mut s = sink.lock().unwrap();
-            s.finish();
-            let (b, n) = s.render(DEFAULT_MAX_BYTES);
-            (b, n, s.total_bytes)
-        };
-        let body = body.trim_end_matches('\n').to_string();
-        let mut details = json!({"wallTimeMs": started.elapsed().as_millis() as u64});
-        match timeout {
-            Some(t) => details["timeoutSeconds"] = json!(t),
-            None => details["timeoutDisabled"] = json!(true),
-        }
-        if notice.is_some() {
-            details["truncation"] = json!({"truncated": true, "direction": "tail", "totalBytes": total_bytes});
-        }
-        let mut text = if body.is_empty() { "(no output)".to_string() } else { body };
-        if let Some(n) = &notice {
-            text.push_str("\n\n");
-            text.push_str(n);
-        }
-        let exit_code = match &ending {
-            Ending::Exited(Some(status)) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    // OMP maps a signal kill without an exit code to 128 + signal (137 for SIGKILL).
-                    status.code().or_else(|| status.signal().map(|s| 128 + s))
-                }
-                #[cfg(not(unix))]
-                status.code()
-            }
-            _ => None,
-        };
-        match ending {
-            Ending::Exited(_) if exit_code == Some(0) => Ok(ToolOutput::text(text).with_details(details)),
-            Ending::Exited(_) if exit_code.is_some() => {
-                let code = exit_code.unwrap();
-                details["exitCode"] = json!(code);
-                text.push_str(&format!("\n\nCommand exited with code {code}"));
-                Ok(ToolOutput::error(text).with_details(details))
-            }
-            Ending::Exited(_) => Err(ToolError(format!("{text}\n\nCommand failed: missing exit status"))),
-            Ending::TimedOut => {
-                details["timedOut"] = json!(true);
-                let secs = timeout.unwrap_or_default();
-                text.push_str(&format!("\n\n[Command timed out after {secs} seconds]"));
-                Ok(ToolOutput::error(text).with_details(details))
-            }
-            Ending::Cancelled => Err(ToolError(if total_bytes == 0 {
-                "Command aborted".into()
-            } else {
-                format!("{text}\n\n[Command aborted]")
-            })),
         }
     }
+    #[cfg(unix)]
+    cmd.process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_SUSPENDED);
+    cmd.kill_on_drop(true);
+    #[cfg(windows)]
+    let job = WindowsJob::new().map_err(|e| ToolError(format!("Failed to create Bash process job: {e}")))?;
+    let started = Instant::now();
+    let mut child = cmd.spawn().map_err(|e| ToolError(format!("Failed to start bash: {e}")))?;
+    drop(cmd); // release the parent's copies of the pipe's write end
+    #[cfg(windows)]
+    if let Err(e) = job.assign_and_resume(&child) {
+        // The initial thread has not run on every ordinary setup failure.
+        // Never execute this command without its Job as a fallback.
+        let _ = child.start_kill();
+        return Err(ToolError(format!("Failed to contain Bash process tree: {e}")));
+    }
+    // Unix only needs the guard's Drop; Windows also kills through it below.
+    #[cfg_attr(not(windows), allow(unused_mut, unused_variables))]
+    let mut group = GroupGuard {
+        #[cfg(unix)]
+        pid: child.id(),
+        #[cfg(windows)]
+        job: Some(job),
+    };
+    #[cfg(unix)]
+    let pid = child.id();
+    let sink = Arc::new(Mutex::new(OutputSink::default()));
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let reader_sink = sink.clone();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 16 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => reader_sink.lock().unwrap().push_bytes(&buf[..n]),
+            }
+        }
+        let _ = done_tx.send(());
+    });
+
+    let deadline = timeout.map(|t| started + Duration::from_secs(t));
+    let mut ticker = tokio::time::interval(UPDATE_INTERVAL);
+    ticker.tick().await;
+    let mut last_sent = 0u64;
+    let ending = loop {
+        tokio::select! {
+            status = child.wait() => break Ending::Exited(status.ok()),
+            _ = cancel.cancelled() => break Ending::Cancelled,
+            _ = async { match deadline { Some(d) => tokio::time::sleep_until(d.into()).await, None => std::future::pending().await } } => break Ending::TimedOut,
+            _ = ticker.tick() => {
+                let snapshot = sink.lock().unwrap().snapshot();
+                if snapshot.total_bytes != last_sent {
+                    last_sent = snapshot.total_bytes;
+                    update(snapshot);
+                }
+            }
+        }
+    };
+    // End of call: the whole group goes (including background children
+    // still holding the pipe), then the reader sees EOF.
+    #[cfg(unix)]
+    kill_group(pid);
+    #[cfg(windows)]
+    group.kill_windows();
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(Duration::from_secs(2), done_rx).await;
+    let mut result = {
+        let mut sink = sink.lock().unwrap();
+        sink.finish();
+        sink.snapshot()
+    };
+    result.wall_time_ms = started.elapsed().as_millis() as u64;
+    result.timeout_seconds = timeout;
+    let exit_code = match &ending {
+        Ending::Exited(Some(status)) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                // OMP maps a signal kill without an exit code to 128 + signal (137 for SIGKILL).
+                status.code().or_else(|| status.signal().map(|s| 128 + s))
+            }
+            #[cfg(not(unix))]
+            status.code()
+        }
+        _ => None,
+    };
+    result.exit_code = exit_code;
+    result.timed_out = matches!(ending, Ending::TimedOut);
+    // Fixed OMP represents deadline cancellation as cancelled + timedOut.
+    result.cancelled = matches!(ending, Ending::Cancelled | Ending::TimedOut);
+    if matches!(ending, Ending::Exited(_)) && exit_code.is_none() {
+        return Err(ToolError(format!("{}\n\nCommand failed: missing exit status", result.tool_text())));
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn process_args(value: Value) -> JsonObject {
+        value.as_object().unwrap().clone()
+    }
+
+    fn no_process_update() -> BashUpdateFn {
+        Arc::new(|_| {})
+    }
+
+    #[tokio::test]
+    async fn typed_process_result_preserves_output_and_distinguishes_nonzero_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let output = execute_bash(
+            &ctx,
+            &process_args(json!({"command":"printf 'é😀\\nsecond\\n'"})),
+            CancellationToken::new(),
+            no_process_update(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.output, "é😀\nsecond\n");
+        assert_eq!(output.exit_code, Some(0));
+        assert!(!output.cancelled && !output.timed_out && !output.truncated);
+        assert_eq!((output.total_lines, output.output_lines), (3, 3));
+        assert_eq!((output.total_bytes, output.output_bytes), (14, 14));
+        assert!(output.working_dir.is_none());
+        let failed = execute_bash(
+            &ctx,
+            &process_args(json!({"command":"printf 'nope\\n'; exit 3"})),
+            CancellationToken::new(),
+            no_process_update(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(failed.output, "nope\n");
+        assert_eq!(failed.exit_code, Some(3));
+        assert!(!failed.cancelled && !failed.timed_out);
+        assert!(!failed.output.contains("Command exited"));
+    }
+
+    #[tokio::test]
+    async fn typed_process_result_reports_exact_totals_for_a_bounded_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let output = execute_bash(
+            &ctx,
+            &process_args(json!({"command":"seq 1 20000"})),
+            CancellationToken::new(),
+            no_process_update(),
+        )
+        .await
+        .unwrap();
+        let expected_total: usize = (1..=20000).map(|line| format!("{line}\n").len()).sum();
+        assert_eq!(output.total_bytes, expected_total as u64);
+        assert_eq!(output.total_lines, 20001);
+        assert!(output.truncated);
+        assert_eq!(output.output_bytes, output.output.len() as u64);
+        assert_eq!(output.output_lines, output.output.matches('\n').count() as u64 + 1);
+        assert!(output.output.len() <= DEFAULT_MAX_BYTES);
+        assert!(output.output.ends_with("20000\n"));
+        assert!(!output.output.contains("Showing lines"));
+    }
+
+    #[tokio::test]
+    async fn typed_process_cancel_before_dispatch_and_on_live_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let output =
+            execute_bash(&ctx, &process_args(json!({"command":"touch pre-cancelled"})), cancel, no_process_update())
+                .await
+                .unwrap();
+        assert!(output.cancelled && !output.timed_out);
+        assert_eq!(output.exit_code, None);
+        assert_eq!(output.output, "");
+        assert_eq!(output.output_with_status_notice(), "[Command cancelled]\n");
+        assert_eq!((output.total_lines, output.total_bytes, output.output_lines, output.output_bytes), (0, 0, 0, 0));
+        assert!(!dir.path().join("pre-cancelled").exists());
+        let cancel = CancellationToken::new();
+        let cancel_on_output = cancel.clone();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let updates = seen.clone();
+        let update: BashUpdateFn = Arc::new(move |partial| {
+            if partial.output.contains("started") {
+                updates.lock().unwrap().push(partial);
+                cancel_on_output.cancel();
+            }
+        });
+        let result = tokio::time::timeout(
+            Duration::from_secs(4),
+            execute_bash(
+                &ctx,
+                &process_args(json!({"command":"echo started; sleep 3; touch after-cancel"})),
+                cancel,
+                update,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.output, "started\n");
+        assert_eq!(result.output_with_status_notice(), "[Command cancelled]\nstarted\n");
+        assert!(result.cancelled && !result.timed_out);
+        assert!(result.exit_code.is_none());
+        let partial = seen.lock().unwrap();
+        assert!(!partial.is_empty());
+        assert_eq!(partial[0].total_bytes, 8);
+        assert!(!partial[0].cancelled);
+        assert!(!dir.path().join("after-cancel").exists());
+    }
+
+    #[tokio::test]
+    async fn typed_process_timeout_is_a_timed_cancellation_without_output_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let result = tokio::time::timeout(
+            Duration::from_secs(4),
+            execute_bash(
+                &ctx,
+                &process_args(json!({"command":"(sleep 2; touch after-timeout) & echo ready; wait","timeout":1})),
+                CancellationToken::new(),
+                no_process_update(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.output, "ready\n");
+        assert_eq!(result.output_with_status_notice(), "[Command timed out after 1 seconds]\nready\n");
+        assert!(result.cancelled && result.timed_out);
+        assert!(result.exit_code.is_none());
+        assert_eq!((result.total_lines, result.output_lines), (2, 2));
+        assert_eq!((result.total_bytes, result.output_bytes), (6, 6));
+        tokio::time::sleep(Duration::from_millis(1400)).await;
+        assert!(!dir.path().join("after-timeout").exists(), "contained child did not survive timeout");
+    }
 
     #[test]
     fn timeout_resolution() {

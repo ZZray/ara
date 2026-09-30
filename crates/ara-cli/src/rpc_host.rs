@@ -20,13 +20,13 @@ use ara_rpc::{
     input::{InputItem, RpcInputReader},
     writer::RpcOutput,
 };
-use ara_session::{SessionJournal, UserSkillPrompt};
+use ara_session::{BashExecutionMessage, SessionJournal, UserSkillPrompt, bash_output_meta_from_summary};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
     future::pending,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock, Weak},
     time::{Duration, Instant},
 };
 
@@ -287,15 +287,7 @@ impl Session {
         };
         // Native provenance comes from the active raw branch. Reopening never
         // needs the historical Skill file, nor equality against model content.
-        let public_messages = journal
-            .branch()
-            .into_iter()
-            .filter_map(|entry| {
-                entry.skill_prompt().map(|prompt| prompt.event_message()).or_else(|| {
-                    entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
-                })
-            })
-            .collect();
+        let public_messages = Self::public_messages(&journal);
         Ok(Arc::new(Self {
             name: Mutex::new((!journal.title().title.is_empty()).then(|| journal.title().title.clone())),
             file: journal.is_persistent().then(|| journal.path().into()),
@@ -305,6 +297,22 @@ impl Session {
             persistence_error: Mutex::new(None),
             header,
         }))
+    }
+
+    fn public_messages(journal: &SessionJournal) -> Vec<Value> {
+        journal
+            .branch()
+            .into_iter()
+            .filter_map(|entry| {
+                entry
+                    .bash_execution()
+                    .map(|bash| bash.event_message())
+                    .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
+                    .or_else(|| {
+                        entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
+                    })
+            })
+            .collect()
     }
 }
 
@@ -404,6 +412,91 @@ struct ActiveRun {
     sink: Arc<RunSink>,
 }
 
+#[derive(Clone)]
+enum BashDestination {
+    Current,
+    Detached { parent: Option<String> },
+    Branch { parent: Option<String> },
+}
+
+// Host-owned destinations are shared by jobs started in one ownership scope.
+// Completions and transitions mutate them only in the serial command owner.
+struct BashTarget {
+    session: Arc<Session>,
+    destination: BashDestination,
+}
+
+struct BashJob {
+    command: Command,
+    text: String,
+    target: Arc<Mutex<BashTarget>>,
+    cancel: CancellationToken,
+    task: JoinHandle<()>,
+}
+
+type BashCompletion = (
+    u64,
+    std::result::Result<std::result::Result<ara_tools::bash::BashResult, ara_agent::ToolError>, tokio::task::JoinError>,
+);
+
+struct BashDispatcher {
+    current: Mutex<Arc<Mutex<BashTarget>>>,
+    jobs: Mutex<std::collections::HashMap<u64, BashJob>>,
+    next_id: std::sync::atomic::AtomicU64,
+    done: mpsc::UnboundedSender<BashCompletion>,
+    output: Output,
+    connection: CancellationToken,
+    cwd: PathBuf,
+}
+
+impl BashDispatcher {
+    // Fixed RpcInputDispatcher starts bash as soon as stdin dispatches it,
+    // independently of the ordinary serial command tail. The process task
+    // cannot write a journal: the Host owns every completion and transition.
+    fn dispatch(&self, command: Command) {
+        let text = match command.string("command") {
+            Ok(text) => text,
+            Err(error) => {
+                self.output.response(&command, None, Some(error.to_string()));
+                return;
+            }
+        };
+        let target = self.current.lock().unwrap().clone();
+        let cancel = self.connection.child_token();
+        let process_cancel = cancel.clone();
+        let context = ara_tools::ToolContext::new(self.cwd.clone());
+        let args = json!({"command":text}).as_object().unwrap().clone();
+        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let done = self.done.clone();
+        // Insert and install the supervisor under one lock. A fast completion
+        // therefore cannot outrun its ownership record.
+        let mut jobs = self.jobs.lock().unwrap();
+        let process = tokio::spawn(async move {
+            ara_tools::bash::execute_bash(&context, &args, process_cancel, Arc::new(|_| {})).await
+        });
+        let task = tokio::spawn(async move {
+            let result = process.await;
+            let _ = done.send((id, result));
+        });
+        jobs.insert(id, BashJob { command, text, target, cancel, task });
+    }
+
+    fn abort(&self) {
+        for job in self.jobs.lock().unwrap().values() {
+            job.cancel.cancel();
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.jobs.lock().unwrap().is_empty()
+    }
+}
+
+struct PendingBash {
+    target: Arc<Mutex<BashTarget>>,
+    message: BashExecutionMessage,
+}
+
 struct Host {
     agent: Arc<Agent>,
     session: Arc<Session>,
@@ -421,9 +514,143 @@ struct Host {
     // Deliberate abort keeps queued input visible but suppresses autonomous
     // resumption. A new explicit prompt/queue command permits another Run.
     drain_queues: bool,
+    bash_target: Arc<Mutex<BashTarget>>,
+    bash_targets: Vec<Weak<Mutex<BashTarget>>>,
+    bash_dispatcher: Arc<BashDispatcher>,
+    pending_bash: Vec<PendingBash>,
+    bash_error: Option<String>,
+}
+
+fn same_session_file(left: &Session, right: &Session) -> bool {
+    if left.header["id"] != right.header["id"] {
+        return false;
+    }
+    match (&left.file, &right.file) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            std::fs::canonicalize(left).ok().zip(std::fs::canonicalize(right).ok()).is_some_and(|(a, b)| a == b)
+                || lexical_absolute(left).ok().zip(lexical_absolute(right).ok()).is_some_and(|(a, b)| a == b)
+        }
+        _ => false,
+    }
+}
+
+fn bash_result_value(result: &ara_tools::bash::BashResult) -> Value {
+    let mut value = json!({"output":result.output_with_status_notice(),"cancelled":result.cancelled,"truncated":result.truncated,
+        "totalLines":result.total_lines,"totalBytes":result.total_bytes,
+        "outputLines":result.output_lines,"outputBytes":result.output_bytes});
+    if let Some(exit) = result.exit_code {
+        value["exitCode"] = json!(exit);
+    }
+    if result.timed_out {
+        value["timedOut"] = json!(true);
+    }
+    if let Some(cwd) = &result.working_dir {
+        value["workingDir"] = json!(cwd);
+    }
+    value
 }
 
 impl Host {
+    async fn append_bash(&mut self, pending: PendingBash) -> Result<()> {
+        let (session, destination) = {
+            let target = pending.target.lock().unwrap();
+            (target.session.clone(), target.destination.clone())
+        };
+        match destination {
+            BashDestination::Current => {
+                if !Arc::ptr_eq(&session, &self.session) {
+                    bail!("Bash current destination no longer owns the active Session");
+                }
+                if let Some(message) = pending.message.model_message() {
+                    // Reject an unresolved tool tail before a User projection
+                    // can hide it in either live or persisted model context.
+                    self.agent.append_idle_message(message)?;
+                }
+                let mut journal = session.journal.lock().await;
+                journal.append_bash_execution(&pending.message)?;
+                session.messages.lock().unwrap().push(pending.message.event_message());
+            }
+            BashDestination::Detached { parent } | BashDestination::Branch { parent } => {
+                let mut journal = session.journal.lock().await;
+                let id = journal.append_bash_execution_to_branch(&pending.message, parent.as_deref())?;
+                let mut target = pending.target.lock().unwrap();
+                match &mut target.destination {
+                    BashDestination::Detached { parent } | BashDestination::Branch { parent } => *parent = Some(id),
+                    BashDestination::Current => unreachable!("serial Host owns destination transitions"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn bash_persistence_failed(&mut self, target: &Arc<Mutex<BashTarget>>, error: &anyhow::Error) {
+        let session = target.lock().unwrap().session.clone();
+        let message = format!("Bash receipt could not be recorded; effects may have occurred: {error:#}");
+        *session.persistence_error.lock().unwrap() = Some(message.clone());
+        self.bash_error = Some(message.clone());
+        eprintln!("ara: {message}");
+        self.connection.cancel();
+    }
+
+    async fn flush_pending_bash(&mut self) {
+        if self.active.is_some() {
+            return;
+        }
+        for pending in std::mem::take(&mut self.pending_bash) {
+            let target = pending.target.clone();
+            if let Err(error) = self.append_bash(pending).await {
+                self.bash_persistence_failed(&target, &error);
+            }
+        }
+    }
+
+    async fn completed_bash(&mut self, (id, result): BashCompletion) {
+        let job = self.bash_dispatcher.jobs.lock().unwrap().remove(&id).expect("tracked Bash completion");
+        let _ = job.task.await;
+        let result = match result {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => {
+                self.output.response(&job.command, None, Some(error.0));
+                return;
+            }
+            Err(error) => {
+                self.output.response(
+                    &job.command,
+                    None,
+                    Some(format!("Bash task failed; effects may be unknown: {error}")),
+                );
+                return;
+            }
+        };
+        let data = bash_result_value(&result);
+        let message = BashExecutionMessage {
+            command: job.text,
+            output: result.output_with_status_notice(),
+            exit_code: result.exit_code,
+            cancelled: result.cancelled,
+            truncated: result.truncated,
+            meta: bash_output_meta_from_summary(&data),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            exclude_from_context: None,
+        };
+        let defer = {
+            let target = job.target.lock().unwrap();
+            matches!(target.destination, BashDestination::Current)
+                && Arc::ptr_eq(&target.session, &self.session)
+                && self.active.is_some()
+        };
+        let pending = PendingBash { target: job.target.clone(), message };
+        if defer {
+            self.pending_bash.push(pending);
+        } else if let Err(error) = self.append_bash(pending).await {
+            self.output.response(&job.command, None, Some(error.to_string()));
+            self.bash_persistence_failed(&job.target, &error);
+            return;
+        }
+        self.output.response(&job.command, Some(data), None);
+    }
+
     fn overlay(&self, definitions: &[HostToolDefinition], active_names: &[String]) -> super::ToolOverlay {
         let active = active_names
             .iter()
@@ -518,7 +745,7 @@ impl Host {
         self.output.frame(json!({"type":"available_commands_update","commands":self.available_commands()}));
     }
 
-    fn adopt(
+    async fn adopt(
         &mut self,
         journal: Option<SessionJournal>,
         header: Value,
@@ -528,7 +755,54 @@ impl Host {
     ) -> Result<()> {
         // Preparation is complete and the old owned Run is joined. Commit the
         // replacement once; each settled RunSink retains its original journal.
-        let session = Session::new(journal, header, &messages)?;
+        let previous_leaf = self.session.journal.lock().await.leaf_id().map(str::to_owned);
+        let proposed = Session::new(journal, header, &messages)?;
+        let new_leaf = proposed.journal.lock().await.leaf_id().map(str::to_owned);
+        let targets = self.bash_targets.iter().filter_map(Weak::upgrade).collect::<Vec<_>>();
+        // A still-owned Bash may retain the same file that switch just opened.
+        // Reuse its journal lock instead of leaving a stale snapshot writer.
+        let retained = targets.iter().find_map(|target| {
+            let session = target.lock().unwrap().session.clone();
+            same_session_file(&session, &proposed).then_some(session)
+        });
+        let session = if let Some(retained) = retained {
+            std::mem::swap(&mut *retained.journal.lock().await, &mut *proposed.journal.lock().await);
+            *retained.messages.lock().unwrap() = proposed.messages.lock().unwrap().clone();
+            *retained.name.lock().unwrap() = proposed.name.lock().unwrap().clone();
+            *retained.partial.lock().unwrap() = None;
+            *retained.persistence_error.lock().unwrap() = None;
+            retained
+        } else {
+            proposed
+        };
+        for target in &targets {
+            let mut target = target.lock().unwrap();
+            target.destination = match &target.destination {
+                BashDestination::Current if Arc::ptr_eq(&target.session, &self.session) => {
+                    if Arc::ptr_eq(&target.session, &session) {
+                        if previous_leaf == new_leaf {
+                            BashDestination::Current
+                        } else {
+                            BashDestination::Branch { parent: previous_leaf.clone() }
+                        }
+                    } else {
+                        BashDestination::Detached { parent: previous_leaf.clone() }
+                    }
+                }
+                BashDestination::Detached { parent } | BashDestination::Branch { parent }
+                    if Arc::ptr_eq(&target.session, &session) =>
+                {
+                    BashDestination::Branch { parent: parent.clone() }
+                }
+                destination => destination.clone(),
+            };
+        }
+        let bash_target =
+            Arc::new(Mutex::new(BashTarget { session: session.clone(), destination: BashDestination::Current }));
+        self.bash_targets.retain(|target| target.strong_count() != 0);
+        self.bash_targets.push(Arc::downgrade(&bash_target));
+        *self.bash_dispatcher.current.lock().unwrap() = bash_target.clone();
+        self.bash_target = bash_target;
         let agent = Agent::new(config.clone(), messages);
         agent.set_steering_mode(self.agent.steering_mode());
         agent.set_follow_up_mode(self.agent.follow_up_mode());
@@ -559,7 +833,7 @@ impl Host {
             .as_ref()
             .map(|journal| journal.header().clone())
             .unwrap_or_else(|| super::ephemeral_header(&self.sessions.cwd, parent));
-        self.adopt(journal, header, Vec::new(), config, skills)?;
+        self.adopt(journal, header, Vec::new(), config, skills).await?;
         Ok(())
     }
 
@@ -592,7 +866,7 @@ impl Host {
         super::recover_session(&mut journal)?;
         let messages = journal.model_context();
         let header = journal.header().clone();
-        self.adopt(Some(journal), header, messages, config, skills)?;
+        self.adopt(Some(journal), header, messages, config, skills).await?;
         Ok(false)
     }
 
@@ -615,7 +889,7 @@ impl Host {
         let journal = self.session.journal.lock().await.fork_at(parent.as_deref(), self.sessions.dir.as_deref())?;
         let header = journal.header().clone();
         let messages = journal.model_context();
-        self.adopt(Some(journal), header, messages, config, skills)?;
+        self.adopt(Some(journal), header, messages, config, skills).await?;
         Ok(text)
     }
 
@@ -710,6 +984,7 @@ impl Host {
             let result = (&mut active.task).await;
             self.completed(active, result);
         }
+        self.flush_pending_bash().await;
     }
 
     fn reconcile_queues(&mut self) {
@@ -759,6 +1034,15 @@ impl Host {
 
     async fn execute(&mut self, command: &Command) -> Result<()> {
         match command.kind.as_str() {
+            "bash" => self.bash_dispatcher.dispatch(Command {
+                id: command.id.clone(),
+                kind: command.kind.clone(),
+                frame: command.frame.clone(),
+            }),
+            "abort_bash" => {
+                self.bash_dispatcher.abort();
+                self.output.response(command, None, None);
+            }
             "set_host_tools" => {
                 let definitions = normalize_host_tool_definitions(
                     command.frame.get("tools").context("set_host_tools requires tools")?,
@@ -833,11 +1117,15 @@ impl Host {
                             ara_session::CompactedContextItem::Summary(_) => json!({"role":"compactionSummary"}),
                             ara_session::CompactedContextItem::Message(sourced) => entries
                                 .get(sourced.entry_id.as_str())
-                                .and_then(|entry| entry.skill_prompt())
-                                .map_or_else(
-                                    || AgentEvent::MessageEnd { message: sourced.message }.full()["message"].clone(),
-                                    |prompt| prompt.event_message(),
-                                ),
+                                .and_then(|entry| {
+                                    entry
+                                        .bash_execution()
+                                        .map(|bash| bash.event_message())
+                                        .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
+                                })
+                                .unwrap_or_else(|| {
+                                    AgentEvent::MessageEnd { message: sourced.message }.full()["message"].clone()
+                                }),
                         })
                         .collect::<Vec<_>>()
                 } else {
@@ -1142,6 +1430,18 @@ where
     }));
     config.hooks = Arc::new(RpcHooks { base: config.hooks.clone(), snapshot: snapshot.clone() });
     let session = Session::new(journal, header, &messages)?;
+    let bash_target =
+        Arc::new(Mutex::new(BashTarget { session: session.clone(), destination: BashDestination::Current }));
+    let (bash_done_tx, mut bash_done_rx) = mpsc::unbounded_channel();
+    let bash_dispatcher = Arc::new(BashDispatcher {
+        current: Mutex::new(bash_target.clone()),
+        jobs: Mutex::new(std::collections::HashMap::new()),
+        next_id: std::sync::atomic::AtomicU64::new(1),
+        done: bash_done_tx,
+        output: output.clone(),
+        connection: connection.clone(),
+        cwd: sessions.cwd.clone(),
+    });
     let mut host = Host {
         agent: Agent::new(config.clone(), messages),
         session,
@@ -1157,6 +1457,11 @@ where
         host_tools: Vec::new(),
         snapshot,
         drain_queues: true,
+        bash_targets: vec![Arc::downgrade(&bash_target)],
+        bash_target,
+        bash_dispatcher: bash_dispatcher.clone(),
+        pending_bash: Vec::new(),
+        bash_error: None,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
@@ -1177,7 +1482,12 @@ where
                     if tool_bridge.consume(&frame) || uri_bridge.consume(&frame) {
                         continue;
                     }
-                    if input_tx.send(Command::new(frame)).is_err() {
+                    let command = Command::new(frame);
+                    if command.kind == "bash" {
+                        bash_dispatcher.dispatch(command);
+                        continue;
+                    }
+                    if input_tx.send(command).is_err() {
                         break;
                     }
                 }
@@ -1200,13 +1510,29 @@ where
     });
     let mut eof = false;
     loop {
+        host.flush_pending_bash().await;
         host.reconcile_queues();
-        if eof && host.active.is_none() {
+        if eof && host.active.is_none() && host.bash_dispatcher.is_empty() {
             break;
         }
         tokio::select! {
             biased;
-            _ = connection.cancelled() => { host.abort().await; break; }
+            _ = connection.cancelled() => {
+                host.abort().await;
+                host.bash_dispatcher.abort();
+                while !host.bash_dispatcher.is_empty() {
+                    if let Some(completion) = bash_done_rx.recv().await {
+                        host.completed_bash(completion).await;
+                    }
+                }
+                host.flush_pending_bash().await;
+                break;
+            }
+            completion = bash_done_rx.recv() => {
+                if let Some(completion) = completion {
+                    host.completed_bash(completion).await;
+                }
+            }
             result = async {
                 match &mut host.active {
                     Some(active) => (&mut active.task).await,
@@ -1226,7 +1552,7 @@ where
     }
     let input_result = reader_task.await.context("RPC input task");
     output.frame(json!({"type":"session_shutdown"}));
-    let failed = host.session.persistence_error.lock().unwrap().clone();
+    let failed = host.bash_error.clone().or_else(|| host.session.persistence_error.lock().unwrap().clone());
     drop(host);
     drop(output);
     output_task.await.context("RPC output task")??;
@@ -1311,6 +1637,18 @@ mod tests {
         let output = Output(tx);
         let connection = CancellationToken::new();
         let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]).unwrap();
+        let bash_target =
+            Arc::new(Mutex::new(BashTarget { session: session.clone(), destination: BashDestination::Current }));
+        let (bash_done_tx, _) = mpsc::unbounded_channel();
+        let bash_dispatcher = Arc::new(BashDispatcher {
+            current: Mutex::new(bash_target.clone()),
+            jobs: Mutex::new(std::collections::HashMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            done: bash_done_tx,
+            output: output.clone(),
+            connection: connection.clone(),
+            cwd: cwd.clone(),
+        });
         let emitter_output = output.clone();
         let emitter: Arc<dyn Fn(WireValue) + Send + Sync> =
             Arc::new(move |frame| emitter_output.send(OutputItem::Frame(frame)));
@@ -1341,8 +1679,129 @@ mod tests {
             host_tools: Vec::new(),
             snapshot,
             drain_queues: false,
+            bash_targets: vec![Arc::downgrade(&bash_target)],
+            bash_target,
+            bash_dispatcher,
+            pending_bash: Vec::new(),
+            bash_error: None,
         };
         (host, rx)
+    }
+
+    #[tokio::test]
+    async fn bash_dispatch_starts_child_while_serial_abort_waits_for_run_settlement() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut host, mut frames_rx) = fixture();
+        let (done_tx, mut done_rx) = mpsc::unbounded_channel();
+        let dispatcher = Arc::new(BashDispatcher {
+            current: Mutex::new(host.bash_target.clone()),
+            jobs: Mutex::new(std::collections::HashMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            done: done_tx,
+            output: host.output.clone(),
+            connection: host.connection.clone(),
+            cwd: dir.path().into(),
+        });
+        host.bash_dispatcher = dispatcher.clone();
+        let cancel = CancellationToken::new();
+        let sink = Arc::new(RunSink {
+            session: host.session.clone(),
+            output: host.output.clone(),
+            cancel: cancel.clone(),
+            connection: host.connection.clone(),
+            terminal: Mutex::new(None),
+            messages: Mutex::new(Vec::new()),
+        });
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let gate = Arc::new(TerminalGate {
+            inner: sink.clone(),
+            reached: Mutex::new(Some(reached_tx)),
+            release: tokio::sync::Mutex::new(Some(release_rx)),
+        });
+        let agent = host.agent.clone();
+        let config = host.config.clone();
+        let run_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            agent
+                .prompt_inputs_with_config(
+                    vec![
+                        Message::User(UserMessage {
+                            content: UserContent::Text("gated".into()),
+                            synthetic: None,
+                            timestamp: 0,
+                        })
+                        .into(),
+                    ],
+                    config,
+                    run_cancel,
+                    gate,
+                )
+                .await
+                .map(Some)
+        });
+        host.active = Some(ActiveRun { cancel, task, command: Command::new(wire(json!({"type":"prompt"}))), sink });
+        tokio::time::timeout(Duration::from_secs(3), reached_rx).await.unwrap().unwrap();
+        let serial = tokio::spawn(async move {
+            host.abort().await;
+            host
+        });
+        dispatcher.dispatch(Command::new(wire(
+            json!({"type":"bash","id":"overtake", "command":"printf admitted > admitted.txt"}),
+        )));
+        let completion = tokio::time::timeout(Duration::from_secs(4), done_rx.recv()).await.unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("admitted.txt")).unwrap(), "admitted");
+        assert!(!serial.is_finished(), "Bash must run before serial Run settlement is released");
+        release_tx.send(()).unwrap();
+        let mut host = tokio::time::timeout(Duration::from_secs(3), serial).await.unwrap().unwrap();
+        host.completed_bash(completion).await;
+        let output = frames(&mut frames_rx);
+        assert!(output.iter().any(|frame| frame["id"] == "overtake" && frame["success"] == true));
+        assert_eq!(
+            host.session.messages.lock().unwrap().iter().filter(|message| message["role"] == "bashExecution").count(),
+            1
+        );
+        assert!(host.bash_dispatcher.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bash_receipt_write_failure_preserves_process_effect_and_blocks_next_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut host, mut output_rx) = fixture();
+        let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+        journal.materialize().unwrap();
+        let path = journal.path().to_path_buf();
+        let header = journal.header().clone();
+        host.session = Session::new(Some(journal), header, &[]).unwrap();
+        let target =
+            Arc::new(Mutex::new(BashTarget { session: host.session.clone(), destination: BashDestination::Current }));
+        let (done_tx, mut done_rx) = mpsc::unbounded_channel();
+        host.bash_target = target.clone();
+        host.bash_targets = vec![Arc::downgrade(&target)];
+        host.bash_dispatcher = Arc::new(BashDispatcher {
+            current: Mutex::new(target),
+            jobs: Mutex::new(std::collections::HashMap::new()),
+            next_id: std::sync::atomic::AtomicU64::new(1),
+            done: done_tx,
+            output: host.output.clone(),
+            connection: host.connection.clone(),
+            cwd: dir.path().into(),
+        });
+        host.bash_dispatcher.dispatch(Command::new(wire(
+            json!({"type":"bash","id":"disk-fault", "command":"printf happened > effect.txt"}),
+        )));
+        let completion = tokio::time::timeout(Duration::from_secs(4), done_rx.recv()).await.unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("effect.txt")).unwrap(), "happened");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        host.completed_bash(completion).await;
+        assert!(host.connection.is_cancelled());
+        assert!(host.session.persistence_error.lock().unwrap().is_some());
+        assert!(host.bash_error.as_deref().unwrap().contains("effects may have occurred"));
+        assert!(host.start(None, Command::new(wire(json!({"type":"prompt"})))).is_err());
+        assert!(!host.agent.is_busy());
+        assert!(frames(&mut output_rx).iter().any(|frame| frame["id"] == "disk-fault" && frame["success"] == false));
+        assert_eq!(std::fs::read_to_string(dir.path().join("effect.txt")).unwrap(), "happened");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::event::AgentEventSink;
 use crate::tool::ToolDecision;
 use ara_ai::{Context, JsonObject, Message, Model, ToolCall};
 use async_trait::async_trait;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
@@ -131,6 +131,47 @@ impl Agent {
     /// messages while the transcript is locked by that run.
     pub async fn messages(&self) -> Vec<Message> {
         self.messages.lock().await.clone()
+    }
+
+    /// Atomically append an externally observed model projection while idle.
+    /// Hold admission's state lock through a non-awaiting transcript try_lock;
+    /// a Run cannot enter between the idle check and this update.
+    pub fn append_idle_message(&self, message: Message) -> Result<(), AgentError> {
+        self.update_idle_messages(|messages| {
+            if has_unpaired_idle_calls(messages) {
+                return Err(idle_unpaired_error());
+            }
+            messages.push(message);
+            Ok(())
+        })
+    }
+
+    /// Replace only the idle transcript. Queues, modes and recovery state stay
+    /// owned by this Agent. Neither the old nor new view may hide runnable tool
+    /// calls without known results behind a later ordinary message.
+    pub fn replace_idle_messages(&self, replacement: Vec<Message>) -> Result<(), AgentError> {
+        self.update_idle_messages(|messages| {
+            if has_unpaired_idle_calls(messages) || has_unpaired_idle_calls(&replacement) {
+                return Err(idle_unpaired_error());
+            }
+            *messages = replacement;
+            Ok(())
+        })
+    }
+
+    fn update_idle_messages(
+        &self,
+        update: impl FnOnce(&mut Vec<Message>) -> Result<(), AgentError>,
+    ) -> Result<(), AgentError> {
+        let state = self.run_state.lock().unwrap();
+        if state.needs_recovery {
+            return Err(AgentError::NeedsRecovery);
+        }
+        if state.busy {
+            return Err(AgentError::Busy);
+        }
+        let mut messages = self.messages.try_lock().map_err(|_| AgentError::Busy)?;
+        update(&mut messages)
     }
 
     pub fn steer(&self, message: Message) {
@@ -390,6 +431,25 @@ impl Agent {
     }
 }
 
+fn idle_unpaired_error() -> AgentError {
+    AgentError::CannotContinue(LoopError::CannotContinue(crate::agent_loop::UNPAIRED_TAIL_REFUSED.into()))
+}
+
+/// Narrow mutation guard. The loop's existing helper classifies runnable
+/// assistant turns; this also retains partial-result pending IDs and prevents
+/// a proposed replacement from hiding one behind a later user/assistant.
+fn has_unpaired_idle_calls(messages: &[Message]) -> bool {
+    let mut pending: HashSet<(String, String)> = HashSet::new();
+    for message in messages {
+        if let Some(assistant) = unpaired_tool_call_tail(std::slice::from_ref(message)) {
+            pending.extend(assistant.tool_calls().map(|call| (call.id.clone(), call.name.clone())));
+        } else if let Message::ToolResult(result) = message {
+            pending.remove(&(result.tool_call_id.clone(), result.tool_name.clone()));
+        }
+    }
+    !pending.is_empty()
+}
+
 struct QueueHooks {
     queues: Arc<Mutex<Queues>>,
     base: Arc<dyn LoopHooks>,
@@ -425,5 +485,212 @@ impl LoopHooks for QueueHooks {
 
     async fn transform_provider_context(&self, context: Context, model: &Model) -> Context {
         self.base.transform_provider_context(context, model).await
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    use crate::{NoHooks, NullSink};
+    use ara_ai::event::EventSink;
+    use ara_ai::{
+        AssistantBlock, AssistantMessage, AssistantMessageEvent, AssistantStream, CallOptions, ModelProvider,
+        StopReason, ToolResultMessage, UserBlock, UserMessage,
+    };
+    use std::sync::atomic::AtomicUsize;
+    use tokio::sync::Notify;
+
+    #[derive(Default)]
+    struct Gate {
+        started: Notify,
+        release: Notify,
+    }
+
+    struct Provider {
+        calls: AtomicUsize,
+        gate: Option<Arc<Gate>>,
+    }
+
+    impl ModelProvider for Provider {
+        fn stream(&self, model: &Model, _context: &Context, _options: CallOptions) -> AssistantStream {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let (sink, stream) = EventSink::channel();
+            let mut message = AssistantMessage::empty(&model.api, &model.provider, &model.id);
+            let gate = self.gate.clone();
+            tokio::spawn(async move {
+                sink.push(AssistantMessageEvent::Start { partial: message.clone() }).await;
+                if let Some(gate) = gate {
+                    gate.started.notify_one();
+                    gate.release.notified().await;
+                }
+                message.content.push(AssistantBlock::text("known answer"));
+                message.stop_reason = StopReason::Stop;
+                sink.push(AssistantMessageEvent::Done { reason: StopReason::Stop, message }).await;
+            });
+            stream
+        }
+    }
+
+    fn fixture(messages: Vec<Message>, gate: Option<Arc<Gate>>) -> (Arc<Agent>, Arc<Provider>) {
+        let provider = Arc::new(Provider { calls: AtomicUsize::new(0), gate });
+        let agent = Agent::new(
+            AgentConfig {
+                model: Model {
+                    id: "idle-fixture".into(),
+                    api: "openai-completions".into(),
+                    provider: "fixture".into(),
+                    base_url: String::new(),
+                    reasoning: false,
+                    max_tokens: None,
+                    tokenizer: None,
+                },
+                provider: provider.clone(),
+                system_prompt: Vec::new(),
+                tools: Vec::new(),
+                tool_choice: None,
+                max_tokens: None,
+                temperature: None,
+                deadline: None,
+                max_model_calls: Some(1),
+                hooks: Arc::new(NoHooks),
+            },
+            messages,
+        );
+        (agent, provider)
+    }
+
+    fn user(text: &str) -> Message {
+        Message::User(UserMessage::text(text))
+    }
+
+    fn unpaired(ids: &[&str]) -> Message {
+        let mut message = AssistantMessage::empty("openai-completions", "fixture", "idle-fixture");
+        message.stop_reason = StopReason::ToolUse;
+        message.content = ids
+            .iter()
+            .map(|id| {
+                AssistantBlock::ToolCall(ToolCall {
+                    id: (*id).into(),
+                    name: "write".into(),
+                    arguments: JsonObject::new(),
+                    thought_signature: None,
+                })
+            })
+            .collect();
+        Message::Assistant(message)
+    }
+
+    fn result(id: &str) -> Message {
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            tool_name: "write".into(),
+            content: vec![UserBlock::text("known result")],
+            details: None,
+            is_error: false,
+            timestamp: 1,
+        })
+    }
+
+    #[tokio::test]
+    async fn idle_append_and_replace_preserve_queue_envelopes_and_modes_without_running_model() {
+        let (agent, provider) = fixture(vec![user("initial")], None);
+        let steering =
+            AgentInput { model: user("steer"), provenance: Some(Arc::new(serde_json::json!({"origin":"s"}))) };
+        let follow =
+            AgentInput { model: user("follow"), provenance: Some(Arc::new(serde_json::json!({"origin":"f"}))) };
+        agent.steer_input(steering.clone());
+        agent.follow_up_input(follow.clone());
+        agent.set_steering_mode(QueueMode::All);
+        agent.set_follow_up_mode(QueueMode::OneAtATime);
+        let appended = user("external projection");
+        agent.append_idle_message(appended.clone()).unwrap();
+        assert_eq!(agent.messages().await.len(), 2);
+        agent.replace_idle_messages(vec![appended.clone()]).unwrap();
+        assert_eq!(agent.messages().await, vec![appended]);
+        assert_eq!(agent.peek_steering_inputs(), vec![steering]);
+        assert_eq!(agent.peek_follow_up_inputs(), vec![follow]);
+        assert_eq!(agent.steering_mode(), QueueMode::All);
+        assert_eq!(agent.follow_up_mode(), QueueMode::OneAtATime);
+        assert!(!agent.is_busy());
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn transcript_try_lock_and_real_run_admission_refuse_mutation_without_waiting() {
+        let gate = Arc::new(Gate::default());
+        let (agent, provider) = fixture(vec![user("existing")], Some(gate.clone()));
+        {
+            let _held = agent.messages.lock().await;
+            assert!(matches!(agent.append_idle_message(user("blocked")), Err(AgentError::Busy)));
+            assert!(matches!(agent.replace_idle_messages(Vec::new()), Err(AgentError::Busy)));
+        }
+        let running = agent.clone();
+        let task = tokio::spawn(async move {
+            running.prompt(vec![user("run")], CancellationToken::new(), Arc::new(NullSink)).await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), gate.started.notified()).await.unwrap();
+        assert!(agent.is_busy());
+        assert!(matches!(agent.append_idle_message(user("during run")), Err(AgentError::Busy)));
+        assert!(matches!(agent.replace_idle_messages(Vec::new()), Err(AgentError::Busy)));
+        gate.release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(2), task).await.unwrap().unwrap().unwrap();
+        assert!(!agent.is_busy());
+        agent.append_idle_message(user("after joined Run")).unwrap();
+        let messages = agent.messages().await;
+        assert_eq!(messages.len(), 4);
+        assert!(matches!(&messages[3], Message::User(message) if message.content.plain_text() == "after joined Run"));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn recovery_state_cannot_be_cleared_by_idle_mutation_or_replacement() {
+        let original = user("original");
+        let (agent, provider) = fixture(vec![original.clone()], None);
+        agent.run_state.lock().unwrap().needs_recovery = true;
+        assert!(matches!(agent.append_idle_message(user("hide")), Err(AgentError::NeedsRecovery)));
+        assert!(matches!(agent.replace_idle_messages(Vec::new()), Err(AgentError::NeedsRecovery)));
+        assert_eq!(agent.messages().await, vec![original]);
+        assert!(agent.run_state.lock().unwrap().needs_recovery);
+        assert!(matches!(
+            agent.prompt(vec![user("next")], CancellationToken::new(), Arc::new(NullSink)).await,
+            Err(AgentError::NeedsRecovery)
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn idle_append_cannot_hide_unpaired_tail_and_next_prompt_never_calls_provider_or_replays() {
+        let original = unpaired(&["unknown-effect"]);
+        let (agent, provider) = fixture(vec![original.clone()], None);
+        agent.follow_up(user("still queued"));
+        assert!(matches!(agent.append_idle_message(user("hide tail")), Err(AgentError::CannotContinue(_))));
+        assert!(matches!(agent.replace_idle_messages(vec![user("hide tail")]), Err(AgentError::CannotContinue(_))));
+        assert_eq!(agent.messages().await, vec![original]);
+        assert!(matches!(
+            agent.prompt(vec![user("next")], CancellationToken::new(), Arc::new(NullSink)).await,
+            Err(AgentError::CannotContinue(_))
+        ));
+        assert_eq!(agent.queued_counts(), (0, 1));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn replacement_checks_embedded_and_partial_runnable_calls_but_accepts_known_pairs() {
+        let original = user("original");
+        let (agent, provider) = fixture(vec![original.clone()], None);
+        assert!(matches!(
+            agent.replace_idle_messages(vec![unpaired(&["unknown"]), user("hidden")]),
+            Err(AgentError::CannotContinue(_))
+        ));
+        assert_eq!(agent.messages().await, vec![original]);
+        let paired = vec![unpaired(&["known-1", "known-2"]), result("known-1"), result("known-2"), user("later")];
+        agent.replace_idle_messages(paired.clone()).unwrap();
+        assert_eq!(agent.messages().await, paired);
+        let interleaved_known = vec![unpaired(&["known"]), user("historical external receipt"), result("known")];
+        agent.replace_idle_messages(interleaved_known.clone()).unwrap();
+        assert_eq!(agent.messages().await, interleaved_known);
+        let (partial, _) = fixture(vec![unpaired(&["known", "unknown"]), result("known")], None);
+        assert!(matches!(partial.append_idle_message(user("hide partial")), Err(AgentError::CannotContinue(_))));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
     }
 }

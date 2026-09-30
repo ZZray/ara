@@ -44,6 +44,250 @@ pub const SESSION_TITLE_SLOT_BYTES: usize = 256;
 pub const CORRUPT_HEADER_MESSAGE: &str = "session header is missing or malformed";
 pub const UNKNOWN_EFFECT_TEXT: &str = "Tool call was interrupted before its result was recorded; its effects are unknown. Inspect the affected state before retrying it.";
 
+/// Native user command receipt (fixed OMP `session/messages.ts`). This stays
+/// distinct from the model's ordinary user message and from Agent tool calls.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BashExecutionMessage {
+    pub command: String,
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub cancelled: bool,
+    pub truncated: bool,
+    pub meta: Option<Value>,
+    pub timestamp: i64,
+    pub exclude_from_context: Option<bool>,
+}
+
+impl BashExecutionMessage {
+    pub fn event_message(&self) -> Value {
+        let mut message = json!({
+            "role":"bashExecution", "command":self.command, "output":self.output,
+            "cancelled":self.cancelled, "truncated":self.truncated, "timestamp":self.timestamp,
+        });
+        if let Some(exit_code) = self.exit_code {
+            message["exitCode"] = json!(exit_code);
+        }
+        if let Some(meta) = &self.meta {
+            message["meta"] = meta.clone();
+        }
+        if let Some(exclude) = self.exclude_from_context {
+            message["excludeFromContext"] = json!(exclude);
+        }
+        message
+    }
+
+    /// Fixed `bashExecutionToText` / `convertOne`, using one user text block.
+    pub fn model_message(&self) -> Option<Message> {
+        if self.exclude_from_context == Some(true) {
+            return None;
+        }
+        let mut text = format!("Ran `{}`\n", self.command);
+        if self.output.is_empty() {
+            text.push_str("(no output)");
+        } else {
+            text.push_str(&format!("```\n{}\n```", self.output));
+        }
+        if self.cancelled {
+            text.push_str("\n\n(command cancelled)");
+        } else if let Some(exit_code) = self.exit_code.filter(|code| *code != 0) {
+            text.push_str(&format!("\n\nCommand exited with code {exit_code}"));
+        }
+        text.push_str(&bash_output_notice(self.meta.as_ref()));
+        Some(Message::User(UserMessage {
+            content: UserContent::Blocks(vec![UserBlock::text(text)]),
+            synthetic: None,
+            timestamp: self.timestamp,
+        }))
+    }
+
+    fn from_entry(raw: &Value) -> Option<Self> {
+        if raw.get("type")?.as_str()? != "message" {
+            return None;
+        }
+        let message = raw.get("message")?;
+        if message.get("role")?.as_str()? != "bashExecution" {
+            return None;
+        }
+        let exit_code = match message.get("exitCode") {
+            None | Some(Value::Null) => None,
+            Some(code) => Some(i32::try_from(code.as_i64()?).ok()?),
+        };
+        let exclude_from_context = match message.get("excludeFromContext") {
+            None | Some(Value::Null) => None,
+            Some(exclude) => Some(exclude.as_bool()?),
+        };
+        Some(Self {
+            command: message.get("command")?.as_str()?.into(),
+            output: message.get("output")?.as_str()?.into(),
+            exit_code,
+            cancelled: message.get("cancelled")?.as_bool()?,
+            truncated: message.get("truncated")?.as_bool()?,
+            meta: message.get("meta").cloned(),
+            timestamp: message.get("timestamp")?.as_i64()?,
+            exclude_from_context,
+        })
+    }
+}
+
+/// Fixed OutputMetaBuilder `truncationFromSummary(summary,{direction:"tail"})`
+/// and `get`. The caller supplies normalized OutputSummary counters, including
+/// outputLines/outputBytes measured from the actual retained UTF-8 body.
+pub fn bash_output_meta_from_summary(summary: &Value) -> Option<Value> {
+    let mut meta = json!({});
+    let column_max = summary.get("columnMax").and_then(Value::as_u64).unwrap_or(0);
+    if column_max > 0 && summary.get("columnTruncatedLines").and_then(Value::as_u64).unwrap_or(0) > 0 {
+        meta["limits"] = json!({"columnTruncated":{"maxColumn":column_max}});
+    }
+    if summary.get("truncated").and_then(Value::as_bool) == Some(true) {
+        let total_lines = summary.get("totalLines")?.as_u64()?;
+        let total_bytes = summary.get("totalBytes")?.as_u64()?;
+        let output_lines = summary.get("outputLines")?.as_u64()?;
+        let output_bytes = summary.get("outputBytes")?.as_u64()?;
+        let mut truncation = json!({"totalLines":total_lines,"totalBytes":total_bytes,
+            "outputLines":output_lines,"outputBytes":output_bytes});
+        if let Some(elided_bytes) = summary.get("elidedBytes").and_then(Value::as_u64).filter(|bytes| *bytes > 0) {
+            let elided_lines = summary
+                .get("elidedLines")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| total_lines.saturating_sub(output_lines));
+            let kept_lines = output_lines.saturating_sub(1);
+            let head_lines = kept_lines.div_ceil(2);
+            let tail_lines = kept_lines - head_lines;
+            truncation["direction"] = json!("middle");
+            truncation["truncatedBy"] = json!("middle");
+            truncation["elidedBytes"] = json!(elided_bytes);
+            truncation["elidedLines"] = json!(elided_lines);
+            if head_lines > 0 {
+                truncation["headRange"] = json!({"start":1,"end":head_lines});
+            }
+            if tail_lines > 0 {
+                truncation["tailRange"] = json!({"start":total_lines-tail_lines+1,"end":total_lines});
+            }
+        } else {
+            truncation["direction"] = json!("tail");
+            truncation["truncatedBy"] = json!(if output_bytes < total_bytes {
+                "bytes"
+            } else if output_lines < total_lines {
+                "lines"
+            } else {
+                "bytes"
+            });
+            truncation["shownRange"] = json!({"start":total_lines-output_lines+1,"end":total_lines});
+        }
+        if let Some(artifact_id) = summary.get("artifactId").filter(|value| !value.is_null()) {
+            truncation["artifactId"] = artifact_id.clone();
+        }
+        meta["truncation"] = truncation;
+    }
+    (!meta.as_object().expect("meta object").is_empty()).then_some(meta)
+}
+
+fn output_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes}B")
+    } else {
+        let (size, unit) = if bytes < 1024 * 1024 {
+            (bytes as f64 / 1024.0, "KB")
+        } else if bytes < 1024 * 1024 * 1024 {
+            (bytes as f64 / (1024.0 * 1024.0), "MB")
+        } else {
+            (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB")
+        };
+        format!("{:.1}{unit}", (size * 10.0).round() / 10.0)
+    }
+}
+
+fn grouped_count(count: u64) -> String {
+    let digits = count.to_string();
+    let mut text = String::new();
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(character);
+    }
+    text
+}
+
+// Bash's outputMeta builder supplies truncation/column limits. Preserve other
+// imported metadata raw; no tool renderer or LSP dependency belongs to Session.
+fn bash_output_notice(meta: Option<&Value>) -> String {
+    let Some(meta) = meta else { return String::new() };
+    let mut parts = Vec::new();
+    if let Some(truncation) = meta.get("truncation").filter(|value| value.is_object()) {
+        let number = |field: &str| truncation.get(field).and_then(Value::as_u64).unwrap_or(0);
+        let total_lines = number("totalLines");
+        let output_lines = number("outputLines");
+        let mut notice;
+        if truncation.get("direction").and_then(Value::as_str) == Some("middle") {
+            let head = truncation.get("headRange");
+            let tail = truncation.get("tailRange");
+            let elided_bytes = truncation
+                .get("elidedBytes")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| number("totalBytes").saturating_sub(number("outputBytes")));
+            let elided_lines = truncation
+                .get("elidedLines")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| total_lines.saturating_sub(output_lines));
+            notice = if let (Some(head), Some(tail)) = (head, tail) {
+                format!(
+                    "Showing lines {}-{} and {}-{} of {total_lines}; {} middle line{} ({}) elided",
+                    head["start"],
+                    head["end"],
+                    tail["start"],
+                    tail["end"],
+                    grouped_count(elided_lines),
+                    if elided_lines == 1 { "" } else { "s" },
+                    output_bytes(elided_bytes)
+                )
+            } else if elided_bytes > 0 {
+                format!(
+                    "Showing head and tail bytes of {} line{}; {} elided",
+                    grouped_count(total_lines),
+                    if total_lines == 1 { "" } else { "s" },
+                    output_bytes(elided_bytes)
+                )
+            } else {
+                format!("Showing {} of {total_lines} lines; middle elided", output_lines.min(total_lines))
+            };
+        } else {
+            let range = truncation.get("shownRange");
+            notice = match range.and_then(|range| Some((range.get("start")?.as_u64()?, range.get("end")?.as_u64()?))) {
+                Some((start, end)) if end >= start => format!("Showing lines {start}-{end} of {total_lines}"),
+                _ => format!("Showing {output_lines} of {total_lines} lines"),
+            };
+            if truncation.get("truncatedBy").and_then(Value::as_str) == Some("bytes") {
+                let max_bytes =
+                    truncation.get("maxBytes").and_then(Value::as_u64).unwrap_or_else(|| number("outputBytes"));
+                notice.push_str(&format!(" ({} limit)", output_bytes(max_bytes)));
+            }
+        }
+        if let Some(offset) = truncation.get("nextOffset").filter(|value| !value.is_null()) {
+            notice.push_str(&format!(". Use :{offset} to continue"));
+        }
+        if let Some(artifact) = truncation.get("artifactId").filter(|value| !value.is_null()) {
+            let artifact = artifact.as_str().map(str::to_owned).unwrap_or_else(|| artifact.to_string());
+            notice.push_str(&format!(". Read artifact://{artifact} for full output"));
+        }
+        parts.push(notice);
+    }
+    if let Some(limits) = meta.get("limits") {
+        for (field, noun) in [("matchLimit", "matches"), ("resultLimit", "results"), ("headLimit", "results")] {
+            if let Some(limit) = limits.get(field) {
+                parts.push(format!(
+                    "{} {noun} limit reached. Use limit={} for more",
+                    limit["reached"], limit["suggestion"]
+                ));
+            }
+        }
+        if let Some(limit) = limits.get("columnTruncated") {
+            parts.push(format!("Some lines truncated to {} chars", limit["maxColumn"]));
+        }
+    }
+    if parts.is_empty() { String::new() } else { format!("\n\n[{}]", parts.join(". ")) }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("{0}")]
@@ -155,6 +399,18 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn bash_execution(&self) -> Option<BashExecutionMessage> {
+        BashExecutionMessage::from_entry(&self.raw)
+    }
+
+    fn is_excluded_bash_execution(&self) -> bool {
+        self.bash_execution().is_some_and(|message| message.exclude_from_context == Some(true))
+    }
+
+    fn is_decodable_message(&self) -> bool {
+        if self.role() == Some("bashExecution") { self.bash_execution().is_some() } else { self.message().is_some() }
+    }
+
     /// Original user-invoked Skill identity, independent of its model projection.
     pub fn skill_prompt(&self) -> Option<UserSkillPrompt> {
         UserSkillPrompt::from_entry(&self.raw)
@@ -169,6 +425,7 @@ impl Entry {
     /// Model-visible message, including a directly invoked Skill custom entry.
     pub fn message(&self) -> Option<Message> {
         match self.kind.as_str() {
+            "message" if self.role() == Some("bashExecution") => self.bash_execution()?.model_message(),
             "message" => serde_json::from_value(self.raw.get("message")?.clone()).ok(),
             "custom_message" => self.skill_prompt().map(|prompt| prompt.model_message()),
             _ => None,
@@ -762,6 +1019,34 @@ impl SessionJournal {
         self.append_raw("message", f)
     }
 
+    pub fn append_bash_execution(&mut self, message: &BashExecutionMessage) -> Result<String> {
+        let mut fields = serde_json::Map::new();
+        fields.insert("message".into(), message.event_message());
+        self.append_raw("message", fields)
+    }
+
+    /// Fixed appendMessageToBranch records a child of the retained owner and
+    /// restores the active leaf. Existing append rollback retains native IDs
+    /// and entries on failure; restoration also happens on that error path.
+    pub fn append_bash_execution_to_branch(
+        &mut self,
+        message: &BashExecutionMessage,
+        parent_id: Option<&str>,
+    ) -> Result<String> {
+        if let Some(parent_id) = parent_id
+            && !self.ids.contains(parent_id)
+        {
+            return Err(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Entry {parent_id} not found")).into()
+            );
+        }
+        let active_leaf = self.leaf.clone();
+        self.leaf = parent_id.map(str::to_owned);
+        let recorded = self.append_bash_execution(message);
+        self.leaf = active_leaf;
+        recorded
+    }
+
     /// Persist one user-invoked Skill as its original custom message. The
     /// initiating timestamp is retained so the reopened model view is exact.
     pub fn append_skill_prompt(&mut self, prompt: &UserSkillPrompt) -> Result<String> {
@@ -886,6 +1171,7 @@ impl SessionJournal {
         let mut messages = Vec::new();
         for entry in self.strict_compaction_branch()? {
             match entry.kind.as_str() {
+                "message" if entry.is_excluded_bash_execution() => {}
                 "message" => messages.push(SourcedMessage {
                     entry_id: entry.id.clone(),
                     message: entry
@@ -927,9 +1213,9 @@ impl SessionJournal {
         for (index, entry) in branch.iter().enumerate() {
             match entry.kind.as_str() {
                 "message" => {
-                    entry
-                        .message()
-                        .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?;
+                    if !entry.is_decodable_message() {
+                        return Err(CompactionSourceError::UndecodableMessage { id: entry.id.clone() }.into());
+                    }
                 }
                 "custom_message" if entry.message().is_some() => {}
                 "model_change" | "label" | "title_change" => {}
@@ -994,7 +1280,10 @@ impl SessionJournal {
                                 .ok_or_else(|| invalid("sourceEntryIds"))?;
                             let expected: Vec<String> = branch[..kept_index]
                                 .iter()
-                                .filter(|candidate| matches!(candidate.kind.as_str(), "message" | "custom_message"))
+                                .filter(|candidate| {
+                                    matches!(candidate.kind.as_str(), "message" | "custom_message")
+                                        && !candidate.is_excluded_bash_execution()
+                                })
                                 .map(|candidate| candidate.id.clone())
                                 .collect();
                             if ids.is_empty() || ids != expected {
@@ -1034,10 +1323,12 @@ impl SessionJournal {
             0
         };
         for entry in &branch[start..] {
-            if matches!(entry.kind.as_str(), "message" | "custom_message") {
+            if matches!(entry.kind.as_str(), "message" | "custom_message")
+                && let Some(message) = entry.message()
+            {
                 items.push(CompactedContextItem::Message(Box::new(SourcedMessage {
                     entry_id: entry.id.clone(),
-                    message: entry.message().expect("decoded above"),
+                    message,
                 })));
             }
         }
@@ -1105,7 +1396,7 @@ impl SessionJournal {
     pub fn undecodable_messages(&self) -> usize {
         self.branch()
             .into_iter()
-            .filter(|e| (e.kind == "message" || e.is_user_skill_prompt_candidate()) && e.message().is_none())
+            .filter(|e| (e.kind == "message" || e.is_user_skill_prompt_candidate()) && !e.is_decodable_message())
             .count()
     }
 
@@ -1121,7 +1412,8 @@ impl SessionJournal {
     /// Pair tool calls that never got a recorded result with explicit
     /// "effect unknown" error results. Works on the raw journal so an entry ARA
     /// cannot decode never hides a call or result. Only calls of the last
-    /// assistant turn whose followers are all tool results can be paired
+    /// assistant turn whose followers are all tool results or decodable Bash
+    /// receipts excluded from model context can be paired
     /// adjacently; earlier gaps are reported, never replayed.
     pub fn recover_interrupted_tool_calls(&mut self) -> Result<Recovery> {
         let branch: Vec<Entry> = self.branch().into_iter().cloned().collect();
@@ -1160,7 +1452,8 @@ impl SessionJournal {
             }
             let tail_is_results_only = Some(i) == last_assistant
                 && branch[i + 1..].iter().all(|f| {
-                    (f.kind != "message" || f.role() == Some("toolResult")) && !f.is_user_skill_prompt_candidate()
+                    (f.kind != "message" || f.role() == Some("toolResult") || f.is_excluded_bash_execution())
+                        && !f.is_user_skill_prompt_candidate()
                 });
             if !tail_is_results_only {
                 recovery.unpaired_earlier.extend(missing.into_iter().map(|(id, _)| id));
