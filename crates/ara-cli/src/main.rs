@@ -91,7 +91,7 @@ impl Api {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "ara", version, about = "ARA agent (print mode, or a line REPL on a terminal)")]
 struct Args {
     /// Prompts, sent in order. Piped stdin is prepended to the first prompt
@@ -1033,6 +1033,190 @@ async fn run_repl_loop(
     Ok(code)
 }
 
+fn recover_session(j: &mut SessionJournal) -> Result<()> {
+    if j.report.malformed_records > 0 {
+        eprintln!("ara: skipped {} malformed record(s) in {}", j.report.malformed_records, j.path().display());
+    }
+    let undecodable = j.undecodable_messages();
+    if undecodable > 0 {
+        eprintln!("ara: {undecodable} message(s) in the session could not be decoded and are not sent to the model");
+    }
+    let recovery = j.recover_interrupted_tool_calls()?;
+    if !recovery.paired.is_empty() {
+        eprintln!(
+            "ara: tool call(s) {} were interrupted before a result was recorded; their effects are unknown and they were not re-run",
+            recovery.paired.join(", ")
+        );
+    }
+    if !recovery.unpaired_earlier.is_empty() {
+        eprintln!("ara: earlier tool call(s) {} have no recorded result", recovery.unpaired_earlier.join(", "));
+    }
+    Ok(())
+}
+
+struct CliSetup {
+    system_prompt: Vec<String>,
+    tools: Vec<Arc<dyn ara_agent::AgentTool>>,
+    hooks: Arc<dyn LoopHooks>,
+    skills: Vec<ara_discovery::LoadedSkill>,
+}
+
+async fn prepare_cli_setup(
+    args: &Args,
+    cwd: &Path,
+    model: &Model,
+    mcp_config: &Option<McpServerConfig>,
+    retained_tools: Option<Vec<Arc<dyn ara_agent::AgentTool>>>,
+) -> Result<CliSetup> {
+    // Context files, skills, SYSTEM.md and APPEND_SYSTEM.md from the host's
+    // locations: native `$ARA_HOME/agent` and `.ara/`, foreign tools per
+    // upstream defaults.
+    let home = user_home();
+    let mut dirs = HostDirs::ara(&home).with_env(|k| std::env::var(k).ok());
+    dirs.native_user_dir = ara_home().join("agent");
+    let discovery = Discovery::new(&home, dirs, ProviderPolicy::default());
+    let skills_settings = SkillsSettings {
+        enabled: !args.no_skills,
+        include_skills: args
+            .skills
+            .as_deref()
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default(),
+        ..SkillsSettings::default()
+    };
+    let (skills, skill_warnings) = discovery.load_skills(cwd, &skills_settings);
+    for warning in &skill_warnings {
+        let at = if warning.skill_path.is_empty() { String::new() } else { format!(" ({})", warning.skill_path) };
+        eprintln!("ara: skill warning{at}: {}", warning.message);
+    }
+
+    let enabled: Vec<&str> = args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let tools = if let Some(tools) = retained_tools {
+        tools
+    } else {
+        let mut tool_ctx =
+            ToolContext::new(cwd.to_path_buf()).with_edit(args.edit_mode, enabled.contains(&"edit")).with_skills(
+                skills
+                    .iter()
+                    .map(|s| ara_tools::internal_urls::SkillRef {
+                        name: s.name.clone(),
+                        file_path: s.file_path.clone(),
+                        base_dir: s.base_dir.clone(),
+                    })
+                    .collect(),
+            );
+        tool_ctx.line_numbers = args.line_numbers;
+        let ast_ctx = tool_ctx.clone();
+        let mut tools: Vec<_> =
+            builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
+        if enabled.contains(&"ast_grep") {
+            tools.push(Arc::new(ara_tools::ast_grep::AstGrepTool { ctx: ast_ctx }));
+        }
+        if let Some(config) = mcp_config.clone() {
+            let mcp_tools =
+                ara_mcp::connect(config, cwd, &args.mcp_allow, &TOOL_NAMES).await.map_err(anyhow::Error::msg)?;
+            tools.extend(mcp_tools);
+        }
+
+        tools
+    };
+
+    let prompt_tools: Vec<PromptTool> = tools
+        .iter()
+        .map(|t| {
+            let name = t.definition().name.clone();
+            let label = name.get(..1).map(|f| f.to_uppercase() + &name[1..]).unwrap_or_default();
+            PromptTool { name, label }
+        })
+        .collect();
+    // Flags win; otherwise the discovered files (upstream `main.ts`
+    // `discoverSystemPromptFile` / `discoverAppendSystemPromptFile`).
+    let mut prompt_warnings = Vec::new();
+    let discovered = |name: &str| discovery.discover_prompt_file(cwd, name).map(|p| p.to_string_lossy().into_owned());
+    let system_source = args.system_prompt.clone().or_else(|| discovered("SYSTEM.md"));
+    let append_source = args.append_system_prompt.clone().or_else(|| discovered("APPEND_SYSTEM.md"));
+    let custom_prompt = resolve_prompt_input(system_source.as_deref(), "system prompt", &mut prompt_warnings);
+    let append_prompt = resolve_prompt_input(append_source.as_deref(), "append system prompt", &mut prompt_warnings);
+    let options = SystemPromptOptions {
+        custom_prompt,
+        append_prompt,
+        tools: Some(prompt_tools),
+        skills: Some(skills),
+        model: Some(model.id.clone()),
+        urls: InternalUrls { skill: enabled.contains(&"read"), ..InternalUrls::default() },
+        ..SystemPromptOptions::default()
+    };
+    let built = build_system_prompt(&discovery, cwd, &options).context("building the system prompt")?;
+    for warning in prompt_warnings.iter().chain(&built.warnings) {
+        eprintln!("ara: warning: {warning}");
+    }
+    let system_prompt = built.blocks;
+    let hooks: Arc<dyn LoopHooks> =
+        Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
+
+    Ok(CliSetup { system_prompt, tools, hooks, skills: options.skills.unwrap_or_default() })
+}
+
+// Clone the transport settings, but allocate native provider state per logical
+// Session. An unchanged reload deliberately keeps its existing provider.
+struct ProviderFactory {
+    client: reqwest::Client,
+    api: Api,
+    options: StreamOptions,
+    anthropic_strict_tools: bool,
+    responses_stateful: bool,
+}
+
+impl ProviderFactory {
+    fn build(&self) -> Arc<dyn ModelProvider> {
+        let client = self.client.clone();
+        let options = self.options.clone();
+        match self.api {
+            Api::AnthropicMessages => Arc::new(AnthropicMessagesProvider {
+                client,
+                base: ara_ai::providers::anthropic::StreamOptions {
+                    api_key: options.api_key,
+                    strict_tools: self.anthropic_strict_tools.then_some(true),
+                    provider_session_state: Some(Arc::new(Default::default())),
+                    extra_headers: options.extra_headers,
+                    first_event_timeout: options.first_event_timeout,
+                    idle_timeout: options.idle_timeout,
+                    retry: options.retry,
+                    ..Default::default()
+                },
+            }),
+            Api::OpenaiCompletions => Arc::new(OpenAICompletionsProvider { client, base: options }),
+            Api::OpenaiResponses => Arc::new(OpenAIResponsesProvider {
+                client,
+                base: ResponsesStreamOptions {
+                    api_key: options.api_key,
+                    extra_headers: options.extra_headers,
+                    first_event_timeout: options.first_event_timeout,
+                    idle_timeout: options.idle_timeout,
+                    retry: options.retry,
+                    session_state: Some(Arc::new(ara_ai::providers::openai_responses::ProviderSessionState::default())),
+                    stateful_responses: self.responses_stateful,
+                    ..ResponsesStreamOptions::default()
+                },
+            }),
+            Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
+        }
+    }
+}
+
+fn ephemeral_header(cwd: &Path, parent: Option<&str>) -> serde_json::Value {
+    let mut header = serde_json::json!({
+        "type":"session", "version":ara_session::CURRENT_SESSION_VERSION,
+        "id":uuid::Uuid::now_v7().to_string(),
+        "timestamp":chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        "cwd":cwd.to_string_lossy()
+    });
+    if let Some(parent) = parent.filter(|parent| !parent.is_empty()) {
+        header["parentSession"] = serde_json::json!(parent);
+    }
+    header
+}
+
 async fn run(args: Args) -> Result<i32> {
     let _ = args.print;
     let rpc_mode = args.mode == Mode::Rpc;
@@ -1114,28 +1298,7 @@ async fn run(args: Args) -> Result<i32> {
                         ),
                     }
                 }
-                if j.report.malformed_records > 0 {
-                    eprintln!("ara: skipped {} malformed record(s) in {}", j.report.malformed_records, p.display());
-                }
-                let undecodable = j.undecodable_messages();
-                if undecodable > 0 {
-                    eprintln!(
-                        "ara: {undecodable} message(s) in the session could not be decoded and are not sent to the model"
-                    );
-                }
-                let recovery = j.recover_interrupted_tool_calls()?;
-                if !recovery.paired.is_empty() {
-                    eprintln!(
-                        "ara: tool call(s) {} were interrupted before a result was recorded; their effects are unknown and they were not re-run",
-                        recovery.paired.join(", ")
-                    );
-                }
-                if !recovery.unpaired_earlier.is_empty() {
-                    eprintln!(
-                        "ara: earlier tool call(s) {} have no recorded result",
-                        recovery.unpaired_earlier.join(", ")
-                    );
-                }
+                recover_session(&mut j)?;
                 j
             }
             None => SessionJournal::create(dir, &cwd)?,
@@ -1151,88 +1314,17 @@ async fn run(args: Args) -> Result<i32> {
         j.append_model_change(&model_ref)?;
     }
     let header = journal.as_ref().map(|j| j.header().clone()).unwrap_or_else(|| {
-        serde_json::json!({"type": "session", "version": ara_session::CURRENT_SESSION_VERSION, "id": "ephemeral", "cwd": cwd.to_string_lossy()})
+        if rpc_mode {
+            ephemeral_header(&cwd, None)
+        } else {
+            serde_json::json!({"type":"session", "version":ara_session::CURRENT_SESSION_VERSION,
+                "id":"ephemeral", "cwd":cwd.to_string_lossy()})
+        }
     });
     let session_path = journal.as_ref().map(|j| j.path().to_path_buf());
 
-    // Context files, skills, SYSTEM.md and APPEND_SYSTEM.md from the host's
-    // locations: native `$ARA_HOME/agent` and `.ara/`, foreign tools per
-    // upstream defaults.
-    let home = user_home();
-    let mut dirs = HostDirs::ara(&home).with_env(|k| std::env::var(k).ok());
-    dirs.native_user_dir = ara_home().join("agent");
-    let discovery = Discovery::new(&home, dirs, ProviderPolicy::default());
-    let skills_settings = SkillsSettings {
-        enabled: !args.no_skills,
-        include_skills: args
-            .skills
-            .as_deref()
-            .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
-            .unwrap_or_default(),
-        ..SkillsSettings::default()
-    };
-    let (skills, skill_warnings) = discovery.load_skills(&cwd, &skills_settings);
-    for warning in &skill_warnings {
-        let at = if warning.skill_path.is_empty() { String::new() } else { format!(" ({})", warning.skill_path) };
-        eprintln!("ara: skill warning{at}: {}", warning.message);
-    }
-
-    let enabled: Vec<&str> = args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let mut tool_ctx = ToolContext::new(cwd.clone()).with_edit(args.edit_mode, enabled.contains(&"edit")).with_skills(
-        skills
-            .iter()
-            .map(|s| ara_tools::internal_urls::SkillRef {
-                name: s.name.clone(),
-                file_path: s.file_path.clone(),
-                base_dir: s.base_dir.clone(),
-            })
-            .collect(),
-    );
-    tool_ctx.line_numbers = args.line_numbers;
-    let ast_ctx = tool_ctx.clone();
-    let mut tools: Vec<_> =
-        builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
-    if enabled.contains(&"ast_grep") {
-        tools.push(Arc::new(ara_tools::ast_grep::AstGrepTool { ctx: ast_ctx }));
-    }
-    if let Some(config) = mcp_config {
-        let mcp_tools =
-            ara_mcp::connect(config, &cwd, &args.mcp_allow, &TOOL_NAMES).await.map_err(anyhow::Error::msg)?;
-        tools.extend(mcp_tools);
-    }
-
-    let prompt_tools: Vec<PromptTool> = tools
-        .iter()
-        .map(|t| {
-            let name = t.definition().name.clone();
-            let label = name.get(..1).map(|f| f.to_uppercase() + &name[1..]).unwrap_or_default();
-            PromptTool { name, label }
-        })
-        .collect();
-    // Flags win; otherwise the discovered files (upstream `main.ts`
-    // `discoverSystemPromptFile` / `discoverAppendSystemPromptFile`).
-    let mut prompt_warnings = Vec::new();
-    let discovered = |name: &str| discovery.discover_prompt_file(&cwd, name).map(|p| p.to_string_lossy().into_owned());
-    let system_source = args.system_prompt.clone().or_else(|| discovered("SYSTEM.md"));
-    let append_source = args.append_system_prompt.clone().or_else(|| discovered("APPEND_SYSTEM.md"));
-    let custom_prompt = resolve_prompt_input(system_source.as_deref(), "system prompt", &mut prompt_warnings);
-    let append_prompt = resolve_prompt_input(append_source.as_deref(), "append system prompt", &mut prompt_warnings);
-    let options = SystemPromptOptions {
-        custom_prompt,
-        append_prompt,
-        tools: Some(prompt_tools),
-        skills: Some(skills),
-        model: Some(route.model.id.clone()),
-        urls: InternalUrls { skill: enabled.contains(&"read"), ..InternalUrls::default() },
-        ..SystemPromptOptions::default()
-    };
-    let built = build_system_prompt(&discovery, &cwd, &options).context("building the system prompt")?;
-    for warning in prompt_warnings.iter().chain(&built.warnings) {
-        eprintln!("ara: warning: {warning}");
-    }
-    let system_prompt = built.blocks;
-    let hooks: Arc<dyn LoopHooks> =
-        Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
+    let setup = prepare_cli_setup(&args, &cwd, &route.model, &mcp_config, None).await?;
+    let CliSetup { system_prompt, tools, hooks, skills } = setup;
 
     let mut stream_options = route.stream_options;
     let mut request_text_stats = None;
@@ -1266,36 +1358,14 @@ async fn run(args: Args) -> Result<i32> {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
     let client = client_builder.build().context("building HTTP client")?;
-    let provider: Arc<dyn ModelProvider> = match selected_api {
-        Api::AnthropicMessages => Arc::new(AnthropicMessagesProvider {
-            client,
-            base: ara_ai::providers::anthropic::StreamOptions {
-                api_key: stream_options.api_key,
-                strict_tools: args.anthropic_strict_tools.then_some(true),
-                provider_session_state: Some(Arc::new(Default::default())),
-                extra_headers: stream_options.extra_headers,
-                first_event_timeout: stream_options.first_event_timeout,
-                idle_timeout: stream_options.idle_timeout,
-                retry: stream_options.retry,
-                ..Default::default()
-            },
-        }),
-        Api::OpenaiCompletions => Arc::new(OpenAICompletionsProvider { client, base: stream_options }),
-        Api::OpenaiResponses => Arc::new(OpenAIResponsesProvider {
-            client,
-            base: ResponsesStreamOptions {
-                api_key: stream_options.api_key,
-                extra_headers: stream_options.extra_headers,
-                first_event_timeout: stream_options.first_event_timeout,
-                idle_timeout: stream_options.idle_timeout,
-                retry: stream_options.retry,
-                session_state: Some(Arc::new(ara_ai::providers::openai_responses::ProviderSessionState::default())),
-                stateful_responses: args.responses_stateful,
-                ..ResponsesStreamOptions::default()
-            },
-        }),
-        Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
+    let provider_factory = ProviderFactory {
+        client,
+        api: selected_api,
+        options: stream_options,
+        anthropic_strict_tools: args.anthropic_strict_tools,
+        responses_stateful: args.responses_stateful,
     };
+    let provider = provider_factory.build();
     let cancel = CancellationToken::new();
     if rpc_mode {
         let config = AgentConfig {
@@ -1310,8 +1380,13 @@ async fn run(args: Args) -> Result<i32> {
             max_model_calls: args.max_model_calls,
             hooks,
         };
-        return rpc_host::run(config, context, journal, header, args.max_time).await;
+        let max_time = args.max_time;
+        let sessions = rpc_host::SessionFactory { dir: session_dir, cwd, provider: provider_factory, args, mcp_config };
+        return rpc_host::run(config, context, journal, header, max_time, sessions).await;
     }
+    // Only RPC retains the factory for future logical Sessions. In print mode
+    // dropping it also closes the observer channel once the provider is dropped.
+    drop(provider_factory);
     let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
@@ -1319,12 +1394,7 @@ async fn run(args: Args) -> Result<i32> {
 
     let mut interrupts = listen_for_interrupts()?;
     if repl_mode {
-        let session = ReplSession {
-            dir: session_dir,
-            cwd: &cwd,
-            model_ref: &model_ref,
-            skills: options.skills.as_deref().unwrap_or_default(),
-        };
+        let session = ReplSession { dir: session_dir, cwd: &cwd, model_ref: &model_ref, skills: &skills };
         return run_repl_loop(
             &args,
             &route.model,

@@ -30,6 +30,10 @@ impl Env {
     }
 
     fn command(&self, base_url: &str, args: &[&str]) -> Command {
+        self.command_at(base_url, args, self.work.path())
+    }
+
+    fn command_at(&self, base_url: &str, args: &[&str], cwd: &Path) -> Command {
         let mut command = Command::new(BIN);
         for key in [
             "OPENROUTER_API_KEY",
@@ -54,7 +58,7 @@ impl Env {
             .env("ARA_HOME", self.home.path())
             .env("ARA_API_KEY", "sk-rpc-fixture-only")
             .args(["--mode", "rpc", "--model", "fake-model", "--base-url", base_url, "--cwd"])
-            .arg(self.work.path())
+            .arg(cwd)
             .arg("--session-dir")
             .arg(&self.sessions)
             .args(["--compact-threshold", "0"])
@@ -188,6 +192,30 @@ impl RpcChild {
         response
     }
 
+    fn state(&mut self, id: &str) -> Value {
+        self.send(json!({"id":id,"type":"get_state"}));
+        self.success(id)["data"].clone()
+    }
+
+    fn messages(&mut self, id: &str) -> Vec<Value> {
+        self.send(json!({"id":id,"type":"get_messages"}));
+        self.success(id)["data"]["messages"].as_array().unwrap().clone()
+    }
+
+    fn adopt(&mut self, id: &str, frame: Value) {
+        let begin = self.seen.len();
+        self.send(frame);
+        assert_eq!(self.success(id)["data"], json!({"cancelled":false}));
+        let updates: Vec<_> = self.seen[begin..]
+            .iter()
+            .enumerate()
+            .filter(|(_, frame)| frame["type"] == "available_commands_update")
+            .collect();
+        assert_eq!(updates.len(), 1, "exactly one command metadata update precedes adoption ACK");
+        assert_eq!(updates[0].1["commands"], json!([]));
+        assert!(updates[0].0 < self.seen.len() - begin - 1, "metadata precedes correlated response");
+    }
+
     fn ready(&mut self) {
         let ready = self.next(WAIT);
         assert_eq!(ready["type"], "ready", "{ready}");
@@ -316,13 +344,17 @@ async fn rpc_protocol_recoverable_input_errors_and_explicit_unsupported_commands
     assert_eq!(child.response("bad-version")["success"], false);
     child.send(json!({"id":"v2-中文-🦀","type":"negotiate_protocol","protocolVersion":2}));
     assert_eq!(child.success("v2-中文-🦀")["data"]["protocolVersion"], 2);
-    for command in ["new_session", "switch_session", "bash", "compact", "set_model", "does_not_exist"] {
+    for command in ["bash", "compact", "set_model", "does_not_exist"] {
         child.send(json!({"id":command,"type":command}));
         let response = child.response(command);
         assert_eq!(response["command"], command);
         assert_eq!(response["success"], false, "{response}");
         assert!(!response["error"].as_str().unwrap().is_empty());
     }
+    child.send(json!({"id":"bad-switch","type":"switch_session"}));
+    assert_eq!(child.response("bad-switch")["success"], false);
+    child.send(json!({"id":"bad-parent","type":"new_session","parentSession":123}));
+    assert_eq!(child.response("bad-parent")["success"], false);
     child.send(json!({"id":"bad-mode","type":"set_follow_up_mode","mode":"bogus"}));
     assert_eq!(child.response("bad-mode")["success"], false);
     child.send(json!({"id":"skill","type":"prompt","message":"/skill:proof task"}));
@@ -837,4 +869,625 @@ async fn rpc_broken_stdout_exits_bounded_while_stdin_remains_open() {
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(child.errors().contains("writing RPC output"), "{}", child.errors());
     assert_eq!(up.served(), 0);
+}
+
+fn native_header(entries: &[Value]) -> &Value {
+    entries.iter().find(|entry| entry["type"] == "session").unwrap()
+}
+
+fn project_markers(env: &Env, label: &str) {
+    std::fs::create_dir_all(env.work.path().join(".ara")).unwrap();
+    std::fs::write(env.work.path().join(".ara/SYSTEM.md"), format!("SYSTEM-{label}")).unwrap();
+    std::fs::write(env.work.path().join("AGENTS.md"), format!("AGENTS-{label}")).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"old-active","bash","{\"command\":\"printf old-effect >> old-effect.txt; printf 'old tool running\\n'; sleep 30\"}"),finish("tool_calls"),done()]},
+        {"events":[tool_call(0,"new-write","write","{\"path\":\"fresh.txt\",\"content\":\"new session artifact\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Fresh task settled."),finish("stop"),done()]}
+    ]})).await;
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut command = env.command(&up.base_url(), &["--tools", "bash,write"]);
+    #[cfg(windows)]
+    command.env("PATH", format!("C:\\Program Files\\Git\\usr\\bin;{}", std::env::var("PATH").unwrap_or_default()));
+    let mut child = RpcChild::spawn(command);
+    child.ready();
+    let old = child.state("old-state");
+    let old_file = PathBuf::from(old["sessionFile"].as_str().unwrap());
+    child.send(json!({"id":"steering-mode","type":"set_steering_mode","mode":"all"}));
+    child.success("steering-mode");
+    child.send(json!({"id":"follow-mode","type":"set_follow_up_mode","mode":"all"}));
+    child.success("follow-mode");
+    child.send(json!({"id":"old","type":"prompt","message":"old active task"}));
+    child.success("old");
+    child.until(
+        |frame| frame["type"] == "tool_execution_update" && contains_text(&frame["partialResult"], "old tool running"),
+        WAIT,
+    );
+    child.send(json!({"id":"steer-old","type":"steer","message":"discard old steering"}));
+    child.success("steer-old");
+    child.send(json!({"id":"follow-old","type":"follow_up","message":"discard old followup"}));
+    child.success("follow-old");
+    assert_eq!(child.state("queued-old")["queuedMessageCount"], 2);
+    let parent = old_file.to_string_lossy().to_string();
+    child.adopt("new", json!({"id":"new","type":"new_session","parentSession":parent}));
+    let adopted = child.state("new-state");
+    assert_ne!(adopted["sessionId"], old["sessionId"]);
+    assert_eq!(adopted["messageCount"], 0);
+    assert_eq!(adopted["queuedMessageCount"], 0);
+    assert_eq!(adopted["steeringMode"], "all");
+    assert_eq!(adopted["followUpMode"], "all");
+    let new_file = PathBuf::from(adopted["sessionFile"].as_str().unwrap());
+    assert!(new_file.is_file(), "new_session is durable before its successful response");
+    let initial_new = journal(&new_file);
+    assert_eq!(native_header(&initial_new)["parentSession"], parent);
+    assert_eq!(native_header(&initial_new)["id"], adopted["sessionId"]);
+    assert_eq!(native_header(&initial_new)["cwd"], native_header(&journal(&old_file))["cwd"]);
+    let end = child.seen.iter().position(|frame| frame["type"] == "agent_end").unwrap();
+    let ack = child.seen.iter().position(|frame| frame["id"] == "new").unwrap();
+    assert!(end < ack);
+    let old_entries = journal(&old_file);
+    let receipt = old_entries.iter().find(|entry| entry["message"]["toolCallId"] == "old-active").unwrap();
+    assert_eq!(receipt["message"]["isError"], true);
+    assert!(contains_text(&receipt["message"], "aborted"));
+    child.send(json!({"id":"fresh","type":"prompt","message":"new task after adoption"}));
+    child.success("fresh");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(journal(&old_file), old_entries, "later events stay bound to the new journal");
+    assert_eq!(
+        std::fs::read_to_string(env.work.path().join("old-effect.txt")).unwrap(),
+        "old-effect",
+        "old effect is never replayed"
+    );
+    assert_eq!(std::fs::read_to_string(env.work.path().join("fresh.txt")).unwrap(), "new session artifact\n");
+    assert!(journal(&new_file).iter().any(|entry| entry["message"]["toolCallId"] == "new-write"));
+    assert!(journal(&new_file).iter().all(|entry| entry["message"]["toolCallId"] != "old-active"));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let fresh = requests[1]["body"]["messages"].to_string();
+    assert!(fresh.contains("new task after adoption"));
+    assert!(!fresh.contains("old active task") && !fresh.contains("discard old"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_tools() {
+    let original = Env::new();
+    let target = Env::new();
+    project_markers(&original, "ORIGINAL");
+    project_markers(&target, "TARGET");
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"target-seed","write","{\"path\":\"target-seed.txt\",\"content\":\"seed target\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Target seeded."),finish("stop"),done()]},
+        {"events":[text("Original seeded."),finish("stop"),done()]},
+        {"events":[tool_call(0,"target-switch","write","{\"path\":\"switched.txt\",\"content\":\"target cwd effect\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Target switch settled."),finish("stop"),done()]},
+        {"events":[tool_call(0,"target-fresh","write","{\"path\":\"new-after-switch.txt\",\"content\":\"inherited target cwd\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Fresh target session settled."),finish("stop"),done()]}
+    ]})).await;
+    let mut seed = RpcChild::spawn(target.command(&up.base_url(), &["--tools", "write"]));
+    seed.ready();
+    seed.send(json!({"id":"seed","type":"prompt","message":"target original source"}));
+    seed.success("seed");
+    seed.until(|frame| frame["type"] == "agent_end", WAIT);
+    let target_state = seed.state("target-state");
+    seed.finish(0);
+    let target_file = PathBuf::from(target_state["sessionFile"].as_str().unwrap());
+    let target_before = journal(&target_file);
+    let mut child = RpcChild::spawn(original.command(&up.base_url(), &["--tools", "write"]));
+    child.ready();
+    child.send(json!({"id":"original","type":"prompt","message":"original source must stay behind"}));
+    child.success("original");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let original_state = child.state("original-state");
+    let original_messages = child.messages("original-messages");
+    let original_file = PathBuf::from(original_state["sessionFile"].as_str().unwrap());
+    let original_before = journal(&original_file);
+    let before_cancelled = child.seen.len();
+    child.send(json!({"id":"switch","type":"switch_session","sessionPath":target_file}));
+    assert_eq!(child.success("switch")["data"], json!({"cancelled":true}));
+    let switched = child.state("switched-state");
+    assert_eq!(switched["sessionId"], original_state["sessionId"]);
+    assert_eq!(switched["sessionFile"], original_state["sessionFile"]);
+    assert_eq!(child.messages("switched-messages"), original_messages);
+    assert!(!child.seen[before_cancelled..].iter().any(|frame| frame["type"] == "available_commands_update"));
+    child.send(json!({"id":"target-task","type":"prompt","message":"task after target switch"}));
+    child.success("target-task");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    assert_eq!(std::fs::read_to_string(original.work.path().join("switched.txt")).unwrap(), "target cwd effect\n");
+    assert!(!target.work.path().join("switched.txt").exists());
+    project_markers(&original, "REFRESHED");
+    child.adopt("new-target", json!({"id":"new-target","type":"new_session"}));
+    let fresh = child.state("fresh-target-state");
+    let fresh_file = PathBuf::from(fresh["sessionFile"].as_str().unwrap());
+    assert_eq!(fresh["messageCount"], 0);
+    assert_ne!(fresh["sessionId"], original_state["sessionId"]);
+    assert_eq!(native_header(&journal(&fresh_file))["cwd"], native_header(&original_before)["cwd"]);
+    child.send(json!({"id":"fresh-target","type":"prompt","message":"fresh adopted cwd task"}));
+    child.success("fresh-target");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(
+        std::fs::read_to_string(original.work.path().join("new-after-switch.txt")).unwrap(),
+        "inherited target cwd\n"
+    );
+    assert!(!target.work.path().join("new-after-switch.txt").exists());
+    assert_eq!(&journal(&original_file)[..original_before.len()], original_before.as_slice());
+    assert_eq!(journal(&target_file), target_before);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 7);
+    for index in [3, 5] {
+        let messages = requests[index]["body"]["messages"].as_array().unwrap();
+        let systems = messages
+            .iter()
+            .filter(|message| message["role"] == "system")
+            .map(|message| message["content"].to_string())
+            .collect::<String>();
+        let expected = if index == 3 { "ORIGINAL" } else { "REFRESHED" };
+        assert!(
+            systems.contains(&format!("SYSTEM-{expected}")) && systems.contains(&format!("AGENTS-{expected}")),
+            "{systems}"
+        );
+        assert!(!systems.contains("SYSTEM-TARGET") && !systems.contains("AGENTS-TARGET"));
+        let cwd = native_header(&original_before)["cwd"].as_str().unwrap().replace('\\', "/");
+        assert!(
+            messages.iter().any(|message| message["role"] == "user" && contains_text(message, &cwd)),
+            "rebuilt date/cwd reminder: {messages:?}"
+        );
+        assert!(!messages.iter().any(|message| contains_text(message, "target original source")));
+    }
+    assert!(requests[3]["body"]["messages"].to_string().contains("original source must stay behind"));
+    assert!(!requests[5]["body"]["messages"].to_string().contains("original source must stay behind"));
+}
+
+fn responses_answer(id: &str, answer: &str) -> Value {
+    json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":format!("msg-{id}"),"content":[{"type":"output_text","text":answer,"annotations":[]}]}}},
+        {"data":{"type":"response.completed","response":{"id":id,"status":"completed"}}}
+    ]})
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_adoption_resets_responses_state_but_unchanged_reload_preserves_it() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        responses_answer("ra1","Answer A1."),responses_answer("ra2","Answer A2."),
+        responses_answer("rb1","Answer B1."),responses_answer("rb2","Answer B2."),
+        responses_answer("ra3","Answer A3."),responses_answer("ra4","Answer A4."),
+        responses_answer("ra-meta","Metadata reload answer."),responses_answer("ra5","Answer A5."),
+        responses_answer("ra6","Replacement identity answer.")
+    ]}))
+    .await;
+    let mut child =
+        RpcChild::spawn(env.command(&up.base_url(), &["--api", "openai-responses", "--responses-stateful"]));
+    child.ready();
+    for id in ["A1", "A2"] {
+        child.send(json!({"id":id,"type":"prompt","message":format!("native prompt {id}")}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+    }
+    let original = child.state("native-original");
+    let original_messages = child.messages("native-original-messages");
+    let original_file = PathBuf::from(original["sessionFile"].as_str().unwrap());
+    let original_entries = journal(&original_file);
+    child.adopt("native-new", json!({"id":"native-new","type":"new_session"}));
+    for id in ["B1", "B2"] {
+        child.send(json!({"id":id,"type":"prompt","message":format!("native prompt {id}")}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+    }
+    child.adopt("native-switch", json!({"id":"native-switch","type":"switch_session","sessionPath":original_file}));
+    assert_eq!(child.messages("native-restored"), original_messages);
+    child.send(json!({"id":"A3","type":"prompt","message":"native prompt A3"}));
+    child.success("A3");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let before_reload = child.messages("before-reload");
+    child.adopt("same-reload", json!({"id":"same-reload","type":"switch_session","sessionPath":original_file}));
+    assert_eq!(child.messages("after-reload"), before_reload);
+    assert_eq!(child.state("reload-id")["sessionId"], original["sessionId"]);
+    child.send(json!({"id":"A4","type":"prompt","message":"native prompt A4"}));
+    child.success("A4");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let mut metadata_only = journal(&original_file);
+    let lexical_alias = env.work.path().join("uncreated-component").join("..");
+    assert!(!env.work.path().join("uncreated-component").exists());
+    metadata_only.iter_mut().find(|entry| entry["type"] == "session").unwrap()["cwd"] = json!(lexical_alias);
+    for entry in &mut metadata_only {
+        if entry["message"]["role"] == "assistant" {
+            entry["message"]["timestamp"] = json!(0);
+            entry["message"]["usage"]["input"] = json!(9999);
+        }
+    }
+    std::fs::write(&original_file, metadata_only.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    child.adopt("metadata-reload", json!({"id":"metadata-reload","type":"switch_session","sessionPath":original_file}));
+    let metadata_messages = child.messages("metadata-restored");
+    assert!(
+        metadata_messages
+            .iter()
+            .filter(|message| message["role"] == "assistant")
+            .all(|message| message["timestamp"] == 0 && message["usage"]["input"] == 9999)
+    );
+    child.send(json!({"id":"metadata-prompt","type":"prompt","message":"metadata-only reload still warm"}));
+    child.success("metadata-prompt");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    // A different saved conversation at the same path requires fresh native
+    // state; unchanged reload above retains the existing provider baseline.
+    std::fs::write(&original_file, original_entries.iter().map(|entry| format!("{entry}\n")).collect::<String>())
+        .unwrap();
+    child.adopt("changed-reload", json!({"id":"changed-reload","type":"switch_session","sessionPath":original_file}));
+    assert_eq!(child.messages("changed-restored"), original_messages);
+    child.send(json!({"id":"A5","type":"prompt","message":"native prompt A5"}));
+    child.success("A5");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let mut changed_identity = journal(&original_file);
+    let replacement_id = "00000000-0000-4000-8000-000000000001";
+    changed_identity.iter_mut().find(|entry| entry["type"] == "session").unwrap()["id"] = json!(replacement_id);
+    std::fs::write(&original_file, changed_identity.iter().map(|entry| format!("{entry}\n")).collect::<String>())
+        .unwrap();
+    child.adopt("identity-reload", json!({"id":"identity-reload","type":"switch_session","sessionPath":original_file}));
+    assert_eq!(child.state("replacement-identity")["sessionId"], replacement_id);
+    child.send(json!({"id":"A6","type":"prompt","message":"same path replacement identity"}));
+    child.success("A6");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 9);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "ra1");
+    assert_eq!(requests[3]["body"]["previous_response_id"], "rb1");
+    let controls = |body: &Value| {
+        let mut controls = body.as_object().unwrap().clone();
+        controls.remove("input");
+        controls.remove("previous_response_id");
+        controls
+    };
+    let before_controls = controls(&requests[4]["body"]);
+    let after_controls = controls(&requests[5]["body"]);
+    let changed_controls: Vec<_> = before_controls
+        .keys()
+        .chain(after_controls.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| before_controls.get(*key) != after_controls.get(*key))
+        .map(|key| json!({"field": key, "before": before_controls.get(key), "after": after_controls.get(key)}))
+        .collect();
+    assert_eq!(
+        requests[5]["body"]["previous_response_id"],
+        "ra3",
+        "unchanged reload controls diff: {changed_controls:?}; stderr: {}",
+        child.errors()
+    );
+    assert_eq!(requests[6]["body"]["previous_response_id"], "ra4");
+    for index in [0, 2, 4, 7, 8] {
+        assert!(
+            requests[index]["body"].get("previous_response_id").is_none(),
+            "fresh provider state at {index}: {}",
+            requests[index]["body"]
+        );
+    }
+    assert!(!requests[2]["body"]["input"].to_string().contains("native prompt A"));
+    for index in [4, 7] {
+        let history = requests[index]["body"]["input"].to_string();
+        assert!(
+            history.contains("native prompt A1")
+                && history.contains("Answer A1.")
+                && history.contains("native prompt A2")
+                && history.contains("Answer A2.")
+        );
+        assert!(!history.contains("native prompt B"));
+    }
+    assert_eq!(requests[5]["body"]["input"].as_array().unwrap().len(), 1);
+    assert!(requests[5]["body"]["input"].to_string().contains("native prompt A4"));
+    assert_eq!(requests[6]["body"]["input"].as_array().unwrap().len(), 1);
+    assert!(requests[6]["body"]["input"].to_string().contains("metadata-only reload still warm"));
+    assert!(!requests[7]["body"]["input"].to_string().contains("Answer A3."));
+    assert!(requests[8]["body"]["input"].to_string().contains("Answer A5."));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_failed_switch_never_adopts_a_fallback_and_original_remains_usable() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[text("Original preserved."),finish("stop"),done()]},
+        {"events":[tool_call(0,"still-original","write","{\"path\":\"original-after-failure.txt\",\"content\":\"original owner kept\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Original task still usable."),finish("stop"),done()]}
+    ]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--tools", "write"]));
+    child.ready();
+    child.send(json!({"id":"original","type":"prompt","message":"original before failed adoption"}));
+    child.success("original");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let original = child.state("before-failure");
+    let messages = child.messages("before-failure-messages");
+    let original_file = PathBuf::from(original["sessionFile"].as_str().unwrap());
+    let original_bytes = std::fs::read(&original_file).unwrap();
+    let faults = tempfile::Builder::new().prefix("ara-rpc-switch-fault-").tempdir().unwrap();
+    let missing = faults.path().join("missing.jsonl");
+    let corrupt = faults.path().join("corrupt.jsonl");
+    std::fs::write(&corrupt, "{broken session\n").unwrap();
+    let missing_cwd = faults.path().join("missing-cwd.jsonl");
+    let mut invalid = journal(&original_file);
+    let header = invalid.iter_mut().find(|entry| entry["type"] == "session").unwrap();
+    header["cwd"] = json!(faults.path().join("directory-that-does-not-exist"));
+    std::fs::write(&missing_cwd, invalid.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    for (id, target) in [("missing", &missing), ("corrupt", &corrupt), ("missing-cwd", &missing_cwd)] {
+        let before = std::fs::read(target).ok();
+        let before_failure = child.seen.len();
+        child.send(json!({"id":id,"type":"switch_session","sessionPath":target}));
+        let error = child.response(id);
+        if id == "missing-cwd" {
+            assert_eq!(error["success"], true, "{error}");
+            assert_eq!(error["data"], json!({"cancelled":true}));
+        } else {
+            assert_eq!(error["success"], false, "{error}");
+            assert!(!error["error"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(child.state(&format!("state-{id}"))["sessionId"], original["sessionId"]);
+        assert_eq!(child.messages(&format!("messages-{id}")), messages);
+        assert!(!child.seen[before_failure..].iter().any(|frame| frame["type"] == "available_commands_update"));
+        assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(target).ok(), before);
+        assert_eq!(env.sessions().as_slice(), std::slice::from_ref(&original_file));
+    }
+    child.send(json!({"id":"still-usable","type":"prompt","message":"task on preserved original"}));
+    child.success("still-usable");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(
+        std::fs::read_to_string(env.work.path().join("original-after-failure.txt")).unwrap(),
+        "original owner kept\n"
+    );
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1]["body"]["messages"].to_string().contains("original before failed adoption"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_no_session_new_ids_are_unique_without_journals_and_switch_fails_explicitly() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"events":[text("Ephemeral task settled."),finish("stop"),done()]}]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--no-session"]));
+    child.ready();
+    let original = child.state("ephemeral-original");
+    assert!(original.get("sessionFile").is_none());
+    child.adopt("ephemeral-new", json!({"id":"ephemeral-new","type":"new_session"}));
+    let first = child.state("ephemeral-first");
+    assert_ne!(first["sessionId"], original["sessionId"]);
+    assert!(first.get("sessionFile").is_none());
+    child.send(json!({"id":"ephemeral-task","type":"prompt","message":"ephemeral task"}));
+    child.success("ephemeral-task");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.adopt("ephemeral-next", json!({"id":"ephemeral-next","type":"new_session"}));
+    let second = child.state("ephemeral-second");
+    assert_ne!(second["sessionId"], first["sessionId"]);
+    assert_eq!(second["messageCount"], 0);
+    let before_failure = child.seen.len();
+    child.send(
+        json!({"id":"ephemeral-switch","type":"switch_session","sessionPath":env.home.path().join("anything.jsonl")}),
+    );
+    assert_eq!(child.response("ephemeral-switch")["success"], false);
+    assert_eq!(child.state("after-ephemeral-failure")["sessionId"], second["sessionId"]);
+    assert!(!child.seen[before_failure..].iter().any(|frame| frame["type"] == "available_commands_update"));
+    child.finish(0);
+    assert!(env.sessions().is_empty());
+    assert!(!env.sessions.exists(), "no-session never initializes a journal directory");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_runtime_switch_recovers_unknown_receipt_without_replaying_file_effect() {
+    let original = Env::new();
+    let target = Env::new();
+    project_markers(&original, "BEFORE-SWITCH");
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"runtime-unknown","write","{\"path\":\"runtime-unknown.txt\",\"content\":\"write once\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Target write settled."),finish("stop"),done()]},
+        {"events":[text("Runtime unknown inspected."),finish("stop"),done()]}
+    ]})).await;
+    let mut seed = RpcChild::spawn(target.command_at(&up.base_url(), &["--tools", "write"], original.work.path()));
+    seed.ready();
+    seed.send(json!({"id":"seed","type":"prompt","message":"target original write"}));
+    seed.success("seed");
+    seed.until(|frame| frame["type"] == "agent_end", WAIT);
+    seed.finish(0);
+    let target_file = target.sessions().pop().unwrap();
+    let entries = journal(&target_file);
+    let assistant = entries
+        .iter()
+        .position(|entry| {
+            entry["message"]["content"].as_array().is_some_and(|content| {
+                content.iter().any(|block| block["type"] == "toolCall" && block["id"] == "runtime-unknown")
+            })
+        })
+        .unwrap();
+    std::fs::write(&target_file, entries[..=assistant].iter().map(|entry| format!("{entry}\n")).collect::<String>())
+        .unwrap();
+    let artifact = original.work.path().join("runtime-unknown.txt");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "write once\n");
+    std::fs::write(&artifact, "external runtime sentinel\n").unwrap();
+    let mut child = RpcChild::spawn(original.command(&up.base_url(), &["--tools", "write"]));
+    child.ready();
+    let before = child.state("before-runtime-switch");
+    assert!(before["systemPrompt"].to_string().contains("SYSTEM-BEFORE-SWITCH"));
+    project_markers(&original, "AFTER-SWITCH");
+    child.adopt("runtime-switch", json!({"id":"runtime-switch","type":"switch_session","sessionPath":target_file}));
+    let adopted = child.state("after-runtime-switch");
+    assert_ne!(adopted["sessionId"], before["sessionId"]);
+    assert_eq!(adopted["sessionId"], native_header(&entries)["id"]);
+    assert!(adopted["systemPrompt"].to_string().contains("SYSTEM-AFTER-SWITCH"));
+    assert!(!adopted["systemPrompt"].to_string().contains("SYSTEM-BEFORE-SWITCH"));
+    let restored = child.messages("runtime-restored");
+    let unknown = restored.iter().find(|message| message["toolCallId"] == "runtime-unknown").unwrap();
+    assert_eq!(unknown["isError"], true);
+    assert_eq!(unknown["details"]["executed"], "unknown");
+    assert!(contains_text(unknown, "effects are unknown"));
+    child.send(json!({"id":"inspect-runtime","type":"prompt","message":"inspect unknown without replay"}));
+    child.success("inspect-runtime");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(std::fs::read_to_string(artifact).unwrap(), "external runtime sentinel\n");
+    assert!(!target.work.path().join("runtime-unknown.txt").exists());
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "tool_execution_start"));
+    assert_eq!(
+        journal(&target_file).iter().filter(|entry| entry["message"]["toolCallId"] == "runtime-unknown").count(),
+        1
+    );
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let system = requests[2]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].to_string())
+        .collect::<String>();
+    assert!(system.contains("SYSTEM-AFTER-SWITCH") && system.contains("AGENTS-AFTER-SWITCH"));
+    assert!(!system.contains("BEFORE-SWITCH"));
+    assert!(requests[2]["body"]["messages"].as_array().unwrap().iter().any(|message| {
+        message["role"] == "tool"
+            && message["tool_call_id"] == "runtime-unknown"
+            && contains_text(message, "effects are unknown")
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_same_file_switch_joins_active_run_before_opening_its_lazy_journal() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[],"end":"hang"},
+        {"events":[text("Reloaded lazy session continued."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready();
+    let before = child.state("before-lazy-switch");
+    let file = PathBuf::from(before["sessionFile"].as_str().unwrap());
+    assert!(!file.exists());
+    child.send(json!({"id":"lazy-run","type":"prompt","message":"source before lazy switch"}));
+    child.success("lazy-run");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while up.served() == 0 {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!file.exists(), "no assistant output, so the journal remains lazy");
+    assert_eq!(child.state("lazy-active")["isStreaming"], true);
+    child.adopt("lazy-switch", json!({"id":"lazy-switch","type":"switch_session","sessionPath":file}));
+    let switched = child.state("after-lazy-switch");
+    assert_eq!(switched["sessionId"], before["sessionId"]);
+    assert_eq!(switched["sessionFile"], before["sessionFile"]);
+    assert!(file.is_file(), "abort settled an assistant receipt before open");
+    let restored = child.messages("lazy-restored");
+    assert_eq!(user_texts(&restored), ["source before lazy switch"]);
+    assert!(restored.iter().any(|message| message["role"] == "assistant" && message["stopReason"] == "aborted"));
+    let ended = child.seen.iter().position(|frame| frame["type"] == "agent_end").unwrap();
+    let switched_ack = child.seen.iter().position(|frame| frame["id"] == "lazy-switch").unwrap();
+    assert!(ended < switched_ack);
+    child.send(json!({"id":"after-lazy","type":"prompt","message":"continue same file after join"}));
+    child.success("after-lazy");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(env.sessions(), [file]);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1]["body"]["messages"].to_string().contains("source before lazy switch"));
+}
+
+#[cfg(feature = "test-fixture")]
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_connection() {
+    let original = Env::new();
+    let target = Env::new();
+    let marker = original.work.path().join("retained-mcp-marker.txt");
+    let args = json!({"text":"retained original connection","marker":marker}).to_string();
+    let up = upstream(json!({"responses":[
+        {"events":[text("Target saved."),finish("stop"),done()]},
+        {"events":[text("Original before setup failure."),finish("stop"),done()]},
+        {"events":[tool_call(0,"retained-mcp","mcp__fixture__echo",&args),finish("tool_calls"),done()]},
+        {"events":[text("Retained original MCP task settled."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut seed = RpcChild::spawn(target.command_at(&up.base_url(), &[], original.work.path()));
+    seed.ready();
+    seed.send(json!({"id":"seed","type":"prompt","message":"target for candidate setup failure"}));
+    seed.success("seed");
+    seed.until(|frame| frame["type"] == "agent_end", WAIT);
+    seed.finish(0);
+    let target_file = target.sessions().pop().unwrap();
+    let target_before = std::fs::read(&target_file).unwrap();
+    let launcher = original.home.path().join("mcp-launch.sh");
+    std::fs::write(&launcher, "#!/usr/bin/env bash\nexec \"$1\" --record \"$2\"\n").unwrap();
+    let configuration = original.home.path().join("mcp.json");
+    #[cfg(windows)]
+    let bash = PathBuf::from("C:/Program Files/Git/usr/bin/bash.exe");
+    #[cfg(not(windows))]
+    let bash = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|directory| directory.join("bash"))
+        .find(|path| path.is_file())
+        .expect("MCP failure fixture requires Bash")
+        .canonicalize()
+        .unwrap();
+    assert!(bash.is_absolute() && bash.is_file(), "MCP command must be an existing absolute executable");
+    std::fs::write(
+        &configuration,
+        json!({
+            "name":"fixture","command":bash,"args":[
+                launcher.to_string_lossy().replace('\\',"/"),
+                env!("CARGO_BIN_EXE_ara-mcp-fixture").replace('\\',"/"),
+                original.home.path().join("mcp-record.json").to_string_lossy().replace('\\',"/")
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut command = original
+        .command(&up.base_url(), &["--mcp-config", configuration.to_str().unwrap(), "--mcp-allow", "fixture:echo"]);
+    #[cfg(windows)]
+    command.env("PATH", format!("C:\\Program Files\\Git\\usr\\bin;{}", std::env::var("PATH").unwrap_or_default()));
+    let mut child = RpcChild::spawn(command);
+    child.ready();
+    child.send(json!({"id":"original","type":"prompt","message":"original before MCP setup failure"}));
+    child.success("original");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let state = child.state("before-mcp-failure");
+    let messages = child.messages("before-mcp-failure-messages");
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    let before = std::fs::read(&file).unwrap();
+    // The original launcher already exec'd the fixture. Removing only that
+    // script blocks later reconnects without touching the running MCP child.
+    std::fs::remove_file(&launcher).unwrap();
+    for (id, command) in [
+        ("mcp-new-failure", json!({"id":"mcp-new-failure","type":"new_session"})),
+        ("mcp-switch-failure", json!({"id":"mcp-switch-failure","type":"switch_session","sessionPath":target_file})),
+    ] {
+        let begin = child.seen.len();
+        child.send(command);
+        let error = child.response(id);
+        assert_eq!(error["success"], false, "{error}");
+        assert!(!error["error"].as_str().unwrap().is_empty());
+        let retained = child.state(&format!("state-{id}"));
+        assert_eq!(retained["sessionId"], state["sessionId"]);
+        assert_eq!(retained["sessionFile"], state["sessionFile"]);
+        assert!(retained["dumpTools"].as_array().unwrap().iter().any(|tool| tool["name"] == "mcp__fixture__echo"));
+        assert_eq!(child.messages(&format!("messages-{id}")), messages);
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        assert_eq!(std::fs::read(&target_file).unwrap(), target_before);
+        assert_eq!(original.sessions().as_slice(), std::slice::from_ref(&file));
+        assert!(!child.seen[begin..].iter().any(|frame| frame["type"] == "available_commands_update"));
+    }
+    child.send(json!({"id":"retained-task","type":"prompt","message":"use the retained original MCP connection"}));
+    child.success("retained-task");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "dispatched");
+    let entries = journal(&file);
+    let receipt = entries.iter().find(|entry| entry["message"]["toolCallId"] == "retained-mcp").unwrap();
+    assert_eq!(receipt["message"]["isError"], false);
+    assert!(contains_text(&receipt["message"], "echo: retained original connection"));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert!(requests[2]["body"]["messages"].to_string().contains("original before MCP setup failure"));
+    assert!(!requests[2]["body"]["messages"].to_string().contains("target for candidate setup failure"));
 }

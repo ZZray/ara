@@ -148,7 +148,12 @@ Windows/predecessor Linux totals, checked all four dependency policies, rehashed
 all twelve actual-model artifacts plus summary/driver/source/executable, and
 inspected raw ACK ordering, live queries, redacted snapshots, journal pairs,
 exact artifacts, five usage records and one shutdown. No optional Cargo rerun
-was needed after these final results. Delivered-commit Linux CI remains pending.
+was needed after these final results. Delivered-commit Linux CI `36669809267` on
+`361ceef5c902ca6704b813d0b0208fed4ee15fb9` passed: **1,115 passed, 0 failed,
+1 ignored across 86 suites**, CLI e2e **90/90**. Actual logs are retained at
+`C:\Temp\ara-rpc-host-entry-validation\github\logs-36669809267\0_verify.txt`;
+the backend step spans 04:39:24-04:44:13 UTC (**289 seconds**).
 
-Next: verified same-cwd and changed-cwd Session adoption with fresh provider state,
-then owned queued Skill provenance and remaining contracts in the full plan.
+Next: [same-cwd native Session adoption](rpc-host-session.md), with changed-cwd
+RPC cancellation and source-backed provider reuse/reset, then owned queued Skill
+provenance and remaining contracts in the full plan.

@@ -168,3 +168,24 @@ The initial trials used OpenRouter `openrouter/free` and Agnes `agnes-2.5-flash`
 
 - The user's reference documents (`ara-doc-ref`), to be pushed to the repository. The plan and Track B design will be revised against them.
 - Network allowlist for `openrouter.ai` and `api.agnes-ai.cn`: both returned proxy 403 on 2026-09-25.
+
+
+### RPC native Session continuation, 2026-09-30
+
+[Session adoption evidence](evidence/rpc-host-session.md) records the bounded
+new/switch slice, shared CLI setup/provider construction and exact fixed-source
+semantics. The preceding entry commit's Linux gate is green (1,115/0/1, 86
+suites, e2e 90/90). The module now has fourteen bounded command implementations
+out of 42; full command parity and P1-P6 acceptance remain open. Different-cwd
+RPC switches cancel, and saved role/model/settings plus runtime capability
+reconciliation remain explicit gaps. Continue owned queued Skill provenance,
+then remaining task-chain/side-channel contracts under the complete Host plan.
+
+
+Final Session-slice Windows evidence: RPC child tests **21/21**, full backend
+**1,120/0/1 across 86 suites**, e2e **87/87**, **71.299 s**; dependency policies
+pass (**7.623 s**). Three-Run actual A/new-B/switch-A task passes in **19.341 s**,
+seven calls/four receipts and exact recall after source deletion. Original,
+isolated and full-gate executable hashes match. Independent final audit is
+recorded in the [Session evidence](evidence/rpc-host-session.md). This remains tested WIP; pushed-commit Linux
+verification and complete RPC/model/settings/capability contracts stay open.

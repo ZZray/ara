@@ -19,9 +19,57 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
     future::pending,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+fn lexical_absolute(path: &std::path::Path) -> Result<PathBuf> {
+    // Fixed path.resolve comparison does not inspect symlinks or require the
+    // directory to exist. std::path::absolute supplies platform drive/root
+    // semantics; fold remaining parent components without filesystem I/O.
+    let absolute = std::path::absolute(path)?;
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    Ok(normalized)
+}
+
+pub(super) struct SessionFactory {
+    pub dir: Option<PathBuf>,
+    pub cwd: PathBuf,
+    pub provider: super::ProviderFactory,
+    pub args: super::Args,
+    pub mcp_config: Option<ara_mcp::ServerConfig>,
+}
+
+impl SessionFactory {
+    async fn config(&self, current: &AgentConfig, reset: bool) -> Result<AgentConfig> {
+        let setup = super::prepare_cli_setup(
+            &self.args,
+            &self.cwd,
+            &current.model,
+            &self.mcp_config,
+            (!reset).then(|| current.tools.clone()),
+        )
+        .await?;
+        let mut config = current.clone();
+        config.system_prompt = setup.system_prompt;
+        config.tools = setup.tools;
+        if reset {
+            config.provider = self.provider.build();
+            config.hooks = setup.hooks;
+        }
+        Ok(config)
+    }
+}
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,
@@ -160,6 +208,23 @@ struct Session {
     file: Option<std::path::PathBuf>,
 }
 
+impl Session {
+    fn new(journal: Option<SessionJournal>, header: Value, messages: &[Message]) -> Arc<Self> {
+        let public_messages = messages
+            .iter()
+            .map(|message| AgentEvent::MessageEnd { message: message.clone() }.full()["message"].clone())
+            .collect();
+        Arc::new(Self {
+            file: journal.as_ref().map(|journal| journal.path().into()),
+            journal: tokio::sync::Mutex::new(journal),
+            messages: Mutex::new(public_messages),
+            partial: Mutex::new(None),
+            persistence_error: Mutex::new(None),
+            header,
+        })
+    }
+}
+
 struct RunSink {
     session: Arc<Session>,
     output: Output,
@@ -209,12 +274,81 @@ struct Host {
     output: Output,
     connection: CancellationToken,
     active: Option<ActiveRun>,
+    sessions: SessionFactory,
     // Deliberate abort keeps queued input visible but suppresses autonomous
     // resumption. A new explicit prompt/queue command permits another Run.
     drain_queues: bool,
 }
 
 impl Host {
+    fn adopt(&mut self, journal: Option<SessionJournal>, header: Value, messages: Vec<Message>, config: AgentConfig) {
+        // Preparation is complete and the old owned Run is joined. Commit the
+        // replacement once; each settled RunSink retains its original journal.
+        let session = Session::new(journal, header, &messages);
+        let agent = Agent::new(config.clone(), messages);
+        agent.set_steering_mode(self.agent.steering_mode());
+        agent.set_follow_up_mode(self.agent.follow_up_mode());
+        self.agent = agent;
+        self.session = session;
+        self.config = config;
+        self.drain_queues = false;
+    }
+
+    async fn new_session(&mut self, parent: Option<&str>) -> Result<()> {
+        self.abort().await;
+        let config = self.sessions.config(&self.config, true).await?;
+        let mut journal = self
+            .sessions
+            .dir
+            .as_ref()
+            .map(|dir| SessionJournal::create_with_parent(dir, &self.sessions.cwd, parent))
+            .transpose()?;
+        if let Some(journal) = journal.as_mut() {
+            journal.append_model_change(&format!("{}/{}", config.model.provider, config.model.id))?;
+            // An explicit new Session must survive restart even with no prompt.
+            journal.materialize()?;
+        }
+        let header = journal
+            .as_ref()
+            .map(|journal| journal.header().clone())
+            .unwrap_or_else(|| super::ephemeral_header(&self.sessions.cwd, parent));
+        self.adopt(journal, header, Vec::new(), config);
+        Ok(())
+    }
+
+    async fn switch_session(&mut self, path: PathBuf) -> Result<bool> {
+        self.abort().await;
+        if self.sessions.dir.is_none() {
+            bail!("--no-session cannot load a disk Session; restart without --no-session");
+        }
+        // Join before opening, including a current lazy journal which was not
+        // on disk before its accepted Run's final cancellation receipt.
+        let mut journal = SessionJournal::open(&path).with_context(|| format!("opening session {}", path.display()))?;
+        if let Some(cwd) = journal.header().get("cwd").and_then(Value::as_str)
+            && lexical_absolute(std::path::Path::new(cwd))? != lexical_absolute(&self.sessions.cwd)?
+        {
+            // Fixed RPC supplies no onCwdChange callback: this is a cancelled
+            // switch, including an inaccessible recorded cwd, not an adoption.
+            return Ok(true);
+        }
+        let same_file = self.session.file.as_ref().is_some_and(|current| {
+            std::fs::canonicalize(current).ok().zip(std::fs::canonicalize(&path).ok()).is_some_and(|(a, b)| a == b)
+        });
+        let messages = journal.model_context();
+        let unchanged = same_file
+            && journal.header()["id"] == self.session.header["id"]
+            && replay_messages_equal(&messages, &self.agent.messages().await);
+        let config = self.sessions.config(&self.config, !unchanged).await?;
+        // The launch-selected route is currently the only available model.
+        // Keep unavailable saved selections intact, as fixed switch's fallback
+        // does; role/catalog/thinking restoration remains a mapped WIP gap.
+        super::recover_session(&mut journal)?;
+        let messages = journal.model_context();
+        let header = journal.header().clone();
+        self.adopt(Some(journal), header, messages, config);
+        Ok(false)
+    }
+
     fn start(&mut self, message: Option<Message>, command: Command) -> Result<()> {
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before continuing");
@@ -373,6 +507,20 @@ impl Host {
                 self.abort().await;
                 self.output.response(command, None, None);
             }
+            "new_session" => {
+                let parent = command.frame.get("parentSession").map(|_| command.string("parentSession")).transpose()?;
+                self.new_session(parent.as_deref()).await?;
+                self.output.frame(json!({"type":"available_commands_update","commands":[]}));
+                self.output.response(command, Some(json!({"cancelled":false})), None);
+            }
+            "switch_session" => {
+                let path = PathBuf::from(command.string("sessionPath")?);
+                let cancelled = self.switch_session(path).await?;
+                if !cancelled {
+                    self.output.frame(json!({"type":"available_commands_update","commands":[]}));
+                }
+                self.output.response(command, Some(json!({"cancelled":cancelled})), None);
+            }
             "prompt" | "abort_and_prompt" => {
                 let message = command.message()?;
                 if command.kind == "abort_and_prompt" {
@@ -421,6 +569,50 @@ fn mode_name(mode: QueueMode) -> &'static str {
     }
 }
 
+// Fixed session/messages.ts:194-246 compares provider replay values rather
+// than timestamps, usage or other runtime metadata. Only the four native Rust
+// message roles are supported here; custom Session messages remain open.
+fn replay_value(message: &Message) -> Value {
+    match message {
+        Message::User(message) => json!({"role":"user","content":message.content}),
+        Message::Developer(message) => json!({"role":"developer","content":message.content}),
+        Message::ToolResult(message) => json!({
+            "role":"toolResult","toolName":message.tool_name,"toolCallId":message.tool_call_id,
+            "isError":message.is_error,"content":message.content
+        }),
+        Message::Assistant(message) => {
+            let responses = matches!(message.api.as_str(), "openai-responses" | "openai-codex-responses");
+            let content = if responses {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ara_ai::AssistantBlock::Thinking(_) => None,
+                        ara_ai::AssistantBlock::ToolCall(call) => Some(json!({
+                            "type":"toolCall","id":call.id,"name":call.name,"arguments":call.arguments
+                        })),
+                        ara_ai::AssistantBlock::Text(text) => Some(json!({
+                            "type":"text","text":text.text,"textSignature":text.text_signature
+                        })),
+                        block => Some(serde_json::to_value(block).expect("message block")),
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                message.content.iter().map(|block| serde_json::to_value(block).expect("message block")).collect()
+            };
+            json!({
+                "role":"assistant","content":content,"api":message.api,"provider":message.provider,
+                "model":message.model,"stopReason":message.stop_reason,"errorMessage":message.error_message,
+                "providerPayload":if responses { None } else { message.provider_payload.as_ref() }
+            })
+        }
+    }
+}
+
+fn replay_messages_equal(left: &[Message], right: &[Message]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| replay_value(a) == replay_value(b))
+}
+
 fn last_assistant_text(messages: &[Value]) -> Option<String> {
     let assistant = messages.iter().rev().find(|message| {
         message["role"] == "assistant"
@@ -443,10 +635,12 @@ pub async fn run(
     journal: Option<SessionJournal>,
     header: Value,
     max_time: Option<f64>,
+    sessions: SessionFactory,
 ) -> Result<i32> {
-    serve(tokio::io::stdin(), tokio::io::stdout(), config, messages, journal, header, max_time).await
+    serve(tokio::io::stdin(), tokio::io::stdout(), config, messages, journal, header, max_time, sessions).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve<R, W>(
     input: R,
     writer: W,
@@ -455,6 +649,7 @@ async fn serve<R, W>(
     journal: Option<SessionJournal>,
     header: Value,
     max_time: Option<f64>,
+    sessions: SessionFactory,
 ) -> Result<i32>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -464,18 +659,7 @@ where
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
     let output_task = tokio::spawn(write_output(writer, output_rx, connection.clone()));
-    let public_messages = messages
-        .iter()
-        .map(|message| AgentEvent::MessageEnd { message: message.clone() }.full()["message"].clone())
-        .collect();
-    let session = Arc::new(Session {
-        file: journal.as_ref().map(|journal| journal.path().into()),
-        journal: tokio::sync::Mutex::new(journal),
-        messages: Mutex::new(public_messages),
-        partial: Mutex::new(None),
-        persistence_error: Mutex::new(None),
-        header,
-    });
+    let session = Session::new(journal, header, &messages);
     let mut host = Host {
         agent: Agent::new(config.clone(), messages),
         session,
@@ -484,6 +668,7 @@ where
         output: output.clone(),
         connection: connection.clone(),
         active: None,
+        sessions,
         drain_queues: true,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],

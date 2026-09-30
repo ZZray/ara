@@ -107,7 +107,12 @@ events are additional contracts, not commands omitted from this denominator.
    The first [entry snapshot](evidence/rpc-host-entry.md) implements twelve
    bounded commands and actual owned Run/sink/mirror/output binding. It remains
    WIP; runtime adoption, Skill provenance and remaining task-chain contracts
-   are next, with explicit unsupported errors in the interim.
+   remain open, with explicit unsupported errors in the interim.
+   The [native Session slice](evidence/rpc-host-session.md) adds bounded new/switch
+   implementations (fourteen of 42 variants implemented, not full command parity).
+   Fixed RPC cancels changed-cwd switches; unchanged same-ID replay retains
+   provider state, while new/different/changed Sessions reset it. Full saved
+   model/settings and runtime capability reconciliation remain open.
 3. **Bidirectional execution and maintenance:** host tools/URI/extension UI,
    background bash, live configuration, compaction/retry and command metadata.
    Unsupported known commands fail explicitly until implemented.

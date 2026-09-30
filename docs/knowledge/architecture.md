@@ -71,3 +71,17 @@ boundary. See [actual entry evidence](../evidence/rpc-host-entry.md).
 **Decision, 2026-09-28 (implemented WIP, not accepted):** Each MCP stdio connection has one task that owns its child, pipes and Windows Job Object and reads server messages while tools are idle. Granted tools share a single-call permit and bounded command channel; dropping the last tool or abandoning an in-flight call closes the connection and releases the child. The task answers server `ping` with `{}` even without an active call, matching the [fixed OMP client and transport](upstream.md). Outbound frame validation occurs before queueing: a rejected or cancelled pre-dispatch call reports `executed: false`, while interruption after queueing remains `executed: unknown` and is never replayed automatically. See the [real-child and host evidence](../evidence/ca-mcp-stdio.md). This decision does not claim race-free descendant containment or point acceptance.
 
 The loop awaits each `AgentEventSink::emit`. A host that persists `message_end` inside the sink has therefore journaled an assistant tool-call message before any of its tools start. By default the loop refuses to re-execute a trailing unpaired tool-call tail (`UnpairedTail::Refuse`), because such calls may already have run and their effects are unknown. A host opts in to execution only when it knows the calls never ran.
+
+
+### Native RPC Session replacement
+
+[Native adoption evidence](../evidence/rpc-host-session.md) maps the fixed RPC
+boundary: a changed recorded cwd cancels; the Host joins old accepted work before
+opening or replacing journals. Run sinks remain attached to their original
+Session. Prepare target tools/context/provider before adopting once; failures
+retain the prior native identity and transcript. Explicit persistent new creates
+a restart boundary before ACK. Unchanged same-file, same-ID provider replay
+retains native provider/tool state; new/different/edited Sessions reset it.
+Compare replay content rather than timestamp/usage metadata. Prompt refresh and
+fresh setup share the initial CLI helpers; complete saved-model/settings and
+capability reconciliation are still open.

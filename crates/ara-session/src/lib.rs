@@ -338,17 +338,25 @@ pub struct SessionJournal {
 impl SessionJournal {
     /// New lazy session in `session_dir` for `cwd` (file created on first assistant message).
     pub fn create(session_dir: &Path, cwd: &Path) -> Result<SessionJournal> {
+        Self::create_with_parent(session_dir, cwd, None)
+    }
+
+    /// Explicit new-session RPC uses the same journal with an optional parent.
+    pub fn create_with_parent(session_dir: &Path, cwd: &Path, parent: Option<&str>) -> Result<SessionJournal> {
         fs::create_dir_all(session_dir)?;
         let id = uuid::Uuid::now_v7().to_string();
         let timestamp = now_iso();
         let path = session_dir.join(format!("{}_{}.jsonl", file_safe_timestamp(&timestamp), id));
-        let header = json!({
+        let mut header = json!({
             "type": "session",
             "version": CURRENT_SESSION_VERSION,
             "id": id,
             "timestamp": timestamp,
             "cwd": cwd.to_string_lossy(),
         });
+        if let Some(parent) = parent.filter(|parent| !parent.is_empty()) {
+            header["parentSession"] = json!(parent);
+        }
         Ok(SessionJournal {
             path,
             title: TitleSlot { updated_at: timestamp, ..Default::default() },
