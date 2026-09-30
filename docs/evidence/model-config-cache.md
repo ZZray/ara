@@ -70,7 +70,15 @@ Final binary SHA256:
 Staged and committed pin audits pass for all 11 tested files: eight byte-exact,
 three unchanged dependency/parser files differ only by Git CRLF normalization.
 Receipts: `staged-pin-audit.json` and `committed-pin-audit.json`.
-Linux and real-model trials: not executed for this disconnected foundation.
+Linux follow-up at exact documentation descendant
+`05d09aad82f96563188667950d497d802e104fe9`: repository checks run **36775141261**,
+job **110091044424**, and CTX invocation run **36775141320**, job **110091041802**,
+both completed successfully. Raw job logs were downloaded and rehashed in
+`C:\Temp\ara-model-policy-batch\ci\receipt.json`. The parent read the full
+backend PASS and 25-parser/10-builder unchanged-source comparison with zero
+mock calls. These are preceding config/cache/CTX evidence, not Linux validation
+of subsequent model-policy code. No new real-model trial is claimed for this
+disconnected foundation.
 
 ## Independent review and repairs
 

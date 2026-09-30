@@ -203,6 +203,7 @@ dependencies = [
  "chrono",
  "clap",
  "libc",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

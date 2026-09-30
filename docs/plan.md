@@ -51,6 +51,15 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+Fixed model policy/construction checkpoint (2026-10-01, tested WIP): native compiled
+rule/taxonomy resolution, complete compat/thinking/build, host identity/reference/
+metrics and declarative behavior/auth accessors pass 46,136 original-source
+comparisons, 270,556 behavior pairs and the Windows full gate; see
+[policy evidence](evidence/model-policy.md). Complete variant-list collapse,
+discovery transports/normalization/manager, registry/authentication and live
+metadata/journal adoption remain the next required integration. No phase or
+RPC acceptance advances from this Host dependency.
+
 Native models configuration/cache checkpoint (2026-10-01, tested WIP): fixed
 schema/validation, Host-owned config file and SQLite model cache have executable
 coverage; see [config/cache evidence](evidence/model-config-cache.md). Continue

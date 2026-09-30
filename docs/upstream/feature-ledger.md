@@ -33,6 +33,17 @@ and 842 unchanged-source Bun comparisons. Registry/network/auth/live metadata
 rebuild and the documented YAML edge requirements remain mandatory. No command,
 surface, phase or parity-marker acceptance advances.
 
+Active fixed model policy/construction dependency (tested WIP): complete compiled
+rules, taxonomy/revision/cascade, per-API compat/thinking/build/tokenizer,
+endpoint detection, reference/metrics/provider priority, and declarative
+behavior/auth policies map to `ara-cli::{catalog_rules,catalog_behavior,
+model_identity,model_policy}`. The [policy evidence](../evidence/model-policy.md)
+records exact data, lossless UTF-16 boundaries, 46,136 unchanged-source comparisons
+and 270,556 provider/model behavior pairs, the Windows full gate
+and scoped independent reviews. Variant-list collapse, native network/registry/
+authentication, overrides and execution/journal adoption remain mandatory.
+No surface, RPC command, phase or parity-marker acceptance advances.
+
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:
 identify the underlying goal, distinguish hard constraints from historical

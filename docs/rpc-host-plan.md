@@ -208,6 +208,13 @@ commands and additional lifecycle contracts until the complete inventory passes.
 
 ## Model/auth foundation checkpoint, 2026-10-01
 
+The [fixed policy/construction dependency](evidence/model-policy.md) adds
+compiled rule/taxonomy resolution, full API compat/thinking/build, endpoint and
+reference/metrics policies. The native dependency passes 46,136 original-source
+comparisons and the Windows full gate. It still needs complete variant-list collapse,
+discovery transport/manager, override recomposition, registry/authentication and
+live execution/journal adoption; the native model commands are not yet accepted.
+
 The next [native config/cache checkpoint](evidence/model-config-cache.md) adds
 fixed schema/provider validation, config file migration/loading and native
 SQLite model metadata cache. This is still a disconnected Host foundation;
