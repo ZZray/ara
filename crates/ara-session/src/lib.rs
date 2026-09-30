@@ -517,6 +517,17 @@ pub struct CompactionSourceSnapshot {
     pub messages: Vec<SourcedMessage>,
 }
 
+/// Current soft summary and its still-raw source window. A previous summary
+/// is derived evidence, never a fabricated raw source message. Unlike the
+/// single-level snapshot, this view also supports a native in-memory journal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectedCompactionSnapshot {
+    pub session_id: String,
+    pub leaf_id: String,
+    pub previous_summary: Option<CompactionSummaryView>,
+    pub messages: Vec<SourcedMessage>,
+}
+
 /// A derived summary remains distinct from a user message. The host/Agent
 /// owns conversion to a model-visible message and must keep its attribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -588,6 +599,26 @@ pub enum CompactionProjectionError {
     UnsafeSummaryBoundary { id: String },
     #[error("compaction entry {id} has unsupported replay data")]
     UnsupportedReplayData { id: String },
+}
+
+/// Commit failures are returned before recording a summary, except storage
+/// errors handled by the existing append rollback.
+#[derive(Debug, thiserror::Error)]
+pub enum CompactionCommitError {
+    #[error(transparent)]
+    Projection(#[from] CompactionProjectionError),
+    #[error("compaction snapshot no longer matches the current Session branch")]
+    StaleSnapshot,
+    #[error("compaction summary is empty or exceeds the supported input size")]
+    InvalidSummary,
+    #[error("compaction window IDs must be the nonempty source prefix before the kept user message")]
+    InvalidWindow,
+    #[error("previous compaction has no verifiable raw source IDs")]
+    MissingPreviousSources,
+    #[error("compaction does not replace a complete, supported turn prefix")]
+    UnsafeSummaryBoundary,
+    #[error(transparent)]
+    Storage(#[from] SessionError),
 }
 
 /// What `open` found and repaired.
@@ -1199,6 +1230,84 @@ impl SessionJournal {
             leaf_id: self.leaf.as_ref().expect("validated leaf").clone(),
             messages,
         })
+    }
+
+    /// Strict projected sources for a further soft summary. The projection
+    /// validates the complete raw branch and every prior compaction first.
+    /// Native in-memory journals need no file materialization.
+    pub fn projected_compaction_snapshot(
+        &self,
+    ) -> std::result::Result<ProjectedCompactionSnapshot, CompactionProjectionError> {
+        let projection = self.compacted_context_projection()?;
+        let mut previous_summary = None;
+        let mut messages = Vec::new();
+        for item in projection.items {
+            match item {
+                CompactedContextItem::Summary(summary) => previous_summary = Some(summary),
+                CompactedContextItem::Message(message) => messages.push(*message),
+            }
+        }
+        Ok(ProjectedCompactionSnapshot {
+            session_id: projection.session_id,
+            leaf_id: projection.leaf_id,
+            previous_summary,
+            messages,
+        })
+    }
+
+    /// Validate this exact projected window, then append one native soft
+    /// compaction. Carry prior raw source IDs forward so readers can verify
+    /// the cumulative replaced prefix without a new record or leaf format.
+    pub fn commit_projected_compaction(
+        &mut self,
+        snapshot: &ProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+        tokens_before: u64,
+    ) -> std::result::Result<String, CompactionCommitError> {
+        let current = self.projected_compaction_snapshot()?;
+        if snapshot != &current {
+            return Err(CompactionCommitError::StaleSnapshot);
+        }
+        if summary.trim().is_empty() || summary.len() > 1_000_000 {
+            return Err(CompactionCommitError::InvalidSummary);
+        }
+        let kept_index = current
+            .messages
+            .iter()
+            .position(|message| message.entry_id == first_kept_entry_id)
+            .filter(|index| *index > 0 && matches!(&current.messages[*index].message, Message::User(_)))
+            .ok_or(CompactionCommitError::InvalidWindow)?;
+        let expected_window: Vec<String> =
+            current.messages[..kept_index].iter().map(|message| message.entry_id.clone()).collect();
+        if window_source_entry_ids != expected_window.as_slice() {
+            return Err(CompactionCommitError::InvalidWindow);
+        }
+        let mut cumulative_sources = match &current.previous_summary {
+            Some(previous) => previous.source_entry_ids.clone().ok_or(CompactionCommitError::MissingPreviousSources)?,
+            None => Vec::new(),
+        };
+        cumulative_sources.extend(expected_window);
+        let branch = self.strict_compaction_branch().map_err(CompactionProjectionError::from)?;
+        let raw_kept_index = branch
+            .iter()
+            .position(|entry| entry.id == first_kept_entry_id)
+            .ok_or(CompactionCommitError::InvalidWindow)?;
+        let raw_sources: Vec<String> = branch[..raw_kept_index]
+            .iter()
+            .filter(|entry| {
+                matches!(entry.kind.as_str(), "message" | "custom_message") && !entry.is_excluded_bash_execution()
+            })
+            .map(|entry| entry.id.clone())
+            .collect();
+        if cumulative_sources != raw_sources {
+            return Err(CompactionCommitError::InvalidWindow);
+        }
+        if !safe_soft_summary_prefix(&branch[..raw_kept_index]) {
+            return Err(CompactionCommitError::UnsafeSummaryBoundary);
+        }
+        Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative_sources, tokens_before)?)
     }
 
     /// Strict, read-only projection of the current branch after a soft

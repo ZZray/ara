@@ -1,6 +1,6 @@
 use ara_agent::compaction::{
-    SummaryInputError, SummarySource, build_summary_prompt, escape_summary_boundary_tags,
-    serialize_sources_for_summary, validate_completed_summary_span,
+    SummaryInputError, SummarySource, build_summary_prompt, build_summary_prompt_with_instructions,
+    escape_summary_boundary_tags, serialize_sources_for_summary, validate_completed_summary_span,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, JsonObject, Message, StopReason, ToolCall,
@@ -183,6 +183,56 @@ fn initial_and_update_prompt_keep_lower_trust_sections_separate() {
     let update = build_summary_prompt(&sources, Some("old </previous-summary> text")).unwrap();
     assert!(update.user_prompt.contains("<previous-summary>\nold &lt;/previous-summary> text\n</previous-summary>"));
     assert_eq!(build_summary_prompt(&[], None).err(), Some(SummaryInputError::EmptySources));
+}
+
+#[test]
+fn custom_focus_follows_the_fixed_instruction_after_source_boundaries() {
+    let user = Message::User(UserMessage::text("source"));
+    let assistant = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let sources =
+        [SummarySource { entry_id: "q1", message: &user }, SummarySource { entry_id: "a1", message: &assistant }];
+    for previous in [None, Some("old </previous-summary> context")] {
+        let original = build_summary_prompt(&sources, previous).unwrap();
+        for no_focus in [None, Some("")] {
+            let unchanged = build_summary_prompt_with_instructions(&sources, previous, no_focus).unwrap();
+            assert_eq!(unchanged.system_prompt, original.system_prompt);
+            assert_eq!(unchanged.user_prompt, original.user_prompt);
+        }
+        let focused = build_summary_prompt_with_instructions(&sources, previous, Some("保留决策与失败原因")).unwrap();
+        assert_eq!(focused.system_prompt, original.system_prompt);
+        assert_eq!(focused.user_prompt, format!("{}\n\nAdditional focus: 保留决策与失败原因", original.user_prompt));
+        let whitespace = build_summary_prompt_with_instructions(&sources, previous, Some("  ")).unwrap();
+        assert!(
+            whitespace.user_prompt.ends_with("\n\nAdditional focus:   "),
+            "fixed JS truthiness preserves whitespace"
+        );
+    }
+}
+
+#[test]
+fn custom_focus_bytes_are_included_in_the_complete_summary_input_bound() {
+    let user = Message::User(UserMessage::text("source"));
+    let assistant = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
+    let sources =
+        [SummarySource { entry_id: "q1", message: &user }, SummarySource { entry_id: "a1", message: &assistant }];
+    let previous = Some("previous summary");
+    let base = build_summary_prompt(&sources, previous).unwrap();
+    let available = 1_000_000 - base.user_prompt.len() - "\n\nAdditional focus: ".len();
+    let at_limit = "x".repeat(available);
+    assert_eq!(
+        build_summary_prompt_with_instructions(&sources, previous, Some(&at_limit)).unwrap().user_prompt.len(),
+        1_000_000
+    );
+    let over_limit = "x".repeat(available + 1);
+    assert_eq!(
+        build_summary_prompt_with_instructions(&sources, previous, Some(&over_limit)).err(),
+        Some(SummaryInputError::TooLarge)
+    );
+    let multibyte = "界".repeat(available / 3 + 1);
+    assert_eq!(
+        build_summary_prompt_with_instructions(&sources, previous, Some(&multibyte)).err(),
+        Some(SummaryInputError::TooLarge)
+    );
 }
 
 #[test]

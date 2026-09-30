@@ -488,6 +488,17 @@ pub fn build_summary_prompt(
     sources: &[SummarySource<'_>],
     previous_summary: Option<&str>,
 ) -> Result<SummaryPrompt, SummaryInputError> {
+    build_summary_prompt_with_instructions(sources, previous_summary, None)
+}
+
+/// Fixed OMP appends a nonempty custom instruction after the initial/update
+/// instruction, outside both lower-trust source boundaries. Its bytes remain
+/// part of the same bounded summary request.
+pub fn build_summary_prompt_with_instructions(
+    sources: &[SummarySource<'_>],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+) -> Result<SummaryPrompt, SummaryInputError> {
     validate_completed_summary_span(sources)?;
     let conversation = serialize_sources_for_summary(sources)?;
     let previous = previous_summary.filter(|s| !s.trim().is_empty());
@@ -501,6 +512,14 @@ pub fn build_summary_prompt(
         user_prompt.push_str("\n</previous-summary>\n\n");
     }
     user_prompt.push_str(if previous.is_some() { UPDATE_SUMMARIZATION_PROMPT } else { SUMMARIZATION_PROMPT });
+    if let Some(instructions) = custom_instructions.filter(|instructions| !instructions.is_empty()) {
+        const PREFIX: &str = "\n\nAdditional focus: ";
+        if user_prompt.len().saturating_add(PREFIX.len()).saturating_add(instructions.len()) > MAX_SUMMARY_INPUT_BYTES {
+            return Err(SummaryInputError::TooLarge);
+        }
+        user_prompt.push_str(PREFIX);
+        user_prompt.push_str(instructions);
+    }
     if user_prompt.len() > MAX_SUMMARY_INPUT_BYTES {
         return Err(SummaryInputError::TooLarge);
     }
@@ -650,7 +669,32 @@ pub async fn summarize_sources(
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<AcceptedSummary, SummaryCallError> {
-    let prompt = build_summary_prompt(sources, previous_summary)
+    summarize_sources_with_instructions(
+        sources,
+        previous_summary,
+        None,
+        model,
+        provider,
+        max_output_tokens,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+/// The same bounded, no-tools summary call with fixed OMP's optional focus.
+#[allow(clippy::too_many_arguments)]
+pub async fn summarize_sources_with_instructions(
+    sources: &[SummarySource<'_>],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    max_output_tokens: u64,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    let prompt = build_summary_prompt_with_instructions(sources, previous_summary, custom_instructions)
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
     if max_output_tokens == 0 {
         return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));

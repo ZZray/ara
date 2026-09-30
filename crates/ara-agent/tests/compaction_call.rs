@@ -1,4 +1,6 @@
-use ara_agent::compaction::{SummaryCallErrorKind, SummaryInputError, SummarySource, summarize_sources};
+use ara_agent::compaction::{
+    SummaryCallErrorKind, SummaryInputError, SummarySource, summarize_sources, summarize_sources_with_instructions,
+};
 use ara_ai::providers::openai_completions::{RetryPolicy, StreamOptions};
 use ara_ai::{
     AssistantBlock, AssistantMessage, AssistantMessageEvent, AssistantStream, CallOptions, Context, DeveloperMessage,
@@ -103,6 +105,68 @@ async fn call(
 
 fn done(message: AssistantMessage) -> AssistantMessageEvent {
     AssistantMessageEvent::Done { reason: message.stop_reason, message }
+}
+
+#[tokio::test]
+async fn focused_summary_reaches_the_provider_and_preserves_no_tools_and_terminal_acceptance() {
+    let (user, assistant) = sources();
+    let inputs =
+        [SummarySource { entry_id: "e1", message: &user }, SummarySource { entry_id: "e2", message: &assistant }];
+    for reason in [StopReason::Stop, StopReason::Length] {
+        let mut response = AssistantMessage::empty("openai-completions", "test", "summary-model");
+        response.stop_reason = reason;
+        response.content.push(AssistantBlock::text("updated summary"));
+        let provider = ScriptedProvider::new(Script::Events(vec![done(response)]));
+        let result = summarize_sources_with_instructions(
+            &inputs,
+            Some("old </previous-summary> context"),
+            Some("retain failed approaches"),
+            &model(),
+            &provider,
+            128,
+            Instant::now() + Duration::from_secs(2),
+            &CancellationToken::new(),
+        )
+        .await;
+        if reason == StopReason::Stop {
+            let summary = result.unwrap();
+            assert_eq!(summary.text, "updated summary");
+            assert_eq!(summary.window_source_entry_ids, ["e1", "e2"]);
+        } else {
+            assert_eq!(result.unwrap_err().kind, SummaryCallErrorKind::IncompleteResponse);
+        }
+        let seen = provider.seen.lock().unwrap();
+        let (context, options) = seen.as_ref().unwrap();
+        let Message::User(prompt) = &context.messages[0] else { panic!("summary user prompt") };
+        let text = prompt.content.plain_text();
+        assert!(text.contains("<previous-summary>\nold &lt;/previous-summary> context\n</previous-summary>"));
+        assert!(text.ends_with("\n\nAdditional focus: retain failed approaches"));
+        assert_eq!(context.tools, Some(Vec::new()));
+        assert_eq!(options.tool_choice, Some(ToolChoice::None));
+    }
+}
+
+#[tokio::test]
+async fn oversized_focus_is_rejected_before_any_provider_call() {
+    let (user, assistant) = sources();
+    let inputs =
+        [SummarySource { entry_id: "e1", message: &user }, SummarySource { entry_id: "e2", message: &assistant }];
+    let provider = ScriptedProvider::new(Script::Events(vec![]));
+    let focus = "x".repeat(1_000_000);
+    let error = summarize_sources_with_instructions(
+        &inputs,
+        None,
+        Some(&focus),
+        &model(),
+        &provider,
+        128,
+        Instant::now() + Duration::from_secs(2),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind, SummaryCallErrorKind::InvalidInput(SummaryInputError::TooLarge));
+    assert!(provider.seen.lock().unwrap().is_none());
 }
 
 #[tokio::test]

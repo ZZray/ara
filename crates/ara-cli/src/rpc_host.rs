@@ -5,6 +5,7 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
+use super::rpc_host_settings::AutoCompactionPolicy;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -300,19 +301,33 @@ impl Session {
     }
 
     fn public_messages(journal: &SessionJournal) -> Vec<Value> {
-        journal
-            .branch()
-            .into_iter()
-            .filter_map(|entry| {
-                entry
-                    .bash_execution()
-                    .map(|bash| bash.event_message())
-                    .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
-                    .or_else(|| {
-                        entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
-                    })
+        let branch = journal.branch();
+        let summary = journal.compacted_context_projection().ok().and_then(|projection| {
+            projection.items.into_iter().find_map(|item| match item {
+                ara_session::CompactedContextItem::Summary(summary) => Some(summary),
+                _ => None,
             })
-            .collect()
+        });
+        let start = summary
+            .as_ref()
+            .and_then(|summary| branch.iter().position(|entry| entry.id == summary.first_kept_entry_id))
+            .unwrap_or(0);
+        let mut messages = Vec::new();
+        if let Some(summary) = summary {
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&summary.timestamp)
+                .ok()
+                .map(|timestamp| timestamp.timestamp_millis());
+            messages.push(json!({"role":"compactionSummary","summary":summary.summary,
+                "tokensBefore":summary.tokens_before,"method":"soft","timestamp":timestamp}));
+        }
+        messages.extend(branch[start..].iter().filter_map(|entry| {
+            entry
+                .bash_execution()
+                .map(|bash| bash.event_message())
+                .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
+                .or_else(|| entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone()))
+        }));
+        messages
     }
 }
 
@@ -519,6 +534,11 @@ struct Host {
     bash_dispatcher: Arc<BashDispatcher>,
     pending_bash: Vec<PendingBash>,
     bash_error: Option<String>,
+    compaction_policy: AutoCompactionPolicy,
+    is_compacting: bool,
+    auto_compaction_pending: bool,
+    // A failed/no-progress pass is not billed again for the same source view.
+    auto_compaction_checked: Option<(String, Option<String>, usize)>,
 }
 
 fn same_session_file(left: &Session, right: &Session) -> bool {
@@ -552,6 +572,164 @@ fn bash_result_value(result: &ara_tools::bash::BashResult) -> Value {
 }
 
 impl Host {
+    async fn compact(&mut self, focus: Option<&str>) -> Result<Value> {
+        use ara_agent::compaction::{SummarySource, select_whole_turn_cut, summarize_sources_with_instructions};
+        use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+        if self.session.persistence_error.lock().unwrap().is_some() {
+            bail!("session persistence failed; restart from the journal before compacting");
+        }
+        if focus.is_some_and(|focus| focus.len() > 1_000_000) {
+            bail!("compaction instructions exceed the summary input limit");
+        }
+        // Compaction keeps Agent queues; explicit abort normally suppresses
+        // autonomous draining, so restore the previous intent after cleanup.
+        let drain = self.drain_queues;
+        self.is_compacting = true;
+        self.abort().await;
+        let result = async {
+            if self.connection.is_cancelled() {
+                bail!("Request was aborted");
+            }
+            let current = self.agent.messages().await;
+            // Check recovery/admission before billing or changing the journal.
+            self.agent.replace_idle_messages(current.clone())?;
+            let snapshot = self.session.journal.lock().await.projected_compaction_snapshot()?;
+            let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
+            let sources = snapshot
+                .messages
+                .iter()
+                .map(|message| SummarySource { entry_id: message.entry_id.as_str(), message: &message.message })
+                .collect::<Vec<_>>();
+            let cut = select_whole_turn_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
+                .map_err(|error| anyhow::anyhow!("{error}"))?
+                .context("No earlier completed turn can be compacted with the current keep-token budget")?;
+            let tokens_before = count_messages(&current, MessageCountOptions::default()) as u64;
+            let seconds = self.max_time.unwrap_or(120.0).clamp(0.0, 120.0);
+            let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+            let max_tokens = self.config.max_tokens.unwrap_or(13_107).min(13_107);
+            let accepted = summarize_sources_with_instructions(
+                &sources[..cut.candidate.first_kept_index],
+                previous,
+                focus,
+                &self.config.model,
+                self.config.provider.as_ref(),
+                max_tokens,
+                deadline,
+                &self.connection,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Compaction summary failed: {error}"))?;
+            let mut journal = self.session.journal.lock().await;
+            let old_leaf = journal.leaf_id().map(str::to_owned);
+            if let Err(error) = journal.commit_projected_compaction(
+                &snapshot,
+                &accepted.text,
+                &cut.candidate.first_kept_entry_id,
+                &accepted.window_source_entry_ids,
+                tokens_before,
+            ) {
+                if matches!(error, ara_session::CompactionCommitError::Storage(_)) {
+                    *self.session.persistence_error.lock().unwrap() = Some(error.to_string());
+                    self.connection.cancel();
+                }
+                return Err(error.into());
+            }
+            if let Err(error) = self.agent.replace_idle_messages(journal.model_context()) {
+                *self.session.persistence_error.lock().unwrap() = Some(error.to_string());
+                self.connection.cancel();
+                return Err(error.into());
+            }
+            *self.session.messages.lock().unwrap() = Session::public_messages(&journal);
+            // Reader-only Bash remains independent during the summary. Hold
+            // admission while changing its original owner's branch target.
+            let mut dispatcher_target = self.bash_dispatcher.current.lock().unwrap();
+            for target in self.bash_targets.iter().filter_map(Weak::upgrade) {
+                let mut target = target.lock().unwrap();
+                if Arc::ptr_eq(&target.session, &self.session) && matches!(target.destination, BashDestination::Current)
+                {
+                    target.destination = BashDestination::Branch { parent: old_leaf.clone() };
+                }
+            }
+            let target = Arc::new(Mutex::new(BashTarget {
+                session: self.session.clone(),
+                destination: BashDestination::Current,
+            }));
+            *dispatcher_target = target.clone();
+            self.bash_targets.retain(|target| target.strong_count() != 0);
+            self.bash_targets.push(Arc::downgrade(&target));
+            self.bash_target = target;
+            // The rewritten context invalidates stateful provider replay.
+            self.config.provider = self.sessions.provider.build();
+            Ok(json!({"summary":accepted.text,"firstKeptEntryId":cut.candidate.first_kept_entry_id,
+                "tokensBefore":tokens_before}))
+        }
+        .await;
+        self.is_compacting = false;
+        self.auto_compaction_pending = false;
+        self.drain_queues = drain && !self.connection.is_cancelled();
+        result
+    }
+
+    async fn maybe_auto_compact(&mut self, pending: &[Message]) {
+        use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+        let threshold = self.sessions.args.compact_threshold;
+        if !self.compaction_policy.enabled()
+            || threshold == 0
+            || self.active.is_some()
+            || self.connection.is_cancelled()
+        {
+            return;
+        }
+        let messages = self.agent.messages().await;
+        // Fixed threshold uses billed context floored by the stored estimate.
+        // The projected transcript contains only kept/post-summary messages.
+        let billed = messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::Assistant(message)
+                    if message.model == self.config.model.id
+                        && message.provider == self.config.model.provider
+                        && matches!(message.stop_reason, ara_ai::StopReason::Stop | ara_ai::StopReason::Length) =>
+                {
+                    Some(
+                        message
+                            .usage
+                            .input
+                            .unwrap_or(0)
+                            .saturating_add(message.usage.cache_read.unwrap_or(0))
+                            .saturating_add(message.usage.cache_write.unwrap_or(0)),
+                    )
+                }
+                Message::Assistant(_) => Some(0),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let stored = count_messages(&messages, MessageCountOptions::default());
+        let pending_tokens = count_messages(pending, MessageCountOptions::default());
+        let tokens = stored.max(usize::try_from(billed).unwrap_or(usize::MAX)).saturating_add(pending_tokens);
+        if tokens <= threshold {
+            return;
+        }
+        let key = {
+            let journal = self.session.journal.lock().await;
+            (journal.session_id().to_owned(), journal.leaf_id().map(str::to_owned), tokens)
+        };
+        if self.auto_compaction_checked.as_ref() == Some(&key) {
+            return;
+        }
+        self.auto_compaction_checked = Some(key);
+        self.output.frame(json!({"type":"auto_compaction_start","reason":"threshold","action":"context-full"}));
+        let result = self.compact(None).await;
+        let mut event = json!({"type":"auto_compaction_end","action":"context-full",
+            "aborted":self.connection.is_cancelled(),"willRetry":false});
+        match result {
+            Ok(result) => event["result"] = result,
+            Err(error) => event["errorMessage"] = json!(super::sanitize_text(&error.to_string())),
+        }
+        self.output.frame(event);
+    }
+
     async fn append_bash(&mut self, pending: PendingBash) -> Result<()> {
         let (session, destination) = {
             let target = pending.target.lock().unwrap();
@@ -949,7 +1127,10 @@ impl Host {
                 None
             }
             Ok(Ok(Some(report))) => match report.end {
-                RunEnd::Completed => None,
+                RunEnd::Completed => {
+                    self.auto_compaction_pending = true;
+                    None
+                }
                 RunEnd::Aborted => Some("Request was aborted".into()),
                 RunEnd::Deadline => Some("Deadline exceeded".into()),
                 RunEnd::ModelCallBudget => Some("Model call limit reached".into()),
@@ -970,12 +1151,14 @@ impl Host {
             .map(|error| format!("Session persistence failed ({error}); restart from the journal"))
             .or(error);
         if let Some(error) = error {
+            self.auto_compaction_pending = false;
             self.drain_queues = false;
             self.output.response(&active.command, None, Some(error));
         }
     }
 
     async fn abort(&mut self) {
+        self.auto_compaction_pending = false;
         self.drain_queues = false;
         if let Some(mut active) = self.active.take() {
             // Covers the interval before Agent::enter installs its own token.
@@ -985,14 +1168,23 @@ impl Host {
             self.completed(active, result);
         }
         self.flush_pending_bash().await;
+        // An already-settling Run can complete successfully after cancellation.
+        // An explicit abort must still suppress new automatic maintenance.
+        self.auto_compaction_pending = false;
     }
 
-    fn reconcile_queues(&mut self) {
+    async fn reconcile_queues(&mut self) {
         if self.active.is_none()
             && self.drain_queues
             && self.agent.has_queued_messages()
             && !self.connection.is_cancelled()
         {
+            let mut pending = self.agent.peek_steering_inputs();
+            if self.agent.steering_mode() == QueueMode::OneAtATime {
+                pending.truncate(1);
+            }
+            let pending = pending.into_iter().map(|input| input.model).collect::<Vec<_>>();
+            self.maybe_auto_compact(&pending).await;
             let command = Command::new(wire(json!({"type":"prompt"})));
             if let Err(error) = self.start(None, command) {
                 self.drain_queues = false;
@@ -1007,10 +1199,10 @@ impl Host {
         let model = &self.config.model;
         let mut state = json!({
             "model":{"id":model.id,"provider":model.provider,"api":model.api,"baseUrl":model.base_url,"reasoning":model.reasoning},
-            "isStreaming":self.active.is_some(),"isCompacting":false,
+            "isStreaming":self.active.is_some(),"isCompacting":self.is_compacting,
             "steeringMode":mode_name(self.agent.steering_mode()),"followUpMode":mode_name(self.agent.follow_up_mode()),
             "interruptMode":"wait", "sessionId":self.session.header["id"],
-            "autoCompactionEnabled":false,"fastModeEnabled":false,"fastModeActive":false,
+            "autoCompactionEnabled":self.compaction_policy.enabled(),"fastModeEnabled":false,"fastModeActive":false,
             "tokensPerSecond":null,"messageCount":self.session.messages.lock().unwrap().len(),
             "queuedMessageCount":steering+follow_up,"todoPhases":[],"systemPrompt":self.config.system_prompt,
             "dumpTools":self.config.tools.iter().map(|tool| tool.definition()).collect::<Vec<_>>()
@@ -1029,11 +1221,29 @@ impl Host {
         if let Err(error) = result {
             self.output.response(&command, None, Some(error.to_string()));
         }
-        self.reconcile_queues();
+        self.reconcile_queues().await;
     }
 
     async fn execute(&mut self, command: &Command) -> Result<()> {
         match command.kind.as_str() {
+            "compact" => {
+                let focus = command
+                    .frame
+                    .get("customInstructions")
+                    .map(|_| command.string("customInstructions"))
+                    .transpose()?;
+                let result = self.compact(focus.as_deref()).await?;
+                self.output.response(command, Some(result), None);
+            }
+            "set_auto_compaction" => {
+                let enabled = match command.frame.get("enabled") {
+                    Some(WireValue::Bool(enabled)) => *enabled,
+                    _ => bail!("set_auto_compaction requires boolean enabled"),
+                };
+                self.compaction_policy.set_enabled(enabled)?;
+                self.auto_compaction_checked = None;
+                self.output.response(command, None, None);
+            }
             "bash" => self.bash_dispatcher.dispatch(Command {
                 id: command.id.clone(),
                 kind: command.kind.clone(),
@@ -1247,6 +1457,7 @@ impl Host {
                         self.agent.follow_up_input(input);
                     }
                 } else {
+                    self.maybe_auto_compact(std::slice::from_ref(&input.model)).await;
                     self.start(
                         Some(input),
                         Command { id: command.id.clone(), kind: command.kind.clone(), frame: command.frame.clone() },
@@ -1256,6 +1467,7 @@ impl Host {
             "abort_and_prompt" => {
                 let message = command.message()?;
                 self.abort().await;
+                self.maybe_auto_compact(std::slice::from_ref(&message)).await;
                 self.output.response(command, None, None);
                 self.drain_queues = true;
                 self.start(
@@ -1411,6 +1623,7 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
+    let compaction_policy = AutoCompactionPolicy::load(&super::ara_home().join("agent"))?;
     let connection = CancellationToken::new();
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
@@ -1462,6 +1675,10 @@ where
         bash_dispatcher: bash_dispatcher.clone(),
         pending_bash: Vec::new(),
         bash_error: None,
+        compaction_policy,
+        is_compacting: false,
+        auto_compaction_pending: false,
+        auto_compaction_checked: None,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
@@ -1511,7 +1728,10 @@ where
     let mut eof = false;
     loop {
         host.flush_pending_bash().await;
-        host.reconcile_queues();
+        if std::mem::take(&mut host.auto_compaction_pending) && !eof {
+            host.maybe_auto_compact(&[]).await;
+        }
+        host.reconcile_queues().await;
         if eof && host.active.is_none() && host.bash_dispatcher.is_empty() {
             break;
         }
@@ -1684,6 +1904,10 @@ mod tests {
             bash_dispatcher,
             pending_bash: Vec::new(),
             bash_error: None,
+            compaction_policy: AutoCompactionPolicy::isolated(true),
+            is_compacting: false,
+            auto_compaction_pending: false,
+            auto_compaction_checked: None,
         };
         (host, rx)
     }
