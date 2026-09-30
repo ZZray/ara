@@ -247,3 +247,10 @@ point is subsequently accepted on `97567f0`: Windows 1,148/0/1, Linux 1,151/0/1,
 RPC 26/26 and an independently audited three-Run actual task. Continue the
 remaining full Host plan. RPC remains 14/42 bounded
 implementations, with full command parity and P1-P6 still open.
+
+The subsequent [native query/action batch](evidence/rpc-native-queries.md) adds
+registered Skill discovery, raw branch selectors, bounded statistics and Session
+naming. RPC now has seventeen bounded command implementations. Current combined
+code is tested/audited WIP; defer its final actual-task acceptance to the coherent
+module checkpoint. Continue native fork/paging and the remaining Host contracts,
+then share the module's final gates rather than repeating each tiny point.

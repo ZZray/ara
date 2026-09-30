@@ -211,6 +211,10 @@ struct Session {
     messages: Mutex<Vec<Value>>,
     partial: Mutex<Option<Value>>,
     persistence_error: Mutex<Option<String>>,
+    name: Mutex<Option<String>>,
+    // A --no-session host still owns native IDs for its consumed user inputs.
+    // Disk Sessions query their original journal entries, including side branches.
+    ephemeral_user_entries: Mutex<Vec<Value>>,
     header: Value,
     file: Option<std::path::PathBuf>,
 }
@@ -236,6 +240,10 @@ impl Session {
                 .collect()
         };
         Arc::new(Self {
+            name: Mutex::new(
+                journal.as_ref().map(|journal| journal.title().title.clone()).filter(|name| !name.is_empty()),
+            ),
+            ephemeral_user_entries: Mutex::new(Vec::new()),
             file: journal.as_ref().map(|journal| journal.path().into()),
             journal: tokio::sync::Mutex::new(journal),
             messages: Mutex::new(public_messages),
@@ -294,13 +302,29 @@ impl AgentEventSink for RunSink {
         let mut public = event.full();
         match &event {
             AgentEvent::MessageEnd { message } => {
-                if let Some(journal) = self.session.journal.lock().await.as_mut()
-                    && let Err(error) = journal.append_message(message)
-                {
-                    // The loop awaits this sink before starting tools. A failed
-                    // assistant receipt therefore cancels before new effects.
-                    self.persistence_failed(error);
+                let mut journal = self.session.journal.lock().await;
+                if let Some(journal) = journal.as_mut() {
+                    if let Err(error) = journal.append_message(message) {
+                        // The loop awaits this sink before starting tools. A failed
+                        // assistant receipt therefore cancels before new effects.
+                        self.persistence_failed(error);
+                    }
+                } else if let Message::User(_) = message {
+                    let text = branch_user_message(&json!({"type":"message","message":public["message"]}))
+                        .and_then(|entry| entry["text"].as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    if !text.is_empty() {
+                        let mut entries = self.session.ephemeral_user_entries.lock().unwrap();
+                        let id = loop {
+                            let id = uuid::Uuid::new_v4().simple().to_string()[24..].to_owned();
+                            if !entries.iter().any(|entry| entry["entryId"] == id) {
+                                break id;
+                            }
+                        };
+                        entries.push(json!({"entryId":id,"text":text}));
+                    }
                 }
+                drop(journal);
                 self.completed_message(public["message"].clone());
             }
             AgentEvent::MessageStart { message: Message::Assistant(_) } | AgentEvent::MessageUpdate { .. } => {
@@ -360,6 +384,28 @@ struct Host {
 }
 
 impl Host {
+    fn available_commands(&self) -> Vec<Value> {
+        // Fixed available-commands.ts:59-68 advertises the registered Skill
+        // snapshot, including hidden entries. Body loading belongs to prompt
+        // admission; a metadata query must not reopen the source file.
+        self.skills
+            .iter()
+            .map(|skill| {
+                let description = if skill.description.is_empty() {
+                    format!("Run {} skill", skill.name)
+                } else {
+                    skill.description.clone()
+                };
+                json!({"name":format!("skill:{}", skill.name),"description":description,
+                    "input":{"hint":"arguments"},"source":"skill"})
+            })
+            .collect()
+    }
+
+    fn emit_available_commands(&self) {
+        self.output.frame(json!({"type":"available_commands_update","commands":self.available_commands()}));
+    }
+
     fn adopt(
         &mut self,
         journal: Option<SessionJournal>,
@@ -560,6 +606,9 @@ impl Host {
         if let Some(file) = &self.session.file {
             state["sessionFile"] = json!(file);
         }
+        if let Some(name) = &*self.session.name.lock().unwrap() {
+            state["sessionName"] = json!(name);
+        }
         state
     }
 
@@ -583,12 +632,81 @@ impl Host {
             "get_messages" => {
                 self.output.response(command, Some(json!({"messages":*self.session.messages.lock().unwrap()})), None)
             }
+            "get_session_stats" => {
+                let journal = self.session.journal.lock().await;
+                let messages = if let Some(journal) = journal.as_ref()
+                    && journal.branch().iter().any(|entry| entry.kind == "compaction")
+                {
+                    let projection =
+                        journal.compacted_context_projection().context("projecting compacted Session statistics")?;
+                    let entries = journal
+                        .entries()
+                        .iter()
+                        .map(|entry| (entry.id.as_str(), entry))
+                        .collect::<std::collections::HashMap<_, _>>();
+                    projection
+                        .items
+                        .into_iter()
+                        .map(|item| match item {
+                            ara_session::CompactedContextItem::Summary(_) => json!({"role":"compactionSummary"}),
+                            ara_session::CompactedContextItem::Message(sourced) => entries
+                                .get(sourced.entry_id.as_str())
+                                .and_then(|entry| entry.skill_prompt())
+                                .map_or_else(
+                                    || AgentEvent::MessageEnd { message: sourced.message }.full()["message"].clone(),
+                                    |prompt| prompt.event_message(),
+                                ),
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    self.session.messages.lock().unwrap().clone()
+                };
+                let mut stats = session_stats(&messages);
+                stats["sessionId"] = self.session.header["id"].clone();
+                if let Some(file) = &self.session.file {
+                    stats["sessionFile"] = json!(file);
+                }
+                self.output.response(command, Some(stats), None);
+            }
+            "get_branch_messages" => {
+                let journal = self.session.journal.lock().await;
+                let messages = if let Some(journal) = journal.as_ref() {
+                    journal.entries().iter().filter_map(|entry| branch_user_message(&entry.raw)).collect::<Vec<_>>()
+                } else {
+                    self.session.ephemeral_user_entries.lock().unwrap().clone()
+                };
+                self.output.response(command, Some(json!({"messages":messages})), None);
+            }
+            "set_session_name" => {
+                let name = command.string("name")?;
+                let name = ara_prompt::js::trim(&name);
+                if name.is_empty() {
+                    bail!("Session name cannot be empty");
+                }
+                let mut journal = self.session.journal.lock().await;
+                let applied = if let Some(journal) = journal.as_mut() {
+                    if !journal.set_session_name(name, "user")? {
+                        bail!("Session name cannot be empty");
+                    }
+                    journal.title().title.clone()
+                } else {
+                    let name = ara_session::normalize_session_name(name);
+                    if name.is_empty() {
+                        bail!("Session name cannot be empty");
+                    }
+                    name
+                };
+                *self.session.name.lock().unwrap() = Some(applied);
+                self.output.response(command, None, None);
+            }
             "get_last_assistant_text" => {
                 let text = last_assistant_text(&self.session.messages.lock().unwrap());
                 let data = text.map_or_else(|| json!({}), |text| json!({"text":text}));
                 self.output.response(command, Some(data), None);
             }
-            "get_available_commands" => self.output.response(command, Some(json!({"commands":[]})), None),
+            "get_available_commands" => {
+                self.output.response(command, Some(json!({"commands":self.available_commands()})), None)
+            }
             "set_steering_mode" | "set_follow_up_mode" => {
                 let mode = command.queue_mode()?;
                 if command.kind == "set_steering_mode" {
@@ -615,14 +733,14 @@ impl Host {
             "new_session" => {
                 let parent = command.frame.get("parentSession").map(|_| command.string("parentSession")).transpose()?;
                 self.new_session(parent.as_deref()).await?;
-                self.output.frame(json!({"type":"available_commands_update","commands":[]}));
+                self.emit_available_commands();
                 self.output.response(command, Some(json!({"cancelled":false})), None);
             }
             "switch_session" => {
                 let path = PathBuf::from(command.string("sessionPath")?);
                 let cancelled = self.switch_session(path).await?;
                 if !cancelled {
-                    self.output.frame(json!({"type":"available_commands_update","commands":[]}));
+                    self.emit_available_commands();
                 }
                 self.output.response(command, Some(json!({"cancelled":cancelled})), None);
             }
@@ -696,6 +814,45 @@ fn mode_name(mode: QueueMode) -> &'static str {
         QueueMode::All => "all",
         QueueMode::OneAtATime => "one-at-a-time",
     }
+}
+
+fn branch_user_message(entry: &Value) -> Option<Value> {
+    if entry["type"] != "message" || entry["message"]["role"] != "user" {
+        return None;
+    }
+    let content = &entry["message"]["content"];
+    let text = content.as_str().map(str::to_owned).unwrap_or_else(|| {
+        content
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| block["type"] == "text")
+            .filter_map(|block| block["text"].as_str())
+            .collect::<String>()
+    });
+    (!text.is_empty()).then(|| json!({"entryId":entry["id"],"text":text}))
+}
+
+fn session_stats(messages: &[Value]) -> Value {
+    let count = |role: &str| messages.iter().filter(|message| message["role"] == role).count();
+    let assistants = messages.iter().filter(|message| message["role"] == "assistant").collect::<Vec<_>>();
+    // Any missing provider bucket makes that aggregate unknown. A successful
+    // response without pricing metadata is not a zero-cost response.
+    let sum = |field: &str| {
+        assistants.iter().try_fold(0u64, |sum, message| sum.checked_add(message["usage"][field].as_u64()?))
+    };
+    let cost = assistants.iter().try_fold(0.0, |sum, message| Some(sum + message["usage"]["cost"]["total"].as_f64()?));
+    let tool_calls = assistants
+        .iter()
+        .map(|message| {
+            message["content"].as_array().into_iter().flatten().filter(|block| block["type"] == "toolCall").count()
+        })
+        .sum::<usize>();
+    json!({"userMessages":count("user"),"assistantMessages":assistants.len(),
+        "toolCalls":tool_calls,"toolResults":count("toolResult"),"totalMessages":messages.len(),
+        "tokens":{"input":sum("input"),"output":sum("output"),"reasoning":sum("reasoningTokens"),
+            "cacheRead":sum("cacheRead"),"cacheWrite":sum("cacheWrite"),"total":sum("totalTokens")},
+        "cost":cost,"premiumRequests":if assistants.is_empty() {json!(0)} else {Value::Null}})
 }
 
 // Fixed session/messages.ts:194-246 compares provider replay values rather
@@ -805,7 +962,7 @@ where
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
-    output.frame(json!({"type":"available_commands_update","commands":[]}));
+    host.emit_available_commands();
     let (input_tx, mut input_rx) = mpsc::unbounded_channel();
     let reader_output = output.clone();
     let reader_cancel = connection.clone();
@@ -967,6 +1124,55 @@ mod tests {
             drain_queues: false,
         };
         (host, rx)
+    }
+
+    #[test]
+    fn metadata_keeps_hidden_skills_and_falls_back_without_source_fields() {
+        let (mut host, _) = fixture();
+        host.skills.push(LoadedSkill {
+            name: "隐藏🦀".into(),
+            description: String::new(),
+            file_path: PathBuf::from("private/SKILL.md"),
+            base_dir: PathBuf::from("private"),
+            source: "fixture:project".into(),
+            hide: true,
+            meta: ara_discovery::SourceMeta::new(
+                "fixture",
+                std::path::Path::new("private"),
+                ara_discovery::Level::Project,
+            ),
+        });
+        assert_eq!(
+            host.available_commands(),
+            vec![json!({"name":"skill:隐藏🦀",
+            "description":"Run 隐藏🦀 skill","input":{"hint":"arguments"},"source":"skill"})]
+        );
+    }
+
+    #[test]
+    fn stats_preserve_unknown_buckets_and_custom_identity() {
+        let messages = vec![
+            json!({"role":"user"}),
+            json!({"role":"custom","customType":"skill-prompt"}),
+            json!({"role":"assistant","content":[{"type":"toolCall"}],
+                "usage":{"input":5,"output":2,"cacheRead":0,"totalTokens":7,"cost":{"total":0.5}}}),
+            json!({"role":"toolResult"}),
+            json!({"role":"assistant","content":[],"usage":{"input":3,"totalTokens":3}}),
+        ];
+        let stats = session_stats(&messages);
+        assert_eq!(stats["userMessages"], 1);
+        assert_eq!(stats["assistantMessages"], 2);
+        assert_eq!(stats["toolCalls"], 1);
+        assert_eq!(stats["toolResults"], 1);
+        assert_eq!(stats["totalMessages"], 5);
+        assert_eq!(
+            stats["tokens"],
+            json!({"input":8,"output":null,"reasoning":null,
+            "cacheRead":null,"cacheWrite":null,"total":10})
+        );
+        assert!(stats["cost"].is_null());
+        assert!(stats["premiumRequests"].is_null());
+        assert_eq!(session_stats(&[])["cost"], 0.0);
     }
 
     #[tokio::test]

@@ -71,6 +71,31 @@ pub struct TitleSlot {
     pub updated_at: String,
 }
 
+/// OMP `SessionManager.#cleanTitle`: replace C0/C1 controls with spaces,
+/// collapse ASCII spaces, then apply ECMAScript `String.trim` whitespace.
+pub fn normalize_session_name(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len());
+    let mut previous_space = false;
+    for character in name.chars() {
+        let character =
+            if character <= '\u{001f}' || ('\u{007f}'..='\u{009f}').contains(&character) { ' ' } else { character };
+        if character == ' ' && previous_space {
+            continue;
+        }
+        normalized.push(character);
+        previous_space = character == ' ';
+    }
+    normalized
+        .trim_matches(|character| {
+            matches!(
+                character,
+                ' ' | '\u{00a0}' | '\u{1680}' | '\u{2000}'
+                    ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+            )
+        })
+        .to_owned()
+}
+
 /// Fixed-width first line (OMP `serializeTitleSlot`), exactly 256 bytes including `\n`.
 pub fn serialize_title_slot(slot: &TitleSlot) -> String {
     let line = |title: &str, pad: &str| {
@@ -441,8 +466,9 @@ impl SessionJournal {
             return Err(corrupt(CORRUPT_HEADER_MESSAGE.into()));
         };
         let title = title.unwrap_or_else(|| TitleSlot {
+            title: header.get("title").and_then(Value::as_str).unwrap_or_default().into(),
+            source: header.get("titleSource").and_then(Value::as_str).map(str::to_string),
             updated_at: header.get("timestamp").and_then(Value::as_str).unwrap_or_default().into(),
-            ..Default::default()
         });
         let damaged = malformed > 0 || bytes.last().is_some_and(|b| *b != b'\n');
         let leaf = entries.last().map(|e| e.id.clone());
@@ -473,6 +499,44 @@ impl SessionJournal {
     pub fn title(&self) -> &TitleSlot {
         &self.title
     }
+
+    /// Apply an explicit (`user`) or generated (`auto`) Session name.
+    /// Empty cleaned titles and an auto rename after a user name return false.
+    /// Like fixed OMP, a rename alone preserves lazy materialization. On disk,
+    /// this journal's atomic rewrite commits the slot, header and title-change
+    /// receipt together; a failed write restores the public in-memory name.
+    pub fn set_session_name(&mut self, name: &str, source: &str) -> Result<bool> {
+        if self.title.source.as_deref() == Some("user") && source == "auto" {
+            return Ok(false);
+        }
+        let name = normalize_session_name(name);
+        if name.is_empty() {
+            return Ok(false);
+        }
+        let previous_title = self.title.clone();
+        let previous_header = self.header.clone();
+        let timestamp = now_iso();
+        self.title = TitleSlot { title: name.clone(), source: Some(source.into()), updated_at: timestamp.clone() };
+        self.header["title"] = json!(name);
+        self.header["titleSource"] = json!(source);
+        let mut fields = serde_json::Map::new();
+        fields.insert("title".into(), json!(name));
+        fields.insert("source".into(), json!(source));
+        fields.insert("timestamp".into(), json!(timestamp));
+        if !previous_title.title.is_empty() {
+            fields.insert("previousTitle".into(), json!(previous_title.title));
+        }
+        // append_raw alone only appends a receipt to an existing file. The
+        // title slot and header need to change in the same durable operation.
+        self.rewrite_required |= self.materialized;
+        if let Err(error) = self.append_raw("title_change", fields) {
+            self.title = previous_title;
+            self.header = previous_header;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
@@ -709,7 +773,7 @@ impl SessionJournal {
                     })?;
                     messages.push(SourcedMessage { entry_id: entry.id.clone(), message });
                 }
-                "model_change" | "label" => {}
+                "model_change" | "label" | "title_change" => {}
                 _ => {
                     return Err(CompactionSourceError::UnsupportedContextEntry {
                         id: entry.id.clone(),
@@ -742,7 +806,7 @@ impl SessionJournal {
                         .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?;
                 }
                 "custom_message" if entry.message().is_some() => {}
-                "model_change" | "label" => {}
+                "model_change" | "label" | "title_change" => {}
                 "compaction" => {
                     let invalid = |field| CompactionProjectionError::InvalidField { id: entry.id.clone(), field };
                     let summary = entry.raw.get("summary").and_then(Value::as_str).ok_or_else(|| invalid("summary"))?;
