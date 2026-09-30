@@ -7,10 +7,10 @@ pub mod event;
 pub mod tokenizer;
 pub mod tool;
 
-pub use agent::{Agent, AgentError, QueueMode};
+pub use agent::{Agent, AgentError, AgentInput, QueueMode};
 pub use agent_loop::{
     AgentConfig, LoopError, LoopHooks, NoHooks, RunEnd, RunReport, UnpairedTail, agent_loop, agent_loop_continue,
-    execute_tool_calls, unpaired_tool_call_tail,
+    agent_loop_inputs, execute_tool_calls, unpaired_tool_call_tail,
 };
 pub use event::{AgentEvent, AgentEventSink, NullSink, RecordingSink};
 pub use tool::{AgentTool, Concurrency, ToolDecision, ToolError, ToolOutput, UpdateFn};

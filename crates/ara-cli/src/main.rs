@@ -1387,7 +1387,7 @@ async fn run(args: Args) -> Result<i32> {
         };
         let max_time = args.max_time;
         let sessions = rpc_host::SessionFactory { dir: session_dir, cwd, provider: provider_factory, args, mcp_config };
-        return rpc_host::run(config, context, journal, header, max_time, sessions).await;
+        return rpc_host::run(config, skills, context, journal, header, max_time, sessions).await;
     }
     // Only RPC retains the factory for future logical Sessions. In print mode
     // dropping it also closes the observer channel once the provider is dropped.

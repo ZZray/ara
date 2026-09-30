@@ -4,6 +4,7 @@ use ara_ai::{AssistantMessageEvent, JsonObject, Message, ToolResultMessage};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
+use crate::agent::AgentInput;
 use crate::tool::ToolOutput;
 
 // Events are short-lived values handed to the sink; boxing large variants
@@ -135,6 +136,14 @@ impl AgentEvent {
 #[async_trait]
 pub trait AgentEventSink: Send + Sync {
     async fn emit(&self, event: AgentEvent);
+
+    /// Receives one consumed input with its opaque host provenance. The
+    /// default preserves the original public MessageStart/MessageEnd pair.
+    /// Both calls are awaited before model/tool execution continues.
+    async fn emit_input(&self, input: AgentInput) {
+        self.emit(AgentEvent::MessageStart { message: input.model.clone() }).await;
+        self.emit(AgentEvent::MessageEnd { message: input.model }).await;
+    }
 }
 
 /// Sink that discards events.
@@ -161,6 +170,50 @@ impl AgentEventSink for RecordingSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn default_owned_input_callback_awaits_original_message_events() {
+        struct GateSink {
+            events: tokio::sync::Mutex<Vec<AgentEvent>>,
+            started: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+        #[async_trait]
+        impl AgentEventSink for GateSink {
+            async fn emit(&self, event: AgentEvent) {
+                let start = matches!(event, AgentEvent::MessageStart { .. });
+                self.events.lock().await.push(event);
+                if start {
+                    self.started.notify_one();
+                    self.release.notified().await;
+                }
+            }
+        }
+        let model = Message::User(ara_ai::UserMessage {
+            content: ara_ai::UserContent::Text("same model projection".into()),
+            synthetic: None,
+            timestamp: 42,
+        });
+        let input = AgentInput { model: model.clone(), provenance: Some(std::sync::Arc::new(json!({"host":"only"}))) };
+        let sink = std::sync::Arc::new(GateSink {
+            events: tokio::sync::Mutex::new(Vec::new()),
+            started: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let waiting = {
+            let sink = sink.clone();
+            tokio::spawn(async move { sink.emit_input(input).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(3), sink.started.notified()).await.unwrap();
+        assert_eq!(*sink.events.lock().await, [AgentEvent::MessageStart { message: model.clone() }]);
+        assert!(!waiting.is_finished());
+        sink.release.notify_one();
+        waiting.await.unwrap();
+        assert_eq!(
+            *sink.events.lock().await,
+            [AgentEvent::MessageStart { message: model.clone() }, AgentEvent::MessageEnd { message: model }]
+        );
+    }
 
     #[test]
     fn event_projection_hides_only_assistant_replay_data() {

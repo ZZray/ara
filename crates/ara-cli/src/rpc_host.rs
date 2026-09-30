@@ -6,15 +6,16 @@
 //! queries use completed event messages, never the Agent transcript lock.
 
 use anyhow::{Context as _, Result, bail};
-use ara_agent::{Agent, AgentConfig, AgentError, AgentEvent, AgentEventSink, QueueMode, RunEnd, RunReport};
+use ara_agent::{Agent, AgentConfig, AgentError, AgentEvent, AgentEventSink, AgentInput, QueueMode, RunEnd, RunReport};
 use ara_ai::{ImageContent, Message, UserBlock, UserContent, UserMessage};
+use ara_discovery::LoadedSkill;
 use ara_rpc::{
     WireValue,
     frame::*,
     input::{InputItem, RpcInputReader},
     writer::RpcOutput,
 };
-use ara_session::SessionJournal;
+use ara_session::{SessionJournal, UserSkillPrompt};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
@@ -51,7 +52,7 @@ pub(super) struct SessionFactory {
 }
 
 impl SessionFactory {
-    async fn config(&self, current: &AgentConfig, reset: bool) -> Result<AgentConfig> {
+    async fn config(&self, current: &AgentConfig, reset: bool) -> Result<(AgentConfig, Vec<LoadedSkill>)> {
         let setup = super::prepare_cli_setup(
             &self.args,
             &self.cwd,
@@ -67,7 +68,7 @@ impl SessionFactory {
             config.provider = self.provider.build();
             config.hooks = setup.hooks;
         }
-        Ok(config)
+        Ok((config, setup.skills))
     }
 }
 
@@ -118,6 +119,14 @@ impl Output {
             command.kind == "negotiate_protocol" && response.get("success") == Some(&WireValue::Bool(true));
         self.send(if negotiated { OutputItem::Negotiate(response) } else { OutputItem::Frame(response) });
     }
+
+    fn prompt_skipped(&self, command: &Command) {
+        let mut result = wire(json!({"type":"prompt_result","agentInvoked":false}));
+        if let (Some(id), WireValue::Object(fields)) = (&command.id, &mut result) {
+            fields.push(("id".into(), id.clone()));
+        }
+        self.send(OutputItem::Frame(result));
+    }
 }
 
 async fn write_output<W: AsyncWrite + Unpin>(
@@ -166,9 +175,6 @@ impl Command {
 
     fn message(&self) -> Result<Message> {
         let text = self.string("message")?;
-        if ara_discovery::parse_skill_invocation(&text).is_some() {
-            bail!("RPC Skill invocation is not implemented yet; use the line REPL");
-        }
         let images = match self.frame.get("images") {
             None => Vec::new(),
             Some(WireValue::Array(images)) => images
@@ -211,10 +217,24 @@ struct Session {
 
 impl Session {
     fn new(journal: Option<SessionJournal>, header: Value, messages: &[Message]) -> Arc<Self> {
-        let public_messages = messages
-            .iter()
-            .map(|message| AgentEvent::MessageEnd { message: message.clone() }.full()["message"].clone())
-            .collect();
+        // Native provenance comes from the active raw branch. Reopening never
+        // needs the historical Skill file, nor equality against model content.
+        let public_messages = if let Some(journal) = &journal {
+            journal
+                .branch()
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.skill_prompt().map(|prompt| prompt.event_message()).or_else(|| {
+                        entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
+                    })
+                })
+                .collect()
+        } else {
+            messages
+                .iter()
+                .map(|message| AgentEvent::MessageEnd { message: message.clone() }.full()["message"].clone())
+                .collect()
+        };
         Arc::new(Self {
             file: journal.as_ref().map(|journal| journal.path().into()),
             journal: tokio::sync::Mutex::new(journal),
@@ -232,31 +252,63 @@ struct RunSink {
     cancel: CancellationToken,
     connection: CancellationToken,
     terminal: Mutex<Option<Value>>,
+    messages: Mutex<Vec<Value>>,
+}
+
+fn skill_input(prompt: UserSkillPrompt) -> AgentInput {
+    AgentInput { model: prompt.model_message(), provenance: Some(Arc::new(prompt.event_message())) }
+}
+
+fn input_skill(input: &AgentInput) -> Option<UserSkillPrompt> {
+    let public = input.provenance.as_ref()?;
+    if public["role"] != "custom"
+        || public["customType"] != ara_session::SKILL_PROMPT_CUSTOM_TYPE
+        || public["attribution"] != "user"
+    {
+        return None;
+    }
+    Some(UserSkillPrompt {
+        content: serde_json::from_value(public.get("content")?.clone()).ok()?,
+        details: public.get("details").cloned(),
+        timestamp: public.get("timestamp")?.as_i64()?,
+    })
+}
+
+impl RunSink {
+    fn completed_message(&self, message: Value) {
+        self.messages.lock().unwrap().push(message.clone());
+        self.session.messages.lock().unwrap().push(message);
+        *self.session.partial.lock().unwrap() = None;
+    }
+
+    fn persistence_failed(&self, error: impl std::fmt::Display) {
+        *self.session.persistence_error.lock().unwrap() = Some(error.to_string());
+        self.cancel.cancel();
+        self.connection.cancel();
+    }
 }
 
 #[async_trait]
 impl AgentEventSink for RunSink {
     async fn emit(&self, event: AgentEvent) {
-        let public = event.full();
+        let mut public = event.full();
         match &event {
             AgentEvent::MessageEnd { message } => {
                 if let Some(journal) = self.session.journal.lock().await.as_mut()
                     && let Err(error) = journal.append_message(message)
                 {
-                    *self.session.persistence_error.lock().unwrap() = Some(error.to_string());
                     // The loop awaits this sink before starting tools. A failed
                     // assistant receipt therefore cancels before new effects.
-                    self.cancel.cancel();
-                    self.connection.cancel();
+                    self.persistence_failed(error);
                 }
-                self.session.messages.lock().unwrap().push(public["message"].clone());
-                *self.session.partial.lock().unwrap() = None;
+                self.completed_message(public["message"].clone());
             }
             AgentEvent::MessageStart { message: Message::Assistant(_) } | AgentEvent::MessageUpdate { .. } => {
                 *self.session.partial.lock().unwrap() = Some(public["message"].clone());
             }
             AgentEvent::AgentEnd { .. } => {
                 *self.session.partial.lock().unwrap() = None;
+                public["messages"] = json!(*self.messages.lock().unwrap());
                 // Fixed AgentSession defers the wire terminal until the prompt
                 // unwinds. The client may immediately start its next Run.
                 *self.terminal.lock().unwrap() = Some(public);
@@ -266,11 +318,28 @@ impl AgentEventSink for RunSink {
         }
         self.output.frame(public);
     }
+
+    async fn emit_input(&self, input: AgentInput) {
+        let Some(prompt) = input_skill(&input) else {
+            self.emit(AgentEvent::MessageStart { message: input.model.clone() }).await;
+            self.emit(AgentEvent::MessageEnd { message: input.model }).await;
+            return;
+        };
+        let public = prompt.event_message();
+        self.output.frame(json!({"type":"message_start","message":public}));
+        if let Some(journal) = self.session.journal.lock().await.as_mut()
+            && let Err(error) = journal.append_skill_prompt(&prompt)
+        {
+            self.persistence_failed(error);
+        }
+        self.completed_message(public.clone());
+        self.output.frame(json!({"type":"message_end","message":public}));
+    }
 }
 
 struct ActiveRun {
     cancel: CancellationToken,
-    task: JoinHandle<std::result::Result<RunReport, AgentError>>,
+    task: JoinHandle<std::result::Result<Option<RunReport>, AgentError>>,
     command: Command,
     sink: Arc<RunSink>,
 }
@@ -279,6 +348,7 @@ struct Host {
     agent: Arc<Agent>,
     session: Arc<Session>,
     config: AgentConfig,
+    skills: Vec<LoadedSkill>,
     max_time: Option<f64>,
     output: Output,
     connection: CancellationToken,
@@ -290,7 +360,14 @@ struct Host {
 }
 
 impl Host {
-    fn adopt(&mut self, journal: Option<SessionJournal>, header: Value, messages: Vec<Message>, config: AgentConfig) {
+    fn adopt(
+        &mut self,
+        journal: Option<SessionJournal>,
+        header: Value,
+        messages: Vec<Message>,
+        config: AgentConfig,
+        skills: Vec<LoadedSkill>,
+    ) {
         // Preparation is complete and the old owned Run is joined. Commit the
         // replacement once; each settled RunSink retains its original journal.
         let session = Session::new(journal, header, &messages);
@@ -300,12 +377,13 @@ impl Host {
         self.agent = agent;
         self.session = session;
         self.config = config;
+        self.skills = skills;
         self.drain_queues = false;
     }
 
     async fn new_session(&mut self, parent: Option<&str>) -> Result<()> {
         self.abort().await;
-        let config = self.sessions.config(&self.config, true).await?;
+        let (config, skills) = self.sessions.config(&self.config, true).await?;
         let mut journal = self
             .sessions
             .dir
@@ -321,7 +399,7 @@ impl Host {
             .as_ref()
             .map(|journal| journal.header().clone())
             .unwrap_or_else(|| super::ephemeral_header(&self.sessions.cwd, parent));
-        self.adopt(journal, header, Vec::new(), config);
+        self.adopt(journal, header, Vec::new(), config, skills);
         Ok(())
     }
 
@@ -347,18 +425,18 @@ impl Host {
         let unchanged = same_file
             && journal.header()["id"] == self.session.header["id"]
             && replay_messages_equal(&messages, &self.agent.messages().await);
-        let config = self.sessions.config(&self.config, !unchanged).await?;
+        let (config, skills) = self.sessions.config(&self.config, !unchanged).await?;
         // The launch-selected route is currently the only available model.
         // Keep unavailable saved selections intact, as fixed switch's fallback
         // does; role/catalog/thinking restoration remains a mapped WIP gap.
         super::recover_session(&mut journal)?;
         let messages = journal.model_context();
         let header = journal.header().clone();
-        self.adopt(Some(journal), header, messages, config);
+        self.adopt(Some(journal), header, messages, config, skills);
         Ok(false)
     }
 
-    fn start(&mut self, message: Option<Message>, command: Command) -> Result<()> {
+    fn start(&mut self, message: Option<AgentInput>, command: Command) -> Result<()> {
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before continuing");
         }
@@ -374,6 +452,7 @@ impl Host {
             cancel: cancel.clone(),
             connection: self.connection.clone(),
             terminal: Mutex::new(None),
+            messages: Mutex::new(Vec::new()),
         });
         let agent = self.agent.clone();
         let run_cancel = cancel.clone();
@@ -381,10 +460,16 @@ impl Host {
         // The serial Host owns the slot before it can accept another command.
         // ACK was enqueued by the caller before this task can emit AgentStart.
         let task = tokio::spawn(async move {
+            // Abort/new/switch may cancel the accepted dispatch before the
+            // spawned task enters Agent. Do not append an uninvoked prompt.
+            if run_cancel.is_cancelled() {
+                return Ok(None);
+            }
             match message {
-                Some(message) => agent.prompt_with_config(vec![message], config, run_cancel, run_sink).await,
+                Some(message) => agent.prompt_inputs_with_config(vec![message], config, run_cancel, run_sink).await,
                 None => agent.continue_run_with_config(config, run_cancel, run_sink).await,
             }
+            .map(Some)
         });
         self.active = Some(ActiveRun { cancel, task, command, sink });
         Ok(())
@@ -393,16 +478,20 @@ impl Host {
     fn completed(
         &mut self,
         active: ActiveRun,
-        result: std::result::Result<std::result::Result<RunReport, AgentError>, tokio::task::JoinError>,
+        result: std::result::Result<std::result::Result<Option<RunReport>, AgentError>, tokio::task::JoinError>,
     ) {
         // Both callers joined the task and removed the active slot. Publish
         // idle only after the Agent's running guard and transcript lock release.
         if let Some(terminal) = active.sink.terminal.lock().unwrap().take() {
             self.output.frame(terminal);
         }
-        let persistence_error = self.session.persistence_error.lock().unwrap().clone();
+        let persistence_error = active.sink.session.persistence_error.lock().unwrap().clone();
         let error = match result {
-            Ok(Ok(report)) => match report.end {
+            Ok(Ok(None)) => {
+                self.output.prompt_skipped(&active.command);
+                None
+            }
+            Ok(Ok(Some(report))) => match report.end {
                 RunEnd::Completed => None,
                 RunEnd::Aborted => Some("Request was aborted".into()),
                 RunEnd::Deadline => Some("Deadline exceeded".into()),
@@ -537,11 +626,25 @@ impl Host {
                 }
                 self.output.response(command, Some(json!({"cancelled":cancelled})), None);
             }
-            "prompt" | "abort_and_prompt" => {
-                let message = command.message()?;
-                if command.kind == "abort_and_prompt" {
-                    self.abort().await;
-                }
+            "prompt" => {
+                let text = command.string("message")?;
+                let deadline = self.max_time.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
+                let prepared = super::skill_command::prepare(&text, &text, &self.skills, &self.connection, deadline)
+                    .await
+                    .map_err(|error| match error {
+                        super::skill_command::PreparationError::Load(error) => {
+                            anyhow::anyhow!("Failed to load Skill: {error}")
+                        }
+                        super::skill_command::PreparationError::Cancelled => anyhow::anyhow!("Request was aborted"),
+                        super::skill_command::PreparationError::Deadline => anyhow::anyhow!("Deadline exceeded"),
+                    })?;
+                let recognized = prepared.is_some();
+                // Resolve the registered Skill before ordinary image parsing.
+                // Fixed RPC ignores images entirely for this entrypoint.
+                let input = match prepared {
+                    Some(prompt) => skill_input(prompt),
+                    None => command.message()?.into(),
+                };
                 let queue = if let Some(value) = command.frame.get("streamingBehavior") {
                     match value.as_string().and_then(|s| s.to_utf8().ok()).as_deref() {
                         Some("steer") => Some(true),
@@ -549,24 +652,34 @@ impl Host {
                         _ => bail!("streamingBehavior must be steer or followUp"),
                     }
                 } else {
-                    None
+                    recognized.then_some(true)
                 };
-                self.output.response(command, None, None);
+                self.output.response(command, recognized.then(|| json!({"agentInvoked":true})), None);
                 self.drain_queues = true;
                 if self.active.is_some()
                     && let Some(steer) = queue
                 {
                     if steer {
-                        self.agent.steer(message);
+                        self.agent.steer_input(input);
                     } else {
-                        self.agent.follow_up(message);
+                        self.agent.follow_up_input(input);
                     }
                 } else {
                     self.start(
-                        Some(message),
+                        Some(input),
                         Command { id: command.id.clone(), kind: command.kind.clone(), frame: command.frame.clone() },
                     )?;
                 }
+            }
+            "abort_and_prompt" => {
+                let message = command.message()?;
+                self.abort().await;
+                self.output.response(command, None, None);
+                self.drain_queues = true;
+                self.start(
+                    Some(message.into()),
+                    Command { id: command.id.clone(), kind: command.kind.clone(), frame: command.frame.clone() },
+                )?;
             }
             "extension_ui_response" | "host_tool_result" | "host_tool_update" | "host_uri_result" => {
                 bail!("RPC side channel is not implemented yet");
@@ -647,13 +760,14 @@ fn last_assistant_text(messages: &[Value]) -> Option<String> {
 
 pub async fn run(
     config: AgentConfig,
+    skills: Vec<LoadedSkill>,
     messages: Vec<Message>,
     journal: Option<SessionJournal>,
     header: Value,
     max_time: Option<f64>,
     sessions: SessionFactory,
 ) -> Result<i32> {
-    serve(tokio::io::stdin(), tokio::io::stdout(), config, messages, journal, header, max_time, sessions).await
+    serve(tokio::io::stdin(), tokio::io::stdout(), config, skills, messages, journal, header, max_time, sessions).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -661,6 +775,7 @@ async fn serve<R, W>(
     input: R,
     writer: W,
     config: AgentConfig,
+    skills: Vec<LoadedSkill>,
     messages: Vec<Message>,
     journal: Option<SessionJournal>,
     header: Value,
@@ -680,6 +795,7 @@ where
         agent: Agent::new(config.clone(), messages),
         session,
         config,
+        skills,
         max_time,
         output: output.clone(),
         connection: connection.clone(),
@@ -774,6 +890,10 @@ mod tests {
 
     #[async_trait]
     impl AgentEventSink for TerminalGate {
+        async fn emit_input(&self, input: AgentInput) {
+            self.inner.emit_input(input).await;
+        }
+
         async fn emit(&self, event: AgentEvent) {
             let terminal = matches!(event, AgentEvent::AgentEnd { .. });
             self.inner.emit(event).await;
@@ -794,8 +914,7 @@ mod tests {
             .collect()
     }
 
-    #[tokio::test]
-    async fn terminal_is_published_only_after_owned_run_settles() {
+    fn fixture() -> (Host, mpsc::UnboundedReceiver<OutputItem>) {
         let cwd = std::env::current_dir().unwrap();
         let provider = super::super::ProviderFactory {
             client: reqwest::Client::new(),
@@ -825,14 +944,15 @@ mod tests {
             max_model_calls: Some(0),
             hooks: Arc::new(ara_agent::NoHooks),
         };
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         let output = Output(tx);
         let connection = CancellationToken::new();
         let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]);
-        let mut host = Host {
+        let host = Host {
             agent: Agent::new(config.clone(), Vec::new()),
             session: session.clone(),
             config: config.clone(),
+            skills: Vec::new(),
             max_time: None,
             output: output.clone(),
             connection: connection.clone(),
@@ -846,9 +966,90 @@ mod tests {
             },
             drain_queues: false,
         };
+        (host, rx)
+    }
+
+    #[tokio::test]
+    async fn cancelled_before_entry_keeps_origin_and_exact_skip_id() {
+        let (mut host, mut rx) = fixture();
+        // A lone UTF-16 surrogate exercises IDs which serde_json cannot
+        // represent. No await before abort: the spawned admission is cancelled.
+        let command = Command::new(WireValue::parse(r#"{"type":"prompt","id":"\ud800"}"#).unwrap());
+        let id = command.id.clone().unwrap();
+        let origin = host.session.clone();
+        host.start(Some(skill_input(UserSkillPrompt::new(UserContent::Text("not invoked".into()), None))), command)
+            .unwrap();
+        host.abort().await;
+        assert!(host.agent.messages().await.is_empty());
+        assert!(origin.messages.lock().unwrap().is_empty());
+        assert!(!host.agent.is_busy());
+        let item = rx.try_recv().unwrap();
+        let OutputItem::Frame(frame) = item else { panic!("unexpected negotiation") };
+        assert_eq!(frame.get("type"), Some(&wire(json!("prompt_result"))));
+        assert_eq!(frame.get("agentInvoked"), Some(&WireValue::Bool(false)));
+        assert_eq!(frame.get("id"), Some(&id));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn custom_receipt_failure_cancels_before_provider_and_tool_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+        journal.materialize().unwrap();
+        let file = journal.path().to_path_buf();
+        let header = journal.header().clone();
+        // The real writer fails its next append without touching other files.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let upstream =
+            ara_testkit::FakeUpstream::start(ara_testkit::Script { responses: Vec::new() }, None).await.unwrap();
+        let (mut host, mut rx) = fixture();
+        host.session = Session::new(Some(journal), header, &[]);
+        let origin = host.session.clone();
+        host.config.model.base_url = upstream.base_url();
+        host.config.max_model_calls = Some(1);
+        host.start(
+            Some(skill_input(UserSkillPrompt::new(UserContent::Text("receipt".into()), None))),
+            Command::new(wire(json!({"type":"prompt","id":"failed-receipt"}))),
+        )
+        .unwrap();
+        let mut active = host.active.take().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
+        assert_eq!(result.as_ref().unwrap().as_ref().unwrap().as_ref().unwrap().end, RunEnd::Aborted);
+        host.completed(active, result);
+        assert!(origin.persistence_error.lock().unwrap().is_some());
+        assert!(host.connection.is_cancelled());
+        assert!(upstream.requests.lock().await.is_empty(), "failed custom receipt must precede model/tool effects");
+        let emitted = frames(&mut rx);
+        assert_eq!(
+            emitted
+                .iter()
+                .filter(|frame| frame["type"] == "message_end" && frame["message"]["role"] == "custom")
+                .count(),
+            1
+        );
+        assert!(emitted.iter().all(|frame| frame["type"] != "tool_execution_start"));
+        let failure = emitted.iter().find(|frame| frame["type"] == "response").unwrap();
+        assert_eq!(failure["id"], "failed-receipt");
+        assert!(failure["error"].as_str().unwrap().contains("Session persistence failed"));
+    }
+
+    #[tokio::test]
+    async fn terminal_is_published_only_after_owned_run_settles() {
+        let (mut host, mut rx) = fixture();
+        let connection = host.connection.clone();
+        let session = host.session.clone();
+        let output = host.output.clone();
+        let config = host.config.clone();
         let cancel = connection.child_token();
-        let sink =
-            Arc::new(RunSink { session, output, cancel: cancel.clone(), connection, terminal: Mutex::new(None) });
+        let sink = Arc::new(RunSink {
+            session,
+            output,
+            cancel: cancel.clone(),
+            connection,
+            terminal: Mutex::new(None),
+            messages: Mutex::new(Vec::new()),
+        });
         let (reached_tx, reached) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();
         let gate = Arc::new(TerminalGate {
@@ -859,7 +1060,18 @@ mod tests {
         let agent = host.agent.clone();
         let run_cancel = cancel.clone();
         let task = tokio::spawn(async move {
-            agent.prompt_with_config(vec![Message::User(UserMessage::text("first"))], config, run_cancel, gate).await
+            agent
+                .prompt_inputs_with_config(
+                    vec![skill_input(UserSkillPrompt::new(
+                        UserContent::Text("first".into()),
+                        Some(json!({"originalText":"/skill:proof"})),
+                    ))],
+                    config,
+                    run_cancel,
+                    gate,
+                )
+                .await
+                .map(Some)
         });
         host.active =
             Some(ActiveRun { cancel, task, command: Command::new(wire(json!({"type":"prompt","id":"first"}))), sink });
@@ -869,6 +1081,8 @@ mod tests {
         assert_eq!(host.state()["isStreaming"], true);
         let live = frames(&mut rx);
         assert!(live.iter().any(|frame| frame["type"] == "agent_start"));
+        let input = live.iter().find(|frame| frame["type"] == "message_end").unwrap()["message"].clone();
+        assert_eq!(input["customType"], "skill-prompt");
         assert!(!live.iter().any(|frame| frame["type"] == "agent_end"));
 
         release.send(()).unwrap();
@@ -879,6 +1093,7 @@ mod tests {
         let settled = frames(&mut rx);
         assert_eq!(settled.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
         assert_eq!(settled[0]["type"], "agent_end");
+        assert_eq!(settled[0]["messages"][0], input);
         assert_eq!(settled[1]["id"], "first");
         assert_eq!(settled[1]["error"], "Model call limit reached");
 

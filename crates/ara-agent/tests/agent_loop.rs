@@ -392,6 +392,374 @@ fn user_texts(messages: &[Message]) -> Vec<String> {
 
 // ------------------------------------------------------------------- tests
 
+fn owned_input(model: &Message, origin: &str) -> AgentInput {
+    AgentInput { model: model.clone(), provenance: Some(Arc::new(json!({"private-origin": origin}))) }
+}
+
+fn assert_input_identity(actual: &[AgentInput], expected: &[AgentInput]) {
+    assert_eq!(actual, expected);
+    for (actual, expected) in actual.iter().zip(expected) {
+        match (&actual.provenance, &expected.provenance) {
+            (Some(actual), Some(expected)) => assert!(Arc::ptr_eq(actual, expected)),
+            (None, None) => {}
+            _ => panic!("input provenance changed"),
+        }
+    }
+}
+
+#[derive(Default)]
+struct InputSink {
+    inputs: Mutex<Vec<AgentInput>>,
+    events: RecordingSink,
+}
+
+#[async_trait]
+impl AgentEventSink for InputSink {
+    async fn emit(&self, event: AgentEvent) {
+        self.events.emit(event).await;
+    }
+
+    async fn emit_input(&self, input: AgentInput) {
+        self.inputs.lock().unwrap().push(input.clone());
+        self.emit(AgentEvent::MessageStart { message: input.model.clone() }).await;
+        self.emit(AgentEvent::MessageEnd { message: input.model }).await;
+    }
+}
+
+#[derive(Default)]
+struct InputHooks {
+    steering: Mutex<Vec<AgentInput>>,
+    follow_up: Mutex<Vec<AgentInput>>,
+}
+
+#[async_trait]
+impl LoopHooks for InputHooks {
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        std::mem::take(&mut *self.steering.lock().unwrap())
+    }
+
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        std::mem::take(&mut *self.follow_up.lock().unwrap())
+    }
+}
+
+struct InputDequeueGate {
+    follow_up: bool,
+    inputs: Mutex<Vec<AgentInput>>,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+impl InputDequeueGate {
+    async fn take(&self) -> Vec<AgentInput> {
+        let inputs = std::mem::take(&mut *self.inputs.lock().unwrap());
+        if !inputs.is_empty() {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        inputs
+    }
+}
+
+#[async_trait]
+impl LoopHooks for InputDequeueGate {
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        if self.follow_up { Vec::new() } else { self.take().await }
+    }
+
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        if self.follow_up { self.take().await } else { Vec::new() }
+    }
+}
+
+#[tokio::test]
+async fn owned_inputs_keep_distinct_provenance_for_equal_model_messages_in_all_queue_modes() {
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("identical input".into()),
+        synthetic: None,
+        timestamp: 42,
+    });
+    for (steering_mode, follow_up_mode, users_per_call) in [
+        (QueueMode::OneAtATime, QueueMode::OneAtATime, vec![2, 3, 4, 5, 6, 7]),
+        (QueueMode::All, QueueMode::All, vec![4, 7]),
+        (QueueMode::All, QueueMode::OneAtATime, vec![4, 5, 6, 7]),
+        (QueueMode::OneAtATime, QueueMode::All, vec![2, 3, 4, 7]),
+    ] {
+        let provider = ScriptedProvider::new(vec![]);
+        let agent = Agent::new(config(provider.clone(), vec![], Arc::new(NoHooks)), Vec::new());
+        agent.set_steering_mode(steering_mode);
+        agent.set_follow_up_mode(follow_up_mode);
+        let initial = owned_input(&model, "initial");
+        let steer_a = owned_input(&model, "steer-a");
+        let steer_b = owned_input(&model, "steer-b");
+        let follow_a = owned_input(&model, "follow-a");
+        let follow_b = owned_input(&model, "follow-b");
+        agent.steer_input(steer_a.clone());
+        agent.steer_input(steer_b.clone());
+        agent.steer(model.clone());
+        agent.follow_up_input(follow_a.clone());
+        agent.follow_up_input(follow_b.clone());
+        agent.follow_up(model.clone());
+        assert_input_identity(&agent.peek_steering_inputs(), &[steer_a.clone(), steer_b.clone(), model.clone().into()]);
+        assert_input_identity(
+            &agent.peek_follow_up_inputs(),
+            &[follow_a.clone(), follow_b.clone(), model.clone().into()],
+        );
+        assert_eq!(agent.peek_steering_queue(), vec![model.clone(); 3]);
+        assert_eq!(agent.peek_follow_up_queue(), vec![model.clone(); 3]);
+        let sink = Arc::new(InputSink::default());
+        let report = agent.prompt_inputs(vec![initial.clone()], CancellationToken::new(), sink.clone()).await.unwrap();
+        let expected = [initial, steer_a, steer_b, model.clone().into(), follow_a, follow_b, model.clone().into()];
+        assert_input_identity(&sink.inputs.lock().unwrap(), &expected);
+        assert_eq!(report.end, RunEnd::Completed);
+        let report_users: Vec<_> =
+            report.messages.iter().filter(|message| matches!(message, Message::User(_))).collect();
+        assert_eq!(report_users, vec![&model; 7]);
+        assert_eq!(agent.messages().await, report.messages);
+        assert!(!serde_json::to_string(&report.messages).unwrap().contains("private-origin"));
+        {
+            let contexts = provider.contexts.lock().unwrap();
+            assert_eq!(
+                contexts.iter().map(|context| user_texts(&context.messages).len()).collect::<Vec<_>>(),
+                users_per_call
+            );
+            for context in contexts.iter() {
+                assert!(!serde_json::to_string(&context.messages).unwrap().contains("private-origin"));
+            }
+        }
+        assert!(!agent.has_queued_messages());
+        let events = sink.events.events.lock().await;
+        let inputs: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AgentEvent::MessageStart { message: Message::User(_) }
+                        | AgentEvent::MessageEnd { message: Message::User(_) }
+                )
+            })
+            .collect();
+        assert_eq!(inputs.len(), 14);
+        for pair in inputs.chunks_exact(2) {
+            assert_eq!(
+                pair,
+                [
+                    &AgentEvent::MessageStart { message: model.clone() },
+                    &AgentEvent::MessageEnd { message: model.clone() }
+                ]
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn owned_native_queues_precede_owned_host_hooks_and_legacy_hooks_adapt() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let initial = owned_input(&model, "initial");
+    let native_steer = owned_input(&model, "native-steer");
+    let host_steer = owned_input(&model, "host-steer");
+    let native_follow = owned_input(&model, "native-follow");
+    let host_follow = owned_input(&model, "host-follow");
+    let hooks = Arc::new(InputHooks::default());
+    hooks.steering.lock().unwrap().push(host_steer.clone());
+    hooks.follow_up.lock().unwrap().push(host_follow.clone());
+    let provider = ScriptedProvider::new(vec![]);
+    let agent = Agent::new(config(provider.clone(), vec![], hooks), Vec::new());
+    agent.steer_input(native_steer.clone());
+    agent.follow_up_input(native_follow.clone());
+    let sink = Arc::new(InputSink::default());
+    agent.prompt_inputs(vec![initial.clone()], CancellationToken::new(), sink.clone()).await.unwrap();
+    assert_input_identity(
+        &sink.inputs.lock().unwrap(),
+        &[initial, native_steer, host_steer, native_follow, host_follow],
+    );
+    assert_eq!(
+        provider.contexts.lock().unwrap().iter().map(|ctx| user_texts(&ctx.messages).len()).collect::<Vec<_>>(),
+        [3, 5]
+    );
+
+    let legacy = Arc::new(Hooks::default());
+    legacy.steering.lock().unwrap().push(model.clone());
+    legacy.follow_up.lock().unwrap().push(model.clone());
+    let legacy_agent = Agent::new(config(ScriptedProvider::new(vec![]), vec![], legacy), Vec::new());
+    let sink = Arc::new(InputSink::default());
+    legacy_agent.prompt(vec![model.clone()], CancellationToken::new(), sink.clone()).await.unwrap();
+    assert_input_identity(&sink.inputs.lock().unwrap(), &vec![AgentInput::from(model); 3]);
+}
+
+#[tokio::test]
+async fn owned_idle_continue_skips_the_second_steer_until_the_next_model_turn() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    for empty in [true, false] {
+        let provider = ScriptedProvider::new(vec![]);
+        let previous =
+            if empty { vec![] } else { vec![Message::Assistant(AssistantMessage::empty("test", "test", "test"))] };
+        let agent = Agent::new(config(provider.clone(), vec![], Arc::new(NoHooks)), previous);
+        let first = owned_input(&model, "first");
+        let second = owned_input(&model, "second");
+        agent.steer_input(first.clone());
+        agent.steer_input(second.clone());
+        let sink = Arc::new(InputSink::default());
+        let report = agent.continue_run(CancellationToken::new(), sink.clone()).await.unwrap();
+        assert_eq!(report.end, RunEnd::Completed);
+        assert_input_identity(&sink.inputs.lock().unwrap(), &[first, second]);
+        assert_eq!(
+            provider.contexts.lock().unwrap().iter().map(|ctx| user_texts(&ctx.messages).len()).collect::<Vec<_>>(),
+            [1, 2]
+        );
+    }
+}
+
+#[test]
+fn owned_queue_peek_pop_and_old_projection_share_one_queue() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let agent = Agent::new(config(ScriptedProvider::new(vec![]), vec![], Arc::new(NoHooks)), Vec::new());
+    let first = owned_input(&model, "first");
+    let second = owned_input(&model, "second");
+    agent.steer_input(first.clone());
+    agent.steer_input(second.clone());
+    agent.follow_up_input(first.clone());
+    agent.follow_up_input(second.clone());
+    assert_input_identity(&[agent.pop_last_steer_input().unwrap()], std::slice::from_ref(&second));
+    assert_input_identity(&[agent.pop_last_follow_up_input().unwrap()], &[second]);
+    assert_input_identity(&agent.peek_steering_inputs(), std::slice::from_ref(&first));
+    assert_input_identity(&agent.peek_follow_up_inputs(), &[first]);
+    assert_eq!(agent.pop_last_steer(), Some(model.clone()));
+    assert_eq!(agent.pop_last_follow_up(), Some(model));
+    assert_eq!(agent.queued_counts(), (0, 0));
+}
+
+#[tokio::test]
+async fn owned_cancelled_idle_dequeue_rolls_back_both_queues_with_exact_provenance() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    for follow_up in [false, true] {
+        for mode in [QueueMode::All, QueueMode::OneAtATime] {
+            let first = owned_input(&model, "native-first");
+            let second = owned_input(&model, "native-second");
+            let host = owned_input(&model, "host");
+            let gate = Arc::new(InputDequeueGate {
+                follow_up,
+                inputs: Mutex::new(vec![host.clone()]),
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            let provider = ScriptedProvider::new(vec![]);
+            let agent = Agent::new(config(provider.clone(), vec![], Arc::new(NoHooks)), Vec::new());
+            agent.set_steering_mode(mode);
+            agent.set_follow_up_mode(mode);
+            if follow_up {
+                agent.follow_up_input(first.clone());
+                agent.follow_up_input(second.clone());
+            } else {
+                agent.steer_input(first.clone());
+                agent.steer_input(second.clone());
+            }
+            let sink = Arc::new(InputSink::default());
+            let cancel = CancellationToken::new();
+            let waiting = {
+                let (agent, cancel, sink, run) =
+                    (agent.clone(), cancel.clone(), sink.clone(), config(provider.clone(), vec![], gate.clone()));
+                tokio::spawn(async move { agent.continue_run_with_config(run, cancel, sink).await })
+            };
+            tokio::time::timeout(Duration::from_secs(3), gate.entered.notified()).await.unwrap();
+            cancel.cancel();
+            gate.release.notify_one();
+            assert!(matches!(waiting.await.unwrap(), Err(AgentError::CannotContinue(_))));
+            let expected = if mode == QueueMode::All { vec![first, second, host] } else { vec![first, host, second] };
+            let remaining = if follow_up { agent.peek_follow_up_inputs() } else { agent.peek_steering_inputs() };
+            assert_input_identity(&remaining, &expected);
+            assert!(agent.messages().await.is_empty());
+            assert!(sink.inputs.lock().unwrap().is_empty());
+            assert!(sink.events.events.lock().await.is_empty());
+            assert!(provider.contexts.lock().unwrap().is_empty());
+            let already_cancelled = CancellationToken::new();
+            already_cancelled.cancel();
+            assert!(matches!(
+                agent.continue_run(already_cancelled, sink.clone()).await,
+                Err(AgentError::CannotContinue(_))
+            ));
+            let report = agent.continue_run(CancellationToken::new(), sink.clone()).await.unwrap();
+            assert_eq!(report.end, RunEnd::Completed);
+            assert_input_identity(&sink.inputs.lock().unwrap(), &expected);
+            assert!(!agent.has_queued_messages());
+        }
+    }
+}
+
+#[tokio::test]
+async fn owned_already_dequeued_inputs_commit_once_at_model_budget_for_both_hooks() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    for follow_up in [false, true] {
+        let initial = owned_input(&model, "initial");
+        let first = owned_input(&model, "pending-first");
+        let second = owned_input(&model, "pending-second");
+        let hooks = Arc::new(InputHooks::default());
+        if follow_up {
+            hooks.follow_up.lock().unwrap().extend([first.clone(), second.clone()]);
+        } else {
+            hooks.steering.lock().unwrap().extend([first.clone(), second.clone()]);
+        }
+        let provider = ScriptedProvider::new(vec![]);
+        let mut cfg = config(provider.clone(), vec![], hooks);
+        cfg.max_model_calls = Some(usize::from(follow_up));
+        let sink = InputSink::default();
+        let mut context = Vec::new();
+        let report =
+            agent_loop_inputs(vec![initial.clone()], &mut context, &cfg, &CancellationToken::new(), &sink).await;
+        assert_eq!(report.end, RunEnd::ModelCallBudget);
+        assert_input_identity(&sink.inputs.lock().unwrap(), &[initial, first, second]);
+        assert_eq!(user_texts(&report.messages), ["same", "same", "same"]);
+        assert_eq!(context, report.messages);
+        assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(follow_up));
+    }
+}
+
+#[tokio::test]
+async fn owned_already_dequeued_inputs_commit_once_after_deadline_for_both_hooks() {
+    let model =
+        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    for follow_up in [false, true] {
+        let initial = owned_input(&model, "initial");
+        let first = owned_input(&model, "pending-first");
+        let second = owned_input(&model, "pending-second");
+        let gate = Arc::new(InputDequeueGate {
+            follow_up,
+            inputs: Mutex::new(vec![first.clone(), second.clone()]),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let provider = ScriptedProvider::new(vec![]);
+        let mut cfg = config(provider.clone(), vec![], gate.clone());
+        let deadline = Instant::now() + Duration::from_millis(500);
+        cfg.deadline = Some(deadline);
+        let sink = Arc::new(InputSink::default());
+        let waiting = {
+            let (sink, initial) = (sink.clone(), initial.clone());
+            tokio::spawn(async move {
+                let mut context = Vec::new();
+                let report =
+                    agent_loop_inputs(vec![initial], &mut context, &cfg, &CancellationToken::new(), sink.as_ref())
+                        .await;
+                (report, context)
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(3), gate.entered.notified()).await.unwrap();
+        tokio::time::sleep_until(deadline.into()).await;
+        gate.release.notify_one();
+        let (report, context) = waiting.await.unwrap();
+        assert_eq!(report.end, RunEnd::Deadline);
+        assert_input_identity(&sink.inputs.lock().unwrap(), &[initial, first, second]);
+        assert_eq!(user_texts(&report.messages), ["same", "same", "same"]);
+        assert_eq!(context, report.messages);
+        assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(follow_up));
+    }
+}
+
 #[tokio::test]
 async fn run_config_selects_provider_tools_hooks_and_request_options() {
     struct ObservedProvider {

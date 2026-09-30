@@ -130,6 +130,11 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Original user-invoked Skill identity, independent of its model projection.
+    pub fn skill_prompt(&self) -> Option<UserSkillPrompt> {
+        UserSkillPrompt::from_entry(&self.raw)
+    }
+
     fn is_user_skill_prompt_candidate(&self) -> bool {
         self.kind == "custom_message"
             && self.raw.get("customType").and_then(Value::as_str) == Some(SKILL_PROMPT_CUSTOM_TYPE)
@@ -140,7 +145,7 @@ impl Entry {
     pub fn message(&self) -> Option<Message> {
         match self.kind.as_str() {
             "message" => serde_json::from_value(self.raw.get("message")?.clone()).ok(),
-            "custom_message" => UserSkillPrompt::from_entry(&self.raw).map(|prompt| prompt.model_message()),
+            "custom_message" => self.skill_prompt().map(|prompt| prompt.model_message()),
             _ => None,
         }
     }

@@ -2,7 +2,7 @@
 //! OMP source: `packages/agent/src/agent.ts` at the locked upstream commit.
 
 use crate::agent_loop::{
-    AgentConfig, LoopError, LoopHooks, RunReport, UnpairedTail, agent_loop, agent_loop_continue,
+    AgentConfig, LoopError, LoopHooks, RunReport, UnpairedTail, agent_loop_continue, agent_loop_inputs,
     unpaired_tool_call_tail,
 };
 use crate::event::AgentEventSink;
@@ -14,6 +14,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
+
+/// Model input with optional host-owned provenance. The Core carries this
+/// opaque value to the input sink without interpreting it or adding it to
+/// provider context, the transcript, or a Run report.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentInput {
+    pub model: Message,
+    pub provenance: Option<Arc<serde_json::Value>>,
+}
+
+impl From<Message> for AgentInput {
+    fn from(model: Message) -> Self {
+        Self { model, provenance: None }
+    }
+}
 
 #[derive(Debug)]
 pub enum AgentError {
@@ -47,21 +62,21 @@ pub enum QueueMode {
 
 #[derive(Default)]
 struct Queues {
-    steering: VecDeque<Message>,
-    follow_up: VecDeque<Message>,
+    steering: VecDeque<AgentInput>,
+    follow_up: VecDeque<AgentInput>,
     steering_mode: QueueMode,
     follow_up_mode: QueueMode,
 }
 
 impl Queues {
-    fn take_steering(&mut self) -> Vec<Message> {
+    fn take_steering(&mut self) -> Vec<AgentInput> {
         match self.steering_mode {
             QueueMode::All => self.steering.drain(..).collect(),
             QueueMode::OneAtATime => self.steering.pop_front().into_iter().collect(),
         }
     }
 
-    fn take_follow_up(&mut self) -> Vec<Message> {
+    fn take_follow_up(&mut self) -> Vec<AgentInput> {
         match self.follow_up_mode {
             QueueMode::All => self.follow_up.drain(..).collect(),
             QueueMode::OneAtATime => self.follow_up.pop_front().into_iter().collect(),
@@ -119,11 +134,19 @@ impl Agent {
     }
 
     pub fn steer(&self, message: Message) {
-        self.queues.lock().unwrap().steering.push_back(message);
+        self.steer_input(message.into());
+    }
+
+    pub fn steer_input(&self, input: AgentInput) {
+        self.queues.lock().unwrap().steering.push_back(input);
     }
 
     pub fn follow_up(&self, message: Message) {
-        self.queues.lock().unwrap().follow_up.push_back(message);
+        self.follow_up_input(message.into());
+    }
+
+    pub fn follow_up_input(&self, input: AgentInput) {
+        self.queues.lock().unwrap().follow_up.push_back(input);
     }
 
     pub fn queued_counts(&self) -> (usize, usize) {
@@ -153,18 +176,34 @@ impl Agent {
     }
 
     pub fn peek_steering_queue(&self) -> Vec<Message> {
+        self.peek_steering_inputs().into_iter().map(|input| input.model).collect()
+    }
+
+    pub fn peek_steering_inputs(&self) -> Vec<AgentInput> {
         self.queues.lock().unwrap().steering.iter().cloned().collect()
     }
 
     pub fn peek_follow_up_queue(&self) -> Vec<Message> {
+        self.peek_follow_up_inputs().into_iter().map(|input| input.model).collect()
+    }
+
+    pub fn peek_follow_up_inputs(&self) -> Vec<AgentInput> {
         self.queues.lock().unwrap().follow_up.iter().cloned().collect()
     }
 
     pub fn pop_last_steer(&self) -> Option<Message> {
+        self.pop_last_steer_input().map(|input| input.model)
+    }
+
+    pub fn pop_last_steer_input(&self) -> Option<AgentInput> {
         self.queues.lock().unwrap().steering.pop_back()
     }
 
     pub fn pop_last_follow_up(&self) -> Option<Message> {
+        self.pop_last_follow_up_input().map(|input| input.model)
+    }
+
+    pub fn pop_last_follow_up_input(&self) -> Option<AgentInput> {
         self.queues.lock().unwrap().follow_up.pop_back()
     }
 
@@ -235,6 +274,28 @@ impl Agent {
         cancel: CancellationToken,
         sink: Arc<dyn AgentEventSink>,
     ) -> Result<RunReport, AgentError> {
+        self.prompt_inputs_with_config(prompts.into_iter().map(AgentInput::from).collect(), config, cancel, sink).await
+    }
+
+    /// Start a Run carrying opaque host provenance through input emission.
+    pub async fn prompt_inputs(
+        self: &Arc<Self>,
+        prompts: Vec<AgentInput>,
+        cancel: CancellationToken,
+        sink: Arc<dyn AgentEventSink>,
+    ) -> Result<RunReport, AgentError> {
+        self.prompt_inputs_with_config(prompts, self.config.clone(), cancel, sink).await
+    }
+
+    /// Owned input counterpart to `prompt_with_config`. Provenance belongs to
+    /// each queued input and remains bound to this Run's sink when consumed.
+    pub async fn prompt_inputs_with_config(
+        self: &Arc<Self>,
+        prompts: Vec<AgentInput>,
+        config: AgentConfig,
+        cancel: CancellationToken,
+        sink: Arc<dyn AgentEventSink>,
+    ) -> Result<RunReport, AgentError> {
         let cancel = self.enter(&cancel)?;
         let agent = self.clone();
         tokio::spawn(async move {
@@ -246,7 +307,7 @@ impl Agent {
                 )));
             }
             let (config, _) = agent.config_with_queues(config);
-            Ok(agent_loop(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
+            Ok(agent_loop_inputs(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
         })
         .await
         .map_err(|_| AgentError::RunPanicked)?
@@ -290,10 +351,10 @@ impl Agent {
                     )));
                 }
                 let mut steering = true;
-                let mut prompts = config.hooks.steering_messages().await;
+                let mut prompts = config.hooks.steering_inputs().await;
                 if prompts.is_empty() {
                     steering = false;
-                    prompts = config.hooks.follow_up_messages().await;
+                    prompts = config.hooks.follow_up_inputs().await;
                 }
                 if prompts.is_empty() {
                     return Err(AgentError::CannotContinue(LoopError::CannotContinue(
@@ -316,7 +377,7 @@ impl Agent {
                 if steering {
                     queue_hooks.skip_initial_steering_poll.store(true, Ordering::Release);
                 }
-                Ok(agent_loop(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
+                Ok(agent_loop_inputs(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
             } else {
                 agent_loop_continue(&mut messages, &config, &cancel, sink.as_ref(), UnpairedTail::Refuse)
                     .await
@@ -340,18 +401,18 @@ impl LoopHooks for QueueHooks {
         self.base.before_tool_call(call, args, cancel).await
     }
 
-    async fn steering_messages(&self) -> Vec<Message> {
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
         if self.skip_initial_steering_poll.swap(false, Ordering::AcqRel) {
             return Vec::new();
         }
-        let from_base = self.base.steering_messages().await;
+        let from_base = self.base.steering_inputs().await;
         let mut result = self.queues.lock().unwrap().take_steering();
         result.extend(from_base);
         result
     }
 
-    async fn follow_up_messages(&self) -> Vec<Message> {
-        let from_base = self.base.follow_up_messages().await;
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        let from_base = self.base.follow_up_inputs().await;
         let mut result = self.queues.lock().unwrap().take_follow_up();
         result.extend(from_base);
         result

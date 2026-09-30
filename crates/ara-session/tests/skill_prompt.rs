@@ -81,6 +81,8 @@ fn persists_one_custom_entry_and_reopens_without_skill_file() {
 
     // Projection depends on the recorded payload, never on a live SKILL.md.
     let reopened = SessionJournal::open(&path).unwrap();
+    assert_eq!(reopened.branch()[0].skill_prompt(), Some(prompt.clone()));
+    assert!(reopened.branch()[1].skill_prompt().is_none());
     assert_eq!(reopened.build_context(), vec![expected.clone(), answer]);
     assert_eq!(reopened.model_context(), reopened.build_context());
     let snapshot = reopened.compaction_source_snapshot().unwrap();
@@ -201,6 +203,7 @@ fn unknown_and_agent_attributed_custom_entries_stay_unsupported() {
             ],
         );
         let journal = SessionJournal::open(&path).unwrap();
+        assert!(journal.branch()[0].skill_prompt().is_none());
         assert_eq!(journal.build_context().len(), 1);
         assert_eq!(journal.undecodable_messages(), 0);
         assert_eq!(
@@ -236,6 +239,7 @@ fn historical_skill_content_does_not_depend_on_details_or_current_metadata() {
     invalid[1]["timestamp"] = json!("invalid");
     write_journal(&path, &invalid[1..]);
     let journal = SessionJournal::open(&path).unwrap();
+    assert!(journal.branch()[0].skill_prompt().is_none());
     assert!(journal.build_context().iter().all(|message| !matches!(message, Message::User(_))));
     assert_eq!(journal.undecodable_messages(), 1, "the host can warn about the omitted Skill");
     assert!(
