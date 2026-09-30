@@ -66,5 +66,53 @@ exact-code Linux evidence are separate checks below.
 
 ## Module task and Linux evidence
 
-Current-binary bounded task and Linux checkpoint are pending. No phase or full
-command acceptance is claimed from the green focused/backend checks.
+`real_session_trial.py` ran once on the final executable and exact code commit
+`dd1b2a62447fc6cd17f4d584f38529fd5e1dd9fd`. Driver SHA-256:
+`7b710768c1096e375ad6d0f0e7dd20e4a43de4ce95aac528f31379a1137c9435`.
+It freshly verified B.AI `deepseek-v4.1-flash`, Chat Completions, at
+**11:32:21 UTC**. Limits: two Runs, three calls/60 seconds per Run, six total
+calls, 512 output tokens/call, 150-second wall guard, cumulative 4 MiB per output
+stream. Failures retain receipts and never automatically replay.
+
+**PASS, 11.082 seconds, two Runs, four calls, two successful write receipts,
+12,221 reported tokens; cost unknown.** The first Run writes a random JSON
+artifact. Five snapshots are reconstructed through 29 limit-one page responses.
+Rename and branch each make the preceding cursor stale. A new native fork keeps
+the original records/IDs, title and source-file parent; its second Run recalls
+the exact artifact after the original file is deleted, using write only. A third
+process only queries the fork and verifies exact history/identity/name restore;
+it starts no Run. The source journal remains byte-identical after the fixture.
+
+The branch selector is a deliberately appended **unconsumed user draft**, added
+after the first process exits. It is a controlled native persistence fixture,
+not another model turn. The fork excludes it. Process tests separately cover
+consumed selections, Skill/tool history and active cancellation. Provider
+request bodies were not captured; the observed boundary is public/native output.
+This trial exercises the current combined prompt/native-query implementation,
+closing the previous checkpoint's old-binary task gap without reusing its result.
+
+Receipts: `real-session-08w328zp/summary.json` and its raw inputs/stdout/native
+journals/paging/artifacts. Parent audit `native-session-receipts-audit.json`
+verified **35 artifact hashes, 12 production source hashes, 245 raw frames,
+56 input commands, five paging snapshots and both Run-local terminals**.
+All source hashes also match exact committed blobs after CRLF normalization.
+Rename ACK **0.003034 s**, branch ACK **0.003948 s**, source restart/query
+**0.071501 s**, query-only fork restart **0.078690 s**.
+
+Exact-code Linux repository run `36708859220` passes on `dd1b2a6`:
+**1,190/0/1, 90 suites**; full backend step **11:29:36-11:34:51 UTC, 315 seconds**.
+Formatting, Clippy, target/doc tests and all repository checks pass. Receipts:
+`native-session-linux.log`, job JSON and audit JSON. Saved log SHA-256:
+`e56fe583827a3eb5aad495d58996b93f10db72d0e0071827a779250582a86cd5`.
+Fixed RPC transport `36708859361` and fixed Skill invocation `36708859155`
+also pass on this exact code commit.
+
+Independent Codex `rpc_skill_independent_review` audited the complete driver and
+original task artifacts: all 35 artifact hashes, 12 source hashes and seven final
+snapshot hashes; 245 frames match observation, all 56 inputs have correlated
+responses, five pages/history snapshots match native/public projections, and
+both write receipts/terminal outputs/retained IDs/unchanged-source/fork restart
+are consistent. **Raw task audit PASS, zero confirmed defects.** The unconsumed
+fixture and uncaptured provider request-body limits above remain explicit.
+This closes this batch's current-binary task and Linux evidence gaps. No phase,
+complete CA-RPC command or full OMP acceptance is claimed from these bounded checks.
