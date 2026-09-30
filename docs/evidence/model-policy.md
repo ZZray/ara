@@ -53,6 +53,11 @@ Raw receipt root: `C:\Temp\ara-model-policy-batch`.
 
 Base: clean `dev`, `05d09aad82f96563188667950d497d802e104fe9`. Final production
 source is identical across the focused, oracle and full-gate receipts below.
+Code WIP checkpoint: `8f4f4d41a43cc2b387ec39b5f60674de5468d565`.
+Staged and committed audits compare all 15 tested source pins: 14 byte-exact,
+one existing `Cargo.lock` differs only through Git CRLF normalization. The
+compiled rules are byte-identical to the fixed Git blob. Receipts:
+`staged-pin-audit.json` and `committed-pin-audit.json`.
 
 - Final library: **102/0/0**, including 24 new native tests (rules 10,
   behavior/auth 2, identity/metrics 6, policy/build 6). Receipt
