@@ -14,6 +14,16 @@ diff review; fixed dispatcher tests 15/15 establish the source baseline only.
 The [42-command Host plan](../rpc-host-plan.md) retains full CA-RPC scope. No
 production command, live configuration, durable queue or native resume acceptance.
 
+Active native model/auth foundation (tested WIP, no new accepted point):
+AI-AUTH, PKG-CATALOG, CA-MODEL-REGISTRY and the fixed fallback selectors map to
+`ara-cli::{credential_store,model_catalog,retry_fallback,model_route}` and the
+Core per-call `ModelExecutionSnapshot`. The [foundation evidence](../evidence/model-auth-foundation.md)
+records exact bundled data, native SQLite/schema/lease/revision checks, pure
+chain fixtures, actual cross-API HTTP and busy original-Agent tool/queue
+continuation. Catalogue execution metadata and full registry/AuthStorage/OAuth/
+rotation/fallback adoption remain mandatory. RPC is still 27/42 bounded variants;
+full R3/R4 and every affected surface stay implementing, with no P1-P6 acceptance.
+
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:
 identify the underlying goal, distinguish hard constraints from historical

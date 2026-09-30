@@ -2,7 +2,7 @@
 
 This index is the entry point for durable decisions in the new Rust repository. Read only the pages relevant to the task. The repository begins with a documented target, not an accepted Agent implementation.
 
-- [Core ownership and host boundary](architecture.md): portable Agent Core, host services, RPC transport ownership, native Session replacement/retry, user Bash targets and retained writers, tool snapshots and connection URI admission, identity, state, and UI integration.
+- [Core ownership and host boundary](architecture.md): portable Agent Core, host services, RPC transport ownership, native Session replacement/retry, complete model routes and private request authentication, user Bash targets and retained writers, tool snapshots and connection URI admission, identity, state, and UI integration.
 - [Fixed upstream baseline](upstream.md): OMP commit meanings, parity evidence, and later incremental sync.
 - [ARA naming](naming.md): `ara-*` crates, binaries and `ARA_*` variables for ported and vendored code; where upstream names stay; the rename step in each sync.
 - [References, memory, and context](context.md): durable user inputs, source provenance, revisions, retrieval, native RPC compaction sources, and Skill source configuration.

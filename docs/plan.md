@@ -307,3 +307,12 @@ Next finish R2 overflow/thinking/interrupted recovery and R3/R4 native
 credential/model registry, configured chains and authorized route adoption.
 The complete settings/fallback/usage/cooldown matrix and every inventory gap
 remain mandatory; customization still waits for complete fixed OMP parity.
+
+The [native model/auth foundation](evidence/model-auth-foundation.md) starts
+R3/R4 with exact catalogue metadata, native schema-7 storage, fixed fallback
+selectors and complete per-call route/authentication ownership. A busy original
+Agent adopts model/provider/options atomically on its next call while retaining
+the in-flight tool snapshot and queues. This is tested foundation WIP; RPC remains
+27/42 bounded implementations. Next connect full models.yml/models.db discovery,
+AuthStorage precedence/OAuth/usage/rotation and native model/role/thinking journal
+adoption, then fixed fallback apply/served/revert and every remaining contract.

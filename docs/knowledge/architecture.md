@@ -176,3 +176,27 @@ authorize replay. [Retry evidence](../evidence/rpc-session-retry.md) records
 the tested scope and mandatory auth/model/overflow/interrupted-turn branches.
 The Host owns those registries and authorized route adoption; Core must not
 acquire product identity or credential storage.
+
+### Complete model route and request authentication
+
+**Tested foundation, 2026-10-01; full registry/auth/fallback remains open:**
+the Host owns exact catalogue metadata, native credentials and route selection.
+`PreparedRoute` carries the execution model, protocol options, lazy resolver and
+generation. One logical model call acquires one private credential lease; inner
+HTTP and outer provider-stream retries retain it. Its immutable actual identity
+owns settlement even if another request has since selected another account.
+Native row revision is a captured global DB revision, not a per-row counter.
+
+Credential headers must be in that same lease: a static Authorization/x-api-key
+override can otherwise send account A while attributing usage/failure to B.
+Prepared protocol options reject static credential material. Startup explicitly
+moves authorized overrides into its Runtime lease. A settlement write failure
+preserves the provider's actual terminal/content/usage/native ID, reports error
+and vetoes replay; it cannot erase evidence to manufacture a clean retry.
+
+Core `ExecutionSnapshot` optionally replaces model/provider/per-call options
+atomically with tools/prompt. One response and its entire tool batch retain that
+snapshot; the next call refreshes it. Run budgets, deadlines and hooks remain
+Run-owned. Pure catalogue lookup does not resolve authentication, and catalogue
+metadata that execution cannot yet represent is rejected rather than discarded.
+See the [bounded evidence and remaining contracts](../evidence/model-auth-foundation.md).

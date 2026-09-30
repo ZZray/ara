@@ -205,3 +205,19 @@ acceptance. Reuse `resolve_route` → ProviderFactory → SessionFactory → ori
 Agent continuation; selecting another model must also select its protocol,
 authentication and actual request credential identity. Preserve all fixed
 commands and additional lifecycle contracts until the complete inventory passes.
+
+## Model/auth foundation checkpoint, 2026-10-01
+
+[Foundation evidence](evidence/model-auth-foundation.md) records the exact fixed
+catalogue, schema-7 native credential store and complete fallback-chain helpers,
+plus a complete target route with lazy per-logical-call credential ownership.
+Core snapshots can atomically adopt model, provider and per-call options together
+with tools/prompt. Actual controlled HTTP exercises a busy original Agent's next
+call across Chat/Responses, including a file tool and queued follow-up. Startup
+print/REPL/RPC reuse the new route wrapper with an explicit fixed host override.
+
+Native AuthStorage, models.yml/models.db discovery, full metadata projection,
+model/role/thinking journal persistence, live RPC model commands and the complete
+fallback/usage/OAuth/rotation/cooldown matrix remain mandatory. This checkpoint
+does not implement another command or accept R3/R4: coverage stays 27/42 bounded
+variants. Pure-helper/store tests are not full runtime acceptance.
