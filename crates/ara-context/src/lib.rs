@@ -11,8 +11,10 @@
 //! `xd://` devices; the templates' sections for them stay off.
 
 mod reminder;
+mod skill_invocation;
 
 pub use reminder::{DateCwdReminder, render_date_cwd_reminder};
+pub use skill_invocation::{BuiltSkillPrompt, build_skill_prompt};
 
 use ara_discovery::{Discovery, LoadedSkill, ProjectContextFile, SkillsSettings, dedupe_contained_context_files};
 use ara_prompt::TemplateError;

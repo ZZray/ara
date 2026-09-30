@@ -28,6 +28,8 @@
 
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agent_loop};
+
+mod skill_command;
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
 use ara_ai::{
@@ -361,6 +363,12 @@ struct HostSink {
 }
 
 impl HostSink {
+    fn persistence_failure(&self, error: &impl std::fmt::Display) {
+        self.persist_failed.store(true, Ordering::SeqCst);
+        eprintln!("ara: session persistence failed ({error}); aborting the run");
+        self.cancel.cancel();
+    }
+
     fn new(
         mode: Mode,
         stream: bool,
@@ -485,9 +493,7 @@ impl AgentEventSink for HostSink {
             && let Some(journal) = self.journal.lock().await.as_mut()
             && let Err(e) = journal.append_message(message)
         {
-            self.persist_failed.store(true, Ordering::SeqCst);
-            eprintln!("ara: session persistence failed ({e}); aborting the run");
-            self.cancel.cancel();
+            self.persistence_failure(&e);
         }
         if self.stream {
             self.stream_progress(&event);
@@ -808,6 +814,7 @@ struct ReplSession<'a> {
     dir: Option<PathBuf>,
     cwd: &'a Path,
     model_ref: &'a str,
+    skills: &'a [ara_discovery::LoadedSkill],
 }
 
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
@@ -876,7 +883,10 @@ async fn run_repl_loop(
         match input.as_str() {
             "/exit" | "/quit" => break 0,
             "/help" => {
-                eprintln!("commands: /help, /new, /compact, /exit");
+                eprintln!("commands: /help, /new, /compact, /exit, /skill:<name> [arguments]");
+                for skill in session.skills {
+                    eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
+                }
                 eprintln!("Ctrl+C during a turn cancels it; Ctrl+C at the prompt exits.");
                 continue;
             }
@@ -941,7 +951,35 @@ async fn run_repl_loop(
         };
         let turn_start = context.len();
         let token = cancel.child_token();
-        let step = agent_loop(vec![Message::User(UserMessage::text(input))], context, &config, &token, sink);
+        // Match OMP input-controller's submitted text.trim() before display
+        // sanitization, which would delete internal JS whitespace boundaries.
+        let draft = ara_prompt::js::trim(&raw);
+        let prep = skill_command::prepare(draft, &raw, session.skills, &token, config.deadline);
+        let skill = match interruptible(prep, &token, &mut interrupts).await {
+            Ok(skill) => skill,
+            Err(skill_command::PreparationError::Load(error)) => {
+                eprintln!("ara: failed to load skill ({}); session kept", sanitize_text(&error));
+                continue;
+            }
+            Err(skill_command::PreparationError::Cancelled) => {
+                eprintln!("ara: turn {turn} cancelled while loading skill; session kept");
+                continue;
+            }
+            Err(skill_command::PreparationError::Deadline) => {
+                eprintln!("ara: turn {turn} hit the deadline while loading skill; session kept");
+                continue;
+            }
+        };
+        let projected =
+            skill.as_ref().map_or_else(|| Message::User(UserMessage::text(input)), |skill| skill.model_message());
+        let skill_sink = skill.as_ref().map(|prompt| skill_command::SkillPromptSink {
+            host: sink,
+            prompt,
+            projected: &projected,
+            recorded: AtomicBool::new(false),
+        });
+        let turn_sink: &dyn AgentEventSink = skill_sink.as_ref().map_or(sink, |sink| sink as &dyn AgentEventSink);
+        let step = agent_loop(vec![projected.clone()], context, &config, &token, turn_sink);
         let report = interruptible(step, &token, &mut interrupts).await;
         // Text mode streamed the answer while the turn ran.
         sink.end_stream_line();
@@ -1258,7 +1296,12 @@ async fn run(args: Args) -> Result<i32> {
 
     let mut interrupts = listen_for_interrupts()?;
     if repl_mode {
-        let session = ReplSession { dir: session_dir, cwd: &cwd, model_ref: &model_ref };
+        let session = ReplSession {
+            dir: session_dir,
+            cwd: &cwd,
+            model_ref: &model_ref,
+            skills: options.skills.as_deref().unwrap_or_default(),
+        };
         return run_repl_loop(
             &args,
             &route.model,

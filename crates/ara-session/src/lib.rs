@@ -23,8 +23,12 @@
 //! resume instead of being replayed.
 //!
 //! Not ported (open): compaction/branch-summary entries in live model context building,
-//! labels, custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
+//! labels, general custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
 //! listing/search, forking, moving, title generation, blob externalization.
+
+mod skill_prompt;
+
+pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
 use ara_ai::{AssistantBlock, Message, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
 use serde_json::{Value, json};
@@ -126,12 +130,19 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Decoded message, or `None` for non-message entries and messages ARA cannot decode.
+    fn is_user_skill_prompt_candidate(&self) -> bool {
+        self.kind == "custom_message"
+            && self.raw.get("customType").and_then(Value::as_str) == Some(SKILL_PROMPT_CUSTOM_TYPE)
+            && self.raw.get("attribution").and_then(Value::as_str) == Some("user")
+    }
+
+    /// Model-visible message, including a directly invoked Skill custom entry.
     pub fn message(&self) -> Option<Message> {
-        if self.kind != "message" {
-            return None;
+        match self.kind.as_str() {
+            "message" => serde_json::from_value(self.raw.get("message")?.clone()).ok(),
+            "custom_message" => UserSkillPrompt::from_entry(&self.raw).map(|prompt| prompt.model_message()),
+            _ => None,
         }
-        serde_json::from_value(self.raw.get("message")?.clone()).ok()
     }
 
     fn role(&self) -> Option<&str> {
@@ -555,6 +566,25 @@ impl SessionJournal {
         self.append_raw("message", f)
     }
 
+    /// Persist one user-invoked Skill as its original custom message. The
+    /// initiating timestamp is retained so the reopened model view is exact.
+    pub fn append_skill_prompt(&mut self, prompt: &UserSkillPrompt) -> Result<String> {
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(prompt.timestamp)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Skill prompt timestamp"))?
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        let mut f = serde_json::Map::new();
+        f.insert("customType".into(), json!(SKILL_PROMPT_CUSTOM_TYPE));
+        f.insert("content".into(), json!(prompt.content));
+        f.insert("display".into(), json!(true));
+        f.insert("attribution".into(), json!("user"));
+        f.insert("timestamp".into(), json!(timestamp));
+        if let Some(details) = &prompt.details {
+            f.insert("details".into(), details.clone());
+        }
+        self.append_raw("custom_message", f)
+    }
+
     /// OMP `appendModelChange`: `model` in `provider/modelId` form.
     pub fn append_model_change(&mut self, model: &str) -> Result<String> {
         let mut f = serde_json::Map::new();
@@ -659,6 +689,13 @@ impl SessionJournal {
                         .message()
                         .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?,
                 }),
+                "custom_message" => {
+                    let message = entry.message().ok_or_else(|| CompactionSourceError::UnsupportedContextEntry {
+                        id: entry.id.clone(),
+                        kind: entry.kind.clone(),
+                    })?;
+                    messages.push(SourcedMessage { entry_id: entry.id.clone(), message });
+                }
                 "model_change" | "label" => {}
                 _ => {
                     return Err(CompactionSourceError::UnsupportedContextEntry {
@@ -691,6 +728,7 @@ impl SessionJournal {
                         .message()
                         .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?;
                 }
+                "custom_message" if entry.message().is_some() => {}
                 "model_change" | "label" => {}
                 "compaction" => {
                     let invalid = |field| CompactionProjectionError::InvalidField { id: entry.id.clone(), field };
@@ -706,7 +744,10 @@ impl SessionJournal {
                         .ok_or_else(|| invalid("firstKeptEntryId"))?;
                     let kept_index = branch[..index]
                         .iter()
-                        .position(|candidate| candidate.id == first_kept && candidate.kind == "message")
+                        .position(|candidate| {
+                            candidate.id == first_kept
+                                && matches!(candidate.kind.as_str(), "message" | "custom_message")
+                        })
                         .ok_or_else(|| CompactionProjectionError::MissingKeptMessage { id: entry.id.clone() })?;
                     if !matches!(branch[kept_index].message(), Some(Message::User(_)))
                         || !safe_soft_summary_prefix(&branch[..kept_index])
@@ -750,7 +791,7 @@ impl SessionJournal {
                                 .ok_or_else(|| invalid("sourceEntryIds"))?;
                             let expected: Vec<String> = branch[..kept_index]
                                 .iter()
-                                .filter(|candidate| candidate.kind == "message")
+                                .filter(|candidate| matches!(candidate.kind.as_str(), "message" | "custom_message"))
                                 .map(|candidate| candidate.id.clone())
                                 .collect();
                             if ids.is_empty() || ids != expected {
@@ -790,7 +831,7 @@ impl SessionJournal {
             0
         };
         for entry in &branch[start..] {
-            if entry.kind == "message" {
+            if matches!(entry.kind.as_str(), "message" | "custom_message") {
                 items.push(CompactedContextItem::Message(Box::new(SourcedMessage {
                     entry_id: entry.id.clone(),
                     message: entry.message().expect("decoded above"),
@@ -859,7 +900,10 @@ impl SessionJournal {
     }
 
     pub fn undecodable_messages(&self) -> usize {
-        self.branch().into_iter().filter(|e| e.kind == "message" && e.message().is_none()).count()
+        self.branch()
+            .into_iter()
+            .filter(|e| (e.kind == "message" || e.is_user_skill_prompt_candidate()) && e.message().is_none())
+            .count()
     }
 
     /// Last `model_change` on the branch.
@@ -912,7 +956,9 @@ impl SessionJournal {
                 continue;
             }
             let tail_is_results_only = Some(i) == last_assistant
-                && branch[i + 1..].iter().all(|f| f.kind != "message" || f.role() == Some("toolResult"));
+                && branch[i + 1..].iter().all(|f| {
+                    (f.kind != "message" || f.role() == Some("toolResult")) && !f.is_user_skill_prompt_candidate()
+                });
             if !tail_is_results_only {
                 recovery.unpaired_earlier.extend(missing.into_iter().map(|(id, _)| id));
                 continue;

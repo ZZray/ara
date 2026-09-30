@@ -29,6 +29,7 @@ ara-agent.workspace = true
 ara-mcp.workspace = true
 ara-ai.workspace = true
 ara-context.workspace = true
+ara-prompt.workspace = true
 ara-discovery.workspace = true
 ara-session.workspace = true
 ara-tools.workspace = true

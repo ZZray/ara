@@ -50,14 +50,20 @@ impl FsCache {
         if let Some(cached) = self.content.lock().unwrap_or_else(|e| e.into_inner()).get(&abs) {
             return cached.clone();
         }
-        let content = self.read_regular(&abs).map(|bytes| decode(&bytes));
+        let content = self.read_regular(&abs).ok().map(|bytes| decode(&bytes));
         self.content.lock().unwrap_or_else(|e| e.into_inner()).insert(abs, content.clone());
         content
     }
 
+    /// A fresh read through the same regular-file boundary, without reading
+    /// or updating the discovery cache. Used by explicit Skill invocation.
+    pub fn read_file_fresh(&self, path: &Path) -> std::io::Result<String> {
+        self.read_regular(&crate::paths::resolve(path)).map(|bytes| decode(&bytes))
+    }
+
     /// Open without blocking and check the type on the opened handle, so a
     /// path swapped for a FIFO between check and read cannot hang discovery.
-    fn read_regular(&self, path: &Path) -> Option<Vec<u8>> {
+    fn read_regular(&self, path: &Path) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
@@ -67,26 +73,30 @@ impl FsCache {
             options.custom_flags(libc::O_NONBLOCK);
         }
         // A FIFO or device is rejected by type before the open when possible.
-        if !std::fs::metadata(path).ok()?.is_file() {
-            return None;
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Skill path is not a regular file"));
         }
-        let file = options.open(path).ok()?;
-        let meta = file.metadata().ok()?;
+        let file = options.open(path)?;
+        let meta = file.metadata()?;
         if !meta.is_file() {
-            return None;
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Skill path is not a regular file"));
         }
         if let Some(max) = self.max_file_bytes {
             if meta.len() > max {
-                return None;
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "file exceeds the read limit"));
             }
             let mut bytes = Vec::new();
-            file.take(max + 1).read_to_end(&mut bytes).ok()?;
-            return (bytes.len() as u64 <= max).then_some(bytes);
+            file.take(max + 1).read_to_end(&mut bytes)?;
+            return if bytes.len() as u64 <= max {
+                Ok(bytes)
+            } else {
+                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "file exceeds the read limit"))
+            };
         }
         let mut bytes = Vec::with_capacity(meta.len() as usize);
         let mut file = file;
-        file.read_to_end(&mut bytes).ok()?;
-        Some(bytes)
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
     }
 
     /// Directory entries (empty when missing or not a directory).

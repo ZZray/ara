@@ -10,6 +10,11 @@ These files are copied from OMP `packages/coding-agent/src/prompts/system/` at `
 
 They are rendered by `ara-prompt` (the port of OMP's template engine), so upstream's Handlebars syntax works unchanged.
 
+`skills/user-invocation.md` is copied unchanged from OMP
+`packages/coding-agent/src/prompts/skills/user-invocation.md` at the same
+fixed commit and under the same MIT copyright notice. The explicit Skill
+builder uses the same `ara-prompt` renderer.
+
 ARA edits, all in `system-prompt.md`:
 
 1. **Identity.** `Oh My Pi coding harness` becomes `{{harnessName}} coding harness`, and the `security://` line says `{{harnessName}} scans`. The host supplies the name (ARA passes `ARA`).

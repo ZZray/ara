@@ -1,0 +1,71 @@
+name: CTX-01e fixed OMP Skill invocation
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - scripts/ctx_skill_invocation_oracle.*
+      - .github/workflows/ctx-skill-invocation.yml
+      - crates/ara-discovery/**
+      - crates/ara-context/**
+      - crates/ara-session/**
+      - crates/ara-cli/**
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-invocation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.1
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch fixed OMP objects and Bun 1.4.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ctx-invocation"
+          git init "$RUNNER_TEMP/omp-source"
+          git -C "$RUNNER_TEMP/omp-source" fetch --depth=1 https://github.com/can1357/oh-my-pi.git 596f2da7101178214aa27a753529d15e6b7ad91d
+          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-linux-x64.zip -o "$RUNNER_TEMP/bun.zip"
+          unzip -q "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP/bun"
+          rustup toolchain install 1.97.1 --profile minimal
+          rustc -vV > "$RUNNER_TEMP/ctx-invocation/rustc.txt"
+      - name: Execute unchanged upstream parser and builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ctx_skill_invocation_oracle.py \
+            --upstream "$RUNNER_TEMP/omp-source" \
+            --bun "$RUNNER_TEMP/bun/bun-linux-x64/bun" \
+            --output "$RUNNER_TEMP/ctx-invocation" \
+            2>&1 | tee "$RUNNER_TEMP/ctx-invocation/oracle.log"
+          mapfile -t oracles < <(find "$RUNNER_TEMP/ctx-invocation" -name oracle.json -type f)
+          test "${#oracles[@]}" = 1
+          echo "ARA_CTX_INVOCATION_ORACLE=${oracles[0]}" >> "$GITHUB_ENV"
+          echo "ARA_CTX_INVOCATION_RECEIPTS=$RUNNER_TEMP/ctx-invocation/process" >> "$GITHUB_ENV"
+      - name: Compare Rust and run actual REPL, restart, failure and FIFO processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p ara-discovery --test skill_invocation -- --nocapture 2>&1 | tee "$RUNNER_TEMP/ctx-invocation/parser-rust.log"
+          cargo test --locked -p ara-context --test skill_invocation -- --nocapture 2>&1 | tee "$RUNNER_TEMP/ctx-invocation/builder-rust.log"
+          cargo test --locked -p ara-session --test skill_prompt -- --nocapture 2>&1 | tee "$RUNNER_TEMP/ctx-invocation/session-rust.log"
+          cargo test --locked -p ara-cli --bin ara skill_command -- --nocapture 2>&1 | tee "$RUNNER_TEMP/ctx-invocation/host-unit.log"
+          cargo test --locked -p ara-cli --test e2e skill -- --nocapture 2>&1 | tee "$RUNNER_TEMP/ctx-invocation/process-rust.log"
+      - name: Preserve source, oracle and process failure receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctx-skill-invocation-linux
+          path: ${{ runner.temp }}/ctx-invocation/
+          if-no-files-found: error
+          include-hidden-files: true

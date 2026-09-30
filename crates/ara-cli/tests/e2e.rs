@@ -11,6 +11,357 @@ use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_ara");
 
+fn invocation_skill(env: &Env, hidden: bool) -> PathBuf {
+    let path = env.work.path().join(".ara").join("skills").join("proof").join("SKILL.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, format!("---\nname: proof\ndescription: Invocation proof\nhide: {hidden}\n---\nFollow the user's task and preserve exact output.\n")).unwrap();
+    path
+}
+
+fn skill_entries(entries: &[Value]) -> Vec<&Value> {
+    entries.iter().filter(|entry| entry["type"] == "custom_message" && entry["customType"] == "skill-prompt").collect()
+}
+
+#[tokio::test]
+async fn repl_skill_dispatch_parses_js_whitespace_before_display_sanitization() {
+    let env = Env::new();
+    invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"events":[text("Embedded."),finish("stop"),done()]},
+        {"events":[text("Ordinary."),finish("stop"),done()]},
+        {"events":[text("BOM."),finish("stop"),done()]},
+        {"events":[text("Internal tab name."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0"]),
+        "before\u{b}/skill:proof\n/skill:proof\t\n\u{feff}/skill:proof arg\n/skill:proof\tother\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let entries = journal(&env.session_files()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 3);
+    assert_eq!(skills[0]["details"]["args"], "before");
+    assert_eq!(skills[0]["details"]["originalText"], "before\u{b}/skill:proof\n");
+    assert!(skills[1]["details"].get("args").is_none());
+    assert_eq!(skills[2]["details"]["args"], "arg");
+    assert_eq!(
+        journal_user_texts(&entries),
+        vec!["/skill:proof\tother"],
+        "leading name retains its internal tab for lookup; ordinary input keeps its existing normalization"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_skill_file_replaced_with_fifo_fails_without_blocking_exit() {
+    use std::os::unix::ffi::OsStrExt;
+    let env = Env::new();
+    let path = invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"events":[text("Before FIFO."),finish("stop"),done()]},
+        {"events":[text("must not run"),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut command =
+        env.cmd(&up.base_url(), &["--repl", "--mode", "json", "--compact-threshold", "0", "--max-time", "1"]);
+    let mut child = spawn_repl(&mut command);
+    let mut stdin = child.stdin.take().unwrap();
+    let stderr = StderrLog::start(&mut child);
+    let stdout = StderrLog::reading(child.stdout.take().unwrap());
+    tokio::task::block_in_place(|| {
+        writeln!(stdin, "before").unwrap();
+        assert!(stdout.wait_for("agent_end", Duration::from_secs(10)));
+        std::fs::remove_file(&path).unwrap();
+        let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // The named pipe has no writer; an ordinary read would block forever.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        writeln!(stdin, "/skill:proof fifo-args").unwrap();
+        writeln!(stdin, "/exit").unwrap();
+        drop(stdin);
+        assert_eq!(wait_exit(&mut child, Duration::from_secs(5)), Some(0));
+    });
+    let error = stderr.finish();
+    let output = stdout.finish();
+    assert!(error.contains("not a regular file"), "{error}");
+    assert_eq!(up.served(), 1);
+    let entries = journal(&env.session_files()[0]);
+    assert!(skill_entries(&entries).is_empty());
+    assert_eq!(journal_user_texts(&entries), vec!["before"]);
+    if let Some(directory) = std::env::var_os("ARA_CTX_INVOCATION_RECEIPTS") {
+        let directory = PathBuf::from(directory).join("fifo-replacement");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("stdout.jsonl"), output).unwrap();
+        std::fs::write(directory.join("stderr.txt"), error).unwrap();
+        std::fs::copy(&env.session_files()[0], directory.join("session.jsonl")).unwrap();
+        std::fs::write(directory.join("requests.json"), serde_json::to_vec_pretty(&*up.requests.lock().await).unwrap())
+            .unwrap();
+        std::fs::write(
+            directory.join("summary.json"),
+            serde_json::to_vec_pretty(&json!({
+                "status":"PASS","case":"regular Skill replaced by unopened FIFO after discovery", "exitCode":0,
+                "modelRequests":up.served(),"customEntries":skill_entries(&entries).len(), "exitBoundSeconds":5,
+                "invocation":"/skill:proof fifo-args","initialPrompt":"before"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_skill_cancelled_tool_keeps_one_custom_and_returns_to_prompt() {
+    let env = Env::new();
+    invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"skill-slow","bash","{\"command\":\"echo started; sleep 30\"}"),finish("tool_calls"),done()]},
+        {"events":[text("After skill abort."),finish("stop"),done()]}
+    ]})).await;
+    let mut command = env.cmd(&up.base_url(), &["--repl", "--mode", "json", "--compact-threshold", "0"]);
+    let mut child = spawn_repl(&mut command);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let started = Instant::now();
+    let (events, code) = tokio::task::block_in_place(|| {
+        writeln!(stdin, "/skill:proof slow-task").unwrap();
+        let mut events =
+            read_until(&mut reader, |event| event["type"] == "tool_execution_update", Duration::from_secs(15));
+        interrupt(&child);
+        events.extend(read_until(&mut reader, |event| event["type"] == "agent_end", Duration::from_secs(10)));
+        assert!(log.wait_for("ara: turn 1 cancelled; session kept", Duration::from_secs(5)));
+        assert!(child.try_wait().unwrap().is_none());
+        writeln!(stdin, "next").unwrap();
+        drop(stdin);
+        events.extend(reader.lines().map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap()));
+        (events, wait_exit(&mut child, Duration::from_secs(15)))
+    });
+    let error = log.finish();
+    assert_eq!(code, Some(0), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(20));
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(skill_entries(&entries).len(), 1);
+    assert_eq!(journal_user_texts(&entries), vec!["next"]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["toolCallId"] == "skill-slow").count(), 1);
+    assert_eq!(events.iter().filter(|event| event["type"] == "tool_execution_start").count(), 1, "no replay");
+    assert_eq!(up.served(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_skill_is_custom_runs_tools_and_replays_after_source_removal() {
+    let env = Env::new();
+    let path = invocation_skill(&env, true);
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"proof-write","write","{\"path\":\"PROOF.txt\",\"content\":\"artifact\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Artifact written."),finish("stop"),done()]},
+        {"events":[text("Next turn."),finish("stop"),done()]}
+    ]})).await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--mode", "json", "--compact-threshold", "0"]),
+        "left /skill:proof focus\nnext\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("PROOF.txt")).unwrap(), "artifact");
+    let entries = journal(&env.session_files()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 1);
+    let skill = skills[0];
+    assert_eq!(skill["display"], true);
+    assert_eq!(skill["attribution"], "user");
+    assert_eq!(skill["details"]["name"], "proof");
+    assert_eq!(skill["details"]["path"], path.to_string_lossy().as_ref());
+    assert_eq!(skill["details"]["args"], "left focus");
+    assert_eq!(skill["details"]["lineCount"], 1);
+    assert_eq!(skill["details"]["originalText"], "left /skill:proof focus\n");
+    assert_eq!(journal_user_texts(&entries), vec!["next"], "the Skill has no ordinary duplicate");
+    let events: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    for event_type in ["message_start", "message_end"] {
+        let custom: Vec<_> =
+            events.iter().filter(|event| event["type"] == event_type && event["message"]["role"] == "custom").collect();
+        assert_eq!(custom.len(), 1, "{events:?}");
+        assert_eq!(custom[0]["message"]["content"], skill["content"]);
+    }
+    let first_end = events.iter().find(|event| event["type"] == "agent_end").unwrap();
+    assert_eq!(first_end["messages"][0]["role"], "custom");
+    let reqs = up.requests.lock().await;
+    for request in reqs.iter() {
+        let body = &request["body"];
+        let text = request_text(body["messages"].as_array().unwrap());
+        assert_eq!(text.matches("[IMPORTANT: User invoked").count(), 1, "{body}");
+        assert!(text.contains("User: left focus"));
+        assert!(!body.to_string().contains("originalText"));
+        assert!(body["messages"].as_array().unwrap().iter().all(|message| message["role"] != "custom"));
+    }
+    drop(reqs);
+    std::fs::remove_file(&path).unwrap();
+    let resumed = upstream(json!({"responses":[{"events":[text("Recalled."),finish("stop"),done()]}]})).await;
+    let out = repl_output(
+        env.cmd(&resumed.base_url(), &["--repl", "--continue", "--compact-threshold", "0"]),
+        "after restart\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let reqs = resumed.requests.lock().await;
+    let body = &reqs[0]["body"];
+    let text = request_text(body["messages"].as_array().unwrap());
+    assert_eq!(text.matches("[IMPORTANT: User invoked").count(), 1);
+    assert!(text.contains("User: left focus"));
+    assert_eq!(skill_entries(&journal(&env.session_files()[0])).len(), 1);
+}
+
+#[tokio::test]
+async fn repl_unknown_disabled_and_print_skill_inputs_take_the_ordinary_path() {
+    for (args, input) in [
+        (vec!["--repl"], "/skill:unknown\n"),
+        (vec!["--repl", "--no-skills"], "/skill:proof\n"),
+        (vec!["-p", "/skill:proof"], ""),
+    ] {
+        let env = Env::new();
+        invocation_skill(&env, false);
+        let up = upstream(json!({"responses":[{"events":[text("Ordinary."),finish("stop"),done()]}]})).await;
+        let out = if args.contains(&"--repl") {
+            repl_output(env.cmd(&up.base_url(), &args), input).await
+        } else {
+            output(env.cmd(&up.base_url(), &args)).await
+        };
+        assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+        let entries = journal(&env.session_files()[0]);
+        assert!(skill_entries(&entries).is_empty());
+        assert_eq!(journal_user_texts(&entries), vec![if input.is_empty() { "/skill:proof" } else { input.trim() }]);
+        let reqs = up.requests.lock().await;
+        let text = request_text(reqs[0]["body"]["messages"].as_array().unwrap());
+        assert!(!text.contains("[IMPORTANT: User invoked"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_known_skill_reloads_then_consumes_a_deleted_file_error() {
+    let env = Env::new();
+    let path = invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"events":[text("Before."),finish("stop"),done()]},
+        {"events":[text("Fresh."),finish("stop"),done()]},
+        {"events":[text("After failure."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut c = env.cmd(&up.base_url(), &["--repl", "--mode", "json", "--compact-threshold", "0"]);
+    let mut child = spawn_repl(&mut c);
+    let mut stdin = child.stdin.take().unwrap();
+    let log = StderrLog::start(&mut child);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let code = tokio::task::block_in_place(|| {
+        writeln!(stdin, "before").unwrap();
+        read_until(&mut reader, |event| event["type"] == "agent_end", Duration::from_secs(15));
+        std::fs::write(&path, "Fresh instructions unique marker.\n").unwrap();
+        writeln!(stdin, "/skill:proof fresh-args").unwrap();
+        read_until(&mut reader, |event| event["type"] == "agent_end", Duration::from_secs(15));
+        std::fs::remove_file(&path).unwrap();
+        writeln!(stdin, "/skill:proof deleted-args").unwrap();
+        writeln!(stdin, "ordinary-after-failure").unwrap();
+        drop(stdin);
+        let _rest: Vec<Value> = reader.lines().map(|line| serde_json::from_str(&line.unwrap()).unwrap()).collect();
+        wait_exit(&mut child, Duration::from_secs(15))
+    });
+    let stderr = log.finish();
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stderr.contains("failed to load skill"), "{stderr}");
+    assert_eq!(up.served(), 3, "failed load never becomes a provider prompt");
+    let entries = journal(&env.session_files()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 1);
+    assert!(skills[0]["content"].as_str().unwrap().contains("Fresh instructions unique marker."));
+    assert_eq!(journal_user_texts(&entries), vec!["before", "ordinary-after-failure"]);
+    let reqs = up.requests.lock().await;
+    assert!(
+        request_text(reqs[1]["body"]["messages"].as_array().unwrap()).contains("Fresh instructions unique marker.")
+    );
+    assert!(!reqs[2]["body"].to_string().contains("deleted-args"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
+    let env = Env::new();
+    let path = invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"events":[text("First."),finish("stop"),done()]},
+        {"events":[text("Second."),finish("stop"),done()]},
+        {"events":[text("First Skill task finished."),finish("stop"),done()]},
+        {"events":[text("Third."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
+        "/skill:proof first-args\n/skill:proof kept-args\n/compact\nthird\n",
+    )
+    .await;
+    let (_, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    let entries = journal(&env.session_files()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 2);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1, "{entries:?}");
+    let compaction = compactions[0];
+    assert_eq!(compaction["firstKeptEntryId"], skills[1]["id"]);
+    let before_kept = entries.iter().position(|entry| entry["id"] == skills[1]["id"]).unwrap();
+    let expected: Vec<_> = entries[..before_kept]
+        .iter()
+        .filter(|entry| entry["type"] == "message" || entry["type"] == "custom_message")
+        .map(|entry| entry["id"].clone())
+        .collect();
+    assert_eq!(compaction["sourceEntryIds"], json!(expected));
+    assert!(expected.contains(&skills[0]["id"]));
+    assert_eq!(skills[0]["details"]["originalText"], "/skill:proof first-args\n");
+    let reqs = up.requests.lock().await;
+    assert_eq!(reqs.len(), 4);
+    assert!(tools_absent_or_empty(&reqs[2]["body"]));
+    assert!(request_text(reqs[2]["body"]["messages"].as_array().unwrap()).contains("User: first-args"));
+    let last = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    assert!(last.contains("First Skill task finished.") && last.contains("User: kept-args"));
+    assert!(!last.contains("User: first-args"));
+    drop(reqs);
+    std::fs::remove_file(path).unwrap();
+    let resumed = upstream(json!({"responses":[{"events":[text("Restored."),finish("stop"),done()]}]})).await;
+    let out = repl_output(
+        env.cmd(&resumed.base_url(), &["--repl", "--continue", "--compact-threshold", "0"]),
+        "after-compacted-restart\n",
+    )
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let reqs = resumed.requests.lock().await;
+    let last = request_text(reqs[0]["body"]["messages"].as_array().unwrap());
+    assert!(last.contains("First Skill task finished.") && last.contains("User: kept-args"));
+    assert!(!last.contains("User: first-args"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_skill_provider_error_retains_custom_and_next_turn() {
+    let env = Env::new();
+    invocation_skill(&env, false);
+    let up = upstream(json!({"responses":[
+        {"status":400,"body":"{\"error\":{\"message\":\"skill backend down\"}}"},
+        {"events":[text("Recovered."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let out = repl_output(
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0"]),
+        "/skill:proof error-turn\nnext\n",
+    )
+    .await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stdout, "Recovered.\n");
+    assert!(stderr.contains("skill backend down"));
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(skill_entries(&entries).len(), 1);
+    assert_eq!(journal_user_texts(&entries), vec!["next"]);
+    assert_eq!(up.served(), 2);
+}
+
 struct Env {
     _home: tempfile::TempDir,
     work: tempfile::TempDir,
