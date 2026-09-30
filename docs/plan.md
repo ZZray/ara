@@ -81,6 +81,22 @@ Each slice is a set of bounded points. Every point goes through implement → fa
 
 `ported_through_commit` advances only when every selected row passes execution and audit.
 
+### Current execution: RPC transport, then production host
+
+**Decision, 2026-09-30:** after the bounded CTX-01e REPL/Skill Session
+acceptance, port fixed `rpc-frame.ts` and `rpc-input.ts` completely as the
+host-neutral `ara-rpc` transport point [RPC-01](evidence/rpc-01-transport.md).
+Preserve existing print/REPL, Agent/free-loop, Session and provider behavior.
+Private-to-transport JS-compatible JSON semantics are necessary for UTF-16,
+f64 and own-property ordering; Core string types remain unchanged.
+
+Then bind the production RPC command host to existing Agent/Session ownership.
+That next point must explicitly cover scheduling, side channels, cancellation,
+native resume, command schema, stdin ownership, shutdown delivery and real
+Core-driven task evidence. Transport tests do not accept CA-RPC or A5.
+PKG-WIRE collaboration protocol and durable queue/lease work retain their own
+owners and acceptance gates. The fixed OMP marker remains unchanged.
+
 ## Track B: next-generation Agent (G2), design v1
 
 ARA features sit behind explicit Core interfaces and never weaken an OMP behavior. B points start once A3 is tested, because they need compaction and recovery. B1 foundations may start earlier as additive types.

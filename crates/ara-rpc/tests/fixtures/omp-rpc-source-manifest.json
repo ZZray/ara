@@ -1,0 +1,86 @@
+{
+  "upstreamCommit": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "bunVersion": "1.4.0",
+  "sources": [
+    {
+      "path": "packages/coding-agent/src/modes/rpc/rpc-frame.ts",
+      "gitBlob": "fb225651ab1e64089dfea00bf47c9a12a01aa9f1",
+      "sha256": "255a7512fcb67bc36170edc0669f7957ba97c90d005be712587f1b2b7d7a8297"
+    },
+    {
+      "path": "packages/coding-agent/src/modes/rpc/rpc-input.ts",
+      "gitBlob": "ea64e545607d43d5b720d2bb71cbe91c7b2de5f9",
+      "sha256": "de20cd9b52302798d5816019ca5fff24b009cfbdb478d204d41cf902336b16c3"
+    },
+    {
+      "path": "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+      "gitBlob": "c7bdf9360fab1a327fd52ac91d23fbb98806af58",
+      "sha256": "224ad60de4a6432189564482a8336e0f3fc41adea6cef419e4ac21753df4b94f"
+    },
+    {
+      "path": "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+      "gitBlob": "45d59e034199245a591df37abe13eef9e43804f3",
+      "sha256": "2e7c38538d69f0bd00c6e2377c02ae0d3f941960384692728e6499994929b862"
+    },
+    {
+      "path": "packages/coding-agent/src/modes/rpc/rpc-client.ts",
+      "gitBlob": "5f5b0f6922fd569c9033bed398ad9b62c8fcd869",
+      "sha256": "a2f2c8d82778ef1516675f486f5d0c5333beebda5517f3eb49d75ab9b8953643"
+    },
+    {
+      "path": "packages/coding-agent/test/rpc-frame.test.ts",
+      "gitBlob": "a3c6ca4f31eb3441dad61ee4c6d2f55e973f4bf9",
+      "sha256": "e06e3fe325fa7564116eca704c10796471b8a7da212f9a1b85f87995e0248d96"
+    },
+    {
+      "path": "packages/coding-agent/test/rpc-malformed-input.test.ts",
+      "gitBlob": "116ddfc10939461aaea8bd1381650e860a962ab7",
+      "sha256": "d46b6205265813a068b298fb8e281d6d3edf31dcaf099cadaaa74ba8fc8ea11b"
+    },
+    {
+      "path": "packages/utils/src/type-guards.ts",
+      "gitBlob": "d43dc8bc83c757514fbf24d17144d381090ad957",
+      "sha256": "86a5fb728ab7635711ea82c2de2dacbcc849e56acd7e4bfaf5041d555a9090dd"
+    },
+    {
+      "path": "packages/utils/src/stream.ts",
+      "gitBlob": "495ab5c743ec92215191d98ae77b944630a43952",
+      "sha256": "bdf3f03103c60537cb7d8ed40ab69c539e52f0072f39033568231a46552eabe8"
+    },
+    {
+      "path": "packages/utils/src/abortable.ts",
+      "gitBlob": "fdf9736cf1e57d752afd662749141f5005f50d33",
+      "sha256": "d57f211accb863e33a2efee693e93819ddc21b3aa2f40e7c5cb8961fd7922007"
+    },
+    {
+      "path": "packages/utils/src/json-parse.ts",
+      "gitBlob": "fc02a184fdf6dba06fe3583b676b4131e4a4355c",
+      "sha256": "0c6c86ef537f958d189ef4fb57f4ca1016bf8d9369ae8944da905cd9a4b128f6"
+    },
+    {
+      "path": "packages/utils/src/json-lexer.ts",
+      "gitBlob": "e2d77a449181159afe4712921c6aff54c688a15d",
+      "sha256": "7c8ead53d734e017745c21ad60ac80e0c3d8190020306d82671fa2e1c27585b3"
+    },
+    {
+      "path": "LICENSE",
+      "gitBlob": "09a0c6c926a81c9d56dc3326cff1e5358c63c6d6",
+      "sha256": "16c45f9d667442781f03fa198914cc39abcaa48ec5ed8f644643e554ca2fbf63"
+    }
+  ],
+  "runnerSha256": "91910d02687096e1eb54ba57bb68e9d19750ac3fe9dc16a93f60449a7bf874b3",
+  "helpers": [
+    {
+      "path": "oracle-pi-utils.ts",
+      "sha256": "59abef6f60a6d1e3c60c9f589afcdf0cd968b4a807388cdc29cde7bb506025ec"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "488de62ceaf38ec8e6974859cf85fbed3f8b0d5c0f380785fa034e6bbbe7b6c0"
+    }
+  ],
+  "launcherSha256": "e5de51f480ed9435b5fc9e7492ed086114a90c53ce062232e3c00eeff8cd296b",
+  "pythonVersion": "3.13.14 (tags/v3.13.14:fd17997, Jun 10 2026, 13:03:48) [MSC v.1944 64 bit (AMD64)]",
+  "pythonExecutableSha256": null,
+  "bunExecutableSha256": "627d2e4775c24bdedee2cd7ccc18dcadae061e5345274ab6e3c4c797927bfb8f"
+}

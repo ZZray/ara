@@ -1,0 +1,57 @@
+name: fixed RPC transport
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - crates/ara-rpc/**
+      - scripts/rpc_transport_*
+      - .github/workflows/rpc-transport.yml
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - name: Export exact fixed OMP source and execute unchanged tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rpc-transport"
+          git init "$RUNNER_TEMP/rpc-omp"
+          git -C "$RUNNER_TEMP/rpc-omp" fetch --depth=1 https://github.com/can1357/oh-my-pi.git 596f2da7101178214aa27a753529d15e6b7ad91d
+          python scripts/rpc_transport_oracle.py --upstream "$RUNNER_TEMP/rpc-omp" --bun "$(command -v bun)" --output "$RUNNER_TEMP/rpc-transport/oracle" 2>&1 | tee "$RUNNER_TEMP/rpc-transport/oracle-run.log"
+      - name: Compare production Rust wire bytes and errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ARA_RPC_ORACLE="$(find "$RUNNER_TEMP/rpc-transport/oracle" -name oracle.json -type f)"
+          test -f "$ARA_RPC_ORACLE"
+          cargo test --locked -p ara-rpc --all-targets 2>&1 | tee "$RUNNER_TEMP/rpc-transport/rust-tests.log"
+      - name: Exercise live pipes, backpressure and broken output
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p ara-rpc --example pipe_probe 2>&1 | tee "$RUNNER_TEMP/rpc-transport/build.log"
+          python scripts/rpc_transport_process.py --probe "$GITHUB_WORKSPACE/target/debug/examples/pipe_probe" --output "$RUNNER_TEMP/rpc-transport/process" 2>&1 | tee "$RUNNER_TEMP/rpc-transport/process-run.log"
+      - name: Retain receipts including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpc-transport-linux
+          path: ${{ runner.temp }}/rpc-transport/
+          if-no-files-found: error
+          include-hidden-files: true

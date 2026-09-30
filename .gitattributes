@@ -1,1 +1,3 @@
 crates/ara-context/prompts/skills/user-invocation.md text eol=lf
+crates/ara-rpc/tests/fixtures/omp-rpc-oracle.json -text
+crates/ara-rpc/tests/fixtures/omp-rpc-source-manifest.json -text whitespace=cr-at-eol

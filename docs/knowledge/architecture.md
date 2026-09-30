@@ -23,8 +23,22 @@ This is an architecture target. Source-backed Rust behavior and host tests are r
 | `ara-session` | Session journal format and recovery | Providers, hosts |
 | `ara-tools` | Built-in tool implementations (file/process effects) behind `AgentTool` | Hosts, products |
 | `ara-mcp` | Host-side bounded MCP stdio process and `AgentTool` adapter | Session storage, product state |
+| `ara-rpc` | Fixed RPC JSON value semantics, v1/v2 framing, input lines and ordered output | Agent, Session, providers, product state |
 | `ara-cli` | Reference host: argument parsing, model/credential binding, journal location, print mode | Product state (HandWave/Lantern/Lumen) |
 | `ara-testkit` | Controlled fake upstream and fixtures | Production crates at runtime |
+
+**Decision, 2026-09-30 (implementation under audit):** `ara-rpc` owns the
+fixed OMP JSONL transport without importing Agent, Session or provider crates.
+Its local UTF-16/f64/ordered-value representation preserves wire semantics
+which ordinary Rust strings and `serde_json::Value` cannot fully express.
+V2 decoding belongs to reception of server output; server input remains direct
+JSON lines. Physical/logical output ceilings do not define inbound or host
+queue limits. Rust writer completion is an awaited write/flush receipt, and
+cancelled or failed partial output makes that writer terminal. No-op terminal
+compaction borrows the original value; chunk emission keeps only one base64
+physical line at a time, while serialized logical data remains resident.
+The reference host will bind scheduling, authority and native Session
+ownership separately. See [RPC-01 evidence and runtime differences](../evidence/rpc-01-transport.md).
 
 **Decision, 2026-09-28 (implemented WIP, not accepted):** The CLI owns MCP server launch and exact `(server, tool)` grants. `ara-mcp` translates a granted stdio tool into the existing `AgentTool` port; the Agent loop and Session writer retain their existing ordering and recovery behavior. The child receives only explicitly mapped environment variables plus the Windows OS installation path, and a call with an uncertain effect is recorded as unknown without reconnect or replay. This first path covers a direct executable and pinned MCP `2025-11-25`; HTTP/SSE, OAuth, catalog resources/prompts and Windows process-tree containment are separate work. See [CA-MCP stdio evidence](../evidence/ca-mcp-stdio.md).
 

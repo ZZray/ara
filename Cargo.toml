@@ -8,6 +8,7 @@ members = [
   "crates/ara-ctok",
   "crates/ara-discovery",
   "crates/ara-prompt",
+  "crates/ara-rpc",
   "crates/ara-session",
   "crates/ara-tools",
   "crates/ara-testkit",
@@ -34,6 +35,7 @@ ara-tools = { path = "crates/ara-tools" }
 ara-testkit = { path = "crates/ara-testkit" }
 ara-walk = { path = "crates/ara-walk" }
 ara-prompt = { path = "crates/ara-prompt" }
+ara-rpc = { path = "crates/ara-rpc" }
 ara-discovery = { path = "crates/ara-discovery" }
 ara-context = { path = "crates/ara-context" }
 ara-ctok = { path = "crates/ara-ctok" }
