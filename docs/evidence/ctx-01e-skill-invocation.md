@@ -5,7 +5,8 @@
 The upstream target stays `596f2da7101178214aa27a753529d15e6b7ad91d`
 (OMP v18.1.8). CTX-01e remains **implementing, not accepted**. This first
 slice adds explicit user invocation to the existing line REPL and preserves
-the Skill as a real Session `custom_message`. It does not accept CA-RPC,
+the Skill as a real Session `custom_message`. This bounded slice is accepted on
+`862911a` by the final independent audit below. It does not accept CA-RPC,
 the full interactive host, P1/P3, or the full OMP marker.
 
 Baseline: `d557334fab3c5e0daa710ca157711fef77148f3b`, clean `dev`.
@@ -170,11 +171,14 @@ actually ran, rather than reporting `NOT RUN`. Log:
 `C:/Temp/ara-ctx-invocation-validation/backend-windows-js-trim.log`, SHA-256
 `4f18d4b0be7abfff26386023af458a0cbd889721ecd28cfb390380763eb50e37`.
 
-Dependency policy passed advisories/bans/licenses/sources. Existing warnings
+The initial dependency policy passed advisories/bans/licenses/sources. Existing warnings
 remain: tree-sitter-graphql has no license field, and duplicate versions of
 base64/cfg-if/encoding_rs/getrandom/syn/windows-sys. Log:
 `C:/Temp/ara-ctx-invocation-validation/cargo-deny.log`.
 Bootstrap, inventory and diff whitespace checks passed.
+The final point audit identified that this dependency receipt predates the last
+CLI manifest/lock-edge adjustment; the delivered-snapshot rerun below supersedes
+it for acceptance.
 
 Controlled process coverage includes hidden/embedded known Skills, real write
 effects, custom events/journal and no duplicate User, restart after source
@@ -259,7 +263,7 @@ first journal and only the resumed prompt in the final one, with one nonerror
 receipt per tool call. Both stages have three model calls and a final `stop`.
 **Real-task audit: PASS**, with the artifact-based recall limit stated above.
 
-## Linux and point-audit boundary
+## Historical Linux and point-audit checkpoint
 
 `.github/workflows/ctx-skill-invocation.yml` is authored but has not run at this
 checkpoint. It pins Ubuntu 24.04, Rust 1.97.1, fixed OMP objects and Bun 1.4.0,
@@ -273,3 +277,89 @@ push the scoped WIP, inspect exact-SHA CI and uploaded Linux receipts, and obtai
 independent point audit including the final model task. Even a bounded slice
 acceptance will not close RPC/queue semantics, CTX-01e as a whole, P1/P3 or the
 complete OMP parity marker.
+
+## Linux execution on delivered `862911a`
+
+Scoped WIP `862911ac0b8c0a88489e9e9f0bd30af2d579ba8c` was committed and pushed to
+`dev`. All 26 committed files match the reviewed worktree after Git's ordinary
+CRLF-to-LF normalization; all 17 tested source hashes still match the local
+snapshot. Blob hashes and linkage are retained in
+`C:/Temp/ara-ctx-invocation-validation/delivered-862911a-manifest.json`.
+
+| Exact-SHA workflow | Result |
+| --- | --- |
+| [Repository checks 36653563236](https://github.com/ZZray/ara/actions/runs/36653563236) | PASS: bootstrap, inventory and full Linux backend gate |
+| [Skill invocation 36653563240](https://github.com/ZZray/ara/actions/runs/36653563240) | PASS: unchanged oracle, Rust differential, Session/host tests and actual FIFO/process fixtures |
+| [Skill directory faults 36653563162](https://github.com/ZZray/ara/actions/runs/36653563162) | PASS: prior directory-failure regression workflow |
+| [Directory oracle 36653563169](https://github.com/ZZray/ara/actions/runs/36653563169) | PASS: prior fixed-source locale regression workflow |
+
+The full Linux gate has **1,073 passed, 0 failed, 1 ignored, 77 suites**;
+CLI e2e **90/90**. Formatting, Clippy and documentation tests passed. Its log is
+`C:/Temp/ara-ctx-invocation-validation/github-862911a/logs-36653563236/verify/7_Run python scripts_verify_backend.py.txt`,
+SHA-256 `148e7f2e5d1911a62a3df71aea0d0e2476c04e39a8d7560f29a7d20b166b911a`.
+The separate invocation workflow supplies the actually executed upstream oracle
+comparison. Commands are committed in that workflow with `--locked` and
+`--nocapture`: parser 1/1, builder 2/2, Session 9/9, host 2/2 and Skill-filtered
+process tests 14/14 passed.
+
+Downloaded artifact root:
+`C:/Temp/ara-ctx-invocation-validation/github-862911a/ctx-skill-invocation-linux`.
+The run is `run-20260930T010720Z-fe23b6c1`: Bun 1.4.0, fixed OMP source,
+25 parser + 10 builder cases, zero mock calls. Oracle SHA-256:
+`62d96c837d4388efc146f792ab2f33a2db1c0b9b0361db53dad6320c4d7bcfef`.
+All five source blobs plus LICENSE match both their manifest and fresh exact-SHA
+Git exports. Runner bytes match the delivered script. All **37 uploaded files**
+were hashed in `github-862911a/linux-862911a-artifact-hashes.json`; archive includes
+the expected fixtures and actual process receipts.
+
+FIFO case receipts are under `process/fifo-replacement`: summary, stdout,
+stderr, model requests and Session. A discovered regular Skill is replaced
+by an unopened FIFO. The first ordinary prompt produced the only model request;
+the subsequent `/skill:proof fifo-args` produced an explicit non-regular-file
+error and no model request or custom entry. The process exited 0 within its
+five-second bound, proving shutdown did not wait on a blocked reader.
+
+The first local artifact-check command used Windows' default GBK decoder and
+failed reading the Unicode oracle. Rerun with explicit UTF-8 passed; source and
+artifacts were unchanged. This checker failure is distinct from a Rust/CI failure.
+
+The independent point audit found the earlier dependency log predates the last
+manifest/lock-edge adjustment. `cargo deny check` was rerun on delivered
+`862911a`, exit 0: advisories/bans/licenses/sources all OK, with the same existing
+warnings. Final receipt:
+`C:/Temp/ara-ctx-invocation-validation/cargo-deny-862911a.log`, SHA-256
+`71ecda837a6ba5e273843470be6bf53819eda4667142fdf1a62bc5da0e7627e4`.
+
+## Final independent point audit, 2026-09-30
+
+Independent Codex `resource_scan_plan` applied `ara-git-review`,
+`ara-rust-core-review` and `point-delivery-audit` to delivered
+`862911ac0b8c0a88489e9e9f0bd30af2d579ba8c` against `d557334`.
+It reviewed all 26 committed paths and the later Linux evidence draft, with no
+skipped changed file or unresolved actionable finding. It independently checked:
+
+- All 17 tested source hashes and 26 delivered blob hashes, including ordinary
+  Git LF normalization; no production changes after the reviewed Windows gate.
+- Exact-SHA checkout/CI logs; full Windows 1,070/0/1 and Linux 1,073/0/1 gates,
+  Linux e2e 90/90 and the existing ignored AST corpus test.
+- All 37 uploaded Linux files and ZIP coverage; six fresh fixed-source/license
+  blobs, delivered runner bytes, 35 executed oracle cases and both fresh reads.
+- Actual 14 Linux Skill process tests, including FIFO request/event/journal
+  receipts and bounded exit, plus Session and host focused gates.
+- Final-binary real task, all 14 artifact hashes, tool ordering/effects,
+  source-deletion restart, stable custom ID/timestamp, no duplicate User,
+  verified model/protocol, budgets, usage and public/credential redaction.
+- The final delivered-snapshot dependency policy log, hash and all four OK checks.
+
+**Decision: ACCEPT the bounded line REPL + specialized user Skill Session slice
+on `862911a`.** No mandatory evidence gap remains for that stated scope.
+The live resumed task uses the saved artifact; direct context projection and
+compaction/restart are established by the controlled process tests. Cost is
+unknown. Local output paths are retained receipts, not committed secrets or a
+deployed product installation.
+
+**Full CTX-01e remains implementing.** RPC acknowledgement/error/queue contracts,
+steering/follow-up/queueOnly, full TUI, line-host images, autoload/generic custom
+families and plugin containment remain open. P1/P3 and the complete fixed OMP
+marker do not advance. A later host slice must first trace existing A5/RPC and
+Agent queue ownership, then carry its own source, execution and review evidence.
