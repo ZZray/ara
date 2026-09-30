@@ -216,6 +216,9 @@ const ARRAY_PROTOTYPE_KEYS: &[&str] = &[
 fn array_index(key: &str) -> Option<usize> {
     key.parse::<usize>().ok().filter(|v| *v < u32::MAX as usize && v.to_string() == key)
 }
+pub(crate) fn array_prototype_has_key(key: &str, len: usize) -> bool {
+    ARRAY_PROTOTYPE_KEYS.contains(&key) || array_index(key).is_some_and(|index| index < len)
+}
 impl CompatPrototype {
     fn has(&self, key: &str) -> bool {
         match self {
@@ -759,7 +762,7 @@ fn has_local_loopback_base_url(base_url: &str) -> bool {
 fn local_provider(provider: &str) -> bool {
     matches!(provider, "llama.cpp" | "lm-studio" | "vllm" | "ollama")
 }
-fn reasoning_disable_mode(format: &str) -> &'static str {
+pub(crate) fn reasoning_disable_mode(format: &str) -> &'static str {
     match format {
         "openrouter" => "openrouter-enabled-false",
         "zai" | "kimi" => "zai-thinking-disabled",
@@ -1092,6 +1095,15 @@ fn resolve_completions(spec: &Value, facts: &IdentityFacts<'_>, axes: &Value) ->
 }
 
 fn resolve_responses(spec: &Value, facts: &IdentityFacts<'_>, axes: &Value, api: &str) -> CompatRecord {
+    resolve_responses_stage(spec, facts, axes, api, true)
+}
+fn resolve_responses_stage(
+    spec: &Value,
+    facts: &IdentityFacts<'_>,
+    axes: &Value,
+    api: &str,
+    apply_authored: bool,
+) -> CompatRecord {
     let base_url = string(spec, "baseUrl");
     let provider = string(spec, "provider");
     let host = |host| model_matches_host(spec, host);
@@ -1172,6 +1184,9 @@ fn resolve_responses(spec: &Value, facts: &IdentityFacts<'_>, axes: &Value, api:
         if local_serving { Some(json!(300_000)) } else { spec["compat"].get("streamIdleTimeoutMs").cloned() },
     );
     apply_wire_axes(&mut c, axes, api);
+    if !apply_authored {
+        return c;
+    }
     c.overrides(spec.get("compat"));
     overlay_effort_map(&mut c, axes, spec);
     if xai && defined(&axes["wire"], "reasoningEffortMap") {
@@ -1510,6 +1525,35 @@ pub fn resolve_model_policy(spec: &Value) -> Result<Value, CatalogPolicyError> {
     Ok(policy)
 }
 
+/// Detector and compiled-axis allocation, before authored values or fixups.
+/// The lossless Host applies the remaining source stages to its native record.
+pub(crate) fn compat_seed_with_axes(spec: &Value, identity: &Value, axes: &Value, api: &str) -> Option<Value> {
+    let facts = IdentityFacts::new(identity);
+    let record = match api {
+        "openai-completions" => {
+            let detection = detect_openai(spec, &facts);
+            let mut record = detect_openai_compat(spec, &facts, &detection);
+            apply_wire_axes(&mut record, axes, api);
+            record
+        }
+        "openrouter" | "openai-responses" | "azure-openai-responses" | "openai-codex-responses" => {
+            resolve_responses_stage(spec, &facts, axes, api, false)
+        }
+        "anthropic-messages" => {
+            let mut detector = spec.clone();
+            detector.as_object_mut()?.remove("compat");
+            resolve_anthropic(&detector, &facts, axes)
+        }
+        "bedrock-converse-stream" | "devin-agent" | "google-generative-ai" | "google-vertex" | "google-gemini-cli" => {
+            let mut detector = spec.clone();
+            detector.as_object_mut()?.remove("compat");
+            resolve_simple(&detector, axes, api)
+        }
+        _ => return None,
+    };
+    Some(record.values)
+}
+
 /// Apply reviewed upstream metadata corrections in the fixed upstream order:
 /// long-context tier derives from the live row, then cost/limit patches win.
 pub fn apply_catalog_corrections(model: &mut Value, catalog: &Value) {
@@ -1609,7 +1653,7 @@ fn apply_catalog_assignments(model: &mut Value, catalog: &Value) {
         model["contextPromotionTarget"] = v.clone();
     }
 }
-fn direct_openai_responses_endpoint(spec: &Value) -> bool {
+pub(crate) fn direct_openai_responses_endpoint(spec: &Value) -> bool {
     let api = string(spec, "api");
     let provider = string(spec, "provider");
     let base_url = string(spec, "baseUrl");

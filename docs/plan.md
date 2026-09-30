@@ -51,12 +51,21 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+Fixed model variants/lossless checkpoint (2026-10-01, tested WIP): all eight
+collapse exports and their mutable aliases/templates/reference identity, native
+UTF-16/undefined/non-finite policy construction and native RegExp pass their
+retained source oracles and Windows full gate; see
+[variant evidence](evidence/model-variants.md). Continue with complete discovery
+transport/normalization/model-manager, overrides and registry, then full
+authentication and execution/journal integration. P0/V1 remain accepted,
+P1–P6 open, RPC 27/42 and the full parity marker null.
+
 Fixed model policy/construction checkpoint (2026-10-01, tested WIP): native compiled
 rule/taxonomy resolution, complete compat/thinking/build, host identity/reference/
 metrics and declarative behavior/auth accessors pass 46,136 original-source
 comparisons, 270,556 behavior pairs and the Windows full gate; see
-[policy evidence](evidence/model-policy.md). Complete variant-list collapse,
-discovery transports/normalization/manager, registry/authentication and live
+[policy evidence](evidence/model-policy.md). The variant-list dependency is
+recorded above; discovery transports/normalization/manager, registry/authentication and live
 metadata/journal adoption remain the next required integration. No phase or
 RPC acceptance advances from this Host dependency.
 

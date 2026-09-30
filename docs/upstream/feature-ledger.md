@@ -40,9 +40,21 @@ behavior/auth policies map to `ara-cli::{catalog_rules,catalog_behavior,
 model_identity,model_policy}`. The [policy evidence](../evidence/model-policy.md)
 records exact data, lossless UTF-16 boundaries, 46,136 unchanged-source comparisons
 and 270,556 provider/model behavior pairs, the Windows full gate
-and scoped independent reviews. Variant-list collapse, native network/registry/
+and scoped independent reviews. The complete variant-list dependency below
+adds native lossless construction. Native network/registry/
 authentication, overrides and execution/journal adoption remain mandatory.
 No surface, RPC command, phase or parity-marker acceptance advances.
+
+Active fixed model variants/lossless dependency (tested WIP): all eight
+`compat/collapse.ts` exports, reviewed families/templates, mutable alias and
+identity state map to `ara-cli::model_collapse`; `model_wire_policy` preserves
+native UTF-16/undefined/non-finite construction and `js_regex` supplies the
+native RegExp seam. [Variant evidence](../evidence/model-variants.md) records
+1,995 isolated unchanged-source sequences, 26 lossless/error cases, 130 RegExp
+cases, 11,844 Wire policy/build replays, 471 retained matcher tests and the
+Windows full gate **1,451/0/10**. No new Linux/real-model trial or registry/main
+integration is claimed. Complete discovery/manager/overrides/registry/auth and
+live metadata/journal remain mandatory; all surface/phase/RPC markers stay open.
 
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:

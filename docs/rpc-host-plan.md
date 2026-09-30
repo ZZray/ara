@@ -208,11 +208,19 @@ commands and additional lifecycle contracts until the complete inventory passes.
 
 ## Model/auth foundation checkpoint, 2026-10-01
 
+The [fixed variant/lossless dependency](evidence/model-variants.md) adds all eight
+collapse exports, Host-owned mutable aliases/templates and reference identity,
+native lossless policy/build and RegExp. Source oracle/full Windows checks pass
+on the frozen version. This is still a Host dependency; discovery/manager/
+overrides/registry/authentication and model/role/thinking/journal adoption must
+connect it to the complete runtime before model commands can be accepted.
+RPC coverage stays 27/42, with no full R3/R4 or CA-RPC acceptance.
+
 The [fixed policy/construction dependency](evidence/model-policy.md) adds
 compiled rule/taxonomy resolution, full API compat/thinking/build, endpoint and
 reference/metrics policies. The native dependency passes 46,136 original-source
-comparisons and the Windows full gate. It still needs complete variant-list collapse,
-discovery transport/manager, override recomposition, registry/authentication and
+comparisons and the Windows full gate. Its variant-list dependency is recorded
+above; discovery transport/manager, override recomposition, registry/authentication and
 live execution/journal adoption; the native model commands are not yet accepted.
 
 The next [native config/cache checkpoint](evidence/model-config-cache.md) adds

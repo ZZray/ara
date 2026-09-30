@@ -4,6 +4,61 @@ use ara_cli::{catalog_behavior as b, catalog_rules as r, model_identity as i, mo
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[test]
+#[ignore = "requires retained fixed OMP artifact in ARA_MODEL_POLICY_ORACLE"]
+fn lossless_policy_adapter_replays_all_original_policy_and_build_cases() {
+    use ara_cli::{
+        model_collapse::{CollapseModelPolicy, VariantSpec},
+        model_wire_policy::WireModelPolicy,
+    };
+    let path = std::env::var_os("ARA_MODEL_POLICY_ORACLE").expect("execute scripts/model_policy_oracle.py first");
+    let bytes = std::fs::read(path).unwrap();
+    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    let actual = digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    assert_eq!(
+        actual, "53c29b84b31edde4be7dda3e22ddcb2aa2121e43f66dcc6b2c8e3136cb9b1cad",
+        "original complete frozen policy corpus"
+    );
+    let oracle: Value = serde_json::from_slice(&bytes).unwrap();
+    inventory(&oracle).expect("original full source inventory");
+    let mut counts = BTreeMap::new();
+    let mut differences = Vec::new();
+    for case in oracle["cases"].as_array().unwrap() {
+        let kind = string(case, "kind");
+        let build = match kind {
+            "catalog-policy"
+            | "fixture-policy"
+            | "endpoint-policy"
+            | "api-endpoint-policy"
+            | "sparse-policy"
+            | "prototype-policy" => false,
+            "catalog-build" | "fixture-build" | "sparse-build" | "computer-use-build" | "prototype-build" => true,
+            _ => continue,
+        };
+        *counts.entry(kind.to_owned()).or_insert(0usize) += 1;
+        let input = VariantSpec::from_json(&case["input"]);
+        let outcome = if build { WireModelPolicy.build(&input) } else { WireModelPolicy.resolve(&input) };
+        let actual =
+            result(outcome.map(|spec| serde_json::from_str::<Value>(&spec.to_wire_json().stringify()).unwrap()));
+        if !same(&actual, &case["expected"]) {
+            differences.push(json!({"kind":kind,"input":case["input"],"expected":case["expected"],"actual":actual}));
+        }
+    }
+    assert_eq!(counts.values().sum::<usize>(), 11844, "all original policy/build inputs");
+    for (kind, count) in &counts {
+        assert_eq!(EXPECTED_COUNTS.iter().find(|(name, _)| name == kind).unwrap().1, *count);
+    }
+    if let Some(path) = std::env::var_os("ARA_WIRE_POLICY_MISMATCHES") {
+        std::fs::write(path, serde_json::to_vec(&differences).unwrap()).unwrap();
+    }
+    assert!(
+        differences.is_empty(),
+        "{} native wire policy/build differences; first={}",
+        differences.len(),
+        json!(differences.first())
+    );
+}
+
 const EXPECTED_COUNTS: &[(&str, usize)] = &[
     ("catalog-taxonomy", 4776),
     ("catalog-cascade", 4776),

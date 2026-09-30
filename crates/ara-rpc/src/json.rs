@@ -22,6 +22,11 @@ impl From<String> for WireString {
 }
 
 impl WireString {
+    /// Retain UTF-16 code units, including unpaired surrogates, without replacement.
+    pub fn from_units(units: Vec<u16>) -> Self {
+        Self(units)
+    }
+
     pub fn units(&self) -> &[u16] {
         &self.0
     }

@@ -1,5 +1,10 @@
 # Vendored OMP crates
 
+The separate third-party matcher dependency `ara-regress` preserves the
+registry package `regress` 0.12.0, its MIT OR Apache-2.0 notices and original
+release tests. It is not an OMP Rust crate. See
+[its source provenance and native patches](ara-regress/ARA-PATCHES.md).
+
 These crates are copied from [Oh My Pi](https://github.com/can1357/oh-my-pi) at the pinned commit `596f2da7101178214aa27a753529d15e6b7ad91d` (`upstream/omp.lock.json`), under the MIT license (`THIRD_PARTY_NOTICES.md`, `ara-ast/LICENSE`). They follow ARA naming ([naming rule](../../docs/knowledge/naming.md)): each package and directory is renamed from `pi-*` to `ara-*`. Otherwise they keep upstream sources, tests, fixtures and formatting. Upstream formats them with a nightly rustfmt configuration, copied here as `rustfmt.toml`. `scripts/verify_backend.py` checks formatting only for ARA-owned packages, so re-syncing stays a plain diff against upstream once the rename is applied.
 
 | Crate | Upstream crate and path | Used for |

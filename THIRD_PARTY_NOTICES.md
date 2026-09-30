@@ -1,5 +1,10 @@
 # Third-party notices
 
+The native ECMAScript matcher is the published `regress` 0.12.0 package,
+preserved in `crates/vendor/ara-regress` under MIT OR Apache-2.0. Original
+licenses, notices and tests remain in that directory. Its two native source
+patches and release checksum are documented in `ARA-PATCHES.md` there.
+
 ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/can1357/oh-my-pi) `v18.1.8` / `596f2da7101178214aa27a753529d15e6b7ad91d`. Ported code lives in:
 
 - `crates/ara-ai`: from `packages/ai`, the `packages/catalog` types and Claude tokenizer policy, and the `packages/utils` JSON parsing.
