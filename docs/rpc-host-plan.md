@@ -106,13 +106,18 @@ events are additional contracts, not commands omitted from this denominator.
    become ready before login/model selection. Keep model-less startup mapped.
    The first [entry snapshot](evidence/rpc-host-entry.md) implements twelve
    bounded commands and actual owned Run/sink/mirror/output binding. It remains
-   WIP; runtime adoption, Skill provenance and remaining task-chain contracts
-   remain open, with explicit unsupported errors in the interim.
+   a historical WIP checkpoint: runtime adoption and Skill provenance were open
+   there and are addressed by the subsequent slices below. Remaining task-chain
+   contracts continue to return explicit unsupported errors.
    The [native Session slice](evidence/rpc-host-session.md) adds bounded new/switch
    implementations (fourteen of 42 variants implemented, not full command parity).
    Fixed RPC cancels changed-cwd switches; unchanged same-ID replay retains
    provider state, while new/different/changed Sessions reset it. Full saved
    model/settings and runtime capability reconciliation remain open.
+   The [owned RPC Skill point](evidence/rpc-host-skills.md) is accepted on
+   `97567f0`: pre-ACK fresh source, command-specific images/default queue behavior,
+   opaque Core input provenance, custom receipts, Run-local public terminals and
+   active-branch native restoration. Complete CTX-01e and CA-RPC remain open.
 3. **Bidirectional execution and maintenance:** host tools/URI/extension UI,
    background bash, live configuration, compaction/retry and command metadata.
    Unsupported known commands fail explicitly until implemented.

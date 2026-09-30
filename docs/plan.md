@@ -8,6 +8,38 @@
 2. **G2: build a next-generation task Agent on that Core.** The direction is in [agent evolution](knowledge/agent-evolution.md): move from answering to finishing tasks, with memory, reasoning, autonomous planning, decisions, execution, feedback, and unified Omni perception for text, images, audio, video, documents and sensors, in Chinese and English. This lays the ground for understanding the physical world.
 3. **G3: validate against real models.** Every integration point runs a bounded real task through the actual host chain. Trials have used OpenRouter (`openrouter/free`), Agnes AI (`agnes-2.5-flash`, `agnes-2.5-pro`) and B.AI (`deepseek-v4.1-flash`) on OpenAI-compatible routes. Credentials come only from the environment; each model ID is verified against the live catalogue before a trial.
 
+## Current priority: reproduce OMP before customization
+
+**User decision, 2026-09-30:** finish the fixed OMP behavior port first, then
+customize ARA. Track A and P1-P3 now take priority over new Track B/P4 features,
+product-specific additions and further V1 dogfood work. V1 is already accepted.
+Existing completed user-requested additions remain recorded; unrelated WIP is
+preserved without being included in parity acceptance.
+
+Work in coherent module batches rather than repeatedly accepting tiny fragments:
+
+1. Continue the production RPC/host module against its complete fixed-source
+   command and lifecycle map. Batch related command discovery, native queries
+   and Session actions where they reuse one owner. Registered Skill metadata
+   uses the existing snapshot; it does not imply a complete six-source catalogue.
+2. Complete remaining Core/Session long-task behavior and provider/protocol
+   parity using their existing implementations, mapped fixtures and open rows.
+   Independent files may be implemented in parallel; ownership stays explicit.
+3. Complete extensibility and remaining fixed-source surfaces, then classify and
+   audit the full inventory for P3 before starting ARA customization.
+
+Each implementation point runs its applicable focused checks. A completed module
+batch shares one final full backend/dependency gate, relevant bounded task and
+independent audit on the same delivered snapshot; its included points stay WIP
+until those gates pass. Reuse unchanged source and artifact evidence, and rerun
+checks to resolve an actual remaining risk or a required gate. Existing reviewed
+plans need a new design review only when their scope or architecture changes.
+
+Report module coverage and actual remaining differences separately from formal
+acceptance, together with measured implementation/gate time and the next batch.
+Do not use narrow fixture counts as an OMP completion percentage. No new
+completion-date estimate is asserted without measured module throughput.
+
 ## Where we are
 
 P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
@@ -25,7 +57,7 @@ P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](evidence/real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`). Context points (A2 CTX-01) carry their own [real-model trial](evidence/ctx-01d-system-prompt.md) on both routes: an `AGENTS.md` rule and a skill's format must be followed.
 - Accepted: CTX-01a (`ara-prompt`), CTX-01b (`ara-discovery` context files) and CTX-01c (frontmatter and skills).
 - CTX-01d is accepted for the explicitly bounded system-prompt/reminder and non-plugin Skill host behaviors on `d05dab0`; see the [final fault evidence and independent point audit](evidence/ctx-01d-skill-directory-fault.md). Evidence includes the observed Windows zh-CN/en-US, macOS en-US and Linux en-US sorting fixtures; the 257 MiB complete resource scan; 22 fixed-source representative Skill renderer comparisons; actual Linux post-open enumeration/type EIO receipts with 100 rehashed uploaded files; a bounded B.AI task with exact artifact and Session receipts; and final Linux backend gate 1,051 passed, 0 failed, 1 ignored. Other locales, generic selectors (TOOLS-01a), plugin/managed Skills (CTX-01c) and `/skill:` (CTX-01e) retain their open boundaries. The native addon build provenance and earlier unconfirmed REPL-warning failure stay explicit in the evidence. P1/P3 and the full OMP marker do not advance. Historical source and repair receipts remain in the [sort evidence](evidence/ctx-01d-skill-directory-sort.md), [renderer evidence](evidence/ctx-01d-skill-selector-renderer.md) and [handoff](handoffs/2026-09-30.md).
-- CTX-01e (`/skill:` invocation) remains implementing as a whole. Its bounded line REPL and specialized Session slice is accepted on `862911a` by independent Codex audit: unchanged fixed-source parser/builder comparison (35 cases), custom persistence/projection/compaction/restart, controlled failures/cancellation and actual Linux FIFO exit, Windows full gate 1,070/0/1, Linux 1,073/0/1 (e2e 90/90), final delivered dependency policy and final-binary B.AI task with exact artifacts (6 calls, 4 receipts). RPC acknowledgement/error/queues, steering/follow-up/queueOnly, full TUI, line-host images, autoload/generic custom families and plugin containment remain open. Trace A5/RPC and existing Agent queue ownership before planning the next host slice; no full CTX-01e, P1/P3 or parity-marker acceptance. [Evidence and final audit](evidence/ctx-01e-skill-invocation.md#final-independent-point-audit-2026-09-30).
+- CTX-01e (`/skill:` invocation) remains implementing as a whole. Its bounded line REPL and specialized Session slice is accepted on `862911a` by independent Codex audit: unchanged fixed-source parser/builder comparison (35 cases), custom persistence/projection/compaction/restart, controlled failures/cancellation and actual Linux FIFO exit, Windows full gate 1,070/0/1, Linux 1,073/0/1 (e2e 90/90), final delivered dependency policy and final-binary B.AI task with exact artifacts (6 calls, 4 receipts). The subsequent owned RPC Skill point is accepted on `97567f0` (see [RPC Skill evidence](evidence/rpc-host-skills.md)). Full TUI, line-host images, autoload/generic custom families, plugin containment and remaining RPC contracts stay open; no full CTX-01e, P1/P3 or parity-marker acceptance. [Evidence and final audit](evidence/ctx-01e-skill-invocation.md#final-independent-point-audit-2026-09-30).
 - A4 MODEL-01a (WIP): opt-in `--api proxy-auto` selects the exact model's Anthropic or OpenAI Chat endpoint from a dual-protocol proxy before Session creation. Controlled CLI tests cover a tool effect, Session receipts and fail-closed discovery; model capability metadata, source-bound resume, the full Windows gate and a bounded live task remain open. [Evidence](evidence/model-01a-proxy-protocol.md).
 - A3 preparation (WIP): the isolated AGT-TOKENIZERa text/message estimate is under implementation; [evidence](evidence/agt-tokenizer-estimate.md). The initial byte-based budget probe was removed after pinned Claude fixtures disproved its claimed token upper bound. The tokenizer point remains WIP; A3 compaction/long-task acceptance is separate from the bounded CTX-01d decision.
 - A3 AGT-TOKENIZERb (WIP): a Claude-only content counter with pinned vocabulary and fixture evidence builds on stable Windows Rust; [evidence](evidence/agt-tokenizer-claude.md). Model-family selection, actual provider-request sizing and compaction remain separate open work.
@@ -63,7 +95,8 @@ Accepted on 2026-09-25 for the behaviors exercised in the [real-model trials](ev
 | V1-COMPACT | Basic compaction from the A3 AGT-COMPACTION pieces: a threshold from the model's context window (or an explicit host value) and a manual `/compact`; the summary is persisted in the Session with source IDs, and resume uses it. Not full A3 parity. | A long session compacts, keeps working, and resumes after restart from the persisted summary |
 | V1-TRIAL | Bounded real-model daily task through the REPL on an OpenAI-compatible route | Evidence per [acceptance](acceptance.md): artifact check, receipts, usage with unknowns kept, latency |
 
-**Estimate:** 4–8 working weeks, low confidence: REPL, cancel and resume 1–2 weeks; basic compaction 2–4 weeks (its persistence and resume are still open in A3); hardening and the real-model trial 1–2 weeks. A full OMP replacement (A3–A8 parity) remains 4–8+ months.
+V1 is complete. Its initial pre-implementation estimate is retired; remaining
+OMP work follows the current module execution priority above.
 
 ## Track A: OMP parity (G1)
 
@@ -113,13 +146,17 @@ The first twelve commands cover protocol, prompt/direct images, canonical
 queues/modes, live queries and joined abort/replacement. An independent stdout
 actor preserves control responsiveness, while the Run sink journals completed
 messages and exposes full partial events. Runtime Session adoption and owned
-RPC Skill provenance remain next; unsupported contracts return explicit errors.
+RPC Skill provenance were open at this entry checkpoint. The subsequent native
+Session and [owned Skill point](evidence/rpc-host-skills.md) implement those
+bounded paths; remaining unsupported contracts return explicit errors.
 The [entry evidence](evidence/rpc-host-entry.md) distinguishes executed tests
 from remaining whole-surface acceptance. Formal gates remain P0 only.
 
 ## Track B: next-generation Agent (G2), design v1
 
-ARA features sit behind explicit Core interfaces and never weaken an OMP behavior. B points start once A3 is tested, because they need compaction and recovery. B1 foundations may start earlier as additive types.
+ARA features sit behind explicit Core interfaces and never weaken an OMP behavior.
+Following the user's 2026-09-30 priority, new B points start after fixed OMP
+parity is accepted at P3. This design remains reference material during Track A.
 
 ```text
                 ┌──────────────────── Host (CLI, RPC, HandWave, Lantern, Lumen) ────────────────────┐
@@ -178,8 +215,9 @@ semantics. The preceding entry commit's Linux gate is green (1,115/0/1, 86
 suites, e2e 90/90). The module now has fourteen bounded command implementations
 out of 42; full command parity and P1-P6 acceptance remain open. Different-cwd
 RPC switches cancel, and saved role/model/settings plus runtime capability
-reconciliation remain explicit gaps. Continue owned queued Skill provenance,
-then remaining task-chain/side-channel contracts under the complete Host plan.
+reconciliation remain explicit gaps. Owned queued Skill provenance is now
+accepted on `97567f0`; continue command discovery, native queries/actions and
+remaining task-chain/side-channel contracts under the complete Host plan.
 
 
 Final Session-slice Windows evidence: RPC child tests **21/21**, full backend
@@ -191,20 +229,21 @@ recorded in the [Session evidence](evidence/rpc-host-session.md). This remains t
 verification and complete RPC/model/settings/capability contracts stay open.
 
 Exact `840d2da` Linux run `36674773925` subsequently exposed a terminal/owned
-Run-settlement race (RPC 20/21). The immediate priority is the narrow RPC terminal
-correction and its final Windows/real-task/independent/Linux receipts; owned
-Skill implementation waits for this gate to close. The source-backed three-view
+Run-settlement race (RPC 20/21). At that checkpoint the immediate priority was the
+narrow RPC terminal correction and its final receipts; owned Skill implementation
+waited for this gate to close. The source-backed three-view
 Skill design is retained without claiming implementation or advancing a phase.
 
 The repaired Windows snapshot and deterministic mutation now pass: backend
 1,121/0/1 (86 suites), all-feature RPC 21/21, e2e 87/87; actual three-Run task
 18.344 s with seven calls/four receipts and exact recall. Final independent
-audit and accurate repaired-commit Linux receipt remain the immediate gates;
+audit and accurate repaired-commit Linux receipt were the immediate gates;
 retain the complete 42-command denominator and P1-P6 acceptance boundary.
 
 Accurate correction `9491fa1` Linux repository run `36681353101` succeeds:
 1,124/0/1 (86 suites), RPC 21/21, e2e 90/90 and the deterministic oracle; backend
-325 seconds. The terminal correction is closed. Resume the reviewed owned
-queued Skill implementation using the existing discovery/preparation and Agent
-queues, then complete the remaining full Host plan. RPC remains 14/42 bounded
+325 seconds. The terminal correction is closed. The reviewed owned queued Skill
+point is subsequently accepted on `97567f0`: Windows 1,148/0/1, Linux 1,151/0/1,
+RPC 26/26 and an independently audited three-Run actual task. Continue the
+remaining full Host plan. RPC remains 14/42 bounded
 implementations, with full command parity and P1-P6 still open.

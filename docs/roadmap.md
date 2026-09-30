@@ -12,8 +12,14 @@ This is a new implementation, not a branch migration. No old ARA source, databas
 | P5 — product integrations | Host APIs for AI HandWave, Lantern/Paseo, Lumen and later products | Real product UI/API workflows, distinct product identity/data, shared Core package, error feedback and resumed history. |
 | P6 — release | Reproducible builds, migration/rollback where needed, security and license review | Final acceptance matrix, isolated rehearsal, authorized deployment, observed runtime behavior. |
 
-**Priority milestone, user decision 2026-09-28: daily-driver v1.** Before the remaining parity slices, make `ara` usable for daily command-line work in place of OMP: a line-based interactive session with streaming output, Ctrl+C that cancels the current turn, Session resume, the existing tools and basic compaction, on OpenAI-compatible Chat Completions routes (OpenRouter and compatible endpoints). An OpenAI Codex account login (Responses with OAuth) is a later option; Anthropic account login is out of scope. V1 is a host milestone, not a gate: it draws points from P1/P2 surfaces, and each point keeps its own ledger row, evidence and audit. Scope, exit criteria and estimate are in the [execution plan](plan.md#priority-daily-driver-v1).
+**Priority milestone, user decision 2026-09-28: daily-driver v1.** Before the remaining parity slices, make `ara` usable for daily command-line work in place of OMP: a line-based interactive session with streaming output, Ctrl+C that cancels the current turn, Session resume, the existing tools and basic compaction, on OpenAI-compatible Chat Completions routes (OpenRouter and compatible endpoints). An OpenAI Codex account login (Responses with OAuth) is a later option; Anthropic account login is out of scope. V1 is a host milestone, not a gate: it draws points from P1/P2 surfaces, and each point keeps its own ledger row, evidence and audit. Scope and exit criteria are in the [execution plan](plan.md#priority-daily-driver-v1).
 
-The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior. Product hosts may be prototyped to prove the Core interface, but their acceptance is later and separate.
+**Current priority, user decision 2026-09-30:** finish fixed OMP behavior parity
+before adding ARA customization. V1 is already accepted. Work in module batches,
+run per-point focused checks, and share final snapshot gates across the completed
+batch. New P4/Track B and product-specific additions wait for P3. Preserve prior
+completed work and unrelated WIP. See the [current execution priority](plan.md#current-priority-reproduce-omp-before-customization).
+
+The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).

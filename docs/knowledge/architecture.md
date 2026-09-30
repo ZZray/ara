@@ -101,3 +101,26 @@ This matches fixed OMP `agent-session.ts:750-755,836-842,2361-2371`. The
 failure, gated real-Agent oracle, caught premature-emission mutation and final
 Windows/Linux/real-task receipts. This rule does not change Core/print/REPL or
 accept full RPC parity.
+
+### Owned RPC Skill input and public provenance
+
+**Decision, 2026-09-30 (bounded point accepted on `97567f0`):** Core queues own
+`AgentInput` envelopes with a model message and optional opaque `Arc<Value>`
+provenance. Never recover custom input identity by model-message equality or
+timestamp: two identical model messages may have distinct user sources. Owned
+hooks and the awaited input callback carry each envelope through queue modes,
+rollback and pending deadline/budget commits. Core does not interpret metadata,
+and provider context, transcript and RunReport contain model projections only.
+
+The RPC sink owns custom presentation and the consumed input's journal receipt.
+Its local completed-message sequence supplies the Run terminal, published only
+after task join. A Session's global mirror is a live query view, not a substitute
+for Run identity. Restore recognized Skill public messages from active raw
+branch entries; the historical file may no longer exist. Keep provider replay
+and public native history as separate projections. CLI setup owns discovery;
+adopt config and its Skill snapshot together after successful preparation.
+
+The [point evidence](../evidence/rpc-host-skills.md) includes equal-value provenance
+oracles, real process failures, source deletion/restart/switch, exact Windows and
+Linux gates and the audited actual task. Arbitrary custom roles, full compaction
+public rendering, live/saved settings and durable queue admission remain open.
