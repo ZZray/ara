@@ -24,6 +24,15 @@ continuation. Catalogue execution metadata and full registry/AuthStorage/OAuth/
 rotation/fallback adoption remain mandatory. RPC is still 27/42 bounded variants;
 full R3/R4 and every affected surface stay implementing, with no P1-P6 acceptance.
 
+Active native model configuration/cache dependency (tested WIP): complete fixed
+schema and both provider validation modes, native models file priority/loading/
+JSONC migration/cache invalidation, and schema-12 SQLite metadata cache map to
+`ara-cli::{models_config,model_config_file,model_cache}`. The
+[config/cache evidence](../evidence/model-config-cache.md) records 38 native tests
+and 842 unchanged-source Bun comparisons. Registry/network/auth/live metadata
+rebuild and the documented YAML edge requirements remain mandatory. No command,
+surface, phase or parity-marker acceptance advances.
+
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:
 identify the underlying goal, distinguish hard constraints from historical

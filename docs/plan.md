@@ -51,6 +51,13 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+Native models configuration/cache checkpoint (2026-10-01, tested WIP): fixed
+schema/validation, Host-owned config file and SQLite model cache have executable
+coverage; see [config/cache evidence](evidence/model-config-cache.md). Continue
+directly with complete model building/compat and native registry/auth/discovery
+integration. This prerequisite batch adds no accepted RPC command or phase and
+retains every outstanding fixed-source behavior.
+
 P0 inventory is done. P1 slice 1 is tested with a controlled upstream:
 
 | Point | Crate | What it covers |

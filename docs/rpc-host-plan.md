@@ -208,6 +208,12 @@ commands and additional lifecycle contracts until the complete inventory passes.
 
 ## Model/auth foundation checkpoint, 2026-10-01
 
+The next [native config/cache checkpoint](evidence/model-config-cache.md) adds
+fixed schema/provider validation, config file migration/loading and native
+SQLite model metadata cache. This is still a disconnected Host foundation;
+complete model rebuild/registry/auth/discovery/journal/adoption and every model
+command remain mandatory. RPC coverage and R3/R4 acceptance are unchanged.
+
 [Foundation evidence](evidence/model-auth-foundation.md) records the exact fixed
 catalogue, schema-7 native credential store and complete fallback-chain helpers,
 plus a complete target route with lazy per-logical-call credential ownership.
