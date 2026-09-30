@@ -1050,6 +1050,47 @@ impl SessionJournal {
         self.append_raw("message", f)
     }
 
+    /// Fixed turn-recovery marks only the recorded failed entries on this
+    /// branch. Pending retries do not invent a new persistent entry/state.
+    /// Preserve every original receipt and atomically rewrite its metadata.
+    pub fn update_retry_recovery(&mut self, updates: &[(String, ara_ai::AssistantRetryRecovery)]) -> Result<()> {
+        let branch_ids: HashSet<String> = self.branch().iter().map(|entry| entry.id.clone()).collect();
+        let mut seen = HashSet::new();
+        for (id, recovery) in updates {
+            if !seen.insert(id) || !branch_ids.contains(id) {
+                return Err(SessionError::Corrupt {
+                    path: self.path.clone(),
+                    message: format!("retry recovery entry is repeated or outside the active branch: {id}"),
+                });
+            }
+            let entry = self.entries.iter().find(|entry| &entry.id == id).expect("branch entry exists");
+            if !matches!(entry.message(), Some(Message::Assistant(message))
+                if matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Aborted))
+                || recovery.kind != "auto-retry"
+                || !matches!(recovery.status.as_str(), "recovered" | "superseded")
+            {
+                return Err(SessionError::Corrupt {
+                    path: self.path.clone(),
+                    message: format!("retry recovery requires an actual failed assistant receipt: {id}"),
+                });
+            }
+        }
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let previous = self.entries.clone();
+        for (id, recovery) in updates {
+            let entry = self.entries.iter_mut().find(|entry| &entry.id == id).expect("validated entry");
+            entry.raw["message"]["retryRecovery"] = serde_json::to_value(recovery).expect("retry recovery serializes");
+        }
+        if let Err(error) = self.rewrite() {
+            self.entries = previous;
+            self.rewrite_required = true;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn append_bash_execution(&mut self, message: &BashExecutionMessage) -> Result<String> {
         let mut fields = serde_json::Map::new();
         fields.insert("message".into(), message.event_message());

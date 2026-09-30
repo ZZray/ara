@@ -54,6 +54,7 @@ use tokio_util::sync::CancellationToken;
 
 mod proxy_discovery;
 mod rpc_host;
+mod rpc_host_retry;
 mod rpc_host_settings;
 mod rpc_host_tools;
 mod rpc_host_uris;

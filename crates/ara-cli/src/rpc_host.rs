@@ -5,7 +5,7 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
-use super::rpc_host_settings::AutoCompactionPolicy;
+use super::rpc_host_settings::{AutoCompactionPolicy, RetryPolicy};
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -13,7 +13,7 @@ use ara_agent::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentEventSink, AgentInput, ExecutionSnapshot, LoopHooks, QueueMode,
     RunEnd, RunReport, ToolDecision,
 };
-use ara_ai::{ImageContent, Message, UserBlock, UserContent, UserMessage};
+use ara_ai::{AssistantMessage, AssistantRetryRecovery, ImageContent, Message, UserBlock, UserContent, UserMessage};
 use ara_discovery::LoadedSkill;
 use ara_rpc::{
     WireValue,
@@ -338,6 +338,9 @@ struct RunSink {
     connection: CancellationToken,
     terminal: Mutex<Option<Value>>,
     messages: Mutex<Vec<Value>>,
+    // Exact native IDs are assigned by the retained writer, not reconstructed
+    // from public timestamps or the current branch's last entry.
+    entries: Mutex<Vec<(String, Message)>>,
 }
 
 fn skill_input(prompt: UserSkillPrompt) -> AgentInput {
@@ -380,10 +383,12 @@ impl AgentEventSink for RunSink {
         match &event {
             AgentEvent::MessageEnd { message } => {
                 let mut journal = self.session.journal.lock().await;
-                if let Err(error) = journal.append_message(message) {
-                    // The loop awaits this sink before starting tools. A failed
-                    // assistant receipt therefore cancels before new effects.
-                    self.persistence_failed(error);
+                match journal.append_message(message) {
+                    Ok(id) => self.entries.lock().unwrap().push((id, message.clone())),
+                    Err(error) => {
+                        // The loop awaits this sink before starting tools.
+                        self.persistence_failed(error);
+                    }
                 }
                 drop(journal);
                 self.completed_message(public["message"].clone());
@@ -425,6 +430,26 @@ struct ActiveRun {
     task: JoinHandle<std::result::Result<Option<RunReport>, AgentError>>,
     command: Command,
     sink: Arc<RunSink>,
+}
+
+struct PendingRetryError {
+    entry_id: String,
+    message: AssistantMessage,
+    attempt: usize,
+    recovery: String,
+    note: String,
+}
+
+struct RetrySaga {
+    session: Arc<Session>,
+    generation: u64,
+    command: Command,
+    attempt: usize,
+    pending: Vec<PendingRetryError>,
+    deadline: Option<Instant>,
+    cancel: CancellationToken,
+    visible: bool,
+    expected_messages: Vec<Message>,
 }
 
 #[derive(Clone)]
@@ -539,6 +564,9 @@ struct Host {
     auto_compaction_pending: bool,
     // A failed/no-progress pass is not billed again for the same source view.
     auto_compaction_checked: Option<(String, Option<String>, usize)>,
+    retry_policy: RetryPolicy,
+    retry: Option<RetrySaga>,
+    prompt_generation: u64,
 }
 
 fn same_session_file(left: &Session, right: &Session) -> bool {
@@ -572,6 +600,277 @@ fn bash_result_value(result: &ara_tools::bash::BashResult) -> Value {
 }
 
 impl Host {
+    async fn finish_retry(&mut self, success: Option<&AssistantMessage>, error: Option<String>, supersede: bool) {
+        let Some(saga) = self.retry.take() else { return };
+        saga.cancel.cancel();
+        let mut final_error = error;
+        let mut updates = Vec::new();
+        if success.is_some() || supersede {
+            let records = saga.pending.iter().map(|pending| {
+                let recovery = AssistantRetryRecovery {
+                    kind: "auto-retry".into(),
+                    status: if success.is_some() { "recovered" } else { "superseded" }.into(),
+                    attempt: pending.attempt,
+                    recovery: pending.recovery.clone(),
+                    note: pending.note.clone(),
+                    recovered_at: success.map(|_| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+                    superseded_by: success.map(|message| {
+                        let mut value = json!({"timestamp":message.timestamp,"provider":message.provider,"model":message.model});
+                        if let Some(id) = &message.response_id { value["responseId"] = json!(id); }
+                        value
+                    }),
+                };
+                (pending.entry_id.clone(), recovery)
+            }).collect::<Vec<_>>();
+            let persisted = saga.session.journal.lock().await.update_retry_recovery(&records);
+            match persisted {
+                Ok(()) => {
+                    let mut messages = self.agent.messages().await;
+                    let mut public = saga.session.messages.lock().unwrap();
+                    for (pending, (entry_id, recovery)) in saga.pending.iter().zip(&records) {
+                        for message in &mut messages {
+                            if let Message::Assistant(message) = message
+                                && message == &pending.message
+                            {
+                                message.retry_recovery = Some(recovery.clone());
+                            }
+                        }
+                        let failed = AgentEvent::MessageEnd { message: Message::Assistant(pending.message.clone()) }
+                            .full()["message"]
+                            .clone();
+                        for message in public.iter_mut().filter(|message| **message == failed) {
+                            message["retryRecovery"] = json!(recovery);
+                        }
+                        updates.push(json!({"entryId":entry_id,"persistenceKey":super::rpc_host_retry::persistence_key(&pending.message),
+                            "note":recovery.note,"retryRecovery":recovery}));
+                    }
+                    drop(public);
+                    if let Err(error) = self.agent.replace_idle_messages(messages) {
+                        final_error = Some(format!("Retry recovery projection failed: {error}"));
+                        *saga.session.persistence_error.lock().unwrap() = final_error.clone();
+                        self.connection.cancel();
+                    }
+                }
+                Err(error) => {
+                    final_error = Some(format!("Retry recovery persistence failed: {error}"));
+                    *saga.session.persistence_error.lock().unwrap() = final_error.clone();
+                    self.connection.cancel();
+                }
+            }
+        }
+        let mut event = json!({"type":"auto_retry_end","success":success.is_some() && final_error.is_none(),"attempt":saga.attempt});
+        if let Some(error) = final_error {
+            event["finalError"] = json!(error);
+        }
+        if success.is_some() || supersede {
+            event["retryErrors"] = json!(updates);
+        }
+        self.output.frame(event);
+    }
+
+    async fn abort_retry(&mut self) {
+        if self.retry.as_ref().is_some_and(|retry| retry.deadline.is_some()) {
+            self.finish_retry(None, Some("Retry cancelled".into()), false).await;
+            self.drain_queues = false;
+        } else if let Some(retry) = &mut self.retry {
+            // Fixed abortRetry resolves its wait promise; an already scheduled
+            // Agent continuation is owned by the Run and is not aborted here.
+            retry.visible = false;
+        }
+    }
+
+    async fn begin_retry(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
+        use super::rpc_host_retry::{RetryDisposition, backoff_ms, disposition};
+        let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
+        if active.cancel.is_cancelled()
+            || self.connection.is_cancelled()
+            || !Arc::ptr_eq(&active.sink.session, &self.session)
+            || !self.retry_policy.enabled()
+        {
+            return Ok(false);
+        }
+        let mut messages = self.agent.messages().await;
+        let Some(disposition) = disposition(message, &messages, &class) else { return Ok(false) };
+        let entry_id = active
+            .sink
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find_map(|(id, candidate)| (candidate.as_assistant() == Some(message)).then(|| id.clone()))
+            .context("failed retry message has no durable native entry ID")?;
+        let previous_attempt = self.retry.as_ref().map_or(0, |retry| retry.attempt);
+        let attempt = previous_attempt.saturating_add(1);
+        if attempt as f64 > self.retry_policy.max_retries() {
+            // The terminal failure remains raw; only prior retry receipts are
+            // marked superseded, as fixed turn-recovery.ts:2310-2325.
+            if self.retry.is_none() {
+                self.retry = Some(RetrySaga {
+                    session: self.session.clone(),
+                    generation: self.prompt_generation,
+                    command: Command {
+                        id: active.command.id.clone(),
+                        kind: active.command.kind.clone(),
+                        frame: active.command.frame.clone(),
+                    },
+                    attempt: previous_attempt,
+                    pending: Vec::new(),
+                    deadline: None,
+                    cancel: self.connection.child_token(),
+                    visible: true,
+                    expected_messages: messages.clone(),
+                });
+            }
+            self.finish_retry(None, message.error_message.clone(), true).await;
+            return Ok(false);
+        }
+        let randomness = uuid::Uuid::new_v4();
+        let random = u64::from_le_bytes(randomness.as_bytes()[..8].try_into().unwrap()) as f64 / u64::MAX as f64;
+        let mut delay_ms =
+            if class.stale_responses { 0.0 } else { backoff_ms(self.retry_policy.base_delay_ms(), attempt, random) };
+        // Fixed turn-recovery.ts:2171-2174,2303-2306: a same-route hint
+        // may raise the backoff but must never shorten it. Stale Responses
+        // recovery keeps its independent zero-delay branch.
+        if !class.stale_responses
+            && let Some(wait_ms) = class.wait_ms
+            && wait_ms > delay_ms
+        {
+            delay_ms = wait_ms;
+        }
+        if !delay_ms.is_finite()
+            || delay_ms < 0.0
+            || (self.retry_policy.max_delay_ms() > 0.0 && delay_ms > self.retry_policy.max_delay_ms())
+        {
+            if let Some(retry) = &mut self.retry {
+                retry.attempt = attempt;
+            } else {
+                self.retry = Some(RetrySaga {
+                    session: self.session.clone(),
+                    generation: self.prompt_generation,
+                    command: Command {
+                        id: active.command.id.clone(),
+                        kind: active.command.kind.clone(),
+                        frame: active.command.frame.clone(),
+                    },
+                    attempt,
+                    pending: Vec::new(),
+                    deadline: None,
+                    cancel: self.connection.child_token(),
+                    visible: true,
+                    expected_messages: Vec::new(),
+                });
+            }
+            self.finish_retry(
+                None,
+                Some(format!(
+                    "Provider requested {}ms wait, exceeds retry.maxDelayMs ({}ms). Original error: {}",
+                    delay_ms.ceil(),
+                    self.retry_policy.max_delay_ms(),
+                    message.error_message.as_deref().unwrap_or("Unknown error")
+                )),
+                false,
+            )
+            .await;
+            return Ok(false);
+        }
+        let duration = Duration::try_from_secs_f64(delay_ms / 1000.0).context("retry delay is not representable")?;
+        // Fixed scheduleAgentContinue defers by one millisecond after backoff;
+        // a zero wait still gives the serial reader a command boundary.
+        let deadline = Instant::now()
+            .checked_add(duration.saturating_add(Duration::from_millis(1)))
+            .context("retry deadline is not representable")?;
+        self.agent.replace_idle_messages(messages.clone())?;
+        let saga = self.retry.get_or_insert_with(|| RetrySaga {
+            session: self.session.clone(),
+            generation: self.prompt_generation,
+            command: Command {
+                id: active.command.id.clone(),
+                kind: active.command.kind.clone(),
+                frame: active.command.frame.clone(),
+            },
+            attempt: 0,
+            pending: Vec::new(),
+            deadline: None,
+            cancel: self.connection.child_token(),
+            visible: true,
+            expected_messages: Vec::new(),
+        });
+        if !Arc::ptr_eq(&saga.session, &self.session) || saga.generation != self.prompt_generation {
+            bail!("retry owner no longer matches this Session generation");
+        }
+        let recovery = if class.usage_limit && delay_ms > 0.0 { "wait" } else { "plain" };
+        let note = if class.usage_limit {
+            if recovery == "wait" { "rate-limited; waited; retried" } else { "rate-limited; retried" }
+        } else {
+            "error; retried"
+        };
+        if !saga.pending.iter().any(|pending| pending.entry_id == entry_id) {
+            saga.pending.push(PendingRetryError {
+                entry_id,
+                message: message.clone(),
+                attempt,
+                recovery: recovery.into(),
+                note: note.into(),
+            });
+        }
+        saga.attempt = attempt;
+        saga.visible = true;
+        saga.deadline = Some(deadline);
+        self.output.frame(json!({"type":"auto_retry_start","attempt":attempt,"maxAttempts":self.retry_policy.max_retries(),
+            "delayMs":delay_ms,"errorMessage":message.error_message.as_deref().unwrap_or("Unknown error"),"errorId":class.error_id}));
+        if disposition == RetryDisposition::RemoveFailed {
+            if messages.last().and_then(Message::as_assistant) != Some(message) {
+                bail!("failed retry assistant is no longer the exact active tail");
+            }
+            messages.pop();
+            self.agent.replace_idle_messages(messages.clone())?;
+            let failed =
+                AgentEvent::MessageEnd { message: Message::Assistant(message.clone()) }.full()["message"].clone();
+            let mut public = self.session.messages.lock().unwrap();
+            if let Some(index) = public.iter().rposition(|candidate| candidate == &failed) {
+                public.remove(index);
+            }
+        }
+        saga.expected_messages = messages;
+        if class.stale_responses {
+            self.config.provider = self.sessions.provider.build();
+        }
+        self.auto_compaction_pending = false;
+        Ok(true)
+    }
+
+    async fn resume_retry(&mut self) {
+        let Some(saga) = &self.retry else { return };
+        if saga.cancel.is_cancelled()
+            || saga.generation != self.prompt_generation
+            || !Arc::ptr_eq(&saga.session, &self.session)
+            || self.connection.is_cancelled()
+        {
+            self.finish_retry(None, Some("Retry cancelled".into()), false).await;
+            return;
+        }
+        let messages = self.agent.messages().await;
+        if messages != saga.expected_messages {
+            self.finish_retry(
+                None,
+                Some("Retry continuation failed locally: the active context changed during backoff".into()),
+                false,
+            )
+            .await;
+            self.drain_queues = false;
+            return;
+        }
+        let saga = self.retry.as_mut().unwrap();
+        saga.deadline = None;
+        let command =
+            Command { id: saga.command.id.clone(), kind: saga.command.kind.clone(), frame: saga.command.frame.clone() };
+        if let Err(error) = self.start(None, command) {
+            self.finish_retry(None, Some(format!("Retry continuation failed locally: {error}")), false).await;
+            self.drain_queues = false;
+        }
+    }
+
     async fn compact(&mut self, focus: Option<&str>) -> Result<Value> {
         use ara_agent::compaction::{SummarySource, select_whole_turn_cut, summarize_sources_with_instructions};
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
@@ -676,6 +975,7 @@ impl Host {
         if !self.compaction_policy.enabled()
             || threshold == 0
             || self.active.is_some()
+            || self.retry.is_some()
             || self.connection.is_cancelled()
         {
             return;
@@ -740,14 +1040,25 @@ impl Host {
                 if !Arc::ptr_eq(&session, &self.session) {
                     bail!("Bash current destination no longer owns the active Session");
                 }
-                if let Some(message) = pending.message.model_message() {
+                let model_message = pending.message.model_message();
+                if let Some(message) = &model_message {
                     // Reject an unresolved tool tail before a User projection
                     // can hide it in either live or persisted model context.
-                    self.agent.append_idle_message(message)?;
+                    self.agent.append_idle_message(message.clone())?;
                 }
                 let mut journal = session.journal.lock().await;
                 journal.append_bash_execution(&pending.message)?;
                 session.messages.lock().unwrap().push(pending.message.event_message());
+                if let Some(message) = model_message
+                    && let Some(retry) = &mut self.retry
+                    && retry.generation == self.prompt_generation
+                    && Arc::ptr_eq(&retry.session, &session)
+                {
+                    // A durable, independently accepted Bash may append while
+                    // retry waits. Extend only this known owner's expected view;
+                    // arbitrary replacement still fails the continuation check.
+                    retry.expected_messages.push(message);
+                }
             }
             BashDestination::Detached { parent } | BashDestination::Branch { parent } => {
                 let mut journal = session.journal.lock().await;
@@ -1078,6 +1389,9 @@ impl Host {
         if self.active.is_some() {
             bail!("Agent is already running; specify streamingBehavior: steer or followUp");
         }
+        if message.is_some() {
+            self.prompt_generation = self.prompt_generation.wrapping_add(1);
+        }
         let cancel = self.connection.child_token();
         let mut config = self.config.clone();
         config.deadline = self.max_time.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
@@ -1088,6 +1402,7 @@ impl Host {
             connection: self.connection.clone(),
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
+            entries: Mutex::new(Vec::new()),
         });
         let agent = self.agent.clone();
         let run_cancel = cancel.clone();
@@ -1110,7 +1425,7 @@ impl Host {
         Ok(())
     }
 
-    fn completed(
+    async fn completed(
         &mut self,
         active: ActiveRun,
         result: std::result::Result<std::result::Result<Option<RunReport>, AgentError>, tokio::task::JoinError>,
@@ -1121,6 +1436,25 @@ impl Host {
             self.output.frame(terminal);
         }
         let persistence_error = active.sink.session.persistence_error.lock().unwrap().clone();
+        if persistence_error.is_none()
+            && let Ok(Ok(Some(report))) = &result
+        {
+            let assistant = report.messages.iter().rev().find_map(Message::as_assistant);
+            if matches!(report.end, RunEnd::Error | RunEnd::Aborted)
+                && let Some(message) = assistant
+            {
+                match self.begin_retry(&active, message).await {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.finish_retry(None, Some(format!("Retry continuation failed locally: {error}")), false)
+                            .await;
+                    }
+                }
+            } else if report.end == RunEnd::Completed {
+                self.finish_retry(assistant, None, false).await;
+            }
+        }
         let error = match result {
             Ok(Ok(None)) => {
                 self.output.prompt_skipped(&active.command);
@@ -1134,14 +1468,12 @@ impl Host {
                 RunEnd::Aborted => Some("Request was aborted".into()),
                 RunEnd::Deadline => Some("Deadline exceeded".into()),
                 RunEnd::ModelCallBudget => Some("Model call limit reached".into()),
-                RunEnd::Error => self
-                    .session
+                RunEnd::Error => report
                     .messages
-                    .lock()
-                    .unwrap()
-                    .last()
-                    .and_then(|message| message["errorMessage"].as_str())
-                    .map(str::to_owned)
+                    .iter()
+                    .rev()
+                    .find_map(Message::as_assistant)
+                    .and_then(|message| message.error_message.clone())
                     .or_else(|| Some("Agent run failed".into())),
             },
             Ok(Err(error)) => Some(error.to_string()),
@@ -1151,6 +1483,7 @@ impl Host {
             .map(|error| format!("Session persistence failed ({error}); restart from the journal"))
             .or(error);
         if let Some(error) = error {
+            self.finish_retry(None, Some(error.clone()), false).await;
             self.auto_compaction_pending = false;
             self.drain_queues = false;
             self.output.response(&active.command, None, Some(error));
@@ -1158,6 +1491,7 @@ impl Host {
     }
 
     async fn abort(&mut self) {
+        self.finish_retry(None, Some("Retry cancelled".into()), false).await;
         self.auto_compaction_pending = false;
         self.drain_queues = false;
         if let Some(mut active) = self.active.take() {
@@ -1165,7 +1499,7 @@ impl Host {
             active.cancel.cancel();
             self.agent.abort();
             let result = (&mut active.task).await;
-            self.completed(active, result);
+            self.completed(active, result).await;
         }
         self.flush_pending_bash().await;
         // An already-settling Run can complete successfully after cancellation.
@@ -1175,6 +1509,7 @@ impl Host {
 
     async fn reconcile_queues(&mut self) {
         if self.active.is_none()
+            && self.retry.is_none()
             && self.drain_queues
             && self.agent.has_queued_messages()
             && !self.connection.is_cancelled()
@@ -1203,6 +1538,7 @@ impl Host {
             "steeringMode":mode_name(self.agent.steering_mode()),"followUpMode":mode_name(self.agent.follow_up_mode()),
             "interruptMode":"wait", "sessionId":self.session.header["id"],
             "autoCompactionEnabled":self.compaction_policy.enabled(),"fastModeEnabled":false,"fastModeActive":false,
+            "autoRetryEnabled":self.retry_policy.enabled(),"isRetrying":self.retry.as_ref().is_some_and(|retry| retry.visible),
             "tokensPerSecond":null,"messageCount":self.session.messages.lock().unwrap().len(),
             "queuedMessageCount":steering+follow_up,"todoPhases":[],"systemPrompt":self.config.system_prompt,
             "dumpTools":self.config.tools.iter().map(|tool| tool.definition()).collect::<Vec<_>>()
@@ -1226,6 +1562,18 @@ impl Host {
 
     async fn execute(&mut self, command: &Command) -> Result<()> {
         match command.kind.as_str() {
+            "set_auto_retry" => {
+                let enabled = match command.frame.get("enabled") {
+                    Some(WireValue::Bool(enabled)) => *enabled,
+                    _ => bail!("set_auto_retry requires boolean enabled"),
+                };
+                self.retry_policy.set_enabled(enabled)?;
+                self.output.response(command, None, None);
+            }
+            "abort_retry" => {
+                self.abort_retry().await;
+                self.output.response(command, None, None);
+            }
             "compact" => {
                 let focus = command
                     .frame
@@ -1457,6 +1805,9 @@ impl Host {
                         self.agent.follow_up_input(input);
                     }
                 } else {
+                    if self.active.is_none() {
+                        self.finish_retry(None, Some("Retry cancelled".into()), false).await;
+                    }
                     self.maybe_auto_compact(std::slice::from_ref(&input.model)).await;
                     self.start(
                         Some(input),
@@ -1624,6 +1975,7 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let compaction_policy = AutoCompactionPolicy::load(&super::ara_home().join("agent"))?;
+    let retry_policy = RetryPolicy::load(&super::ara_home().join("agent"))?;
     let connection = CancellationToken::new();
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
@@ -1679,6 +2031,9 @@ where
         is_compacting: false,
         auto_compaction_pending: false,
         auto_compaction_checked: None,
+        retry_policy,
+        retry: None,
+        prompt_generation: 0,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
@@ -1732,7 +2087,7 @@ where
             host.maybe_auto_compact(&[]).await;
         }
         host.reconcile_queues().await;
-        if eof && host.active.is_none() && host.bash_dispatcher.is_empty() {
+        if eof && host.active.is_none() && host.retry.is_none() && host.bash_dispatcher.is_empty() {
             break;
         }
         tokio::select! {
@@ -1760,7 +2115,15 @@ where
                 }
             }, if host.active.is_some() => {
                 let active = host.active.take().expect("selected active Run");
-                host.completed(active, result);
+                host.completed(active, result).await;
+            }
+            _ = async {
+                match host.retry.as_ref().and_then(|retry| retry.deadline) {
+                    Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+                    None => pending().await,
+                }
+            }, if host.retry.as_ref().is_some_and(|retry| retry.deadline.is_some()) => {
+                host.resume_retry().await;
             }
             command = input_rx.recv(), if !eof => {
                 match command {
@@ -1908,6 +2271,9 @@ mod tests {
             is_compacting: false,
             auto_compaction_pending: false,
             auto_compaction_checked: None,
+            retry_policy: RetryPolicy::isolated(true),
+            retry: None,
+            prompt_generation: 0,
         };
         (host, rx)
     }
@@ -1935,6 +2301,7 @@ mod tests {
             connection: host.connection.clone(),
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
+            entries: Mutex::new(Vec::new()),
         });
         let (reached_tx, reached_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -2135,7 +2502,7 @@ mod tests {
         let mut active = host.active.take().unwrap();
         let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
         assert_eq!(result.as_ref().unwrap().as_ref().unwrap().as_ref().unwrap().end, RunEnd::Aborted);
-        host.completed(active, result);
+        host.completed(active, result).await;
         assert!(origin.persistence_error.lock().unwrap().is_some());
         assert!(host.connection.is_cancelled());
         assert!(upstream.requests.lock().await.is_empty(), "failed custom receipt must precede model/tool effects");
@@ -2168,6 +2535,7 @@ mod tests {
             connection,
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
+            entries: Mutex::new(Vec::new()),
         });
         let (reached_tx, reached) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();
@@ -2207,7 +2575,7 @@ mod tests {
         release.send(()).unwrap();
         let mut active = host.active.take().unwrap();
         let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
-        host.completed(active, result);
+        host.completed(active, result).await;
         assert_eq!(host.state()["isStreaming"], false);
         let settled = frames(&mut rx);
         assert_eq!(settled.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
@@ -2219,7 +2587,7 @@ mod tests {
         host.handle(Command::new(wire(json!({"type":"prompt","id":"next","message":"next"})))).await;
         let mut active = host.active.take().expect("immediate next prompt starts");
         let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
-        host.completed(active, result);
+        host.completed(active, result).await;
         let next = frames(&mut rx);
         assert_eq!(next[0]["id"], "next");
         assert_eq!(next[0]["success"], true);

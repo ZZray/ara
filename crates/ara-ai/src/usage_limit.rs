@@ -185,7 +185,7 @@ fn absolute_reset_ms(body: &str) -> Option<f64> {
     None
 }
 
-fn retry_hint_ms(body: &str) -> Option<f64> {
+pub(crate) fn retry_hint_ms(body: &str) -> Option<f64> {
     if let Some(parts) = RESET_AFTER.captures(body) {
         let hours = parts.get(1).and_then(|part| part.as_str().parse::<f64>().ok()).unwrap_or(0.0);
         let minutes = parts.get(2).and_then(|part| part.as_str().parse::<f64>().ok()).unwrap_or(0.0);

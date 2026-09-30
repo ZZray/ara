@@ -64,7 +64,7 @@ impl AutoCompactionPolicy {
         let mut encoded = String::new();
         YamlEmitter::new(&mut encoded).dump(&document).context("serializing native compaction settings")?;
         encoded.push('\n');
-        write_atomically(path, &encoded, loaded.as_ref().map(|(_, source)| source.as_str()))?;
+        write_atomically(path, &encoded, loaded.as_ref().map(|(_, source)| source.as_str()), "compaction")?;
         // A failed parse/read/write/rename never changes the live policy and
         // cannot be acknowledged by the Host as a successful setting change.
         self.enabled = read_enabled(&document)?;
@@ -75,6 +75,118 @@ impl AutoCompactionPolicy {
     pub(super) fn isolated(enabled: bool) -> Self {
         Self { path: None, enabled }
     }
+}
+
+/// Native retry policy for the Session-owned recovery saga. Fixed OMP
+/// settings-schema.ts declares the limits as `number`, without integer or
+/// nonnegative constraints. Keep those values as f64; the Host owns their
+/// comparison/backoff semantics and checked conversion to a timer duration.
+/// Credential/model fallback settings remain in the native document and are
+/// not consumed by this same-route policy surface.
+pub(super) struct RetryPolicy {
+    path: Option<PathBuf>,
+    enabled: bool,
+    max_retries: f64,
+    base_delay_ms: f64,
+    max_delay_ms: f64,
+}
+
+impl RetryPolicy {
+    pub(super) fn load(agent_dir: &Path) -> Result<Self> {
+        for filename in MAIN_CONFIG_FILENAMES {
+            let path = agent_dir.join(filename);
+            if let Some((document, _)) = read_document(&path)? {
+                return Self::from_document(Some(path), &document);
+            }
+        }
+        Self::from_document(Some(agent_dir.join(MAIN_CONFIG_FILENAMES[0])), &empty_mapping())
+    }
+
+    fn from_document(path: Option<PathBuf>, document: &Yaml) -> Result<Self> {
+        let root = document.as_hash().context("native settings root must be a mapping")?;
+        let group = match root.get(&Yaml::String("retry".into())) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("retry settings must be a mapping")?),
+        };
+        let enabled = match group.and_then(|group| group.get(&Yaml::String("enabled".into()))) {
+            None => true,
+            Some(Yaml::Boolean(enabled)) => *enabled,
+            Some(_) => bail!("retry.enabled must be a boolean"),
+        };
+        Ok(Self {
+            path,
+            enabled,
+            max_retries: read_retry_number(group, "maxRetries", 10.0)?,
+            base_delay_ms: read_retry_number(group, "baseDelayMs", 500.0)?,
+            max_delay_ms: read_retry_number(group, "maxDelayMs", 300_000.0)?,
+        })
+    }
+
+    pub(super) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(super) fn max_retries(&self) -> f64 {
+        self.max_retries
+    }
+
+    pub(super) fn base_delay_ms(&self) -> f64 {
+        self.base_delay_ms
+    }
+
+    pub(super) fn max_delay_ms(&self) -> f64 {
+        self.max_delay_ms
+    }
+
+    pub(super) fn set_enabled(&mut self, enabled: bool) -> Result<()> {
+        let Some(path) = &self.path else {
+            self.enabled = enabled;
+            return Ok(());
+        };
+        // Reload the whole native document before changing the one key, so
+        // deferred fixed retry settings and disjoint external edits survive.
+        let loaded = read_document(path)?;
+        let mut document = loaded.as_ref().map(|(document, _)| document.clone()).unwrap_or_else(empty_mapping);
+        Self::from_document(Some(path.clone()), &document)?;
+        let root = document.as_mut_hash().expect("read_document validates mapping");
+        let group = root.entry(Yaml::String("retry".into())).or_insert_with(empty_mapping);
+        if matches!(group, Yaml::Null) {
+            *group = empty_mapping();
+        }
+        group
+            .as_mut_hash()
+            .context("retry settings must be a mapping")?
+            .insert(Yaml::String("enabled".into()), Yaml::Boolean(enabled));
+        let updated = Self::from_document(Some(path.clone()), &document)?;
+        let mut encoded = String::new();
+        YamlEmitter::new(&mut encoded).dump(&document).context("serializing native retry settings")?;
+        encoded.push('\n');
+        write_atomically(path, &encoded, loaded.as_ref().map(|(_, source)| source.as_str()), "retry")?;
+        // Publish enabled and any reloaded numeric values together only after
+        // the atomic write succeeds. Failure leaves the live snapshot intact.
+        *self = updated;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn isolated(enabled: bool) -> Self {
+        Self { path: None, enabled, max_retries: 10.0, base_delay_ms: 500.0, max_delay_ms: 300_000.0 }
+    }
+}
+
+fn read_retry_number(group: Option<&Hash>, key: &str, default: f64) -> Result<f64> {
+    let value = match group.and_then(|group| group.get(&Yaml::String(key.into()))) {
+        None => return Ok(default),
+        Some(Yaml::Integer(value)) => *value as f64,
+        Some(Yaml::Real(value)) => {
+            value.parse::<f64>().with_context(|| format!("retry.{key} must be a finite number"))?
+        }
+        Some(_) => bail!("retry.{key} must be a number"),
+    };
+    if !value.is_finite() {
+        bail!("retry.{key} must be a finite number");
+    }
+    Ok(value)
 }
 
 fn empty_mapping() -> Yaml {
@@ -124,7 +236,7 @@ fn has_compaction_methods(order: Option<&Yaml>) -> bool {
     }
 }
 
-fn write_atomically(path: &Path, source: &str, expected: Option<&str>) -> Result<()> {
+fn write_atomically(path: &Path, source: &str, expected: Option<&str>, group: &str) -> Result<()> {
     let parent = path.parent().context("native settings path has no parent")?;
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating native settings directory {}", parent.display()))?;
@@ -136,7 +248,7 @@ fn write_atomically(path: &Path, source: &str, expected: Option<&str>) -> Result
         Err(error) => return Err(error).context("resolving native settings write target"),
     };
     let target_parent = target.parent().context("native settings target has no parent")?;
-    let temporary = target_parent.join(format!(".ara-compaction-{}.tmp", uuid::Uuid::new_v4()));
+    let temporary = target_parent.join(format!(".ara-{group}-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> Result<()> {
         let mut output = std::fs::OpenOptions::new()
             .write(true)
@@ -147,14 +259,14 @@ fn write_atomically(path: &Path, source: &str, expected: Option<&str>) -> Result
             std::fs::set_permissions(&temporary, metadata.permissions())
                 .context("preserving native settings permissions")?;
         }
-        output.write_all(source.as_bytes()).context("writing native compaction settings")?;
-        output.sync_all().context("syncing native compaction settings")?;
+        output.write_all(source.as_bytes()).with_context(|| format!("writing native {group} settings"))?;
+        output.sync_all().with_context(|| format!("syncing native {group} settings"))?;
         drop(output);
         let current = read_document(path)?.map(|(_, source)| source);
         if current.as_deref() != expected {
-            bail!("native settings changed during compaction setting update; retry the command");
+            bail!("native settings changed during {group} setting update; retry the command");
         }
-        std::fs::rename(&temporary, &target).context("replacing native compaction settings")?;
+        std::fs::rename(&temporary, &target).with_context(|| format!("replacing native {group} settings"))?;
         Ok(())
     })();
     if result.is_err() {
@@ -262,5 +374,158 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
         assert!(policy.set_enabled(false).is_err());
         assert!(policy.enabled());
+    }
+
+    #[test]
+    fn retry_defaults_are_lazy_and_saved_toggle_survives_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let agent = directory.path().join("agent");
+        let mut policy = RetryPolicy::load(&agent).unwrap();
+        assert!(policy.enabled());
+        assert_eq!(policy.max_retries(), 10.0);
+        assert_eq!(policy.base_delay_ms(), 500.0);
+        assert_eq!(policy.max_delay_ms(), 300_000.0);
+        assert!(!agent.exists());
+        policy.set_enabled(false).unwrap();
+        assert!(!policy.enabled());
+        assert!(agent.join("config.yml").is_file());
+        let reopened = RetryPolicy::load(&agent).unwrap();
+        assert!(!reopened.enabled());
+        assert_eq!(reopened.max_retries(), 10.0);
+        let mut isolated = RetryPolicy::isolated(false);
+        isolated.set_enabled(true).unwrap();
+        assert!(isolated.enabled());
+        assert_eq!(isolated.base_delay_ms(), 500.0);
+    }
+
+    #[test]
+    fn retry_first_existing_filename_wins_and_yaml_remains_write_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let yaml = directory.path().join("config.yaml");
+        let yml = directory.path().join("config.yml");
+        std::fs::write(&yaml, "retry:\n  enabled: false\n  maxRetries: 2\n").unwrap();
+        let mut policy = RetryPolicy::load(directory.path()).unwrap();
+        assert!(!policy.enabled());
+        assert_eq!(policy.max_retries(), 2.0);
+        policy.set_enabled(true).unwrap();
+        assert!(!yml.exists());
+        assert!(RetryPolicy::load(directory.path()).unwrap().enabled());
+        std::fs::write(&yml, "retry:\n  enabled: false\n  maxRetries: 3\n").unwrap();
+        let preferred = RetryPolicy::load(directory.path()).unwrap();
+        assert!(!preferred.enabled());
+        assert_eq!(preferred.max_retries(), 3.0);
+        assert_eq!(read_document(&yaml).unwrap().unwrap().0["retry"]["enabled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn retry_numbers_preserve_fixed_fraction_negative_and_zero_semantics() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        std::fs::write(&path, "retry:\n  maxRetries: 1.5\n  baseDelayMs: -2.75\n  maxDelayMs: 0\n").unwrap();
+        let mut policy = RetryPolicy::load(directory.path()).unwrap();
+        assert_eq!(policy.max_retries(), 1.5);
+        assert_eq!(policy.base_delay_ms(), -2.75);
+        assert_eq!(policy.max_delay_ms(), 0.0);
+        policy.set_enabled(false).unwrap();
+        let reopened = RetryPolicy::load(directory.path()).unwrap();
+        assert_eq!(reopened.max_retries(), 1.5);
+        assert_eq!(reopened.base_delay_ms(), -2.75);
+        assert_eq!(reopened.max_delay_ms(), 0.0);
+    }
+
+    #[test]
+    fn retry_scoped_write_retains_fallback_custom_and_compaction_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        std::fs::write(&path, "retry:\n  enabled: true\n  maxRetries: 1\ncustom: old\n").unwrap();
+        let mut policy = RetryPolicy::load(directory.path()).unwrap();
+        // All fixed fallback keys are retained as source values until their
+        // mandatory host credential/model interfaces consume them.
+        std::fs::write(&path, "retry:\n  enabled: true\n  maxRetries: 7\n  baseDelayMs: 12.5\n  maxDelayMs: 0\n  modelFallback: true\n  usageAwareFallback: false\n  usageReservePct: 10\n  usageReservePolicy: confirm\n  fallbackChains:\n    default: [openai/fallback]\n    provider/*: [other/*]\n  fallbackRevertPolicy: cooldown-expiry\n  custom: [one, 2, true]\ncompaction:\n  enabled: false\n  methodOrder: []\ncustom:\n  external: changed\n").unwrap();
+        let before = read_document(&path).unwrap().unwrap().0;
+        policy.set_enabled(false).unwrap();
+        let after = read_document(&path).unwrap().unwrap().0;
+        let mut expected = before;
+        expected
+            .as_mut_hash()
+            .unwrap()
+            .get_mut(&Yaml::String("retry".into()))
+            .unwrap()
+            .as_mut_hash()
+            .unwrap()
+            .insert(Yaml::String("enabled".into()), Yaml::Boolean(false));
+        // The native stringifier can reposition the updated root group.
+        // Compare every retained value, including unknown nested values.
+        let actual = after.as_hash().unwrap();
+        let expected = expected.as_hash().unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (key, value) in expected {
+            assert_eq!(actual.get(key), Some(value), "retained setting {key:?}");
+        }
+        assert!(!policy.enabled());
+        assert_eq!(policy.max_retries(), 7.0);
+        assert_eq!(policy.base_delay_ms(), 12.5);
+        assert_eq!(policy.max_delay_ms(), 0.0);
+    }
+
+    #[test]
+    fn retry_invalid_primary_never_falls_back_or_overwrites_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        std::fs::write(directory.path().join("config.yaml"), "retry:\n  enabled: true\n").unwrap();
+        for source in
+            ["bad: [", "- sequence", "retry: scalar", "retry:\n  enabled: 'false'\n", "retry:\n  enabled: null\n"]
+        {
+            std::fs::write(&path, source).unwrap();
+            assert!(RetryPolicy::load(directory.path()).is_err(), "{source}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+        for key in ["maxRetries", "baseDelayMs", "maxDelayMs"] {
+            for value in ["'2'", "true", "null", ".nan", ".inf", "-.inf"] {
+                let source = format!("retry:\n  {key}: {value}\n");
+                std::fs::write(&path, &source).unwrap();
+                assert!(RetryPolicy::load(directory.path()).is_err(), "{source}");
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+            }
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(RetryPolicy::load(directory.path()).is_err());
+    }
+
+    #[test]
+    fn retry_failed_reload_preserves_live_enabled_and_numeric_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        std::fs::write(&path, "retry:\n  enabled: true\n  maxRetries: 2.5\n  baseDelayMs: 25\n  maxDelayMs: 100\n")
+            .unwrap();
+        let mut policy = RetryPolicy::load(directory.path()).unwrap();
+        for source in ["bad: [", "retry:\n  maxRetries: 'bad'\n"] {
+            std::fs::write(&path, source).unwrap();
+            assert!(policy.set_enabled(false).is_err());
+            assert!(policy.enabled());
+            assert_eq!(policy.max_retries(), 2.5);
+            assert_eq!(policy.base_delay_ms(), 25.0);
+            assert_eq!(policy.max_delay_ms(), 100.0);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(policy.set_enabled(false).is_err());
+        assert!(policy.enabled());
+        assert_eq!(policy.max_retries(), 2.5);
+    }
+
+    #[test]
+    fn retry_atomic_writer_rejects_changed_generation_and_cleans_own_temporary() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        let old = "retry:\n  enabled: true\n";
+        let external = "retry:\n  enabled: true\ncustom: external\n";
+        std::fs::write(&path, external).unwrap();
+        let error = write_atomically(&path, "retry:\n  enabled: false\n", Some(old), "retry").unwrap_err();
+        assert!(error.to_string().contains("changed during retry setting update"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 }

@@ -218,6 +218,21 @@ pub struct DeveloperMessage {
     pub timestamp: i64,
 }
 
+/// Fixed OMP `AssistantRetryRecovery`: raw failed receipts remain sourced.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantRetryRecovery {
+    pub kind: String,
+    pub status: String,
+    pub attempt: usize,
+    pub recovery: String,
+    pub note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovered_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub content: Vec<AssistantBlock>,
@@ -237,6 +252,8 @@ pub struct AssistantMessage {
     /// attempts, including discarded ones; they are not a billing verdict.
     #[serde(rename = "retryAccounting", default, skip_serializing_if = "Option::is_none")]
     pub retry_accounting: Option<RetryAccounting>,
+    #[serde(rename = "retryRecovery", default, skip_serializing_if = "Option::is_none")]
+    pub retry_recovery: Option<AssistantRetryRecovery>,
     #[serde(rename = "stopReason")]
     pub stop_reason: StopReason,
     #[serde(rename = "stopDetails", default, skip_serializing_if = "Option::is_none")]
@@ -245,6 +262,9 @@ pub struct AssistantMessage {
     pub error_message: Option<String>,
     #[serde(rename = "errorStatus", default, skip_serializing_if = "Option::is_none")]
     pub error_status: Option<u16>,
+    /// Actual typed provider failure, with bounded classification and wait facts.
+    #[serde(rename = "failureEvidence", default, skip_serializing_if = "Option::is_none")]
+    pub failure_evidence: Option<crate::retry_classification::ProviderFailureEvidence>,
     pub timestamp: i64,
     /// Request duration in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,10 +286,12 @@ impl AssistantMessage {
             provider_payload: None,
             usage: Usage::unknown(),
             retry_accounting: None,
+            retry_recovery: None,
             stop_reason: StopReason::Stop,
             stop_details: None,
             error_message: None,
             error_status: None,
+            failure_evidence: None,
             timestamp: now_ms(),
             duration: None,
             ttft: None,

@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use super::openai_completions::{PostError, RetryPolicy, post_with_retry_detailed};
+use super::openai_completions::{PostError, PostRetryState, RetryPolicy, post_with_retry_detailed};
 
 pub const API: &str = "openai-responses";
 const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
@@ -1088,6 +1088,13 @@ fn stream_once(
                 output.stop_reason = cause.stop_reason();
                 output.error_status = cause.status();
                 output.error_message = Some(cause.to_string());
+                crate::retry_classification::finalize_failure(
+                    &mut output,
+                    &cause,
+                    retry_blocked || state.replay_unsafe_wire_event,
+                    state.replay_unsafe_wire_event,
+                    &model.api,
+                );
                 let reason = output.stop_reason;
                 let _ = sink.push(AssistantMessageEvent::Error { reason, error: output }).await;
             }
@@ -1103,15 +1110,15 @@ async fn post_until_first_event(
     body: &Value,
     options: &StreamOptions,
     first_deadline: Option<Instant>,
-    retry_blocked: &mut bool,
+    retry_state: &mut PostRetryState<'_>,
 ) -> Result<reqwest::Response, PostError> {
     match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_blocked) => result,
+            result = post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_state) => result,
             _ = tokio::time::sleep_until(deadline.into()) => Err(ProviderError::Timeout("Responses stream timed out before its first event".into()).into()),
         },
         None => {
-            post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_blocked).await
+            post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_state).await
         }
     }
 }
@@ -1163,8 +1170,9 @@ async fn run(
     headers.extend(options.extra_headers.iter().cloned());
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|duration| started + duration);
+    let mut retry_state = PostRetryState { retry_blocked, failure_evidence: &mut state.output.failure_evidence };
     let mut posted =
-        post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
+        post_until_first_event(client, &url, &headers, &body, options, first_deadline, &mut retry_state).await;
     if sent_previous
         && !options.cancel.is_cancelled()
         && let Some(zero_data_retention) = posted.as_ref().err().and_then(stale_previous_response)
@@ -1179,9 +1187,14 @@ async fn run(
             body["store"] = json!(false);
         }
         sent_previous = false;
-        posted = post_until_first_event(client, &url, &headers, &body, options, first_deadline, retry_blocked).await;
+        posted = post_until_first_event(client, &url, &headers, &body, options, first_deadline, &mut retry_state).await;
     }
-    let response = posted.map_err(|error| error.cause)?;
+    let response = posted.map_err(|error| {
+        if let Some(evidence) = error.failure_evidence {
+            state.output.failure_evidence = Some(evidence);
+        }
+        error.cause
+    })?;
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &options.cancel).await {
         return Err(ProviderError::Aborted);
     }
@@ -1242,7 +1255,14 @@ async fn run(
                 progressed = true;
                 last_progress = Instant::now();
             }
-            let updates = state.handle(&event)?;
+            let updates = state.handle(&event).inspect_err(|error| {
+                state.output.failure_evidence =
+                    Some(crate::retry_classification::ProviderFailureEvidence::from_error_envelope(
+                        error,
+                        &event,
+                        state.replay_unsafe_wire_event,
+                    ));
+            })?;
             for update in updates {
                 if !sink.push_or_cancel(update, &options.cancel).await {
                     return Err(ProviderError::Aborted);

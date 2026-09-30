@@ -10,6 +10,7 @@ pub mod providers;
 pub(crate) mod replay_safe_retry;
 pub(crate) mod responses_sse;
 pub(crate) mod responses_stream;
+pub mod retry_classification;
 pub(crate) mod schema_draft;
 pub(crate) mod schema_wire;
 pub mod sse;

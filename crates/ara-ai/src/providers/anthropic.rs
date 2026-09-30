@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent as Event, AssistantStream, EventSink};
-use crate::providers::openai_completions::{PostError, RetryPolicy, post_with_retry, post_with_retry_detailed};
+use crate::providers::openai_completions::{PostError, PostRetryState, RetryPolicy, post_with_retry_detailed};
 use crate::schema_wire::postprocess_json_wire_schema;
 use crate::sse::SseDecoder;
 use crate::transform::{ToolCallOriginScope, transform_messages};
@@ -694,26 +694,26 @@ async fn post_with_strict_fallback(
     params: &Value,
     fallback: Option<&Value>,
     options: &StreamOptions,
-    retry_blocked: &mut bool,
-) -> Result<reqwest::Response, ProviderError> {
-    match post_with_retry_detailed(client, url, headers, params, &options.retry, &options.cancel, retry_blocked).await {
+    retry_state: &mut PostRetryState<'_>,
+) -> Result<reqwest::Response, PostError> {
+    match post_with_retry_detailed(client, url, headers, params, &options.retry, &options.cancel, retry_state).await {
         Err(error) if fallback.is_some() && has_strict_tools(params) && strict_rejection(&error) => {
             if let Some(state) = &options.provider_session_state {
                 let model_id = params["model"].as_str().expect("built Anthropic params contain a model ID");
                 state.remember_strict_rejection(url, model_id);
             }
-            post_with_retry(
+            post_with_retry_detailed(
                 client,
                 url,
                 headers,
                 fallback.expect("checked fallback"),
                 &options.retry,
                 &options.cancel,
-                retry_blocked,
+                retry_state,
             )
             .await
         }
-        other => other.map_err(|error| error.cause),
+        other => other,
     }
 }
 
@@ -845,7 +845,14 @@ impl MessageState {
             return Ok(false);
         }
         if kind == "error" {
-            return Err(ProviderError::Stream(sse_error_detail(frame, "Anthropic stream error")));
+            let error = ProviderError::Stream(sse_error_detail(frame, "Anthropic stream error"));
+            self.output.failure_evidence =
+                Some(crate::retry_classification::ProviderFailureEvidence::from_error_envelope(
+                    &error,
+                    frame,
+                    self.retry_blocked,
+                ));
+            return Err(error);
         }
         if kind == "message_start" {
             if self.started {
@@ -1170,6 +1177,7 @@ fn stream_once(
                 output.stop_reason = err.stop_reason();
                 output.error_status = err.status();
                 output.error_message = Some(err.to_string());
+                crate::retry_classification::finalize_failure(&mut output, &err, retry_blocked, false, &model.api);
                 Event::Error { reason: output.stop_reason, error: output }
             }
         };
@@ -1206,24 +1214,26 @@ async fn run(
         if has_strict_tools(&params) { Some(build_params_with_strict(model, context, options, false)?) } else { None };
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|timeout| started + timeout);
-    let response = match first_deadline {
+    let mut retry_state = PostRetryState {
+        retry_blocked: &mut state.retry_blocked,
+        failure_evidence: &mut state.output.failure_evidence,
+    };
+    let posted = match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut state.retry_blocked) => result?,
+            result = post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut retry_state) => result,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout("Anthropic stream timed out before first event".into())),
         },
         None => {
-            post_with_strict_fallback(
-                client,
-                &url,
-                &headers,
-                &params,
-                fallback.as_ref(),
-                options,
-                &mut state.retry_blocked,
-            )
-            .await?
+            post_with_strict_fallback(client, &url, &headers, &params, fallback.as_ref(), options, &mut retry_state)
+                .await
         }
     };
+    let response = posted.map_err(|error| {
+        if let Some(evidence) = error.failure_evidence {
+            state.output.failure_evidence = Some(evidence);
+        }
+        error.cause
+    })?;
     if !sink.push_or_cancel(Event::Start { partial: state.output.clone() }, cancel).await {
         return Err(ProviderError::Aborted);
     }
@@ -1256,7 +1266,14 @@ async fn run(
             let name = frame.event.as_deref().unwrap_or("");
             if name == "error" {
                 let value = serde_json::from_str::<Value>(&frame.data).unwrap_or(Value::Null);
-                return Err(ProviderError::Stream(sse_error_detail(&value, &frame.data)));
+                let error = ProviderError::Stream(sse_error_detail(&value, &frame.data));
+                state.output.failure_evidence =
+                    Some(crate::retry_classification::ProviderFailureEvidence::from_error_envelope(
+                        &error,
+                        &value,
+                        state.retry_blocked,
+                    ));
+                return Err(error);
             }
             if name != "ping"
                 && !matches!(
@@ -1449,6 +1466,7 @@ mod strict_tool_tests {
         let error = |status, code: Option<&str>, detail: &str| PostError {
             cause: ProviderError::Http { status, detail: detail.into() },
             code: code.map(str::to_owned),
+            failure_evidence: None,
         };
         assert!(strict_rejection(&error(400, Some("invalid_request_error"), "The compiled grammar is too large")));
         assert!(strict_rejection(&error(400, None, "structured_outputs not supported")));
@@ -1471,6 +1489,7 @@ mod strict_tool_tests {
         .unwrap();
         let (params, fallback) = official_params();
         let mut retry_blocked = false;
+        let mut failure_evidence = None;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
             &format!("{}/messages", server.base_url()),
@@ -1478,11 +1497,12 @@ mod strict_tool_tests {
             &params,
             Some(&fallback),
             &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
-            &mut retry_blocked,
+            &mut PostRetryState { retry_blocked: &mut retry_blocked, failure_evidence: &mut failure_evidence },
         )
         .await
         .unwrap();
         assert!(response.status().is_success());
+        assert!(failure_evidence.is_none(), "successful strict fallback must clear the rejected attempt's facts");
         assert_eq!(server.served(), 2);
         let requests = server.requests.lock().await;
         assert_eq!(requests[0]["body"]["tools"][0]["strict"], true);
@@ -1500,6 +1520,7 @@ mod strict_tool_tests {
         .unwrap();
         let (params, fallback) = official_params();
         let mut retry_blocked = false;
+        let mut failure_evidence = None;
         let response = post_with_strict_fallback(
             &reqwest::Client::new(),
             &format!("{}/messages", server.base_url()),
@@ -1507,11 +1528,12 @@ mod strict_tool_tests {
             &params,
             Some(&fallback),
             &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
-            &mut retry_blocked,
+            &mut PostRetryState { retry_blocked: &mut retry_blocked, failure_evidence: &mut failure_evidence },
         )
         .await
         .unwrap();
         assert!(response.status().is_success());
+        assert!(failure_evidence.is_none());
         assert_eq!(server.served(), 2);
         assert!(server.requests.lock().await[1]["body"]["tools"][0].get("strict").is_none());
     }
@@ -1522,6 +1544,7 @@ mod strict_tool_tests {
             FakeUpstream::start(script("invalid_request_error", "Some other validation error."), None).await.unwrap();
         let (params, fallback) = official_params();
         let mut retry_blocked = false;
+        let mut failure_evidence = None;
         let error = post_with_strict_fallback(
             &reqwest::Client::new(),
             &format!("{}/messages", server.base_url()),
@@ -1529,11 +1552,11 @@ mod strict_tool_tests {
             &params,
             Some(&fallback),
             &StreamOptions { retry: RetryPolicy { max_attempts: 1, ..Default::default() }, ..Default::default() },
-            &mut retry_blocked,
+            &mut PostRetryState { retry_blocked: &mut retry_blocked, failure_evidence: &mut failure_evidence },
         )
         .await
         .unwrap_err();
-        assert!(matches!(error, ProviderError::Http { status: 400, .. }));
+        assert!(matches!(error.cause, ProviderError::Http { status: 400, .. }));
         assert_eq!(server.served(), 1);
     }
 }

@@ -33,6 +33,9 @@ pub enum ProviderError {
 }
 
 impl ProviderError {
+    pub fn failure_evidence(&self, replay_blocked: bool) -> crate::retry_classification::ProviderFailureEvidence {
+        crate::retry_classification::ProviderFailureEvidence::from_error(self, replay_blocked)
+    }
     pub fn stop_reason(&self) -> StopReason {
         match self {
             ProviderError::Aborted => StopReason::Aborted,

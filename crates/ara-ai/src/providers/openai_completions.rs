@@ -717,6 +717,7 @@ pub fn is_progress_chunk(chunk: &Value) -> bool {
 struct InBandError {
     cause: ProviderError,
     retry_blocked: bool,
+    evidence: crate::retry_classification::ProviderFailureEvidence,
 }
 
 fn stream_error(chunk: &Value) -> Option<InBandError> {
@@ -729,7 +730,9 @@ fn stream_error(chunk: &Value) -> Option<InBandError> {
     let detail = envelope_message(chunk)
         .unwrap_or_else(|| "Provider returned an in-band OpenAI completions stream error".into());
     if !structured {
-        return Some(InBandError { cause: ProviderError::Stream(detail), retry_blocked: false });
+        let cause = ProviderError::Stream(detail);
+        let evidence = cause.failure_evidence(false);
+        return Some(InBandError { cause, retry_blocked: false, evidence });
     }
     let err = error.unwrap();
     let status = match err.get("code") {
@@ -749,7 +752,13 @@ fn stream_error(chunk: &Value) -> Option<InBandError> {
         Some(status) => ProviderError::Http { status, detail },
         None => ProviderError::Stream(detail),
     };
-    Some(InBandError { cause, retry_blocked })
+    let mut evidence = cause.failure_evidence(retry_blocked);
+    evidence.code =
+        err.get("code").and_then(Value::as_str).or_else(|| err.get("type").and_then(Value::as_str)).map(str::to_owned);
+    if retry_blocked {
+        evidence.error_id = crate::retry_classification::flag::USAGE_LIMIT | crate::retry_classification::flag::CLASS;
+    }
+    Some(InBandError { cause, retry_blocked, evidence })
 }
 
 fn content_text(content: Option<&Value>) -> String {
@@ -1037,6 +1046,7 @@ impl ChunkState {
         self.saw_frame = true;
         if let Some(err) = stream_error(chunk) {
             self.retry_blocked = err.retry_blocked;
+            self.output.failure_evidence = Some(err.evidence);
             return Err(err.cause);
         }
         if self.output.response_id.is_none() {
@@ -1250,35 +1260,26 @@ async fn sleep_or_cancel(delay: Duration, cancel: &CancellationToken) -> Result<
     }
 }
 
-/// POST with bounded retries before any stream byte is consumed
-/// (OMP `fetchWithRetry`: 408/429/5xx and network errors, Retry-After aware).
-pub(crate) async fn post_with_retry(
-    client: &reqwest::Client,
-    url: &str,
-    headers: &[(String, String)],
-    body: &Value,
-    policy: &RetryPolicy,
-    cancel: &CancellationToken,
-    retry_blocked: &mut bool,
-) -> Result<reqwest::Response, ProviderError> {
-    post_with_retry_detailed(client, url, headers, body, policy, cancel, retry_blocked)
-        .await
-        .map_err(|error| error.cause)
-}
-
+#[derive(Debug)]
 pub(crate) struct PostError {
     pub cause: ProviderError,
     pub code: Option<String>,
+    pub failure_evidence: Option<crate::retry_classification::ProviderFailureEvidence>,
 }
 
 impl From<ProviderError> for PostError {
     fn from(cause: ProviderError) -> Self {
-        Self { cause, code: None }
+        Self { cause, code: None, failure_evidence: None }
     }
 }
 
-/// The Responses chain fallback needs the structured HTTP code. Other
-/// providers keep the original `post_with_retry` error contract.
+pub(crate) struct PostRetryState<'a> {
+    pub retry_blocked: &'a mut bool,
+    pub failure_evidence: &'a mut Option<crate::retry_classification::ProviderFailureEvidence>,
+}
+
+/// The Responses chain fallback needs the structured HTTP code. Header facts
+/// live in caller-owned state so a watchdog can drop the body future safely.
 pub(crate) async fn post_with_retry_detailed(
     client: &reqwest::Client,
     url: &str,
@@ -1286,11 +1287,13 @@ pub(crate) async fn post_with_retry_detailed(
     body: &Value,
     policy: &RetryPolicy,
     cancel: &CancellationToken,
-    retry_blocked: &mut bool,
+    state: &mut PostRetryState<'_>,
 ) -> Result<reqwest::Response, PostError> {
     let bytes = serde_json::to_vec(body).map_err(|e| ProviderError::Config(e.to_string()))?;
     let mut attempt: u32 = 0;
     loop {
+        *state.failure_evidence = None;
+        *state.retry_blocked = false;
         let mut req = client
             .post(url)
             .header("Content-Type", "application/json")
@@ -1306,10 +1309,18 @@ pub(crate) async fn post_with_retry_detailed(
         let last = attempt + 1 >= policy.max_attempts;
         let default_delay = policy.base_delay.saturating_mul(2u32.saturating_pow(attempt)).min(policy.max_delay);
         match result {
-            Ok(resp) if resp.status().is_success() => return Ok(resp),
+            Ok(resp) if resp.status().is_success() => {
+                *state.failure_evidence = None;
+                *state.retry_blocked = false;
+                return Ok(resp);
+            }
             Ok(resp) => {
                 let status = resp.status().as_u16();
                 let hint = retry_after(resp.headers());
+                let session_wait_ms = crate::retry_classification::retry_wait_ms(
+                    resp.headers(),
+                    chrono::Utc::now().timestamp_millis() as f64,
+                );
                 let admission_header = resp
                     .headers()
                     .get("rate_limit_type")
@@ -1318,7 +1329,12 @@ pub(crate) async fn post_with_retry_detailed(
                 let hint_too_long = hint.is_some_and(|h| h > policy.max_delay);
                 // Preserve an explicit no-retry header even if the error body
                 // stalls and the first-event watchdog drops this future.
-                *retry_blocked = admission_header || hint_too_long;
+                *state.retry_blocked = admission_header || hint_too_long;
+                let mut evidence =
+                    ProviderError::Http { status, detail: String::new() }.failure_evidence(*state.retry_blocked);
+                evidence.same_route_blocked = admission_header;
+                evidence.wait_ms = session_wait_ms;
+                *state.failure_evidence = Some(evidence);
                 let retryable = matches!(status, 408 | 429 | 500..=599);
                 let body = tokio::select! {
                     b = resp.text() => b.unwrap_or_default(),
@@ -1340,10 +1356,21 @@ pub(crate) async fn post_with_retry_detailed(
                                 .or_else(|| error.get("type").and_then(Value::as_str))
                         })
                         .map(str::to_owned);
-                    *retry_blocked = admission_reject
+                    *state.retry_blocked = admission_reject
                         || hint_too_long
                         || account_usage_limit(Some(status), error.as_ref(), &detail, Some(&body));
-                    return Err(PostError { cause: ProviderError::Http { status, detail }, code });
+                    let usage_limit = account_usage_limit(Some(status), error.as_ref(), &detail, Some(&body));
+                    let cause = ProviderError::Http { status, detail };
+                    let mut evidence = cause.failure_evidence(*state.retry_blocked);
+                    evidence.same_route_blocked = admission_reject || usage_limit;
+                    evidence.code = code.clone();
+                    evidence.wait_ms = session_wait_ms;
+                    if usage_limit {
+                        evidence.error_id =
+                            crate::retry_classification::flag::USAGE_LIMIT | crate::retry_classification::flag::CLASS;
+                    }
+                    *state.failure_evidence = Some(evidence.clone());
+                    return Err(PostError { cause, code, failure_evidence: Some(evidence) });
                 }
                 sleep_or_cancel(hint.unwrap_or(default_delay), cancel).await?;
             }
@@ -1414,6 +1441,13 @@ fn stream_once(
                 output.stop_reason = err.stop_reason();
                 output.error_status = err.status();
                 output.error_message = Some(err.to_string());
+                crate::retry_classification::finalize_failure(
+                    &mut output,
+                    &err,
+                    state.retry_blocked,
+                    false,
+                    &model.api,
+                );
                 let reason = output.stop_reason;
                 sink.push(AssistantMessageEvent::Error { reason, error: output }).await;
             }
@@ -1453,15 +1487,25 @@ async fn run(
 
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|d| started + d);
-    let response = match first_deadline {
+    let mut retry_state = PostRetryState {
+        retry_blocked: &mut state.retry_blocked,
+        failure_evidence: &mut state.output.failure_evidence,
+    };
+    let posted = match first_deadline {
         Some(deadline) => tokio::select! {
-            r = post_with_retry(client, &url, &headers, &params, &options.retry, &cancel, &mut state.retry_blocked) => r?,
+            r = post_with_retry_detailed(client, &url, &headers, &params, &options.retry, &cancel, &mut retry_state) => r,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout(FIRST_EVENT_TIMEOUT_MESSAGE.into())),
         },
         None => {
-            post_with_retry(client, &url, &headers, &params, &options.retry, &cancel, &mut state.retry_blocked).await?
+            post_with_retry_detailed(client, &url, &headers, &params, &options.retry, &cancel, &mut retry_state).await
         }
     };
+    let response = posted.map_err(|error| {
+        if let Some(evidence) = error.failure_evidence {
+            state.output.failure_evidence = Some(evidence);
+        }
+        error.cause
+    })?;
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &cancel).await {
         return Err(ProviderError::Aborted);
     }
