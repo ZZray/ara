@@ -6,6 +6,14 @@ The complete denominator is the generated [OMP source inventory](inventory.md): 
 
 Active AI-01e extension (WIP, no new registered point): fixed OMP `openai-shared.ts::processResponsesStream` failure branches and `azure-openai-responses-stream.test.ts` nested-error cases map to `ara-ai::responses_stream::response_error`. ARA reports coded and nested Responses failures through controlled HTTP and CLI/Session evidence; its public error type remains unchanged, while the existing transient classifier can retry a newly visible `server_error` before output. [Failure-detail evidence](../evidence/ai-01e-responses-failure-details.md). Full Windows verification and a real-model task remain open.
 
+Active production RPC dependency (WIP, no new accepted point): `Agent::prompt_with_config`
+and `continue_run_with_config` retain transcript/queue ownership while supplying
+a fresh Run configuration. [API evidence](../evidence/rpc-host-run-config.md):
+five focused regressions, Windows full gate 1,098/0/1 and independent two-file
+diff review; fixed dispatcher tests 15/15 establish the source baseline only.
+The [42-command Host plan](../rpc-host-plan.md) retains full CA-RPC scope. No
+production command, live configuration, durable queue or native resume acceptance.
+
 | ID | Upstream source and behavior | Rust owner | Difference/reason | Executed test and artifact | Status |
 | --- | --- | --- | --- | --- | --- |
 

@@ -99,6 +99,14 @@ Core-driven task evidence. Transport tests do not accept CA-RPC or A5.
 PKG-WIRE collaboration protocol and durable queue/lease work retain their own
 owners and acceptance gates. The fixed OMP marker remains unchanged.
 
+**Production Host investigation, 2026-09-30:** three independent Codex views
+and cross-review produced the [full 42-command Host plan](rpc-host-plan.md).
+The owned per-Run configuration prerequisite is implemented and Windows tested
+([evidence](evidence/rpc-host-run-config.md)); it preserves a single Agent and
+its queues, but does not implement mid-run live settings or any production RPC
+command. The plan records additional Session/compaction/Skill interfaces and
+nonblocking input/output ownership. CA-RPC/A5 and the full marker stay open.
+
 ## Track B: next-generation Agent (G2), design v1
 
 ARA features sit behind explicit Core interfaces and never weaken an OMP behavior. B points start once A3 is tested, because they need compaction and recovery. B1 foundations may start earlier as additive types.

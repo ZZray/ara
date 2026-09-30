@@ -393,6 +393,307 @@ fn user_texts(messages: &[Message]) -> Vec<String> {
 // ------------------------------------------------------------------- tests
 
 #[tokio::test]
+async fn run_config_selects_provider_tools_hooks_and_request_options() {
+    struct ObservedProvider {
+        scripted: Arc<ScriptedProvider>,
+        requests: Mutex<Vec<(Model, CallOptions)>>,
+    }
+    impl ModelProvider for ObservedProvider {
+        fn stream(&self, model: &Model, context: &Context, options: CallOptions) -> AssistantStream {
+            self.requests.lock().unwrap().push((model.clone(), options.clone()));
+            self.scripted.stream(model, context, options)
+        }
+    }
+    struct RunHooks(Hooks);
+    #[async_trait]
+    impl LoopHooks for RunHooks {
+        async fn steering_messages(&self) -> Vec<Message> {
+            self.0.steering_messages().await
+        }
+        async fn transform_provider_context(&self, mut context: Context, _model: &Model) -> Context {
+            context.system_prompt.push("run transform".into());
+            context
+        }
+    }
+    let defaults = ScriptedProvider::new(vec![
+        reply("", &[("default-tool", "echo", json!({"text":"denied"}))], StopReason::ToolUse),
+        reply("default restored", &[], StopReason::Stop),
+    ]);
+    let default_hooks = Arc::new(Hooks { block: true, ..Default::default() });
+    let (default_tool, default_effects) = echo(0, Concurrency::Shared);
+    let agent = Agent::new(config(defaults.clone(), vec![default_tool], default_hooks), vec![]);
+    agent.steer(user("owned steer"));
+    let hooks = Arc::new(RunHooks(Hooks::default()));
+    hooks.0.steering.lock().unwrap().push(user("run hook steer"));
+    let scripted =
+        ScriptedProvider::new(vec![reply("", &[("run-tool", "echo", json!({"text":"once"}))], StopReason::ToolUse)]);
+    let provider = Arc::new(ObservedProvider { scripted: scripted.clone(), requests: Mutex::new(vec![]) });
+    let (tool, effects) = echo(0, Concurrency::Shared);
+    let mut run = config(provider.clone(), vec![tool], hooks);
+    run.model.id = "run-model".into();
+    run.system_prompt = vec!["run prompt".into()];
+    run.max_tokens = Some(37);
+    run.temperature = Some(0.25);
+    run.tool_choice = Some(ToolChoice::Tool("echo".into()));
+    run.max_model_calls = Some(1);
+    let report = agent
+        .prompt_with_config(vec![user("initial")], run, CancellationToken::new(), Arc::new(NullSink))
+        .await
+        .unwrap();
+    assert_eq!(report.end, RunEnd::ModelCallBudget);
+    assert_eq!(*effects.lock().unwrap(), ["start:run-tool", "end:run-tool"]);
+    assert!(defaults.contexts.lock().unwrap().is_empty());
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0.id, "run-model");
+        assert_eq!(requests[0].1.max_tokens, Some(37));
+        assert_eq!(requests[0].1.temperature, Some(0.25));
+        assert_eq!(requests[0].1.tool_choice, Some(ToolChoice::Tool("echo".into())));
+        let contexts = scripted.contexts.lock().unwrap();
+        assert_eq!(contexts[0].system_prompt, ["run prompt", "run transform"]);
+        assert_eq!(contexts[0].tools.as_ref().unwrap()[0].name, "echo");
+        assert_eq!(user_texts(&contexts[0].messages), ["initial", "owned steer", "run hook steer"]);
+    }
+    assert_eq!(
+        agent.prompt(vec![user("defaults again")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap().end,
+        RunEnd::Completed
+    );
+    assert!(default_effects.lock().unwrap().is_empty());
+    let messages = agent.messages().await;
+    assert!(messages.iter().any(|message| matches!(message, Message::ToolResult(result) if result.tool_call_id == "default-tool" && result.is_error)));
+    assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "default restored");
+    assert_eq!(messages.last().unwrap().as_assistant().unwrap().model, "scripted");
+    let contexts = defaults.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[0].system_prompt, ["sys"]);
+    assert_eq!(contexts[0].tools.as_ref().unwrap()[0].name, "echo");
+}
+
+#[tokio::test]
+async fn run_config_refreshes_deadlines_without_replacing_transcript_queues_or_defaults() {
+    let defaults = ScriptedProvider::new(vec![]);
+    let mut original = config(defaults.clone(), vec![], Arc::new(NoHooks));
+    original.deadline = Some(Instant::now() - Duration::from_secs(1));
+    let agent = Agent::new(original, vec![]);
+    let provider = ScriptedProvider::new(vec![
+        reply("one", &[], StopReason::Stop),
+        reply("two", &[], StopReason::Stop),
+        reply("three", &[], StopReason::Stop),
+    ]);
+    let fresh = || {
+        let mut run = config(provider.clone(), vec![], Arc::new(NoHooks));
+        run.deadline = Some(Instant::now() + Duration::from_secs(30));
+        run
+    };
+    for text in ["first", "second"] {
+        assert_eq!(
+            agent
+                .prompt_with_config(vec![user(text)], fresh(), CancellationToken::new(), Arc::new(NullSink))
+                .await
+                .unwrap()
+                .end,
+            RunEnd::Completed
+        );
+    }
+    agent.set_steering_mode(QueueMode::All);
+    agent.steer(user("third-a"));
+    agent.steer(user("third-b"));
+    assert!(matches!(
+        agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await,
+        Err(AgentError::CannotContinue(_))
+    ));
+    assert_eq!(agent.queued_counts(), (2, 0));
+    assert_eq!(
+        agent.continue_run_with_config(fresh(), CancellationToken::new(), Arc::new(NullSink)).await.unwrap().end,
+        RunEnd::Completed
+    );
+    assert_eq!(agent.steering_mode(), QueueMode::All);
+    assert_eq!(user_texts(&agent.messages().await), ["first", "second", "third-a", "third-b"]);
+    assert!(defaults.contexts.lock().unwrap().is_empty());
+    assert_eq!(provider.contexts.lock().unwrap().len(), 3);
+    assert_eq!(agent.queued_counts(), (0, 0));
+}
+
+#[tokio::test]
+async fn run_config_continues_empty_and_native_transcripts_with_supplied_hooks_and_deadline() {
+    let provider = ScriptedProvider::new(vec![
+        reply("empty", &[], StopReason::Stop),
+        reply("native", &[], StopReason::Stop),
+        reply("recorded tool", &[], StopReason::Stop),
+    ]);
+    let defaults = ScriptedProvider::new(vec![]);
+    let mut assistant = AssistantMessage::empty("test", "test", "test");
+    assistant.stop_reason = StopReason::ToolUse;
+    assistant.content.push(AssistantBlock::ToolCall(call_block("recorded", "echo", &json!({"text":"once"}))));
+    let recorded = vec![
+        user("native pending prompt"),
+        Message::Assistant(assistant),
+        Message::ToolResult(ToolResultMessage {
+            tool_call_id: "recorded".into(),
+            tool_name: "echo".into(),
+            content: vec![UserBlock::text("recorded receipt")],
+            details: None,
+            is_error: false,
+            timestamp: 0,
+        }),
+    ];
+    let (tool, effects) = echo(0, Concurrency::Shared);
+    for messages in [vec![], vec![user("native pending prompt")], recorded] {
+        let mut original = config(defaults.clone(), vec![], Arc::new(NoHooks));
+        original.deadline = Some(Instant::now() - Duration::from_secs(1));
+        let empty = messages.is_empty();
+        let agent = Agent::new(original, messages);
+        let hooks = Arc::new(Hooks::default());
+        if empty {
+            hooks.follow_up.lock().unwrap().push(user("supplied hook follow-up"));
+        }
+        let mut run = config(provider.clone(), vec![tool.clone()], hooks);
+        run.deadline = Some(Instant::now() + Duration::from_secs(30));
+        assert_eq!(
+            agent.continue_run_with_config(run, CancellationToken::new(), Arc::new(NullSink)).await.unwrap().end,
+            RunEnd::Completed
+        );
+        assert_eq!(
+            user_texts(&agent.messages().await),
+            [if empty { "supplied hook follow-up" } else { "native pending prompt" }]
+        );
+    }
+    assert!(defaults.contexts.lock().unwrap().is_empty());
+    assert_eq!(provider.contexts.lock().unwrap().len(), 3);
+    assert!(effects.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn run_config_preserves_cancelled_dequeue_and_unknown_effect_refusal() {
+    struct DequeueGate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+    #[async_trait]
+    impl LoopHooks for DequeueGate {
+        async fn steering_messages(&self) -> Vec<Message> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            vec![user("supplied hook message")]
+        }
+    }
+    let defaults = ScriptedProvider::new(vec![]);
+    let provider = ScriptedProvider::new(vec![]);
+    let agent = Agent::new(config(defaults.clone(), vec![], Arc::new(NoHooks)), vec![]);
+    let gate = Arc::new(DequeueGate { entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new() });
+    let cancel = CancellationToken::new();
+    let pending = {
+        let (agent, cancel, run) = (agent.clone(), cancel.clone(), config(provider.clone(), vec![], gate.clone()));
+        tokio::spawn(async move { agent.continue_run_with_config(run, cancel, Arc::new(NullSink)).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), gate.entered.notified()).await.unwrap();
+    agent.steer(user("owned message"));
+    cancel.cancel();
+    gate.release.notify_one();
+    assert!(matches!(pending.await.unwrap(), Err(AgentError::CannotContinue(_))));
+    assert_eq!(user_texts(&agent.peek_steering_queue()), ["owned message", "supplied hook message"]);
+    assert!(agent.messages().await.is_empty());
+    assert!(provider.contexts.lock().unwrap().is_empty());
+    let mut expired = config(provider.clone(), vec![], Arc::new(NoHooks));
+    expired.deadline = Some(Instant::now() - Duration::from_secs(1));
+    assert!(matches!(
+        agent.continue_run_with_config(expired, CancellationToken::new(), Arc::new(NullSink)).await,
+        Err(AgentError::CannotContinue(_))
+    ));
+    assert_eq!(agent.queued_counts(), (2, 0));
+    let mut tail = AssistantMessage::empty("test", "test", "test");
+    tail.stop_reason = StopReason::ToolUse;
+    tail.content.push(AssistantBlock::ToolCall(call_block("unknown-run", "echo", &json!({"text":"unknown"}))));
+    let unsafe_agent = Agent::new(config(defaults, vec![], Arc::new(NoHooks)), vec![Message::Assistant(tail)]);
+    unsafe_agent.steer(user("must remain"));
+    let (tool, effects) = echo(0, Concurrency::Shared);
+    let run = config(provider.clone(), vec![tool], Arc::new(NoHooks));
+    assert!(matches!(
+        unsafe_agent
+            .prompt_with_config(vec![user("refused")], run.clone(), CancellationToken::new(), Arc::new(NullSink))
+            .await,
+        Err(AgentError::CannotContinue(_))
+    ));
+    assert!(matches!(
+        unsafe_agent.continue_run_with_config(run, CancellationToken::new(), Arc::new(NullSink)).await,
+        Err(AgentError::CannotContinue(_))
+    ));
+    assert!(effects.lock().unwrap().is_empty());
+    assert!(provider.contexts.lock().unwrap().is_empty());
+    assert_eq!(unsafe_agent.queued_counts(), (1, 0));
+    assert_eq!(unsafe_agent.messages().await.len(), 1);
+}
+
+#[tokio::test]
+async fn run_config_busy_rejection_and_dropped_waiter_retain_owned_effects_and_receipts() {
+    struct GatedSink {
+        recorded: RecordingSink,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+    #[async_trait]
+    impl AgentEventSink for GatedSink {
+        async fn emit(&self, event: AgentEvent) {
+            let tool_start = matches!(event, AgentEvent::ToolExecutionStart { .. });
+            self.recorded.emit(event).await;
+            if tool_start {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+        }
+    }
+    let defaults = ScriptedProvider::new(vec![]);
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("owned-run", "echo", json!({"text":"once"}))], StopReason::ToolUse),
+        reply("done", &[], StopReason::Stop),
+    ]);
+    let (tool, effects) = echo(0, Concurrency::Shared);
+    let agent = Agent::new(config(defaults.clone(), vec![], Arc::new(NoHooks)), vec![]);
+    let sink = Arc::new(GatedSink {
+        recorded: RecordingSink::default(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    let waiting = {
+        let (agent, sink, run) = (agent.clone(), sink.clone(), config(provider.clone(), vec![tool], Arc::new(NoHooks)));
+        tokio::spawn(async move {
+            agent.prompt_with_config(vec![user("initial")], run, CancellationToken::new(), sink).await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(3), sink.entered.notified()).await.unwrap();
+    agent.steer(user("queued"));
+    let rejected = config(defaults.clone(), vec![], Arc::new(NoHooks));
+    assert!(matches!(
+        agent
+            .prompt_with_config(vec![user("wrong")], rejected.clone(), CancellationToken::new(), Arc::new(NullSink))
+            .await,
+        Err(AgentError::Busy)
+    ));
+    assert!(matches!(
+        agent.continue_run_with_config(rejected, CancellationToken::new(), Arc::new(NullSink)).await,
+        Err(AgentError::Busy)
+    ));
+    assert_eq!(user_texts(&agent.peek_steering_queue()), ["queued"]);
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    sink.release.notify_one();
+    let messages = tokio::time::timeout(Duration::from_secs(3), agent.messages()).await.unwrap();
+    assert_eq!(*effects.lock().unwrap(), ["start:owned-run", "end:owned-run"]);
+    assert_eq!(user_texts(&messages), ["initial", "queued"]);
+    assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "done");
+    assert!(
+        sink.recorded
+            .events
+            .lock()
+            .await
+            .iter()
+            .any(|event| matches!(event, AgentEvent::MessageEnd { message: Message::ToolResult(_) }))
+    );
+    assert!(defaults.contexts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn stateful_agent_drains_steering_then_follow_up_and_rejects_parallel_prompt() {
     let provider = ScriptedProvider::new(vec![
         reply("", &[("one", "echo", json!({"text": "once"}))], StopReason::ToolUse),

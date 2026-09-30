@@ -203,11 +203,10 @@ impl Agent {
         Ok(run_cancel)
     }
 
-    fn config_with_queues(&self) -> (AgentConfig, Arc<QueueHooks>) {
-        let mut config = self.config.clone();
+    fn config_with_queues(&self, mut config: AgentConfig) -> (AgentConfig, Arc<QueueHooks>) {
         let hooks = Arc::new(QueueHooks {
             queues: self.queues.clone(),
-            base: self.config.hooks.clone(),
+            base: config.hooks.clone(),
             skip_initial_steering_poll: AtomicBool::new(false),
         });
         config.hooks = hooks.clone();
@@ -222,6 +221,20 @@ impl Agent {
         cancel: CancellationToken,
         sink: Arc<dyn AgentEventSink>,
     ) -> Result<RunReport, AgentError> {
+        self.prompt_with_config(prompts, self.config.clone(), cancel, sink).await
+    }
+
+    /// Start a Run with an owned configuration snapshot, retaining this
+    /// Agent's transcript and queues. The host can supply a fresh deadline or
+    /// route without changing the defaults used by `prompt`/`continue_run`.
+    /// This snapshot is fixed for the Run; it is not a live settings port.
+    pub async fn prompt_with_config(
+        self: &Arc<Self>,
+        prompts: Vec<Message>,
+        config: AgentConfig,
+        cancel: CancellationToken,
+        sink: Arc<dyn AgentEventSink>,
+    ) -> Result<RunReport, AgentError> {
         let cancel = self.enter(&cancel)?;
         let agent = self.clone();
         tokio::spawn(async move {
@@ -232,7 +245,7 @@ impl Agent {
                     crate::agent_loop::UNPAIRED_TAIL_REFUSED.into(),
                 )));
             }
-            let (config, _) = agent.config_with_queues();
+            let (config, _) = agent.config_with_queues(config);
             Ok(agent_loop(prompts, &mut messages, &config, &cancel, sink.as_ref()).await)
         })
         .await
@@ -247,12 +260,24 @@ impl Agent {
         cancel: CancellationToken,
         sink: Arc<dyn AgentEventSink>,
     ) -> Result<RunReport, AgentError> {
+        self.continue_run_with_config(self.config.clone(), cancel, sink).await
+    }
+
+    /// Continue with a Run configuration snapshot while preserving queue
+    /// modes, cancellation rollback and the unknown-effect recovery guard.
+    /// Like `prompt_with_config`, this leaves the Agent defaults unchanged.
+    pub async fn continue_run_with_config(
+        self: &Arc<Self>,
+        config: AgentConfig,
+        cancel: CancellationToken,
+        sink: Arc<dyn AgentEventSink>,
+    ) -> Result<RunReport, AgentError> {
         let cancel = self.enter(&cancel)?;
         let agent = self.clone();
         tokio::spawn(async move {
             let _guard = RunningGuard(agent.clone());
             let mut messages = agent.messages.lock().await;
-            let (config, queue_hooks) = agent.config_with_queues();
+            let (config, queue_hooks) = agent.config_with_queues(config);
             if unpaired_tool_call_tail(&messages).is_some() {
                 return Err(AgentError::CannotContinue(LoopError::CannotContinue(
                     crate::agent_loop::UNPAIRED_TAIL_REFUSED.into(),
