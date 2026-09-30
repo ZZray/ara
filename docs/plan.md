@@ -264,3 +264,13 @@ implementations**. Windows focused/full/dependency gates, a three-call real
 task, independent audit and exact-code Linux `36715269879` pass on `c4165e4`.
 Full xdev presentation, remaining RPC commands and
 P1–P6 remain open. Continue fixed OMP modules before customization.
+
+The [native user Bash batch](evidence/rpc-native-bash.md) adds `bash` and
+`abort_bash`, independent input dispatch, typed process results, original
+Session/branch receipts, safe streaming flush and native restart projection.
+RPC now has **23/42 bounded implementations**. Windows full/dependency gates
+and a two-Run artifact/restart task pass; exact-commit Linux and final audit
+receipts are recorded in the point evidence. Complete RPC and P1–P6 stay open.
+Next: OMP compaction maintenance (`compact`, `set_auto_compaction`), then
+Session retry recovery (`set_auto_retry`, `abort_retry`). Share gates across
+each coherent module and reuse the existing child/receipt fixtures.

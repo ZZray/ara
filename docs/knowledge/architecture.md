@@ -136,3 +136,25 @@ The [point evidence](../evidence/rpc-host-skills.md) includes equal-value proven
 oracles, real process failures, source deletion/restart/switch, exact Windows and
 Linux gates and the audited actual task. Arbitrary custom roles, full compaction
 public rendering, live/saved settings and durable queue admission remain open.
+
+### Native user Bash and retained Session writers
+
+**Decision, 2026-09-30 (bounded RPC checkpoint, full parity open):** User-shell
+jobs belong to the reference Host and have tokens separate from model tools.
+Input dispatch captures the target before ordinary serial work can settle;
+only the serial completion owner writes receipts. Native `bashExecution`
+identity stays in Session storage/public history and projects to User context.
+Core idle transcript edits share Run admission's atomic state guard and cannot
+hide unresolved tool effects or discard queued input.
+
+A pending job must not retain a stale journal writer when that file is reopened.
+Reuse the captured Session's journal lock and replace its reopened view before
+adoption. Transition destinations retain their own advancing branch parent;
+detached or branch receipts cannot enter the new Agent. Current receipts defer
+until the owned Run joins, before new prompts or automatic queued continuation.
+Branch append preserves the live leaf only: fixed OMP rebuild selects the last
+raw entry after restart. A new persistent leaf marker would change that contract.
+Valid context-excluded Bash is transparent to unknown-effect recovery adjacency;
+included/malformed receipts remain barriers. The [checkpoint evidence](../evidence/rpc-native-bash.md)
+records source locations, actual process/journal faults and the verified restart
+task. Complete shell/settings/maintenance behavior remains open.

@@ -154,3 +154,17 @@ Three independent Codex views (`rpc_host_pragmatism`, `rpc_host_architecture`,
 Consensus: the owned Run configuration prerequisite, canonical Agent queues,
 isolated RPC sink/mirror and independent input/output scheduling. Remaining
 dependencies and differences above stay open. The full OMP marker remains null.
+
+## Native user Bash checkpoint, 2026-09-30
+
+The [native Bash evidence](evidence/rpc-native-bash.md) implements both Bash
+commands as bounded tested WIP, bringing the command subset to **23/42**.
+Stdin dispatch captures the target and starts its process independently of
+ordinary commands. Host serial completion owns native receipts, transition
+destinations, safe joined-boundary flush and EOF drain. A retained same-file
+Session uses one writer across reopen; shared Core only gains generic atomic
+idle transcript operations. Fixed native Bash projects to User context.
+Persistent shell/PTY/artifact spill and complete shell settings remain open.
+Next implement compaction maintenance, then Session retry recovery; ordinary
+maintenance keeps the fixed serial dispatcher schedule. Whole CA-RPC/P1–P6
+acceptance is not inferred from this subset.
