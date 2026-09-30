@@ -112,12 +112,55 @@ impl AgentTool for WriteTool {
         &self,
         _id: &str,
         args: JsonObject,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
         let hashlines = self.ctx.hashlines();
         let raw_path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
         let path = ara_edit::path_policy::unwrap_hashline_header_path(raw_path);
+        if let Some(scheme) = crate::internal_urls::hierarchical_scheme(path) {
+            let (url, selector) = crate::internal_urls::split_content_url_selector(path);
+            if let Some(sel) = selector
+                && !sel.eq_ignore_ascii_case("raw")
+                && !sel.eq_ignore_ascii_case("conflicts")
+            {
+                return Err(ToolError(format!(
+                    "write does not accept the trailing selector \":{sel}\" — it writes a whole file. Remove \":{sel}\", or if the filename truly ends with it, percent-encode the \":\" as %3A."
+                )));
+            }
+            if let Some(port) = self.ctx.content_uri_port() {
+                match port.route(&url) {
+                    crate::ContentUriRoute::Registered { writable: true } => {
+                        if cancel.is_cancelled() {
+                            return Err(ToolError(format!("Host URI write for {url} was aborted")));
+                        }
+                        let raw_content = args.get("content").and_then(|v| v.as_str()).unwrap_or_default();
+                        let (content, stripped) =
+                            if hashlines { strip_write_content(raw_content) } else { (raw_content.to_owned(), false) };
+                        port.write(&url, &content, cancel).await?;
+                        let mut text = format!("Successfully wrote {} bytes to {url}", content.encode_utf16().count());
+                        if stripped {
+                            text.push('\n');
+                            text.push_str(STRIPPED_NOTE);
+                        }
+                        return Ok(ToolOutput::text(text).with_details(json!({})));
+                    }
+                    crate::ContentUriRoute::Registered { writable: false } => {
+                        return Err(ToolError(format!(
+                            "{}:// URLs are read-only for write; use the protocol-specific tool for mutations.",
+                            scheme.to_ascii_lowercase()
+                        )));
+                    }
+                    crate::ContentUriRoute::Removed => {
+                        return Err(ToolError(format!("Unknown protocol: {}://", scheme.to_ascii_lowercase())));
+                    }
+                    crate::ContentUriRoute::Unregistered => {}
+                }
+            }
+            if !crate::internal_urls::is_internal_url(path) {
+                return Err(ToolError(format!("Unknown protocol: {}://", scheme.to_ascii_lowercase())));
+            }
+        }
         if crate::internal_urls::is_internal_url(path) {
             let (_, selector) = crate::internal_urls::split_skill_url_selector(path);
             if let Some(sel) = selector

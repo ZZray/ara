@@ -18,13 +18,45 @@ pub mod paths;
 pub mod read;
 pub mod write;
 
-use ara_agent::AgentTool;
+use ara_agent::{AgentTool, ToolError};
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use tokio_util::sync::CancellationToken;
 
 /// Upstream `DEFAULT_MAX_LINES` / `DEFAULT_MAX_BYTES` (session/streaming-output.ts).
 pub const DEFAULT_MAX_LINES: usize = 3000;
 pub const DEFAULT_MAX_BYTES: usize = 50 * 1024;
+
+/// A host's routing decision for a hierarchical content URI. Removed routes
+/// remain distinct from unregistered ones: dropping an explicit override must
+/// not silently restore a native handler (OMP `InternalUrlRouter.unregister`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentUriRoute {
+    Unregistered,
+    Registered { writable: bool },
+    Removed,
+}
+
+/// UTF-8 content returned by a host-owned URI handler. It has no backing file;
+/// read selectors operate on this content without materializing a local path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UriResource {
+    pub content: String,
+    pub content_type: String,
+    pub notes: Vec<String>,
+    pub immutable: bool,
+}
+
+/// Optional per-host content routing for `read` and `write`. The host owns
+/// registrations, permissions and request transport; ordinary tool gates still
+/// run before these methods. Other tools retain their filesystem contracts.
+#[async_trait]
+pub trait ContentUriPort: Send + Sync {
+    fn route(&self, url: &str) -> ContentUriRoute;
+    async fn read(&self, url: &str, cancel: CancellationToken) -> Result<UriResource, ToolError>;
+    async fn write(&self, url: &str, content: &str, cancel: CancellationToken) -> Result<(), ToolError>;
+}
 
 /// Shared tool settings chosen by the host.
 #[derive(Clone)]
@@ -41,6 +73,7 @@ pub struct ToolContext {
     pub edit_store: ara_edit::EditStore,
     /// Skills `skill://` URLs resolve against (the host's loaded skills).
     pub skills: std::sync::Arc<std::sync::RwLock<Vec<internal_urls::SkillRef>>>,
+    content_uri_port: Arc<RwLock<Option<Arc<dyn ContentUriPort>>>>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -67,6 +100,7 @@ impl ToolContext {
             edit_enabled: true,
             edit_store: ara_edit::EditStore::new(),
             skills: Default::default(),
+            content_uri_port: Default::default(),
         }
     }
 
@@ -75,6 +109,22 @@ impl ToolContext {
     pub fn with_skills(mut self, skills: Vec<internal_urls::SkillRef>) -> Self {
         self.skills = std::sync::Arc::new(std::sync::RwLock::new(skills));
         self
+    }
+
+    /// Install the content URI port shared by this context's existing clones.
+    pub fn with_uri_port(self, port: Arc<dyn ContentUriPort>) -> Self {
+        self.set_uri_port(port);
+        self
+    }
+
+    pub fn set_uri_port(&self, port: Arc<dyn ContentUriPort>) {
+        *self.content_uri_port.write().unwrap_or_else(|e| e.into_inner()) = Some(port);
+    }
+
+    /// Clone the port while holding the slot lock; release it before awaiting
+    /// the host so live registrations do not block behind a pending read/write.
+    pub fn content_uri_port(&self) -> Option<Arc<dyn ContentUriPort>> {
+        self.content_uri_port.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Resolve an internal URL (`skill://…`) to a filesystem path.

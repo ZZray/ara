@@ -5,8 +5,13 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
+use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
+use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
-use ara_agent::{Agent, AgentConfig, AgentError, AgentEvent, AgentEventSink, AgentInput, QueueMode, RunEnd, RunReport};
+use ara_agent::{
+    Agent, AgentConfig, AgentError, AgentEvent, AgentEventSink, AgentInput, ExecutionSnapshot, LoopHooks, QueueMode,
+    RunEnd, RunReport, ToolDecision,
+};
 use ara_ai::{ImageContent, Message, UserBlock, UserContent, UserMessage};
 use ara_discovery::LoadedSkill;
 use ara_rpc::{
@@ -21,7 +26,7 @@ use serde_json::{Value, json};
 use std::{
     future::pending,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
 
@@ -49,18 +54,29 @@ pub(super) struct SessionFactory {
     pub provider: super::ProviderFactory,
     pub args: super::Args,
     pub mcp_config: Option<ara_mcp::ServerConfig>,
+    pub tool_context: Option<ara_tools::ToolContext>,
+    pub uri_port: Option<Arc<dyn ara_tools::ContentUriPort>>,
 }
 
 impl SessionFactory {
-    async fn config(&self, current: &AgentConfig, reset: bool) -> Result<(AgentConfig, Vec<LoadedSkill>)> {
+    async fn config(
+        &self,
+        current: &AgentConfig,
+        reset: bool,
+        overlay: super::ToolOverlay,
+    ) -> Result<(AgentConfig, Vec<LoadedSkill>)> {
         let setup = super::prepare_cli_setup(
             &self.args,
             &self.cwd,
             &current.model,
             &self.mcp_config,
             (!reset).then(|| current.tools.clone()),
+            overlay,
         )
         .await?;
+        if let (Some(context), Some(port)) = (&setup.tool_context, &self.uri_port) {
+            context.set_uri_port(port.clone());
+        }
         let mut config = current.clone();
         config.system_prompt = setup.system_prompt;
         config.tools = setup.tools;
@@ -69,6 +85,37 @@ impl SessionFactory {
             config.hooks = setup.hooks;
         }
         Ok((config, setup.skills))
+    }
+}
+
+struct RpcHooks {
+    base: Arc<dyn LoopHooks>,
+    snapshot: Arc<RwLock<ExecutionSnapshot>>,
+}
+
+#[async_trait]
+impl LoopHooks for RpcHooks {
+    fn execution_snapshot(&self) -> Option<ExecutionSnapshot> {
+        Some(self.snapshot.read().unwrap_or_else(|e| e.into_inner()).clone())
+    }
+
+    async fn before_tool_call(
+        &self,
+        call: &ara_ai::ToolCall,
+        args: &ara_ai::JsonObject,
+        cancel: &CancellationToken,
+    ) -> ToolDecision {
+        self.base.before_tool_call(call, args, cancel).await
+    }
+
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        self.base.steering_inputs().await
+    }
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        self.base.follow_up_inputs().await
+    }
+    async fn transform_provider_context(&self, context: ara_ai::Context, model: &ara_ai::Model) -> ara_ai::Context {
+        self.base.transform_provider_context(context, model).await
     }
 }
 
@@ -367,12 +414,88 @@ struct Host {
     connection: CancellationToken,
     active: Option<ActiveRun>,
     sessions: SessionFactory,
+    tool_bridge: Arc<ToolBridge>,
+    uri_bridge: Arc<UriBridge>,
+    host_tools: Vec<HostToolDefinition>,
+    snapshot: Arc<RwLock<ExecutionSnapshot>>,
     // Deliberate abort keeps queued input visible but suppresses autonomous
     // resumption. A new explicit prompt/queue command permits another Run.
     drain_queues: bool,
 }
 
 impl Host {
+    fn overlay(&self, definitions: &[HostToolDefinition], active_names: &[String]) -> super::ToolOverlay {
+        let active = active_names
+            .iter()
+            .filter_map(|name| definitions.iter().find(|tool| tool.name == *name).cloned())
+            .collect::<Vec<_>>();
+        super::ToolOverlay {
+            tools: self.tool_bridge.adapters(&active),
+            labels: active.into_iter().map(|tool| (tool.name, tool.label)).collect(),
+        }
+    }
+
+    fn active_host_names(&self) -> Vec<String> {
+        self.config
+            .tools
+            .iter()
+            .map(|tool| tool.definition().name.clone())
+            .filter(|name| self.host_tools.iter().any(|tool| tool.name == *name))
+            .collect()
+    }
+
+    fn base_config(&self) -> AgentConfig {
+        let mut config = self.config.clone();
+        config.tools.retain(|tool| !self.host_tools.iter().any(|host| host.name == tool.definition().name));
+        config
+    }
+
+    async fn session_config(&self, reset: bool) -> Result<(AgentConfig, Vec<LoadedSkill>)> {
+        let overlay = self.overlay(&self.host_tools, &self.active_host_names());
+        let (mut config, skills) = self.sessions.config(&self.base_config(), reset, overlay).await?;
+        if reset {
+            config.hooks = Arc::new(RpcHooks { base: config.hooks.clone(), snapshot: self.snapshot.clone() });
+        }
+        Ok((config, skills))
+    }
+
+    fn publish_snapshot(&self, config: &AgentConfig) {
+        *self.snapshot.write().unwrap_or_else(|e| e.into_inner()) =
+            ExecutionSnapshot { tools: config.tools.clone(), system_prompt: config.system_prompt.clone() };
+    }
+
+    async fn set_host_tools(&mut self, definitions: Vec<HostToolDefinition>) -> Result<Vec<String>> {
+        let names = definitions.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+        let unique = names.iter().collect::<std::collections::HashSet<_>>();
+        if unique.len() != names.len() {
+            bail!("RPC host tool names must be unique");
+        }
+        let base = self.base_config();
+        for name in &names {
+            if super::TOOL_NAMES.contains(&name.as_str())
+                || base.tools.iter().any(|tool| tool.definition().name == *name)
+            {
+                bail!("RPC host tool \"{name}\" conflicts with an existing tool");
+            }
+        }
+        let mut active = self.active_host_names().into_iter().filter(|name| unique.contains(name)).collect::<Vec<_>>();
+        active.extend(
+            definitions
+                .iter()
+                .filter(|tool| !tool.hidden && !self.host_tools.iter().any(|previous| previous.name == tool.name))
+                .map(|tool| tool.name.clone()),
+        );
+        let overlay = self.overlay(&definitions, &active);
+        // Prepare the complete prompt and adapters before publishing either.
+        // Pending calls retain their old adapter and original Session sink.
+        let (config, skills) = self.sessions.config(&base, false, overlay).await?;
+        self.publish_snapshot(&config);
+        self.config = config;
+        self.skills = skills;
+        self.host_tools = definitions;
+        Ok(names)
+    }
+
     fn available_commands(&self) -> Vec<Value> {
         // Fixed available-commands.ts:59-68 advertises the registered Skill
         // snapshot, including hidden entries. Body loading belongs to prompt
@@ -409,6 +532,7 @@ impl Host {
         let agent = Agent::new(config.clone(), messages);
         agent.set_steering_mode(self.agent.steering_mode());
         agent.set_follow_up_mode(self.agent.follow_up_mode());
+        self.publish_snapshot(&config);
         self.agent = agent;
         self.session = session;
         self.config = config;
@@ -419,7 +543,7 @@ impl Host {
 
     async fn new_session(&mut self, parent: Option<&str>) -> Result<()> {
         self.abort().await;
-        let (config, skills) = self.sessions.config(&self.config, true).await?;
+        let (config, skills) = self.session_config(true).await?;
         let mut journal = self
             .sessions
             .dir
@@ -461,7 +585,7 @@ impl Host {
         let unchanged = same_file
             && journal.header()["id"] == self.session.header["id"]
             && replay_messages_equal(&messages, &self.agent.messages().await);
-        let (config, skills) = self.sessions.config(&self.config, !unchanged).await?;
+        let (config, skills) = self.session_config(!unchanged).await?;
         // The launch-selected route is currently the only available model.
         // Keep unavailable saved selections intact, as fixed switch's fallback
         // does; role/catalog/thinking restoration remains a mapped WIP gap.
@@ -487,7 +611,7 @@ impl Host {
             (entry.parent_id.clone().filter(|parent| !parent.is_empty()), user_message_text(&entry.raw["message"]))
         };
         self.abort().await;
-        let (config, skills) = self.sessions.config(&self.config, true).await?;
+        let (config, skills) = self.session_config(true).await?;
         let journal = self.session.journal.lock().await.fork_at(parent.as_deref(), self.sessions.dir.as_deref())?;
         let header = journal.header().clone();
         let messages = journal.model_context();
@@ -635,6 +759,21 @@ impl Host {
 
     async fn execute(&mut self, command: &Command) -> Result<()> {
         match command.kind.as_str() {
+            "set_host_tools" => {
+                let definitions = normalize_host_tool_definitions(
+                    command.frame.get("tools").context("set_host_tools requires tools")?,
+                )
+                .map_err(anyhow::Error::msg)?;
+                let names = self.set_host_tools(definitions).await?;
+                self.output.response(command, Some(json!({"toolNames":names})), None);
+            }
+            "set_host_uri_schemes" => {
+                let schemes = self
+                    .uri_bridge
+                    .set_schemes(command.frame.get("schemes").context("set_host_uri_schemes requires schemes")?)
+                    .map_err(anyhow::Error::msg)?;
+                self.output.response(command, Some(json!({"schemes":schemes})), None);
+            }
             "negotiate_protocol" => {
                 if command.frame.get("protocolVersion").and_then(WireValue::as_number) != Some(2.0) {
                     bail!("Unsupported RPC protocol version; expected 2");
@@ -972,13 +1111,13 @@ pub async fn run(
 async fn serve<R, W>(
     input: R,
     writer: W,
-    config: AgentConfig,
+    mut config: AgentConfig,
     skills: Vec<LoadedSkill>,
     messages: Vec<Message>,
     journal: Option<SessionJournal>,
     header: Value,
     max_time: Option<f64>,
-    sessions: SessionFactory,
+    mut sessions: SessionFactory,
 ) -> Result<i32>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -988,6 +1127,20 @@ where
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
     let output_task = tokio::spawn(write_output(writer, output_rx, connection.clone()));
+    let emitter_output = output.clone();
+    let emitter: Arc<dyn Fn(WireValue) + Send + Sync> =
+        Arc::new(move |frame| emitter_output.send(OutputItem::Frame(frame)));
+    let tool_bridge = ToolBridge::new(emitter.clone());
+    let uri_bridge = UriBridge::new(emitter);
+    if let Some(context) = sessions.tool_context.take() {
+        context.set_uri_port(uri_bridge.clone());
+    }
+    sessions.uri_port = Some(uri_bridge.clone());
+    let snapshot = Arc::new(RwLock::new(ExecutionSnapshot {
+        tools: config.tools.clone(),
+        system_prompt: config.system_prompt.clone(),
+    }));
+    config.hooks = Arc::new(RpcHooks { base: config.hooks.clone(), snapshot: snapshot.clone() });
     let session = Session::new(journal, header, &messages)?;
     let mut host = Host {
         agent: Agent::new(config.clone(), messages),
@@ -999,6 +1152,10 @@ where
         connection: connection.clone(),
         active: None,
         sessions,
+        tool_bridge: tool_bridge.clone(),
+        uri_bridge: uri_bridge.clone(),
+        host_tools: Vec::new(),
+        snapshot,
         drain_queues: true,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
@@ -1017,6 +1174,9 @@ where
             };
             match next {
                 Ok(Some(InputItem::Frame(frame))) => {
+                    if tool_bridge.consume(&frame) || uri_bridge.consume(&frame) {
+                        continue;
+                    }
                     if input_tx.send(Command::new(frame)).is_err() {
                         break;
                     }
@@ -1026,11 +1186,16 @@ where
                 }
                 Ok(None) => break,
                 Err(error) => {
+                    tool_bridge.close("RPC input disconnected");
+                    uri_bridge.close_connection("RPC input disconnected");
                     reader_cancel.cancel();
                     return Err(error);
                 }
             }
         }
+        // Unblock accepted work before the serial command owner drains/joins.
+        tool_bridge.close("RPC host disconnected");
+        uri_bridge.close_connection("RPC host disconnected");
         Ok(())
     });
     let mut eof = false;
@@ -1146,6 +1311,13 @@ mod tests {
         let output = Output(tx);
         let connection = CancellationToken::new();
         let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]).unwrap();
+        let emitter_output = output.clone();
+        let emitter: Arc<dyn Fn(WireValue) + Send + Sync> =
+            Arc::new(move |frame| emitter_output.send(OutputItem::Frame(frame)));
+        let snapshot = Arc::new(RwLock::new(ExecutionSnapshot {
+            tools: config.tools.clone(),
+            system_prompt: config.system_prompt.clone(),
+        }));
         let host = Host {
             agent: Agent::new(config.clone(), Vec::new()),
             session: session.clone(),
@@ -1161,7 +1333,13 @@ mod tests {
                 provider,
                 args: super::super::Args::parse_from(["ara"]),
                 mcp_config: None,
+                tool_context: None,
+                uri_port: None,
             },
+            tool_bridge: ToolBridge::new(emitter.clone()),
+            uri_bridge: UriBridge::new(emitter),
+            host_tools: Vec::new(),
+            snapshot,
             drain_queues: false,
         };
         (host, rx)

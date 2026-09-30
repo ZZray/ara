@@ -43,6 +43,13 @@ const MISSING_TERMINAL_EVENT: &str = "Provider stream ended without a terminal e
 /// Host callbacks consulted by the loop. All methods default to no-ops.
 #[async_trait]
 pub trait LoopHooks: Send + Sync {
+    /// Current tool adapters and matching prompt, read once before each model
+    /// call and retained through that response's whole tool batch. Standalone
+    /// tool execution reads once before preparation. `None` retains the Run's
+    /// original configuration.
+    fn execution_snapshot(&self) -> Option<ExecutionSnapshot> {
+        None
+    }
     /// Permission gate for a validated call (OMP `beforeToolCall` block).
     /// `cancel` fires when the run is aborted; a pending approval must give up.
     async fn before_tool_call(
@@ -79,6 +86,26 @@ pub trait LoopHooks: Send + Sync {
 
 pub struct NoHooks;
 impl LoopHooks for NoHooks {}
+
+/// Host-owned live execution context. A prepared tool keeps its adapter `Arc`
+/// even if the host replaces the catalogue while that call is pending.
+#[derive(Clone)]
+pub struct ExecutionSnapshot {
+    pub tools: Vec<Arc<dyn AgentTool>>,
+    pub system_prompt: Vec<String>,
+}
+
+fn execution_config(config: &AgentConfig) -> std::borrow::Cow<'_, AgentConfig> {
+    match config.hooks.execution_snapshot() {
+        None => std::borrow::Cow::Borrowed(config),
+        Some(snapshot) => {
+            let mut live = config.clone();
+            live.tools = snapshot.tools;
+            live.system_prompt = snapshot.system_prompt;
+            std::borrow::Cow::Owned(live)
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AgentConfig {
@@ -297,7 +324,8 @@ async fn run_loop(
     if let Some(tail) = unpaired_tool_call_tail(context).cloned() {
         sink.emit(AgentEvent::TurnStart).await;
         emit_inputs(sink, &std::mem::take(&mut to_emit)).await;
-        let results = execute_calls(&tail, config, ctl, sink).await;
+        let execution = execution_config(config);
+        let results = execute_calls(&tail, &execution, ctl, sink).await;
         for r in &results {
             context.push(Message::ToolResult(r.clone()));
             new_messages.push(Message::ToolResult(r.clone()));
@@ -330,7 +358,10 @@ async fn run_loop(
             emit_inputs(sink, &turn_messages).await;
 
             model_calls += 1;
-            let message = stream_assistant_response(context, config, ctl, sink).await;
+            // Fixed OMP syncs context before the model call, then keeps that
+            // call's adapters through preparation and the whole tool batch.
+            let execution = execution_config(config);
+            let message = stream_assistant_response(context, &execution, ctl, sink).await;
             new_messages.push(Message::Assistant(message.clone()));
 
             let tool_calls: Vec<ToolCall> = message.tool_calls().cloned().collect();
@@ -360,7 +391,7 @@ async fn run_loop(
             }
             let mut results = Vec::new();
             if has_more_tool_calls {
-                results = execute_calls(&message, config, ctl, sink).await;
+                results = execute_calls(&message, &execution, ctl, sink).await;
                 for r in &results {
                     context.push(Message::ToolResult(r.clone()));
                     new_messages.push(Message::ToolResult(r.clone()));
@@ -829,5 +860,6 @@ pub async fn execute_tool_calls(
     sink: &dyn AgentEventSink,
 ) -> Vec<ToolResultMessage> {
     let ctl = RunControl::new(cancel, config.deadline);
-    execute_calls(message, config, &ctl, sink).await
+    let execution = execution_config(config);
+    execute_calls(message, &execution, &ctl, sink).await
 }

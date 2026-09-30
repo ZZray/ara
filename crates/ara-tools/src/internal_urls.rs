@@ -17,6 +17,46 @@ pub fn is_internal_url(input: &str) -> bool {
     input.get(.."skill://".len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case("skill://"))
 }
 
+/// Registered protocol handlers accept only hierarchical `scheme://` inputs.
+/// This does not broaden the path-only skill resolver used by other tools.
+pub fn hierarchical_scheme(input: &str) -> Option<&str> {
+    let (scheme, _) = input.split_once("://")?;
+    let mut bytes = scheme.bytes();
+    if !bytes.next()?.is_ascii_alphabetic()
+        || !bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-'))
+    {
+        return None;
+    }
+    Some(scheme)
+}
+
+/// OMP `splitInternalUrlSel`: predefined schemes accept selectors, while
+/// arbitrary host schemes and MCP resource URIs retain server-owned suffixes.
+pub fn split_content_url_selector(url: &str) -> (String, Option<String>) {
+    let Some(scheme) = hierarchical_scheme(url) else { return (url.to_owned(), None) };
+    let scheme = scheme.to_ascii_lowercase();
+    if !matches!(
+        scheme.as_str(),
+        "agent"
+            | "artifact"
+            | "issue"
+            | "history"
+            | "local"
+            | "memory"
+            | "omp"
+            | "pr"
+            | "rule"
+            | "security"
+            | "skill"
+            | "ssh"
+            | "vault"
+    ) || (scheme == "ssh" && !url["ssh://".len()..].contains('/'))
+    {
+        return (url.to_owned(), None);
+    }
+    split_url_selector(url, scheme.len() + "://".len())
+}
+
 /// `decodeURIComponent`: `None` on a malformed escape or a byte sequence that
 /// is not UTF-8 (JS `URIError`).
 fn decode_uri_component(s: &str) -> Option<String> {
@@ -140,13 +180,17 @@ pub fn split_skill_url_selector(url: &str) -> (String, Option<String>) {
     if !is_internal_url(url) {
         return (url.to_string(), None);
     }
+    split_url_selector(url, "skill://".len())
+}
+
+fn split_url_selector(url: &str, scheme_end: usize) -> (String, Option<String>) {
     static PART: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"(?i)^(?:raw|conflicts|img|L?[0-9]+(?:(?:[-+]|\.\.)L?[0-9]+|-|\.\.)?(?:,L?[0-9]+(?:(?:[-+]|\.\.)L?[0-9]+|-|\.\.)?)*|-[0-9]+(?:[-+][0-9]+)?)$")
             .expect("valid selector regex")
     });
     let mut path = url;
     let mut parts = Vec::new();
-    while let Some(colon) = path.rfind(':').filter(|&i| i >= "skill://".len()) {
+    while let Some(colon) = path.rfind(':').filter(|&i| i >= scheme_end) {
         let tail = &path[colon + 1..];
         if !PART.is_match(tail) {
             break;

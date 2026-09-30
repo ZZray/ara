@@ -2,8 +2,8 @@
 //! OMP source: `packages/agent/src/agent.ts` at the locked upstream commit.
 
 use crate::agent_loop::{
-    AgentConfig, LoopError, LoopHooks, RunReport, UnpairedTail, agent_loop_continue, agent_loop_inputs,
-    unpaired_tool_call_tail,
+    AgentConfig, ExecutionSnapshot, LoopError, LoopHooks, RunReport, UnpairedTail, agent_loop_continue,
+    agent_loop_inputs, unpaired_tool_call_tail,
 };
 use crate::event::AgentEventSink;
 use crate::tool::ToolDecision;
@@ -266,7 +266,8 @@ impl Agent {
     /// Start a Run with an owned configuration snapshot, retaining this
     /// Agent's transcript and queues. The host can supply a fresh deadline or
     /// route without changing the defaults used by `prompt`/`continue_run`.
-    /// This snapshot is fixed for the Run; it is not a live settings port.
+    /// Run settings remain fixed; `LoopHooks::execution_snapshot` may supply
+    /// live tools and their matching prompt before each model call.
     pub async fn prompt_with_config(
         self: &Arc<Self>,
         prompts: Vec<Message>,
@@ -397,6 +398,10 @@ struct QueueHooks {
 
 #[async_trait]
 impl LoopHooks for QueueHooks {
+    fn execution_snapshot(&self) -> Option<ExecutionSnapshot> {
+        self.base.execution_snapshot()
+    }
+
     async fn before_tool_call(&self, call: &ToolCall, args: &JsonObject, cancel: &CancellationToken) -> ToolDecision {
         self.base.before_tool_call(call, args, cancel).await
     }

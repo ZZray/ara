@@ -21,7 +21,7 @@
 //!
 //! Not ported (open): structural summaries and bracket context around
 //! ranges, archives, SQLite, PDFs, URLs, internal
-//! URIs other than `skill://`, suffix path resolution, `:conflicts`, video,
+//! native URIs other than `skill://`, suffix path resolution, `:conflicts`, video,
 //! column caps, artifact spill.
 //!
 //! `skill://` (`internal_urls`): resolved to the skill file, then read with
@@ -253,6 +253,9 @@ enum Numbering {
 struct ReadRender<'a> {
     numbering: Numbering,
     text_resource: bool,
+    /// Only `skill://` resources bypass the normal result caps. In-memory
+    /// host resources are text but remain capped (OMP read.ts:2373).
+    ignore_result_limits: bool,
     block_context: Option<(&'a str, &'a Path)>,
 }
 
@@ -278,7 +281,7 @@ fn read_window_with_scan_limit<R: BufRead + Seek, const SCAN_LIMIT: u64>(
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
     let ReadRender { numbering, text_resource, .. } = render;
-    let limits = !text_resource;
+    let limits = !render.ignore_result_limits;
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
     let mut head = vec![0u8; SNIFF_BYTES];
     let n = read_up_to(&mut reader, &mut head).map_err(io)?;
@@ -339,6 +342,7 @@ fn read_window_with_scan_limit<R: BufRead + Seek, const SCAN_LIMIT: u64>(
     let end = requested_end.map(|end| if sel.raw { end } else { end.saturating_add(3) });
 
     let mut out = String::new();
+    let mut resource_bytes = 0usize;
     let mut emitted = 0usize;
     let mut line_no = 0usize;
     let mut truncated_by: Option<&str> = None;
@@ -380,26 +384,47 @@ fn read_window_with_scan_limit<R: BufRead + Seek, const SCAN_LIMIT: u64>(
             Numbering::Hashline => format!("{line_no}:{line}"),
             Numbering::None => line.to_string(),
         };
-        if limits && line_no < requested_start && rendered.len() + 1 > DEFAULT_MAX_BYTES {
+        // OMP's in-memory builder truncates selected text before adding line
+        // display prefixes. Preserve the existing filesystem budget here.
+        let line_bytes = if text_resource { line.len() } else { rendered.len() + 1 };
+        let projected_bytes =
+            if text_resource { resource_bytes + usize::from(emitted > 0) + line_bytes } else { out.len() + line_bytes };
+        if limits && line_no < requested_start && line_bytes > DEFAULT_MAX_BYTES {
             // Context must not consume the entire budget before the requested line.
             start = requested_start;
             continue;
         }
-        if limits && line_no == requested_start && emitted > 0 && out.len() + rendered.len() + 1 > DEFAULT_MAX_BYTES {
+        if limits && line_no == requested_start && emitted > 0 && projected_bytes > DEFAULT_MAX_BYTES {
             out.clear();
             emitted = 0;
+            resource_bytes = 0;
             start = requested_start;
         }
         if limits && emitted >= DEFAULT_MAX_LINES {
             truncated_by = Some("lines");
             continue;
         }
-        if limits && out.len() + rendered.len() + 1 > DEFAULT_MAX_BYTES {
+        let projected_bytes =
+            if text_resource { resource_bytes + usize::from(emitted > 0) + line_bytes } else { out.len() + line_bytes };
+        if limits && projected_bytes > DEFAULT_MAX_BYTES {
             if emitted == 0 {
                 // A single line larger than the cap: bounded preview (OMP firstLineExceedsLimit).
-                out.push_str(cut_at_char_boundary(&rendered, DEFAULT_MAX_BYTES));
+                if text_resource {
+                    // In-memory resources budget the source before adding
+                    // display prefixes (fixed read-format.ts firstLineExceedsLimit).
+                    let snippet = cut_at_char_boundary(line, DEFAULT_MAX_BYTES);
+                    let preview = match numbering {
+                        _ if sel.raw => snippet.to_owned(),
+                        Numbering::Pipe => format!("{line_no}|{snippet}"),
+                        Numbering::Hashline => format!("{line_no}:{snippet}"),
+                        Numbering::None => snippet.to_owned(),
+                    };
+                    out.push_str(&preview);
+                } else {
+                    out.push_str(cut_at_char_boundary(&rendered, DEFAULT_MAX_BYTES));
+                }
                 emitted = 1;
-                oversized_line = Some((line_no, buf.len()));
+                oversized_line = Some((line_no, if text_resource { line.len() } else { buf.len() }));
             }
             truncated_by = Some("bytes");
             continue;
@@ -408,6 +433,7 @@ fn read_window_with_scan_limit<R: BufRead + Seek, const SCAN_LIMIT: u64>(
             out.push('\n');
         }
         out.push_str(&rendered);
+        resource_bytes = projected_bytes;
         emitted += 1;
     }
     let total = if reached_eof { Some(line_no) } else { None };
@@ -541,12 +567,12 @@ fn render_multi_rows(rows: &BTreeMap<u32, String>) -> String {
 /// lines from ARA's bounded result. Only complete, buffered UTF-8 files use it.
 fn multi_block_context(
     text: &str,
-    path: &Path,
+    path: Option<&Path>,
     selected: &[u32],
     numbering: Numbering,
     max_bytes: usize,
     max_lines: usize,
-) -> Option<(String, usize)> {
+) -> Option<(String, Vec<u32>)> {
     if selected.is_empty() {
         return None;
     }
@@ -559,7 +585,7 @@ fn multi_block_context(
         rows.insert(line, numbered_multi_row(line, source, numbering));
     }
     let mut used_bytes = render_multi_rows(&rows).len();
-    let path = path.to_str();
+    let path = path.and_then(Path::to_str);
     let source = ara_edit::diff_string::BlockContextSource { path, lang: None };
     let mut added = false;
     for (line, content) in ara_edit::diff_string::find_block_context_lines(&lines, selected, &source) {
@@ -581,7 +607,7 @@ fn multi_block_context(
         used_bytes = projected;
         added = true;
     }
-    added.then(|| (render_multi_rows(&rows), rows.len()))
+    added.then(|| (render_multi_rows(&rows), rows.keys().copied().collect()))
 }
 
 /// Multi-range reads use exact spans, unlike single-range reads with 1/3-line
@@ -594,7 +620,7 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
     render: ReadRender<'_>,
     cancel: &CancellationToken,
 ) -> Result<Window, String> {
-    let ReadRender { numbering, text_resource, block_context } = render;
+    let ReadRender { numbering, text_resource, ignore_result_limits, block_context } = render;
     let io = |e: std::io::Error| format!("Cannot read {display}: {e}");
     let entity = if text_resource { "resource" } else { "file" };
     let mut out = String::new();
@@ -653,9 +679,9 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
                 "\n"
             };
             let extra = separator.len() + rendered.len();
-            if !text_resource && seen.len() >= DEFAULT_MAX_LINES {
+            if !ignore_result_limits && seen.len() >= DEFAULT_MAX_LINES {
                 truncated_by = Some("lines");
-            } else if !text_resource && out.len() + extra > DEFAULT_MAX_BYTES {
+            } else if !ignore_result_limits && out.len() + extra > DEFAULT_MAX_BYTES {
                 truncated_by = Some("bytes");
                 if rendered.len() > DEFAULT_MAX_BYTES {
                     oversized_line = Some(total);
@@ -708,7 +734,7 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
             {
                 let bound = end.map_or_else(|| start.to_string(), |end| format!("{start}-{end}"));
                 let notice = format!("[Range {bound} is beyond end of {entity} ({total} lines total); skipped]");
-                if text_resource
+                if ignore_result_limits
                     || out.len() + notices.len() + usize::from(!out.is_empty() || !notices.is_empty()) + notice.len()
                         <= DEFAULT_MAX_BYTES
                 {
@@ -732,14 +758,16 @@ fn read_multi_window<R: BufRead, const POST_SCAN_LIMIT: u64>(
         if cancel.is_cancelled() {
             return Err(format!("Read of {display} was aborted"));
         }
-        let (max_bytes, max_lines) = if text_resource {
+        let (max_bytes, max_lines) = if ignore_result_limits {
             (usize::MAX, usize::MAX)
         } else {
             (DEFAULT_MAX_BYTES.saturating_sub(notices.len()), DEFAULT_MAX_LINES)
         };
-        if let Some((rendered, count)) = multi_block_context(full_text, path, &seen, numbering, max_bytes, max_lines) {
+        if let Some((rendered, context_lines)) =
+            multi_block_context(full_text, Some(path), &seen, numbering, max_bytes, max_lines)
+        {
             out = rendered;
-            emitted = count;
+            emitted = context_lines.len();
         }
         if cancel.is_cancelled() {
             return Err(format!("Read of {display} was aborted"));
@@ -782,6 +810,194 @@ pub struct ReadTool {
     pub ctx: ToolContext,
 }
 
+fn content_selector(selector: Option<&str>) -> Result<Selector, ToolError> {
+    let Some(selector) = selector else { return Ok(Selector::default()) };
+    if selector.eq_ignore_ascii_case("raw") {
+        return Ok(Selector { raw: true, ..Selector::default() });
+    }
+    if selector.eq_ignore_ascii_case("conflicts") {
+        // In-memory resources do not have the filesystem conflict handler;
+        // upstream's in-memory builder treats this as a whole-resource read.
+        return Ok(Selector::default());
+    }
+    if selector.eq_ignore_ascii_case("img") {
+        return Err(ToolError("The ':img' selector only supports local .svg and .svgz files.".into()));
+    }
+    let chunks: Vec<&str> = selector.split(':').collect();
+    let (range, raw) = match chunks.as_slice() {
+        [range] => (*range, false),
+        [raw, range] if raw.eq_ignore_ascii_case("raw") => (*range, true),
+        [range, raw] if raw.eq_ignore_ascii_case("raw") => (*range, true),
+        _ => ("", false),
+    };
+    let Some(mut ranges) = parse_ranges(range).filter(|ranges| !ranges.is_empty()) else {
+        return Err(ToolError(format!(
+            "Invalid selector ':{selector}'. Use :N, :N-M, :N+K, :N- (open-ended), :-N (last N lines), a comma-separated list of ranges, :raw, :img for SVG rendering, or a range combined with raw (e.g. :raw:50-100)."
+        )));
+    };
+    Ok(if ranges.len() == 1 {
+        Selector { range: ranges.pop(), multi_ranges: vec![], raw }
+    } else {
+        Selector { range: None, multi_ranges: ranges, raw }
+    })
+}
+
+impl ReadTool {
+    async fn read_content_uri(
+        &self,
+        port: std::sync::Arc<dyn crate::ContentUriPort>,
+        input: &str,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let (url, selector) = crate::internal_urls::split_content_url_selector(input);
+        let sel = content_selector(selector.as_deref())?;
+        if cancel.is_cancelled() {
+            return Err(ToolError(format!("Host URI read for {url} was aborted")));
+        }
+        let resource = port.read(&url, cancel.clone()).await?;
+        // Fixed multi-range in-memory reads do not truncate either; the
+        // ordinary single-range resource caps remain scheme-specific.
+        let ignore_result_limits = !sel.multi_ranges.is_empty()
+            || crate::internal_urls::hierarchical_scheme(&url)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("skill"));
+        let numbering = if sel.raw {
+            Numbering::None
+        } else if self.ctx.hashlines() && !resource.immutable {
+            // A host URI has no absolute sourcePath, so it receives numbered
+            // rows but no filesystem snapshot header or edit-store entry.
+            Numbering::Hashline
+        } else if self.ctx.line_numbers {
+            Numbering::Pipe
+        } else {
+            Numbering::None
+        };
+        let display = url.clone();
+        crate::run_blocking("Read", cancel, move |work| {
+            if work.is_cancelled() {
+                return Err(ToolError(format!("Read of {url} was aborted")));
+            }
+            let mut content = resource.content;
+            let size = content.len() as u64;
+            // Raw addresses `split("\n")`, including the final empty segment.
+            if sel.raw && sel.multi_ranges.is_empty() && (content.is_empty() || content.ends_with('\n')) {
+                content.push('\n');
+            }
+            let mut window = read_window(
+                std::io::Cursor::new(content.as_bytes()),
+                size,
+                &display,
+                &sel,
+                ReadRender { numbering, text_resource: true, ignore_result_limits, block_context: None },
+                &work,
+            )
+            .map_err(ToolError)?;
+            let lines: Vec<&str> = content.split_terminator('\n').collect();
+            let mut display_content = resource_display_content(&lines, &sel, &window, numbering);
+            if !sel.raw
+                && window.oversized_first_line.is_none()
+                && let Some((_, _, numbers)) = &display_content
+            {
+                let selected: Vec<u32> =
+                    numbers.iter().filter_map(|line| line.as_u64().map(|line| line as u32)).collect();
+                // Host resources have no sourcePath, so fixed OMP takes the
+                // lexical bracket fallback. It adds context after truncating
+                // selected text, without assigning a synthetic file identity.
+                if let Some((rendered, context_lines)) =
+                    multi_block_context(&content, None, &selected, numbering, usize::MAX, usize::MAX)
+                {
+                    let original_rows = selected
+                        .iter()
+                        .map(|&line| (line, numbered_multi_row(line, lines[line as usize - 1], numbering)))
+                        .collect();
+                    let original_body = render_multi_rows(&original_rows);
+                    if let Some(notices) = window.text.strip_prefix(&original_body) {
+                        window.text = format!("{rendered}{notices}");
+                        display_content = resource_rows_display(&lines, &context_lines);
+                    }
+                }
+                if work.is_cancelled() {
+                    return Err(ToolError(format!("Read of {url} was aborted")));
+                }
+            }
+            let mut details = window.details;
+            // Fixed host resources supply contentType, not a backing file.
+            details.as_object_mut().expect("read details object").remove("fileSize");
+            details["contentType"] = json!(resource.content_type);
+            details["meta"] = json!({"source": {"type": "internal", "value": url}});
+            // The host renderer receives the undecorated content separately
+            // from numbered model rows (OMP read-format.ts `displayContent`).
+            if let Some((start, plain, numbers)) = display_content {
+                details["displayContent"] = json!({"text": plain, "startLine": start, "lineNumbers": numbers});
+            }
+            // Resource notes stay on the port resource; fixed read.ts does not
+            // project them into the tool's ReadToolDetails.
+            Ok(ToolOutput::text(window.text).with_details(details))
+        })
+        .await
+    }
+}
+
+fn resource_display_content(
+    lines: &[&str],
+    sel: &Selector,
+    window: &Window,
+    numbering: Numbering,
+) -> Option<(usize, String, Vec<Value>)> {
+    if let Some((line, _)) = window.oversized_first_line {
+        if numbering == Numbering::Hashline {
+            return None;
+        }
+        let snippet = cut_at_char_boundary(lines.get(line - 1)?, DEFAULT_MAX_BYTES);
+        return Some((line, snippet.to_owned(), vec![json!(line)]));
+    }
+    if window.emitted == 0 {
+        return None;
+    }
+    if sel.multi_ranges.is_empty() {
+        let selected = lines.get(window.start - 1..window.start - 1 + window.emitted)?;
+        let plain = selected.join("\n");
+        let numbers = if sel.raw && plain.is_empty() {
+            vec![]
+        } else {
+            (window.start..window.start + window.emitted).map(|line| json!(line)).collect()
+        };
+        return Some((window.start, plain, numbers));
+    }
+    // Fixed raw multi-range results omit displayContent.
+    if sel.raw {
+        return None;
+    }
+    let mut selected = Vec::new();
+    for range in &sel.multi_ranges {
+        let Range::From(start, end) = range else { continue };
+        for line in *start..=end.unwrap_or(lines.len()).min(lines.len()) {
+            selected.push(line as u32);
+        }
+    }
+    resource_rows_display(lines, &selected)
+}
+
+fn resource_rows_display(lines: &[&str], selected: &[u32]) -> Option<(usize, String, Vec<Value>)> {
+    let first = *selected.first()? as usize;
+    let mut plain = String::new();
+    let mut numbers = Vec::new();
+    let mut previous = None;
+    for &line in selected {
+        if let Some(before) = previous {
+            if line == before + 1 {
+                plain.push('\n');
+            } else {
+                plain.push_str("\n…\n");
+                numbers.push(Value::Null);
+            }
+        }
+        plain.push_str(lines.get(line.checked_sub(1)? as usize)?);
+        numbers.push(json!(line));
+        previous = Some(line);
+    }
+    Some((first, plain, numbers))
+}
+
 #[async_trait]
 impl AgentTool for ReadTool {
     fn definition(&self) -> Tool {
@@ -805,6 +1021,22 @@ impl AgentTool for ReadTool {
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
         let input = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+        if let Some(scheme) = crate::internal_urls::hierarchical_scheme(input) {
+            if let Some(port) = self.ctx.content_uri_port() {
+                match port.route(input) {
+                    crate::ContentUriRoute::Registered { .. } => {
+                        return self.read_content_uri(port, input, cancel).await;
+                    }
+                    crate::ContentUriRoute::Removed => {
+                        return Err(ToolError(format!("Unknown protocol: {}://", scheme.to_ascii_lowercase())));
+                    }
+                    crate::ContentUriRoute::Unregistered => {}
+                }
+            }
+            if !crate::internal_urls::is_internal_url(input) {
+                return Err(ToolError(format!("Unknown protocol: {}://", scheme.to_ascii_lowercase())));
+            }
+        }
         // Internal URLs (`skill://…`) resolve to a file first; selectors apply
         // to it. A skill resource is immutable and exempt from result limits
         // (upstream `immutable`, `ignoreResultLimits: scheme === "skill"`):
@@ -872,6 +1104,7 @@ impl AgentTool for ReadTool {
                     ReadRender {
                         numbering,
                         text_resource: true,
+                        ignore_result_limits: true,
                         block_context: (!sel.raw && !sel.multi_ranges.is_empty())
                             .then_some((content.as_str(), abs.as_path())),
                     },
@@ -988,6 +1221,7 @@ impl AgentTool for ReadTool {
                     ReadRender {
                         numbering,
                         text_resource: true,
+                        ignore_result_limits: true,
                         block_context: (!raw && !sel.multi_ranges.is_empty())
                             .then_some((content.as_str(), abs2.as_path())),
                     },
@@ -1003,6 +1237,7 @@ impl AgentTool for ReadTool {
                         ReadRender {
                             numbering,
                             text_resource: false,
+                            ignore_result_limits: false,
                             block_context: (!notebook
                                 && !raw
                                 && !sel.multi_ranges.is_empty()
@@ -1016,7 +1251,12 @@ impl AgentTool for ReadTool {
                         bytes.len() as u64,
                         &display2,
                         &sel,
-                        ReadRender { numbering, text_resource: false, block_context: None },
+                        ReadRender {
+                            numbering,
+                            text_resource: false,
+                            ignore_result_limits: false,
+                            block_context: None,
+                        },
                         &cancel2,
                     )?,
                     (None, None) => {
@@ -1027,7 +1267,12 @@ impl AgentTool for ReadTool {
                             size,
                             &display2,
                             &sel,
-                            ReadRender { numbering, text_resource: false, block_context: None },
+                            ReadRender {
+                                numbering,
+                                text_resource: false,
+                                ignore_result_limits: false,
+                                block_context: None,
+                            },
                             &cancel2,
                         )?
                     }
@@ -1150,7 +1395,12 @@ mod tests {
                 content.len() as u64,
                 "lines.txt",
                 &Selector { range, multi_ranges: vec![], raw: true },
-                ReadRender { numbering: Numbering::None, text_resource, block_context: None },
+                ReadRender {
+                    numbering: Numbering::None,
+                    text_resource,
+                    ignore_result_limits: text_resource,
+                    block_context: None,
+                },
                 &CancellationToken::new(),
             )
         };
@@ -1179,7 +1429,12 @@ mod tests {
                 content.len() as u64,
                 "lines.txt",
                 &sel,
-                ReadRender { numbering: Numbering::None, text_resource, block_context: None },
+                ReadRender {
+                    numbering: Numbering::None,
+                    text_resource,
+                    ignore_result_limits: text_resource,
+                    block_context: None,
+                },
                 &CancellationToken::new(),
             )
             .unwrap();
@@ -1208,7 +1463,12 @@ mod tests {
                 content.len() as u64,
                 "large-resource.txt",
                 &sel,
-                ReadRender { numbering: Numbering::None, text_resource: true, block_context: None },
+                ReadRender {
+                    numbering: Numbering::None,
+                    text_resource: true,
+                    ignore_result_limits: true,
+                    block_context: None,
+                },
                 &cancel,
             )
             .err()
@@ -1230,7 +1490,12 @@ mod tests {
             content.len() as u64,
             "lines.txt",
             &sel,
-            ReadRender { numbering: Numbering::Pipe, text_resource: false, block_context: None },
+            ReadRender {
+                numbering: Numbering::Pipe,
+                text_resource: false,
+                ignore_result_limits: false,
+                block_context: None,
+            },
             &CancellationToken::new(),
         )
         .unwrap();
@@ -1254,6 +1519,7 @@ mod tests {
             ReadRender {
                 numbering: Numbering::Pipe,
                 text_resource: false,
+                ignore_result_limits: false,
                 block_context: Some((content, Path::new("blocks.ts"))),
             },
             &cancel,

@@ -54,6 +54,8 @@ use tokio_util::sync::CancellationToken;
 
 mod proxy_discovery;
 mod rpc_host;
+mod rpc_host_tools;
+mod rpc_host_uris;
 
 const TOOL_NAMES: [&str; 7] = ["read", "write", "edit", "bash", "grep", "glob", "ast_grep"];
 
@@ -1063,6 +1065,13 @@ struct CliSetup {
     tools: Vec<Arc<dyn ara_agent::AgentTool>>,
     hooks: Arc<dyn LoopHooks>,
     skills: Vec<ara_discovery::LoadedSkill>,
+    tool_context: Option<ToolContext>,
+}
+
+#[derive(Default)]
+struct ToolOverlay {
+    tools: Vec<Arc<dyn ara_agent::AgentTool>>,
+    labels: std::collections::HashMap<String, String>,
 }
 
 async fn prepare_cli_setup(
@@ -1071,6 +1080,7 @@ async fn prepare_cli_setup(
     model: &Model,
     mcp_config: &Option<McpServerConfig>,
     retained_tools: Option<Vec<Arc<dyn ara_agent::AgentTool>>>,
+    overlay: ToolOverlay,
 ) -> Result<CliSetup> {
     // Context files, skills, SYSTEM.md and APPEND_SYSTEM.md from the host's
     // locations: native `$ARA_HOME/agent` and `.ara/`, foreign tools per
@@ -1096,7 +1106,8 @@ async fn prepare_cli_setup(
     }
 
     let enabled: Vec<&str> = args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
-    let tools = if let Some(tools) = retained_tools {
+    let mut tool_context = None;
+    let mut tools = if let Some(tools) = retained_tools {
         tools
     } else {
         let mut tool_ctx =
@@ -1111,6 +1122,7 @@ async fn prepare_cli_setup(
                     .collect(),
             );
         tool_ctx.line_numbers = args.line_numbers;
+        tool_context = Some(tool_ctx.clone());
         let ast_ctx = tool_ctx.clone();
         let mut tools: Vec<_> =
             builtin_tools(tool_ctx).into_iter().filter(|t| enabled.contains(&t.definition().name.as_str())).collect();
@@ -1125,12 +1137,23 @@ async fn prepare_cli_setup(
 
         tools
     };
+    for tool in &overlay.tools {
+        let name = &tool.definition().name;
+        if tools.iter().any(|existing| existing.definition().name == *name) {
+            anyhow::bail!("RPC host tool \"{name}\" conflicts with an existing tool");
+        }
+    }
+    tools.extend(overlay.tools);
 
     let prompt_tools: Vec<PromptTool> = tools
         .iter()
         .map(|t| {
             let name = t.definition().name.clone();
-            let label = name.get(..1).map(|f| f.to_uppercase() + &name[1..]).unwrap_or_default();
+            let label = overlay
+                .labels
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| name.get(..1).map(|f| f.to_uppercase() + &name[1..]).unwrap_or_default());
             PromptTool { name, label }
         })
         .collect();
@@ -1159,7 +1182,7 @@ async fn prepare_cli_setup(
     let hooks: Arc<dyn LoopHooks> =
         Arc::new(CliHooks { reminder: DateCwdReminder::new(), cwd: cwd.to_string_lossy().replace('\\', "/") });
 
-    Ok(CliSetup { system_prompt, tools, hooks, skills: options.skills.unwrap_or_default() })
+    Ok(CliSetup { system_prompt, tools, hooks, skills: options.skills.unwrap_or_default(), tool_context })
 }
 
 // Clone the transport settings, but allocate native provider state per logical
@@ -1328,8 +1351,8 @@ async fn run(args: Args) -> Result<i32> {
     });
     let session_path = journal.as_ref().map(|j| j.path().to_path_buf());
 
-    let setup = prepare_cli_setup(&args, &cwd, &route.model, &mcp_config, None).await?;
-    let CliSetup { system_prompt, tools, hooks, skills } = setup;
+    let setup = prepare_cli_setup(&args, &cwd, &route.model, &mcp_config, None, ToolOverlay::default()).await?;
+    let CliSetup { system_prompt, tools, hooks, skills, tool_context } = setup;
 
     let mut stream_options = route.stream_options;
     let mut request_text_stats = None;
@@ -1386,7 +1409,15 @@ async fn run(args: Args) -> Result<i32> {
             hooks,
         };
         let max_time = args.max_time;
-        let sessions = rpc_host::SessionFactory { dir: session_dir, cwd, provider: provider_factory, args, mcp_config };
+        let sessions = rpc_host::SessionFactory {
+            dir: session_dir,
+            cwd,
+            provider: provider_factory,
+            args,
+            mcp_config,
+            tool_context,
+            uri_port: None,
+        };
         return rpc_host::run(config, skills, context, journal, header, max_time, sessions).await;
     }
     // Only RPC retains the factory for future logical Sessions. In print mode
