@@ -9,7 +9,7 @@ change. Complete CA-RPC, CTX-01e, statistics parity and P1-P6 remain open.
 
 | Fixed source | Rust behavior |
 | --- | --- |
-| `slash-commands/available-commands.ts:59-68`, `rpc-mode.ts:1234-1235` | Registered Skill snapshot supplies query/startup/successful new/switch metadata; hidden entries, order, Unicode and description fallback are preserved. Source/body I/O stays in invocation. |
+| `slash-commands/available-commands.ts:59-68`, `rpc-mode.ts:1234-1235` | Registered Skill snapshot supplies query/startup/successful new/switch metadata; hidden entries, order, Unicode and description fallback are preserved. Metadata queries do not reopen Skill files; fresh body I/O stays in invocation. |
 | `session/agent-session.ts:9754-9782`, `rpc-mode.ts:1428-1431` | `get_branch_messages` selects nonempty ordinary user text from all raw entries, including side branches, with original entry IDs. Skills remain custom. No-session inputs receive stable native IDs when consumed. |
 | `session/session-stats.ts:111-199`, `rpc-mode.ts:1418-1421` | `get_session_stats` aggregates completed roles/tool calls and known usage; compacted history uses the existing source projection, preserving summary/Skill identity and excluding replaced usage. |
 | `session/session-manager.ts:1286-1290,2221-2256`, `rpc-mode.ts:1439-1451` | `set_session_name` applies JS trim, control cleanup and ASCII-space collapse; records slot/header/title-change, preserves lazy creation, and exposes the applied name in state. |
@@ -69,8 +69,8 @@ per-stream output. Failure preserves receipts and never replays automatically.
 
 **PASS, 29.996 s, two Runs, four calls, two successful write receipts, 9,286
 reported tokens; cost unknown.** A randomized JSON artifact is written, the
-Session is renamed, the process exits, the same native Session/name/history/IDs
-resume, the original artifact is deleted, and a write-only recall reproduces it.
+Session is renamed, the process exits, the original artifact is deleted, the same
+native Session/name/history/IDs resume, and a write-only recall reproduces it.
 Rename ACK takes **0.003792 s**; restart/ready/query takes **0.065301 s**.
 
 Receipt: `real-native-7jdx7i3j/summary.json`. Parent rehashed **22 artifacts**,
@@ -93,3 +93,16 @@ source, raw focused/full/dependency logs and source hashes. It found no remainin
 confirmed code defects after the two dependency fixes. The current combined
 snapshot is tested/audited; final exact-commit Linux and module actual-task
 receipts are separate gates. No full RPC/phase/OMP marker advances.
+
+## Delivered Linux checkpoint
+
+Commit `3d37cde74c89bc7c4c5d23767360ecc0ed1997d8` passed
+[repository checks 36704283607](https://github.com/ZZray/ara/actions/runs/36704283607):
+**1,168 passed / 0 failed / 1 ignored, 88 suites**. The backend step ran
+**10:45:15-10:50:16 UTC, 301 s**; formatting, strict Clippy, target and doc tests
+passed. Parent re-read the exact job SHA and recalculated totals from the original
+`linux-final.log`; SHA-256
+`6d6c42007b8d68b7e6979706a84dd1daf2eeb54f28277095ce6784ca7e5090af`.
+`commit.json` matches all four delivered Git blobs to the Windows snapshot with
+only CRLF-to-LF normalization. The remaining actual-task combination gate keeps
+this checkpoint WIP; this Linux success does not advance full module acceptance.
