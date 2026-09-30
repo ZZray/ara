@@ -132,9 +132,41 @@ defects, zero skipped; concurrent WIP explicitly excluded. Final independent
 Windows point audit **APPROVE**: **11/11 staged paths**, **34/34 artifact hashes**,
 **10/10 snapshot hashes**, all 16 raw requests and 11 call/receipt/forwarded
 results, **five distinct Sessions**, three usage-error processes and raw gate
-totals independently verified. No unresolved findings. Linux CI remains
-pending at this checkpoint; the code checkpoint is labeled unfinished until
-that platform check closes.
+totals independently verified. No unresolved findings. The initial code
+checkpoint was labeled unfinished while the Linux check below was pending.
 
 P0/V1, P1-P6, the full OMP marker and unrelated RPC/Skill provenance work retain
 their previous acceptance boundaries.
+
+## Linux delivery verification
+
+Exact code checkpoint: `753bacb28b32d8076a67e5d80c111c175fa7cd40`.
+[Repository checks 36686617302](https://github.com/ZZray/ara/actions/runs/36686617302)
+completed successfully on Ubuntu. The raw checkout receipt identifies that
+SHA, and the verified committed blobs match the staged snapshot after Git's
+line-ending normalization.
+
+- `python scripts/verify_backend.py`: **1,136 passed, 0 failed, 1 ignored,
+  87 suites**; formatting, strict Clippy, target tests and documentation tests
+  all pass. Backend step duration **295 seconds** (07:56:25 to 08:01:20 UTC).
+- CLI E2E **95/95**, RPC host **21/21**, new source-switch suite **7/7** and
+  all five new CLI cases pass in the raw log.
+- Documentation bootstrap and fixed inventory checks pass on that SHA.
+- The same SHA's existing fixed RPC transport, Skill directory I/O faults,
+  directory oracle and fixed OMP Skill invocation workflows all succeed.
+
+Raw log root: `C:/Temp/ara-skill-source-switches/linux/logs-36686617302/`.
+`linux/audit.json` records the target, raw totals and blob checks;
+`linux/jobs-36686617302.json` records step times. Backend log SHA256:
+`f1e9b85e15bea2c95ef1f8b78e3e4c5f5c7c676784895ad9d254607a1aa9961b`.
+Windows raw tool artifacts remain the recorded artifact oracle; these Linux
+checks are actual process assertions and CI logs, without an additional
+real-model or product UI trial.
+
+Final independent Codex point audit (`skill_sources_plan_review`): **ACCEPTED**.
+It independently matched the checkout SHA, all five successful workflows,
+raw **1,136/0/1** totals and 87 suites, all **12 new tests**, the **295-second**
+step and **11/11 committed blob hashes**. The Windows/actual CLI artifacts and
+Linux gates together close this bounded Core/CLI configuration point, with
+zero unresolved findings. The documentation-only acceptance checkpoint does
+not change the tested code or advance any full OMP/phase/product acceptance.
