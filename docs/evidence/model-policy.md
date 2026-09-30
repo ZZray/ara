@@ -58,6 +58,13 @@ Staged and committed audits compare all 15 tested source pins: 14 byte-exact,
 one existing `Cargo.lock` differs only through Git CRLF normalization. The
 compiled rules are byte-identical to the fixed Git blob. Receipts:
 `staged-pin-audit.json` and `committed-pin-audit.json`.
+The code and documentation descendant `c2efa1b` remain local: GitHub push
+protection rejected four original Google OAuth app-registration constants in
+the unchanged compiled data. Remote `dev` was read afterward and remains at
+the base above. User approval of reviewed public upstream values or an
+authorized secure-externalization/reconstruction is pending. No protection was
+disabled and no history was rewritten. Push failure does not change the test
+results or permit dropping authentication behavior.
 
 - Final library: **102/0/0**, including 24 new native tests (rules 10,
   behavior/auth 2, identity/metrics 6, policy/build 6). Receipt
