@@ -28,4 +28,4 @@ pub use context_files::{ContextFile, context_file_capability, load_standalone_co
 pub use fs::FsCache;
 pub use project::{Discovery, ProjectContextFile, dedupe_contained_context_files};
 pub use skill_invocation::{ParsedSkillInvocation, parse_skill_invocation};
-pub use skills::{LoadedSkill, Skill, SkillWarning, SkillsSettings, skill_capability};
+pub use skills::{LoadedSkill, Skill, SkillSourceSwitches, SkillWarning, SkillsSettings, skill_capability};

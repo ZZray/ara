@@ -247,6 +247,7 @@ dependencies = [
  "globset",
  "libc",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
  "yaml-rust2",

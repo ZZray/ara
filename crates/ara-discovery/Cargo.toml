@@ -10,6 +10,7 @@ publish.workspace = true
 ara-prompt.workspace = true
 regex.workspace = true
 globset.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 yaml-rust2.workspace = true
 

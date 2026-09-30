@@ -4007,3 +4007,214 @@ async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
     }
     assert!(!follow_up.contains("[Compacted summary of earlier turns"), "{follow_up}");
 }
+
+const SWITCH_SKILL_NAMES: [&str; 9] = [
+    "agents-global",
+    "agents-project",
+    "claude-global",
+    "claude-project",
+    "codex-global",
+    "codex-project",
+    "opencode-global",
+    "opencode-project",
+    "native-proof",
+];
+
+fn compatibility_skill_fixtures(env: &Env) {
+    // The isolated HOME and work directories are siblings. Without a repo
+    // boundary, ancestor Skill discovery could reach the real user's profile.
+    std::fs::create_dir_all(env.work.path().join(".git")).unwrap();
+    for (root, directory, name) in [
+        (env._home.path(), ".agents/skills", "agents-global"),
+        (env.work.path(), ".agents/skills", "agents-project"),
+        (env._home.path(), ".claude/skills", "claude-global"),
+        (env.work.path(), ".claude/skills", "claude-project"),
+        (env._home.path(), ".codex/skills", "codex-global"),
+        (env.work.path(), ".codex/skills", "codex-project"),
+        (env._home.path(), ".config/opencode/skills", "opencode-global"),
+        (env.work.path(), ".opencode/skills", "opencode-project"),
+        (env.work.path(), ".ara/skills", "native-proof"),
+    ] {
+        let path = root.join(directory).join(name).join("SKILL.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("---\ndescription: Switch fixture {name}\n---\nSOURCE-BODY {name}\n")).unwrap();
+    }
+    std::fs::write(env.work.path().join(".claude/CLAUDE.md"), "SKILL-SWITCH-INDEPENDENT-CONTEXT").unwrap();
+}
+
+async fn assert_cli_skill_source_case(case_name: &str, args: &[&str], enabled: &[&str], reads: &[(&str, bool)]) {
+    let env = Env::new();
+    compatibility_skill_fixtures(&env);
+    let mut responses: Vec<Value> = reads
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| {
+            json!({"events": [
+                tool_call(0, &format!("source-read-{index}"), "read", &json!({"path":format!("skill://{name}")}).to_string()),
+                finish("tool_calls"), done()
+            ]})
+        })
+        .collect();
+    responses.push(json!({"events": [text("Sources verified."), finish("stop"), done()]}));
+    let up = upstream(json!({"responses": responses})).await;
+    let mut all_args = args.to_vec();
+    all_args.extend(["-p", "Inspect the selected skills"]);
+    let out = output(env.cmd(&up.base_url(), &all_args)).await;
+    let (stdout, stderr) = text_of(&out);
+    assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+    assert_eq!(stdout, "Sources verified.\n");
+    assert_eq!(up.served(), reads.len() + 1);
+    let system = first_system(&up).await;
+    let mut actual_enabled = Vec::new();
+    if let Some((_, tail)) = system.split_once("<skills>") {
+        let (listing, _) = tail.split_once("</skills>").expect("closed Skills listing");
+        for line in listing.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let (name, description) = line.strip_prefix("- ").unwrap().split_once(": ").unwrap();
+            assert!(SWITCH_SKILL_NAMES.contains(&name), "non-fixture Skill discovered: {line}");
+            assert_eq!(description, format!("Switch fixture {name}"));
+            actual_enabled.push(name);
+        }
+    }
+    actual_enabled.sort_unstable();
+    let mut expected_enabled = enabled.to_vec();
+    expected_enabled.sort_unstable();
+    assert_eq!(actual_enabled, expected_enabled, "{args:?}: exact Skills listing: {system}");
+    assert!(system.contains("SKILL-SWITCH-INDEPENDENT-CONTEXT"), "context discovery remains independent");
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let entries = journal(&files[0]);
+    let receipts: Vec<_> = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect();
+    assert_eq!(receipts.len(), reads.len());
+    let requests = up.requests.lock().await;
+    for (index, (name, succeeds)) in reads.iter().enumerate() {
+        let id = format!("source-read-{index}");
+        let receipt = receipts.iter().find(|entry| entry["message"]["toolCallId"] == id).unwrap();
+        assert_eq!(receipt["message"]["isError"], json!(!succeeds), "{args:?}: {name}: {receipt}");
+        let content = receipt["message"]["content"][0]["text"].as_str().unwrap();
+        let expected = if *succeeds { format!("SOURCE-BODY {name}") } else { format!("Unknown skill: {name}") };
+        assert!(content.contains(&expected), "{args:?}: {name}: {content}");
+        if !succeeds {
+            let available = if actual_enabled.is_empty() { "none".to_string() } else { actual_enabled.join(", ") };
+            let observed: Vec<_> = content.lines().filter_map(|line| line.strip_prefix("Available: ")).collect();
+            assert_eq!(observed, [available.as_str()], "{args:?}: {name}: exact available Skills: {content}");
+        }
+        let messages = requests[index + 1]["body"]["messages"].as_array().unwrap();
+        let carried =
+            messages.iter().find(|message| message["role"] == "tool" && message["tool_call_id"] == id).unwrap();
+        assert_eq!(carried["content"], json!(content), "the actual receipt reaches the next model request");
+    }
+    if let Some(directory) = std::env::var_os("ARA_SKILL_SOURCE_RECEIPTS") {
+        let directory = PathBuf::from(directory).join(case_name);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("stdout.txt"), &stdout).unwrap();
+        std::fs::write(directory.join("stderr.txt"), &stderr).unwrap();
+        std::fs::copy(&files[0], directory.join("session.jsonl")).unwrap();
+        std::fs::write(directory.join("requests.json"), serde_json::to_vec_pretty(&*requests).unwrap()).unwrap();
+        let read_results: Vec<_> = reads
+            .iter()
+            .enumerate()
+            .map(|(index, (name, expected))| {
+                let id = format!("source-read-{index}");
+                let receipt = receipts.iter().find(|entry| entry["message"]["toolCallId"] == id).unwrap();
+                json!({
+                    "skill": name, "toolCallId": id, "expectedSuccess": expected,
+                    "actualSuccess": !receipt["message"]["isError"].as_bool().unwrap(),
+                    "content": receipt["message"]["content"][0]["text"]
+                })
+            })
+            .collect();
+        std::fs::write(
+            directory.join("summary.json"),
+            serde_json::to_vec_pretty(&json!({
+                "status": "PASS", "case": case_name, "arguments": args,
+                "exitCode": out.status.code(), "expectedEnabled": expected_enabled, "actualEnabled": actual_enabled,
+                "reads": read_results, "modelRequests": requests.len(), "servedRequests": up.served(),
+                "toolCalls": receipts.len(), "sessions": files.len(), "contextPreserved": true
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn skill_sources_default_lists_three_compatibility_paths_and_resolves_their_user_skills() {
+    assert_cli_skill_source_case(
+        "default",
+        &[],
+        &SWITCH_SKILL_NAMES[..6].iter().copied().chain(["native-proof"]).collect::<Vec<_>>(),
+        &[("codex-global", true), ("opencode-project", false)],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn skill_sources_explicit_opencode_selection_enables_both_paths_and_removes_other_sources() {
+    assert_cli_skill_source_case(
+        "opencode",
+        &["--skill-sources", "opencode"],
+        &["opencode-global", "opencode-project", "native-proof"],
+        &[("opencode-global", true), ("agents-project", false)],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn skill_sources_empty_keeps_native_but_no_skills_disables_every_skill() {
+    assert_cli_skill_source_case(
+        "empty",
+        &["--skill-sources", ""],
+        &["native-proof"],
+        &[("native-proof", true), ("claude-global", false)],
+    )
+    .await;
+    assert_cli_skill_source_case(
+        "no-skills",
+        &["--skill-sources", "agents,claude,codex,opencode", "--no-skills"],
+        &[],
+        &[("native-proof", false), ("opencode-project", false)],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn skill_sources_and_name_filter_both_control_listing_and_url_resolution() {
+    assert_cli_skill_source_case(
+        "name-filter",
+        &["--skill-sources", "codex", "--skills", "*-project"],
+        &["codex-project"],
+        &[("codex-project", true), ("codex-global", false), ("agents-project", false)],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn skill_sources_invalid_selection_exits_two_without_a_model_request_or_session() {
+    let env = Env::new();
+    let up = upstream(json!({"responses": [{"events": [text("must not run"), finish("stop"), done()]}]})).await;
+    for (index, invalid) in ["unknown", "agents,unknown", "Agents"].iter().enumerate() {
+        let out = output(env.cmd(&up.base_url(), &["--skill-sources", invalid, "-p", "must not run"])).await;
+        assert_eq!(out.status.code(), Some(2), "{}", text_of(&out).1);
+        let (stdout, stderr) = text_of(&out);
+        assert!(stdout.is_empty());
+        assert!(stderr.contains("--skill-sources") && stderr.contains("unknown"), "{stderr}");
+        assert_eq!(up.served(), 0);
+        assert!(up.requests.lock().await.is_empty());
+        assert!(env.session_files().is_empty());
+        if let Some(directory) = std::env::var_os("ARA_SKILL_SOURCE_RECEIPTS") {
+            let directory = PathBuf::from(directory).join(format!("invalid-{index}"));
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("stdout.txt"), &stdout).unwrap();
+            std::fs::write(directory.join("stderr.txt"), &stderr).unwrap();
+            std::fs::write(
+                directory.join("summary.json"),
+                serde_json::to_vec_pretty(&json!({
+                    "status": "PASS", "case": format!("invalid-{index}"), "sourceArgument": invalid,
+                    "exitCode": out.status.code(), "modelRequests": up.served(), "sessions": env.session_files().len()
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+}

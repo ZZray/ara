@@ -39,7 +39,7 @@ use ara_ai::{
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
 };
-use ara_discovery::{Discovery, HostDirs, ProviderPolicy, SkillsSettings};
+use ara_discovery::{Discovery, HostDirs, ProviderPolicy, SkillSourceSwitches, SkillsSettings};
 use ara_mcp::ServerConfig as McpServerConfig;
 use ara_session::{SessionJournal, latest_session};
 use ara_tools::{ToolContext, builtin_tools};
@@ -197,6 +197,10 @@ struct Args {
     /// Do not discover or list skills.
     #[arg(long)]
     no_skills: bool,
+    /// Compatible Skill sources to discover at both user and project levels
+    /// (comma separated): agents,claude,codex,opencode. Empty disables these four.
+    #[arg(long, default_value = "agents,claude,codex")]
+    skill_sources: SkillSourceSwitches,
     /// Only include skills whose names match these globs (comma separated).
     #[arg(long)]
     skills: Option<String>,
@@ -1077,6 +1081,7 @@ async fn prepare_cli_setup(
     let discovery = Discovery::new(&home, dirs, ProviderPolicy::default());
     let skills_settings = SkillsSettings {
         enabled: !args.no_skills,
+        source_switches: Some(args.skill_sources),
         include_skills: args
             .skills
             .as_deref()

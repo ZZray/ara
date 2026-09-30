@@ -10,6 +10,7 @@ use crate::capability::{Capability, Level, LoadContext, LoadOptions, LoadResult,
 use crate::frontmatter::{FrontmatterOptions, parse_frontmatter};
 use crate::fs::FsCache;
 use crate::project::Discovery;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -264,10 +265,65 @@ pub fn skill_capability(native_name: &str) -> Capability<Skill> {
     capability
 }
 
-/// `SkillsSettings` (`skills.*`), with upstream's defaults.
+/// Host-persisted switches for compatible Skill sources. Each switch controls
+/// both user and project discovery. Native and custom sources are independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SkillSourceSwitches {
+    pub agents: bool,
+    pub claude: bool,
+    pub codex: bool,
+    pub opencode: bool,
+}
+
+impl Default for SkillSourceSwitches {
+    fn default() -> Self {
+        Self { agents: true, claude: true, codex: true, opencode: false }
+    }
+}
+
+impl SkillSourceSwitches {
+    fn providers(self) -> [(&'static str, bool); 4] {
+        [("agents", self.agents), ("claude", self.claude), ("codex", self.codex), ("opencode", self.opencode)]
+    }
+}
+
+impl std::str::FromStr for SkillSourceSwitches {
+    type Err = String;
+
+    /// Parse the exact comma-separated set of enabled sources; an empty value
+    /// disables all four. This does not change native or custom sources.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let mut switches = Self { agents: false, claude: false, codex: false, opencode: false };
+        if value.trim().is_empty() {
+            return Ok(switches);
+        }
+        for source in value.split(',').map(str::trim).filter(|source| !source.is_empty()) {
+            match source {
+                "agents" => switches.agents = true,
+                "claude" => switches.claude = true,
+                "codex" => switches.codex = true,
+                "opencode" => switches.opencode = true,
+                _ => {
+                    return Err(format!(
+                        "unknown Skill source {source:?}; expected agents, claude, codex, or opencode"
+                    ));
+                }
+            }
+        }
+        Ok(switches)
+    }
+}
+
+/// `SkillsSettings` (`skills.*`), with upstream's legacy defaults.
 #[derive(Clone, Debug)]
 pub struct SkillsSettings {
     pub enabled: bool,
+    /// `None` retains fixed OMP source semantics. `Some` overrides the legacy
+    /// per-level switches for these four sources, including foreign user opt-ins.
+    /// ProviderPolicy.disabled still blocks a provider. Hosts seeking ARA's
+    /// defaults should supply `Some(SkillSourceSwitches::default())`.
+    pub source_switches: Option<SkillSourceSwitches>,
     pub enable_codex_user: bool,
     pub enable_claude_user: bool,
     pub enable_claude_project: bool,
@@ -288,6 +344,7 @@ impl Default for SkillsSettings {
     fn default() -> Self {
         SkillsSettings {
             enabled: true,
+            source_switches: None,
             enable_codex_user: false,
             enable_claude_user: false,
             enable_claude_project: true,
@@ -400,11 +457,24 @@ impl Discovery {
         let mut ctx = self.context(cwd);
         ctx.skill_toggles.claude_user = settings.enable_claude_user;
         ctx.skill_toggles.codex_user = settings.enable_codex_user;
-        let options =
+        let mut options =
             LoadOptions { disabled_extensions: settings.disabled_extensions.clone(), ..LoadOptions::default() };
+        if let Some(switches) = settings.source_switches {
+            ctx.explicit_providers = Some(
+                switches.providers().into_iter().filter(|(_, enabled)| *enabled).map(|(id, _)| id.into()).collect(),
+            );
+            // Skip disabled loaders before they read directories or report warnings.
+            options.exclude_providers =
+                switches.providers().into_iter().filter(|(_, enabled)| !enabled).map(|(id, _)| id.into()).collect();
+        }
         let result = self.skills.load(&ctx, &options);
 
         let source_enabled = |meta: &SourceMeta| -> bool {
+            if let Some(switches) = settings.source_switches
+                && let Some((_, enabled)) = switches.providers().into_iter().find(|(id, _)| *id == meta.provider)
+            {
+                return enabled;
+            }
             match (meta.provider.as_str(), meta.level) {
                 ("codex", Level::User) => settings.enable_codex_user || ctx.is_user_source_enabled("codex"),
                 ("claude", Level::User) => settings.enable_claude_user || ctx.is_user_source_enabled("claude"),
