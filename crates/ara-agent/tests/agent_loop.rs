@@ -540,9 +540,9 @@ async fn owned_inputs_keep_distinct_provenance_for_equal_model_messages_in_all_q
             })
             .collect();
         assert_eq!(inputs.len(), 14);
-        for pair in inputs.chunks_exact(2) {
+        for pair in inputs.as_chunks::<2>().0 {
             assert_eq!(
-                pair,
+                *pair,
                 [
                     &AgentEvent::MessageStart { message: model.clone() },
                     &AgentEvent::MessageEnd { message: model.clone() }
