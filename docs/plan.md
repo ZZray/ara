@@ -86,6 +86,8 @@ Each slice is a set of bounded points. Every point goes through implement → fa
 **Decision, 2026-09-30:** after the bounded CTX-01e REPL/Skill Session
 acceptance, port fixed `rpc-frame.ts` and `rpc-input.ts` completely as the
 host-neutral `ara-rpc` transport point [RPC-01](evidence/rpc-01-transport.md).
+The bounded JSON transport was accepted on `69de671` after Windows/Linux
+execution and independent artifact audit; its documented runtime differences remain.
 Preserve existing print/REPL, Agent/free-loop, Session and provider behavior.
 Private-to-transport JS-compatible JSON semantics are necessary for UTF-16,
 f64 and own-property ordering; Core string types remain unchanged.

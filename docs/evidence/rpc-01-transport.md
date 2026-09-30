@@ -1,7 +1,7 @@
 # RPC-01: fixed RPC transport
 
-Status: implementing; transport acceptance awaits the final delivered-snapshot
-gate, independent diff audit and Linux receipts. Full CA-RPC/A5 remains open.
+Status: bounded transport accepted on `69de6716fa8ff2f09112f105acdbbdad7172ec0e`
+by the final independent audit below. Full CA-RPC/A5 remains open.
 
 ## Requirement and scope
 
@@ -146,4 +146,68 @@ Dependency log SHA-256:
 Final process receipt SHA-256:
 `344fcc2e7111add9e1a83f6be45a553f189708961f6554afe720b31ebbc7c766`.
 
-Commit, Linux artifact audit and acceptance decision follow when executed.
+## Delivered commit and Linux verification
+
+Implementation commit: `69de6716fa8ff2f09112f105acdbbdad7172ec0e`.
+Reviewed tree: `f587fbfccaf06615b429d6b4765e198009c56b72`.
+All 28 scoped committed paths match the independently reviewed staged blobs;
+no production code changed after Windows verification or Linux execution.
+
+| Exact-head workflow | Run | Result |
+| --- | --- | --- |
+| Repository checks | [36659354675](https://github.com/ZZray/ara/actions/runs/36659354675) | fmt, strict Clippy, all-targets and docs: 1,096 passed, 0 failed, 1 ignored, 85 suites; CLI e2e 90/90 |
+| Fixed RPC transport | [36659354678](https://github.com/ZZray/ara/actions/runs/36659354678) | 17 unchanged Bun tests, 74-case Rust comparison, all 23 crate test functions, live process 4/4 |
+| CTX-01e invocation regression | [36659354633](https://github.com/ZZray/ara/actions/runs/36659354633) | success |
+| CTX-01d directory faults regression | [36659354635](https://github.com/ZZray/ara/actions/runs/36659354635) | success |
+| CTX-01d directory oracle regression | [36659354628](https://github.com/ZZray/ara/actions/runs/36659354628) | success |
+
+Artifacts and extracted logs are retained under
+`C:\Temp\ara-rpc-transport-validation\github`:
+
+- Transport artifact ZIP SHA-256:
+  `8a92949218126687c6a54db1b977dc0893d6c49bfb5d79309bebf6a995d67e13`.
+- Linux process receipt SHA-256:
+  `3fcf79a1a02269ed76bb2e40a27468db5ecaaca7da469a14121ef1e1e16dc999`.
+- Full Linux backend step log SHA-256:
+  `eade65634a4e5c6b90e74f782093f119a9f1d0f2d835a5c3cea34b8f6db6ab2e`.
+- Full log ZIP SHA-256:
+  `59fcd670255a443b1d701e916a7ea69c16ad8372d4408d55c66d0035bcd98147`.
+
+The Linux process observed five chunks before stdin EOF and seventeen chunks
+under paused stdout/backpressure, followed by the exact echo in order.
+Broken output reported `BrokenPipe`, exit 1, with its stderr hash retained.
+The executable hash is recorded by the runtime; the binary itself is not
+retained in the artifact. The exact-head workflow builds and runs the same
+recorded executable path.
+
+## Final independent point audit, 2026-09-30
+
+Reviewer: independent Codex `resource_scan_plan`, using `ara-git-review` and
+the point-delivery boundary. Precommit scope covered all 28 paths, none
+skipped, and independently reran fresh upstream/oracle, all crate targets,
+strict Clippy and Windows process cases. Scope receipt:
+`C:\Temp\ara-rpc-transport-final-review\scope.json`.
+
+After push, the reviewer audited all 28 Linux artifact files and their ZIP
+bytes, all 13 unchanged source/license exports against exact OMP Git blobs,
+runner/launcher/process-script hashes against the delivered Git objects,
+and every Linux physical line plus aggregate stdout length/hash in all four
+process cases. Linux recipes/outcomes/limits equal the committed 74-case
+fixture; only environment-linked manifest hashes differ. Exact checkout
+revision and the whole Linux gate log/counts were independently checked.
+The reviewed public upstream and synthetic artifacts had no credential
+signature finding.
+
+Final audit receipt:
+`C:\Temp\ara-rpc-transport-final-review\linux-transport-audit.json`, SHA-256
+`2ed4cb45b619861ce36f763fcabf9f396321b0650ebb6e295afac0af035ecd1b`.
+Verdict: **RPC-01 bounded JSON transport accepted on `69de671`**, with no
+remaining actionable finding. Object-valued `__proto__` shrink is covered by
+source reasoning and the implementation's setter-equivalent omission, not a
+separate executable differential case; that optional case is a non-blocking
+coverage gap. The explicit diagnostics and runtime differences above remain.
+
+This accepts no production RPC command host, Agent/Session binding, complete
+CA-RPC/A5/P2, PKG-WIRE or full OMP marker. `ported_through_commit` remains null.
+Next: independently plan production host ownership and command contracts,
+then execute controlled Core/Session task chains and a bounded real RPC task.

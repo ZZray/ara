@@ -27,7 +27,7 @@ This is an architecture target. Source-backed Rust behavior and host tests are r
 | `ara-cli` | Reference host: argument parsing, model/credential binding, journal location, print mode | Product state (HandWave/Lantern/Lumen) |
 | `ara-testkit` | Controlled fake upstream and fixtures | Production crates at runtime |
 
-**Decision, 2026-09-30 (implementation under audit):** `ara-rpc` owns the
+**Decision, 2026-09-30 (RPC-01 transport accepted on `69de671`):** `ara-rpc` owns the
 fixed OMP JSONL transport without importing Agent, Session or provider crates.
 Its local UTF-16/f64/ordered-value representation preserves wire semantics
 which ordinary Rust strings and `serde_json::Value` cannot fully express.
