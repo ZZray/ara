@@ -308,7 +308,7 @@ impl Agent {
     /// Agent's transcript and queues. The host can supply a fresh deadline or
     /// route without changing the defaults used by `prompt`/`continue_run`.
     /// Run settings remain fixed; `LoopHooks::execution_snapshot` may supply
-    /// live tools and their matching prompt before each model call.
+    /// a live model route, tools and their matching prompt before each model call.
     pub async fn prompt_with_config(
         self: &Arc<Self>,
         prompts: Vec<Message>,

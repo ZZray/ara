@@ -43,7 +43,7 @@ const MISSING_TERMINAL_EVENT: &str = "Provider stream ended without a terminal e
 /// Host callbacks consulted by the loop. All methods default to no-ops.
 #[async_trait]
 pub trait LoopHooks: Send + Sync {
-    /// Current tool adapters and matching prompt, read once before each model
+    /// Current model route, tool adapters and matching prompt, read once before each model
     /// call and retained through that response's whole tool batch. Standalone
     /// tool execution reads once before preparation. `None` retains the Run's
     /// original configuration.
@@ -93,6 +93,36 @@ impl LoopHooks for NoHooks {}
 pub struct ExecutionSnapshot {
     pub tools: Vec<Arc<dyn AgentTool>>,
     pub system_prompt: Vec<String>,
+    /// Model, transport and per-call options must be adopted together. `None`
+    /// preserves the Run's original model binding for tools-only hosts.
+    pub model: Option<ModelExecutionSnapshot>,
+}
+
+/// Portable execution fields only. Registry, account identity and authentication
+/// remain behind the host-owned provider port.
+#[derive(Clone)]
+pub struct ModelExecutionSnapshot {
+    pub model: Model,
+    pub provider: Arc<dyn ModelProvider>,
+    pub tool_choice: Option<ToolChoice>,
+    pub max_tokens: Option<u64>,
+    pub temperature: Option<f64>,
+}
+
+impl ExecutionSnapshot {
+    pub fn from_config(config: &AgentConfig) -> Self {
+        Self {
+            tools: config.tools.clone(),
+            system_prompt: config.system_prompt.clone(),
+            model: Some(ModelExecutionSnapshot {
+                model: config.model.clone(),
+                provider: config.provider.clone(),
+                tool_choice: config.tool_choice.clone(),
+                max_tokens: config.max_tokens,
+                temperature: config.temperature,
+            }),
+        }
+    }
 }
 
 fn execution_config(config: &AgentConfig) -> std::borrow::Cow<'_, AgentConfig> {
@@ -102,6 +132,13 @@ fn execution_config(config: &AgentConfig) -> std::borrow::Cow<'_, AgentConfig> {
             let mut live = config.clone();
             live.tools = snapshot.tools;
             live.system_prompt = snapshot.system_prompt;
+            if let Some(model) = snapshot.model {
+                live.model = model.model;
+                live.provider = model.provider;
+                live.tool_choice = model.tool_choice;
+                live.max_tokens = model.max_tokens;
+                live.temperature = model.temperature;
+            }
             std::borrow::Cow::Owned(live)
         }
     }

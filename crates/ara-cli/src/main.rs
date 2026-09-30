@@ -33,8 +33,8 @@ mod skill_command;
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
 use ara_ai::{
-    AnthropicMessagesProvider, AssistantMessageEvent, Message, Model, ModelProvider, ModelTokenizer,
-    OpenAICompletionsProvider, OpenAIResponsesProvider, StopReason, UserMessage, resolve_known_claude_tokenizer,
+    AssistantMessageEvent, Message, Model, ModelProvider, ModelTokenizer, StopReason, UserMessage,
+    resolve_known_claude_tokenizer,
 };
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
@@ -1191,46 +1191,55 @@ async fn prepare_cli_setup(
 // Session. An unchanged reload deliberately keeps its existing provider.
 struct ProviderFactory {
     client: reqwest::Client,
-    api: Api,
-    options: StreamOptions,
-    anthropic_strict_tools: bool,
-    responses_stateful: bool,
+    route: ara_cli::model_route::PreparedRoute,
 }
 
 impl ProviderFactory {
+    fn startup(
+        client: reqwest::Client,
+        model: Model,
+        api: Api,
+        mut options: StreamOptions,
+        anthropic_strict_tools: bool,
+        responses_stateful: bool,
+    ) -> Result<Self> {
+        use ara_cli::model_route::{
+            CredentialIdentity, FixedRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthLease,
+            is_credential_header,
+        };
+        let (auth_headers, ordinary_headers) =
+            options.extra_headers.into_iter().partition(|(name, _)| is_credential_header(name));
+        options.extra_headers = ordinary_headers;
+        let auth = Arc::new(FixedRequestAuth::new(
+            RequestAuthLease::new(CredentialIdentity::Runtime, options.api_key.take()).with_headers(auth_headers),
+        ));
+        let protocol = match api {
+            Api::AnthropicMessages => ProtocolOptions::Anthropic(ara_ai::providers::anthropic::StreamOptions {
+                strict_tools: anthropic_strict_tools.then_some(true),
+                extra_headers: options.extra_headers,
+                first_event_timeout: options.first_event_timeout,
+                idle_timeout: options.idle_timeout,
+                retry: options.retry,
+                ..Default::default()
+            }),
+            Api::OpenaiCompletions => ProtocolOptions::Completions(options),
+            Api::OpenaiResponses => ProtocolOptions::Responses(ResponsesStreamOptions {
+                extra_headers: options.extra_headers,
+                first_event_timeout: options.first_event_timeout,
+                idle_timeout: options.idle_timeout,
+                retry: options.retry,
+                stateful_responses: responses_stateful,
+                ..Default::default()
+            }),
+            Api::ProxyAuto => bail!("proxy discovery must resolve to a concrete protocol"),
+        };
+        let route = PreparedRoute::new(model, protocol, auth, 0)
+            .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
+        Ok(Self { client, route })
+    }
+
     fn build(&self) -> Arc<dyn ModelProvider> {
-        let client = self.client.clone();
-        let options = self.options.clone();
-        match self.api {
-            Api::AnthropicMessages => Arc::new(AnthropicMessagesProvider {
-                client,
-                base: ara_ai::providers::anthropic::StreamOptions {
-                    api_key: options.api_key,
-                    strict_tools: self.anthropic_strict_tools.then_some(true),
-                    provider_session_state: Some(Arc::new(Default::default())),
-                    extra_headers: options.extra_headers,
-                    first_event_timeout: options.first_event_timeout,
-                    idle_timeout: options.idle_timeout,
-                    retry: options.retry,
-                    ..Default::default()
-                },
-            }),
-            Api::OpenaiCompletions => Arc::new(OpenAICompletionsProvider { client, base: options }),
-            Api::OpenaiResponses => Arc::new(OpenAIResponsesProvider {
-                client,
-                base: ResponsesStreamOptions {
-                    api_key: options.api_key,
-                    extra_headers: options.extra_headers,
-                    first_event_timeout: options.first_event_timeout,
-                    idle_timeout: options.idle_timeout,
-                    retry: options.retry,
-                    session_state: Some(Arc::new(ara_ai::providers::openai_responses::ProviderSessionState::default())),
-                    stateful_responses: self.responses_stateful,
-                    ..ResponsesStreamOptions::default()
-                },
-            }),
-            Api::ProxyAuto => unreachable!("proxy discovery resolves to a concrete protocol"),
-        }
+        self.route.bind(self.client.clone(), None)
     }
 }
 
@@ -1388,13 +1397,14 @@ async fn run(args: Args) -> Result<i32> {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
     let client = client_builder.build().context("building HTTP client")?;
-    let provider_factory = ProviderFactory {
+    let provider_factory = ProviderFactory::startup(
         client,
-        api: selected_api,
-        options: stream_options,
-        anthropic_strict_tools: args.anthropic_strict_tools,
-        responses_stateful: args.responses_stateful,
-    };
+        route.model.clone(),
+        selected_api,
+        stream_options,
+        args.anthropic_strict_tools,
+        args.responses_stateful,
+    )?;
     let provider = provider_factory.build();
     let cancel = CancellationToken::new();
     if rpc_mode {

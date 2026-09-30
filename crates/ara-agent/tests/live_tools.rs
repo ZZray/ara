@@ -147,7 +147,11 @@ fn tool(version: &'static str, effects: &Arc<Mutex<Vec<String>>>, gate: Option<A
 }
 
 fn snapshot(version: &'static str, effects: &Arc<Mutex<Vec<String>>>, gate: Option<Arc<Gate>>) -> ExecutionSnapshot {
-    ExecutionSnapshot { tools: vec![tool(version, effects, gate)], system_prompt: vec![format!("prompt {version}")] }
+    ExecutionSnapshot {
+        tools: vec![tool(version, effects, gate)],
+        system_prompt: vec![format!("prompt {version}")],
+        model: None,
+    }
 }
 
 struct LiveHooks {
@@ -342,7 +346,7 @@ async fn known_unexecuted_tail_reads_live_snapshot_before_preparation() {
 async fn empty_live_snapshot_clears_original_tools_and_prompt() {
     let effects = Arc::new(Mutex::new(Vec::new()));
     let provider = Provider::new(vec![turn(&[("disabled", "original")]), turn(&[])]);
-    let hooks = LiveHooks::new(ExecutionSnapshot { tools: Vec::new(), system_prompt: Vec::new() });
+    let hooks = LiveHooks::new(ExecutionSnapshot { tools: Vec::new(), system_prompt: Vec::new(), model: None });
     let agent = Agent::new(config(provider.clone(), &effects, hooks.clone()), Vec::new());
     let report = bounded(agent.prompt(
         vec![Message::User(UserMessage::text("run"))],

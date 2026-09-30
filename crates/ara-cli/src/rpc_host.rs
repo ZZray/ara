@@ -1176,8 +1176,7 @@ impl Host {
     }
 
     fn publish_snapshot(&self, config: &AgentConfig) {
-        *self.snapshot.write().unwrap_or_else(|e| e.into_inner()) =
-            ExecutionSnapshot { tools: config.tools.clone(), system_prompt: config.system_prompt.clone() };
+        *self.snapshot.write().unwrap_or_else(|e| e.into_inner()) = ExecutionSnapshot::from_config(config);
     }
 
     async fn set_host_tools(&mut self, definitions: Vec<HostToolDefinition>) -> Result<Vec<String>> {
@@ -1989,10 +1988,7 @@ where
         context.set_uri_port(uri_bridge.clone());
     }
     sessions.uri_port = Some(uri_bridge.clone());
-    let snapshot = Arc::new(RwLock::new(ExecutionSnapshot {
-        tools: config.tools.clone(),
-        system_prompt: config.system_prompt.clone(),
-    }));
+    let snapshot = Arc::new(RwLock::new(ExecutionSnapshot::from_config(&config)));
     config.hooks = Arc::new(RpcHooks { base: config.hooks.clone(), snapshot: snapshot.clone() });
     let session = Session::new(journal, header, &messages)?;
     let bash_target =
@@ -2188,23 +2184,26 @@ mod tests {
 
     fn fixture() -> (Host, mpsc::UnboundedReceiver<OutputItem>) {
         let cwd = std::env::current_dir().unwrap();
-        let provider = super::super::ProviderFactory {
-            client: reqwest::Client::new(),
-            api: super::super::Api::OpenaiCompletions,
-            options: Default::default(),
-            anthropic_strict_tools: false,
-            responses_stateful: false,
+        let model = ara_ai::Model {
+            id: "terminal-fixture".into(),
+            api: "openai-completions".into(),
+            provider: "test".into(),
+            base_url: String::new(),
+            reasoning: false,
+            max_tokens: None,
+            tokenizer: None,
         };
+        let provider = super::super::ProviderFactory::startup(
+            reqwest::Client::new(),
+            model.clone(),
+            super::super::Api::OpenaiCompletions,
+            Default::default(),
+            false,
+            false,
+        )
+        .unwrap();
         let config = AgentConfig {
-            model: ara_ai::Model {
-                id: "terminal-fixture".into(),
-                api: "openai-completions".into(),
-                provider: "test".into(),
-                base_url: String::new(),
-                reasoning: false,
-                max_tokens: None,
-                tokenizer: None,
-            },
+            model,
             provider: provider.build(),
             system_prompt: Vec::new(),
             tools: Vec::new(),
@@ -2235,10 +2234,7 @@ mod tests {
         let emitter_output = output.clone();
         let emitter: Arc<dyn Fn(WireValue) + Send + Sync> =
             Arc::new(move |frame| emitter_output.send(OutputItem::Frame(frame)));
-        let snapshot = Arc::new(RwLock::new(ExecutionSnapshot {
-            tools: config.tools.clone(),
-            system_prompt: config.system_prompt.clone(),
-        }));
+        let snapshot = Arc::new(RwLock::new(ExecutionSnapshot::from_config(&config)));
         let host = Host {
             agent: Agent::new(config.clone(), Vec::new()),
             session: session.clone(),
