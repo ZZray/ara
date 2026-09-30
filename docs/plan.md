@@ -16,6 +16,15 @@ product-specific additions and further V1 dogfood work. V1 is already accepted.
 Existing completed user-requested additions remain recorded; unrelated WIP is
 preserved without being included in parity acceptance.
 
+**User clarification, 2026-09-30:** reproduce the fixed OMP completely; do not
+omit features. Bounded checkpoints are progress records, not permission to
+drop remaining methods, commands, failure paths or inventory surfaces. Every
+remaining source-backed behavior is mandatory before full parity acceptance.
+An unsupported response, a scheduled row or an intentional-difference label
+cannot substitute for implementing a requested OMP feature. Necessary Rust or
+platform adaptations must preserve its observable behavior. New customization
+starts after that complete reproduction and its executable audit.
+
 Work in coherent module batches rather than repeatedly accepting tiny fragments:
 
 1. Continue the production RPC/host module against its complete fixed-source
@@ -274,3 +283,16 @@ receipts are recorded in the point evidence. Complete RPC and P1–P6 stay open.
 Next: OMP compaction maintenance (`compact`, `set_auto_compaction`), then
 Session retry recovery (`set_auto_retry`, `abort_retry`). Share gates across
 each coherent module and reuse the existing child/receipt fixtures.
+
+The [RPC soft compaction batch](evidence/rpc-soft-compaction.md) adds serial
+`compact`, focused and chained summaries with cumulative raw sources, native
+public projection, preserved queues and provider replay reset. Persistent
+`set_auto_compaction` now gates actual supported threshold passes. Windows
+full/dependency execution and the actual summary/restart artifact task pass on
+`599db7c`; exact-code Linux also passes (1,286/0/1, 97 suites). The point evidence
+records the final artifact/audit boundary. RPC is now
+**25/42 bounded implementations**, with full maintenance and whole CA-RPC open.
+Remaining compaction methods, split-turn preparation, overflow recovery,
+mid-turn/idle/incomplete triggers, model-capacity resolution and settings
+integration are mandatory reproduction work, alongside the remaining RPC
+commands. No checkpoint substitutes for that work or starts customization.

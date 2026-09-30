@@ -168,3 +168,20 @@ Persistent shell/PTY/artifact spill and complete shell settings remain open.
 Next implement compaction maintenance, then Session retry recovery; ordinary
 maintenance keeps the fixed serial dispatcher schedule. Whole CA-RPC/P1–P6
 acceptance is not inferred from this subset.
+
+## Native soft compaction checkpoint, 2026-09-30
+
+[RPC soft compaction](evidence/rpc-soft-compaction.md) adds two bounded variants,
+bringing implemented command coverage to **25/42**. Manual maintenance remains
+serial, uses the original Agent queues and journal writer, validates cumulative
+raw provenance before committing and resets provider replay. Native public
+summary messages are separate from their User model projection. The persistent
+auto policy gates actual direct/steering/joined threshold execution.
+
+This checkpoint leaves required full maintenance work open: split-turn cuts,
+method order execution, remote/handoff/shake/snapcompact, capacity resolution,
+overflow continuation and mid-turn/idle/incomplete maintenance. Settings
+overlays/conflict/quarantine behavior also remains to be reproduced. These
+are mandatory backlog, not omitted features. Next bind Session retry recovery
+and complete its shared recovery prerequisites; full CA-RPC acceptance still
+requires every command and lifecycle contract from the fixed source.

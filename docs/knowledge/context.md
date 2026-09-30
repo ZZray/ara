@@ -22,3 +22,22 @@ semantics; hosts use `Some(SkillSourceSwitches::default())` for ARA's selected
 three-on/one-off defaults. Persistence and UI remain host-owned. The
 [configuration guide](../skill-sources.md) records paths and usage, and the
 [execution record](../evidence/skill-source-switches.md) states tested scope.
+
+## Native RPC soft compaction provenance
+
+**Implemented boundary, 2026-09-30, `599db7c`:** a chained soft summary uses
+the last validated derived summary and the kept/later raw window. Its checked
+commit carries previous raw source IDs forward, so the journal retains both
+the original observations and a verifiable cumulative replaced prefix. A
+derived summary never becomes an invented raw user observation. Shared Core
+receives the lower-trust model projection through its existing idle interface;
+the Host exposes native `compactionSummary` and owns policy/provider reset.
+Missing legacy source provenance is an explicit refusal to update a summary.
+Print/REPL keep their earlier V1 scope; full maintenance remains mandatory
+reproduction work. [Execution and audit](../evidence/rpc-soft-compaction.md)
+record the bounded implementation and remaining behavior.
+
+The same journal writer retains late user Bash on its captured pre-compaction
+branch. Fixed OMP restores the active leaf in memory but rebuilds from the last
+raw entry on reopen. Preserve that source-backed distinction while reproducing
+OMP; changing persisted leaf semantics belongs to later customization.

@@ -7,7 +7,7 @@ This is a new implementation, not a branch migration. No old ARA source, databas
 | P0 — baseline | Exact OMP checkout, complete behavior inventory, Rust crate/host boundaries, per-item source mapping | Pinned SHA and license verified; each intended OMP surface has an owner, test strategy, and explicit status. |
 | P1 — OMP Rust Core | Messages, context, Session journal, streaming events, tool loop, cancellation, recovery, compaction, skills and knowledge loading | Same-input OMP/Rust behavior comparison, real Rust process tests, persistence/restart and negative paths. |
 | P2 — OMP host and protocols | CLI/RPC, native tools, MCP/LSP where applicable, OpenAI-compatible Chat/Responses and Anthropic Messages, budgets and permissions | Actual host → Gateway → Provider → tool → journal path with controlled upstream, plus bounded real-model task trials. |
-| P3 — fixed OMP parity | Every selected OMP behavior at the locked commit classified as ported, intentionally different, or open | Per-item executable evidence and independent audit; no entire gate accepted from a sample or a test count alone. |
+| P3 — fixed OMP parity | Complete required behavior inventory at the locked commit reproduced in Rust; necessary platform adaptations preserve observable behavior | Every required feature implemented, exercised and independently audited; no required feature remains open or is replaced by an intentional-difference label. No entire gate accepted from a sample or a test count alone. |
 | P4 — ARA capabilities | [Agent evolution](knowledge/agent-evolution.md): sourced references and revisable memory, planning/decision evidence, reviewed feedback, background Jobs/timers, task review, Omni input | Real task artifacts, cross-Run continuity and correction, permission/budget/lease/cancel gates, explicit unsupported-modality errors. |
 | P5 — product integrations | Host APIs for AI HandWave, Lantern/Paseo, Lumen and later products | Real product UI/API workflows, distinct product identity/data, shared Core package, error feedback and resumed history. |
 | P6 — release | Reproducible builds, migration/rollback where needed, security and license review | Final acceptance matrix, isolated rehearsal, authorized deployment, observed runtime behavior. |
@@ -19,6 +19,12 @@ before adding ARA customization. V1 is already accepted. Work in module batches,
 run per-point focused checks, and share final snapshot gates across the completed
 batch. New P4/Track B and product-specific additions wait for P3. Preserve prior
 completed work and unrelated WIP. See the [current execution priority](plan.md#current-priority-reproduce-omp-before-customization).
+
+**User clarification, 2026-09-30:** complete reproduction is required, with no
+feature omission. Open/partial rows are work still to finish. Earlier V1
+exclusions apply to that early host milestone only; they do not remove fixed
+OMP features from the full reproduction. P3 must close the required inventory
+before customization starts.
 
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
