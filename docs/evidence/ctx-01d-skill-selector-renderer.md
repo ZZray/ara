@@ -1,5 +1,8 @@
 # CTX-01d representative Skill renderer comparison (WIP)
 
+This page records a test-only WIP slice; the bounded CTX-01d point is now
+accepted in the [final audit](ctx-01d-skill-directory-fault.md#acceptance-boundary).
+
 ## Requirement and scope
 
 Compare the complete output of representative immutable `skill://` reads
@@ -137,3 +140,13 @@ they do not supply the new selector-oracle JSON. The explicit Windows
 22-case comparison above remains this slice's dynamic renderer evidence.
 CI receipts: `C:\Temp\ara-ctx-skill-selector-oracle\ci-81d036e.json`,
 SHA-256 `d6748db28f615204cfcbd59a12e75ac7eb14d863455a6bf39094aeb6162dfa9e`.
+
+## Final bounded point disposition, 2026-09-30
+
+The [final directory fault evidence and independent point audit](ctx-01d-skill-directory-fault.md)
+accepts the explicitly bounded CTX-01d host/Skill point on `d05dab0`.
+This page's 22-case comparison is representative renderer evidence;
+the installed native addon's exact build provenance remains unverified.
+The earlier unconfirmed REPL gate failure is retained, and subsequent
+unchanged-code/final delivered-snapshot gates passed. Generic selectors,
+other locales and full OMP/P1/P3 remain outside this bounded decision.

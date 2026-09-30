@@ -3,7 +3,10 @@
 The 2026-09-29 section below is a historical checkpoint. The later
 [`skill://` directory-order repair](ctx-01d-skill-directory-sort.md) and
 [current handoff](../handoffs/2026-09-30.md) record the fixed-OMP Bun
-oracles, delivered-code tests and real-model tasks. CTX-01d remains WIP.
+oracles, delivered-code tests and real-model tasks. The bounded CTX-01d
+point is now accepted on `d05dab0`; see the
+[final point audit](ctx-01d-skill-directory-fault.md#acceptance-boundary).
+Earlier WIP checkpoints below retain their historical verdicts.
 
 ## 2026-09-29 current-head B.AI trial and gate (WIP)
 
@@ -326,3 +329,16 @@ has no `ARA_API_KEY` or `OPENROUTER_API_KEY` environment variable; no live
 route or current-code real-model task was verified in this recheck. The prior
 Agnes/OpenRouter trials above remain earlier-snapshot evidence. CTX-01d stays
 **changes requested** and formal progress is unchanged.
+
+## Final scoped disposition, 2026-09-30
+
+Earlier changes-requested/WIP decisions above are historical snapshots.
+After the recorded prompt/URL repairs, sorting/scan/renderer comparisons,
+final real-model task and Linux fault receipts, independent Codex
+`ctx_point_audit` accepts the bounded CTX-01d system-prompt/reminder and
+non-plugin Skill host point on `d05dab0`. The exact evidence, final checks,
+artifact hashes and remaining limits are in the
+[final point audit](ctx-01d-skill-directory-fault.md#acceptance-boundary).
+Plugin/managed Skill containment remains CTX-01c, `/skill:` invocation
+CTX-01e and generic selectors TOOLS-01a. The complete OMP marker and P1/P3
+stay open.

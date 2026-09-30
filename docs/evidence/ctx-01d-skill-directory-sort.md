@@ -1,5 +1,8 @@
 # CTX-01d: fixed OMP Skill directory ordering (WIP)
 
+This page retains historical WIP repair checkpoints; the bounded CTX-01d
+point is now accepted in the [final audit](ctx-01d-skill-directory-fault.md#acceptance-boundary).
+
 ## Requirement and boundary
 
 Fixed OMP `596f2da7101178214aa27a753529d15e6b7ad91d`,
@@ -374,3 +377,18 @@ cases against Rust on Windows. It supersedes the projected-row-only
 evidence for those representative inputs, with source and result
 mutation controls. Directory I/O fault execution and final CTX-01d
 acceptance remain open.
+
+## Final bounded CTX-01d acceptance, 2026-09-30
+
+The [final Linux directory fault evidence and point audit](ctx-01d-skill-directory-fault.md)
+supersedes this page's earlier point-level WIP verdict. On `d05dab0`,
+normal listing, enumeration EIO and persistent entry-type EIO pass through
+the real CLI/Session/provider path; all 100 uploaded artifact hashes match.
+The final Linux backend gate passes 1,051 tests with zero failures and one
+ignored test. An independently checked bounded B.AI task verifies directory
+ordering, raw tail/multi-range output, AGENTS ownership and its written
+artifact. Independent Codex `ctx_point_audit` accepts the recorded CTX-01d
+host/Skill point with the existing observed locale matrix, scan-budget and
+representative renderer receipts. Other locales/Unicode inputs, generic
+selectors, plugin/managed Skill containment and `/skill:` retain their
+separate open scope. P1/P3 and the full OMP marker do not advance.
