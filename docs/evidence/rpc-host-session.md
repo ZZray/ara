@@ -262,5 +262,28 @@ hashes. `terminal-staged-snapshot.json` matches all six tested source/dependency
 paths with the index; unchanged Cargo.toml alone has existing CRLF-to-LF
 normalization. The changed Rust file matches exactly.
 
-**Correction decision: APPROVE as tested WIP, pending accurate repaired-commit
-Linux verification.** No command or phase acceptance is advanced.
+The final independent raw-task audit also checked all 313 frames, exact recall,
+Session parent and receipt ordering, and all fifteen artifact hashes. The source
+and executable remained pinned throughout. Scoped correction commit:
+`9491fa100eab943c3b65b291cc7430c6b6941826`.
+
+### Accurate repaired-commit Linux gate
+
+Repository run [36681353101](https://github.com/ZZray/ara/actions/runs/36681353101)
+on exact `9491fa1` is **completed/success**. Backend step **07:01:24-07:06:49
+UTC, 325 s**: formatting, strict all-feature Clippy, target and doc tests pass,
+**1,124 passed, 0 failed, 1 ignored across 86 suites**, e2e **90/90** and RPC
+**21/21** (**1.99 s** execution). The new deterministic real-Agent oracle passes
+on Linux too. Raw log:
+`C:\Temp\ara-rpc-host-session-validation\github\logs-36681353101\0_verify.txt`;
+recomputed summary: `terminal-linux-result.json`. The separate fixed OMP Skill
+invocation workflow `36681353098` succeeds on the same exact commit.
+Independent Codex `rpc_terminal_review` checked the raw checkout SHA, recomputed
+all 86 suite results, confirmed the original failing Responses test and new
+oracle both pass, and matched the committed Rust blob with the tested source.
+The follow-up receipt/knowledge update changes documentation only.
+
+**Correction decision: APPROVE as tested WIP; the observed Linux failure is
+closed.** Full RPC, saved settings/capability reconciliation and P1-P6 remain
+open. Continue the source-backed owned queued Skill slice; no command or phase
+acceptance is advanced by this correction.

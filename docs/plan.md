@@ -201,3 +201,10 @@ The repaired Windows snapshot and deterministic mutation now pass: backend
 18.344 s with seven calls/four receipts and exact recall. Final independent
 audit and accurate repaired-commit Linux receipt remain the immediate gates;
 retain the complete 42-command denominator and P1-P6 acceptance boundary.
+
+Accurate correction `9491fa1` Linux repository run `36681353101` succeeds:
+1,124/0/1 (86 suites), RPC 21/21, e2e 90/90 and the deterministic oracle; backend
+325 seconds. The terminal correction is closed. Resume the reviewed owned
+queued Skill implementation using the existing discovery/preparation and Agent
+queues, then complete the remaining full Host plan. RPC remains 14/42 bounded
+implementations, with full command parity and P1-P6 still open.

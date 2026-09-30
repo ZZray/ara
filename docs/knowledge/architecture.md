@@ -85,3 +85,19 @@ retains native provider/tool state; new/different/edited Sessions reset it.
 Compare replay content rather than timestamp/usage metadata. Prompt refresh and
 fresh setup share the initial CLI helpers; complete saved-model/settings and
 capability reconciliation are still open.
+
+### RPC terminal and Run settlement
+
+**Decision, 2026-09-30 (verified correction `9491fa1`, RPC remains WIP):**
+Clients can send their next prompt immediately after `agent_end`. The internal
+Agent loop emits that event while its running guard/transcript lock are still
+owned; the reference RPC Host must retain the terminal in its fixed Run sink
+and publish it only after joining the owned task and clearing the active slot.
+All earlier live events and journal barriers retain their schedule. Completion,
+abort and EOF share this boundary; publish the terminal before its correlated
+error, and never fabricate a terminal for a task which emitted none.
+This matches fixed OMP `agent-session.ts:750-755,836-842,2361-2371`. The
+[Session evidence](../evidence/rpc-host-session.md) contains the actual Linux
+failure, gated real-Agent oracle, caught premature-emission mutation and final
+Windows/Linux/real-task receipts. This rule does not change Core/print/REPL or
+accept full RPC parity.
