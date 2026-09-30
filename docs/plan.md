@@ -296,3 +296,14 @@ Remaining compaction methods, split-turn preparation, overflow recovery,
 mid-turn/idle/incomplete triggers, model-capacity resolution and settings
 integration are mandatory reproduction work, alongside the remaining RPC
 commands. No checkpoint substitutes for that work or starts customization.
+
+The [native Session retry checkpoint](evidence/rpc-session-retry.md) adds
+`set_auto_retry`/`abort_retry`, actual same-route recovery, durable original
+error metadata and phase-specific cancellation. Windows 1,316/0/1 and the
+independently audited two-Run real write/reopen task pass on `8d20531`;
+exact-code Linux and final audit details remain in its evidence. RPC has
+**27/42 bounded implementations**, with complete Retry and P1–P6 still open.
+Next finish R2 overflow/thinking/interrupted recovery and R3/R4 native
+credential/model registry, configured chains and authorized route adoption.
+The complete settings/fallback/usage/cooldown matrix and every inventory gap
+remain mandatory; customization still waits for complete fixed OMP parity.

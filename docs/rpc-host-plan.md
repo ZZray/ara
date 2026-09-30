@@ -185,3 +185,23 @@ overlays/conflict/quarantine behavior also remains to be reproduced. These
 are mandatory backlog, not omitted features. Next bind Session retry recovery
 and complete its shared recovery prerequisites; full CA-RPC acceptance still
 requires every command and lifecycle contract from the fixed source.
+
+## Native Session retry checkpoint, 2026-10-01
+
+[RPC Session retry](evidence/rpc-session-retry.md) adds persistent
+`set_auto_retry`, phase-specific `abort_retry` and a joined same-route saga,
+bringing implemented command coverage to **27/42 bounded variants**. It keeps
+native failed IDs/raw receipts, verifies tool-effect eligibility, and commits
+recovery metadata before successful events. Windows full gates and an
+independently audited actual retry/write/reopen task pass on `8d20531`.
+Platform and final evidence details are in the checkpoint.
+
+Complete Retry still requires usage-backed overflow, ThinkingLoop and
+interrupted-turn branches, native credentials/OAuth/usage/preflight/rotation,
+model catalogue/roles/aliases/fallback chains, authorized whole-route adoption,
+capacity/effort/reserve checks, cooldown/revert, Fireworks intrinsic fallback
+and full settings integration. These remain mandatory before full CA-RPC
+acceptance. Reuse `resolve_route` → ProviderFactory → SessionFactory → original
+Agent continuation; selecting another model must also select its protocol,
+authentication and actual request credential identity. Preserve all fixed
+commands and additional lifecycle contracts until the complete inventory passes.

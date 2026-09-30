@@ -158,3 +158,21 @@ Valid context-excluded Bash is transparent to unknown-effect recovery adjacency;
 included/malformed receipts remain barriers. The [checkpoint evidence](../evidence/rpc-native-bash.md)
 records source locations, actual process/journal faults and the verified restart
 task. Complete shell/settings/maintenance behavior remains open.
+
+### Native Session retry ownership
+
+**Decision, 2026-10-01 (bounded same-route checkpoint, full parity open):**
+Provider replay and Session recovery have different owners and budgets. A
+Session retry begins only after its failed Run joins, retains its original
+Agent/queues and captures native append IDs. Backoff has its own cancellation;
+aborting that wait does not abort an already started continuation. Eligible
+failed active tails may leave the model projection while their raw source
+remains. Successful recovery rewrites exact failed native IDs before emitting
+recovery receipts; I/O failure is fail-stop.
+
+Header facts must survive a dropped body future: provider veto, Session route
+veto and Session wait ceiling are distinct. Unknown tool effects do not
+authorize replay. [Retry evidence](../evidence/rpc-session-retry.md) records
+the tested scope and mandatory auth/model/overflow/interrupted-turn branches.
+The Host owns those registries and authorized route adoption; Core must not
+acquire product identity or credential storage.

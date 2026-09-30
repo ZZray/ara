@@ -29,3 +29,11 @@ before customization starts.
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).
+
+The [native Session retry checkpoint](evidence/rpc-session-retry.md) records
+`set_auto_retry`/`abort_retry`, same-route recovery and sourced native metadata
+on `8d20531`. Windows 1,316/0/1 and an independently audited real write/reopen
+task pass; platform/audit details are in the evidence. RPC has **27/42 bounded
+implementations**. Complete Retry, CA-RPC and P1–P6 remain open. Finish all
+overflow/thinking/interrupted, credential/OAuth/usage, model/fallback/settings
+and remaining inventory contracts before ARA customization; none is omitted.
