@@ -374,6 +374,360 @@ fn query_data(child: &mut RpcChild, id: &str, kind: &str) -> Value {
     child.success(id)["data"].clone()
 }
 
+fn branch_rpc(child: &mut RpcChild, id: &str, entry_id: &str, text: &str, commands: Value) {
+    let begin = child.seen.len();
+    child.send(json!({"id":id,"type":"branch","entryId":entry_id}));
+    assert_eq!(child.success(id)["data"], json!({"text":text,"cancelled":false}));
+    let updates: Vec<_> =
+        child.seen[begin..].iter().filter(|frame| frame["type"] == "available_commands_update").collect();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0]["commands"], commands);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_branch_forks_native_skill_and_tool_history_then_reopens_without_touching_source() {
+    let env = Env::new();
+    let skill = invocation_skill(&env, ".ara/skills", "proof", "Native fork Skill body");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Ordinary answer"),finish("stop"),done()]},
+        {"events":[tool_call(0,"fork-source-write","write","{\"path\":\"source.txt\",\"content\":\"source effect\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Skill answer"),finish("stop"),done()]},
+        {"events":[text("Excluded answer"),finish("stop"),done()]},
+        {"events":[tool_call(0,"fork-new-write","write","{\"path\":\"fork.txt\",\"content\":\"fork effect\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Fork answer"),finish("stop"),done()]}
+    ]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--tools", "write"]));
+    child.ready_commands(proof_commands());
+    child.send(json!({"id":"name-fork","type":"set_session_name","name":"Inherited 🦀"}));
+    child.success("name-fork");
+    for (id, message) in [
+        ("native-one", "ordinary retained"),
+        ("native-skill", "/skill:proof retained"),
+        ("native-selected", "selected excluded α"),
+    ] {
+        child.send(json!({"id":id,"type":"prompt","message":message}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+    }
+    let old = child.state("fork-old");
+    let old_file = PathBuf::from(old["sessionFile"].as_str().unwrap());
+    let before = std::fs::read(&old_file).unwrap();
+    let old_entries = journal(&old_file);
+    let selected = old_entries
+        .iter()
+        .find(|entry| entry["message"]["role"] == "user" && contains_text(&entry["message"], "selected excluded"))
+        .unwrap();
+    let parent = selected["parentId"].clone();
+    let selected_index = old_entries.iter().position(|entry| entry["id"] == selected["id"]).unwrap();
+    let retained = old_entries[..selected_index]
+        .iter()
+        .filter(|entry| entry.get("id").is_some() && entry["type"] != "session")
+        .cloned()
+        .collect::<Vec<_>>();
+    let public = child.messages("fork-old-messages");
+    branch_rpc(&mut child, "native-fork", selected["id"].as_str().unwrap(), "selected excluded α", proof_commands());
+    let fork = child.state("fork-state");
+    assert_ne!(fork["sessionId"], old["sessionId"]);
+    assert_eq!(fork["sessionName"], "Inherited 🦀");
+    let fork_file = PathBuf::from(fork["sessionFile"].as_str().unwrap());
+    assert_ne!(fork_file, old_file);
+    assert_eq!(native_header(&journal(&fork_file))["parentSession"], json!(old_file));
+    let fork_entries = journal(&fork_file);
+    assert_eq!(
+        fork_entries
+            .iter()
+            .filter(|entry| entry.get("id").is_some() && entry["type"] != "session")
+            .cloned()
+            .collect::<Vec<_>>(),
+        retained
+    );
+    assert_eq!(fork_entries.last().unwrap()["id"], parent);
+    assert_eq!(child.messages("fork-public"), public[..public.len() - 2]);
+    child.send(json!({"id":"fork-task","type":"prompt","message":"continue fork only"}));
+    child.success("fork-task");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let final_public = child.messages("fork-final-public");
+    child.finish(0);
+    assert_eq!(std::fs::read(&old_file).unwrap(), before);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("fork.txt")).unwrap(), "fork effect");
+    std::fs::remove_file(skill).unwrap();
+    let mut reopened =
+        RpcChild::spawn(env.command(&up.base_url(), &["--resume", fork_file.to_str().unwrap(), "--tools", "write"]));
+    reopened.ready();
+    assert_eq!(reopened.messages("fork-reopened"), final_public);
+    reopened.finish(0);
+    assert_eq!(std::fs::read(&old_file).unwrap(), before);
+    assert_eq!(up.served(), 6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_memory_fork_keeps_native_ids_duplicate_text_images_and_custom_receipts_without_files() {
+    let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Memory fork Skill body");
+    let up = upstream(json!({"responses":[
+        {"events":[text("First answer"),finish("stop"),done()]},
+        {"events":[text("Skill answer"),finish("stop"),done()]},
+        {"events":[text("Selected answer"),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--no-session"]));
+    child.ready_commands(proof_commands());
+    for (id, message) in
+        [("memory-first", "same text"), ("memory-skill", "/skill:proof memory"), ("memory-selected", "same text")]
+    {
+        child
+            .send(json!({"id":id,"type":"prompt","message":message,"images":[{"data":"aA==","mimeType":"image/png"}]}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+    }
+    let old = child.state("memory-old");
+    let public = child.messages("memory-public");
+    let picks = query_data(&mut child, "memory-picks", "get_branch_messages");
+    let picks = picks["messages"].as_array().unwrap();
+    assert_eq!(picks.len(), 2);
+    assert_ne!(picks[0]["entryId"], picks[1]["entryId"]);
+    branch_rpc(&mut child, "memory-fork", picks[1]["entryId"].as_str().unwrap(), "same text", proof_commands());
+    let fork = child.state("memory-fork-state");
+    assert_ne!(fork["sessionId"], old["sessionId"]);
+    assert!(fork.get("sessionFile").is_none());
+    assert_eq!(child.messages("memory-kept"), public[..4]);
+    assert_eq!(query_data(&mut child, "memory-kept-ids", "get_branch_messages")["messages"], json!([picks[0]]));
+    assert!(public[0]["content"].as_array().unwrap().iter().any(|block| block["type"] == "image"));
+    assert_eq!(public[2]["role"], "custom");
+    child.finish(0);
+    assert!(env.sessions().is_empty());
+    assert_eq!(up.served(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_branch_joins_held_run_clears_queues_and_busy_page_returns_before_terminal() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[text("Retained answer"),finish("stop"),done()]},
+        {"events":[text("Held branch answer")],"end":"hang"},
+        {"events":[text("New fork answer"),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready();
+    child.send(json!({"id":"held-seed","type":"prompt","message":"retained seed"}));
+    child.success("held-seed");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let old = child.state("held-origin");
+    let old_file = PathBuf::from(old["sessionFile"].as_str().unwrap());
+    child.send(json!({"id":"held-selected","type":"prompt","message":"held selected"}));
+    child.success("held-selected");
+    child.until(
+        |frame| frame["type"] == "message_update" && contains_text(&frame["message"], "Held branch answer"),
+        WAIT,
+    );
+    let begin = child.seen.len();
+    child.send(json!({"id":"busy-🦀","type":"get_messages_page","limit":1}));
+    let busy = child.until(|frame| frame["command"] == "get_messages_page", Duration::from_secs(2));
+    assert_eq!(busy["success"], false);
+    assert_eq!(busy["id"], "busy-🦀");
+    assert_eq!(busy["code"], "session_busy");
+    assert_eq!(busy["error"], "Cannot page messages while the session is changing");
+    assert!(!child.seen[begin..].iter().any(|frame| frame["type"] == "agent_end"));
+    child.send(json!({"id":"invalid-fork","type":"branch","entryId":"missing"}));
+    assert_eq!(child.response("invalid-fork")["error"], "Invalid entry ID for branching");
+    assert_eq!(child.state("still-held")["isStreaming"], true);
+    for kind in ["steer", "follow_up"] {
+        child.send(json!({"id":kind,"type":kind,"message":"discard old queued input"}));
+        child.success(kind);
+    }
+    let entries = query_data(&mut child, "held-picks", "get_branch_messages");
+    let selected = entries["messages"].as_array().unwrap().last().unwrap()["entryId"].as_str().unwrap();
+    branch_rpc(&mut child, "held-fork", selected, "held selected", json!([]));
+    let fork = child.state("held-fork-state");
+    assert_eq!(fork["queuedMessageCount"], 0);
+    assert_eq!(fork["messageCount"], 2);
+    let old_after = std::fs::read(&old_file).unwrap();
+    let old_entries = journal(&old_file);
+    assert_eq!(old_entries.last().unwrap()["message"]["stopReason"], "aborted");
+    assert!(!json!(old_entries).to_string().contains("discard old queued input"));
+    child.send(json!({"id":"after-held-fork","type":"prompt","message":"fresh fork input"}));
+    child.success("after-held-fork");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(std::fs::read(old_file).unwrap(), old_after);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    let fresh = requests[2]["body"]["messages"].to_string();
+    assert!(fresh.contains("retained seed") && fresh.contains("fresh fork input"));
+    assert!(!fresh.contains("held selected") && !fresh.contains("discard old"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_paging_reconstructs_snapshot_and_rename_new_message_and_adoption_stale_cursors() {
+    use ara_ai::{Message, UserMessage};
+    use ara_session::SessionJournal;
+    let env = Env::new();
+    let mut native = SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+    for i in 0..9 {
+        native.append_message(&Message::User(UserMessage::text(format!("page {i}")))).unwrap();
+    }
+    native.materialize().unwrap();
+    let file = native.path().to_path_buf();
+    let up = upstream(json!({"responses":[{"events":[text("New message answer"),finish("stop"),done()]}]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    child.ready();
+    let all = child.messages("page-all");
+    let before = std::fs::read(&file).unwrap();
+    let mut cursor = None;
+    let mut rebuilt = Vec::new();
+    let mut first_cursor = Value::Null;
+    for i in 0..5 {
+        let id = format!("page-{i}");
+        let mut frame = json!({"id":id,"type":"get_messages_page","limit":2});
+        if let Some(cursor) = cursor {
+            frame["cursor"] = cursor;
+        }
+        child.send(frame);
+        let page = child.success(&id)["data"].clone();
+        assert_eq!(page["totalMessages"], 9);
+        rebuilt.extend(page["messages"].as_array().unwrap().clone());
+        if i == 0 {
+            first_cursor = page["nextCursor"].clone();
+        }
+        cursor = page.get("nextCursor").cloned();
+    }
+    assert!(cursor.is_none());
+    assert_eq!(rebuilt, all);
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    child.send(json!({"id":"page-rename","type":"set_session_name","name":"New leaf, same messages"}));
+    child.success("page-rename");
+    child.send(json!({"id":"page-stale-leaf","type":"get_messages_page","cursor":first_cursor}));
+    let stale = child.response("page-stale-leaf");
+    assert_eq!(stale["code"], "stale_cursor");
+    assert_eq!(stale["error"], "RPC message cursor is stale");
+    child.send(json!({"id":"page-current","type":"get_messages_page","limit":1}));
+    let current_cursor = child.success("page-current")["data"]["nextCursor"].clone();
+    child.send(json!({"id":"page-new-message","type":"prompt","message":"new count"}));
+    child.success("page-new-message");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.send(json!({"id":"page-stale-count","type":"get_messages_page","cursor":current_cursor}));
+    assert_eq!(child.response("page-stale-count")["code"], "stale_cursor");
+    child.adopt("page-new-session", json!({"id":"page-new-session","type":"new_session"}));
+    child.send(json!({"id":"page-stale-session","type":"get_messages_page","cursor":first_cursor}));
+    assert_eq!(child.response("page-stale-session")["code"], "stale_cursor");
+    child.send(json!({"id":"page-invalid","type":"get_messages_page","limit":0}));
+    let invalid = child.response("page-invalid");
+    assert_eq!(invalid["success"], false);
+    assert!(invalid.get("code").is_none());
+    child.send(json!({"id":"page-null-limit","type":"get_messages_page","limit":null}));
+    assert_eq!(child.success("page-null-limit")["data"], json!({"messages":[],"totalMessages":0}));
+    child.finish(0);
+    assert_eq!(up.served(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_paging_oversized_first_message_round_trips_through_v2_chunks() {
+    use ara_ai::{Message, UserMessage};
+    use ara_session::SessionJournal;
+    let env = Env::new();
+    let mut native = SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+    let large = "🦀中文".repeat(140_000);
+    native.append_message(&Message::User(UserMessage::text(large.clone()))).unwrap();
+    native.append_message(&Message::User(UserMessage::text("second message"))).unwrap();
+    native.materialize().unwrap();
+    let file = native.path().to_path_buf();
+    let up = upstream(json!({"responses":[]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    child.ready();
+    child.send(json!({"id":"page-v2","type":"negotiate_protocol","protocolVersion":2}));
+    child.success("page-v2");
+    child.send(json!({"id":"page-large","type":"get_messages_page"}));
+    let mut decoder = ara_rpc::RpcFrameDecoder::new();
+    let mut chunks = 0;
+    let page = loop {
+        let frame = child.next(WAIT);
+        if frame["type"] == "rpc_chunk" {
+            chunks += 1;
+        }
+        if let Some(decoded) = decoder.push(ara_rpc::WireValue::parse(&frame.to_string()).unwrap()).unwrap() {
+            let response: Value = serde_json::from_str(&decoded.stringify()).unwrap();
+            if response["id"] == "page-large" {
+                break response["data"].clone();
+            }
+        }
+    };
+    assert!(chunks >= 2, "oversized page uses the negotiated chunk writer");
+    assert_eq!(page["totalMessages"], 2);
+    assert_eq!(page["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(page["messages"][0]["content"], large);
+    child.send(json!({"id":"page-large-next","type":"get_messages_page","cursor":page["nextCursor"]}));
+    let last = child.success("page-large-next")["data"].clone();
+    assert_eq!(last["messages"][0]["content"], "second message");
+    assert!(last.get("nextCursor").is_none());
+    child.finish(0);
+    assert_eq!(up.served(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_branch_side_path_root_and_target_failure_preserve_original_identity_and_history() {
+    use ara_ai::{AssistantBlock, AssistantMessage, Message, UserMessage};
+    use ara_session::SessionJournal;
+    let env = Env::new();
+    let source_dir = tempfile::tempdir().unwrap();
+    let mut native = SessionJournal::create(source_dir.path(), env.work.path()).unwrap();
+    let root = native.append_message(&Message::User(UserMessage::text("root selection"))).unwrap();
+    let mut answer = AssistantMessage::empty("openai-completions", "fixture", "fake-model");
+    answer.content.push(AssistantBlock::text("retained root answer"));
+    let parent = native.append_message(&Message::Assistant(answer)).unwrap();
+    let selected = native.append_message(&Message::User(UserMessage::text("side selection"))).unwrap();
+    native.append_message(&Message::User(UserMessage::text("active different branch"))).unwrap();
+    native.set_session_name("Root inherited title", "user").unwrap();
+    native.materialize().unwrap();
+    let file = native.path().to_path_buf();
+    let mut entries = journal(&file);
+    entries.iter_mut().find(|entry| entry["id"] == root).unwrap()["parentId"] = json!("");
+    entries.iter_mut().find(|entry| entry["message"]["content"] == "active different branch").unwrap()["parentId"] =
+        json!(root);
+    entries.iter_mut().find(|entry| entry["type"] == "session").unwrap()["additionalDirectories"] =
+        json!([env.work.path().join("extra")]);
+    std::fs::write(&file, entries.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    let up = upstream(json!({"responses":[]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    child.ready();
+    let old = child.state("side-origin");
+    let old_messages = child.messages("side-original-messages");
+    let before = std::fs::read(&file).unwrap();
+    for (id, entry_id) in [("bad-assistant", parent.as_str()), ("bad-missing", "missing")] {
+        child.send(json!({"id":id,"type":"branch","entryId":entry_id}));
+        assert_eq!(child.response(id)["error"], "Invalid entry ID for branching");
+    }
+    if env.sessions.exists() {
+        std::fs::remove_dir(&env.sessions).unwrap();
+    }
+    std::fs::write(&env.sessions, "blocked target directory").unwrap();
+    child.send(json!({"id":"branch-disk-failure","type":"branch","entryId":selected}));
+    assert_eq!(child.response("branch-disk-failure")["success"], false);
+    assert_eq!(child.state("side-failed-id")["sessionId"], old["sessionId"]);
+    assert_eq!(child.messages("side-failed-messages"), old_messages);
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    std::fs::remove_file(&env.sessions).unwrap();
+    branch_rpc(&mut child, "side-fork", &selected, "side selection", json!([]));
+    let side = child.state("side-fork-state");
+    let side_file = PathBuf::from(side["sessionFile"].as_str().unwrap());
+    assert_eq!(user_texts(&child.messages("side-fork-messages")), ["root selection"]);
+    assert_eq!(child.messages("side-fork-all").len(), 2);
+    assert_eq!(native_header(&journal(&side_file))["additionalDirectories"], json!([env.work.path().join("extra")]));
+    child.adopt("back-to-root-source", json!({"id":"back-to-root-source","type":"switch_session","sessionPath":file}));
+    branch_rpc(&mut child, "root-fork", &root, "root selection", json!([]));
+    let root_state = child.state("root-fork-state");
+    assert_eq!(root_state["messageCount"], 0);
+    assert_eq!(root_state["sessionName"], "Root inherited title");
+    let root_file = PathBuf::from(root_state["sessionFile"].as_str().unwrap());
+    let root_entries = journal(&root_file);
+    assert!(native_header(&root_entries).get("additionalDirectories").is_none());
+    assert_eq!(root_entries.iter().filter(|entry| entry["type"] == "title_change").count(), 1);
+    assert!(root_entries.iter().all(|entry| entry["type"] != "message"));
+    child.finish(0);
+    assert_eq!(std::fs::read(file).unwrap(), before);
+    assert_eq!(up.served(), 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_native_stats_count_completed_skill_tool_turns_and_branch_queries_use_all_raw_entry_ids() {
     let env = Env::new();

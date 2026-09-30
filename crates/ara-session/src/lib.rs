@@ -23,8 +23,8 @@
 //! resume instead of being replayed.
 //!
 //! Not ported (open): compaction/branch-summary entries in live model context building,
-//! labels, general custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
-//! listing/search, forking, moving, title generation, blob externalization.
+//! label editing, general custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
+//! listing/search, moving, title generation, blob externalization.
 
 mod skill_prompt;
 
@@ -353,6 +353,7 @@ pub struct Recovery {
 
 pub struct SessionJournal {
     path: PathBuf,
+    persistent: bool,
     header: Value,
     title: TitleSlot,
     entries: Vec<Entry>,
@@ -389,6 +390,7 @@ impl SessionJournal {
         }
         Ok(SessionJournal {
             path,
+            persistent: true,
             title: TitleSlot { updated_at: timestamp, ..Default::default() },
             header,
             entries: Vec::new(),
@@ -400,6 +402,113 @@ impl SessionJournal {
             pending_backup: false,
             report: LoadReport::default(),
         })
+    }
+
+    /// Native in-memory journal with the host's Session identity and no file effects.
+    pub fn in_memory(header: Value) -> Result<SessionJournal> {
+        if !is_valid_header(&header) || header.get("version").and_then(Value::as_u64) != Some(CURRENT_SESSION_VERSION) {
+            return Err(SessionError::Corrupt { path: PathBuf::new(), message: CORRUPT_HEADER_MESSAGE.into() });
+        }
+        let title = TitleSlot {
+            title: header.get("title").and_then(Value::as_str).unwrap_or_default().into(),
+            source: header.get("titleSource").and_then(Value::as_str).map(str::to_string),
+            updated_at: header.get("timestamp").and_then(Value::as_str).unwrap_or_default().into(),
+        };
+        Ok(SessionJournal {
+            path: PathBuf::new(),
+            persistent: false,
+            header,
+            title,
+            entries: Vec::new(),
+            ids: HashSet::new(),
+            leaf: None,
+            materialized: false,
+            rewrite_required: false,
+            loaded_invalid_utf8: false,
+            pending_backup: false,
+            report: LoadReport::default(),
+        })
+    }
+
+    /// Prepare a new native Session through `leaf`, leaving this source unchanged.
+    /// `None` means the root-user branch flow: an empty Session and inherited
+    /// name action. A directory forces a durable fork; no directory keeps it
+    /// in memory. Missing parents and cycles retain fixed OMP's tolerant path walk.
+    pub fn fork_at(&self, leaf: Option<&str>, session_dir: Option<&Path>) -> Result<SessionJournal> {
+        let branch = self.path_to(leaf);
+        if let Some(leaf) = leaf
+            && branch.is_empty()
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Entry {leaf} not found")).into());
+        }
+        let timestamp = now_iso();
+        let id = uuid::Uuid::now_v7().to_string();
+        let mut header = json!({
+            "type": "session", "version": CURRENT_SESSION_VERSION,
+            "id": id, "timestamp": timestamp, "cwd": self.header["cwd"],
+        });
+        if session_dir.is_some() && self.persistent {
+            header["parentSession"] = json!(self.path);
+        }
+        // Fixed AgentSession's root flow calls newSession without workspace
+        // options. createBranchedSession preserves the additional directories.
+        if leaf.is_some()
+            && let Some(directories) = self
+                .header
+                .get("additionalDirectories")
+                .filter(|value| value.as_array().is_some_and(|directories| !directories.is_empty()))
+        {
+            header["additionalDirectories"] = directories.clone();
+        }
+        let mut fork = Self::in_memory(header)?;
+        if leaf.is_none() {
+            if !self.title.title.is_empty() {
+                fork.set_session_name(&self.title.title, self.title.source.as_deref().unwrap_or("auto"))?;
+            }
+        } else {
+            fork.title = TitleSlot { updated_at: timestamp.clone(), ..self.title.clone() };
+            if !fork.title.title.is_empty() {
+                fork.header["title"] = json!(fork.title.title);
+            }
+            if let Some(source) = &fork.title.source {
+                fork.header["titleSource"] = json!(source);
+            }
+            fork.entries = branch.into_iter().filter(|entry| entry.kind != "label").cloned().collect();
+            fork.ids = fork.entries.iter().map(|entry| entry.id.clone()).collect();
+            fork.leaf = fork.entries.last().map(|entry| entry.id.clone());
+
+            // SessionEntryIndex resolves labels over ALL entries, including
+            // off-path edits. Vec preserves JS Map insertion order; deletion
+            // followed by a new label moves that target to the end.
+            let mut labels: Vec<(String, String)> = Vec::new();
+            for entry in self.entries.iter().filter(|entry| entry.kind == "label") {
+                let Some(target) = entry.raw.get("targetId").and_then(Value::as_str) else { continue };
+                match entry.raw.get("label").and_then(Value::as_str).filter(|label| !label.is_empty()) {
+                    Some(label) => {
+                        if let Some((_, current)) = labels.iter_mut().find(|(id, _)| id.as_str() == target) {
+                            *current = label.to_owned();
+                        } else {
+                            labels.push((target.to_owned(), label.to_owned()));
+                        }
+                    }
+                    None => labels.retain(|(id, _)| id.as_str() != target),
+                }
+            }
+            let labels_to_carry =
+                labels.into_iter().filter(|(target, _)| fork.ids.contains(target)).collect::<Vec<_>>();
+            for (target, label) in labels_to_carry {
+                let mut fields = serde_json::Map::new();
+                fields.insert("targetId".into(), json!(target));
+                fields.insert("label".into(), json!(label));
+                fork.append_raw("label", fields)?;
+            }
+        }
+        if let Some(directory) = session_dir {
+            fork.path = directory.join(format!("{}_{}.jsonl", file_safe_timestamp(&timestamp), id));
+            fork.persistent = true;
+            fork.materialize()?;
+        }
+        Ok(fork)
     }
 
     /// Load an existing session. Malformed records are skipped (the file is
@@ -474,6 +583,7 @@ impl SessionJournal {
         let leaf = entries.last().map(|e| e.id.clone());
         Ok(SessionJournal {
             path: path.into(),
+            persistent: true,
             header,
             title,
             entries,
@@ -489,6 +599,9 @@ impl SessionJournal {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    pub fn is_persistent(&self) -> bool {
+        self.persistent
     }
     pub fn session_id(&self) -> &str {
         self.header["id"].as_str().unwrap_or_default()
@@ -571,6 +684,9 @@ impl SessionJournal {
     /// Atomic full rewrite: synced backup of damaged bytes, unique temp file,
     /// fsync, rename, and directory fsync where supported.
     fn rewrite(&mut self) -> Result<()> {
+        if !self.persistent {
+            return Ok(());
+        }
         let dir = self.dir();
         fs::create_dir_all(&dir)?;
         if self.pending_backup && self.path.exists() {
@@ -600,6 +716,9 @@ impl SessionJournal {
     }
 
     fn persist(&mut self, entry_raw: &Value) -> Result<()> {
+        if !self.persistent {
+            return Ok(());
+        }
         if !self.materialized && !self.has_assistant() {
             return Ok(()); // lazy: nothing on disk until an assistant message exists
         }
@@ -677,9 +796,13 @@ impl SessionJournal {
     /// Entries on the branch from the root to the leaf. The walk stops at a
     /// missing parent (e.g. a dropped malformed record), like OMP `pathTo`.
     pub fn branch(&self) -> Vec<&Entry> {
+        self.path_to(self.leaf.as_deref())
+    }
+
+    fn path_to(&self, leaf: Option<&str>) -> Vec<&Entry> {
         let by_id: HashMap<&str, &Entry> = self.entries.iter().map(|e| (e.id.as_str(), e)).collect();
         let mut out = Vec::new();
-        let mut cur = self.leaf.as_deref();
+        let mut cur = leaf;
         let mut seen = HashSet::new();
         while let Some(id) = cur {
             if !seen.insert(id) {
@@ -694,7 +817,7 @@ impl SessionJournal {
     }
 
     fn strict_compaction_branch(&self) -> std::result::Result<Vec<&Entry>, CompactionSourceError> {
-        if !self.materialized || self.leaf.is_none() {
+        if (self.persistent && !self.materialized) || self.leaf.is_none() {
             return Err(CompactionSourceError::NotDurable);
         }
         if self.rewrite_required {
@@ -757,6 +880,9 @@ impl SessionJournal {
     /// known non-context anchors; unsupported context entries need their own
     /// projection before compaction can safely use this branch.
     pub fn compaction_source_snapshot(&self) -> std::result::Result<CompactionSourceSnapshot, CompactionSourceError> {
+        if !self.materialized {
+            return Err(CompactionSourceError::NotDurable);
+        }
         let mut messages = Vec::new();
         for entry in self.strict_compaction_branch()? {
             match entry.kind.as_str() {

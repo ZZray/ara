@@ -105,13 +105,23 @@ impl Output {
     }
 
     fn response(&self, command: &Command, data: Option<Value>, error: Option<String>) {
+        self.response_wire(command, data.map(wire), error, None);
+    }
+
+    fn response_wire(&self, command: &Command, data: Option<WireValue>, error: Option<String>, code: Option<&str>) {
         let mut response = json!({"type":"response", "command":command.kind, "success":error.is_none()});
         if let Some(error) = error {
             response["error"] = json!(error);
-        } else if let Some(data) = data {
-            response["data"] = data;
+            if let Some(code) = code {
+                response["code"] = json!(code);
+            }
         }
         let mut response = wire(response);
+        if response.get("success") == Some(&WireValue::Bool(true))
+            && let Some(data) = data
+        {
+            response.insert("data", data);
+        }
         if let (Some(id), WireValue::Object(fields)) = (&command.id, &mut response) {
             fields.push(("id".into(), id.clone()));
         }
@@ -205,52 +215,49 @@ impl Command {
 }
 
 struct Session {
-    journal: tokio::sync::Mutex<Option<SessionJournal>>,
+    journal: tokio::sync::Mutex<SessionJournal>,
     // Public completed messages only. A partial is kept separately and never
     // appended by get_messages while the provider is still producing it.
     messages: Mutex<Vec<Value>>,
     partial: Mutex<Option<Value>>,
     persistence_error: Mutex<Option<String>>,
     name: Mutex<Option<String>>,
-    // A --no-session host still owns native IDs for its consumed user inputs.
-    // Disk Sessions query their original journal entries, including side branches.
-    ephemeral_user_entries: Mutex<Vec<Value>>,
     header: Value,
     file: Option<std::path::PathBuf>,
 }
 
 impl Session {
-    fn new(journal: Option<SessionJournal>, header: Value, messages: &[Message]) -> Arc<Self> {
+    fn new(journal: Option<SessionJournal>, header: Value, messages: &[Message]) -> Result<Arc<Self>> {
+        let journal = match journal {
+            Some(journal) => journal,
+            None => {
+                let mut journal = SessionJournal::in_memory(header.clone())?;
+                for message in messages {
+                    journal.append_message(message)?;
+                }
+                journal
+            }
+        };
         // Native provenance comes from the active raw branch. Reopening never
         // needs the historical Skill file, nor equality against model content.
-        let public_messages = if let Some(journal) = &journal {
-            journal
-                .branch()
-                .into_iter()
-                .filter_map(|entry| {
-                    entry.skill_prompt().map(|prompt| prompt.event_message()).or_else(|| {
-                        entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
-                    })
+        let public_messages = journal
+            .branch()
+            .into_iter()
+            .filter_map(|entry| {
+                entry.skill_prompt().map(|prompt| prompt.event_message()).or_else(|| {
+                    entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone())
                 })
-                .collect()
-        } else {
-            messages
-                .iter()
-                .map(|message| AgentEvent::MessageEnd { message: message.clone() }.full()["message"].clone())
-                .collect()
-        };
-        Arc::new(Self {
-            name: Mutex::new(
-                journal.as_ref().map(|journal| journal.title().title.clone()).filter(|name| !name.is_empty()),
-            ),
-            ephemeral_user_entries: Mutex::new(Vec::new()),
-            file: journal.as_ref().map(|journal| journal.path().into()),
+            })
+            .collect();
+        Ok(Arc::new(Self {
+            name: Mutex::new((!journal.title().title.is_empty()).then(|| journal.title().title.clone())),
+            file: journal.is_persistent().then(|| journal.path().into()),
             journal: tokio::sync::Mutex::new(journal),
             messages: Mutex::new(public_messages),
             partial: Mutex::new(None),
             persistence_error: Mutex::new(None),
             header,
-        })
+        }))
     }
 }
 
@@ -303,26 +310,10 @@ impl AgentEventSink for RunSink {
         match &event {
             AgentEvent::MessageEnd { message } => {
                 let mut journal = self.session.journal.lock().await;
-                if let Some(journal) = journal.as_mut() {
-                    if let Err(error) = journal.append_message(message) {
-                        // The loop awaits this sink before starting tools. A failed
-                        // assistant receipt therefore cancels before new effects.
-                        self.persistence_failed(error);
-                    }
-                } else if let Message::User(_) = message {
-                    let text = branch_user_message(&json!({"type":"message","message":public["message"]}))
-                        .and_then(|entry| entry["text"].as_str().map(str::to_owned))
-                        .unwrap_or_default();
-                    if !text.is_empty() {
-                        let mut entries = self.session.ephemeral_user_entries.lock().unwrap();
-                        let id = loop {
-                            let id = uuid::Uuid::new_v4().simple().to_string()[24..].to_owned();
-                            if !entries.iter().any(|entry| entry["entryId"] == id) {
-                                break id;
-                            }
-                        };
-                        entries.push(json!({"entryId":id,"text":text}));
-                    }
+                if let Err(error) = journal.append_message(message) {
+                    // The loop awaits this sink before starting tools. A failed
+                    // assistant receipt therefore cancels before new effects.
+                    self.persistence_failed(error);
                 }
                 drop(journal);
                 self.completed_message(public["message"].clone());
@@ -351,9 +342,7 @@ impl AgentEventSink for RunSink {
         };
         let public = prompt.event_message();
         self.output.frame(json!({"type":"message_start","message":public}));
-        if let Some(journal) = self.session.journal.lock().await.as_mut()
-            && let Err(error) = journal.append_skill_prompt(&prompt)
-        {
+        if let Err(error) = self.session.journal.lock().await.append_skill_prompt(&prompt) {
             self.persistence_failed(error);
         }
         self.completed_message(public.clone());
@@ -413,10 +402,10 @@ impl Host {
         messages: Vec<Message>,
         config: AgentConfig,
         skills: Vec<LoadedSkill>,
-    ) {
+    ) -> Result<()> {
         // Preparation is complete and the old owned Run is joined. Commit the
         // replacement once; each settled RunSink retains its original journal.
-        let session = Session::new(journal, header, &messages);
+        let session = Session::new(journal, header, &messages)?;
         let agent = Agent::new(config.clone(), messages);
         agent.set_steering_mode(self.agent.steering_mode());
         agent.set_follow_up_mode(self.agent.follow_up_mode());
@@ -425,6 +414,7 @@ impl Host {
         self.config = config;
         self.skills = skills;
         self.drain_queues = false;
+        Ok(())
     }
 
     async fn new_session(&mut self, parent: Option<&str>) -> Result<()> {
@@ -445,7 +435,7 @@ impl Host {
             .as_ref()
             .map(|journal| journal.header().clone())
             .unwrap_or_else(|| super::ephemeral_header(&self.sessions.cwd, parent));
-        self.adopt(journal, header, Vec::new(), config, skills);
+        self.adopt(journal, header, Vec::new(), config, skills)?;
         Ok(())
     }
 
@@ -478,8 +468,31 @@ impl Host {
         super::recover_session(&mut journal)?;
         let messages = journal.model_context();
         let header = journal.header().clone();
-        self.adopt(Some(journal), header, messages, config, skills);
+        self.adopt(Some(journal), header, messages, config, skills)?;
         Ok(false)
+    }
+
+    async fn branch(&mut self, entry_id: &str) -> Result<String> {
+        // Select raw identity before cancellation; empty/image-only ordinary
+        // users are valid even though the branch picker omits their empty text.
+        let (parent, text) = {
+            let journal = self.session.journal.lock().await;
+            let entry = journal
+                .entries()
+                .iter()
+                .rev()
+                .find(|entry| entry.id == entry_id)
+                .filter(|entry| entry.kind == "message" && entry.raw["message"]["role"] == "user")
+                .context("Invalid entry ID for branching")?;
+            (entry.parent_id.clone().filter(|parent| !parent.is_empty()), user_message_text(&entry.raw["message"]))
+        };
+        self.abort().await;
+        let (config, skills) = self.sessions.config(&self.config, true).await?;
+        let journal = self.session.journal.lock().await.fork_at(parent.as_deref(), self.sessions.dir.as_deref())?;
+        let header = journal.header().clone();
+        let messages = journal.model_context();
+        self.adopt(Some(journal), header, messages, config, skills)?;
+        Ok(text)
     }
 
     fn start(&mut self, message: Option<AgentInput>, command: Command) -> Result<()> {
@@ -632,11 +645,41 @@ impl Host {
             "get_messages" => {
                 self.output.response(command, Some(json!({"messages":*self.session.messages.lock().unwrap()})), None)
             }
+            "get_messages_page" => {
+                use ara_rpc::messages::{
+                    RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessageSnapshot, RpcMessagesPageOptions, page_rpc_messages,
+                };
+                if self.active.is_some() {
+                    self.output.response_wire(
+                        command,
+                        None,
+                        Some(RPC_MESSAGES_PAGE_BUSY_ERROR.into()),
+                        Some("session_busy"),
+                    );
+                } else {
+                    let journal = self.session.journal.lock().await;
+                    let messages = self.session.messages.lock().unwrap().iter().cloned().map(wire).collect::<Vec<_>>();
+                    let snapshot = RpcMessageSnapshot {
+                        session_id: self.session.header["id"].as_str().context("Session identity is missing")?.into(),
+                        leaf_id: journal.leaf_id().map(Into::into),
+                        message_count: messages.len(),
+                    };
+                    match page_rpc_messages(
+                        &messages,
+                        &snapshot,
+                        RpcMessagesPageOptions {
+                            cursor: command.frame.get("cursor"),
+                            limit: command.frame.get("limit"),
+                        },
+                    ) {
+                        Ok(page) => self.output.response_wire(command, Some(page.into()), None, None),
+                        Err(error) => self.output.response_wire(command, None, Some(error.message), error.code),
+                    }
+                }
+            }
             "get_session_stats" => {
                 let journal = self.session.journal.lock().await;
-                let messages = if let Some(journal) = journal.as_ref()
-                    && journal.branch().iter().any(|entry| entry.kind == "compaction")
-                {
+                let messages = if journal.branch().iter().any(|entry| entry.kind == "compaction") {
                     let projection =
                         journal.compacted_context_projection().context("projecting compacted Session statistics")?;
                     let entries = journal
@@ -670,11 +713,8 @@ impl Host {
             }
             "get_branch_messages" => {
                 let journal = self.session.journal.lock().await;
-                let messages = if let Some(journal) = journal.as_ref() {
-                    journal.entries().iter().filter_map(|entry| branch_user_message(&entry.raw)).collect::<Vec<_>>()
-                } else {
-                    self.session.ephemeral_user_entries.lock().unwrap().clone()
-                };
+                let messages =
+                    journal.entries().iter().filter_map(|entry| branch_user_message(&entry.raw)).collect::<Vec<_>>();
                 self.output.response(command, Some(json!({"messages":messages})), None);
             }
             "set_session_name" => {
@@ -684,18 +724,10 @@ impl Host {
                     bail!("Session name cannot be empty");
                 }
                 let mut journal = self.session.journal.lock().await;
-                let applied = if let Some(journal) = journal.as_mut() {
-                    if !journal.set_session_name(name, "user")? {
-                        bail!("Session name cannot be empty");
-                    }
-                    journal.title().title.clone()
-                } else {
-                    let name = ara_session::normalize_session_name(name);
-                    if name.is_empty() {
-                        bail!("Session name cannot be empty");
-                    }
-                    name
-                };
+                if !journal.set_session_name(name, "user")? {
+                    bail!("Session name cannot be empty");
+                }
+                let applied = journal.title().title.clone();
                 *self.session.name.lock().unwrap() = Some(applied);
                 self.output.response(command, None, None);
             }
@@ -743,6 +775,11 @@ impl Host {
                     self.emit_available_commands();
                 }
                 self.output.response(command, Some(json!({"cancelled":cancelled})), None);
+            }
+            "branch" => {
+                let text = self.branch(&command.string("entryId")?).await?;
+                self.emit_available_commands();
+                self.output.response(command, Some(json!({"text":text,"cancelled":false})), None);
             }
             "prompt" => {
                 let text = command.string("message")?;
@@ -820,8 +857,13 @@ fn branch_user_message(entry: &Value) -> Option<Value> {
     if entry["type"] != "message" || entry["message"]["role"] != "user" {
         return None;
     }
-    let content = &entry["message"]["content"];
-    let text = content.as_str().map(str::to_owned).unwrap_or_else(|| {
+    let text = user_message_text(&entry["message"]);
+    (!text.is_empty()).then(|| json!({"entryId":entry["id"],"text":text}))
+}
+
+fn user_message_text(message: &Value) -> String {
+    let content = &message["content"];
+    content.as_str().map(str::to_owned).unwrap_or_else(|| {
         content
             .as_array()
             .into_iter()
@@ -829,8 +871,7 @@ fn branch_user_message(entry: &Value) -> Option<Value> {
             .filter(|block| block["type"] == "text")
             .filter_map(|block| block["text"].as_str())
             .collect::<String>()
-    });
-    (!text.is_empty()).then(|| json!({"entryId":entry["id"],"text":text}))
+    })
 }
 
 fn session_stats(messages: &[Value]) -> Value {
@@ -947,7 +988,7 @@ where
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
     let output_task = tokio::spawn(write_output(writer, output_rx, connection.clone()));
-    let session = Session::new(journal, header, &messages);
+    let session = Session::new(journal, header, &messages)?;
     let mut host = Host {
         agent: Agent::new(config.clone(), messages),
         session,
@@ -1104,7 +1145,7 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let output = Output(tx);
         let connection = CancellationToken::new();
-        let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]);
+        let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]).unwrap();
         let host = Host {
             agent: Agent::new(config.clone(), Vec::new()),
             session: session.clone(),
@@ -1147,6 +1188,17 @@ mod tests {
             vec![json!({"name":"skill:隐藏🦀",
             "description":"Run 隐藏🦀 skill","input":{"hint":"arguments"},"source":"skill"})]
         );
+    }
+
+    #[test]
+    fn paging_error_keeps_unpaired_utf16_correlation_id_and_code() {
+        let (host, mut rx) = fixture();
+        let command = Command::new(WireValue::parse(r#"{"type":"get_messages_page","id":"\ud800"}"#).unwrap());
+        host.output.response_wire(&command, None, Some("RPC message cursor is stale".into()), Some("stale_cursor"));
+        let OutputItem::Frame(frame) = rx.try_recv().unwrap() else { panic!("ordinary response") };
+        assert_eq!(frame.get("id"), command.id.as_ref());
+        assert_eq!(frame.get("code"), Some(&WireValue::String("stale_cursor".into())));
+        assert!(frame.get("data").is_none());
     }
 
     #[test]
@@ -1210,7 +1262,7 @@ mod tests {
         let upstream =
             ara_testkit::FakeUpstream::start(ara_testkit::Script { responses: Vec::new() }, None).await.unwrap();
         let (mut host, mut rx) = fixture();
-        host.session = Session::new(Some(journal), header, &[]);
+        host.session = Session::new(Some(journal), header, &[]).unwrap();
         let origin = host.session.clone();
         host.config.model.base_url = upstream.base_url();
         host.config.max_model_calls = Some(1);

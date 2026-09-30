@@ -250,7 +250,9 @@ implementations, with full command parity and P1-P6 still open.
 
 The subsequent [native query/action batch](evidence/rpc-native-queries.md) adds
 registered Skill discovery, raw branch selectors, bounded statistics and Session
-naming. RPC now has seventeen bounded command implementations. Current combined
-code is tested/audited WIP; defer its final actual-task acceptance to the coherent
-module checkpoint. Continue native fork/paging and the remaining Host contracts,
-then share the module's final gates rather than repeating each tiny point.
+naming. The subsequent [native fork/paging checkpoint](evidence/rpc-native-fork-paging.md)
+adds real persistent/memory Session forks and stable-snapshot message paging.
+RPC now has nineteen bounded command implementations. This combined checkpoint
+is tested/audited WIP; complete CA-RPC and P1-P6 remain open. Continue the remaining
+Host execution/configuration contracts in coherent batches, sharing final gates
+and bounded tasks across each batch. ARA customization waits for fixed OMP parity.

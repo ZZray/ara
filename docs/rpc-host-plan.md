@@ -120,8 +120,11 @@ events are additional contracts, not commands omitted from this denominator.
    active-branch native restoration. Complete CTX-01e and CA-RPC remain open.
    The [native query/action batch](evidence/rpc-native-queries.md) adds registered
    Skill metadata, branch selectors, bounded statistics and Session naming:
-   seventeen bounded variants, with full catalogue/statistics/fork contracts open.
-   Its current combined snapshot is tested/audited WIP pending module acceptance.
+   seventeen bounded variants, with full catalogue/statistics/fork contracts open
+   at that checkpoint. The [native fork/paging batch](evidence/rpc-native-fork-paging.md)
+   then adds canonical memory journals, real native forks and snapshot paging:
+   nineteen bounded variants. Complete CA-RPC and full advanced lifecycle hooks
+   remain open; this is tested/audited WIP, not full command acceptance.
 3. **Bidirectional execution and maintenance:** host tools/URI/extension UI,
    background bash, live configuration, compaction/retry and command metadata.
    Unsupported known commands fail explicitly until implemented.
