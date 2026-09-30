@@ -70,6 +70,7 @@ impl SessionFactory {
         Ok(config)
     }
 }
+
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,
@@ -230,6 +231,7 @@ struct RunSink {
     output: Output,
     cancel: CancellationToken,
     connection: CancellationToken,
+    terminal: Mutex<Option<Value>>,
 }
 
 #[async_trait]
@@ -253,7 +255,13 @@ impl AgentEventSink for RunSink {
             AgentEvent::MessageStart { message: Message::Assistant(_) } | AgentEvent::MessageUpdate { .. } => {
                 *self.session.partial.lock().unwrap() = Some(public["message"].clone());
             }
-            AgentEvent::AgentEnd { .. } => *self.session.partial.lock().unwrap() = None,
+            AgentEvent::AgentEnd { .. } => {
+                *self.session.partial.lock().unwrap() = None;
+                // Fixed AgentSession defers the wire terminal until the prompt
+                // unwinds. The client may immediately start its next Run.
+                *self.terminal.lock().unwrap() = Some(public);
+                return;
+            }
             _ => {}
         }
         self.output.frame(public);
@@ -264,6 +272,7 @@ struct ActiveRun {
     cancel: CancellationToken,
     task: JoinHandle<std::result::Result<RunReport, AgentError>>,
     command: Command,
+    sink: Arc<RunSink>,
 }
 
 struct Host {
@@ -364,18 +373,20 @@ impl Host {
             output: self.output.clone(),
             cancel: cancel.clone(),
             connection: self.connection.clone(),
+            terminal: Mutex::new(None),
         });
         let agent = self.agent.clone();
         let run_cancel = cancel.clone();
+        let run_sink = sink.clone();
         // The serial Host owns the slot before it can accept another command.
         // ACK was enqueued by the caller before this task can emit AgentStart.
         let task = tokio::spawn(async move {
             match message {
-                Some(message) => agent.prompt_with_config(vec![message], config, run_cancel, sink).await,
-                None => agent.continue_run_with_config(config, run_cancel, sink).await,
+                Some(message) => agent.prompt_with_config(vec![message], config, run_cancel, run_sink).await,
+                None => agent.continue_run_with_config(config, run_cancel, run_sink).await,
             }
         });
-        self.active = Some(ActiveRun { cancel, task, command });
+        self.active = Some(ActiveRun { cancel, task, command, sink });
         Ok(())
     }
 
@@ -384,6 +395,11 @@ impl Host {
         active: ActiveRun,
         result: std::result::Result<std::result::Result<RunReport, AgentError>, tokio::task::JoinError>,
     ) {
+        // Both callers joined the task and removed the active slot. Publish
+        // idle only after the Agent's running guard and transcript lock release.
+        if let Some(terminal) = active.sink.terminal.lock().unwrap().take() {
+            self.output.frame(terminal);
+        }
         let persistence_error = self.session.persistence_error.lock().unwrap().clone();
         let error = match result {
             Ok(Ok(report)) => match report.end {
@@ -741,5 +757,142 @@ where
         Ok(1)
     } else {
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use tokio::sync::oneshot;
+
+    struct TerminalGate {
+        inner: Arc<RunSink>,
+        reached: Mutex<Option<oneshot::Sender<()>>>,
+        release: tokio::sync::Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    #[async_trait]
+    impl AgentEventSink for TerminalGate {
+        async fn emit(&self, event: AgentEvent) {
+            let terminal = matches!(event, AgentEvent::AgentEnd { .. });
+            self.inner.emit(event).await;
+            if terminal {
+                self.reached.lock().unwrap().take().unwrap().send(()).unwrap();
+                self.release.lock().await.take().unwrap().await.unwrap();
+            }
+        }
+    }
+
+    fn frames(rx: &mut mpsc::UnboundedReceiver<OutputItem>) -> Vec<Value> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|item| match item {
+                OutputItem::Frame(frame) | OutputItem::Negotiate(frame) => {
+                    serde_json::from_str(&frame.stringify()).unwrap()
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn terminal_is_published_only_after_owned_run_settles() {
+        let cwd = std::env::current_dir().unwrap();
+        let provider = super::super::ProviderFactory {
+            client: reqwest::Client::new(),
+            api: super::super::Api::OpenaiCompletions,
+            options: Default::default(),
+            anthropic_strict_tools: false,
+            responses_stateful: false,
+        };
+        let config = AgentConfig {
+            model: ara_ai::Model {
+                id: "terminal-fixture".into(),
+                api: "openai-completions".into(),
+                provider: "test".into(),
+                base_url: String::new(),
+                reasoning: false,
+                max_tokens: None,
+                tokenizer: None,
+            },
+            provider: provider.build(),
+            system_prompt: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: None,
+            max_tokens: None,
+            temperature: None,
+            deadline: None,
+            // Exercise real Agent ownership without a network/model call.
+            max_model_calls: Some(0),
+            hooks: Arc::new(ara_agent::NoHooks),
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let output = Output(tx);
+        let connection = CancellationToken::new();
+        let session = Session::new(None, super::super::ephemeral_header(&cwd, None), &[]);
+        let mut host = Host {
+            agent: Agent::new(config.clone(), Vec::new()),
+            session: session.clone(),
+            config: config.clone(),
+            max_time: None,
+            output: output.clone(),
+            connection: connection.clone(),
+            active: None,
+            sessions: SessionFactory {
+                dir: None,
+                cwd,
+                provider,
+                args: super::super::Args::parse_from(["ara"]),
+                mcp_config: None,
+            },
+            drain_queues: false,
+        };
+        let cancel = connection.child_token();
+        let sink =
+            Arc::new(RunSink { session, output, cancel: cancel.clone(), connection, terminal: Mutex::new(None) });
+        let (reached_tx, reached) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let gate = Arc::new(TerminalGate {
+            inner: sink.clone(),
+            reached: Mutex::new(Some(reached_tx)),
+            release: tokio::sync::Mutex::new(Some(release_rx)),
+        });
+        let agent = host.agent.clone();
+        let run_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            agent.prompt_with_config(vec![Message::User(UserMessage::text("first"))], config, run_cancel, gate).await
+        });
+        host.active =
+            Some(ActiveRun { cancel, task, command: Command::new(wire(json!({"type":"prompt","id":"first"}))), sink });
+
+        tokio::time::timeout(Duration::from_secs(5), reached).await.unwrap().unwrap();
+        assert!(!host.active.as_ref().unwrap().task.is_finished());
+        assert_eq!(host.state()["isStreaming"], true);
+        let live = frames(&mut rx);
+        assert!(live.iter().any(|frame| frame["type"] == "agent_start"));
+        assert!(!live.iter().any(|frame| frame["type"] == "agent_end"));
+
+        release.send(()).unwrap();
+        let mut active = host.active.take().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
+        host.completed(active, result);
+        assert_eq!(host.state()["isStreaming"], false);
+        let settled = frames(&mut rx);
+        assert_eq!(settled.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
+        assert_eq!(settled[0]["type"], "agent_end");
+        assert_eq!(settled[1]["id"], "first");
+        assert_eq!(settled[1]["error"], "Model call limit reached");
+
+        host.handle(Command::new(wire(json!({"type":"prompt","id":"next","message":"next"})))).await;
+        let mut active = host.active.take().expect("immediate next prompt starts");
+        let result = tokio::time::timeout(Duration::from_secs(5), &mut active.task).await.unwrap();
+        host.completed(active, result);
+        let next = frames(&mut rx);
+        assert_eq!(next[0]["id"], "next");
+        assert_eq!(next[0]["success"], true);
+        assert!(next.iter().any(|frame| frame["type"] == "agent_start"));
+        assert_eq!(next.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
+        assert!(
+            !next.iter().any(|frame| frame["error"].as_str().is_some_and(|error| error.contains("already running")))
+        );
     }
 }

@@ -123,7 +123,14 @@ Logs/results and six-file source snapshot:
 `a030b108e20ee4800d873673e2203cbc26c1fff070bcdb619fa46d38c302d987`.
 Original, isolated trial and final full-gate executable hashes all match:
 `bba61c5769eaa1f2540b30626779b566c04a40fb7245cc0fd6751a7eb3fb3e12`.
-Exact pushed-commit Linux verification remains pending for this Session slice.
+Exact commit `840d2daa19678710fa0b52c79ac04cfb12f2804b` Linux repository
+run `36674773925` failed: RPC **20/21**, with the remaining backend suites
+not reached. The last frames show B1 `agent_end`, B2 success ACK, then B2
+`Agent is already running` failure; B2 never starts. This is a production
+terminal/Run-settlement race, separate from the corrected Responses fixture.
+Raw log: `C:\Temp\ara-rpc-host-session-validation\github\logs-36674773925\0_verify.txt`,
+lines 1600-1617. Windows and the prior actual-task receipts remain valid for
+their snapshots; they do not close this Linux failure.
 
 ### Bounded actual-model task
 
@@ -175,5 +182,85 @@ or optional model task was repeated for this audit. The actual-task lane also
 retained its raw receipt audit in `receipt-audit.json`; the parent independently
 rehashed the fifteen artifacts and matched tested files with the staged snapshot.
 
-**Decision: APPROVE as tested WIP.** Exact pushed-commit Linux remains pending;
-full RPC, P1-P6, saved settings and capability reconciliation remain open.
+**Decision at the reviewed snapshot: APPROVE as tested WIP.** The subsequent
+exact-commit Linux failure above keeps this slice open. Full RPC, P1-P6, saved
+settings and capability reconciliation remain open.
+
+## Terminal settlement correction, 2026-09-30
+
+Fixed `agent-session.ts:750-755,836-842,2361-2371` explicitly holds the external
+`agent_end` until in-flight prompts unwind, because clients immediately resume
+on that event. The Rust RPC sink now retains only its terminal frame; the
+serial Host publishes it after joining the owned task and removing its active
+slot. Other live events and awaited journal barriers retain their schedule.
+Normal completion, abort and EOF use the same completion path. The original
+terminal-before-correlated-error order remains intact; a task without a terminal
+does not acquire a fabricated success event. Shared Core/provider/print/REPL
+behavior and all twenty-one existing process oracles are unchanged.
+
+Independent Codex `rpc_entry_plan_review` approved this narrow plan before
+implementation. The final deterministic oracle holds the real Agent inside its
+terminal sink callback while its running guard/transcript lock remain owned.
+Before the explicit gate releases, no terminal is exposed; after join/slot
+removal, exactly one terminal appears and an immediate next prompt enters the
+real Agent. Its zero-call budget avoids network access and also proves the
+original terminal-before-correlated-error ordering.
+
+Final local receipts in `C:\Temp\ara-rpc-host-session-validation`:
+
+- `terminal-focused.log` / `-result.json`: **1/1**, **8.327 s** including compile.
+- `terminal-mutation.log` / `-result.json`: restoring premature sink emission
+  fails the no-terminal assertion, exit **101**, **7.438 s**. Original and
+  restored source hashes match; no mutated source is delivered.
+- `terminal-rpc-process.log`: default-feature process tests **20/20**, **7.355 s**
+  including compile. Full-gate all-feature RPC is **21/21**, **1.21 s** execution;
+  the additional test exercises the MCP launcher fixture.
+- `terminal-backend-windows.log` / `-result.json`: formatting, strict all-target/
+  all-feature Clippy, target tests and doc tests pass, **1,121/0/1 across 86
+  suites**, e2e **87/87**, **74.616 s**.
+- `terminal-cargo-deny.log`: advisories/bans/licenses/sources all pass,
+  **2.791 s**, existing warnings unchanged.
+- `terminal-bootstrap.log` and `terminal-inventory.log`: both pass.
+
+`terminal-source-snapshot.json` pins the tested seven paths. Final RPC source
+SHA-256 is `31da85dab1a66d0dd0beb0751ed780c93d283bd92905d3f57ef4e9815c55d42b`;
+EXE is `0cd88282995252590f98170e76db4f5ad7938aa63306d71585470bcbcae72071`.
+The existing twenty-one process tests, dependency bytes, main and Session source
+remain unchanged. An initial test compile stopped because two independently
+written test modules shared a name; the weaker duplicate was removed before
+all final receipts above.
+
+### Repaired executable actual task
+
+The parameterized `real_rpc_adoption_trial_terminal.py` changes only executable/
+expected-hash arguments; original driver and all task/limit assertions remain.
+Driver SHA-256: `8abf0d22e28c5986e75984276109b4a949d65b39a8941a822ff56e5f883b4a70`.
+Live route catalogue at **06:55:51 UTC** confirms 59 models and exact
+`deepseek-v4.1-flash`, OpenAI Chat Completions. Authorization remains environment
+only, cost unknown. Limits retain three Runs/nine calls, three calls/60 s per
+Run, 1,024 output tokens per call, 180 s process guard and 4 MiB stream caps.
+
+Final EXE task **PASS: 18.344 s, 3 Runs, 7 calls (3+2+2), 4 successful receipts,
+231 message updates, exit 0**. Proof/independent B marker/source-deletion A recall
+all match. A/B IDs remain distinct, journals retain 10/4 messages and 3/1 results.
+Reported usage totals **18,386 tokens**; cost remains unknown. All fifteen
+original artifact hashes match the final summary's snapshot.
+Receipts: `C:\Temp\ara-rpc-host-session-validation\real-adoption-lfrn4sqb\summary.json`;
+raw stdout, journal and original artifacts remain in that directory.
+
+Independent actual-task lane `rpc_terminal_real` audited all fifteen hashes,
+313 raw frames, ACK/live-state/metadata order, journal isolation, exact deleted-
+source recall, seven usage records, final idle/empty queues and one EOF shutdown.
+`receipt-audit.json` records PASS; stderr is empty and credential bytes are absent.
+Its summary/audit hashes are respectively
+`c5f0c01e72c385a168f5246b16da18812eed043c557b58149b6b5fe51b5c2ea3` and
+`dcb8d81acc4af489313a6513d7dc59bfef802a54a7a18bf29b7570b0bfbd2c69`.
+Independent Codex `rpc_terminal_review` approved the final code (4/4 paths,
+zero skipped/actionable defects), read the focused and caught-mutation logs,
+and independently recomputed the full gate, CLI/RPC counts and final source/EXE
+hashes. `terminal-staged-snapshot.json` matches all six tested source/dependency
+paths with the index; unchanged Cargo.toml alone has existing CRLF-to-LF
+normalization. The changed Rust file matches exactly.
+
+**Correction decision: APPROVE as tested WIP, pending accurate repaired-commit
+Linux verification.** No command or phase acceptance is advanced.

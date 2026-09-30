@@ -189,3 +189,15 @@ seven calls/four receipts and exact recall after source deletion. Original,
 isolated and full-gate executable hashes match. Independent final audit is
 recorded in the [Session evidence](evidence/rpc-host-session.md). This remains tested WIP; pushed-commit Linux
 verification and complete RPC/model/settings/capability contracts stay open.
+
+Exact `840d2da` Linux run `36674773925` subsequently exposed a terminal/owned
+Run-settlement race (RPC 20/21). The immediate priority is the narrow RPC terminal
+correction and its final Windows/real-task/independent/Linux receipts; owned
+Skill implementation waits for this gate to close. The source-backed three-view
+Skill design is retained without claiming implementation or advancing a phase.
+
+The repaired Windows snapshot and deterministic mutation now pass: backend
+1,121/0/1 (86 suites), all-feature RPC 21/21, e2e 87/87; actual three-Run task
+18.344 s with seven calls/four receipts and exact recall. Final independent
+audit and accurate repaired-commit Linux receipt remain the immediate gates;
+retain the complete 42-command denominator and P1-P6 acceptance boundary.
