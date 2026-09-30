@@ -3078,8 +3078,6 @@ async fn discovered_system_md_and_prompt_flags() {
     let user_dir = env._home.path().join("agent");
     std::fs::create_dir_all(&user_dir).unwrap();
     std::fs::create_dir_all(work.join(".ara")).unwrap();
-    std::fs::write(user_dir.join("SYSTEM.md"), "USER-SYSTEM-MARKER").unwrap();
-    std::fs::write(work.join(".ara/SYSTEM.md"), "PROJECT-SYSTEM-MARKER").unwrap();
     std::fs::write(work.join(".ara/APPEND_SYSTEM.md"), "APPEND-MARKER").unwrap();
     let run = |args: Vec<&'static str>| {
         let env = &env;
@@ -3094,9 +3092,32 @@ async fn discovered_system_md_and_prompt_flags() {
         }
     };
 
+    // The actual CLI/provider request carries ARA's default workflow before
+    // a host-owned SYSTEM.md or explicit custom prompt replaces it.
+    let (system, _) = run(vec![]).await;
+    assert!(
+        system.contains("evidence-guided problem solving") && system.contains("falsifiable hypotheses"),
+        "{system}"
+    );
+    assert!(system.contains("host-granted budgets and deadlines"), "{system}");
+    assert!(system.contains("underlying problem and desired outcome"), "{system}");
+    assert!(
+        system.contains("hard constraints (physical limits, protocol requirements, published contracts)"),
+        "{system}"
+    );
+    assert!(
+        system.contains("given facts F and constraints C, choose solution S and validate by observation V"),
+        "{system}"
+    );
+    assert!(system.contains("a clear explanation alone does not establish correctness"), "{system}");
+    assert_eq!(system.matches("APPEND-MARKER").count(), 1, "{system}");
+
+    std::fs::write(user_dir.join("SYSTEM.md"), "USER-SYSTEM-MARKER").unwrap();
+    std::fs::write(work.join(".ara/SYSTEM.md"), "PROJECT-SYSTEM-MARKER").unwrap();
     let (system, _) = run(vec![]).await;
     assert_eq!(system.matches("PROJECT-SYSTEM-MARKER").count(), 1, "{system}");
     assert!(!system.contains("USER-SYSTEM-MARKER") && !system.contains("coding harness"), "{system}");
+    assert!(!system.contains("evidence-guided problem solving"), "{system}");
     assert_eq!(system.matches("APPEND-MARKER").count(), 1, "{system}");
 
     std::fs::remove_file(work.join(".ara/SYSTEM.md")).unwrap();
@@ -3106,6 +3127,7 @@ async fn discovered_system_md_and_prompt_flags() {
     let (system, _) = run(vec!["--system-prompt", "FIRST-FLAG", "--system-prompt", "FLAG-SYSTEM-MARKER"]).await;
     assert!(system.contains("FLAG-SYSTEM-MARKER"), "{system}");
     assert!(!system.contains("FIRST-FLAG") && !system.contains("USER-SYSTEM-MARKER"), "{system}");
+    assert!(!system.contains("evidence-guided problem solving"), "{system}");
     let (system, _) = run(vec!["--append-system-prompt", "A1", "--append-system-prompt", "FLAG-APPEND"]).await;
     assert!(system.contains("FLAG-APPEND") && !system.contains("APPEND-MARKER"), "{system}");
     assert!(!system.contains("\nA1"), "{system}");

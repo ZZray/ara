@@ -14,6 +14,20 @@ diff review; fixed dispatcher tests 15/15 establish the source baseline only.
 The [42-command Host plan](../rpc-host-plan.md) retains full CA-RPC scope. No
 production command, live configuration, durable queue or native resume acceptance.
 
+ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
+default Agent prompt and its Workflow now guide evidence-based problem solving:
+identify the underlying goal, distinguish hard constraints from historical
+choices, and derive a minimal solution and observable acceptance from the goal,
+facts and constraints. Scope/authority separation, safe falsifiable hypotheses
+and risk-appropriate acceptance remain explicit. The existing
+default/custom/discovery request path is preserved.
+[Executed evidence](../evidence/ara-ps01-problem-solving.md) records rendered and
+actual CLI requests, the full Windows backend gate, three bounded real-model tasks
+and independent review. This is an audited default-policy slice, not an OMP
+upgrade, a P4 acceptance, or a guarantee of model obedience; the fixed marker and
+all existing surface/point acceptance counts are unchanged. See the
+[durable decision](../knowledge/problem-solving.md).
+
 | ID | Upstream source and behavior | Rust owner | Difference/reason | Executed test and artifact | Status |
 | --- | --- | --- | --- | --- | --- |
 
