@@ -14,6 +14,18 @@ This is an architecture target. Source-backed Rust behavior and host tests are r
 
 ## Rust crate layout
 
+**Implemented boundary, 2026-09-30:** Core `LoopHooks::execution_snapshot` optionally
+provides matching tools and system prompt once per model call. The whole response
+keeps that snapshot, including prepared adapter Arcs; the next call may refresh.
+RPC owns tool registries and pending transport, while `ContentUriPort` only routes
+instance-bound text read/write through ordinary tool permissions. Context clones
+share the port slot; a fresh context has a fresh slot. A Run sink retains its
+original Session. URI `clear` is reusable, so EOF needs a distinct permanent
+connection admission close under the same mutex as pending insertion: rejecting
+current waits alone can let accepted queued commands register routes and hang.
+See the [bounded implementation and executable evidence](../evidence/rpc-host-bridges.md).
+Live model/settings and full presentation remain open.
+
 **Decision, 2026-09-25**, from the P1 slice-1 implementation:
 
 | Crate | Owns | Must not depend on |

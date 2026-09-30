@@ -252,7 +252,15 @@ The subsequent [native query/action batch](evidence/rpc-native-queries.md) adds
 registered Skill discovery, raw branch selectors, bounded statistics and Session
 naming. The subsequent [native fork/paging checkpoint](evidence/rpc-native-fork-paging.md)
 adds real persistent/memory Session forks and stable-snapshot message paging.
-RPC now has nineteen bounded command implementations. This combined checkpoint
+RPC at that checkpoint has nineteen bounded command implementations. This combined checkpoint
 is tested/audited WIP; complete CA-RPC and P1-P6 remain open. Continue the remaining
 Host execution/configuration contracts in coherent batches, sharing final gates
 and bounded tasks across each batch. ARA customization waits for fixed OMP parity.
+
+The [Host tool/URI batch](evidence/rpc-host-bridges.md) adds two bounded commands
+and their actual bidirectional execution, per-model-call tool/prompt refresh,
+instance content routing and connection shutdown. RPC now has **21/42 bounded
+implementations**. Windows focused/full/dependency gates, a three-call real
+task, independent audit and exact-code Linux `36715269879` pass on `c4165e4`.
+Full xdev presentation, remaining RPC commands and
+P1–P6 remain open. Continue fixed OMP modules before customization.
