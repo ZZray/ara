@@ -96,6 +96,7 @@ pub struct DailySelection {
     pub protocol: ProtocolOptions,
     pub generation: DailyGeneration,
     pub auth_source: DailyAuthSource,
+    pub loop_guard_policy: ara_ai::thinking_loop::LoopGuardPolicy,
 }
 
 /// Diagnostics never include configuration values (keys or header payloads).
@@ -342,6 +343,10 @@ pub fn resolve_daily_selection(
     }
     let mut compat = object(provider.get("compat"), "provider/compat")?;
     compat.extend(object(model.get("compat"), "model/compat")?);
+    let authored_loop_guard = compat.remove("thinkingLoopGuard");
+    if authored_loop_guard.as_ref().is_some_and(|value| !value.is_boolean()) {
+        return Err(error("compat/thinkingLoopGuard", "must be a boolean"));
+    }
     reject_fields(
         &compat,
         if api == DailyApi::OpenAiCompletions { CHAT_COMPAT } else { &["streamIdleTimeoutMs"] },
@@ -443,21 +448,21 @@ pub fn resolve_daily_selection(
             codex_protocol(ordinary_headers, watchdog)
         }
     };
-    Ok(DailySelection {
-        model: Model {
-            id: model_id,
-            api: api.as_str().into(),
-            provider: provider_id,
-            base_url,
-            reasoning,
-            max_tokens: configured_cap,
-            tokenizer,
-        },
-        api,
-        protocol,
-        generation,
-        auth_source,
-    })
+    let execution_model = Model {
+        id: model_id,
+        api: api.as_str().into(),
+        provider: provider_id,
+        base_url,
+        reasoning,
+        max_tokens: configured_cap,
+        tokenizer,
+    };
+    let mut loop_guard_policy = crate::model_route::resolved_loop_guard_policy(&execution_model)
+        .map_err(|_| error("model", "cannot resolve the native loop guard policy"))?;
+    if authored_loop_guard.is_some() {
+        loop_guard_policy.semantic_heuristics = true;
+    }
+    Ok(DailySelection { model: execution_model, api, protocol, generation, auth_source, loop_guard_policy })
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -80,3 +80,31 @@ flows; `--full` runs the shared backend, inventory, dependency and build gates.
 The deterministic runner uses synthetic credentials and never reads local
 account tokens. Selected live tasks use separately bounded, private credentials.
 See [delivery evidence](evidence/openai-daily.md).
+
+## Loop protection and recovery verification
+
+The provider stream guard follows fixed OMP exact/semantic loop detection.
+For RPC, `$ARA_HOME/agent/config.yml` (or `config.yaml`) also controls the
+assistant-content check and Gemini planning-header reminder:
+
+```yaml
+model:
+  loopGuard:
+    enabled: true
+    checkAssistantContent: true
+    toolCallReminder: true
+```
+
+All three defaults are true. `ARA_NO_THINKING_LOOP_GUARD=1` disables the guard.
+This native settings binding currently belongs to the RPC host. A configured
+`compat.thinkingLoopGuard` property selects semantic detection by its presence,
+including an explicit false value, as the pinned OMP source requires.
+
+```powershell
+python -X utf8 scripts/verify_recovery.py --module all --full
+```
+
+Use `--module ai|host|config|session` for development. The command shares the
+existing final gate and compiles only selected module targets. Ordinary mapping
+details reuse the source/native corpus. See [recovery evidence](evidence/thinking-loop-recovery.md)
+for controlled faults, actual CAS artifacts and original-Session restart.

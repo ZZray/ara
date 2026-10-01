@@ -14,6 +14,7 @@ pub mod retry_classification;
 pub(crate) mod schema_draft;
 pub(crate) mod schema_wire;
 pub mod sse;
+pub mod thinking_loop;
 pub mod transform;
 pub mod types;
 pub(crate) mod usage_limit;
@@ -33,6 +34,7 @@ pub struct CallOptions {
     pub tool_choice: Option<ToolChoice>,
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
+    pub loop_guard: Option<thinking_loop::LoopGuardOptions>,
 }
 
 /// A model transport port. Hosts bind real adapters; tests bind scripted ones.

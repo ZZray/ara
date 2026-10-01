@@ -71,7 +71,8 @@ fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     value["headers"] = json!({"X-Route":"provider","Authorization":"Bearer fixture"});
     value["models"][0]["baseUrl"] = json!("https://model.example/v1");
     value["models"][0]["headers"] = json!({"x-route":"model"});
-    value["models"][0]["compat"] = json!({"supportsUsageInStreaming":true,"streamIdleTimeoutMs":1250});
+    value["models"][0]["compat"] =
+        json!({"supportsUsageInStreaming":true,"streamIdleTimeoutMs":1250,"thinkingLoopGuard":false});
     let config = config(value);
     let env = |name: &str| match name {
         "ARA_PROVIDER" => Some("not-selected".into()),
@@ -99,6 +100,9 @@ fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     cli.temperature = Some(0.25);
     cli.headers = vec![("X-Route".into(), "cli".into())];
     let route = resolve_daily_selection(Some(&config), &cli, &env).unwrap();
+    // Native semantic guard checks property presence, including authored false;
+    // this is host metadata and must not enter the wire request.
+    assert!(route.loop_guard_policy.semantic_heuristics);
     assert_eq!(route.model.id, "group/exact-model");
     assert_eq!(route.model.base_url, "https://cli.example/v1");
     assert_eq!(route.generation.max_tokens, Some(64));
@@ -120,6 +124,7 @@ fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     assert_eq!(body["temperature"], 0.25);
     assert_eq!(body["messages"][0]["role"], "developer");
     assert_eq!(body["stream_options"]["include_usage"], true);
+    assert!(body.get("thinkingLoopGuard").is_none());
     let DailyAuthSource::Fixed(lease) = route.auth_source else { panic!("fixed lease") };
     assert_eq!(lease.identity(), &CredentialIdentity::Environment { variable: "EXPLICIT_KEY".into() });
     assert!(PreparedRoute::new(route.model, route.protocol, Arc::new(FixedRequestAuth::new(lease)), 0).is_ok());

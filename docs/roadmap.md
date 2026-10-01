@@ -42,6 +42,15 @@ a configured answer-free CAS artifact/restart task (7.032 seconds). Actual OpenA
 authorization and a subscription-model task remain open. [Usage](openai-daily.md)
 and the provider register describe the usable slice and required later contracts.
 
+The [ThinkingLoop recovery checkpoint](evidence/thinking-loop-recovery.md)
+adds fixed stream detection, native switches/notices and original-Session
+continuation. Windows modules 24/0/0 and backend 1,499/0/20 pass with one
+114.925-second shared gate; actual CAS task/restart takes 11.338 seconds across
+Runs. Final source/binary/artifacts are independently audited. Other stream
+guards, overflow/interrupted recovery and native special caps remain required.
+This adds behavior to existing RPC variants; RPC stays 27/42, P1–P6 stay open
+and the full parity marker stays null.
+
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).
@@ -51,5 +60,5 @@ The [native Session retry checkpoint](evidence/rpc-session-retry.md) records
 on `8d20531`. Windows 1,316/0/1 and an independently audited real write/reopen
 task pass; platform/audit details are in the evidence. RPC has **27/42 bounded
 implementations**. Complete Retry, CA-RPC and P1–P6 remain open. Finish all
-overflow/thinking/interrupted, credential/OAuth/usage, model/fallback/settings
+remaining overflow/thinking/interrupted, credential/OAuth/usage, model/fallback/settings
 and remaining inventory contracts before ARA customization; none is omitted.

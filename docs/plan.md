@@ -61,6 +61,22 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+ThinkingLoop/original-Session recovery checkpoint (2026-10-01, tested/audited
+WIP): fixed exact/semantic/header detectors, stream guard, bounded completion
+helpers, native switches, per-retry hidden notices and Gemini original-Run
+interruption/continuation now run through the existing Host and durable Session.
+Original OMP detector/header tests pass 19/0 and the shared corpus 46/46;
+Rust modules pass 24/0/0. The shared Windows gate passes 1,499/0/20 plus
+inventory/deny/build in 114.925 seconds; actual CAS file task and original-Session
+restart/recall pass in 11.338 seconds across Runs, reusing the identical binary.
+Independent review and Root audit bind the final source and original artifacts.
+See [recovery evidence](evidence/thinking-loop-recovery.md). The four suites take
+7.520 seconds; ordinary details use existing inputs and source review, with no
+separate micro-test per mapping. Next: overflow/interrupted/native-special-stream
+caps and remaining stream/tool-loop guards, then remaining RPC/registry.
+Actual OpenAI authorization remains a separate live check. P0/V1 accepted,
+P1–P6 open, RPC 27/42 and parity marker null remain unchanged.
+
 OpenAI daily Host checkpoint (2026-10-01): custom models.yml Chat/Responses
 configuration now reaches tools and original-Session restart. Device
 login/logout, private SQLite refresh/settlement and dedicated Codex SSE pass

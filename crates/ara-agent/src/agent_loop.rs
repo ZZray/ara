@@ -536,6 +536,7 @@ async fn stream_assistant_response(
             tool_choice: config.tool_choice.clone(),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
+            loop_guard: None,
         },
     );
     loop {

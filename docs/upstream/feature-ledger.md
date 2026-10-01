@@ -4,6 +4,19 @@ Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `
 
 The complete denominator is the generated [OMP source inventory](inventory.md): every tracked file at the baseline belongs to one surface in [`surfaces.toml`](../../upstream/inventory/surfaces.toml), and every upstream test case is a behavior item (`B-xxxxxxxxxx` in [behaviors.tsv](inventory/behaviors.tsv)). Rows below are bounded behavior points being ported; each cites its surface and the upstream behavior IDs/source it covers. A surface is only `accepted` when all of its behavior items are accounted for here. `python scripts/omp_inventory.py check` rejects citations of unknown behavior IDs.
 
+Active fixed ThinkingLoop/recovery extension (tested/audited WIP, no new
+registered point): AI-STREAM-GUARDS, CA-TURN-RECOVERY and existing CA-RPC retries
+map exact/semantic/header detection, guarded completion helpers, native switches,
+per-retry hidden notices and Gemini original-Run/Session continuation to
+`ara-ai::thinking_loop`, `ara-cli::{model_route,rpc_host,rpc_host_loop_guard}`
+and `ara-session::LoopGuardNotice`. [Recovery evidence](../evidence/thinking-loop-recovery.md)
+records unchanged original detector/header tests 19/0, original corpus 46/46,
+Rust modules 24/0/0, Windows backend 1,499/0/20 and final independent audit of
+the real CAS artifact/restart and exact final binary. Known usage is retained;
+absent loop usage stays unknown rather than OMP's synthetic zeros. Remaining
+overflow/interrupted/native caps and other stream/tool-loop guards stay open.
+RPC remains 27/42; no whole surface, P1–P6 or parity marker advances.
+
 Active AI-01e extension (WIP, no new registered point): fixed OMP `openai-shared.ts::processResponsesStream` failure branches and `azure-openai-responses-stream.test.ts` nested-error cases map to `ara-ai::responses_stream::response_error`. ARA reports coded and nested Responses failures through controlled HTTP and CLI/Session evidence; its public error type remains unchanged, while the existing transient classifier can retry a newly visible `server_error` before output. [Failure-detail evidence](../evidence/ai-01e-responses-failure-details.md). Full Windows verification and a real-model task remain open.
 
 Active production RPC dependency (WIP, no new accepted point): `Agent::prompt_with_config`

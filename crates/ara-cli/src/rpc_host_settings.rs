@@ -13,6 +13,56 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 const MAIN_CONFIG_FILENAMES: [&str; 2] = ["config.yml", "config.yaml"];
 const DEFAULT_METHOD_ORDER: [&str; 5] = ["remote", "snapcompact", "handoff", "shake", "soft"];
 
+/// Fixed settings-schema.ts:1442-1473. Hosts bind these switches to their
+/// provider guard and Gemini reminder; Core does not own native settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LoopGuardSettings {
+    pub(super) enabled: bool,
+    pub(super) check_assistant_content: bool,
+    pub(super) tool_call_reminder: bool,
+}
+
+impl Default for LoopGuardSettings {
+    fn default() -> Self {
+        Self { enabled: true, check_assistant_content: true, tool_call_reminder: true }
+    }
+}
+
+impl LoopGuardSettings {
+    pub(super) fn load(agent_dir: &Path) -> Result<Self> {
+        for filename in MAIN_CONFIG_FILENAMES {
+            if let Some((document, _)) = read_document(&agent_dir.join(filename))? {
+                return Self::from_document(&document);
+            }
+        }
+        Ok(Self::default())
+    }
+
+    fn from_document(document: &Yaml) -> Result<Self> {
+        let root = document.as_hash().context("native settings root must be a mapping")?;
+        let model = match root.get(&Yaml::String("model".into())) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("model settings must be a mapping")?),
+        };
+        let guard = match model.and_then(|group| group.get(&Yaml::String("loopGuard".into()))) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("model.loopGuard settings must be a mapping")?),
+        };
+        let boolean = |name: &str| -> Result<bool> {
+            match guard.and_then(|group| group.get(&Yaml::String(name.into()))) {
+                None => Ok(true),
+                Some(Yaml::Boolean(value)) => Ok(*value),
+                Some(_) => bail!("model.loopGuard.{name} must be a boolean"),
+            }
+        };
+        Ok(Self {
+            enabled: boolean("enabled")?,
+            check_assistant_content: boolean("checkAssistantContent")?,
+            tool_call_reminder: boolean("toolCallReminder")?,
+        })
+    }
+}
+
 pub(super) struct AutoCompactionPolicy {
     path: Option<PathBuf>,
     enabled: bool,

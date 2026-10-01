@@ -58,6 +58,14 @@ once the batch is stable. Reuse existing protocol framing and synthetic auth
 fixtures before adding a scenario. Earlier failed/superseded checks remain in
 the daily evidence; they do not change the final expected outcomes.
 
+The later [ThinkingLoop/recovery batch](evidence/thinking-loop-recovery.md)
+reuses the same runner and native OMP detector inputs. Four modules pass 24/0/0
+in 7.520 seconds; the complete shared command takes 114.925 seconds with backend
+1,499/0/20 and inventory/deny/build passing. The final binary is identical to
+the bounded real CAS task/restart binary (11.338 seconds across Runs), avoiding
+a duplicate paid trial. Development compilation now builds only the selected
+test targets; `--full` owns the comprehensive build/test gate.
+
 ## Deferred compatibility register
 
 | Item | Evidence / dependency | Status |

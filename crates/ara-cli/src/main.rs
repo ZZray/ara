@@ -1341,8 +1341,10 @@ impl ProviderFactory {
                 (account.clone(), Some(account))
             }
         };
+        let loop_guard_policy = configured_loop_guard_policy(selection.loop_guard_policy)?;
         let route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
-            .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?;
+            .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?
+            .with_loop_guard_policy(loop_guard_policy);
         Ok(Self { client, route, account_auth })
     }
 
@@ -1387,12 +1389,23 @@ impl ProviderFactory {
         };
         let route = PreparedRoute::new(model, protocol, auth, 0)
             .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
+        let loop_guard_policy = configured_loop_guard_policy(route.loop_guard_policy())?;
+        let route = route.with_loop_guard_policy(loop_guard_policy);
         Ok(Self { client, route, account_auth: None })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {
         self.route.bind(self.client.clone(), None)
     }
+}
+
+fn configured_loop_guard_policy(
+    mut policy: ara_ai::thinking_loop::LoopGuardPolicy,
+) -> Result<ara_ai::thinking_loop::LoopGuardPolicy> {
+    let settings = rpc_host_settings::LoopGuardSettings::load(&ara_home().join("agent"))?;
+    policy.enabled = settings.enabled;
+    policy.check_assistant_content = settings.check_assistant_content;
+    Ok(policy)
 }
 
 async fn open_codex_auth(client: reqwest::Client) -> Result<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>> {

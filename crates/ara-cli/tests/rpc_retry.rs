@@ -20,6 +20,7 @@ struct Env {
     work: tempfile::TempDir,
     sessions: PathBuf,
     deadline: Instant,
+    model: &'static str,
 }
 
 impl Env {
@@ -28,7 +29,7 @@ impl Env {
         let work = tempfile::Builder::new().prefix("ara-retry-work-").tempdir().unwrap();
         std::fs::create_dir(work.path().join(".git")).unwrap();
         let sessions = home.path().join("sessions");
-        Self { home, work, sessions, deadline: Instant::now() + CASE_BOUND }
+        Self { home, work, sessions, deadline: Instant::now() + CASE_BOUND, model: "fake-model" }
     }
 
     fn command(&self, base_url: &str, args: &[&str]) -> Command {
@@ -55,7 +56,7 @@ impl Env {
             .env("HOME", self.home.path())
             .env("ARA_HOME", self.home.path())
             .env("ARA_API_KEY", "sk-user-bash-fixture-only")
-            .args(["--mode", "rpc", "--model", "fake-model", "--base-url", base_url, "--cwd"])
+            .args(["--mode", "rpc", "--model", self.model, "--base-url", base_url, "--cwd"])
             .arg(self.work.path())
             .arg("--session-dir")
             .arg(&self.sessions)
@@ -67,6 +68,11 @@ impl Env {
         command
     }
 }
+
+// Share the existing bounded child/socket/journal harness with this recovery
+// module. No second harness or separate test for every ordinary mapping.
+#[path = "support/rpc_loop_guard.rs"]
+mod loop_guard;
 
 struct RpcChild {
     child: Child,

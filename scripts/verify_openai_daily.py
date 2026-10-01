@@ -20,6 +20,7 @@ import time
 from verify_backend import windows_test_env
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT = Path(tempfile.gettempdir()) / "ara-openai-daily"
 MODULES = {
     "config": ("ara-cli", "daily_model_config"),
     "auth": ("ara-cli", "openai_codex_auth"),
@@ -46,7 +47,7 @@ def source_pins() -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--module", choices=(*MODULES, "all"), default="all")
-    parser.add_argument("--output", type=Path, default=Path(tempfile.gettempdir()) / "ara-openai-daily")
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--full", action="store_true", help="Also run fmt, Clippy, all target/doc tests, inventory, deny and build")
     args = parser.parse_args()
     selected = MODULES if args.module == "all" else {args.module: MODULES[args.module]}
@@ -85,6 +86,10 @@ def main() -> int:
     compile_command = ["cargo", "test"]
     for package in packages:
         compile_command.extend(("-p", package))
+    # Only compile the selected module executables here. The optional backend
+    # gate owns the complete all-target build/test once the batch is stable.
+    for target in sorted({target for _, target in selected.values()}):
+        compile_command.extend(("--test", target))
     compile_command.extend(("--all-features", "--locked", "--no-run", "--message-format=json"))
     code, compiler = run("compile", compile_command)
     binaries = {}

@@ -178,6 +178,29 @@ pub fn is_credential_header(name: &str) -> bool {
 pub enum RoutePrepareError {
     ProtocolMismatch,
     StaticCredential,
+    ModelPolicy,
+}
+
+/// Resolve the fixed native identity and compatibility facts for this target.
+fn resolved_loop_guard_metadata(model: &Model) -> Result<serde_json::Value, RoutePrepareError> {
+    let spec = serde_json::json!({"provider":model.provider,"id":model.id,
+        "api":model.api,"baseUrl":model.base_url,"reasoning":model.reasoning});
+    crate::model_policy::resolve_model_policy(&spec).map_err(|_| RoutePrepareError::ModelPolicy)
+}
+
+/// Fixed OMP utils/thinking-loop.ts::isLoopGuardedModel uses defined compat
+/// presence, including a defined false value, rather than its truthiness.
+pub fn resolved_loop_guard_policy(model: &Model) -> Result<ara_ai::thinking_loop::LoopGuardPolicy, RoutePrepareError> {
+    let metadata = resolved_loop_guard_metadata(model)?;
+    let semantic_heuristics = match metadata.get("compat") {
+        Some(compat) => compat.get("thinkingLoopGuard").is_some(),
+        None => matches!(metadata["identity"]["class"].as_str(), Some("gemini" | "deepseek" | "xai")),
+    };
+    Ok(ara_ai::thinking_loop::LoopGuardPolicy { semantic_heuristics, ..Default::default() })
+}
+
+pub fn resolved_loop_guard_model_class(model: &Model) -> Result<String, RoutePrepareError> {
+    Ok(resolved_loop_guard_metadata(model)?["identity"]["class"].as_str().unwrap_or("unknown").to_owned())
 }
 
 /// Fully prepared target. This is immutable for one provider/session binding.
@@ -187,6 +210,7 @@ pub struct PreparedRoute {
     protocol: ProtocolOptions,
     auth: Arc<dyn RequestAuthResolver>,
     generation: u64,
+    loop_guard_policy: ara_ai::thinking_loop::LoopGuardPolicy,
 }
 
 impl PreparedRoute {
@@ -202,11 +226,21 @@ impl PreparedRoute {
         if protocol.has_static_key() {
             return Err(RoutePrepareError::StaticCredential);
         }
-        Ok(Self { model, protocol, auth, generation })
+        let loop_guard_policy = resolved_loop_guard_policy(&model)?;
+        Ok(Self { model, protocol, auth, generation, loop_guard_policy })
     }
 
     pub fn model(&self) -> &Model {
         &self.model
+    }
+
+    pub fn loop_guard_policy(&self) -> ara_ai::thinking_loop::LoopGuardPolicy {
+        self.loop_guard_policy
+    }
+
+    pub fn with_loop_guard_policy(mut self, policy: ara_ai::thinking_loop::LoopGuardPolicy) -> Self {
+        self.loop_guard_policy = policy;
+        self
     }
 
     /// Allocate protocol session state once. Every call on this binding shares it;
@@ -345,7 +379,10 @@ impl ModelProvider for AuthenticatedRouteProvider {
             let provider = route.protocol.provider(client, lease);
             let mut options = options;
             options.cancel = cancel.clone();
-            let mut inner = provider.stream(&model, &context, options);
+            let mut inner =
+                ara_ai::thinking_loop::with_thinking_loop_guard(&model, options, route.loop_guard_policy, |options| {
+                    provider.stream(&model, &context, options)
+                });
             loop {
                 let event = tokio::select! {
                     event = inner.recv() => event,

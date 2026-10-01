@@ -5,7 +5,9 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
-use super::rpc_host_settings::{AutoCompactionPolicy, RetryPolicy};
+use super::rpc_host_settings::{AutoCompactionPolicy, LoopGuardSettings, RetryPolicy};
+#[path = "rpc_host_loop_guard.rs"]
+mod loop_guard;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -21,8 +23,11 @@ use ara_rpc::{
     input::{InputItem, RpcInputReader},
     writer::RpcOutput,
 };
-use ara_session::{BashExecutionMessage, SessionJournal, UserSkillPrompt, bash_output_meta_from_summary};
+use ara_session::{
+    BashExecutionMessage, LoopGuardNotice, SessionJournal, UserSkillPrompt, bash_output_meta_from_summary,
+};
 use async_trait::async_trait;
+use loop_guard::{GeminiHeaderGuard, HeaderInterruption};
 use serde_json::{Value, json};
 use std::{
     future::pending,
@@ -325,6 +330,7 @@ impl Session {
                 .bash_execution()
                 .map(|bash| bash.event_message())
                 .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
+                .or_else(|| entry.loop_guard_notice().map(|notice| notice.event_message()))
                 .or_else(|| entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone()))
         }));
         messages
@@ -341,6 +347,7 @@ struct RunSink {
     // Exact native IDs are assigned by the retained writer, not reconstructed
     // from public timestamps or the current branch's last entry.
     entries: Mutex<Vec<(String, Message)>>,
+    header_guard: Mutex<GeminiHeaderGuard>,
 }
 
 fn skill_input(prompt: UserSkillPrompt) -> AgentInput {
@@ -379,6 +386,14 @@ impl RunSink {
 #[async_trait]
 impl AgentEventSink for RunSink {
     async fn emit(&self, event: AgentEvent) {
+        if let AgentEvent::MessageUpdate { message: Message::Assistant(message), event: assistant_event } = &event {
+            let hit = self.header_guard.lock().unwrap().observe(message, assistant_event);
+            if let Some(hit) = hit {
+                self.output.frame(json!({"type":"notice", "level":"warning", "source":"loop-guard",
+                    "message":format!("Interrupted {} planning headers with no tool call; reminded the model to issue one.", hit.headers)}));
+                self.cancel.cancel();
+            }
+        }
         let mut public = event.full();
         match &event {
             AgentEvent::MessageEnd { message } => {
@@ -450,6 +465,14 @@ struct RetrySaga {
     cancel: CancellationToken,
     visible: bool,
     expected_messages: Vec<Message>,
+}
+
+struct PendingHeaderContinue {
+    session: Arc<Session>,
+    generation: u64,
+    command: Command,
+    expected_messages: Vec<Message>,
+    deadline: Instant,
 }
 
 #[derive(Clone)]
@@ -567,6 +590,9 @@ struct Host {
     retry_policy: RetryPolicy,
     retry: Option<RetrySaga>,
     prompt_generation: u64,
+    loop_guard_settings: LoopGuardSettings,
+    header_continue: Option<PendingHeaderContinue>,
+    input_closed: bool,
 }
 
 fn same_session_file(left: &Session, right: &Session) -> bool {
@@ -832,6 +858,18 @@ impl Host {
                 public.remove(index);
             }
         }
+        if class.error_id & ara_ai::retry_classification::flag::THINKING_LOOP != 0
+            && loop_guard::guard_enabled(self.loop_guard_settings)
+        {
+            let notice = LoopGuardNotice::thinking_loop();
+            self.session.journal.lock().await.append_loop_guard_notice(&notice)?;
+            messages.push(notice.model_message());
+            self.agent.replace_idle_messages(messages.clone())?;
+            let public = notice.event_message();
+            self.session.messages.lock().unwrap().push(public.clone());
+            self.output.frame(json!({"type":"message_start","message":public}));
+            self.output.frame(json!({"type":"message_end","message":public}));
+        }
         saga.expected_messages = messages;
         if class.stale_responses {
             self.config.provider = self.sessions.provider.build();
@@ -868,6 +906,106 @@ impl Host {
         if let Err(error) = self.start(None, command) {
             self.finish_retry(None, Some(format!("Retry continuation failed locally: {error}")), false).await;
             self.drain_queues = false;
+        }
+    }
+
+    async fn begin_header_continue(&mut self, active: &ActiveRun, hit: HeaderInterruption) -> Result<bool> {
+        if self.input_closed
+            || self.connection.is_cancelled()
+            || hit.generation != self.prompt_generation
+            || !Arc::ptr_eq(&active.sink.session, &self.session)
+        {
+            return Ok(false);
+        }
+        let mut messages = self.agent.messages().await;
+        let Some(message) = messages
+            .last()
+            .and_then(Message::as_assistant)
+            .filter(|message| {
+                message.timestamp == hit.target_timestamp && message.stop_reason == ara_ai::StopReason::Aborted
+            })
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        // Retain the existing visible/image/tool/unknown-effect veto. A header
+        // count is not evidence that an earlier tool has had no side effect.
+        if super::rpc_host_retry::disposition(
+            &message,
+            &messages,
+            &ara_ai::retry_classification::RetryClass { abort: true, ..Default::default() },
+        ) != Some(super::rpc_host_retry::RetryDisposition::RemoveFailed)
+        {
+            return Ok(false);
+        }
+        let entry_id = active
+            .sink
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find_map(|(id, candidate)| (candidate.as_assistant() == Some(&message)).then(|| id.clone()))
+            .context("Gemini interrupted assistant has no durable native entry ID")?;
+        let notice = LoopGuardNotice::gemini_headers(hit.headers);
+        // Persist the exact branch exclusion and notice before adopting live
+        // context. Failure leaves the original aborted leaf selected.
+        self.session.journal.lock().await.append_gemini_reminder_after_aborted(&notice, &entry_id)?;
+        messages.pop();
+        messages.push(notice.model_message());
+        self.agent.replace_idle_messages(messages.clone())?;
+        let failed = AgentEvent::MessageEnd { message: Message::Assistant(message) }.full()["message"].clone();
+        let public = notice.event_message();
+        {
+            let mut transcript = self.session.messages.lock().unwrap();
+            if let Some(index) = transcript.iter().rposition(|candidate| candidate == &failed) {
+                transcript.remove(index);
+            }
+            transcript.push(public.clone());
+        }
+        self.output.frame(json!({"type":"message_start","message":public}));
+        self.output.frame(json!({"type":"message_end","message":public}));
+        self.header_continue = Some(PendingHeaderContinue {
+            session: self.session.clone(),
+            generation: hit.generation,
+            command: Command {
+                id: active.command.id.clone(),
+                kind: active.command.kind.clone(),
+                frame: active.command.frame.clone(),
+            },
+            expected_messages: messages,
+            deadline: Instant::now() + Duration::from_millis(1),
+        });
+        self.auto_compaction_pending = false;
+        Ok(true)
+    }
+
+    async fn resume_header_continue(&mut self) {
+        let Some(pending) = self.header_continue.take() else { return };
+        if self.input_closed
+            || self.connection.is_cancelled()
+            || pending.generation != self.prompt_generation
+            || !Arc::ptr_eq(&pending.session, &self.session)
+        {
+            self.finish_retry(None, Some("Gemini continuation cancelled".into()), false).await;
+            return;
+        }
+        if self.agent.messages().await != pending.expected_messages {
+            self.finish_retry(None, Some("Gemini continuation cancelled: the active context changed".into()), false)
+                .await;
+            self.drain_queues = false;
+            self.output.response(
+                &pending.command,
+                None,
+                Some("Gemini continuation cancelled: the active context changed".into()),
+            );
+            return;
+        }
+        if let Err(error) = self.start(None, pending.command) {
+            self.finish_retry(None, Some(format!("Gemini continuation failed locally: {error}")), false).await;
+            self.drain_queues = false;
+            self.output.frame(json!({"type":"notice","level":"warning","source":"loop-guard",
+                "message":format!("Gemini tool-call reminder continuation failed: {error}")}));
         }
     }
 
@@ -976,6 +1114,7 @@ impl Host {
             || threshold == 0
             || self.active.is_some()
             || self.retry.is_some()
+            || self.header_continue.is_some()
             || self.connection.is_cancelled()
         {
             return;
@@ -1389,8 +1528,14 @@ impl Host {
             bail!("Agent is already running; specify streamingBehavior: steer or followUp");
         }
         if message.is_some() {
+            self.header_continue = None;
             self.prompt_generation = self.prompt_generation.wrapping_add(1);
         }
+        let header_guard_enabled = loop_guard::guard_enabled(self.loop_guard_settings)
+            && self.loop_guard_settings.tool_call_reminder
+            && ara_cli::model_route::resolved_loop_guard_model_class(&self.config.model)
+                .map_err(|error| anyhow::anyhow!("resolving native loop guard model class: {error:?}"))?
+                == "gemini";
         let cancel = self.connection.child_token();
         let mut config = self.config.clone();
         config.deadline = self.max_time.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
@@ -1402,6 +1547,7 @@ impl Host {
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
+            header_guard: Mutex::new(GeminiHeaderGuard::new(header_guard_enabled, self.prompt_generation)),
         });
         let agent = self.agent.clone();
         let run_cancel = cancel.clone();
@@ -1438,6 +1584,18 @@ impl Host {
         if persistence_error.is_none()
             && let Ok(Ok(Some(report))) = &result
         {
+            let header_hit = active.sink.header_guard.lock().unwrap().hit();
+            if report.end == RunEnd::Aborted
+                && let Some(hit) = header_hit
+            {
+                match self.begin_header_continue(&active, hit).await {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(error) => {
+                        active.sink.persistence_failed(error);
+                    }
+                }
+            }
             let assistant = report.messages.iter().rev().find_map(Message::as_assistant);
             if matches!(report.end, RunEnd::Error | RunEnd::Aborted)
                 && let Some(message) = assistant
@@ -1490,10 +1648,12 @@ impl Host {
     }
 
     async fn abort(&mut self) {
+        self.header_continue = None;
         self.finish_retry(None, Some("Retry cancelled".into()), false).await;
         self.auto_compaction_pending = false;
         self.drain_queues = false;
         if let Some(mut active) = self.active.take() {
+            active.sink.header_guard.lock().unwrap().revoke();
             // Covers the interval before Agent::enter installs its own token.
             active.cancel.cancel();
             self.agent.abort();
@@ -1509,6 +1669,7 @@ impl Host {
     async fn reconcile_queues(&mut self) {
         if self.active.is_none()
             && self.retry.is_none()
+            && self.header_continue.is_none()
             && self.drain_queues
             && self.agent.has_queued_messages()
             && !self.connection.is_cancelled()
@@ -1679,6 +1840,7 @@ impl Host {
                                         .bash_execution()
                                         .map(|bash| bash.event_message())
                                         .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
+                                        .or_else(|| entry.loop_guard_notice().map(|notice| notice.event_message()))
                                 })
                                 .unwrap_or_else(|| {
                                     AgentEvent::MessageEnd { message: sourced.message }.full()["message"].clone()
@@ -1975,6 +2137,7 @@ where
 {
     let compaction_policy = AutoCompactionPolicy::load(&super::ara_home().join("agent"))?;
     let retry_policy = RetryPolicy::load(&super::ara_home().join("agent"))?;
+    let loop_guard_settings = LoopGuardSettings::load(&super::ara_home().join("agent"))?;
     let connection = CancellationToken::new();
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
@@ -2030,6 +2193,9 @@ where
         retry_policy,
         retry: None,
         prompt_generation: 0,
+        loop_guard_settings,
+        header_continue: None,
+        input_closed: false,
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
@@ -2083,7 +2249,12 @@ where
             host.maybe_auto_compact(&[]).await;
         }
         host.reconcile_queues().await;
-        if eof && host.active.is_none() && host.retry.is_none() && host.bash_dispatcher.is_empty() {
+        if eof
+            && host.active.is_none()
+            && host.retry.is_none()
+            && host.header_continue.is_none()
+            && host.bash_dispatcher.is_empty()
+        {
             break;
         }
         tokio::select! {
@@ -2121,10 +2292,28 @@ where
             }, if host.retry.as_ref().is_some_and(|retry| retry.deadline.is_some()) => {
                 host.resume_retry().await;
             }
+            _ = async {
+                match host.header_continue.as_ref() {
+                    Some(pending) => tokio::time::sleep_until(pending.deadline.into()).await,
+                    None => pending().await,
+                }
+            }, if host.header_continue.is_some() => {
+                host.resume_header_continue().await;
+            }
             command = input_rx.recv(), if !eof => {
                 match command {
                     Some(command) => host.handle(command).await,
-                    None => eof = true,
+                    None => {
+                        eof = true;
+                        host.input_closed = true;
+                        if host.header_continue.take().is_some() {
+                            host.finish_retry(None, Some("Gemini continuation cancelled by EOF".into()), false).await;
+                            host.drain_queues = false;
+                        }
+                        if let Some(active) = &host.active {
+                            active.sink.header_guard.lock().unwrap().revoke();
+                        }
+                    },
                 }
             }
         }
@@ -2270,6 +2459,9 @@ mod tests {
             retry_policy: RetryPolicy::isolated(true),
             retry: None,
             prompt_generation: 0,
+            loop_guard_settings: LoopGuardSettings::default(),
+            header_continue: None,
+            input_closed: false,
         };
         (host, rx)
     }
@@ -2298,6 +2490,7 @@ mod tests {
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
+            header_guard: Mutex::new(GeminiHeaderGuard::new(false, 0)),
         });
         let (reached_tx, reached_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
@@ -2532,6 +2725,7 @@ mod tests {
             terminal: Mutex::new(None),
             messages: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
+            header_guard: Mutex::new(GeminiHeaderGuard::new(false, 0)),
         });
         let (reached_tx, reached) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();

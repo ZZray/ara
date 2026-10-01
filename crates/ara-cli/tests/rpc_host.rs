@@ -1662,7 +1662,9 @@ async fn rpc_provider_failure_is_correlated_and_next_prompt_remains_usable() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_abort_and_prompt_executes_while_stdout_is_backpressured() {
     let env = Env::new();
-    let mut held: Vec<Value> = (0..40).map(|_| text(&"x".repeat(4096))).collect();
+    // Keep identical snapshot/pipe pressure using numeric data. Repeated
+    // alphabetic prose is now correctly interrupted by the fixed loop guard.
+    let mut held: Vec<Value> = (0..40).map(|_| text(&"0".repeat(4096))).collect();
     held.extend([
         tool_call(
             0,

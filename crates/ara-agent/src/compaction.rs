@@ -723,6 +723,7 @@ pub async fn summarize_sources_with_instructions(
             tool_choice: Some(ToolChoice::None),
             max_tokens: Some(max_output_tokens),
             temperature: None,
+            loop_guard: None,
         },
     );
     let deadline = tokio::time::Instant::from_std(deadline);

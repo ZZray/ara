@@ -26,8 +26,10 @@
 //! label editing, general custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
 //! listing/search, moving, title generation, blob externalization.
 
+mod loop_guard_notice;
 mod skill_prompt;
 
+pub use loop_guard_notice::{GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE};
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
 use ara_ai::{AssistantBlock, Message, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
@@ -416,6 +418,10 @@ impl Entry {
         UserSkillPrompt::from_entry(&self.raw)
     }
 
+    pub fn loop_guard_notice(&self) -> Option<LoopGuardNotice> {
+        LoopGuardNotice::from_entry(&self.raw)
+    }
+
     fn is_user_skill_prompt_candidate(&self) -> bool {
         self.kind == "custom_message"
             && self.raw.get("customType").and_then(Value::as_str) == Some(SKILL_PROMPT_CUSTOM_TYPE)
@@ -427,7 +433,10 @@ impl Entry {
         match self.kind.as_str() {
             "message" if self.role() == Some("bashExecution") => self.bash_execution()?.model_message(),
             "message" => serde_json::from_value(self.raw.get("message")?.clone()).ok(),
-            "custom_message" => self.skill_prompt().map(|prompt| prompt.model_message()),
+            "custom_message" => self
+                .skill_prompt()
+                .map(|prompt| prompt.model_message())
+                .or_else(|| self.loop_guard_notice().map(|notice| notice.model_message())),
             _ => None,
         }
     }
@@ -1138,6 +1147,54 @@ impl SessionJournal {
         self.append_raw("custom_message", f)
     }
 
+    /// One fixed agent-attributed hidden reminder per accepted interruption.
+    /// Persist the custom identity; providers consume its Developer projection.
+    pub fn append_loop_guard_notice(&mut self, notice: &LoopGuardNotice) -> Result<String> {
+        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(notice.timestamp())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid loop guard notice timestamp")
+            })?
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        let mut fields = notice.event_message().as_object().expect("notice is an object").clone();
+        fields.remove("role");
+        fields.insert("timestamp".into(), json!(timestamp));
+        self.append_raw("custom_message", fields)
+    }
+
+    /// Discard only the captured aborted assistant from the active branch,
+    /// retaining its raw receipt. The new notice's parent bypasses that leaf;
+    /// restart therefore sees the same model context and Session identity.
+    pub fn append_gemini_reminder_after_aborted(
+        &mut self,
+        notice: &LoopGuardNotice,
+        aborted_entry_id: &str,
+    ) -> Result<String> {
+        let invalid = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Gemini reminder requires the exact aborted thinking-only assistant leaf",
+            )
+        };
+        if notice.custom_type() != GEMINI_TOOL_CALL_REMINDER_TYPE || self.leaf_id() != Some(aborted_entry_id) {
+            return Err(invalid().into());
+        }
+        let target = self.entries.iter().find(|entry| entry.id == aborted_entry_id).ok_or_else(invalid)?;
+        let Some(Message::Assistant(message)) = target.message() else { return Err(invalid().into()) };
+        if message.stop_reason != ara_ai::StopReason::Aborted
+            || message.content.iter().any(|block| !matches!(block, AssistantBlock::Thinking(_)))
+        {
+            return Err(invalid().into());
+        }
+        let previous_leaf = self.leaf.clone();
+        self.leaf = target.parent_id.clone();
+        let result = self.append_loop_guard_notice(notice);
+        if result.is_err() {
+            self.leaf = previous_leaf;
+        }
+        result
+    }
+
     /// OMP `appendModelChange`: `model` in `provider/modelId` form.
     pub fn append_model_change(&mut self, model: &str) -> Result<String> {
         let mut f = serde_json::Map::new();
@@ -1546,7 +1603,10 @@ impl SessionJournal {
     pub fn undecodable_messages(&self) -> usize {
         self.branch()
             .into_iter()
-            .filter(|e| (e.kind == "message" || e.is_user_skill_prompt_candidate()) && !e.is_decodable_message())
+            .filter(|e| {
+                (e.kind == "message" || e.is_user_skill_prompt_candidate() || LoopGuardNotice::is_candidate(&e.raw))
+                    && !e.is_decodable_message()
+            })
             .count()
     }
 
