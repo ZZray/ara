@@ -11,8 +11,9 @@ use std::io::{self, Write};
 use std::time::Instant;
 
 use ara_ai::{
-    AssistantBlock, AssistantMessage, AssistantMessageEvent, CallOptions, Context, JsonObject, Message, Model,
-    ModelProvider, StopReason, ToolChoice, ToolResultMessage, Usage, UserBlock, UserContent, UserMessage,
+    AssistantBlock, AssistantMessage, AssistantMessageEvent, CallOptions, Context, ContextRecoveryEvidence, JsonObject,
+    Message, Model, ModelProvider, StopReason, ToolChoice, ToolResultMessage, Usage, UserBlock, UserContent,
+    UserMessage,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -546,6 +547,9 @@ fn build_summary_prompt_from_conversation(
 #[derive(Clone, Debug, PartialEq)]
 pub struct AcceptedSummary {
     pub text: String,
+    /// Actual final summary terminal; Length may yield usable visible text.
+    /// This does not turn a length-stopped primary Agent Run into success.
+    pub terminal_reason: StopReason,
     /// IDs for this summary window only. A previous summary has separate
     /// provenance that the Session owner must carry forward when updating it.
     pub window_source_entry_ids: Vec<String>,
@@ -641,6 +645,17 @@ fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> 
     failure
 }
 
+fn rejected_terminal_event(
+    kind: SummaryCallErrorKind,
+    reason: StopReason,
+    message: &AssistantMessage,
+) -> SummaryCallError {
+    let mut failure = rejected_terminal(kind, message);
+    failure.stop_reason = Some(reason);
+    failure.invocations.last_mut().expect("terminal invocation").stop_reason = Some(reason);
+    failure
+}
+
 fn rejected_invocation(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallError {
     let mut failure = rejected(kind, usage);
     failure.invocations.push(SummaryInvocationReceipt {
@@ -656,6 +671,15 @@ fn rejected_invocation(kind: SummaryCallErrorKind, usage: Option<Usage>) -> Summ
     failure
 }
 
+fn rejected_after_accept(kind: SummaryCallErrorKind, accepted: AcceptedSummary) -> SummaryCallError {
+    let mut failure = rejected_invocation(kind, Some(accepted.usage));
+    failure.stop_reason = Some(accepted.terminal_reason);
+    let receipt = failure.invocations.last_mut().expect("completed invocation");
+    receipt.stop_reason = Some(accepted.terminal_reason);
+    receipt.response_id = accepted.response_id;
+    failure
+}
+
 fn accept_summary_response(
     window_source_entry_ids: Vec<String>,
     model: &Model,
@@ -663,16 +687,16 @@ fn accept_summary_response(
     message: AssistantMessage,
     saw_tool_call_event: bool,
 ) -> Result<AcceptedSummary, SummaryCallError> {
-    if reason != StopReason::Stop
-        || message.stop_reason != StopReason::Stop
+    let length_without_content_proof = reason == StopReason::Length
+        && matches!(model.api.as_str(), "openai-responses" | "openai-codex-responses")
+        && message.terminal_context_recovery != Some(ContextRecoveryEvidence::ContentOnly);
+    if reason != message.stop_reason
+        || !matches!(reason, StopReason::Stop | StopReason::Length)
+        || length_without_content_proof
         || message.error_message.is_some()
         || message.error_status.is_some()
     {
-        let mut failure = rejected_terminal(SummaryCallErrorKind::IncompleteResponse, &message);
-        if reason != StopReason::Stop {
-            failure.stop_reason = Some(reason);
-        }
-        return Err(failure);
+        return Err(rejected_terminal_event(SummaryCallErrorKind::IncompleteResponse, reason, &message));
     }
     if saw_tool_call_event || message.tool_calls().next().is_some() {
         return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));
@@ -706,6 +730,7 @@ fn accept_summary_response(
     }
     Ok(AcceptedSummary {
         text,
+        terminal_reason: reason,
         window_source_entry_ids,
         model_id: model.id.clone(),
         response_id: message.response_id,
@@ -908,7 +933,7 @@ pub async fn summarize_sources_with_instructions(
                     window_source_entry_ids: ids,
                     usage: Some(accepted.usage.clone()),
                     response_id: accepted.response_id.clone(),
-                    stop_reason: Some(StopReason::Stop),
+                    stop_reason: Some(accepted.terminal_reason),
                     provider_status: None,
                     error_kind: None,
                     classification: None,
@@ -1031,29 +1056,29 @@ async fn summarize_window(
             Some(AssistantMessageEvent::Done { reason, message }) => {
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal(SummaryCallErrorKind::Cancelled, &message));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &message));
                 }
                 if Instant::now() >= deadline.into_std() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal(SummaryCallErrorKind::Deadline, &message));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Deadline, reason, &message));
                 }
                 let accepted = accept_summary_response(Vec::new(), model, reason, message, saw_tool_call_event)?;
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected_invocation(SummaryCallErrorKind::Cancelled, Some(accepted.usage)));
+                    return Err(rejected_after_accept(SummaryCallErrorKind::Cancelled, accepted));
                 }
                 if Instant::now() >= deadline.into_std() {
                     provider_cancel.cancel();
-                    return Err(rejected_invocation(SummaryCallErrorKind::Deadline, Some(accepted.usage)));
+                    return Err(rejected_after_accept(SummaryCallErrorKind::Deadline, accepted));
                 }
                 return Ok(accepted);
             }
-            Some(AssistantMessageEvent::Error { error, .. }) => {
+            Some(AssistantMessageEvent::Error { error, reason }) => {
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal(SummaryCallErrorKind::Cancelled, &error));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &error));
                 }
-                return Err(rejected_terminal(SummaryCallErrorKind::ProviderError, &error));
+                return Err(rejected_terminal_event(SummaryCallErrorKind::ProviderError, reason, &error));
             }
             Some(
                 AssistantMessageEvent::ToolcallStart { .. }

@@ -1322,6 +1322,7 @@ struct ProviderFactory {
     client: reqwest::Client,
     route: ara_cli::model_route::PreparedRoute,
     account_auth: Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    metadata: Option<serde_json::Value>,
 }
 
 impl ProviderFactory {
@@ -1346,7 +1347,7 @@ impl ProviderFactory {
         let route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
             .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?
             .with_loop_guard_policy(loop_guard_policy);
-        Ok(Self { client, route, account_auth })
+        Ok(Self { client, route, account_auth, metadata: Some(selection.metadata) })
     }
 
     fn startup(
@@ -1392,7 +1393,7 @@ impl ProviderFactory {
             .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
         let loop_guard_policy = configured_loop_guard_policy(route.loop_guard_policy())?;
         let route = route.with_loop_guard_policy(loop_guard_policy);
-        Ok(Self { client, route, account_auth: None })
+        Ok(Self { client, route, account_auth: None, metadata: None })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {

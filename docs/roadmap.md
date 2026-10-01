@@ -1,5 +1,14 @@
 # Delivery roadmap
 
+The [terminal recovery and configured promotion checkpoint](evidence/terminal-recovery-promotion.md)
+adds safe nonempty Length summaries, native empty-terminal continuation and
+same-Agent configured route preparation with atomic journal metadata. Modules
+68/0/0 and Windows 1,519/0/20 pass one stable 137.539s gate. The preferred CAS
+task/reopen passes in 11.573s after a controlled empty Stop. Independent review
+and Root artifact audit pass. Split-turn, remaining terminal/Host callers,
+methods/rescue and recorded Provider contracts remain open. P0/V1 accepted,
+P1–P6 open, RPC 27/42 and the null full marker retain their status.
+
 The [native recovery/fold checkpoint](evidence/native-recovery-fold.md) adds
 typed Responses context-recovery evidence, raw-reserve summary output budgets
 and bounded message-window folding. Modules 53/0/0 and Windows backend

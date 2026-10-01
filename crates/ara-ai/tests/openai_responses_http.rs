@@ -72,6 +72,51 @@ async fn collect(stream: ara_ai::AssistantStream) -> (Vec<AssistantMessageEvent>
 }
 
 #[tokio::test]
+async fn successful_terminal_keeps_context_recovery_wire_proof() {
+    for length in [false, true] {
+        for native in [false, true] {
+            let terminal = if length {
+                json!({"type":"response.incomplete","response":{"status":"incomplete", "incomplete_details":{"reason":"max_output_tokens"}}})
+            } else {
+                json!({"type":"response.completed","response":{"status":"completed"}})
+            };
+            let mut events = vec![json!({"data":{"type":"response.created","response":{"id":"terminal-proof"}}})];
+            if native {
+                events.push(json!({"data":{"type":"response.future_native_completed","item":{"type":"future_native","id":"unknown-effect"}}}));
+            }
+            events.push(json!({"data":terminal}));
+            let server = FakeUpstream::start(script(json!({"responses":[{"events":events}]})), None).await.unwrap();
+            let (_, output) = collect(openai_responses::stream(
+                reqwest::Client::new(),
+                model(&server.base_url()),
+                Context::default(),
+                options(),
+            ))
+            .await;
+            assert_eq!(
+                output.stop_reason,
+                if length { StopReason::Length } else { StopReason::Stop },
+                "length={length} native={native}: {:?}",
+                output.error_message
+            );
+            assert_eq!(
+                output.terminal_context_recovery,
+                Some(if native {
+                    ara_ai::ContextRecoveryEvidence::NativeOutput
+                } else {
+                    ara_ai::ContextRecoveryEvidence::ContentOnly
+                })
+            );
+            assert!(output.failure_evidence.is_none(), "successful terminal must not fabricate a failure");
+            let mut old = serde_json::to_value(&output).unwrap();
+            old.as_object_mut().unwrap().remove("terminalContextRecovery");
+            assert_eq!(serde_json::from_value::<AssistantMessage>(old).unwrap().terminal_context_recovery, None);
+            assert_eq!(server.served(), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn context_recovery_wire_facts_preserve_replay_vetoes_and_unknown_journals() {
     use ara_ai::ContextRecoveryEvidence::{ContentOnly, NativeOutput, NativeValidation, UsageAdmission};
     use ara_ai::providers::openai_codex_responses as codex;

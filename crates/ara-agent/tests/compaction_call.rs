@@ -57,6 +57,7 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
         "provider-overflow",
         "single-huge",
         "non-overflow",
+        "length-then-error",
         "cancel-window-two",
         "floor-deadend",
         "tool-window",
@@ -65,7 +66,7 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
         let mut selected = model();
         selected.context_window = Some(match case {
             "provider-overflow" => 400_000.0,
-            "fold" | "carry" | "single-huge" | "non-overflow" | "cancel-window-two" => 40_000.0,
+            "fold" | "carry" | "single-huge" | "non-overflow" | "length-then-error" | "cancel-window-two" => 40_000.0,
             "tool-window" | "unknown-tool-veto" => 16_384.0,
             _ => 200_000.0,
         });
@@ -85,7 +86,7 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
         );
         let turns = match case {
             "provider-overflow" => 60,
-            "fold" | "carry" | "non-overflow" | "cancel-window-two" => 12,
+            "fold" | "carry" | "non-overflow" | "length-then-error" | "cancel-window-two" => 12,
             _ => 1,
         };
         let repeats = if turns > 1 { if case == "provider-overflow" { 2000 } else { 2500 } } else { 40 };
@@ -151,12 +152,15 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
                         "diagnostic ".repeat(70),
                         text.len()
                     ));
-                } else if case == "non-overflow" {
+                } else if case == "non-overflow" || (case == "length-then-error" && index == 1) {
                     response.stop_reason = StopReason::Error;
                     response.error_status = Some(500);
                     response.error_message = Some("provider exploded".into());
                 } else {
                     response.content.push(AssistantBlock::text(format!("fold summary {index}")));
+                    if matches!(case, "length-then-error" | "cancel-window-two") && index == 0 {
+                        response.stop_reason = StopReason::Length;
+                    }
                 }
                 if case == "cancel-window-two" && index == 1 {
                     provider_cancel.cancel();
@@ -197,13 +201,26 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
             let Message::User(user) = &context.messages[0] else { panic!("summary user") };
             assert!(user.content.plain_text().ends_with("Additional focus: retain original observations"));
         }
-        if matches!(case, "non-overflow" | "cancel-window-two" | "floor-deadend") {
+        if matches!(case, "non-overflow" | "length-then-error" | "cancel-window-two" | "floor-deadend") {
             let error = result.unwrap_err();
             assert_eq!(error.invocations.len(), seen.len(), "{case}: every started provider call has a receipt");
-            if case == "cancel-window-two" {
-                assert_eq!(error.kind, SummaryCallErrorKind::Cancelled);
+            if matches!(case, "length-then-error" | "cancel-window-two") {
+                assert_eq!(
+                    error.kind,
+                    if case == "cancel-window-two" {
+                        SummaryCallErrorKind::Cancelled
+                    } else {
+                        SummaryCallErrorKind::IncompleteResponse
+                    }
+                );
                 assert_eq!(seen.len(), 2);
                 assert!(error.invocations[0].error_kind.is_none());
+                assert_eq!(error.invocations[0].stop_reason, Some(StopReason::Length));
+                assert_eq!(error.invocations[0].window_source_entry_ids.len(), 2);
+                let Message::User(second) = &seen[1].0.messages[0] else { panic!("next fold window") };
+                assert!(
+                    second.content.plain_text().contains("<previous-summary>\nfold summary 0\n</previous-summary>")
+                );
             } else {
                 assert_eq!(seen.len(), 1);
                 assert!(!error.invocations[0].overflow_replanned);
@@ -361,28 +378,42 @@ async fn focused_summary_reaches_the_provider_and_preserves_no_tools_and_termina
     let (user, assistant) = sources();
     let inputs =
         [SummarySource { entry_id: "e1", message: &user }, SummarySource { entry_id: "e2", message: &assistant }];
-    for reason in [StopReason::Stop, StopReason::Length] {
-        let mut response = AssistantMessage::empty("openai-completions", "test", "summary-model");
+    for (api, reason, proof, accepted) in [
+        ("openai-completions", StopReason::Stop, None, true),
+        ("openai-completions", StopReason::Length, None, true),
+        ("openai-responses", StopReason::Length, Some(ara_ai::ContextRecoveryEvidence::ContentOnly), true),
+        ("openai-codex-responses", StopReason::Length, Some(ara_ai::ContextRecoveryEvidence::ContentOnly), true),
+        ("openai-responses", StopReason::Length, None, false),
+        ("openai-codex-responses", StopReason::Length, Some(ara_ai::ContextRecoveryEvidence::NativeOutput), false),
+    ] {
+        let mut selected = model();
+        selected.api = api.into();
+        let mut response = AssistantMessage::empty(api, "test", "summary-model");
         response.stop_reason = reason;
+        response.terminal_context_recovery = proof;
         response.content.push(AssistantBlock::text("updated summary"));
         let provider = ScriptedProvider::new(Script::Events(vec![done(response)]));
         let result = summarize_sources_with_instructions(
             &inputs,
             Some("old </previous-summary> context"),
             Some("retain failed approaches"),
-            &model(),
+            &selected,
             &provider,
             128,
             Instant::now() + Duration::from_secs(2),
             &CancellationToken::new(),
         )
         .await;
-        if reason == StopReason::Stop {
+        if accepted {
             let summary = result.unwrap();
             assert_eq!(summary.text, "updated summary");
             assert_eq!(summary.window_source_entry_ids, ["e1", "e2"]);
+            assert_eq!(summary.terminal_reason, reason);
+            assert_eq!(summary.invocations[0].stop_reason, Some(reason));
         } else {
-            assert_eq!(result.unwrap_err().kind, SummaryCallErrorKind::IncompleteResponse);
+            let error = result.unwrap_err();
+            assert_eq!(error.kind, SummaryCallErrorKind::IncompleteResponse);
+            assert_eq!(error.invocations[0].stop_reason, Some(reason));
         }
         let seen = provider.seen.lock().unwrap();
         let (context, options) = seen.as_ref().unwrap();
@@ -454,7 +485,6 @@ async fn one_shot_summary_uses_only_system_and_user_and_returns_visible_text_wit
 async fn one_shot_rejects_incomplete_empty_tool_and_error_responses() {
     let mut length = AssistantMessage::empty("openai-completions", "test", "summary-model");
     length.stop_reason = StopReason::Length;
-    length.content.push(AssistantBlock::text("partial"));
     let mut whitespace = AssistantMessage::empty("openai-completions", "test", "summary-model");
     whitespace.content.push(AssistantBlock::text("  \n "));
     let mut tool = AssistantMessage::empty("openai-completions", "test", "summary-model");
@@ -485,7 +515,7 @@ async fn one_shot_rejects_incomplete_empty_tool_and_error_responses() {
         thinking_signature: None,
     }));
     let cases = [
-        (vec![done(length)], SummaryCallErrorKind::IncompleteResponse),
+        (vec![done(length)], SummaryCallErrorKind::EmptySummary),
         (vec![done(whitespace)], SummaryCallErrorKind::EmptySummary),
         (vec![done(tool)], SummaryCallErrorKind::UnexpectedToolCall),
         (

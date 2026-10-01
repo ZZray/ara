@@ -17,7 +17,7 @@ use crate::models_config::ModelsConfig;
 use ara_ai::Model;
 use ara_ai::model_tokenizer::{ModelTokenizer, resolve_known_claude_tokenizer};
 use ara_ai::providers::{openai_completions as chat, openai_responses as responses};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::{fmt, path::Path, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +93,8 @@ pub enum DailyAuthSource {
 /// private auth source and applies generation settings to all logical calls.
 pub struct DailySelection {
     pub model: Model,
+    /// Safe selection facts only; catalogue membership is not route authority.
+    pub metadata: Value,
     pub api: DailyApi,
     pub protocol: ProtocolOptions,
     pub generation: DailyGeneration,
@@ -245,7 +247,7 @@ pub fn resolve_daily_selection(
         &["api", "baseUrl", "apiKey", "auth", "authHeader", "headers", "compat", "models", "modelOverrides"],
         "provider",
     )?;
-    let model = match provider.get("models") {
+    let mut model = match provider.get("models") {
         Some(Value::Array(models)) if !models.is_empty() => {
             let matches: Vec<_> =
                 models.iter().filter(|m| m.get("id").and_then(Value::as_str) == Some(model_id.as_str())).collect();
@@ -256,11 +258,10 @@ pub fn resolve_daily_selection(
         }
         _ => Map::new(),
     };
-    if provider.get("modelOverrides").and_then(|v| v.get(&model_id)).is_some() {
-        return Err(error(
-            "provider/modelOverrides",
-            "selected model overrides are not supported; use an explicit model entry",
-        ));
+    if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)) {
+        let overrides = object(Some(value), "provider/modelOverrides")?;
+        reject_fields(&overrides, &["contextPromotionTarget"], "provider/modelOverrides")?;
+        model.extend(overrides);
     }
     reject_fields(
         &model,
@@ -275,6 +276,7 @@ pub fn resolve_daily_selection(
             "maxTokens",
             "cost",
             "contextWindow",
+            "contextPromotionTarget",
             "supportsTools",
             "headers",
             "compat",
@@ -465,7 +467,144 @@ pub fn resolve_daily_selection(
     if authored_loop_guard.is_some() {
         loop_guard_policy.semantic_heuristics = true;
     }
-    Ok(DailySelection { model: execution_model, api, protocol, generation, auth_source, loop_guard_policy })
+    let mut metadata = json!({"provider":execution_model.provider,"id":execution_model.id,
+        "api":execution_model.api,"contextWindow":execution_model.context_window});
+    let promotion_target = model.get("contextPromotionTarget").or_else(|| {
+        crate::model_identity::bundled_model_list()
+            .iter()
+            .find(|row| {
+                row["provider"].as_str() == Some(execution_model.provider.as_str())
+                    && row["id"].as_str() == Some(execution_model.id.as_str())
+            })
+            .and_then(|row| row.get("contextPromotionTarget"))
+    });
+    if let Some(target) = promotion_target {
+        metadata["contextPromotionTarget"] = target.clone();
+    }
+    Ok(DailySelection { model: execution_model, metadata, api, protocol, generation, auth_source, loop_guard_policy })
+}
+
+const PROMOTION_ROUTE_ENV: &[&str] = &[
+    "ARA_MODEL",
+    "ARA_TEST_MODEL_ID",
+    "ARA_PROVIDER",
+    "ARA_BASE_URL",
+    "ARA_TEST_BASE_URL",
+    "OPENROUTER_BASE_URL",
+    "ARA_TOKENIZER",
+    "ARA_API_KEY",
+    "ARA_TEST_API_KEY",
+];
+
+fn promotion_metadata(row: &Value) -> Value {
+    let mut metadata = json!({});
+    for field in ["provider", "id", "api", "contextWindow", "contextPromotionTarget"] {
+        if let Some(value) = row.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    metadata
+}
+
+/// Select one larger configured target, then project its own daily contract.
+/// The Host must prepare credentials and atomically adopt the route before
+/// discarding a failed turn. An Err permits the existing compaction fallback.
+/// Bundled metadata is reused for selection, never stripped into a route.
+pub fn resolve_daily_promotion_selection(
+    config: Option<&ModelsConfig>,
+    current: &Value,
+    env: &dyn DailyEnvironment,
+) -> Result<Option<DailySelection>, DailyConfigError> {
+    let mut candidates: Vec<Value> =
+        crate::model_identity::bundled_model_list().iter().map(promotion_metadata).collect();
+    let providers = config.and_then(|config| config.value().get("providers")).and_then(Value::as_object);
+    if let Some(providers) = providers {
+        for (provider_id, provider) in providers {
+            for model in provider.get("models").and_then(Value::as_array).into_iter().flatten() {
+                let mut candidate = promotion_metadata(model);
+                candidate["provider"] = json!(provider_id);
+                // Explicit definitions retain the execution projection's
+                // unknown-capacity behavior instead of inheriting a window.
+                candidate["contextWindow"] = model.get("contextWindow").cloned().unwrap_or(Value::Null);
+                let id =
+                    model.get("id").and_then(Value::as_str).ok_or_else(|| error("model/id", "must be a string"))?;
+                if let Some(target) = provider
+                    .get("modelOverrides")
+                    .and_then(|overrides| overrides.get(id))
+                    .and_then(|overrides| overrides.get("contextPromotionTarget"))
+                {
+                    candidate["contextPromotionTarget"] = target.clone();
+                }
+                let same_identity = |row: &Value| {
+                    row["provider"].as_str() == Some(provider_id.as_str()) && row["id"].as_str() == Some(id)
+                };
+                if let Some(index) = candidates.iter().position(same_identity) {
+                    candidates[index] = candidate;
+                } else {
+                    candidates.push(candidate);
+                }
+            }
+        }
+    }
+    let Some(target) = crate::model_policy::resolve_context_promotion_target(current, &candidates) else {
+        return Ok(None);
+    };
+    let provider_id = target["provider"].as_str().expect("selector checked provider");
+    let model_id = target["id"].as_str().expect("selector checked id");
+    let provider = providers.and_then(|providers| providers.get(provider_id)).and_then(Value::as_object);
+    let configured_model = provider
+        .and_then(|provider| provider.get("models"))
+        .and_then(Value::as_array)
+        .and_then(|models| models.iter().find(|model| model["id"].as_str() == Some(model_id)));
+    if configured_model.is_none() {
+        return Err(error(
+            "contextPromotionTarget",
+            "bundled target execution contracts require an explicit supported daily model definition",
+        ));
+    }
+    let provider = provider.expect("configured model has provider");
+    let model = configured_model.and_then(Value::as_object).expect("validated configured model");
+    let api = text(model, "api").or_else(|| text(provider, "api")).unwrap_or_else(|| {
+        if provider_id == "openai-codex" { "openai-codex-responses" } else { "openai-completions" }.into()
+    });
+    let base_url = text(model, "baseUrl")
+        .or_else(|| text(provider, "baseUrl"))
+        .or_else(|| (api == "openai-codex-responses").then(|| "https://chatgpt.com/backend-api".into()))
+        .ok_or_else(|| error("contextPromotionTarget/baseUrl", "target needs its own configured endpoint"))?;
+    let explicit_key_env = provider
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .filter(|name| !name.starts_with('!') && (PROMOTION_ROUTE_ENV.contains(name) || env.get(name).is_some()))
+        .map(str::to_owned);
+    let target_env = |name: &str| {
+        if explicit_key_env.as_deref() == Some(name) || !PROMOTION_ROUTE_ENV.contains(&name) {
+            env.get(name)
+        } else {
+            None
+        }
+    };
+    let cli = DailyOverrides {
+        provider: Some(provider_id.into()),
+        model: Some(model_id.into()),
+        api: Some(api),
+        base_url: Some(base_url),
+        tokenizer: Some(text(model, "tokenizer").unwrap_or_else(|| "auto".into())),
+        api_key_env: explicit_key_env.clone(),
+        ..Default::default()
+    };
+    let selection = resolve_daily_selection(config, &cli, &target_env)?;
+    let credential_header = [provider.get("headers"), configured_model.and_then(|model| model.get("headers"))]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .any(|headers| headers.keys().any(|name| is_credential_header(name)));
+    if provider.get("auth").and_then(Value::as_str) != Some("none")
+        && !credential_header
+        && matches!(&selection.auth_source, DailyAuthSource::Fixed(lease) if lease.identity() == &CredentialIdentity::Keyless)
+    {
+        return Err(error("contextPromotionTarget/auth", "target has no configured usable credential"));
+    }
+    Ok(Some(selection))
 }
 
 #[allow(clippy::too_many_arguments)]

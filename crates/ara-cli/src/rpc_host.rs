@@ -674,6 +674,7 @@ struct Host {
     active: Option<ActiveRun>,
     maintenance: Option<maintenance::ActiveMaintenance>,
     maintenance_continue: Option<maintenance::PendingMaintenanceContinue>,
+    terminal_recovery: maintenance::TerminalRecoveryState,
     sessions: SessionFactory,
     tool_bridge: Arc<ToolBridge>,
     uri_bridge: Arc<UriBridge>,
@@ -1558,6 +1559,7 @@ impl Host {
         agent.set_follow_up_mode(self.agent.follow_up_mode());
         self.publish_snapshot(&config);
         self.agent = agent;
+        self.terminal_recovery = maintenance::TerminalRecoveryState::default();
         self.session = session;
         self.config = config;
         self.skills = skills;
@@ -1654,6 +1656,7 @@ impl Host {
             self.header_continue = None;
             self.maintenance_continue = None;
             self.prompt_generation = self.prompt_generation.wrapping_add(1);
+            self.terminal_recovery = maintenance::TerminalRecoveryState::default();
         }
         let header_guard_enabled = loop_guard::guard_enabled(self.loop_guard_settings)
             && self.loop_guard_settings.tool_call_reminder
@@ -1734,7 +1737,29 @@ impl Host {
             }
             let assistant = report.messages.iter().rev().find_map(Message::as_assistant);
             let mut maintenance_blocked = false;
-            if report.end == RunEnd::Error
+            if matches!(report.end, RunEnd::Error | RunEnd::Completed)
+                && let Some(message) = assistant
+            {
+                match Box::pin(self.begin_empty_stop_recovery(&active, message)).await {
+                    Ok(outcome) if outcome.continuation_scheduled => return,
+                    Ok(outcome) if outcome.automatic_continuation_blocked => {
+                        self.auto_compaction_pending = false;
+                        self.drain_queues = self.agent.has_queued_messages();
+                        self.output.response(
+                            &active.command,
+                            None,
+                            Some("Assistant returned no final output after the recovery cap".into()),
+                        );
+                        return;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        active.sink.persistence_failed(error);
+                        return;
+                    }
+                }
+            }
+            if matches!(report.end, RunEnd::Error | RunEnd::Completed)
                 && let Some(message) = assistant
             {
                 // Serial threshold compaction also joins completed(). Keep the
@@ -1833,7 +1858,9 @@ impl Host {
             active.cancel.cancel();
             self.agent.abort();
             let result = (&mut active.task).await;
-            self.completed(active, result).await;
+            // Recovery adds owned async state; keep settlement out of the
+            // new/switch/abort callers on the Windows default main stack.
+            Box::pin(self.completed(active, result)).await;
         }
         self.flush_pending_bash().await;
         // An already-settling Run can complete successfully after cancellation.
@@ -2365,6 +2392,7 @@ where
         active: None,
         maintenance: None,
         maintenance_continue: None,
+        terminal_recovery: maintenance::TerminalRecoveryState::default(),
         sessions,
         tool_bridge: tool_bridge.clone(),
         uri_bridge: uri_bridge.clone(),
@@ -2476,7 +2504,7 @@ where
                 }
             }, if host.active.is_some() => {
                 let active = host.active.take().expect("selected active Run");
-                host.completed(active, result).await;
+                Box::pin(host.completed(active, result)).await;
             }
             result = async {
                 match &mut host.maintenance {
@@ -2648,6 +2676,7 @@ mod tests {
             active: None,
             maintenance: None,
             maintenance_continue: None,
+            terminal_recovery: maintenance::TerminalRecoveryState::default(),
             sessions: SessionFactory {
                 dir: None,
                 cwd,
@@ -2681,6 +2710,84 @@ mod tests {
             tool_loop_settings_dir: None,
         };
         (host, rx)
+    }
+
+    #[tokio::test]
+    async fn native_incomplete_cap_progress_and_foreign_terminal_host_module() {
+        for case in ["reasoning-cap", "visible-progress", "old-responses", "foreign-length"] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut host, _) = fixture();
+            let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+            let user = Message::User(UserMessage::text("pending original task"));
+            journal.append_message(&user).unwrap();
+            let mut assistant =
+                AssistantMessage::empty(&host.config.model.api, &host.config.model.provider, &host.config.model.id);
+            assistant.stop_reason = ara_ai::StopReason::Length;
+            if case == "reasoning-cap" {
+                assistant.content.push(ara_ai::AssistantBlock::Thinking(ara_ai::ThinkingContent {
+                    thinking: "reasoning without deliverable".into(),
+                    thinking_signature: None,
+                }));
+            }
+            if case == "visible-progress" {
+                assistant.content.push(ara_ai::AssistantBlock::text("actionable partial deliverable"));
+            }
+            if case == "old-responses" {
+                host.config.model.api = "openai-responses".into();
+                assistant.api = host.config.model.api.clone();
+            }
+            if case == "foreign-length" {
+                assistant.model = "foreign-model".into();
+            }
+            let message = Message::Assistant(assistant.clone());
+            let entry = journal.append_message(&message).unwrap();
+            let file = journal.path().to_path_buf();
+            let messages = vec![user, message.clone()];
+            let header = journal.header().clone();
+            host.session = Session::new(Some(journal), header, &messages).unwrap();
+            host.agent.replace_idle_messages(messages).unwrap();
+            host.terminal_recovery.incomplete_attempts = 3;
+            let cancel = CancellationToken::new();
+            let sink = Arc::new(RunSink {
+                session: host.session.clone(),
+                output: host.output.clone(),
+                cancel: cancel.clone(),
+                connection: host.connection.clone(),
+                terminal: Mutex::new(None),
+                messages: Mutex::new(Vec::new()),
+                entries: Mutex::new(vec![(entry, message)]),
+                header_guard: Mutex::new(GeminiHeaderGuard::new(false, 0)),
+            });
+            let active = ActiveRun {
+                cancel,
+                task: tokio::spawn(async { Ok(None) }),
+                command: Command::new(wire(json!({"type":"prompt"}))),
+                sink,
+            };
+            let outcome = Box::pin(host.begin_overflow_recovery(&active, &assistant)).await.unwrap();
+            let loaded = SessionJournal::open(&file).unwrap();
+            loaded.projected_compaction_snapshot().unwrap();
+            match case {
+                "reasoning-cap" => {
+                    assert!(outcome.automatic_continuation_blocked && outcome.history_rewritten);
+                    assert_eq!(host.terminal_recovery.incomplete_attempts, 0);
+                    assert!(loaded.model_context().iter().all(|m| m.as_assistant().is_none()));
+                }
+                "visible-progress" => {
+                    assert!(!outcome.history_rewritten);
+                    assert_eq!(host.terminal_recovery.incomplete_attempts, 1);
+                    assert_eq!(
+                        loaded.model_context().last().unwrap().as_assistant().unwrap().text(),
+                        "actionable partial deliverable"
+                    );
+                }
+                _ => {
+                    assert!(!outcome.continuation_scheduled && !outcome.history_rewritten);
+                    assert_eq!(host.terminal_recovery.incomplete_attempts, 3);
+                }
+            }
+            assert!(!host.connection.is_cancelled());
+        }
     }
 
     #[tokio::test]

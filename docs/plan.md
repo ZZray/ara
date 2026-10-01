@@ -1,14 +1,16 @@
 # ARA execution plan
 
-**Latest checkpoint, 2026-10-01:** [native recovery/fold](evidence/native-recovery-fold.md)
-is tested/audited bounded WIP: typed Responses context
-recovery, raw-reserve summary budgets and bounded message-window folding.
-Modules 53/0/0; final backend 1,512/0/20, source unchanged; one shared gate
-338.253s including 203s all-target recompilation. Preferred CAS task/fold/
-continuation/reopen takes 29.558s with two actual summary calls and one complete
-source commit in the original Session. Next group: incomplete/length/terminal
-recovery and promotion/durable-discard Host callers. All other methods, rescue,
-full span/tokenizer/settings/receipt contracts continue after that.
+**Latest checkpoint, 2026-10-01:** [terminal recovery and configured promotion](evidence/terminal-recovery-promotion.md)
+is tested/audited bounded WIP: safe Length summary acceptance, empty-Stop
+continuation, same-Agent prepared target adoption and atomic durable discard.
+Modules 68/0/0; final Windows backend 1,519/0/20, source unchanged; one shared
+gate 137.539s. Preferred CAS file task and tool-disabled original-Session reopen
+take 11.573s after one controlled empty terminal, with five actual CAS requests.
+The existing default-stack Host regression is fixed and independently reviewed.
+Next group: native split-turn summary selection, manual-summary retry defaults,
+orphan-tool/unexpected-stop and accepted-terminal Host callers. Other methods,
+rescue, pre-prompt promotion, registry execution and full span/tokenizer/settings/
+receipt contracts remain required; actual OpenAI account authorization stays open.
 Use existing native input families, module checks while editing and one final
 shared gate. P1–P6 and complete parent surfaces remain open; no scope is dropped.
 

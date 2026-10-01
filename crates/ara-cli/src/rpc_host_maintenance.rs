@@ -1,5 +1,5 @@
 //! Fixed OMP 596f2da same-route soft overflow recovery. Other native methods,
-//! promotion and dead-end rescue remain separate required parity work.
+//! Other compaction methods and dead-end rescue remain required parity work.
 use super::*;
 use ara_agent::compaction::{
     AcceptedSummary, SummarySource, select_whole_turn_cut, summarize_sources_with_instructions,
@@ -36,7 +36,28 @@ pub(super) struct PendingMaintenanceContinue {
     command: Command,
     expected_messages: Vec<Message>,
     reserve_tokens: Option<f64>,
+    check_fit: bool,
     pub deadline: Instant,
+}
+
+#[derive(Default)]
+pub(super) struct TerminalRecoveryState {
+    pub incomplete_attempts: usize,
+    pub empty_attempts: usize,
+}
+
+fn safe_success_terminal(message: &AssistantMessage, api: &str) -> bool {
+    !matches!(api, "openai-responses" | "openai-codex-responses")
+        || message.terminal_context_recovery == Some(ara_ai::ContextRecoveryEvidence::ContentOnly)
+}
+
+fn produced_output(message: &AssistantMessage) -> bool {
+    if matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Aborted) {
+        return false;
+    }
+    let mut content = message.clone();
+    content.stop_reason = ara_ai::StopReason::Stop;
+    !ara_session::is_empty_assistant_stop(&content)
 }
 
 fn stored_tokens(messages: &[Message]) -> usize {
@@ -48,6 +69,18 @@ fn reported_input(message: &AssistantMessage) -> (u64, Option<u64>) {
     let buckets = [message.usage.input, message.usage.cache_read, message.usage.cache_write];
     let lower = buckets.into_iter().flatten().fold(0u64, u64::saturating_add);
     (lower, buckets.iter().all(Option::is_some).then_some(lower))
+}
+
+fn persisted_assistant_id(active: &ActiveRun, message: &AssistantMessage) -> Result<String> {
+    active
+        .sink
+        .entries
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find_map(|(id, candidate)| (candidate.as_assistant() == Some(message)).then(|| id.clone()))
+        .context("recovery assistant has no persisted native entry ID")
 }
 
 fn retry_fit(window: Option<f64>, reserve: Option<f64>, messages: &[Message]) -> bool {
@@ -64,6 +97,181 @@ fn retry_fit(window: Option<f64>, reserve: Option<f64>, messages: &[Message]) ->
 }
 
 impl Host {
+    fn queue_terminal_continue(&mut self, active: &ActiveRun, messages: Vec<Message>) {
+        self.maintenance_continue = Some(PendingMaintenanceContinue {
+            session: self.session.clone(),
+            generation: self.prompt_generation,
+            command: Command {
+                id: active.command.id.clone(),
+                kind: active.command.kind.clone(),
+                frame: active.command.frame.clone(),
+            },
+            expected_messages: messages,
+            reserve_tokens: None,
+            check_fit: false,
+            deadline: Instant::now() + Duration::from_millis(100),
+        });
+        self.auto_compaction_pending = false;
+    }
+
+    async fn try_context_promotion(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
+        use ara_cli::daily_model_config::{load_daily_config, resolve_daily_promotion_selection};
+        let agent_dir = super::super::ara_home().join("agent");
+        let Some(metadata) = self.sessions.provider.metadata.as_ref() else { return Ok(false) };
+        let prepared = async {
+            if !super::super::rpc_host_settings::context_promotion_enabled(&agent_dir)? {
+                return Ok(None);
+            }
+            let path = self.sessions.args.models_config.clone().unwrap_or_else(|| agent_dir.join("models.yml"));
+            let models = load_daily_config(&path, self.sessions.args.models_config.is_some())?;
+            let Some(selection) =
+                resolve_daily_promotion_selection(models.as_ref(), metadata, &|name: &str| std::env::var(name).ok())?
+            else {
+                return Ok(None);
+            };
+            // Account RPC startup is still an explicit unsupported contract.
+            if selection.api == ara_cli::daily_model_config::DailyApi::OpenAiCodexResponses {
+                bail!("account promotion in RPC is not yet available");
+            }
+            let generation = selection.generation;
+            let provider = super::super::ProviderFactory::daily(
+                self.sessions.provider.client.clone(),
+                selection,
+                self.session.header["id"].as_str().map(str::to_owned),
+            )
+            .await?;
+            provider
+                .route
+                .check_auth(&active.cancel)
+                .await
+                .map_err(|error| anyhow::anyhow!("promotion authentication unavailable: {error:?}"))?;
+            let mut config = self.base_config();
+            config.model = provider.route.model().clone();
+            config.provider = provider.build();
+            config.max_tokens = self.sessions.args.max_tokens.or(generation.max_tokens);
+            config.temperature = self.sessions.args.temperature.or(generation.temperature);
+            let overlay = self.overlay(&self.host_tools, &self.active_host_names());
+            let (config, skills) = self.sessions.config(&config, false, overlay).await?;
+            Ok::<_, anyhow::Error>(Some((provider, config, skills)))
+        }
+        .await;
+        let (provider, config, skills) = match prepared {
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => return Ok(false),
+            Err(_) => {
+                self.output.frame(json!({"type":"notice","level":"warning","source":"context-promotion", "message":"Context promotion target could not be prepared; trying configured compaction."}));
+                return Ok(false);
+            }
+        };
+        if active.cancel.is_cancelled() || self.connection.is_cancelled() {
+            return Ok(false);
+        }
+        let entry_id = persisted_assistant_id(active, message)?;
+        let mut messages = self.agent.messages().await;
+        if messages.last().and_then(Message::as_assistant) != Some(message) {
+            return Ok(false);
+        }
+        messages.pop();
+        // Journal selection + model receipt are a single durable transaction.
+        // The prepared snapshot is then published on the same Agent/Session.
+        let session = self.session.clone();
+        let mut journal = session.journal.lock().await;
+        let leaf = journal.leaf_id().map(str::to_owned);
+        let parent =
+            journal.entries().iter().find(|entry| entry.id == entry_id).and_then(|entry| entry.parent_id.clone());
+        journal.discard_failed_assistant_for_promotion(
+            leaf.as_deref(),
+            &entry_id,
+            message,
+            &format!("{}/{}", config.model.provider, config.model.id),
+        )?;
+        self.maintenance_bash_transition(parent);
+        self.agent.replace_idle_messages(messages.clone())?;
+        *session.messages.lock().unwrap() = Session::public_messages(&journal);
+        drop(journal);
+        self.publish_snapshot(&config);
+        let from = format!("{}/{}", self.config.model.provider, self.config.model.id);
+        let to = format!("{}/{}", config.model.provider, config.model.id);
+        self.config = config;
+        self.skills = skills;
+        self.sessions.provider = provider;
+        self.terminal_recovery.incomplete_attempts = 0;
+        self.finish_retry(None, Some("Retry transferred to context promotion".into()), false).await;
+        self.queue_terminal_continue(active, messages);
+        self.output.frame(json!({"type":"notice","level":"info","source":"context-promotion", "message":format!("Context model promoted from {from} to {to}")}));
+        Ok(true)
+    }
+
+    pub(super) async fn begin_empty_stop_recovery(
+        &mut self,
+        active: &ActiveRun,
+        message: &AssistantMessage,
+    ) -> Result<MaintenanceOutcome> {
+        let none = MaintenanceOutcome::default();
+        let api = &self.config.model.api;
+        if produced_output(message) {
+            self.terminal_recovery.incomplete_attempts = 0;
+        }
+        let class = ara_ai::retry_classification::classify_retry(message, api);
+        let provider_empty = message.stop_reason == ara_ai::StopReason::Error
+            && class.error_id & ara_ai::retry_classification::flag::EMPTY_RESPONSE != 0
+            && message.content.iter().all(|block| {
+                matches!(block, ara_ai::AssistantBlock::Thinking(_))
+                    || matches!(block, ara_ai::AssistantBlock::Text(text) if text.text.trim().is_empty())
+            });
+        if !ara_session::is_empty_assistant_stop(message) && !provider_empty {
+            self.terminal_recovery.empty_attempts = 0;
+            return Ok(none);
+        }
+        if self.input_closed
+            || active.cancel.is_cancelled()
+            || self.connection.is_cancelled()
+            || !Arc::ptr_eq(&active.sink.session, &self.session)
+            || message.provider != self.config.model.provider
+            || message.model != self.config.model.id
+            || class.context_recovery_blocked
+            || (!provider_empty && !safe_success_terminal(message, api))
+        {
+            return Ok(none);
+        }
+        let mut messages = self.agent.messages().await;
+        if messages.last().and_then(Message::as_assistant) != Some(message) {
+            return Ok(none);
+        }
+        let entry_id = persisted_assistant_id(active, message)?;
+        let session = self.session.clone();
+        let mut journal = session.journal.lock().await;
+        let leaf = journal.leaf_id().map(str::to_owned);
+        let parent =
+            journal.entries().iter().find(|entry| entry.id == entry_id).and_then(|entry| entry.parent_id.clone());
+        if provider_empty {
+            journal.discard_entry_durably(leaf.as_deref(), &entry_id, message)?;
+        } else {
+            journal.discard_empty_stop_durably(leaf.as_deref(), &entry_id, message)?;
+        }
+        self.maintenance_bash_transition(parent);
+        messages.pop();
+        *session.messages.lock().unwrap() = Session::public_messages(&journal);
+        drop(journal);
+        self.terminal_recovery.empty_attempts += 1;
+        if self.terminal_recovery.empty_attempts > 3 {
+            self.terminal_recovery.empty_attempts = 0;
+            self.agent.replace_idle_messages(messages)?;
+            let error = "Assistant returned no final output after three recovery attempts; try switching models or raising output limits.";
+            self.finish_retry(None, Some(error.into()), false).await;
+            self.output.frame(json!({"type":"notice","level":"error","source":"empty-stop", "message":error}));
+            return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, history_rewritten: true, ..none });
+        }
+        // Fixed empty-stop-retry.md. Runtime-only developer guidance, not a new
+        // user source or permission restriction on the continuing Agent.
+        messages.push(Message::Developer(ara_ai::DeveloperMessage {
+            content: UserContent::Text(format!("<system-injection>\nStopped without actionable output; task incomplete. Continue with a user-visible final answer or the next required tool call.\nAttempt #{}/3\n</system-injection>", self.terminal_recovery.empty_attempts)),
+            timestamp: ara_ai::now_ms(),
+        }));
+        self.agent.replace_idle_messages(messages.clone())?;
+        self.queue_terminal_continue(active, messages);
+        Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none })
+    }
     // Caller holds the journal across the synchronous branch transition.
     // Existing jobs keep their original raw branch; later jobs get a fresh owner.
     fn maintenance_bash_transition(&mut self, parent: Option<String>) {
@@ -93,7 +301,7 @@ impl Host {
             || active.cancel.is_cancelled()
             || self.connection.is_cancelled()
             || !Arc::ptr_eq(&active.sink.session, &self.session)
-            || message.stop_reason != ara_ai::StopReason::Error
+            || !matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Length)
             || message.provider != self.config.model.provider
             || message.model != self.config.model.id
         {
@@ -104,14 +312,18 @@ impl Host {
             return Ok(none);
         }
         let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
-        if class.context_recovery_blocked {
+        let incomplete = message.stop_reason == ara_ai::StopReason::Length;
+        if produced_output(message) {
+            self.terminal_recovery.incomplete_attempts = 0;
+        }
+        if class.context_recovery_blocked || incomplete && !safe_success_terminal(message, &self.config.model.api) {
             return Ok(none);
         }
         let window = self.config.model.context_window.filter(|window| window.is_finite() && *window > 0.0);
         let (lower, reported) = reported_input(message);
         let usage_overflow = window.is_some_and(|window| lower as f64 > window);
         let payload = class.error_id & ara_ai::retry_classification::flag::PAYLOAD_REJECTED != 0;
-        if !class.overflow && !usage_overflow && !payload {
+        if !incomplete && !class.overflow && !usage_overflow && !payload {
             return Ok(none);
         }
         let latest = self
@@ -143,9 +355,39 @@ impl Host {
                 "message":"Provider rejected request payload size; token compaction cannot establish a recovery. Reduce the payload or select another route."}));
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
         }
+        if self.try_context_promotion(active, message).await? {
+            return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
+        }
         let settings = self.compaction_policy.recovery_settings()?;
         if !self.compaction_policy.enabled() || !settings.soft_available {
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
+        }
+        if incomplete {
+            if self.terminal_recovery.incomplete_attempts >= 3 {
+                self.terminal_recovery.incomplete_attempts = 0;
+                let entry_id = persisted_assistant_id(active, message)?;
+                let session = self.session.clone();
+                let mut journal = session.journal.lock().await;
+                let leaf = journal.leaf_id().map(str::to_owned);
+                let parent = journal
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.id == entry_id)
+                    .and_then(|entry| entry.parent_id.clone());
+                journal.discard_entry_durably(leaf.as_deref(), &entry_id, message)?;
+                self.maintenance_bash_transition(parent);
+                let mut clean = messages;
+                clean.pop();
+                self.agent.replace_idle_messages(clean)?;
+                *session.messages.lock().unwrap() = Session::public_messages(&journal);
+                self.output.frame(json!({"type":"notice","level":"error","source":"compaction", "message":"Compaction recovery gave up after three consecutive empty length responses; try switching models or raising max output tokens."}));
+                return Ok(MaintenanceOutcome {
+                    automatic_continuation_blocked: true,
+                    history_rewritten: true,
+                    ..none
+                });
+            }
+            self.terminal_recovery.incomplete_attempts += 1;
         }
         // Validate the native output budget before changing the failed turn.
         let summary_budget = summary_output_budget_tokens(settings.reserve_tokens)?;
@@ -246,7 +488,7 @@ impl Host {
         });
         self.is_compacting = true;
         self.auto_compaction_pending = false;
-        self.output.frame(json!({"type":"auto_compaction_start","reason":"overflow","action":"context-full"}));
+        self.output.frame(json!({"type":"auto_compaction_start","reason":if incomplete { "incomplete" } else { "overflow" },"action":"context-full"}));
         Ok(MaintenanceOutcome { continuation_scheduled: true, ..none })
     }
 
@@ -351,6 +593,7 @@ impl Host {
                         command: active.command,
                         expected_messages: messages,
                         reserve_tokens: active.reserve_tokens,
+                        check_fit: true,
                         deadline: Instant::now() + Duration::from_millis(100),
                     });
                     event["willRetry"] = json!(true);
@@ -393,7 +636,9 @@ impl Host {
         if self.agent.has_queued_messages() {
             self.drain_queues = true;
             self.reconcile_queues().await;
-        } else if !retry_fit(self.config.model.context_window, pending.reserve_tokens, &pending.expected_messages) {
+        } else if pending.check_fit
+            && !retry_fit(self.config.model.context_window, pending.reserve_tokens, &pending.expected_messages)
+        {
             self.drain_queues = false;
             self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                 "message":"Context changed after compaction and no longer fits the model."}));

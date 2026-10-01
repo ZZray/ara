@@ -1,7 +1,8 @@
 //! Native catalog policy, ported from OMP 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
-//! Source: packages/catalog/src/{build,model-tokenizer,utils}.ts and
-//! compat/{resolve,axes,apply,anthropic,openai}.ts. Missing JSON properties
+//! Source: packages/catalog/src/{build,model-tokenizer,utils}.ts,
+//! compat/{resolve,axes,apply,anthropic,openai}.ts and coding-agent
+//! session/role-models.ts plus config/model-resolver.ts. Missing JSON properties
 //! represent JavaScript `undefined`; authored nulls remain authored nulls.
 //! The utils port here covers pure value helpers. `discoveryFetch` and its
 //! per-request extra-CA transport composition belong to discovery transport.
@@ -1754,6 +1755,85 @@ pub fn build_model(spec: &Value) -> Result<Value, CatalogPolicyError> {
     Ok(model)
 }
 
+fn context_target_thinking_level(suffix: &str) -> Option<&'static str> {
+    // Fixed coding-agent/thinking.ts accepts exact selectors or an
+    // unambiguous prefix of at least two characters, without case folding.
+    const LEVELS: &[&str] = &["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    if let Some(level) = LEVELS.iter().copied().find(|level| *level == suffix) {
+        return Some(level);
+    }
+    if suffix.len() < 2 {
+        return None;
+    }
+    let mut matches = LEVELS.iter().copied().filter(|level| level.starts_with(suffix));
+    let level = matches.next()?;
+    matches.next().is_none().then_some(level)
+}
+
+fn configured_context_target<'a>(current: &Value, candidates: &'a [Value]) -> Option<&'a Value> {
+    let target = js_trim(current.get("contextPromotionTarget")?.as_str()?);
+    if target.is_empty() {
+        return None;
+    }
+    let find = |provider: &str, id: &str| {
+        candidates.iter().find(|model| {
+            model.get("provider").and_then(Value::as_str) == Some(provider)
+                && model.get("id").and_then(Value::as_str) == Some(id)
+        })
+    };
+    if let Some((provider, id)) = target.split_once('/')
+        && !provider.is_empty()
+    {
+        let parsed_id = match id.rsplit_once(':') {
+            Some((base, suffix)) => match context_target_thinking_level(suffix) {
+                Some("max") => {
+                    if find(provider, id).is_some() {
+                        id
+                    } else {
+                        base
+                    }
+                }
+                Some(_) => base,
+                None if suffix == "auto" => {
+                    if find(provider, id).is_some() {
+                        id
+                    } else {
+                        base
+                    }
+                }
+                None => id,
+            },
+            None => id,
+        };
+        if let Some(explicit) = find(provider, parsed_id) {
+            return Some(explicit);
+        }
+    }
+    find(current.get("provider")?.as_str()?, target)
+}
+
+/// Resolve fixed OMP context-promotion metadata without preparing a route.
+///
+/// Port of session/role-models.ts::resolveContextPromotionConfiguredTarget
+/// and session-maintenance.ts::resolveContextPromotionTarget at the pinned
+/// SHA in this module header. Exact qualified selection precedes a literal
+/// same-provider fallback. A target must have a strictly larger known window.
+///
+/// `candidates` is caller-supplied metadata, not an authenticated/executable
+/// registry. The Host owns enabled settings, stale-turn checks, target route
+/// preparation, usable credentials and adoption on the existing Session.
+pub fn resolve_context_promotion_target<'a>(current: &Value, candidates: &'a [Value]) -> Option<&'a Value> {
+    let window = current.get("contextWindow")?.as_f64().filter(|window| window.is_finite() && *window > 0.0)?;
+    let candidate = configured_context_target(current, candidates)?;
+    if candidate.get("provider")?.as_str()? == current.get("provider")?.as_str()?
+        && candidate.get("id")?.as_str()? == current.get("id")?.as_str()?
+    {
+        return None;
+    }
+    candidate.get("contextWindow")?.as_f64().filter(|target| target.is_finite() && *target > window)?;
+    Some(candidate)
+}
+
 /// Exact embedded-tokenizer selection (pure; caching is not observable).
 pub fn resolve_model_tokenizer(model_id: &str) -> Result<Option<&'static str>, CatalogPolicyError> {
     let bare = model_id.rsplit('/').next().unwrap_or(model_id);
@@ -1877,6 +1957,75 @@ mod tests {
         json!({"api":api,"provider":provider,"id":id,"name":"OpenAI: A model (latest)",
             "reasoning":true,"input":["text"],"contextWindow":4096,"maxTokens":1024,
             "cost":{"input":1,"output":2,"cacheRead":0.1,"cacheWrite":0.2},"privateMetadata":{"original":true}})
+    }
+
+    #[test]
+    fn native_context_promotion_selectors_and_window_guards() {
+        // Fixed role-models.ts exact selection and model-resolver.ts thinking
+        // selectors; context-promotion.test.ts also pins same-window no-op.
+        let candidates = vec![
+            json!({"provider":"p","id":"large","contextWindow":200}),
+            json!({"provider":"q","id":"large","contextWindow":300}),
+            json!({"provider":"p","id":"org/large","contextWindow":400}),
+            json!({"provider":"org","id":"large","contextWindow":500}),
+            json!({"provider":"p","id":"large:max","contextWindow":250}),
+            json!({"provider":"p","id":"large:auto","contextWindow":260}),
+            json!({"provider":"p","id":"large:ma","contextWindow":270}),
+            json!({"provider":"p","id":"large:high","contextWindow":280}),
+            json!({"provider":"p","id":"missing/large","contextWindow":290}),
+            json!({"provider":"p","id":"small","contextWindow":1000}),
+        ];
+        for (target, expected) in [
+            ("p/large", Some(0)),
+            ("large", Some(0)),
+            ("\u{feff} p/large \u{2029}", Some(0)),
+            ("org/large", Some(3)),
+            ("p/org/large", Some(2)),
+            ("missing/large", Some(8)),
+            ("p/large:hi", Some(0)),
+            ("p/large:high", Some(0)),
+            ("p/large:max", Some(4)),
+            ("p/large:ma", Some(6)),
+            ("p/large:auto", Some(5)),
+            ("q/large:max", Some(1)),
+            ("q/large:auto", Some(1)),
+            ("q/large:xhi", Some(1)),
+            ("q/large:in", Some(1)),
+            ("q/large:mi", Some(1)),
+            ("q/large:of", Some(1)),
+            ("large:high", Some(7)),
+            ("q/large:m", None),
+            ("large:hi", None),
+            ("p/*", None),
+            ("p/LARGE", None),
+            ("p/ large", None),
+            ("small", None),
+            ("", None),
+            ("missing", None),
+        ] {
+            let current = json!({"provider":"p","id":"small","contextWindow":100,"contextPromotionTarget":target});
+            let selected = resolve_context_promotion_target(&current, &candidates);
+            assert_eq!(selected, expected.map(|index| &candidates[index]), "{target}");
+            if let (Some(selected), Some(index)) = (selected, expected) {
+                assert!(std::ptr::eq(selected, &candidates[index]), "metadata stays caller-owned");
+            }
+        }
+        for source_window in [Value::Null, json!(0), json!(-1), json!(200), json!("100")] {
+            let current =
+                json!({"provider":"p","id":"small","contextWindow":source_window,"contextPromotionTarget":"large"});
+            assert!(resolve_context_promotion_target(&current, &candidates).is_none());
+        }
+        let current = json!({"provider":"p","id":"small","contextWindow":100,"contextPromotionTarget":"large"});
+        assert!(resolve_context_promotion_target(&current, &[]).is_none());
+        for target_window in [Value::Null, json!(0), json!(-1), json!(100), json!("200")] {
+            let candidate = json!({"provider":"p","id":"large","contextWindow":target_window});
+            assert!(resolve_context_promotion_target(&current, &[candidate]).is_none());
+        }
+        let first = json!({"provider":"p","id":"large","contextWindow":100});
+        assert!(resolve_context_promotion_target(&current, &[first, candidates[0].clone()]).is_none());
+        let authored = json!({"api":"openai-responses","provider":"p","id":"small","name":"Small",
+            "contextWindow":100,"contextPromotionTarget":"large"});
+        assert_eq!(build_model(&authored).unwrap()["contextPromotionTarget"], "large");
     }
 
     #[test]

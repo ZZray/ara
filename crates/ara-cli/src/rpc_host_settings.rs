@@ -13,6 +13,26 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 const MAIN_CONFIG_FILENAMES: [&str; 2] = ["config.yml", "config.yaml"];
 const DEFAULT_METHOD_ORDER: [&str; 5] = ["remote", "snapcompact", "handoff", "shake", "soft"];
 
+/// Fixed settings-schema contextPromotion.enabled defaults to false.
+pub(super) fn context_promotion_enabled(agent_dir: &Path) -> Result<bool> {
+    for filename in MAIN_CONFIG_FILENAMES {
+        if let Some((document, _)) = read_document(&agent_dir.join(filename))? {
+            let root = document.as_hash().context("native settings root must be a mapping")?;
+            let Some(group) = root.get(&Yaml::String("contextPromotion".into())) else { return Ok(false) };
+            if matches!(group, Yaml::Null) {
+                return Ok(false);
+            }
+            let group = group.as_hash().context("contextPromotion must be a mapping")?;
+            return match group.get(&Yaml::String("enabled".into())) {
+                None => Ok(false),
+                Some(Yaml::Boolean(enabled)) => Ok(*enabled),
+                Some(_) => bail!("contextPromotion.enabled must be a boolean"),
+            };
+        }
+    }
+    Ok(false)
+}
+
 /// Fixed settings-schema.ts:1442-1473. Hosts bind these switches to their
 /// provider guard and Gemini reminder; Core does not own native settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

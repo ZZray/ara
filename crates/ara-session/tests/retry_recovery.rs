@@ -1,9 +1,10 @@
 use ara_ai::{
     AssistantBlock, AssistantMessage, AssistantRetryRecovery, JsonObject, Message, StopReason, ThinkingContent,
-    ToolCall, ToolResultMessage, UserMessage,
+    ToolCall, ToolResultMessage, UserContent, UserMessage,
 };
 use ara_session::{
-    BashExecutionMessage, DISCARDED_ENTRY_BRANCH_MARKER, FailedAssistantRecoveryOutcome, SessionJournal,
+    ACCEPTED_TERMINAL_EMPTY_STOP_MARKER, BashExecutionMessage, DISCARDED_ENTRY_BRANCH_MARKER,
+    FailedAssistantRecoveryOutcome, SessionJournal, UserSkillPrompt, is_empty_assistant_stop,
 };
 use serde_json::{Value, json};
 
@@ -266,6 +267,164 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     std::fs::write(&path, before_bytes).unwrap();
     journal.discard_entry_durably(Some(&tier), &discarded, &partial).unwrap();
     assert!(SessionJournal::open(&path).unwrap().projected_compaction_snapshot().is_ok());
+
+    // A prepared promotion writes its discard and native model receipt together.
+    let mut length = partial.clone();
+    length.stop_reason = StopReason::Length;
+    let discarded = journal.append_message(&Message::Assistant(length.clone())).unwrap();
+    let tier = journal.append_service_tier_change(&Value::Null).unwrap();
+    let before_entries = journal.entries().to_vec();
+    let before_bytes = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(
+        journal.discard_failed_assistant_for_promotion(Some(&tier), &discarded, &length, "fixture/larger").is_err()
+    );
+    assert_eq!(journal.entries(), before_entries);
+    assert_eq!(journal.leaf_id(), Some(tier.as_str()));
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, &before_bytes).unwrap();
+    assert_eq!(SessionJournal::open(&path).unwrap().entries(), before_entries);
+    let promoted = journal
+        .discard_failed_assistant_for_promotion(Some(&tier), &discarded, &length, "fixture/larger")
+        .unwrap()
+        .unwrap();
+    let model_receipt = journal.entries().last().unwrap();
+    assert_eq!(model_receipt.id, promoted);
+    assert_eq!(model_receipt.kind, "model_change");
+    assert_eq!(model_receipt.raw["model"], "fixture/larger");
+    let discard_marker =
+        journal.entries().iter().find(|entry| Some(&entry.id) == model_receipt.parent_id.as_ref()).unwrap();
+    assert_eq!(discard_marker.raw["details"]["discardedEntryId"], discarded);
+    assert_eq!(discard_marker.parent_id.as_deref(), Some(tier.as_str()));
+    assert!(!journal.entries().iter().any(|entry| entry.id == discarded));
+    let reopened = SessionJournal::open(&path).unwrap();
+    assert_eq!(reopened.leaf_id(), Some(promoted.as_str()));
+    assert_reopened_context(&journal, &reopened);
+
+    // Empty Stop has native actionable-content semantics, distinct from Error.
+    let stop_directory = tempfile::tempdir().unwrap();
+    let mut stops = SessionJournal::create(stop_directory.path(), stop_directory.path()).unwrap();
+    let request_message = Message::User(UserMessage::text("ordinary request stays active"));
+    let request = stops.append_message(&request_message).unwrap();
+    let mut empty_stop = AssistantMessage::empty("openai-completions", "fixture", "model");
+    empty_stop.content = vec![
+        AssistantBlock::text("\u{FEFF} "),
+        AssistantBlock::Thinking(ThinkingContent {
+            thinking: "unsigned reasoning is not actionable output".into(),
+            thinking_signature: None,
+        }),
+    ];
+    assert!(is_empty_assistant_stop(&empty_stop));
+    let stopped = stops.append_message(&Message::Assistant(empty_stop.clone())).unwrap();
+    let stop_bytes = std::fs::read(stops.path()).unwrap();
+    assert!(stops.discard_entry_durably(Some(&stopped), &stopped, &empty_stop).is_err());
+    assert!(
+        stops.discard_failed_assistant_for_promotion(Some(&stopped), &stopped, &empty_stop, "fixture/larger").is_err()
+    );
+    for content in [
+        vec![AssistantBlock::text("visible answer")],
+        vec![AssistantBlock::Thinking(ThinkingContent {
+            thinking: String::new(),
+            thinking_signature: Some("signed".into()),
+        })],
+        vec![AssistantBlock::ToolCall(ToolCall {
+            id: "effect".into(),
+            name: "write".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        })],
+    ] {
+        let mut actionable = empty_stop.clone();
+        actionable.content = content;
+        assert!(!is_empty_assistant_stop(&actionable));
+        assert!(stops.discard_empty_stop_durably(Some(&stopped), &stopped, &actionable).is_err());
+        assert!(stops.discard_accepted_terminal_empty_stop(Some(&stopped), &stopped, &actionable).is_err());
+    }
+    assert_eq!(std::fs::read(stops.path()).unwrap(), stop_bytes);
+    let dropped = stops.discard_empty_stop_durably(Some(&stopped), &stopped, &empty_stop).unwrap().unwrap();
+    let reopened = SessionJournal::open(stops.path()).unwrap();
+    assert_eq!(reopened.entries(), stops.entries());
+    assert_eq!(reopened.leaf_id(), Some(dropped.as_str()));
+    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.compaction_source_snapshot().unwrap().messages[0].entry_id, request);
+    assert!(reopened.compacted_context_projection().is_ok());
+    assert!(!reopened.entries().iter().any(|entry| entry.id == stopped));
+
+    // Accepted empty Stop preserves raw history and ordinary user context.
+    let stopped = stops.append_message(&Message::Assistant(empty_stop.clone())).unwrap();
+    let raw_stop = stops.entries().last().unwrap().clone();
+    let accepted = stops.discard_accepted_terminal_empty_stop(Some(&stopped), &stopped, &empty_stop).unwrap().unwrap();
+    let marker = stops.entries().last().unwrap();
+    assert_eq!(marker.id, accepted);
+    assert_eq!(marker.kind, "custom");
+    assert_eq!(marker.raw["customType"], ACCEPTED_TERMINAL_EMPTY_STOP_MARKER);
+    assert!(marker.raw.get("data").is_none());
+    assert_eq!(marker.parent_id.as_deref(), Some(dropped.as_str()));
+    assert_eq!(stops.entries().iter().find(|entry| entry.id == stopped), Some(&raw_stop));
+    assert!(stops.branch().iter().any(|entry| entry.id == request));
+    assert!(!stops.branch().iter().any(|entry| entry.id == stopped));
+    let reopened = SessionJournal::open(stops.path()).unwrap();
+    assert_eq!(reopened.entries(), stops.entries());
+    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.compaction_source_snapshot().unwrap(), stops.compaction_source_snapshot().unwrap());
+    assert_eq!(reopened.compacted_context_projection().unwrap(), stops.compacted_context_projection().unwrap());
+
+    // Only the direct native custom prompt is also bypassed; both raw receipts survive.
+    let prompt = UserSkillPrompt::new(UserContent::Text("terminal-only Skill prompt".into()), None);
+    let custom = stops.append_skill_prompt(&prompt).unwrap();
+    let raw_custom = stops.entries().last().unwrap().clone();
+    let stopped = stops.append_message(&Message::Assistant(empty_stop.clone())).unwrap();
+    let raw_stop = stops.entries().last().unwrap().clone();
+    let accepted_custom =
+        stops.discard_accepted_terminal_empty_stop(Some(&stopped), &stopped, &empty_stop).unwrap().unwrap();
+    assert_eq!(stops.entries().last().unwrap().parent_id.as_deref(), Some(accepted.as_str()));
+    assert_eq!(stops.entries().iter().find(|entry| entry.id == custom), Some(&raw_custom));
+    assert_eq!(stops.entries().iter().find(|entry| entry.id == stopped), Some(&raw_stop));
+    assert!(!stops.branch().iter().any(|entry| entry.id == custom || entry.id == stopped));
+    let reopened = SessionJournal::open(stops.path()).unwrap();
+    assert_eq!(reopened.entries(), stops.entries());
+    assert_eq!(reopened.leaf_id(), Some(accepted_custom.as_str()));
+    assert_eq!(reopened.model_context(), vec![request_message]);
+    assert!(reopened.compaction_source_snapshot().is_ok());
+    assert!(reopened.compacted_context_projection().is_ok());
+
+    // The strict projections do not grant general custom-entry semantics.
+    let valid_bytes = std::fs::read(stops.path()).unwrap();
+    for custom_type in [ACCEPTED_TERMINAL_EMPTY_STOP_MARKER, "unrecognized-custom"] {
+        let malformed = std::str::from_utf8(&valid_bytes)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let mut raw: Value = serde_json::from_str(line).unwrap();
+                if raw["id"] == accepted_custom {
+                    raw["customType"] = json!(custom_type);
+                    raw["data"] = json!({"content":"cannot silently omit payload"});
+                }
+                serde_json::to_string(&raw).unwrap()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(stops.path(), malformed).unwrap();
+        let malformed = SessionJournal::open(stops.path()).unwrap();
+        assert!(malformed.compaction_source_snapshot().is_err());
+        assert!(malformed.compacted_context_projection().is_err());
+    }
+    std::fs::write(stops.path(), valid_bytes).unwrap();
+
+    // A failed marker append restores the active leaf and all native receipts.
+    let stopped = stops.append_message(&Message::Assistant(empty_stop.clone())).unwrap();
+    let before_entries = stops.entries().to_vec();
+    let before_bytes = std::fs::read(stops.path()).unwrap();
+    std::fs::remove_file(stops.path()).unwrap();
+    std::fs::create_dir(stops.path()).unwrap();
+    assert!(stops.discard_accepted_terminal_empty_stop(Some(&stopped), &stopped, &empty_stop).is_err());
+    assert_eq!(stops.entries(), before_entries);
+    assert_eq!(stops.leaf_id(), Some(stopped.as_str()));
+    std::fs::remove_dir(stops.path()).unwrap();
+    std::fs::write(stops.path(), before_bytes).unwrap();
+    assert_eq!(SessionJournal::open(stops.path()).unwrap().entries(), before_entries);
 
     // Unknown/panicked tool receipts are neither removed nor replay-authorized.
     let tool_directory = tempfile::tempdir().unwrap();

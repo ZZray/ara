@@ -243,6 +243,12 @@ impl PreparedRoute {
         self
     }
 
+    /// Host promotion checks account availability before publishing a route.
+    /// The lease stays private; every later logical call still resolves afresh.
+    pub async fn check_auth(&self, cancel: &CancellationToken) -> Result<(), AuthResolveError> {
+        self.auth.resolve(&self.model, cancel).await.map(|_| ())
+    }
+
     /// Allocate protocol session state once. Every call on this binding shares it;
     /// a new logical Session or adopted route gets independent state.
     pub fn bind(

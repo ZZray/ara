@@ -51,6 +51,7 @@ pub const SESSION_TITLE_SLOT_BYTES: usize = 256;
 pub const CORRUPT_HEADER_MESSAGE: &str = "session header is missing or malformed";
 pub const UNKNOWN_EFFECT_TEXT: &str = "Tool call was interrupted before its result was recorded; its effects are unknown. Inspect the affected state before retrying it.";
 pub const DISCARDED_ENTRY_BRANCH_MARKER: &str = "discarded-entry-branch";
+pub const ACCEPTED_TERMINAL_EMPTY_STOP_MARKER: &str = "accepted-terminal-empty-stop";
 
 /// Native user command receipt (fixed OMP `session/messages.ts`). This stays
 /// distinct from the model's ordinary user message and from Agent tool calls.
@@ -420,6 +421,12 @@ impl Entry {
             && self.raw.pointer("/details/discardedEntryId").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
     }
 
+    fn is_accepted_terminal_empty_stop_marker(&self) -> bool {
+        self.kind == "custom"
+            && self.raw.get("customType").and_then(Value::as_str) == Some(ACCEPTED_TERMINAL_EMPTY_STOP_MARKER)
+            && self.raw.get("data").is_none()
+    }
+
     pub fn bash_execution(&self) -> Option<BashExecutionMessage> {
         BashExecutionMessage::from_entry(&self.raw)
     }
@@ -702,6 +709,20 @@ fn is_empty_error_turn(message: &AssistantMessage) -> bool {
                         .is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty())
             }
             AssistantBlock::RedactedThinking { data } => !ara_prompt::js::trim(data).is_empty(),
+            _ => true,
+        })
+}
+
+/// Fixed OMP's actionable-content test, narrowed to tool-free `Stop` turns.
+/// Unsigned thinking is not final output; signed or redacted thinking is.
+pub fn is_empty_assistant_stop(message: &AssistantMessage) -> bool {
+    message.stop_reason == StopReason::Stop
+        && !message.content.iter().any(|block| match block {
+            AssistantBlock::Text(text) => !ara_prompt::js::trim(&text.text).is_empty(),
+            AssistantBlock::Thinking(thinking) => thinking
+                .thinking_signature
+                .as_deref()
+                .is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty()),
             _ => true,
         })
 }
@@ -1223,15 +1244,58 @@ impl SessionJournal {
         entry_id: &str,
         assistant: &AssistantMessage,
     ) -> Result<Option<String>> {
+        if !matches!(assistant.stop_reason, StopReason::Error | StopReason::Length)
+            || assistant.tool_calls().next().is_some()
+        {
+            return Err(failed_recovery_error("durable discard requires a tool-free failed assistant"));
+        }
+        self.discard_assistant_durably(expected_leaf, entry_id, assistant, None)
+    }
+
+    /// Drop an exact empty Stop before continuation or after its retry cap.
+    /// Other terminal reasons retain the existing failed-assistant API.
+    pub fn discard_empty_stop_durably(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+    ) -> Result<Option<String>> {
+        if !is_empty_assistant_stop(assistant) {
+            return Err(failed_recovery_error("durable empty-stop discard requires an empty Stop assistant"));
+        }
+        self.discard_assistant_durably(expected_leaf, entry_id, assistant, None)
+    }
+
+    /// Commit failed-turn discard and a prepared host model promotion together.
+    /// There is no durable intermediate branch without its model-change receipt.
+    pub fn discard_failed_assistant_for_promotion(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+        target: &str,
+    ) -> Result<Option<String>> {
+        if !matches!(assistant.stop_reason, StopReason::Error | StopReason::Length)
+            || assistant.tool_calls().next().is_some()
+        {
+            return Err(failed_recovery_error("model promotion requires a tool-free failed assistant"));
+        }
+        self.discard_assistant_durably(expected_leaf, entry_id, assistant, Some(target))
+    }
+
+    fn discard_assistant_durably(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+        promotion_model: Option<&str>,
+    ) -> Result<Option<String>> {
         if self.leaf_id() != expected_leaf {
             return Err(failed_recovery_error("durable discard branch changed"));
         }
         let Some(target) = self.entries.iter().find(|entry| entry.id == entry_id).cloned() else { return Ok(None) };
-        if target.message() != Some(Message::Assistant(assistant.clone()))
-            || !matches!(assistant.stop_reason, StopReason::Error | StopReason::Length)
-            || assistant.tool_calls().next().is_some()
-        {
-            return Err(failed_recovery_error("durable discard requires the exact tool-free failed assistant"));
+        if target.message() != Some(Message::Assistant(assistant.clone())) {
+            return Err(failed_recovery_error("durable discard requires the exact assistant receipt"));
         }
         let branch = if self.leaf.is_none() {
             Vec::new()
@@ -1275,13 +1339,59 @@ impl SessionJournal {
         self.entries.push(Entry { id: marker_id.clone(), parent_id, kind: "branch_summary".into(), raw });
         self.ids.insert(marker_id.clone());
         self.leaf = Some(marker_id.clone());
+        if let Some(model) = promotion_model {
+            let id = generate_id(&self.ids);
+            let raw = json!({"type":"model_change", "id":id, "parentId":marker_id,
+                "timestamp":now_iso(), "model":model});
+            self.entries.push(Entry { id: id.clone(), parent_id: Some(marker_id), kind: "model_change".into(), raw });
+            self.ids.insert(id.clone());
+            self.leaf = Some(id);
+        }
         if let Err(error) = self.rewrite() {
             self.entries = previous_entries;
             self.ids = previous_ids;
             self.leaf = previous_leaf;
             return Err(error);
         }
-        Ok(Some(marker_id))
+        Ok(self.leaf.clone())
+    }
+
+    /// Fixed turn-recovery.ts:1061-1093. Preserve the original raw receipts,
+    /// bypassing only this empty Stop and its directly preceding custom prompt.
+    pub fn discard_accepted_terminal_empty_stop(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+    ) -> Result<Option<String>> {
+        if self.leaf_id() != expected_leaf || !is_empty_assistant_stop(assistant) {
+            return Err(failed_recovery_error("accepted empty-stop branch or assistant changed"));
+        }
+        let branch = self.strict_compaction_branch().map_err(|error| failed_recovery_error(error.to_string()))?;
+        let index = branch
+            .iter()
+            .position(|entry| entry.id == entry_id)
+            .ok_or_else(|| failed_recovery_error("accepted empty Stop is outside the current branch"))?;
+        let target = branch[index];
+        if target.message() != Some(Message::Assistant(assistant.clone()))
+            || branch[index + 1..].iter().any(|entry| !entry.is_service_tier_change())
+        {
+            return Err(failed_recovery_error("accepted empty-stop receipt or metadata tail changed"));
+        }
+        let parent = target.parent_id.as_deref().and_then(|id| branch.iter().find(|entry| entry.id == id));
+        let target_parent = match parent {
+            Some(parent) if parent.kind == "custom_message" => parent.parent_id.clone(),
+            _ => target.parent_id.clone(),
+        };
+        let previous_leaf = self.leaf.clone();
+        self.leaf = target_parent;
+        let mut fields = serde_json::Map::new();
+        fields.insert("customType".into(), json!(ACCEPTED_TERMINAL_EMPTY_STOP_MARKER));
+        let result = self.append_raw("custom", fields).map(Some);
+        if result.is_err() {
+            self.leaf = previous_leaf;
+        }
+        result
     }
 
     /// Native metadata receipt, retained verbatim and excluded from messages.
@@ -1550,7 +1660,9 @@ impl SessionJournal {
                     messages.push(SourcedMessage { entry_id: entry.id.clone(), message });
                 }
                 "model_change" | "label" | "title_change" => {}
-                _ if entry.is_service_tier_change() || entry.is_discarded_entry_branch_marker() => {}
+                _ if entry.is_service_tier_change()
+                    || entry.is_discarded_entry_branch_marker()
+                    || entry.is_accepted_terminal_empty_stop_marker() => {}
                 _ => {
                     return Err(CompactionSourceError::UnsupportedContextEntry {
                         id: entry.id.clone(),
@@ -1662,7 +1774,9 @@ impl SessionJournal {
                 }
                 "custom_message" if entry.message().is_some() => {}
                 "model_change" | "label" | "title_change" => {}
-                _ if entry.is_service_tier_change() || entry.is_discarded_entry_branch_marker() => {}
+                _ if entry.is_service_tier_change()
+                    || entry.is_discarded_entry_branch_marker()
+                    || entry.is_accepted_terminal_empty_stop_marker() => {}
                 "compaction" => {
                     let invalid = |field| CompactionProjectionError::InvalidField { id: entry.id.clone(), field };
                     let summary = entry.raw.get("summary").and_then(Value::as_str).ok_or_else(|| invalid("summary"))?;

@@ -282,6 +282,10 @@ pub struct AssistantMessage {
     /// Actual typed provider failure, with bounded classification and wait facts.
     #[serde(rename = "failureEvidence", default, skip_serializing_if = "Option::is_none")]
     pub failure_evidence: Option<crate::retry_classification::ProviderFailureEvidence>,
+    /// Wire safety observed for a terminal, including successful Length/Stop.
+    /// Absent historical metadata is unassessed, never positive replay proof.
+    #[serde(rename = "terminalContextRecovery", default, skip_serializing_if = "Option::is_none")]
+    pub terminal_context_recovery: Option<ContextRecoveryEvidence>,
     pub timestamp: i64,
     /// Request duration in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -309,6 +313,7 @@ impl AssistantMessage {
             error_message: None,
             error_status: None,
             failure_evidence: None,
+            terminal_context_recovery: None,
             timestamp: now_ms(),
             duration: None,
             ttft: None,

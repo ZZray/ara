@@ -5,7 +5,8 @@
 use ara_ai::providers::{openai_completions as chat, openai_responses as responses};
 use ara_ai::{Context, DeveloperMessage, Message, UserContent, UserMessage};
 use ara_cli::daily_model_config::{
-    DailyApi, DailyAuthSource, DailyOverrides, load_daily_config, resolve_daily_selection,
+    DailyApi, DailyAuthSource, DailyOverrides, load_daily_config, resolve_daily_promotion_selection,
+    resolve_daily_selection,
 };
 use ara_cli::model_route::{CredentialIdentity, FixedRequestAuth, PreparedRoute, ProtocolOptions};
 use ara_cli::models_config::ModelsConfig;
@@ -88,6 +89,99 @@ fn configured_context_window_reaches_execution_route_and_absence_stays_unknown()
             PreparedRoute::new(selection.model, selection.protocol, Arc::new(FixedRequestAuth::new(lease)), 0).unwrap();
         assert_eq!(route.model().context_window, capacity);
     }
+}
+
+#[test]
+fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_overrides() {
+    let baseline = json!({"providers":{
+        "source":{"api":"openai-responses","baseUrl":"https://source.example/v1","auth":"none",
+            "models":[{"id":"small","contextWindow":100,"contextPromotionTarget":"target/group/large"}]},
+        "target":{"api":"openai-completions","baseUrl":"https://target.example/v1","apiKey":"TARGET_KEY",
+            "models":[{"id":"group/large","contextWindow":200,"maxTokens":512,"input":["text"]}]}
+    }});
+    let config = ModelsConfig::validate(baseline.clone()).unwrap();
+    let env = |name: &str| match name {
+        "ARA_MODEL" | "ARA_TEST_MODEL_ID" => Some("small".into()),
+        "ARA_PROVIDER" => Some("source".into()),
+        "ARA_BASE_URL" | "ARA_TEST_BASE_URL" | "OPENROUTER_BASE_URL" => Some("https://old.example/v1".into()),
+        "ARA_TOKENIZER" => Some("unsupported-old-tokenizer".into()),
+        "ARA_API_KEY" => Some("explicit-same-name-target-key".into()),
+        "ARA_TEST_API_KEY" => Some("old-ambient-key".into()),
+        "TARGET_KEY" => Some("target-key".into()),
+        _ => None,
+    };
+    let current = resolve_daily_selection(
+        Some(&config),
+        &DailyOverrides {
+            provider: Some("source".into()),
+            model: Some("small".into()),
+            tokenizer: Some("none".into()),
+            ..Default::default()
+        },
+        &env,
+    )
+    .unwrap();
+    assert_eq!(current.metadata.as_object().unwrap().len(), 5);
+    assert_eq!(current.metadata["contextWindow"].as_f64(), Some(100.0));
+    assert_eq!(current.metadata["contextPromotionTarget"], "target/group/large");
+    let promoted = resolve_daily_promotion_selection(Some(&config), &current.metadata, &env).unwrap().unwrap();
+    assert_eq!(promoted.model.provider, "target");
+    assert_eq!(promoted.model.id, "group/large");
+    assert_eq!(promoted.model.base_url, "https://target.example/v1");
+    assert_eq!(promoted.model.context_window, Some(200.0));
+    assert_eq!(promoted.api, DailyApi::OpenAiCompletions);
+    assert_eq!(promoted.generation.max_tokens, Some(512));
+    let DailyAuthSource::Fixed(lease) = promoted.auth_source else { panic!("target key lease") };
+    assert_eq!(lease.identity(), &CredentialIdentity::Environment { variable: "TARGET_KEY".into() });
+    assert!(PreparedRoute::new(promoted.model, promoted.protocol, Arc::new(FixedRequestAuth::new(lease)), 1).is_ok());
+
+    for key_name in ["TARGET_KEY", "ARA_API_KEY", "ARA_BASE_URL"] {
+        let mut value = baseline.clone();
+        value["providers"]["target"]["apiKey"] = json!(key_name);
+        let cfg = ModelsConfig::validate(value).unwrap();
+        let target = resolve_daily_promotion_selection(Some(&cfg), &current.metadata, &env).unwrap().unwrap();
+        assert_eq!(target.model.base_url, "https://target.example/v1", "explicit key names cannot override endpoints");
+        let DailyAuthSource::Fixed(lease) = target.auth_source else { panic!("explicit target key") };
+        assert_eq!(lease.identity(), &CredentialIdentity::Environment { variable: key_name.into() });
+        if key_name != "TARGET_KEY" {
+            assert!(resolve_daily_promotion_selection(Some(&cfg), &current.metadata, &no_env).is_err());
+        }
+    }
+    for auth_none in [true, false] {
+        let mut value = baseline.clone();
+        if auth_none {
+            value["providers"]["target"].as_object_mut().unwrap().remove("apiKey");
+            value["providers"]["target"]["auth"] = json!("none");
+        } else {
+            value["providers"]["target"]["apiKey"] = json!("ARA_TEST_API_KEY");
+        }
+        let cfg = ModelsConfig::validate(value).unwrap();
+        let missing_target_env = |name: &str| if name == "ARA_TEST_API_KEY" { None } else { env(name) };
+        assert_eq!(
+            resolve_daily_promotion_selection(Some(&cfg), &current.metadata, &missing_target_env).is_ok(),
+            auth_none
+        );
+    }
+    let mut value = baseline.clone();
+    value["providers"]["source"]["models"][0].as_object_mut().unwrap().remove("contextPromotionTarget");
+    value["providers"]["source"]["modelOverrides"] = json!({"small":{"contextPromotionTarget":"target/group/large"}});
+    let cfg = ModelsConfig::validate(value.clone()).unwrap();
+    let cli = DailyOverrides { provider: Some("source".into()), model: Some("small".into()), ..Default::default() };
+    assert_eq!(
+        resolve_daily_selection(Some(&cfg), &cli, &no_env).unwrap().metadata["contextPromotionTarget"],
+        "target/group/large"
+    );
+    value["providers"]["source"]["modelOverrides"]["small"]["reasoning"] = json!(true);
+    let cfg = ModelsConfig::validate(value).unwrap();
+    assert!(resolve_daily_selection(Some(&cfg), &cli, &no_env).is_err());
+
+    let mut bundle_target = current.metadata.clone();
+    bundle_target["contextPromotionTarget"] = json!("openai-codex/gpt-5.4");
+    assert!(resolve_daily_promotion_selection(Some(&config), &bundle_target, &no_env).is_err());
+    let mut value = baseline;
+    value["providers"]["target"]["models"][0]["preferWebsockets"] = json!(true);
+    let cfg = ModelsConfig::validate(value).unwrap();
+    assert!(resolve_daily_promotion_selection(Some(&cfg), &current.metadata, &env).is_err());
 }
 
 #[test]

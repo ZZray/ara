@@ -1099,6 +1099,7 @@ fn stream_once(
         let mut retry_blocked = false;
         let result = run(&client, &model, &context, (&options, &protocol), &mut state, &sink, &mut retry_blocked).await;
         let mut output = state.output.clone();
+        output.terminal_context_recovery = Some(state.context_recovery_evidence);
         output.duration = Some(start.elapsed().as_millis() as u64);
         match result {
             Ok(()) => {

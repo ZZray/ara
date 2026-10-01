@@ -495,7 +495,7 @@ async fn rpc_compact_rejected_focus_and_failed_summaries_do_not_append_or_execut
     let env = Env::new();
     let up = upstream(vec![answer("seed one"), answer("seed two"),
         json!({"events":[tool_call(0,"forbidden-summary-tool","write","{\"path\":\"summary-effect.txt\",\"content\":\"bad\"}"),finish("tool_calls"),done()]}),
-        json!({"events":[text("unfinished summary"),finish("length"),done()]})]).await;
+        json!({"events":[text("failed summary"),{"data":{"error":{"code":400,"message":"summary failed"}}}]})]).await;
     let mut child = RpcChild::spawn(&env, &up, &[]);
     child.ready();
     child.send(json!({"id":"nothing","type":"compact"}));
@@ -723,6 +723,203 @@ fn responses_answer(text: &str) -> Value {
     ]})
 }
 
+fn responses_terminal(length: bool, native: bool, visible: Option<&str>) -> Value {
+    let mut response = visible.map(responses_answer).unwrap_or_else(|| json!({"events":[]}));
+    let events = response["events"].as_array_mut().unwrap();
+    if visible.is_some() {
+        events.pop();
+    }
+    if native {
+        events.push(json!({"data":{"type":"response.future_native_completed","item":{"type":"future_native","id":"unknown-effect"}}}));
+    }
+    events.push(json!({"data":if length {
+        json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})
+    } else { json!({"type":"response.completed","response":{"status":"completed"}}) }}));
+    response
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_terminal_length_empty_stop_and_wire_veto_module() {
+    for length in [false, true] {
+        for native in [false, true] {
+            let env = Env::new();
+            overflow_config(&env, 200_000, None);
+            let path = env.home.path().join("agent/models.yml");
+            let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            config["providers"]["overflow-fixture"]["api"] = json!("openai-responses");
+            std::fs::write(&path, config.to_string()).unwrap();
+            let mut responses = vec![
+                responses_answer("prior completed turn"),
+                responses_terminal(length, native, length.then_some("truncated deliverable")),
+            ];
+            if !native {
+                if length {
+                    responses.push(responses_terminal(true, false, Some("accepted length summary")));
+                }
+                responses.push(responses_answer("completed after terminal recovery"));
+            }
+            let up = upstream(responses).await;
+            let mut child = RpcChild::spawn(&env, &up, &["--provider", "overflow-fixture"]);
+            child.ready();
+            child.run("seed", "completed archival source");
+            let before = child.state("before");
+            child.prompt("terminal", "pending task input");
+            if !native {
+                child.until(|frame| {
+                    frame["type"] == "message_end"
+                        && message_text(&frame["message"]) == "completed after terminal recovery"
+                });
+            }
+            child.until(|frame| frame["type"] == "agent_end");
+            let after = child.state("after");
+            child.finish();
+            assert_eq!(before["sessionId"], after["sessionId"]);
+            assert_eq!(
+                up.served(),
+                if native {
+                    2
+                } else if length {
+                    4
+                } else {
+                    3
+                }
+            );
+            let file = PathBuf::from(after["sessionFile"].as_str().unwrap());
+            let entries = journal(&file);
+            assert_eq!(summary_entries(&entries).len(), usize::from(length && !native));
+            let loaded = SessionJournal::open(&file).unwrap();
+            loaded.projected_compaction_snapshot().unwrap();
+            if !native {
+                assert_eq!(
+                    loaded.model_context().last().unwrap().as_assistant().unwrap().text(),
+                    "completed after terminal recovery"
+                );
+                let requests = up.requests.lock().await;
+                if length {
+                    assert_eq!(summary_entries(&entries)[0]["summary"], "accepted length summary");
+                    assert!(requests[2]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
+                    assert!(!requests[3]["body"]["input"].to_string().contains("truncated deliverable"));
+                } else {
+                    let input = requests[2]["body"]["input"].to_string();
+                    assert!(input.contains("next required tool call"));
+                    assert!(input.contains("Attempt #1/3"));
+                    assert!(!entries.iter().any(|row| row["message"]["role"] == "developer"));
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_empty_stop_cap_is_durable_and_new_prompt_resets_module() {
+    let env = Env::new();
+    let empty = json!({"events":[finish("stop"),done()]});
+    let up = upstream(vec![
+        empty.clone(),
+        empty.clone(),
+        empty.clone(),
+        empty.clone(),
+        empty,
+        answer("new prompt recovered"),
+    ])
+    .await;
+    let mut child = RpcChild::spawn(&env, &up, &[]);
+    child.ready();
+    child.prompt("empty", "task with zero delivered output");
+    let notice = child.until(|frame| frame["type"] == "notice" && frame["source"] == "empty-stop");
+    assert_eq!(notice["level"], "error");
+    let state = child.state("capped");
+    assert_eq!(state["isStreaming"], false);
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    let loaded = SessionJournal::open(&file).unwrap();
+    assert!(loaded.model_context().iter().all(|m| m.as_assistant().is_none()));
+    loaded.projected_compaction_snapshot().unwrap();
+    assert_eq!(up.served(), 4);
+    child.prompt("fresh", "explicit fresh user task");
+    child.until(|frame| frame["type"] == "message_end" && message_text(&frame["message"]) == "new prompt recovered");
+    child.until(|frame| frame["type"] == "agent_end");
+    child.finish();
+    assert_eq!(up.served(), 6);
+    let requests = up.requests.lock().await;
+    assert!(requests[5]["body"]["messages"].to_string().contains("Attempt #1/3"));
+    assert_eq!(
+        SessionJournal::open(&file).unwrap().model_context().last().unwrap().as_assistant().unwrap().text(),
+        "new prompt recovered"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_context_promotion_prepares_target_route_or_falls_back_module() {
+    for case in ["prepared", "missing-key", "disabled", "invalid-switch"] {
+        let env = Env::new();
+        overflow_config(&env, 200_000, None);
+        let target =
+            upstream(vec![responses_answer("promoted completion"), responses_answer("queued completion")]).await;
+        let path = env.home.path().join("agent/models.yml");
+        let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["providers"]["overflow-fixture"]["models"][0]["contextPromotionTarget"] =
+            json!("promoted-fixture/larger-model");
+        config["providers"]["promoted-fixture"] = json!({"api":"openai-responses","baseUrl":target.base_url(),"auth":if case=="missing-key" {"apiKey"} else {"none"}, "models":[{"id":"larger-model","contextWindow":400_000,"maxTokens":1024,"input":["text"]}]});
+        if case == "missing-key" {
+            config["providers"]["promoted-fixture"]["apiKey"] = json!("ARA_TEST_API_KEY");
+        }
+        std::fs::write(&path, config.to_string()).unwrap();
+        if case != "disabled" {
+            let settings = env.home.path().join("agent/config.yml");
+            let mut contents = std::fs::read_to_string(&settings).unwrap();
+            contents.push_str(if case == "invalid-switch" {
+                "contextPromotion:\n  enabled: 'true'\n"
+            } else {
+                "contextPromotion:\n  enabled: true\n"
+            });
+            std::fs::write(settings, contents).unwrap();
+        }
+        let mut responses = vec![answer("prior source"), failed_overflow(None, false)];
+        if case != "prepared" {
+            responses.extend([answer("fallback summary"), answer("fallback completion")]);
+        }
+        let up = upstream(responses).await;
+        let mut gate = HttpGate::start(&up, 1).await;
+        let mut child = RpcChild::spawn_url(&env, &gate.url, &["--provider", "overflow-fixture"]);
+        child.ready();
+        child.run("seed", "earlier completed user input");
+        let before = child.state("before");
+        child.prompt("overflow", "finish this original pending task");
+        gate.reached(env.deadline).await;
+        if case == "prepared" {
+            child.send(json!({"id":"queued", "type":"prompt", "message":"retained queued user input", "streamingBehavior":"followUp"}));
+            child.success("queued");
+        }
+        gate.release();
+        let expected = if case == "prepared" { "queued completion" } else { "fallback completion" };
+        child.until(|frame| frame["type"] == "message_end" && message_text(&frame["message"]) == expected);
+        child.until(|frame| frame["type"] == "agent_end");
+        let after = child.state("after");
+        assert_eq!(before["sessionId"], after["sessionId"]);
+        assert_eq!(after["model"]["id"], if case == "prepared" { "larger-model" } else { "fake-model" });
+        child.finish();
+        assert_eq!(target.served(), if case == "prepared" { 2 } else { 0 });
+        assert_eq!(up.served(), if case == "prepared" { 2 } else { 4 });
+        let file = PathBuf::from(after["sessionFile"].as_str().unwrap());
+        let entries = journal(&file);
+        let loaded = SessionJournal::open(&file).unwrap();
+        loaded.projected_compaction_snapshot().unwrap();
+        assert_eq!(summary_entries(&entries).len(), usize::from(case != "prepared"));
+        if case == "prepared" {
+            assert!(
+                entries
+                    .iter()
+                    .any(|row| row["type"] == "model_change" && row["model"] == "promoted-fixture/larger-model")
+            );
+            let requests = target.requests.lock().await;
+            assert_eq!(requests[0]["body"]["model"], "larger-model");
+            assert!(requests[0]["request"].as_str().unwrap().contains("responses"));
+            assert!(requests[0]["body"]["input"].to_string().contains("original pending task"));
+            assert!(requests[1]["body"]["input"].to_string().contains("retained queued user input"));
+        }
+    }
+}
+
 // Native message.done recovery is separate from transparent replay. Exercise
 // the actual Provider -> Host -> branch transaction, including unknown output.
 #[tokio::test(flavor = "multi_thread")]
@@ -856,7 +1053,7 @@ async fn rpc_native_soft_overflow_recovery_module_scenarios() {
         overflow_config(&env, if deadend { 10_000 } else { 200_000 }, deadend.then_some(8000));
         let partial = format!("visible-overflow-{case}");
         let summary = if summary_failure {
-            json!({"events":[text("rejected incomplete summary"),finish("length"),done()]})
+            json!({"events":[text("rejected failed summary"),{"data":{"error":{"code":400,"message":"summary failed"}}}]})
         } else {
             answer("native soft overflow summary")
         };
