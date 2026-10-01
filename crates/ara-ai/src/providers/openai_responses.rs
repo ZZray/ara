@@ -1122,7 +1122,7 @@ fn stream_once(
                     &mut output,
                     &cause,
                     retry_blocked || state.replay_unsafe_wire_event,
-                    state.replay_unsafe_wire_event,
+                    state.same_route_unsafe_wire_event,
                     &model.api,
                 );
                 let reason = output.stop_reason;
@@ -1267,7 +1267,7 @@ async fn run(
         for frame in frames {
             if frame.data == "[DONE]" {
                 return Err(ProviderError::Incomplete(
-                    "Responses stream ended without a response terminal event".into(),
+                    "OpenAI responses stream closed before a terminal response event was received".into(),
                 ));
             }
             let event: Value = serde_json::from_str(&frame.data)
@@ -1301,15 +1301,17 @@ async fn run(
                 && let Err(error) = super::openai_codex_responses::validate_event(&event)
             {
                 state.replay_unsafe_wire_event = true;
+                state.same_route_unsafe_wire_event = true;
                 return Err(error);
             }
             let updates = state.handle(&event).inspect_err(|error| {
-                state.output.failure_evidence =
-                    Some(crate::retry_classification::ProviderFailureEvidence::from_error_envelope(
-                        error,
-                        &event,
-                        state.replay_unsafe_wire_event,
-                    ));
+                let mut evidence = crate::retry_classification::ProviderFailureEvidence::from_error_envelope(
+                    error,
+                    &event,
+                    state.same_route_unsafe_wire_event,
+                );
+                evidence.replay_blocked |= state.replay_unsafe_wire_event;
+                state.output.failure_evidence = Some(evidence);
             })?;
             for update in updates {
                 if !sink.push_or_cancel(update, &options.cancel).await {
@@ -1332,7 +1334,9 @@ async fn run(
             break;
         }
     }
-    Err(ProviderError::Incomplete("Responses stream closed without a response terminal event".into()))
+    Err(ProviderError::Incomplete(
+        "OpenAI responses stream closed before a terminal response event was received".into(),
+    ))
 }
 
 #[cfg(test)]

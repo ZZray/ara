@@ -73,6 +73,8 @@ impl Env {
 // module. No second harness or separate test for every ordinary mapping.
 #[path = "support/rpc_loop_guard.rs"]
 mod loop_guard;
+#[path = "support/rpc_stream_close_cap.rs"]
+mod stream_close_cap;
 #[path = "support/rpc_tool_loop_guard.rs"]
 mod tool_loop_guard;
 

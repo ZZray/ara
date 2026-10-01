@@ -809,7 +809,7 @@ impl Host {
     }
 
     async fn begin_retry(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
-        use super::rpc_host_retry::{RetryDisposition, backoff_ms, disposition};
+        use super::rpc_host_retry::{RetryDisposition, backoff_ms, disposition, effective_max_retries};
         let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
         if active.cancel.is_cancelled()
             || self.connection.is_cancelled()
@@ -820,6 +820,7 @@ impl Host {
         }
         let mut messages = self.agent.messages().await;
         let Some(disposition) = disposition(message, &messages, &class) else { return Ok(false) };
+        let max_retries = effective_max_retries(message, self.retry_policy.max_retries());
         let entry_id = active
             .sink
             .entries
@@ -831,7 +832,7 @@ impl Host {
             .context("failed retry message has no durable native entry ID")?;
         let previous_attempt = self.retry.as_ref().map_or(0, |retry| retry.attempt);
         let attempt = previous_attempt.saturating_add(1);
-        if attempt as f64 > self.retry_policy.max_retries() {
+        if attempt as f64 > max_retries {
             // The terminal failure remains raw; only prior retry receipts are
             // marked superseded, as fixed turn-recovery.ts:2310-2325.
             if self.retry.is_none() {
@@ -946,7 +947,7 @@ impl Host {
         saga.attempt = attempt;
         saga.visible = true;
         saga.deadline = Some(deadline);
-        self.output.frame(json!({"type":"auto_retry_start","attempt":attempt,"maxAttempts":self.retry_policy.max_retries(),
+        self.output.frame(json!({"type":"auto_retry_start","attempt":attempt,"maxAttempts":max_retries,
             "delayMs":delay_ms,"errorMessage":message.error_message.as_deref().unwrap_or("Unknown error"),"errorId":class.error_id}));
         if disposition == RetryDisposition::RemoveFailed {
             if messages.last().and_then(Message::as_assistant) != Some(message) {

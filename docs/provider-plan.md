@@ -77,6 +77,14 @@ does not change the daily Provider ordering or accept actual account login.
 
 ## Deferred compatibility register
 
+The [native thinking stream-close cap](evidence/thinking-stream-retry-cap.md)
+uses two existing modules (50/0/0) and one shared final gate (1,504/0/20,
+293.401s including a 168s all-target rebuild). Module execution takes 4.890s.
+Two controlled faults plus five actual preferred CAS requests verify a file
+task and original-Session tool-disabled recall in 14.823s. This does not change
+Provider priorities or prove live OpenRouter/Copilot faults/account login.
+Development checks stay scoped; share the final comprehensive build once.
+
 | Item | Evidence / dependency | Status |
 | --- | --- | --- |
 | Full cipher expressions and suites | Current native catalog TLS uses ring's named subset. Actual Bun uses BoringSSL; the 45-case investigation demonstrates expression differences from local OpenSSL and a negotiable AES128-SHA suite absent in ring. | Explicitly deferred by provider prioritization; not complete. |

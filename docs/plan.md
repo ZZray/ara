@@ -61,6 +61,19 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+Native thinking stream-close cap checkpoint (2026-10-01, tested/audited WIP):
+same-route OpenRouter/Copilot cap, actual Responses EOF/DONE diagnosis and
+separate Provider/Session failure facts pass seven grouped process scenarios.
+One-command modules 50/0/0, backend 1,504/0/20 and inventory/deny/build pass in
+293.401 seconds; module execution is 4.890 seconds, full target recompile 168s.
+Preferred CAS artifact and tool-disabled original-Session restart pass after
+two controlled thinking faults; five actual model calls, three processes,
+14.823 seconds. Independent review and Root audit bind the sources/binary.
+See [cap evidence](evidence/thinking-stream-retry-cap.md). Next complete overflow
+capacity/checked journal recovery and continuation, then remaining native stops,
+fallback and RPC/registry. P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker
+null stay unchanged. Avoid duplicate unchanged gates/trials after compaction.
+
 Tool-call-loop checkpoint (2026-10-01, tested/audited WIP): fixed detector,
 long-lived Host policy and awaited Core turn-end inputs now retain native notice
 ordering, Session restart and compaction provenance. Original OMP detector tests

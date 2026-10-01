@@ -208,6 +208,14 @@ commands and additional lifecycle contracts until the complete inventory passes.
 
 ## Model/auth foundation checkpoint, 2026-10-01
 
+The [thinking stream-close cap](evidence/thinking-stream-retry-cap.md) completes
+the native same-route cap subset and real Responses failure wiring. Seven
+grouped Host scenarios, existing HTTP corpus, the shared Windows gate and a
+preferred actual CAS artifact/original-Session task pass with independent audit.
+Complete overflow capacity/branch rollback/discard and continuation, native
+terminal stops, configured fallback and exhausted-error presentation remain
+required. No command count or full R2/CA-RPC acceptance advances: RPC is 27/42.
+
 The [fixed variant/lossless dependency](evidence/model-variants.md) adds all eight
 collapse exports, Host-owned mutable aliases/templates and reference identity,
 native lossless policy/build and RegExp. Source oracle/full Windows checks pass

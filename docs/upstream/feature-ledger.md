@@ -4,6 +4,18 @@ Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `
 
 The complete denominator is the generated [OMP source inventory](inventory.md): every tracked file at the baseline belongs to one surface in [`surfaces.toml`](../../upstream/inventory/surfaces.toml), and every upstream test case is a behavior item (`B-xxxxxxxxxx` in [behaviors.tsv](inventory/behaviors.tsv)). Rows below are bounded behavior points being ported; each cites its surface and the upstream behavior IDs/source it covers. A surface is only `accepted` when all of its behavior items are accounted for here. `python scripts/omp_inventory.py check` rejects citations of unknown behavior IDs.
 
+Active fixed thinking stream-close cap extension (tested/audited WIP, no new
+registered point): CA-TURN-RECOVERY and existing CA-RPC same-route retries map
+`turn-recovery.ts:1395–1412,2156–2159` to
+`ara-cli::{rpc_host,rpc_host_retry}`. Real Responses EOF/DONE diagnosis and
+separate Provider commitment/Session unsafe wire facts map to
+`ara-ai::{providers::openai_responses,responses_stream}`.
+[Cap evidence](../evidence/thinking-stream-retry-cap.md) records one grouped
+seven-mode child scenario, modules 50/0/0, Windows backend 1,504/0/20,
+inventory/deny/build and independently audited preferred CAS artifact/restart.
+Complete overflow/terminal-stop/fallback/compaction continuation remains
+mandatory; RPC 27/42, P1–P6 and full marker null stay unchanged.
+
 Active fixed tool-call-loop extension (tested/audited WIP, no new registered
 point): AI-STREAM-GUARDS and existing CA-RPC/CA-TURN-RECOVERY map the detector,
 native defaults/settings lifetime and awaited completed-turn injection to

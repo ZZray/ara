@@ -66,6 +66,9 @@ pub(crate) struct ResponsesStreamState {
     identifierless_scan_work: usize,
     pub(crate) terminal: bool,
     pub(crate) replay_unsafe_wire_event: bool,
+    // Thinking commits the Provider stream but can be removed by Session
+    // recovery. Tool and unknown native effects must still veto that recovery.
+    pub(crate) same_route_unsafe_wire_event: bool,
 }
 
 impl ResponsesStreamState {
@@ -91,6 +94,7 @@ impl ResponsesStreamState {
             identifierless_scan_work: 0,
             terminal: false,
             replay_unsafe_wire_event: false,
+            same_route_unsafe_wire_event: false,
         }
     }
 
@@ -210,6 +214,7 @@ impl ResponsesStreamState {
             }
             ItemKind::Function => {
                 self.replay_unsafe_wire_event = true;
+                self.same_route_unsafe_wire_event = true;
                 let call_id = call.as_deref().expect("checked above");
                 let stable_id = id.clone().unwrap_or_else(|| format!("fc_ara_{key}"));
                 self.output.content.push(AssistantBlock::ToolCall(ToolCall {
@@ -432,6 +437,7 @@ impl ResponsesStreamState {
             }
             ItemKind::Function => {
                 self.replay_unsafe_wire_event = true;
+                self.same_route_unsafe_wire_event = true;
                 let proven_complete = open.final_arguments.is_some()
                     || (terminal_fallback
                         && serde_json::from_str::<crate::types::JsonObject>(&open.argument_bytes).is_ok());
@@ -576,6 +582,7 @@ impl ResponsesStreamState {
                     }
                     _ => {
                         self.replay_unsafe_wire_event = true;
+                        self.same_route_unsafe_wire_event = true;
                         return Err(ProviderError::Stream("Unsupported Responses output item".into()));
                     }
                 }
@@ -699,6 +706,7 @@ impl ResponsesStreamState {
                     }
                     open.argument_bytes.push_str(delta);
                     self.replay_unsafe_wire_event = true;
+                    self.same_route_unsafe_wire_event = true;
                     events.push(AssistantMessageEvent::ToolcallDelta {
                         content_index: open.content_index,
                         delta: delta.to_owned(),
@@ -726,10 +734,14 @@ impl ResponsesStreamState {
                     open.final_arguments = Some(raw.to_owned());
                     open.identifierless_arguments_done = identifierless;
                     self.replay_unsafe_wire_event = true;
+                    self.same_route_unsafe_wire_event = true;
                 }
             }
             "response.output_item.done" => {
                 self.replay_unsafe_wire_event = true;
+                if event.pointer("/item/type").and_then(Value::as_str) != Some("reasoning") {
+                    self.same_route_unsafe_wire_event = true;
+                }
                 let item = event
                     .get("item")
                     .ok_or_else(|| ProviderError::Stream("Responses done event has no item".into()))?;

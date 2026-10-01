@@ -9,6 +9,33 @@ pub(super) enum RetryDisposition {
     PreserveFailed,
 }
 
+/// Fixed turn-recovery.ts:1400-1412,2156-2159. This cap belongs to the
+/// current failed message; later failures in the same saga are classified anew.
+pub(super) fn effective_max_retries(message: &AssistantMessage, configured: f64) -> f64 {
+    if !message.content.iter().any(|block| {
+        matches!(block, AssistantBlock::Thinking(thinking) if !ara_prompt::js::trim(&thinking.thinking).is_empty())
+    }) {
+        return configured;
+    }
+    let error = message.error_message.as_deref().unwrap_or("").to_ascii_lowercase();
+    let bounded = match message.provider.as_str() {
+        "openrouter" => error.match_indices("server_error:").any(|(index, marker)| {
+            // Native /i is ASCII case folding for this non-Unicode pattern;
+            // reuse JS whitespace rather than Rust regex's broader \s set.
+            let tail = ara_prompt::js::trim_start(&error[index + marker.len()..]);
+            let Some(tail) = tail.strip_prefix("stream closed with reason:") else { return false };
+            ara_prompt::js::trim_start(tail).starts_with("error")
+        }),
+        "github-copilot" if message.model == "grok-4.6" && message.api == "openai-responses" => {
+            error.contains("openai responses stream closed before a terminal response event was received")
+        }
+        _ => false,
+    };
+    // RetryPolicy rejects nonfinite settings; keep zero, negative and fractional
+    // values unchanged when they are already below the native one-retry cap.
+    if bounded { configured.min(1.0) } else { configured }
+}
+
 pub(super) fn disposition(
     message: &AssistantMessage,
     messages: &[Message],
