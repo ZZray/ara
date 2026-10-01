@@ -1118,7 +1118,9 @@ impl Host {
     }
 
     async fn compact(&mut self, focus: Option<&str>) -> Result<Value> {
-        use ara_agent::compaction::{SummarySource, select_whole_turn_cut, summarize_sources_with_instructions};
+        use ara_agent::compaction::{
+            SummarySource, select_whole_turn_cut, summarize_sources_with_instructions, summary_output_budget_tokens,
+        };
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before compacting");
@@ -1151,7 +1153,9 @@ impl Host {
             let tokens_before = count_messages(&current, MessageCountOptions::default()) as u64;
             let seconds = self.max_time.unwrap_or(120.0).clamp(0.0, 120.0);
             let deadline = Instant::now() + Duration::from_secs_f64(seconds);
-            let max_tokens = self.config.max_tokens.unwrap_or(13_107).min(13_107);
+            let settings = self.compaction_policy.recovery_settings()?;
+            let summary_budget = summary_output_budget_tokens(settings.reserve_tokens)?;
+            let max_tokens = self.config.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
             let accepted = summarize_sources_with_instructions(
                 &sources[..cut.candidate.first_kept_index],
                 previous,

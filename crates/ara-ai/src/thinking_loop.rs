@@ -443,6 +443,7 @@ pub fn guard_thinking_loop_stream(
                     code: None,
                     replay_blocked: true,
                     same_route_blocked: true,
+                    context_recovery: None,
                     wait_ms: None,
                     error_id: 0,
                 });
@@ -504,6 +505,7 @@ fn build_thinking_loop_error(model: &Model, detail: &str, observed: &AssistantMe
         code: None,
         replay_blocked: false,
         same_route_blocked: false,
+        context_recovery: None,
         wait_ms: None,
         error_id: flag::THINKING_LOOP | flag::CLASS,
     });

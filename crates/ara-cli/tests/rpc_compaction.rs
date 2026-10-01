@@ -715,6 +715,125 @@ fn failed_overflow(content: Option<&str>, payload: bool) -> Value {
     json!({"events":events})
 }
 
+fn responses_answer(text: &str) -> Value {
+    json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{
+            "type":"message","id":"msg-summary-fixture","content":[{"type":"output_text","text":text}]}}},
+        {"data":{"type":"response.completed","response":{"id":"resp-summary-fixture","status":"completed"}}}
+    ]})
+}
+
+// Native message.done recovery is separate from transparent replay. Exercise
+// the actual Provider -> Host -> branch transaction, including unknown output.
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_responses_content_only_overflow_and_native_output_veto_module() {
+    for unsafe_output in [false, true] {
+        let env = Env::new();
+        overflow_config(&env, 200_000, Some(25_000));
+        let path = env.home.path().join("agent/models.yml");
+        let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["providers"]["overflow-fixture"]["api"] = json!("openai-responses");
+        config["providers"]["overflow-fixture"]["models"][0]["maxTokens"] = json!(20_000);
+        std::fs::write(path, config.to_string()).unwrap();
+        let mut failure = responses_answer("visible completed text before overflow");
+        failure["events"].as_array_mut().unwrap().pop();
+        let output =
+            if unsafe_output { json!([{"type":"computer_call","id":"unobserved-native-effect"}]) } else { json!([]) };
+        failure["events"].as_array_mut().unwrap().push(json!({"data":{
+            "type":"response.failed","response":{"id":"resp-overflow","status":"failed",
+                "output":output,"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}
+        }}));
+        let mut responses = vec![responses_answer("completed prior source"), failure];
+        if !unsafe_output {
+            responses.extend([
+                responses_answer("native Responses recovery summary"),
+                responses_answer("continued original input"),
+            ]);
+        }
+        let up = upstream(responses).await;
+        let args = ["--provider", "overflow-fixture", "--max-tokens", "20000"];
+        let mut child = RpcChild::spawn(&env, &up, &args);
+        child.ready();
+        child.run("seed", "completed earlier source turn");
+        let before = child.state("before");
+        child.prompt("overflow", "recover the original pending input");
+        if !unsafe_output {
+            let end = child.until(|frame| frame["type"] == "auto_compaction_end");
+            assert_eq!(end["willRetry"], true, "{end}");
+        }
+        child.until(|frame| frame["type"] == "agent_end");
+        let after = child.state("after");
+        assert_eq!(after["sessionId"], before["sessionId"]);
+        assert_eq!(after["isCompacting"], false);
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+        child.finish();
+        assert_eq!(up.served(), if unsafe_output { 2 } else { 4 });
+        let file = PathBuf::from(after["sessionFile"].as_str().unwrap());
+        let entries = journal(&file);
+        assert_eq!(summary_entries(&entries).len(), usize::from(!unsafe_output));
+        let failed = entries.iter().find(|row| row["message"]["stopReason"] == "error").unwrap();
+        assert_eq!(
+            failed["message"]["failureEvidence"]["contextRecovery"],
+            if unsafe_output { "nativeOutput" } else { "contentOnly" }
+        );
+        if !unsafe_output {
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[2]["body"]["max_output_tokens"], 16_384);
+            assert!(requests[2]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
+            assert!(!requests[2]["body"]["input"].to_string().contains("visible completed text before overflow"));
+            assert!(requests[3]["body"]["input"].to_string().contains("native Responses recovery summary"));
+            let projected = SessionJournal::open(&file).unwrap().model_context();
+            assert!(
+                !projected
+                    .iter()
+                    .any(|message| message.as_assistant().is_some_and(|m| m.stop_reason == ara_ai::StopReason::Error))
+            );
+        }
+    }
+}
+
+// One module sequence verifies raw reserve -> wire cap -> message fold ->
+// carried summary -> one durable compaction containing all original IDs.
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_manual_summary_budget_folding_module() {
+    let env = Env::new();
+    overflow_config(&env, 8192, Some(25_000));
+    let path = env.home.path().join("agent/models.yml");
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["providers"]["overflow-fixture"]["models"][0]["maxTokens"] = json!(20_000);
+    std::fs::write(path, config.to_string()).unwrap();
+    let up = upstream(vec![
+        answer("completed source"),
+        answer("kept turn"),
+        answer("first window summary"),
+        answer("final carried summary"),
+    ])
+    .await;
+    let mut child = RpcChild::spawn(&env, &up, &["--provider", "overflow-fixture", "--max-tokens", "20000"]);
+    child.ready();
+    child.run("seed", &"original oversized input ".repeat(350));
+    child.run("kept", "keep this recent turn");
+    let before = child.state("before-fold");
+    compact(&mut child, "fold", Some("Retain original receipts"));
+    let after = child.state("after-fold");
+    assert_eq!(before["sessionId"], after["sessionId"]);
+    child.finish();
+    assert_eq!(up.served(), 4);
+    let requests = up.requests.lock().await;
+    for index in [2, 3] {
+        assert_eq!(requests[index]["body"]["max_tokens"], 16_384);
+        assert!(requests[index]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
+        assert!(requests[index]["body"]["messages"].to_string().contains("Retain original receipts"));
+    }
+    assert!(requests[2]["body"]["messages"].to_string().contains("more characters truncated"));
+    assert!(requests[3]["body"]["messages"].to_string().contains("first window summary"));
+    let entries = journal(Path::new(after["sessionFile"].as_str().unwrap()));
+    let summaries = summary_entries(&entries);
+    assert_eq!(summaries.len(), 1);
+    assert_summary_sources(&entries, summaries[0]);
+    assert_eq!(summaries[0]["summary"], "final carried summary");
+}
+
 // Fixed native scenarios: auto-compaction-progress-guard:620-870,1343-1404,
 //1537-1565 and payload-rejection-413:239-268. One real Host/Session sequence per
 // case covers disposition, summary result, provider request and restart together.

@@ -7,7 +7,10 @@
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
 use crate::json::{JsonPrefixState, classify_json_prefix, parse_final_arguments};
-use crate::types::{AssistantBlock, AssistantMessage, Model, StopReason, TextContent, ThinkingContent, ToolCall};
+use crate::types::{
+    AssistantBlock, AssistantMessage, ContextRecoveryEvidence, Model, StopReason, TextContent, ThinkingContent,
+    ToolCall,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -69,6 +72,7 @@ pub(crate) struct ResponsesStreamState {
     // Thinking commits the Provider stream but can be removed by Session
     // recovery. Tool and unknown native effects must still veto that recovery.
     pub(crate) same_route_unsafe_wire_event: bool,
+    pub(crate) context_recovery_evidence: ContextRecoveryEvidence,
 }
 
 impl ResponsesStreamState {
@@ -95,6 +99,91 @@ impl ResponsesStreamState {
             terminal: false,
             replay_unsafe_wire_event: false,
             same_route_unsafe_wire_event: false,
+            context_recovery_evidence: ContextRecoveryEvidence::ContentOnly,
+        }
+    }
+
+    pub(crate) fn veto_context_recovery(&mut self, evidence: ContextRecoveryEvidence) {
+        self.context_recovery_evidence = self.context_recovery_evidence.merge(evidence);
+    }
+
+    fn content_only_part(part: &Value) -> bool {
+        match part.get("type").and_then(Value::as_str) {
+            Some("output_text" | "summary_text" | "reasoning_text") => part.get("text").is_some_and(Value::is_string),
+            Some("refusal") => part.get("refusal").is_some_and(Value::is_string),
+            _ => false,
+        }
+    }
+
+    fn observe_context_recovery_item(&mut self, item: &Value) {
+        let content_only = match item.get("type").and_then(Value::as_str) {
+            Some("reasoning") => true,
+            Some("message") => item.get("content").is_none_or(|content| {
+                content.as_array().is_some_and(|parts| {
+                    parts.iter().all(|part| {
+                        matches!(part.get("type").and_then(Value::as_str), Some("output_text" | "refusal"))
+                            && Self::content_only_part(part)
+                    })
+                })
+            }),
+            _ => false,
+        };
+        if !content_only {
+            self.veto_context_recovery(ContextRecoveryEvidence::NativeOutput);
+        }
+    }
+
+    // Observe native effect families before routing or parsing can fail. A
+    // ToolCall projection is not required for an unsafe wire fact to survive.
+    fn observe_context_recovery_event(&mut self, event: &Value) {
+        if let Some(item) = event.get("item") {
+            self.observe_context_recovery_item(item);
+        }
+        if event.get("part").is_some_and(|part| !Self::content_only_part(part)) {
+            self.veto_context_recovery(ContextRecoveryEvidence::NativeOutput);
+        }
+        if let Some(output) = event.pointer("/response/output") {
+            match output.as_array() {
+                Some(items) => {
+                    for item in items {
+                        self.observe_context_recovery_item(item);
+                    }
+                }
+                None => self.veto_context_recovery(ContextRecoveryEvidence::NativeOutput),
+            }
+        }
+        let content_only = match event.get("type").and_then(Value::as_str) {
+            Some("response.output_item.added" | "response.output_item.done") => event.get("item").is_some(),
+            Some("response.content_part.added" | "response.content_part.done") => {
+                event.get("part").is_some_and(|part| {
+                    matches!(part.get("type").and_then(Value::as_str), Some("output_text" | "refusal"))
+                        && Self::content_only_part(part)
+                })
+            }
+            Some(
+                "response.created"
+                | "response.in_progress"
+                | "response.queued"
+                | "response.completed"
+                | "response.incomplete"
+                | "response.done"
+                | "response.failed"
+                | "error"
+                | "response.output_text.delta"
+                | "response.output_text.done"
+                | "response.refusal.delta"
+                | "response.refusal.done"
+                | "response.reasoning_summary_part.added"
+                | "response.reasoning_summary_part.done"
+                | "response.reasoning_summary_text.delta"
+                | "response.reasoning_summary_text.done"
+                | "response.reasoning_text.delta"
+                | "response.reasoning_text.done",
+            ) => true,
+            _ => false,
+        };
+        if !content_only {
+            self.veto_context_recovery(ContextRecoveryEvidence::NativeOutput);
         }
     }
 
@@ -323,6 +412,7 @@ impl ResponsesStreamState {
         events: &mut Vec<AssistantMessageEvent>,
         terminal_fallback: bool,
     ) -> Result<(), ProviderError> {
+        self.observe_context_recovery_item(item);
         let index = event.get("output_index").and_then(Value::as_u64);
         let id = item.get("id").and_then(Value::as_str);
         let call_id = item.get("call_id").and_then(Value::as_str);
@@ -554,6 +644,7 @@ impl ResponsesStreamState {
     }
 
     pub(crate) fn handle(&mut self, event: &Value) -> Result<Vec<AssistantMessageEvent>, ProviderError> {
+        self.observe_context_recovery_event(event);
         if self.terminal {
             return Err(ProviderError::Stream("Responses event arrived after terminal".into()));
         }

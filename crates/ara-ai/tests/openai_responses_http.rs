@@ -72,6 +72,159 @@ async fn collect(stream: ara_ai::AssistantStream) -> (Vec<AssistantMessageEvent>
 }
 
 #[tokio::test]
+async fn context_recovery_wire_facts_preserve_replay_vetoes_and_unknown_journals() {
+    use ara_ai::ContextRecoveryEvidence::{ContentOnly, NativeOutput, NativeValidation, UsageAdmission};
+    use ara_ai::providers::openai_codex_responses as codex;
+    use ara_ai::retry_classification::classify_retry;
+    let message = json!({"type":"response.output_item.done","output_index":0,
+        "item":{"type":"message","id":"msg","content":[
+            {"type":"output_text","text":"draft"},{"type":"refusal","refusal":"refusal"}]}});
+    let overflow = json!({"type":"response.failed","response":{"status":"failed",
+        "error":{"code":"context_length_exceeded","message":"maximum context length is 4000 tokens"}}});
+    let cases = [
+        ("message", vec![message.clone(), overflow.clone()], ContentOnly, false),
+        (
+            "reasoning",
+            vec![
+                json!({"type":"response.output_item.done","output_index":0,
+            "item":{"type":"reasoning","id":"rs","summary":[{"type":"summary_text","text":"thinking"}]}}),
+                overflow.clone(),
+            ],
+            ContentOnly,
+            false,
+        ),
+        (
+            "function-before-parse",
+            vec![json!({"type":"response.output_item.added","output_index":0,
+            "item":{"type":"function_call","id":"fc","name":"read"}})],
+            NativeOutput,
+            false,
+        ),
+        (
+            "function-before-lookup",
+            vec![
+                json!({"type":"response.function_call_arguments.done",
+            "item_id":"missing","arguments":"{}"}),
+                overflow.clone(),
+            ],
+            NativeOutput,
+            false,
+        ),
+        (
+            "unknown-item",
+            vec![json!({"type":"response.output_item.done","item":{"type":"future_native"}})],
+            NativeOutput,
+            false,
+        ),
+        (
+            "unknown-terminal-output",
+            vec![json!({"type":"response.failed","response":{"status":"failed",
+            "output":[{"type":"future_native"}],"error":{"message":"maximum context length is 4000 tokens"}}})],
+            NativeOutput,
+            false,
+        ),
+        (
+            "function-terminal-output",
+            vec![json!({"type":"response.failed","response":{"status":"failed",
+            "output":[{"type":"function_call","call_id":"hidden","name":"write","arguments":"{}"}],
+            "error":{"message":"maximum context length is 4000 tokens"}}})],
+            NativeOutput,
+            false,
+        ),
+        (
+            "unknown-message-part",
+            vec![
+                json!({"type":"response.output_item.done","output_index":0,
+            "item":{"type":"message","content":[{"type":"output_image"}]}}),
+                overflow.clone(),
+            ],
+            NativeOutput,
+            false,
+        ),
+        (
+            "malformed-known-part",
+            vec![
+                json!({"type":"response.content_part.added","part":{"type":"output_text","text":7}}),
+                message.clone(),
+                overflow.clone(),
+            ],
+            NativeOutput,
+            false,
+        ),
+        (
+            "unknown-event-then-message",
+            vec![json!({"type":"future.native_tool"}), message.clone(), overflow.clone()],
+            NativeOutput,
+            false,
+        ),
+        (
+            "usage-admission",
+            vec![
+                message.clone(),
+                json!({"type":"response.failed","response":{"status":"failed",
+            "error":{"code":"usage_limit_reached","message":"maximum context length is 4000 tokens"}}}),
+            ],
+            UsageAdmission,
+            false,
+        ),
+        (
+            "codex-validator",
+            vec![json!({"type":"response.content_part.added","part":{"type":"output_image"}})],
+            NativeValidation,
+            true,
+        ),
+    ];
+    for (name, frames, expected, is_codex) in cases {
+        let response = json!({"events":frames.into_iter().map(|data| json!({"data":data})).collect::<Vec<_>>()});
+        let server =
+            FakeUpstream::start(script(json!({"responses":[response, completed_text("wrong", "wrong retry")]})), None)
+                .await
+                .unwrap();
+        let mut selected = model(&server.base_url());
+        let mut opts = options();
+        opts.retry.max_attempts = 2;
+        let stream = if is_codex {
+            selected.api = codex::API.into();
+            selected.provider = "openai-codex".into();
+            codex::stream(
+                reqwest::Client::new(),
+                selected,
+                Context::default(),
+                codex::StreamOptions {
+                    api_key: opts.api_key,
+                    extra_headers: vec![(codex::ACCOUNT_HEADER.into(), "fixture-account".into())],
+                    retry: opts.retry,
+                    first_event_timeout: opts.first_event_timeout,
+                    idle_timeout: opts.idle_timeout,
+                    ..Default::default()
+                },
+            )
+        } else {
+            openai_responses::stream(reqwest::Client::new(), selected, Context::default(), opts)
+        };
+        let (_, output) = collect(stream).await;
+        assert_eq!(output.stop_reason, StopReason::Error, "{name}");
+        assert_eq!(server.served(), 1, "{name}: no transparent replay");
+        let decoded: AssistantMessage = serde_json::from_value(serde_json::to_value(&output).unwrap()).unwrap();
+        assert_eq!(decoded.failure_evidence.as_ref().unwrap().context_recovery, Some(expected), "{name}");
+        let api = if is_codex { codex::API } else { openai_responses::API };
+        let class = classify_retry(&decoded, api);
+        assert_eq!(class.context_recovery_blocked, expected != ContentOnly, "{name}");
+        if name == "message" {
+            assert!(class.overflow && class.replay_blocked);
+            assert!(decoded.failure_evidence.as_ref().unwrap().replay_blocked);
+            let mut legacy = serde_json::to_value(&decoded).unwrap();
+            legacy["failureEvidence"].as_object_mut().unwrap().remove("contextRecovery");
+            let legacy: AssistantMessage = serde_json::from_value(legacy).unwrap();
+            assert!(classify_retry(&legacy, api).context_recovery_blocked, "absent proof stays unknown");
+        }
+        if name == "function-before-parse" || name == "function-terminal-output" || name == "unknown-terminal-output" {
+            assert_eq!(output.tool_calls().count(), 0, "{name}: unsafe facts do not require projected tools");
+        }
+    }
+}
+
+#[tokio::test]
 async fn response_terminal_ends_a_hanging_socket_and_records_the_native_request() {
     let server = FakeUpstream::start(script(json!({"responses":[{"events":[
         {"data":{"type":"response.created","response":{"id":"resp_1"}}},

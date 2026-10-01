@@ -3,6 +3,7 @@
 use super::*;
 use ara_agent::compaction::{
     AcceptedSummary, SummarySource, select_whole_turn_cut, summarize_sources_with_instructions,
+    summary_output_budget_tokens,
 };
 use ara_agent::tokenizer::{MessageCountOptions, count_messages};
 use ara_session::{FailedAssistantRecovery, FailedAssistantRecoveryOutcome, ProjectedCompactionSnapshot};
@@ -103,7 +104,7 @@ impl Host {
             return Ok(none);
         }
         let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
-        if class.replay_blocked {
+        if class.context_recovery_blocked {
             return Ok(none);
         }
         let window = self.config.model.context_window.filter(|window| window.is_finite() && *window > 0.0);
@@ -146,6 +147,9 @@ impl Host {
         if !self.compaction_policy.enabled() || !settings.soft_available {
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
         }
+        // Validate the native output budget before changing the failed turn.
+        let summary_budget = summary_output_budget_tokens(settings.reserve_tokens)?;
+        let max_tokens = self.config.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
         // Explicit takeover closes the previous saga exactly once.
         if self.retry.is_some() {
             self.finish_retry(None, Some("Retry transferred to context overflow recovery".into()), false).await;
@@ -202,8 +206,6 @@ impl Host {
         let task_snapshot = snapshot.clone();
         let model = self.config.model.clone();
         let provider = self.config.provider.clone();
-        let summary_budget = (0.8 * settings.reserve_tokens.unwrap_or(16_384.0)).floor().max(1.0) as u64;
-        let max_tokens = self.config.max_tokens.unwrap_or(13_107).min(13_107).min(summary_budget);
         let deadline = Instant::now() + Duration::from_secs_f64(self.max_time.unwrap_or(120.0).clamp(0.0, 120.0));
         let first_kept_index = cut.first_kept_index;
         let task = tokio::spawn(async move {

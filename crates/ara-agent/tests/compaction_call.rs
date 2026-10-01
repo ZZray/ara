@@ -1,5 +1,6 @@
 use ara_agent::compaction::{
     SummaryCallErrorKind, SummaryInputError, SummarySource, summarize_sources, summarize_sources_with_instructions,
+    summary_output_budget_tokens,
 };
 use ara_ai::providers::openai_completions::{RetryPolicy, StreamOptions};
 use ara_ai::{
@@ -17,6 +18,253 @@ use tokio_util::sync::CancellationToken;
 enum Script {
     Events(Vec<AssistantMessageEvent>),
     WaitForCancel,
+}
+
+type FoldingResponse = dyn Fn(usize, &Context, &CallOptions) -> AssistantMessage + Send + Sync;
+
+struct FoldingProvider {
+    seen: Mutex<Vec<(Context, CallOptions)>>,
+    response: Box<FoldingResponse>,
+}
+
+impl ModelProvider for FoldingProvider {
+    fn stream(&self, _model: &Model, context: &Context, options: CallOptions) -> AssistantStream {
+        let index = {
+            let mut seen = self.seen.lock().unwrap();
+            let index = seen.len();
+            seen.push((context.clone(), options.clone()));
+            index
+        };
+        let response = (self.response)(index, context, &options);
+        let (sink, stream) = EventSink::channel();
+        tokio::spawn(async move {
+            sink.push(done(response)).await;
+        });
+        stream
+    }
+}
+
+// Fixed compaction-summary-cap and compaction-oversized-input native scenarios,
+// grouped through the same complete-span → window fold → terminal receipt path.
+#[tokio::test]
+async fn native_summary_output_budget_and_input_folding_module_scenarios() {
+    for case in [
+        "fitting",
+        "large-cap",
+        "small-reserve",
+        "fold",
+        "carry",
+        "provider-overflow",
+        "single-huge",
+        "non-overflow",
+        "cancel-window-two",
+        "floor-deadend",
+        "tool-window",
+        "unknown-tool-veto",
+    ] {
+        let mut selected = model();
+        selected.context_window = Some(match case {
+            "provider-overflow" => 400_000.0,
+            "fold" | "carry" | "single-huge" | "non-overflow" | "cancel-window-two" => 40_000.0,
+            "tool-window" | "unknown-tool-veto" => 16_384.0,
+            _ => 200_000.0,
+        });
+        let reserve = match case {
+            "large-cap" => Some(150_000.0),
+            "small-reserve" => Some(10_000.0),
+            _ => None,
+        };
+        let max_tokens = summary_output_budget_tokens(reserve).unwrap();
+        assert_eq!(
+            max_tokens,
+            match case {
+                "large-cap" => 16_384,
+                "small-reserve" => 8_000,
+                _ => 13_107,
+            }
+        );
+        let turns = match case {
+            "provider-overflow" => 60,
+            "fold" | "carry" | "non-overflow" | "cancel-window-two" => 12,
+            _ => 1,
+        };
+        let repeats = if turns > 1 { if case == "provider-overflow" { 2000 } else { 2500 } } else { 40 };
+        let mut messages = (0..turns)
+            .flat_map(|index| {
+                [
+                    Message::User(UserMessage::text(format!("turn {index} {}", "work ".repeat(repeats)))),
+                    Message::Assistant(AssistantMessage::empty("openai-completions", "test", "summary-model")),
+                ]
+            })
+            .collect::<Vec<_>>();
+        if case == "single-huge" {
+            messages[0] =
+                Message::User(UserMessage::text(format!("huge source {} tail withheld", "🧭".repeat(80_000))));
+        }
+        if matches!(case, "tool-window" | "unknown-tool-veto") {
+            messages[0] = Message::User(UserMessage::text("read original source ".repeat(1000)));
+            let mut calling = AssistantMessage::empty("openai-completions", "test", "summary-model");
+            calling.stop_reason = StopReason::ToolUse;
+            calling.content.push(AssistantBlock::ToolCall(ToolCall {
+                id: "sourced-call".into(),
+                name: "read".into(),
+                arguments: json!({"source":"original","padding":"work ".repeat(2000)}).as_object().unwrap().clone(),
+                thought_signature: None,
+            }));
+            messages[1] = Message::Assistant(calling);
+            messages.push(Message::ToolResult(ara_ai::ToolResultMessage {
+                tool_call_id: "sourced-call".into(),
+                tool_name: "read".into(),
+                content: vec![ara_ai::UserBlock::text("original tool receipt ".repeat(100))],
+                details: (case == "unknown-tool-veto").then(|| json!({"executed":"unknown","panicked":true})),
+                is_error: case == "unknown-tool-veto",
+                timestamp: 77,
+            }));
+            messages.push(Message::Assistant(AssistantMessage::empty("openai-completions", "test", "summary-model")));
+        }
+        let raw_before = serde_json::to_value(&messages).unwrap();
+        let ids = (0..messages.len()).map(|index| format!("e-{index}")).collect::<Vec<_>>();
+        let inputs = ids
+            .iter()
+            .zip(&messages)
+            .map(|(entry_id, message)| SummarySource { entry_id, message })
+            .collect::<Vec<_>>();
+        let cancel = CancellationToken::new();
+        let provider_cancel = cancel.clone();
+        let provider = FoldingProvider {
+            seen: Mutex::new(Vec::new()),
+            response: Box::new(move |index, context, _options| {
+                let text = match &context.messages[0] {
+                    Message::User(user) => user.content.plain_text(),
+                    _ => panic!("summary prompt"),
+                };
+                let mut response = AssistantMessage::empty("openai-completions", "test", "summary-model");
+                response.response_id = Some(format!("summary-request-{index}"));
+                response.usage = Usage { output: Some(index as u64 + 1), ..Usage::unknown() };
+                if (case == "provider-overflow" && text.len() > 160_000) || case == "floor-deadend" {
+                    response.stop_reason = StopReason::Error;
+                    response.error_status = Some(400);
+                    // Classification must use the original terminal message,
+                    // not the independently bounded 512-character diagnostic.
+                    response.error_message = Some(format!(
+                        "{} prompt is too long: {} tokens > 160000 maximum",
+                        "diagnostic ".repeat(70),
+                        text.len()
+                    ));
+                } else if case == "non-overflow" {
+                    response.stop_reason = StopReason::Error;
+                    response.error_status = Some(500);
+                    response.error_message = Some("provider exploded".into());
+                } else {
+                    response.content.push(AssistantBlock::text(format!("fold summary {index}")));
+                }
+                if case == "cancel-window-two" && index == 1 {
+                    provider_cancel.cancel();
+                }
+                response
+            }),
+        };
+        let previous = (case == "carry").then_some("earlier caller summary");
+        let result = summarize_sources_with_instructions(
+            &inputs,
+            previous,
+            Some("retain original observations"),
+            &selected,
+            &provider,
+            max_tokens,
+            Instant::now() + Duration::from_secs(5),
+            &cancel,
+        )
+        .await;
+        let seen = provider.seen.lock().unwrap();
+        assert_eq!(
+            serde_json::to_value(&messages).unwrap(),
+            raw_before,
+            "{case}: no raw observation or receipt rewrite"
+        );
+        if case == "unknown-tool-veto" {
+            assert_eq!(
+                result.unwrap_err().kind,
+                SummaryCallErrorKind::InvalidInput(SummaryInputError::UnknownToolEffect)
+            );
+            assert!(seen.is_empty());
+            continue;
+        }
+        for (context, options) in seen.iter() {
+            assert_eq!(context.tools, Some(Vec::new()));
+            assert_eq!(options.tool_choice, Some(ToolChoice::None));
+            assert_eq!(options.max_tokens, Some(max_tokens));
+            let Message::User(user) = &context.messages[0] else { panic!("summary user") };
+            assert!(user.content.plain_text().ends_with("Additional focus: retain original observations"));
+        }
+        if matches!(case, "non-overflow" | "cancel-window-two" | "floor-deadend") {
+            let error = result.unwrap_err();
+            assert_eq!(error.invocations.len(), seen.len(), "{case}: every started provider call has a receipt");
+            if case == "cancel-window-two" {
+                assert_eq!(error.kind, SummaryCallErrorKind::Cancelled);
+                assert_eq!(seen.len(), 2);
+                assert!(error.invocations[0].error_kind.is_none());
+            } else {
+                assert_eq!(seen.len(), 1);
+                assert!(!error.invocations[0].overflow_replanned);
+                assert_eq!(error.invocations[0].classification.unwrap().overflow, case == "floor-deadend");
+            }
+            continue;
+        }
+        let summary = result.unwrap();
+        assert_eq!(
+            summary.invocations.len(),
+            seen.len(),
+            "{case}: final-call usage cannot stand for the complete fold"
+        );
+        assert_eq!(summary.window_source_entry_ids, ids);
+        assert_eq!(summary.text, format!("fold summary {}", seen.len() - 1));
+        assert_eq!(summary.usage.output, Some(seen.len() as u64));
+        assert_eq!(summary.usage.input, None);
+        let accepted_ids = summary
+            .invocations
+            .iter()
+            .filter(|receipt| receipt.error_kind.is_none())
+            .flat_map(|receipt| receipt.window_source_entry_ids.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(accepted_ids, ids, "{case}: accepted windows cover each original source once in order");
+        let mut carried = previous.map(str::to_owned);
+        for (index, ((context, _), receipt)) in seen.iter().zip(&summary.invocations).enumerate() {
+            let Message::User(user) = &context.messages[0] else { panic!("summary user") };
+            let text = user.content.plain_text();
+            if let Some(previous) = &carried {
+                assert!(text.contains(&format!("<previous-summary>\n{previous}\n</previous-summary>")), "{case}");
+            } else {
+                assert!(!text.contains("<previous-summary>"), "{case}");
+            }
+            assert!(receipt.usage.as_ref().unwrap().input.is_none());
+            if receipt.error_kind.is_none() {
+                carried = Some(format!("fold summary {index}"));
+            }
+            if matches!(case, "fold" | "carry") {
+                assert!(text.len() <= 26_000, "small-model floor must fit native planned windows");
+            }
+        }
+        if matches!(case, "fitting" | "large-cap" | "small-reserve") {
+            assert_eq!(seen.len(), 1);
+        } else {
+            assert!(seen.len() > 1, "{case}: exercise actual folding");
+        }
+        if case == "provider-overflow" {
+            let rejected = summary.invocations.iter().filter(|receipt| receipt.overflow_replanned).count();
+            assert!(
+                (1..4).contains(&rejected),
+                "halve observed conversation, not the imaginary catalog ladder: {rejected}"
+            );
+        }
+        if case == "single-huge" {
+            let Message::User(first) = &seen[0].0.messages[0] else { panic!("clamped user") };
+            let text = first.content.plain_text();
+            assert!(text.contains("more characters truncated]"));
+            assert!(text.contains("huge source"));
+            assert!(!text.contains("tail withheld"));
+        }
+    }
 }
 
 struct ScriptedProvider {

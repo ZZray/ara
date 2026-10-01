@@ -1118,6 +1118,22 @@ fn stream_once(
                 output.stop_reason = cause.stop_reason();
                 output.error_status = cause.status();
                 output.error_message = Some(cause.to_string());
+                let evidence = output.failure_evidence.get_or_insert_with(|| {
+                    crate::retry_classification::ProviderFailureEvidence::from_error(&cause, false)
+                });
+                evidence.context_recovery = match evidence.context_recovery {
+                    Some(previous) => Some(previous.merge(state.context_recovery_evidence)),
+                    None if evidence.same_route_blocked
+                        && state.context_recovery_evidence == crate::ContextRecoveryEvidence::ContentOnly =>
+                    {
+                        // The HTTP post owner sets this only for admission or
+                        // account usage vetoes; a provider wait ceiling alone
+                        // leaves same_route_blocked false.
+                        (evidence.kind == crate::retry_classification::ProviderErrorKind::Http)
+                            .then_some(crate::ContextRecoveryEvidence::UsageAdmission)
+                    }
+                    None => Some(state.context_recovery_evidence),
+                };
                 crate::retry_classification::finalize_failure(
                     &mut output,
                     &cause,
@@ -1302,6 +1318,7 @@ async fn run(
             {
                 state.replay_unsafe_wire_event = true;
                 state.same_route_unsafe_wire_event = true;
+                state.veto_context_recovery(crate::ContextRecoveryEvidence::NativeValidation);
                 return Err(error);
             }
             let updates = state.handle(&event).inspect_err(|error| {
@@ -1311,6 +1328,10 @@ async fn run(
                     state.same_route_unsafe_wire_event,
                 );
                 evidence.replay_blocked |= state.replay_unsafe_wire_event;
+                evidence.context_recovery =
+                    Some(evidence.context_recovery.map_or(state.context_recovery_evidence, |previous| {
+                        previous.merge(state.context_recovery_evidence)
+                    }));
                 state.output.failure_evidence = Some(evidence);
             })?;
             for update in updates {

@@ -1,5 +1,16 @@
 # OMP feature ledger
 
+**2026-10-01 native recovery/fold checkpoint (tested/audited WIP):**
+[Executed evidence](../evidence/native-recovery-fold.md) maps typed Responses
+recovery evidence, raw-reserve output budgets and bounded folding to
+`ara-ai::{responses_stream,retry_classification}`, `ara-agent::compaction` and
+the existing RPC/REPL callers. Modules 53/0/0, backend 1,512/0/20 and preferred
+CAS two-fold/original-Session artifact/reopen pass on the final source snapshot.
+No new registered point or complete surface is accepted. Native terminal
+recovery, promotion/durable-discard, other methods/rescue and the explicit
+input/tokenizer/settings/receipt gaps remain required. RPC 27/42, P1–P6 open
+and the null full marker retain their status.
+
 **2026-10-01 soft overflow checkpoint:**
 [Executed evidence](../evidence/soft-overflow-recovery.md) maps fixed maintenance,
 recovery, Session and capacity sources to Rust. One grouped module entry gives

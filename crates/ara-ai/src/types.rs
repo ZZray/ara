@@ -233,6 +233,23 @@ pub struct AssistantRetryRecovery {
     pub superseded_by: Option<Value>,
 }
 
+/// Responses wire evidence for replacing a failed turn's context. This does
+/// not authorize transparent provider replay or ordinary same-route retry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextRecoveryEvidence {
+    ContentOnly,
+    NativeOutput,
+    UsageAdmission,
+    NativeValidation,
+}
+
+impl ContextRecoveryEvidence {
+    pub(crate) fn merge(self, other: Self) -> Self {
+        if self == Self::ContentOnly { other } else { self }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AssistantMessage {
     pub content: Vec<AssistantBlock>,

@@ -1,13 +1,14 @@
 # ARA execution plan
 
-**Latest checkpoint, 2026-10-01:** [soft overflow recovery](evidence/soft-overflow-recovery.md)
-is tested/audited bounded WIP: configured capacity → failed-turn transaction →
-cancellable soft summary → checked original-Session continuation/rollback.
-Modules 18/0/0; final backend 1,508/0/20, source unchanged; final CAS task
-31.523s including summary-time new Bash and tool-disabled reopen recall.
-Next batch: refine Responses contentful recovery evidence, then complete
-native summary budget/input folding and incomplete/length/terminal recovery;
-context promotion, all other methods and rescue continue after that.
+**Latest checkpoint, 2026-10-01:** [native recovery/fold](evidence/native-recovery-fold.md)
+is tested/audited bounded WIP: typed Responses context
+recovery, raw-reserve summary budgets and bounded message-window folding.
+Modules 53/0/0; final backend 1,512/0/20, source unchanged; one shared gate
+338.253s including 203s all-target recompilation. Preferred CAS task/fold/
+continuation/reopen takes 29.558s with two actual summary calls and one complete
+source commit in the original Session. Next group: incomplete/length/terminal
+recovery and promotion/durable-discard Host callers. All other methods, rescue,
+full span/tokenizer/settings/receipt contracts continue after that.
 Use existing native input families, module checks while editing and one final
 shared gate. P1–P6 and complete parent surfaces remain open; no scope is dropped.
 

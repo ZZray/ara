@@ -5,7 +5,7 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d (MIT; see THIRD_PARTY_NOTICES.md).
 //! Host receipt/lifecycle gates and credential/model selection are separate.
 
-use crate::{AssistantMessage, ProviderError, StopReason};
+use crate::{AssistantMessage, ContextRecoveryEvidence, ProviderError, StopReason};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
@@ -58,6 +58,10 @@ pub struct ProviderFailureEvidence {
     /// alone does not set this: the Session has its own configured ceiling.
     #[serde(default)]
     pub same_route_blocked: bool,
+    /// None is unassessed, including journals written before typed recovery
+    /// evidence existed. Only ContentOnly can clear the wire-output veto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_recovery: Option<ContextRecoveryEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<f64>,
     pub error_id: u32,
@@ -80,6 +84,7 @@ impl ProviderFailureEvidence {
             code: None,
             replay_blocked,
             same_route_blocked: replay_blocked,
+            context_recovery: None,
             wait_ms: None,
             error_id: 0,
         }
@@ -102,6 +107,7 @@ impl ProviderFailureEvidence {
             evidence.error_id = flag::USAGE_LIMIT | flag::CLASS;
             evidence.replay_blocked = true;
             evidence.same_route_blocked = true;
+            evidence.context_recovery = Some(ContextRecoveryEvidence::UsageAdmission);
         }
         evidence
     }
@@ -119,6 +125,7 @@ pub struct RetryClass {
     pub error_id: u32,
     pub interrupted_stream: bool,
     pub replay_blocked: bool,
+    pub context_recovery_blocked: bool,
 }
 
 macro_rules! pattern {
@@ -349,6 +356,17 @@ pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClas
             )
             || supported && kind == Some(ProviderErrorKind::Stream) && INTERRUPTED.is_match(text),
         replay_blocked: evidence.is_some_and(|e| e.same_route_blocked),
+        context_recovery_blocked: preflight_blocked
+            || flags & USAGE_LIMIT != 0
+            || evidence.is_some_and(|e| match e.context_recovery {
+                Some(ContextRecoveryEvidence::ContentOnly)
+                    if matches!(actual_api, "openai-responses" | "openai-codex-responses") =>
+                {
+                    false
+                }
+                Some(ContextRecoveryEvidence::ContentOnly) | None => e.same_route_blocked,
+                Some(_) => true,
+            }),
     }
 }
 
@@ -371,10 +389,20 @@ pub(crate) fn finalize_failure(
         evidence.error_id = previous.error_id;
         evidence.replay_blocked |= previous.replay_blocked;
         evidence.same_route_blocked |= previous.same_route_blocked;
+        evidence.context_recovery = previous.context_recovery;
     }
     message.failure_evidence = Some(evidence);
     let classified = classify_retry(message, actual_api);
-    message.failure_evidence.as_mut().expect("installed evidence").error_id = classified.error_id;
+    let evidence = message.failure_evidence.as_mut().expect("installed evidence");
+    evidence.error_id = classified.error_id;
+    if classified.usage_limit
+        || message.error_message.as_deref().is_some_and(|text| text.starts_with("Usage preflight blocked:"))
+    {
+        evidence.context_recovery =
+            Some(evidence.context_recovery.map_or(ContextRecoveryEvidence::UsageAdmission, |previous| {
+                previous.merge(ContextRecoveryEvidence::UsageAdmission)
+            }));
+    }
 }
 
 #[cfg(test)]

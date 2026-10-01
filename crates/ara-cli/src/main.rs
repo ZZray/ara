@@ -758,6 +758,7 @@ async fn run_compaction(
 ) -> Result<bool> {
     use ara_agent::compaction::{
         SummaryInputError, SummarySource, explain_no_whole_turn_cut, select_whole_turn_cut, summarize_sources,
+        summary_output_budget_tokens,
     };
     use ara_agent::tokenizer::{MessageCountOptions, count_message, count_messages};
     use ara_session::CompactionSourceError;
@@ -817,11 +818,10 @@ async fn run_compaction(
     };
     let span = &sources[..cut.candidate.first_kept_index];
     let deadline = Instant::now() + Duration::from_secs(120);
-    // OMP's default summary budget, floor(0.8 * reserveTokens) with the default
-    // 16384 reserve; ARA knows no context window, so it keeps the default.
-    // A reasoning model spends part of it on thinking. `--max-tokens` caps it.
-    const SUMMARY_MAX_TOKENS: u64 = 16_384 * 4 / 5;
-    let max_tokens = args.max_tokens.map_or(SUMMARY_MAX_TOKENS, |cap| cap.min(SUMMARY_MAX_TOKENS));
+    // This legacy REPL entry uses the native default reserve; RPC also reads
+    // the configured raw reserve. The request cap remains an explicit bound.
+    let summary_budget = summary_output_budget_tokens(None)?;
+    let max_tokens = args.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
     // The subscription endpoint rejects output caps. Omit the internal cap
     // from its wire call and check the observed summary before adoption below.
     let uncapped = CodexSummaryProvider(provider.as_ref());

@@ -6,7 +6,7 @@
 //! This module plans structural whole-turn cuts and a provisional recent-message
 //! target, but does not write a Session compaction or change model context.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -17,12 +17,17 @@ use ara_ai::{
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::tokenizer::{MessageCountOptions, count_message};
+use crate::tokenizer::{
+    EstimateMode, MessageCountOptions, ModelContentCount, count_message, count_model_fragments, count_text,
+};
+use ara_ai::retry_classification::{RetryClass, classify_retry};
 
 const TOOL_RESULT_MAX_CHARS: usize = 2_000;
 const MAX_SUMMARY_INPUT_BYTES: usize = 1_000_000;
 const MAX_SUMMARY_SOURCES: usize = 256;
 const MAX_SUMMARY_OUTPUT_BYTES: usize = 1_000_000;
+pub const MAX_SUMMARY_TOKENS: u64 = 16_384;
+const DEFAULT_SUMMARY_INPUT_WINDOW: f64 = 200_000.0;
 
 #[derive(Clone, Copy)]
 pub struct SummarySource<'a> {
@@ -501,6 +506,16 @@ pub fn build_summary_prompt_with_instructions(
 ) -> Result<SummaryPrompt, SummaryInputError> {
     validate_completed_summary_span(sources)?;
     let conversation = serialize_sources_for_summary(sources)?;
+    build_summary_prompt_from_conversation(&conversation, previous_summary, custom_instructions)
+}
+
+// Folding windows may split a tool cycle. Only the complete source span is
+// validated; each window is serialized lower-trust data, never a live tool call.
+fn build_summary_prompt_from_conversation(
+    conversation: &str,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+) -> Result<SummaryPrompt, SummaryInputError> {
     let previous = previous_summary.filter(|s| !s.trim().is_empty());
     if previous.is_some_and(|s| s.len() > MAX_SUMMARY_INPUT_BYTES.saturating_sub(conversation.len())) {
         return Err(SummaryInputError::TooLarge);
@@ -536,9 +551,12 @@ pub struct AcceptedSummary {
     pub window_source_entry_ids: Vec<String>,
     pub model_id: String,
     pub response_id: Option<String>,
+    /// Usage and response metadata describe the final successful fold request.
+    /// Every request, including rejected overflow attempts, is in `invocations`.
     pub usage: Usage,
     pub duration_ms: Option<u64>,
     pub ttft_ms: Option<u64>,
+    pub invocations: Vec<SummaryInvocationReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -568,6 +586,22 @@ pub struct SummaryCallError {
     /// Bounded provider diagnostic. Callers must still redact it before logs
     /// or user display because an upstream may echo request content.
     pub provider_message: Option<String>,
+    pub invocations: Vec<SummaryInvocationReceipt>,
+}
+
+/// One actual summary provider invocation. Unknown usage stays unknown; these
+/// receipts must not be mistaken for a locally priced or aggregated cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SummaryInvocationReceipt {
+    pub window_source_entry_ids: Vec<String>,
+    pub usage: Option<Usage>,
+    pub response_id: Option<String>,
+    pub stop_reason: Option<StopReason>,
+    pub provider_status: Option<u16>,
+    pub error_kind: Option<SummaryCallErrorKind>,
+    /// Classified from the complete terminal message before diagnostics truncate.
+    pub classification: Option<RetryClass>,
+    pub overflow_replanned: bool,
 }
 
 impl std::fmt::Display for SummaryCallError {
@@ -585,6 +619,7 @@ fn rejected(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallErro
         provider_status: None,
         stop_reason: None,
         provider_message: None,
+        invocations: Vec::new(),
     }
 }
 
@@ -593,6 +628,31 @@ fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> 
     failure.provider_status = message.error_status;
     failure.stop_reason = Some(message.stop_reason);
     failure.provider_message = message.error_message.as_deref().map(|text| text.chars().take(512).collect());
+    failure.invocations.push(SummaryInvocationReceipt {
+        window_source_entry_ids: Vec::new(),
+        usage: Some(message.usage.clone()),
+        response_id: message.response_id.clone(),
+        stop_reason: Some(message.stop_reason),
+        provider_status: message.error_status,
+        error_kind: Some(kind),
+        classification: Some(classify_retry(message, &message.api)),
+        overflow_replanned: false,
+    });
+    failure
+}
+
+fn rejected_invocation(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallError {
+    let mut failure = rejected(kind, usage);
+    failure.invocations.push(SummaryInvocationReceipt {
+        window_source_entry_ids: Vec::new(),
+        usage: failure.usage.as_deref().cloned(),
+        response_id: None,
+        stop_reason: None,
+        provider_status: None,
+        error_kind: Some(kind),
+        classification: None,
+        overflow_replanned: false,
+    });
     failure
 }
 
@@ -652,14 +712,115 @@ fn accept_summary_response(
         usage: message.usage,
         duration_ms: message.duration,
         ttft_ms: message.ttft,
+        invocations: Vec::new(),
     })
 }
 
-/// Make one bounded logical summary call. This layer never runs tools, retries,
-/// edits the journal, or treats partial output as accepted. The provider may
-/// retry HTTP before streaming according to its own configuration. The host must
-/// choose a model/window that fits the prepared prompt and must validate
-/// source IDs against its Session branch before committing the derived text.
+/// Native output budget uses the raw reserve, not the context-fit reserve.
+/// Fixed `compaction.ts:1543,857` defaults to 16384 and caps at 16384.
+pub fn summary_output_budget_tokens(raw_reserve: Option<f64>) -> Result<u64, SummaryCallError> {
+    let reserve = raw_reserve.unwrap_or(MAX_SUMMARY_TOKENS as f64);
+    if !reserve.is_finite() || reserve < 0.0 {
+        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
+    }
+    let output = (0.8 * reserve).floor().min(MAX_SUMMARY_TOKENS as f64) as u64;
+    if output == 0 {
+        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
+    }
+    Ok(output)
+}
+
+fn summary_input_floor(model: &Model) -> u64 {
+    let window = model
+        .context_window
+        .filter(|window| window.is_finite() && *window > 0.0)
+        .unwrap_or(DEFAULT_SUMMARY_INPUT_WINDOW);
+    (window / 8.0).floor().max(1024.0).min(MAX_SUMMARY_TOKENS as f64) as u64
+}
+
+fn summary_input_budget(model: &Model, max_output_tokens: u64) -> u64 {
+    let window = model
+        .context_window
+        .filter(|window| window.is_finite() && *window > 0.0)
+        .unwrap_or(DEFAULT_SUMMARY_INPUT_WINDOW);
+    // Signed floating arithmetic reproduces native subtraction before the floor
+    // is applied, without unsigned underflow on small advertised windows.
+    ((window * 0.8).floor() - max_output_tokens as f64 - MAX_SUMMARY_TOKENS as f64)
+        .max(summary_input_floor(model) as f64) as u64
+}
+
+fn summary_text_tokens(model: &Model, text: &str) -> u64 {
+    match count_model_fragments(model, [text]) {
+        ModelContentCount::Exact(count) => count,
+        ModelContentCount::UnknownTokenizer => count_text(text, EstimateMode::Approximate) as u64,
+        ModelContentCount::CountOverflow => u64::MAX,
+    }
+}
+
+struct SummaryWindow {
+    start: usize,
+    end: usize,
+    budget_tokens: u64,
+    text: Option<String>,
+}
+
+fn plan_summary_windows(
+    sources: &[SummarySource<'_>],
+    model: &Model,
+    budget_tokens: u64,
+    start: usize,
+    end: usize,
+) -> Result<Vec<SummaryWindow>, SummaryInputError> {
+    let mut windows = Vec::new();
+    let mut first = start;
+    let mut current_tokens = 0u64;
+    for index in start..end {
+        let text = serialize_sources_for_summary(&sources[index..index + 1])?;
+        let tokens = summary_text_tokens(model, &text);
+        if current_tokens > 0 && current_tokens.saturating_add(tokens) > budget_tokens {
+            windows.push(SummaryWindow { start: first, end: index, budget_tokens, text: None });
+            first = index;
+            current_tokens = 0;
+        }
+        current_tokens = current_tokens.saturating_add(tokens);
+    }
+    if first < end {
+        windows.push(SummaryWindow { start: first, end, budget_tokens, text: None });
+    }
+    Ok(windows)
+}
+
+fn clamp_summary_conversation(text: &str, budget_tokens: u64, tokens: u64) -> String {
+    if tokens <= budget_tokens {
+        return text.to_owned();
+    }
+    // Native slices JS UTF-16 characters. Keep complete Rust scalars so a
+    // surrogate pair/UTF-8 sequence is never split at that same prefix boundary.
+    let characters = text.encode_utf16().count();
+    let keep = ((characters as f64 * budget_tokens as f64 * 0.95) / tokens as f64).floor().max(1024.0) as usize;
+    if keep >= characters {
+        return text.to_owned();
+    }
+    let mut kept = 0;
+    let end = text
+        .char_indices()
+        .find_map(|(index, character)| {
+            let next = kept + character.len_utf16();
+            if next > keep {
+                Some(index)
+            } else {
+                kept = next;
+                None
+            }
+        })
+        .unwrap_or(text.len());
+    format!("{}\n\n[... {} more characters truncated]", &text[..end], characters - kept)
+}
+
+/// Fold bounded source history through native model-window planning. Only a
+/// fully accepted fold returns a summary; this layer never executes tools or
+/// edits a journal. Local content counts plan calls, not a provider fit proof.
+/// The host must still validate source IDs against its current Session branch.
 pub async fn summarize_sources(
     sources: &[SummarySource<'_>],
     previous_summary: Option<&str>,
@@ -682,7 +843,9 @@ pub async fn summarize_sources(
     .await
 }
 
-/// The same bounded, no-tools summary call with fixed OMP's optional focus.
+/// The same bounded, no-tools summary fold with fixed OMP's optional focus.
+/// The explicit max-output argument remains a caller override. Native host
+/// policy can obtain its default from `summary_output_budget_tokens`.
 #[allow(clippy::too_many_arguments)]
 pub async fn summarize_sources_with_instructions(
     sources: &[SummarySource<'_>],
@@ -694,11 +857,133 @@ pub async fn summarize_sources_with_instructions(
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<AcceptedSummary, SummaryCallError> {
-    let prompt = build_summary_prompt_with_instructions(sources, previous_summary, custom_instructions)
+    validate_completed_summary_span(sources)
+        .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    let conversation = serialize_sources_for_summary(sources)
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
     if max_output_tokens == 0 {
         return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
     }
+    let budget = summary_input_budget(model, max_output_tokens);
+    let mut pending = if summary_text_tokens(model, &conversation) <= budget {
+        VecDeque::from([SummaryWindow {
+            start: 0,
+            end: sources.len(),
+            budget_tokens: budget,
+            text: Some(conversation),
+        }])
+    } else {
+        plan_summary_windows(sources, model, budget, 0, sources.len())
+            .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?
+            .into()
+    };
+    let mut carried_summary = previous_summary.map(str::to_owned);
+    let mut final_summary = None;
+    let mut invocations = Vec::new();
+    while let Some(window) = pending.pop_front() {
+        let text = match window.text {
+            Some(text) => text,
+            None => serialize_sources_for_summary(&sources[window.start..window.end])
+                .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?,
+        };
+        let tokens = summary_text_tokens(model, &text);
+        let conversation = clamp_summary_conversation(&text, window.budget_tokens, tokens);
+        let prompt = match build_summary_prompt_from_conversation(
+            &conversation,
+            carried_summary.as_deref(),
+            custom_instructions,
+        ) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                let mut failure = rejected(SummaryCallErrorKind::InvalidInput(error), None);
+                failure.invocations = invocations;
+                return Err(failure);
+            }
+        };
+        let ids: Vec<String> =
+            sources[window.start..window.end].iter().map(|source| source.entry_id.to_owned()).collect();
+        match summarize_window(prompt, model, provider, max_output_tokens, deadline, cancel).await {
+            Ok(mut accepted) => {
+                invocations.push(SummaryInvocationReceipt {
+                    window_source_entry_ids: ids,
+                    usage: Some(accepted.usage.clone()),
+                    response_id: accepted.response_id.clone(),
+                    stop_reason: Some(StopReason::Stop),
+                    provider_status: None,
+                    error_kind: None,
+                    classification: None,
+                    overflow_replanned: false,
+                });
+                carried_summary = Some(accepted.text.clone());
+                accepted.window_source_entry_ids = sources.iter().map(|source| source.entry_id.to_owned()).collect();
+                final_summary = Some(accepted);
+            }
+            Err(mut failure) => {
+                if failure.invocations.is_empty() {
+                    // Pre-cancel/deadline opens no provider request.
+                    if matches!(failure.kind, SummaryCallErrorKind::Cancelled | SummaryCallErrorKind::Deadline)
+                        && (cancel.is_cancelled() || Instant::now() >= deadline)
+                        && failure.usage.is_none()
+                    {
+                        failure.invocations = invocations;
+                        return Err(failure);
+                    }
+                    failure.invocations.push(SummaryInvocationReceipt {
+                        window_source_entry_ids: Vec::new(),
+                        usage: failure.usage.as_deref().cloned(),
+                        response_id: None,
+                        stop_reason: failure.stop_reason,
+                        provider_status: failure.provider_status,
+                        error_kind: Some(failure.kind),
+                        classification: None,
+                        overflow_replanned: false,
+                    });
+                }
+                let halved = window.budget_tokens.min(tokens) / 2;
+                let receipt = failure.invocations.last_mut().expect("one actual invocation receipt");
+                receipt.window_source_entry_ids = ids;
+                let replan =
+                    receipt.classification.is_some_and(|class| class.overflow && !class.context_recovery_blocked)
+                        && matches!(
+                            failure.kind,
+                            SummaryCallErrorKind::ProviderError | SummaryCallErrorKind::IncompleteResponse
+                        )
+                        && !cancel.is_cancelled()
+                        && Instant::now() < deadline
+                        && halved >= summary_input_floor(model);
+                receipt.overflow_replanned = replan;
+                invocations.append(&mut failure.invocations);
+                if !replan {
+                    failure.invocations = invocations;
+                    return Err(failure);
+                }
+                let smaller = match plan_summary_windows(sources, model, halved, window.start, window.end) {
+                    Ok(smaller) => smaller,
+                    Err(error) => {
+                        let mut failure = rejected(SummaryCallErrorKind::InvalidInput(error), None);
+                        failure.invocations = invocations;
+                        return Err(failure);
+                    }
+                };
+                for smaller in smaller.into_iter().rev() {
+                    pending.push_front(smaller);
+                }
+            }
+        }
+    }
+    let mut accepted = final_summary.expect("validated sources produce at least one summary window");
+    accepted.invocations = invocations;
+    Ok(accepted)
+}
+
+async fn summarize_window(
+    prompt: SummaryPrompt,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    max_output_tokens: u64,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
     if cancel.is_cancelled() {
         return Err(rejected(SummaryCallErrorKind::Cancelled, None));
     }
@@ -706,7 +991,6 @@ pub async fn summarize_sources_with_instructions(
         return Err(rejected(SummaryCallErrorKind::Deadline, None));
     }
 
-    let window_source_entry_ids = sources.iter().map(|source| source.entry_id.to_owned()).collect();
     let context = Context {
         system_prompt: vec![prompt.system_prompt.to_owned()],
         messages: vec![Message::User(UserMessage::text(prompt.user_prompt))],
@@ -735,11 +1019,11 @@ pub async fn summarize_sources_with_instructions(
             biased;
             _ = cancel.cancelled() => {
                 provider_cancel.cancel();
-                return Err(rejected(SummaryCallErrorKind::Cancelled, None));
+                return Err(rejected_invocation(SummaryCallErrorKind::Cancelled, None));
             }
             _ = &mut timeout => {
                 provider_cancel.cancel();
-                return Err(rejected(SummaryCallErrorKind::Deadline, None));
+                return Err(rejected_invocation(SummaryCallErrorKind::Deadline, None));
             }
             event = events.recv() => event,
         };
@@ -747,21 +1031,20 @@ pub async fn summarize_sources_with_instructions(
             Some(AssistantMessageEvent::Done { reason, message }) => {
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected(SummaryCallErrorKind::Cancelled, Some(message.usage)));
+                    return Err(rejected_terminal(SummaryCallErrorKind::Cancelled, &message));
                 }
                 if Instant::now() >= deadline.into_std() {
                     provider_cancel.cancel();
-                    return Err(rejected(SummaryCallErrorKind::Deadline, Some(message.usage)));
+                    return Err(rejected_terminal(SummaryCallErrorKind::Deadline, &message));
                 }
-                let accepted =
-                    accept_summary_response(window_source_entry_ids, model, reason, message, saw_tool_call_event)?;
+                let accepted = accept_summary_response(Vec::new(), model, reason, message, saw_tool_call_event)?;
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected(SummaryCallErrorKind::Cancelled, Some(accepted.usage)));
+                    return Err(rejected_invocation(SummaryCallErrorKind::Cancelled, Some(accepted.usage)));
                 }
                 if Instant::now() >= deadline.into_std() {
                     provider_cancel.cancel();
-                    return Err(rejected(SummaryCallErrorKind::Deadline, Some(accepted.usage)));
+                    return Err(rejected_invocation(SummaryCallErrorKind::Deadline, Some(accepted.usage)));
                 }
                 return Ok(accepted);
             }
@@ -778,7 +1061,7 @@ pub async fn summarize_sources_with_instructions(
                 | AssistantMessageEvent::ToolcallEnd { .. },
             ) => saw_tool_call_event = true,
             Some(_) => {}
-            None => return Err(rejected(SummaryCallErrorKind::StreamEndedWithoutTerminal, None)),
+            None => return Err(rejected_invocation(SummaryCallErrorKind::StreamEndedWithoutTerminal, None)),
         }
     }
 }

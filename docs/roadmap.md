@@ -1,5 +1,15 @@
 # Delivery roadmap
 
+The [native recovery/fold checkpoint](evidence/native-recovery-fold.md) adds
+typed Responses context-recovery evidence, raw-reserve summary output budgets
+and bounded message-window folding. Modules 53/0/0 and Windows backend
+1,512/0/20 pass a single stable gate (338.253s, including 203s all-target
+recompilation). Preferred CAS task/fold/continuation/reopen takes 29.558s,
+with two actual summary calls and one complete-source commit. Independent
+POST and Root artifact audit pass; all parent surfaces, P1–P6, RPC 27/42 and full marker null
+retain their status. Remaining terminal recovery, promotion and other methods
+are grouped next; input/tokenizer/settings/receipt limitations stay recorded.
+
 The [soft overflow checkpoint](evidence/soft-overflow-recovery.md) connects
 configured capacity, failed-turn rollback and cancellable same-route soft
 maintenance. Modules 18/0/0 and one final Windows backend 1,508/0/20 pass;
