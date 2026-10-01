@@ -56,7 +56,7 @@ expected task outcomes remain unchanged.
 ### Real configured CAS task
 
 Receipt/raw events/artifacts:
-`C:\Temp\ara-openai-daily-batch\live\20261001T060424Z`.
+`C:\Temp\ara-openai-daily-batch\live\20261001T063130Z`.
 Read the user-specified local Manager configuration privately, without editing
 it or printing/committing credentials. Live catalogue confirms
 `deepseek-v4.1-flash`; actual route is Manager → local OMP management → CAS,
@@ -66,14 +66,21 @@ with a private environment key; no CLI API/base URL/key overrides are supplied.
 Bounds: two Runs, at most 8 calls/180 seconds each, 8,192 output tokens per call.
 Actual task: read `sales.csv`, compute totals, write and reread `summary.json`.
 Expected/observed: `{"pen":7.5,"book":24,"cup":21,"grand_total":52.5}`.
-Three successful read/write/read tool results and four model calls are in raw
-events; task exit 0, 5.833 seconds. A second process resumes the original Session
-`01a0f610-639d-709c-9a74-e31fa13c4ffa`, uses no tools and one model call,
-and returns exactly `pen_quantity=3; cup_unit_price=5.25; grand_total=52.5`;
-exit 0, 1.313 seconds. Both process headers carry that same Session ID.
-Observed total tokens: 13,574 then 3,583; output 332 then 21. No measured billing
-cost is asserted. Root and independent reviewer inspect original events/files,
-not merely receipt status or HTTP success.
+Neither task nor recall prompt contains the expected numeric answers. Three
+successful read/write/read tool results and four model calls are in raw events;
+task exit 0, 5.699 seconds. A second process resumes the original Session
+`01a0f629-338e-75c1-bd50-43cc703054fe`, has an empty tool list and one model call,
+and returns `pen_quantity=3; cup_unit_price=5.25; grand_total=52.50`, matching
+the original numeric data; exit 0, 1.333 seconds. Both process headers carry
+that same Session ID. Total **7.032 seconds**. Observed total tokens: 13,531
+then 2,972; output 391 then 44. No measured billing cost is asserted. Root
+inspects raw user prompts, final events, tool results and actual artifact.
+
+Earlier live receipts `060424Z` and `063051Z` used prompts containing expected
+answers. They establish tool effects/restart transport but cannot prove recall;
+the reviewer explicitly identified that boundary. Root's final answer-free,
+tool-disabled recall above supersedes those semantic acceptance claims on the
+same built binary. No code or deterministic gate changed for this correction.
 
 Binary SHA256 matches the final built binary and trial receipt:
 `d003cfbff2d27f52a74c9e0cfd7278e8a59df411d63bcd38a8fec313592b9566`.
@@ -94,7 +101,10 @@ Three independent Codex cross-reviews reuse the prior scope and original source:
   raw CAS tool/artifact/restart evidence verified. Legacy API coexistence and
   early Codex RPC rejection included. Seven scoped files fully covered.
 
-All receipt paths are under `C:\Temp\ara-openai-daily-batch`; reviews are
+All receipt paths are under `C:\Temp\ara-openai-daily-batch`; independent raw
+CAS review covers the earlier tool/process receipt and states its known-answer
+limitation. Root separately accepts the final answer-free task/recall artifact.
+Reviews are
 bounded approvals, not acceptance of full Provider/Core parity. Root checks
 critical fixes, final source pins, raw tools/artifact, Session identity and
 failure boundaries; the configured custom CLI slice passes its bounded audit.

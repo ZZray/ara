@@ -38,7 +38,7 @@ P0–P6 requirements retain their existing ownership and acceptance boundaries.
 The [OpenAI daily checkpoint](evidence/openai-daily.md) now verifies configured
 Chat/Responses CLI routes and synthetic device/Codex SSE lifecycle with one
 shared Windows gate (module 22/0/0; backend 1,491/0/20; 134.536 seconds), plus
-a configured CAS artifact/restart task (7.146 seconds). Actual OpenAI account
+a configured answer-free CAS artifact/restart task (7.032 seconds). Actual OpenAI account
 authorization and a subscription-model task remain open. [Usage](openai-daily.md)
 and the provider register describe the usable slice and required later contracts.
 

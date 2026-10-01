@@ -67,7 +67,7 @@ login/logout, private SQLite refresh/settlement and dedicated Codex SSE pass
 the controlled real-process workflow, including `/new` attribution and hidden
 reasoning replay. Windows module 22/0/0 and full backend 1,491/0/20,
 inventory/deny/build pass in 134.536 seconds; configured CAS artifact/restart
-passes in 7.146 seconds. [Daily evidence](evidence/openai-daily.md) and
+passes in 7.032 seconds with answer-free prompts and tools disabled for recall. [Daily evidence](evidence/openai-daily.md) and
 [usage](openai-daily.md) define the supported slice. Actual OpenAI authorization
 and an account-model task still require live acceptance. Complete AuthStorage,
 registry projection, Codex RPC/WS/Lite and other providers stay open/deferred;

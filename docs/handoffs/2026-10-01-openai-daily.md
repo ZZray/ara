@@ -18,7 +18,8 @@ Parent `9688c584dc7d2f39f150b9d3dc9fc1f768ae7606`; fixed OMP
   fmt/Clippy/target/doc/inventory/deny/build PASS, source unchanged,
   134.536 seconds. No code changed after this gate.
 - Actual native configured Manager → OMP → CAS `deepseek-v4.1-flash`:
-  file task and original Session recall pass, 7.146 seconds; binary pinned.
+  answer-free file task and tool-disabled original Session recall pass,
+  7.032 seconds; binary pinned. Earlier known-answer prompts do not prove recall.
 - Independent source/gate reviews completed. No private credentials/config,
   SQLite or trial artifacts belong in Git.
 
@@ -41,7 +42,9 @@ Codex summary server cost limits and new Linux execution are not proven.
 
 ## Time and speed
 
-Batch began about 04:29 UTC; final code gate/trial completed about 06:05 UTC.
+Batch began about 04:29 UTC; final code gate completed about 06:04 UTC,
+answer-free task/recall at 06:32 UTC. Code push `eb44edb` required one HTTP/1.1
+retry after HTTP 408; exact remote SHA was checked before and after retry.
 Implementation, source review and fix/fixture iterations dominate elapsed time;
 four final module suites take 2.499 seconds, shared backend 125.629 seconds.
 Use existing OMP inputs/ARA wire helpers, batch related flows, keep one Cargo

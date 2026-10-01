@@ -52,7 +52,7 @@ OMP/P0–P6 completion date is not yet supported by measured remaining throughpu
 The final daily-use check measured **134.536 seconds**, including cached compile,
 four module suites, one shared full gate, inventory, deny and binary build;
 the four suites themselves took 2.499 seconds and backend took 125.629 seconds.
-The configured CAS artifact task and original-Session restart took 7.146 seconds.
+The final answer-free CAS artifact task and tool-disabled original-Session recall took 7.032 seconds.
 Keep development checks scoped to the changed module; share the full gate only
 once the batch is stable. Reuse existing protocol framing and synthetic auth
 fixtures before adding a scenario. Earlier failed/superseded checks remain in
