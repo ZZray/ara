@@ -3,7 +3,8 @@
 //! provider guard and the serial Host own detection/recovery respectively.
 
 use ara_ai::thinking_loop::GeminiHeaderRunDetector;
-use ara_ai::{AssistantMessage, AssistantMessageEvent};
+use ara_ai::tool_call_loop_guard::{RepeatedToolCallDetection, ToolCallLoopGuard, ToolCallLoopGuardOptions};
+use ara_ai::{AssistantMessage, AssistantMessageEvent, ToolResultMessage};
 
 #[derive(Clone, Copy)]
 pub(super) struct HeaderInterruption {
@@ -72,4 +73,37 @@ impl GeminiHeaderGuard {
 
 pub(super) fn guard_enabled(settings: super::LoopGuardSettings) -> bool {
     settings.enabled && std::env::var("ARA_NO_THINKING_LOOP_GUARD").as_deref() != Ok("1")
+}
+
+/// Fixed AgentSession constructs LoopGuards once. Preserve this state across
+/// prompt/new/switch; disable or a raw settings-key change rebuilds it.
+#[derive(Default)]
+pub(super) struct ToolLoopState {
+    settings: Option<super::ToolLoopGuardSettings>,
+    guard: Option<ToolCallLoopGuard>,
+}
+
+impl ToolLoopState {
+    pub(super) fn configure(&mut self, settings: super::ToolLoopGuardSettings) {
+        if !settings.enabled {
+            self.guard = None;
+            self.settings = None;
+            return;
+        }
+        if self.settings.as_ref().is_none_or(|previous| !previous.same_key(&settings)) {
+            self.guard = Some(ToolCallLoopGuard::new(ToolCallLoopGuardOptions {
+                threshold: settings.threshold,
+                exempt_tools: settings.exempt_tools.clone(),
+            }));
+            self.settings = Some(settings);
+        }
+    }
+
+    pub(super) fn record_turn(
+        &mut self,
+        message: &AssistantMessage,
+        results: &[ToolResultMessage],
+    ) -> Option<RepeatedToolCallDetection> {
+        self.guard.as_mut()?.record_turn(message, results)
+    }
 }

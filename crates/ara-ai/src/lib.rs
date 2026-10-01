@@ -15,6 +15,7 @@ pub(crate) mod schema_draft;
 pub(crate) mod schema_wire;
 pub mod sse;
 pub mod thinking_loop;
+pub mod tool_call_loop_guard;
 pub mod transform;
 pub mod types;
 pub(crate) mod usage_limit;

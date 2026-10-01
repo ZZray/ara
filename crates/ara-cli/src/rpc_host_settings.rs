@@ -63,6 +63,75 @@ impl LoopGuardSettings {
     }
 }
 
+/// Fixed settings-schema.ts:1476-1509 and stream-guards.ts:201-215.
+/// The raw threshold remains a number; the detector owns truncation/clamping.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ToolLoopGuardSettings {
+    pub(super) enabled: bool,
+    pub(super) threshold: f64,
+    pub(super) exempt_tools: Vec<String>,
+}
+
+impl Default for ToolLoopGuardSettings {
+    fn default() -> Self {
+        Self { enabled: true, threshold: 5.0, exempt_tools: vec!["hub".into()] }
+    }
+}
+
+impl ToolLoopGuardSettings {
+    pub(super) fn load(agent_dir: &Path) -> Result<Self> {
+        for filename in MAIN_CONFIG_FILENAMES {
+            if let Some((document, _)) = read_document(&agent_dir.join(filename))? {
+                return Self::from_document(&document);
+            }
+        }
+        Ok(Self::default())
+    }
+
+    fn from_document(document: &Yaml) -> Result<Self> {
+        let root = document.as_hash().context("native settings root must be a mapping")?;
+        let model = match root.get(&Yaml::String("model".into())) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("model settings must be a mapping")?),
+        };
+        let guard = match model.and_then(|group| group.get(&Yaml::String("toolCallLoopGuard".into()))) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("model.toolCallLoopGuard settings must be a mapping")?),
+        };
+        let field = |key: &str| guard.and_then(|group| group.get(&Yaml::String(key.into())));
+        let enabled = match field("enabled") {
+            None => true,
+            Some(Yaml::Boolean(value)) => *value,
+            Some(_) => bail!("model.toolCallLoopGuard.enabled must be a boolean"),
+        };
+        let threshold = match field("threshold") {
+            None => 5.0,
+            Some(Yaml::Integer(value)) => *value as f64,
+            Some(Yaml::Real(value)) => match value.as_str() {
+                ".nan" | ".NaN" | ".NAN" => f64::NAN,
+                ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => f64::INFINITY,
+                "-.inf" | "-.Inf" | "-.INF" => f64::NEG_INFINITY,
+                _ => value.parse::<f64>().context("model.toolCallLoopGuard.threshold must be a number")?,
+            },
+            Some(_) => bail!("model.toolCallLoopGuard.threshold must be a number"),
+        };
+        let exempt_tools = match field("exemptTools") {
+            None => vec!["hub".into()],
+            Some(Yaml::Array(values)) => {
+                values.iter().filter_map(Yaml::as_str).filter(|name| !name.is_empty()).map(str::to_owned).collect()
+            }
+            Some(_) => bail!("model.toolCallLoopGuard.exemptTools must be an array"),
+        };
+        Ok(Self { enabled, threshold, exempt_tools })
+    }
+
+    pub(super) fn same_key(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+            && self.exempt_tools == other.exempt_tools
+            && (self.threshold == other.threshold || self.threshold.is_nan() && other.threshold.is_nan())
+    }
+}
+
 pub(super) struct AutoCompactionPolicy {
     path: Option<PathBuf>,
     enabled: bool,

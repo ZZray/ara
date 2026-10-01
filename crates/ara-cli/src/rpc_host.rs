@@ -5,7 +5,7 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
-use super::rpc_host_settings::{AutoCompactionPolicy, LoopGuardSettings, RetryPolicy};
+use super::rpc_host_settings::{AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings};
 #[path = "rpc_host_loop_guard.rs"]
 mod loop_guard;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
@@ -27,7 +27,7 @@ use ara_session::{
     BashExecutionMessage, LoopGuardNotice, SessionJournal, UserSkillPrompt, bash_output_meta_from_summary,
 };
 use async_trait::async_trait;
-use loop_guard::{GeminiHeaderGuard, HeaderInterruption};
+use loop_guard::{GeminiHeaderGuard, HeaderInterruption, ToolLoopState};
 use serde_json::{Value, json};
 use std::{
     future::pending,
@@ -122,6 +122,92 @@ impl LoopHooks for RpcHooks {
     }
     async fn transform_provider_context(&self, context: ara_ai::Context, model: &ara_ai::Model) -> ara_ai::Context {
         self.base.transform_provider_context(context, model).await
+    }
+
+    async fn turn_end_inputs(
+        &self,
+        message: &AssistantMessage,
+        results: &[ara_ai::ToolResultMessage],
+        cancel: &CancellationToken,
+    ) -> Vec<AgentInput> {
+        self.base.turn_end_inputs(message, results, cancel).await
+    }
+}
+
+/// Per-Run adapter; the detector itself belongs to the long-lived RPC Host.
+/// Core owns insertion into its transcript and awaits the native input sink
+/// before it admits another model call, a deadline, or user steering.
+struct ToolLoopHooks {
+    base: Arc<dyn LoopHooks>,
+    state: Arc<Mutex<ToolLoopState>>,
+    settings: ToolLoopGuardSettings,
+    output: Output,
+    session_id: Value,
+    run_cancel: CancellationToken,
+}
+
+#[async_trait]
+impl LoopHooks for ToolLoopHooks {
+    fn execution_snapshot(&self) -> Option<ExecutionSnapshot> {
+        self.base.execution_snapshot()
+    }
+    async fn before_tool_call(
+        &self,
+        call: &ara_ai::ToolCall,
+        args: &ara_ai::JsonObject,
+        cancel: &CancellationToken,
+    ) -> ToolDecision {
+        self.base.before_tool_call(call, args, cancel).await
+    }
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        self.base.steering_inputs().await
+    }
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        self.base.follow_up_inputs().await
+    }
+    async fn transform_provider_context(&self, context: ara_ai::Context, model: &ara_ai::Model) -> ara_ai::Context {
+        self.base.transform_provider_context(context, model).await
+    }
+    async fn turn_end_inputs(
+        &self,
+        message: &AssistantMessage,
+        results: &[ara_ai::ToolResultMessage],
+        cancel: &CancellationToken,
+    ) -> Vec<AgentInput> {
+        let mut inputs = self.base.turn_end_inputs(message, results, cancel).await;
+        if cancel.is_cancelled()
+            || matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Aborted)
+        {
+            return inputs;
+        }
+        let detection = {
+            let mut state = self.state.lock().unwrap();
+            state.configure(self.settings.clone());
+            state.record_turn(message, results)
+        };
+        if let Some(detection) = detection {
+            let projected = LoopGuardNotice::tool_call_loop(&detection).and_then(|notice| {
+                let model = notice.try_model_message()?;
+                Ok(AgentInput { model, provenance: Some(Arc::new(notice.event_message())) })
+            });
+            match projected {
+                Ok(input) => inputs.push(input),
+                Err(error) => {
+                    // Native JavaScript truncation can leave a lone UTF-16
+                    // surrogate. Retain the exact wire receipt, refuse today's
+                    // UTF-8 context projection and cancel this Run; never replay.
+                    let mut receipt = wire(json!({"type":"notice","level":"error","source":"loop-guard",
+                        "sessionId":self.session_id,"message":error.to_string()}));
+                    receipt.insert("details", detection.to_wire_value());
+                    self.output.send(OutputItem::Frame(receipt));
+                    cancel.cancel();
+                    // Core owns a child token. Cancel the Host's retained Run
+                    // token too so its existing retry veto cannot re-dispatch.
+                    self.run_cancel.cancel();
+                }
+            }
+        }
+        inputs
     }
 }
 
@@ -369,6 +455,11 @@ fn input_skill(input: &AgentInput) -> Option<UserSkillPrompt> {
     })
 }
 
+fn input_loop_guard_notice(input: &AgentInput) -> Option<LoopGuardNotice> {
+    let notice = LoopGuardNotice::from_event_message(input.provenance.as_ref()?)?;
+    (notice.try_model_message().ok()? == input.model).then_some(notice)
+}
+
 impl RunSink {
     fn completed_message(&self, message: Value) {
         self.messages.lock().unwrap().push(message.clone());
@@ -425,6 +516,16 @@ impl AgentEventSink for RunSink {
     }
 
     async fn emit_input(&self, input: AgentInput) {
+        if let Some(notice) = input_loop_guard_notice(&input) {
+            let public = notice.event_message();
+            self.output.frame(json!({"type":"message_start","message":public}));
+            if let Err(error) = self.session.journal.lock().await.append_loop_guard_notice(&notice) {
+                self.persistence_failed(error);
+            }
+            self.completed_message(public.clone());
+            self.output.frame(json!({"type":"message_end","message":public}));
+            return;
+        }
         let Some(prompt) = input_skill(&input) else {
             self.emit(AgentEvent::MessageStart { message: input.model.clone() }).await;
             self.emit(AgentEvent::MessageEnd { message: input.model }).await;
@@ -593,6 +694,8 @@ struct Host {
     loop_guard_settings: LoopGuardSettings,
     header_continue: Option<PendingHeaderContinue>,
     input_closed: bool,
+    tool_loop: Arc<Mutex<ToolLoopState>>,
+    tool_loop_settings_dir: Option<PathBuf>,
 }
 
 fn same_session_file(left: &Session, right: &Session) -> bool {
@@ -1539,6 +1642,18 @@ impl Host {
         let cancel = self.connection.child_token();
         let mut config = self.config.clone();
         config.deadline = self.max_time.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0)));
+        let tool_loop_settings = match &self.tool_loop_settings_dir {
+            Some(directory) => ToolLoopGuardSettings::load(directory)?,
+            None => ToolLoopGuardSettings::default(),
+        };
+        config.hooks = Arc::new(ToolLoopHooks {
+            base: config.hooks,
+            state: self.tool_loop.clone(),
+            settings: tool_loop_settings,
+            output: self.output.clone(),
+            session_id: self.session.header["id"].clone(),
+            run_cancel: cancel.clone(),
+        });
         let sink = Arc::new(RunSink {
             session: self.session.clone(),
             output: self.output.clone(),
@@ -2138,6 +2253,10 @@ where
     let compaction_policy = AutoCompactionPolicy::load(&super::ara_home().join("agent"))?;
     let retry_policy = RetryPolicy::load(&super::ara_home().join("agent"))?;
     let loop_guard_settings = LoopGuardSettings::load(&super::ara_home().join("agent"))?;
+    let tool_loop_settings_dir = super::ara_home().join("agent");
+    let tool_loop_settings = ToolLoopGuardSettings::load(&tool_loop_settings_dir)?;
+    let mut tool_loop_state = ToolLoopState::default();
+    tool_loop_state.configure(tool_loop_settings);
     let connection = CancellationToken::new();
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
@@ -2196,6 +2315,8 @@ where
         loop_guard_settings,
         header_continue: None,
         input_closed: false,
+        tool_loop: Arc::new(Mutex::new(tool_loop_state)),
+        tool_loop_settings_dir: Some(tool_loop_settings_dir),
     };
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
@@ -2462,6 +2583,8 @@ mod tests {
             loop_guard_settings: LoopGuardSettings::default(),
             header_continue: None,
             input_closed: false,
+            tool_loop: Arc::new(Mutex::new(ToolLoopState::default())),
+            tool_loop_settings_dir: None,
         };
         (host, rx)
     }

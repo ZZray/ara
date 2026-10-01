@@ -486,6 +486,15 @@ impl LoopHooks for QueueHooks {
     async fn transform_provider_context(&self, context: Context, model: &Model) -> Context {
         self.base.transform_provider_context(context, model).await
     }
+
+    async fn turn_end_inputs(
+        &self,
+        message: &ara_ai::AssistantMessage,
+        tool_results: &[ara_ai::ToolResultMessage],
+        cancel: &CancellationToken,
+    ) -> Vec<AgentInput> {
+        self.base.turn_end_inputs(message, tool_results, cancel).await
+    }
 }
 
 #[cfg(test)]

@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ara-ctok",
+ "ara-rpc",
  "ara-testkit",
  "bytes",
  "chrono",
@@ -356,6 +357,7 @@ name = "ara-session"
 version = "0.1.0"
 dependencies = [
  "ara-ai",
+ "ara-prompt",
  "chrono",
  "serde",
  "serde_json",

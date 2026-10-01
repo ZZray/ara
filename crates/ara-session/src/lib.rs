@@ -29,7 +29,9 @@
 mod loop_guard_notice;
 mod skill_prompt;
 
-pub use loop_guard_notice::{GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE};
+pub use loop_guard_notice::{
+    GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE, TOOL_CALL_LOOP_REDIRECT_TYPE,
+};
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
 use ara_ai::{AssistantBlock, Message, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};

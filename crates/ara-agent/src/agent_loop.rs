@@ -82,6 +82,17 @@ pub trait LoopHooks: Send + Sync {
     async fn transform_provider_context(&self, context: Context, _model: &Model) -> Context {
         context
     }
+    /// Host inputs produced by a healthy completed turn (fixed OMP
+    /// `onTurnEnd`). They enter this transcript and the awaited input sink
+    /// before terminal checks or user steering; provenance stays Host-owned.
+    async fn turn_end_inputs(
+        &self,
+        _message: &AssistantMessage,
+        _tool_results: &[ToolResultMessage],
+        _cancel: &CancellationToken,
+    ) -> Vec<AgentInput> {
+        Vec::new()
+    }
 }
 
 pub struct NoHooks;
@@ -337,6 +348,29 @@ async fn emit_inputs(sink: &dyn AgentEventSink, inputs: &[AgentInput]) {
     }
 }
 
+async fn emit_turn_end(
+    context: &mut Vec<Message>,
+    new_messages: &mut Vec<Message>,
+    message: AssistantMessage,
+    tool_results: Vec<ToolResultMessage>,
+    config: &AgentConfig,
+    ctl: &RunControl,
+    sink: &dyn AgentEventSink,
+) {
+    sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(message.clone()), tool_results: tool_results.clone() })
+        .await;
+    // Fixed emitTurnEnd skips a user abort, deadline or failed assistant. Once
+    // the hook returns inputs, commit them even if cancellation raced the hook.
+    if ctl.is_cancelled() || matches!(message.stop_reason, StopReason::Error | StopReason::Aborted) {
+        return;
+    }
+    for input in config.hooks.turn_end_inputs(&message, &tool_results, &ctl.token).await {
+        context.push(input.model.clone());
+        new_messages.push(input.model.clone());
+        sink.emit_input(input).await;
+    }
+}
+
 async fn end(sink: &dyn AgentEventSink, new_messages: &[Message], reason: RunEnd) -> RunEnd {
     sink.emit(AgentEvent::AgentEnd { messages: new_messages.to_vec() }).await;
     reason
@@ -367,7 +401,7 @@ async fn run_loop(
             context.push(Message::ToolResult(r.clone()));
             new_messages.push(Message::ToolResult(r.clone()));
         }
-        sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(tail), tool_results: results }).await;
+        emit_turn_end(context, new_messages, tail, results, config, ctl, sink).await;
     }
 
     let mut model_calls = 0usize;
@@ -416,7 +450,7 @@ async fn run_loop(
                     StopReason::Aborted => RunEnd::Aborted,
                     _ => RunEnd::Error,
                 };
-                sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(message), tool_results: results }).await;
+                emit_turn_end(context, new_messages, message, results, config, ctl, sink).await;
                 return end(sink, new_messages, reason).await;
             }
 
@@ -451,7 +485,7 @@ async fn run_loop(
                     has_more_tool_calls = true;
                 }
             }
-            sink.emit(AgentEvent::TurnEnd { message: Message::Assistant(message), tool_results: results }).await;
+            emit_turn_end(context, new_messages, message, results, config, ctl, sink).await;
             if deadline_passed(config) {
                 return end(sink, new_messages, RunEnd::Deadline).await;
             }

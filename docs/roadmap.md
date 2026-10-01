@@ -51,6 +51,13 @@ guards, overflow/interrupted recovery and native special caps remain required.
 This adds behavior to existing RPC variants; RPC stays 27/42, P1–P6 stay open
 and the full parity marker stays null.
 
+The [tool-call-loop checkpoint](evidence/tool-call-loop-guard.md) adds fixed
+cross-turn detection, native Host switches and durable notices before steering.
+Modules 20/0/0 and Windows backend 1,503/0/20 pass one 194.995-second shared gate;
+preferred CAS file task/original-Session recall takes 9.011 seconds across Runs.
+Lossless UTF-16 model-text projection, advisor/other Hosts and remaining guards
+stay mandatory open work. This checkpoint accepts no full parent surface.
+
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).

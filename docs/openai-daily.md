@@ -108,3 +108,31 @@ Use `--module ai|host|config|session` for development. The command shares the
 existing final gate and compiles only selected module targets. Ordinary mapping
 details reuse the source/native corpus. See [recovery evidence](evidence/thinking-loop-recovery.md)
 for controlled faults, actual CAS artifacts and original-Session restart.
+
+## Cross-turn tool loop protection
+
+For the RPC Host, native settings also control repeated tool-call batches:
+
+```yaml
+model:
+  toolCallLoopGuard:
+    enabled: true
+    threshold: 5
+    exemptTools: [hub]
+```
+
+These are the fixed OMP defaults. A notice is persisted before user steering or
+another model request. The same Host retains detection across prompt/new/switch;
+disable or settings changes rebuild it. Native template/Session provenance is
+restored on restart. A summary containing an unpaired UTF-16 surrogate is retained
+in a lossless error receipt and refuses current UTF-8 model projection; both Run
+tokens are cancelled to prevent retries. Completing lossless model text remains
+required parity work.
+
+```powershell
+python -X utf8 scripts/verify_stream_guards.py --module all --full
+```
+
+Use `--module ai|host|session` during development. Original OMP detector tests,
+whole-module Rust flows, one shared backend gate and bounded actual CAS task
+are recorded in [tool-loop evidence](evidence/tool-call-loop-guard.md).

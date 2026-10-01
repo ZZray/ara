@@ -61,6 +61,21 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+Tool-call-loop checkpoint (2026-10-01, tested/audited WIP): fixed detector,
+long-lived Host policy and awaited Core turn-end inputs now retain native notice
+ordering, Session restart and compaction provenance. Original OMP detector tests
+pass 10/0; the existing Rust modules pass 20/0/0. One final shared gate passes
+Windows backend 1,503/0/20 plus inventory/deny/build in 194.995 seconds;
+module suites take 4.177 seconds. Two controlled read turns followed by four real
+CAS calls complete the file task and tool-disabled original-Session recall in
+9.011 seconds across Runs. Independent Codex and Root audit bind source/binary
+and raw artifacts. [Tool-loop evidence](evidence/tool-call-loop-guard.md).
+Full lossless UTF-16 model text, advisor/other Hosts and remaining guards are
+mandatory open parity work. Next: overflow/interrupted/native special-stream
+caps and remaining RPC/registry. P0/V1 accepted, P1–P6 open, RPC 27/42 and null
+parity marker remain unchanged. Tests stay module based with one final stable
+batch gate; ordinary mappings do not get separate micro-tests.
+
 ThinkingLoop/original-Session recovery checkpoint (2026-10-01, tested/audited
 WIP): fixed exact/semantic/header detectors, stream guard, bounded completion
 helpers, native switches, per-retry hidden notices and Gemini original-Run

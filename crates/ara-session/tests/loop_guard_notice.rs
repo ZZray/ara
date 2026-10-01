@@ -20,6 +20,20 @@ fn fixed_agent_notices_reopen_project_to_developer_and_preserve_compaction_sourc
     let first = journal.append_loop_guard_notice(&redirect).unwrap();
     let second = journal.append_loop_guard_notice(&redirect).unwrap();
     assert_ne!(first, second, "Two actual retries retain two independent receipts");
+    let tool_loop = LoopGuardNotice::tool_call_loop(&ara_ai::tool_call_loop_guard::RepeatedToolCallDetection {
+        kind: "repeated_tool_call",
+        tool_name: "bash".into(),
+        count: 2.0,
+        arguments_summary: "{\"command\":\"pytest -q\"}".into(),
+        result_summary: "1263 passed, 4 skipped".into(),
+    })
+    .unwrap();
+    let tool_loop_id = journal.append_loop_guard_notice(&tool_loop).unwrap();
+    assert!(
+        !tool_loop.event_message()["content"].as_str().unwrap().ends_with('\n'),
+        "Fixed prompt.render formats the redirect"
+    );
+    assert_eq!(LoopGuardNotice::from_event_message(&tool_loop.event_message()), Some(tool_loop));
     let reopened = SessionJournal::open(journal.path()).unwrap();
     assert_eq!(reopened.header()["id"], journal.header()["id"]);
     assert!(reopened.entries().iter().any(|entry| entry.id == aborted_id), "raw interruption receipt is retained");
@@ -27,7 +41,7 @@ fn fixed_agent_notices_reopen_project_to_developer_and_preserve_compaction_sourc
         !reopened.branch().iter().any(|entry| entry.id == aborted_id),
         "only the interrupted active leaf is bypassed"
     );
-    let notice_ids = [reminder_id, first, second];
+    let notice_ids = [reminder_id, first, second, tool_loop_id];
     let snapshot = reopened.compaction_source_snapshot().unwrap();
     for id in &notice_ids {
         let entry = reopened.entries().iter().find(|entry| &entry.id == id).unwrap();
@@ -50,7 +64,7 @@ fn fixed_agent_notices_reopen_project_to_developer_and_preserve_compaction_sourc
     let source = std::fs::read_to_string(journal.path()).unwrap();
     let mut rows =
         source.lines().map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()).collect::<Vec<_>>();
-    let notice = rows.iter_mut().find(|row| row["id"] == json!(notice_ids[2])).unwrap();
+    let notice = rows.iter_mut().find(|row| row["id"] == json!(notice_ids[3])).unwrap();
     notice["content"] = json!("untrusted captured error text");
     std::fs::write(journal.path(), rows.iter().map(|row| format!("{row}\n")).collect::<String>()).unwrap();
     let forged = SessionJournal::open(journal.path()).unwrap();

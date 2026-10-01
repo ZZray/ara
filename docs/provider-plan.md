@@ -66,6 +66,15 @@ the bounded real CAS task/restart binary (11.338 seconds across Runs), avoiding
 a duplicate paid trial. Development compilation now builds only the selected
 test targets; `--full` owns the comprehensive build/test gate.
 
+The [tool-loop batch](evidence/tool-call-loop-guard.md) reuses original detector
+input families and three existing module suites: 20/0/0 in 4.177 seconds.
+Its sole final full command takes 194.995 seconds, including 69 seconds rebuilding
+all target tests; backend 1,503/0/20 and inventory/deny/build pass. Preferred CAS
+completion/original-Session recall takes 9.011 seconds across Runs, with two
+controlled tool turns separately recorded from four actual model requests.
+Development continues to compile selected targets only. This Core/Host module
+does not change the daily Provider ordering or accept actual account login.
+
 ## Deferred compatibility register
 
 | Item | Evidence / dependency | Status |

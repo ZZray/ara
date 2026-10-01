@@ -4,6 +4,19 @@ Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `
 
 The complete denominator is the generated [OMP source inventory](inventory.md): every tracked file at the baseline belongs to one surface in [`surfaces.toml`](../../upstream/inventory/surfaces.toml), and every upstream test case is a behavior item (`B-xxxxxxxxxx` in [behaviors.tsv](inventory/behaviors.tsv)). Rows below are bounded behavior points being ported; each cites its surface and the upstream behavior IDs/source it covers. A surface is only `accepted` when all of its behavior items are accounted for here. `python scripts/omp_inventory.py check` rejects citations of unknown behavior IDs.
 
+Active fixed tool-call-loop extension (tested/audited WIP, no new registered
+point): AI-STREAM-GUARDS and existing CA-RPC/CA-TURN-RECOVERY map the detector,
+native defaults/settings lifetime and awaited completed-turn injection to
+`ara-ai::tool_call_loop_guard`, `ara-agent::LoopHooks::turn_end_inputs`,
+`ara-cli::{rpc_host,rpc_host_loop_guard,rpc_host_settings}` and
+`ara-session::LoopGuardNotice`. [Tool-loop evidence](../evidence/tool-call-loop-guard.md)
+records original detector tests 10/0, Rust modules 20/0/0, one Windows backend
+gate 1,503/0/20 and audited preferred CAS artifacts/original-Session restart.
+Full UTF-16 model-text projection is a mandatory gap: current refusal preserves
+lossless details and cancels both Run tokens without replay. Advisor/other Hosts,
+remaining guards and parent surfaces stay open. RPC 27/42, P1–P6 and parity
+marker remain unchanged; no full surface is accepted from this checkpoint.
+
 Active fixed ThinkingLoop/recovery extension (tested/audited WIP, no new
 registered point): AI-STREAM-GUARDS, CA-TURN-RECOVERY and existing CA-RPC retries
 map exact/semantic/header detection, guarded completion helpers, native switches,

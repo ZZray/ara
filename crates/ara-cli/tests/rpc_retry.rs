@@ -73,6 +73,8 @@ impl Env {
 // module. No second harness or separate test for every ordinary mapping.
 #[path = "support/rpc_loop_guard.rs"]
 mod loop_guard;
+#[path = "support/rpc_tool_loop_guard.rs"]
+mod tool_loop_guard;
 
 struct RpcChild {
     child: Child,
@@ -103,9 +105,7 @@ impl RpcChild {
         let (tx, frames) = mpsc::channel();
         let output_reader = std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
-                let frame = line
-                    .map_err(|error| error.to_string())
-                    .and_then(|line| serde_json::from_str(&line).map_err(|error| format!("{error}: {line}")));
+                let frame = line.map_err(|error| error.to_string()).and_then(|line| parse_rpc_test_frame(&line));
                 if tx.send(frame).is_err() {
                     break;
                 }
@@ -234,6 +234,29 @@ impl RpcChild {
         }
         assert_eq!(status.code(), Some(expected), "{}", self.stderr.lock().unwrap());
         assert_eq!(self.seen.iter().filter(|frame| frame["type"] == "session_shutdown").count(), 1);
+    }
+}
+
+// The production codec can retain a native UTF-16 summary that serde_json's
+// UTF-8 value cannot represent. Keep its exact JSON for the guard refusal
+// scenario while preserving the existing error behavior for other frames.
+fn parse_rpc_test_frame(line: &str) -> Result<Value, String> {
+    match serde_json::from_str(line) {
+        Ok(frame) => Ok(frame),
+        Err(error) => {
+            let mut native = ara_rpc::WireValue::parse(line).map_err(|_| format!("{error}: {line}"))?;
+            if native.get("type") != Some(&ara_rpc::WireValue::String("notice".into()))
+                || native.get("level") != Some(&ara_rpc::WireValue::String("error".into()))
+                || native.get("source") != Some(&ara_rpc::WireValue::String("loop-guard".into()))
+            {
+                return Err(format!("{error}: {line}"));
+            }
+            let details = native.get("details").cloned().ok_or_else(|| format!("{error}: {line}"))?;
+            native.insert("details", ara_rpc::WireValue::Null);
+            let mut frame: Value = serde_json::from_str(&native.stringify()).map_err(|_| format!("{error}: {line}"))?;
+            frame["losslessDetailsJson"] = json!(details.stringify());
+            Ok(frame)
+        }
     }
 }
 
