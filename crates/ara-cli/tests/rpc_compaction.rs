@@ -2,6 +2,7 @@
 //! File gates establish process and Session ownership order without timing
 //! guesses. Every case shares one deadline, including shutdown and reopen.
 
+use ara_session::SessionJournal;
 use ara_testkit::chunks::{done, finish, text, tool_call};
 use ara_testkit::{FakeUpstream, Script};
 use serde_json::{Value, json};
@@ -678,4 +679,296 @@ async fn rpc_compaction_commit_disk_failure_stops_connection_before_queued_promp
     assert!(!env.work.path().join("queued-effect.txt").exists());
     assert!(!child.seen.iter().any(|frame| frame["id"] == "queued-after-disk-failure" && frame["success"] == true));
     assert!(!original.is_empty(), "fault was applied to an actual materialized source Session");
+}
+
+fn overflow_config(env: &Env, window: u64, reserve: Option<u64>) {
+    let agent = env.home.path().join("agent");
+    std::fs::create_dir_all(&agent).unwrap();
+    std::fs::write(
+        agent.join("models.yml"),
+        json!({"providers":{"overflow-fixture":{
+            "api":"openai-completions", "baseUrl":"http://127.0.0.1:1/v1", "auth":"none",
+            "models":[{"id":"fake-model","contextWindow":window,"maxTokens":512,"input":["text"]}]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let reserve = reserve.map(|tokens| format!("  reserveTokens: {tokens}\n")).unwrap_or_default();
+    std::fs::write(agent.join("config.yml"), format!(
+        "compaction:\n  enabled: true\n  methodOrder: [soft]\n{reserve}retry:\n  enabled: false\n  modelFallback: false\n"
+    )).unwrap();
+}
+
+fn failed_overflow(content: Option<&str>, payload: bool) -> Value {
+    let mut events = Vec::new();
+    if let Some(content) = content {
+        events.push(text(content));
+    }
+    let input = if payload { 1000 } else { 250_000 };
+    // Every reported bucket is explicit; omitted cache buckets stay unknown in
+    // production and cannot establish the native trusted-payload headroom case.
+    events.push(json!({"data":{"choices":[],"usage":{"prompt_tokens":input,"completion_tokens":0,
+        "prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"total_tokens":input}}}));
+    events.push(json!({"data":{"error":{"code":if payload {413} else {400},"message":if payload {
+        "413 request exceeds the maximum size"
+    } else { "prompt is too long: 250000 tokens > 200000 maximum" }}}}));
+    json!({"events":events})
+}
+
+// Fixed native scenarios: auto-compaction-progress-guard:620-870,1343-1404,
+//1537-1565 and payload-rejection-413:239-268. One real Host/Session sequence per
+// case covers disposition, summary result, provider request and restart together.
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_soft_overflow_recovery_module_scenarios() {
+    for case in [
+        "soft-success",
+        "contentful-summary-failure",
+        "empty-summary-failure",
+        "payload-headroom",
+        "unknown-http-payload",
+        "reserve-deadend",
+    ] {
+        let env = Env::new();
+        let deadend = case == "reserve-deadend";
+        let unknown_usage = case == "unknown-http-payload";
+        let payload = case == "payload-headroom" || unknown_usage;
+        let empty = case == "empty-summary-failure";
+        let summary_failure = case.ends_with("summary-failure");
+        overflow_config(&env, if deadend { 10_000 } else { 200_000 }, deadend.then_some(8000));
+        let partial = format!("visible-overflow-{case}");
+        let summary = if summary_failure {
+            json!({"events":[text("rejected incomplete summary"),finish("length"),done()]})
+        } else {
+            answer("native soft overflow summary")
+        };
+        let failure = if unknown_usage {
+            json!({"status":413,"body":json!({"error":{"message":"request exceeds the maximum size"}}).to_string()})
+        } else {
+            failed_overflow((!empty && !payload).then_some(partial.as_str()), payload)
+        };
+        let mut responses = vec![answer("completed prior turn"), failure];
+        if !payload {
+            responses.push(summary);
+        }
+        if case == "soft-success" {
+            responses.push(answer("continued after overflow"));
+        }
+        responses.push(answer("explicit restart answer"));
+        let up = upstream(responses).await;
+        let mut child = RpcChild::spawn(&env, &up, &["--provider", "overflow-fixture"]);
+        child.ready();
+        child.run("seed", "earlier completed source");
+        let initial = child.state("initial-session");
+        let file = PathBuf::from(initial["sessionFile"].as_str().unwrap());
+        let request =
+            if deadend { "unavoidable kept input ".repeat(2000) } else { "current request needs recovery".into() };
+        child.prompt("overflow", &request);
+        if payload {
+            child.until(|frame| {
+                frame["type"] == "notice"
+                    && frame["source"] == "compaction"
+                    && frame["message"].as_str().is_some_and(|message| message.contains("payload"))
+            });
+        } else {
+            let end = child.until(|frame| frame["type"] == "auto_compaction_end");
+            assert_eq!(end["aborted"], false, "{case}: {end}");
+            assert_eq!(end["willRetry"], case == "soft-success", "{case}: {end}");
+            if summary_failure {
+                assert!(end["errorMessage"].as_str().is_some_and(|error| !error.is_empty()));
+            }
+            if case == "soft-success" {
+                child.until(|frame| frame["type"] == "agent_end");
+            }
+        }
+        let settled = child.state("settled");
+        assert_eq!(settled["sessionId"], initial["sessionId"]);
+        assert_eq!(settled["sessionFile"], initial["sessionFile"]);
+        assert_eq!(settled["isCompacting"], false);
+        assert_eq!(settled["isStreaming"], false);
+        assert_eq!(settled["isRetrying"], false);
+        let starts = child.seen.iter().filter(|frame| frame["type"] == "auto_compaction_start").collect::<Vec<_>>();
+        assert_eq!(starts.len(), usize::from(!payload), "{case}: {:?}", child.seen);
+        if let Some(start) = starts.first() {
+            assert_eq!(start["reason"], "overflow");
+        }
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+        if deadend {
+            assert_eq!(
+                child
+                    .seen
+                    .iter()
+                    .filter(|frame| frame["type"] == "notice"
+                        && frame["source"] == "compaction"
+                        && frame["message"].as_str().is_some_and(|text| text.contains("enough context")))
+                    .count(),
+                1
+            );
+        }
+        child.finish();
+        let served_before_restart = if payload {
+            2
+        } else if case == "soft-success" {
+            4
+        } else {
+            3
+        };
+        assert_eq!(up.served(), served_before_restart, "{case}: no blind automatic extra request");
+        let loaded = SessionJournal::open(&file).unwrap();
+        let entries = journal(&file);
+        assert_eq!(summary_entries(&entries).len(), usize::from(!payload && !summary_failure));
+        assert!(
+            entries.iter().any(|entry| entry["message"]["stopReason"] == "error"),
+            "{case}: keep original raw failure receipt"
+        );
+        if unknown_usage {
+            let error = entries.iter().find(|entry| entry["message"]["stopReason"] == "error").unwrap();
+            for bucket in ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] {
+                assert!(
+                    error["message"]["usage"].get(bucket).is_none(),
+                    "{case}: unknown {bucket} must not become zero"
+                );
+            }
+        }
+        if summary_failure && !empty {
+            let raw_errors = entries
+                .iter()
+                .filter(|entry| entry["message"]["stopReason"] == "error" && message_text(&entry["message"]) == partial)
+                .collect::<Vec<_>>();
+            assert_eq!(raw_errors.len(), 2, "native rollback appends a new receipt while retaining the original");
+            assert_ne!(raw_errors[0]["id"], raw_errors[1]["id"]);
+            assert_eq!(
+                loaded.model_context().last().unwrap().as_assistant().unwrap().stop_reason,
+                ara_ai::StopReason::Error
+            );
+        }
+        if empty || payload {
+            assert!(loaded.model_context().iter().all(|message| {
+                message.as_assistant().is_none_or(|assistant| assistant.stop_reason != ara_ai::StopReason::Error)
+            }));
+        }
+        if case == "soft-success" {
+            assert_eq!(
+                loaded.model_context().last().unwrap().as_assistant().unwrap().stop_reason,
+                ara_ai::StopReason::Stop
+            );
+        }
+        let mut reopened =
+            RpcChild::spawn(&env, &up, &["--provider", "overflow-fixture", "--resume", file.to_str().unwrap()]);
+        reopened.ready();
+        reopened.run("explicit-restart", "explicit user request after restart");
+        reopened.finish();
+        assert_eq!(up.served(), served_before_restart + 1, "{case}");
+        let requests = up.requests.lock().await;
+        if !payload {
+            assert!(requests[2]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
+            assert!(!requests[2]["body"]["messages"].to_string().contains(&partial));
+        }
+        if case == "soft-success" {
+            let continuation = requests[3]["body"]["messages"].to_string();
+            assert!(continuation.contains("native soft overflow summary"));
+            assert!(continuation.contains("current request needs recovery"));
+            assert!(!continuation.contains(&partial));
+        }
+        let restarted = requests.last().unwrap()["body"]["messages"].to_string();
+        assert_eq!(
+            restarted.contains(&partial),
+            summary_failure && !empty,
+            "{case}: replay only the restored visible failure"
+        );
+    }
+}
+
+// Native queue:148-223,267-325 and cancellation:113-164. A real HTTP gate
+// establishes summary ownership before abort/queue commands, without a sleep.
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_overflow_summary_owned_abort_and_queued_input_scenarios() {
+    for cancel in [true, false] {
+        let env = Env::new();
+        overflow_config(&env, 200_000, None);
+        let partial = "owned-summary visible overflow";
+        let mut responses = vec![
+            answer("owned earlier completed answer"),
+            failed_overflow(Some(partial), false),
+            answer("owned overflow summary"),
+            answer("continued current request after summary"),
+        ];
+        if !cancel {
+            responses.push(answer("completed explicit queued follow-up"));
+        }
+        let up = upstream(responses).await;
+        let mut gate = HttpGate::start(&up, 2).await;
+        let mut child = RpcChild::spawn_url(&env, &gate.url, &["--provider", "overflow-fixture"]);
+        child.ready();
+        child.run("owned-seed", "earlier completed owned source");
+        child.prompt("owned-overflow", "recover while the host accepts other commands");
+        gate.reached(env.deadline).await;
+        let active = child.state("summary-active");
+        assert_eq!(active["isCompacting"], true);
+        assert_eq!(active["isStreaming"], false);
+        let file = PathBuf::from(active["sessionFile"].as_str().unwrap());
+        assert!(summary_entries(&journal(&file)).is_empty());
+        if cancel {
+            child.send(json!({"id":"cancel-owned-summary","type":"abort"}));
+            child.success("cancel-owned-summary");
+            let end = child.seen.iter().find(|frame| frame["type"] == "auto_compaction_end").unwrap();
+            assert_eq!(end["aborted"], true);
+            assert_eq!(end["willRetry"], false);
+            assert_eq!(child.state("after-abort")["isCompacting"], false);
+            assert_eq!(up.served(), 2, "cancel the gated summary before it can commit or continue");
+            assert!(summary_entries(&journal(&file)).is_empty());
+            assert_eq!(
+                SessionJournal::open(&file)
+                    .unwrap()
+                    .model_context()
+                    .last()
+                    .unwrap()
+                    .as_assistant()
+                    .unwrap()
+                    .stop_reason,
+                ara_ai::StopReason::Error
+            );
+            // The aborted gate must not forward its stale request. A replacement
+            // uses the original fixture's next response after cleanup completes.
+            child.run("replacement", "replacement prompt after summary abort");
+            child.finish();
+            assert_eq!(up.served(), 3);
+        } else {
+            child.send(json!({"id":"queue-owned-summary","type":"follow_up","message":"explicit queued follow-up"}));
+            child.success("queue-owned-summary");
+            let queued = child.state("queued-during-summary");
+            assert_eq!(queued["isCompacting"], true);
+            assert_eq!(queued["queuedMessageCount"], 1);
+            assert_eq!(up.served(), 2);
+            gate.release();
+            let end = child.until(|frame| frame["type"] == "auto_compaction_end");
+            assert_eq!(end["aborted"], false);
+            assert_eq!(end["willRetry"], true);
+            child.until(|frame| frame["type"] == "agent_end");
+            let settled = child.state("owned-queue-settled");
+            assert_eq!(settled["queuedMessageCount"], 0);
+            assert_eq!(settled["isCompacting"], false);
+            assert_eq!(settled["isStreaming"], false);
+            assert_eq!(settled["sessionId"], active["sessionId"]);
+            assert_eq!(settled["sessionFile"], active["sessionFile"]);
+            let messages = child.messages("completed-owned-queue");
+            assert_eq!(
+                messages.iter().filter(|message| message_text(message) == "explicit queued follow-up").count(),
+                1
+            );
+            assert!(messages.iter().any(|message| message_text(message) == "completed explicit queued follow-up"));
+            child.finish();
+            assert_eq!(up.served(), 5, "one summary, native clean-user continuation, then one explicit follow-up");
+            let requests = up.requests.lock().await;
+            // Native Agent continue only dequeues follow-up immediately for an
+            // assistant/empty tail. The clean user tail completes first, and
+            // the same owned Run drains follow-up without another Host retry.
+            for request in &requests[3..] {
+                let continuation = request["body"]["messages"].to_string();
+                assert!(continuation.contains("owned overflow summary"));
+                assert!(!continuation.contains(partial));
+            }
+            assert!(requests[4]["body"]["messages"].to_string().contains("explicit queued follow-up"));
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+        }
+    }
 }

@@ -27,6 +27,7 @@ fn model(base: &str) -> Model {
         reasoning: true,
         // Capacity metadata must never become a Codex output cap.
         max_tokens: Some(128000),
+        context_window: None,
         tokenizer: None,
     }
 }

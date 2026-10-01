@@ -1600,6 +1600,7 @@ mod tests {
             base_url: "http://x".into(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         }
     }

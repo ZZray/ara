@@ -99,7 +99,7 @@ impl CatalogModel {
                 )),
                 "contextWindow" if value.is_null() => {}
                 "contextWindow" => unsupported
-                    .push(UnsupportedContract::new(field, "Rust Model does not carry the catalog context window")),
+                    .push(UnsupportedContract::new(field, "catalog context window is not yet projected to execution")),
                 "input" => unsupported.push(UnsupportedContract::new(
                     field,
                     "Rust Model does not carry or enforce catalog input modalities",
@@ -126,6 +126,7 @@ impl CatalogModel {
             base_url: row["baseUrl"].as_str().expect("validated base URL").to_owned(),
             reasoning: row["reasoning"].as_bool().expect("validated reasoning flag"),
             max_tokens: row["maxTokens"].as_u64(),
+            context_window: None,
             tokenizer,
         })
     }

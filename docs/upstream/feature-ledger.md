@@ -1,5 +1,15 @@
 # OMP feature ledger
 
+**2026-10-01 soft overflow checkpoint:**
+[Executed evidence](../evidence/soft-overflow-recovery.md) maps fixed maintenance,
+recovery, Session and capacity sources to Rust. One grouped module entry gives
+18/0/0; the stable batch gives Windows 1,508/0/20, inventory/deny/build PASS.
+Final real CAS summary, concurrent new Bash, continuation artifact and original
+Session reopen pass with independent final-source/binary audit. These extend
+CA-TURN-RECOVERY / CA-COMPACTION-HOST without completing either parent.
+Responses finer veto, full summary budget/folding, terminal recovery, promotion,
+other methods and rescue stay mandatory. RPC remains 27/42, P1–P6 open, marker null.
+
 Target source: [`omp.lock.json`](../../upstream/omp.lock.json). Status values: `open`, `implementing`, `tested`, `audited`, `accepted`, `intentional-difference`.
 
 The complete denominator is the generated [OMP source inventory](inventory.md): every tracked file at the baseline belongs to one surface in [`surfaces.toml`](../../upstream/inventory/surfaces.toml), and every upstream test case is a behavior item (`B-xxxxxxxxxx` in [behaviors.tsv](inventory/behaviors.tsv)). Rows below are bounded behavior points being ported; each cites its surface and the upstream behavior IDs/source it covers. A surface is only `accepted` when all of its behavior items are accounted for here. `python scripts/omp_inventory.py check` rejects citations of unknown behavior IDs.

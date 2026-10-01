@@ -682,6 +682,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
             base_url,
             reasoning: args.reasoning,
             max_tokens: None,
+            context_window: None,
             tokenizer,
         },
         stream_options,

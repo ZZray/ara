@@ -1,5 +1,14 @@
 # Delivery roadmap
 
+The [soft overflow checkpoint](evidence/soft-overflow-recovery.md) connects
+configured capacity, failed-turn rollback and cancellable same-route soft
+maintenance. Modules 18/0/0 and one final Windows backend 1,508/0/20 pass;
+full command 287.203s (149s all-target recompilation). Final preferred CAS
+summary/new concurrent Bash/continuation/reopen task takes 31.523s and is
+independently audited. Full native summary budgets, Responses recovery evidence,
+terminal stops, promotion, other methods and rescue remain mandatory. P0/V1
+accepted, P1–P6 open, RPC 27/42 and the full marker null are unchanged.
+
 This is a new implementation, not a branch migration. No old ARA source, database, or Git ancestry is imported by this bootstrap. The fixed OMP source and the previous ARA behavior may be inspected in separate checkouts as evidence.
 
 | Gate | Deliverable | Required proof |

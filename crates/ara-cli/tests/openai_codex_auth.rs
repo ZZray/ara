@@ -41,6 +41,7 @@ fn model(base_url: String) -> Model {
         base_url,
         reasoning: false,
         max_tokens: None,
+        context_window: None,
         tokenizer: None,
     }
 }

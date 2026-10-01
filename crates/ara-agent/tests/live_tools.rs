@@ -204,6 +204,7 @@ fn config(provider: Arc<Provider>, effects: &Arc<Mutex<Vec<String>>>, hooks: Arc
             base_url: String::new(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         },
         provider,

@@ -20,6 +20,7 @@ fn model(tokenizer: Option<ModelTokenizer>) -> Model {
         base_url: "http://localhost".into(),
         reasoning: false,
         max_tokens: None,
+        context_window: None,
         tokenizer,
     }
 }

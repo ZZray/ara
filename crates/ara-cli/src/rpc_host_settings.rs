@@ -137,6 +137,11 @@ pub(super) struct AutoCompactionPolicy {
     enabled: bool,
 }
 
+pub(super) struct RecoveryCompactionSettings {
+    pub reserve_tokens: Option<f64>,
+    pub soft_available: bool,
+}
+
 impl AutoCompactionPolicy {
     pub(super) fn load(agent_dir: &Path) -> Result<Self> {
         // Fixed first existing native filename wins; malformed or unreadable
@@ -152,6 +157,31 @@ impl AutoCompactionPolicy {
 
     pub(super) fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub(super) fn recovery_settings(&self) -> Result<RecoveryCompactionSettings> {
+        let loaded = self.path.as_ref().map(|path| read_document(path)).transpose()?.flatten();
+        let group = loaded
+            .as_ref()
+            .and_then(|(document, _)| document.as_hash())
+            .and_then(|root| root.get(&Yaml::String("compaction".into())))
+            .and_then(Yaml::as_hash);
+        let field = |name: &str| group.and_then(|group| group.get(&Yaml::String(name.into())));
+        let reserve_tokens = match field("reserveTokens") {
+            None | Some(Yaml::Null) => None,
+            Some(Yaml::Integer(value)) => Some(*value as f64),
+            Some(Yaml::Real(value)) => Some(value.parse::<f64>().context("compaction.reserveTokens must be finite")?),
+            Some(_) => bail!("compaction.reserveTokens must be a number"),
+        };
+        if reserve_tokens.is_some_and(|value| !value.is_finite()) {
+            bail!("compaction.reserveTokens must be finite");
+        }
+        let soft_available = match field("methodOrder") {
+            None | Some(Yaml::Null) => true,
+            Some(Yaml::Array(methods)) => methods.iter().any(|method| method.as_str() == Some("soft")),
+            Some(_) => false,
+        };
+        Ok(RecoveryCompactionSettings { reserve_tokens, soft_available })
     }
 
     pub(super) fn set_enabled(&mut self, enabled: bool) -> Result<()> {

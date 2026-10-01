@@ -24,6 +24,7 @@ fn model(base_url: &str) -> Model {
         base_url: base_url.into(),
         reasoning: false,
         max_tokens: None,
+        context_window: None,
         tokenizer: None,
     }
 }

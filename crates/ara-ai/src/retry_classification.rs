@@ -522,6 +522,7 @@ mod tests {
                     base_url: upstream.base_url(),
                     reasoning: false,
                     max_tokens: None,
+                    context_window: None,
                     tokenizer: None,
                 };
                 let retry = openai_completions::RetryPolicy {

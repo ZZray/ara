@@ -930,6 +930,7 @@ mod tests {
             base_url: "http://example.invalid/v1".into(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         }
     }

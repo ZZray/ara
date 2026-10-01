@@ -64,6 +64,33 @@ fn file_loading_distinguishes_absence_validation_and_migration() {
 }
 
 #[test]
+fn configured_context_window_reaches_execution_route_and_absence_stays_unknown() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("models.json");
+    for capacity in [None, Some(32_768.5)] {
+        let mut provider = custom("openai-completions");
+        provider["auth"] = json!("none");
+        provider.as_object_mut().unwrap().remove("apiKey");
+        if let Some(capacity) = capacity {
+            provider["models"][0]["contextWindow"] = json!(capacity);
+        }
+        std::fs::write(&path, json!({"providers":{"custom":provider}}).to_string()).unwrap();
+        let config = load_daily_config(&path, true).unwrap().unwrap();
+        let selection = resolve_daily_selection(Some(&config), &selected(), &no_env).unwrap();
+        assert_eq!(selection.model.context_window, capacity);
+        assert_eq!(selection.generation.max_tokens, Some(512));
+        let ProtocolOptions::Completions(options) = &selection.protocol else { panic!("Chat protocol") };
+        let body = chat::build_params(&selection.model, &context(), options);
+        assert_eq!(body["max_tokens"], 512);
+        assert!(body.get("contextWindow").is_none());
+        let DailyAuthSource::Fixed(lease) = selection.auth_source else { panic!("keyless lease") };
+        let route =
+            PreparedRoute::new(selection.model, selection.protocol, Arc::new(FixedRequestAuth::new(lease)), 0).unwrap();
+        assert_eq!(route.model().context_window, capacity);
+    }
+}
+
+#[test]
 fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     let mut value = custom("openai-completions");
     value["compat"] =
@@ -203,6 +230,7 @@ fn codex_account_route_needs_no_config_or_key_and_rejects_overrides() {
     let route = resolve_daily_selection(None, &cli, &env).unwrap();
     assert_eq!(route.api, DailyApi::OpenAiCodexResponses);
     assert_eq!(route.model.base_url, "https://chatgpt.com/backend-api");
+    assert_eq!(route.model.context_window, None);
     assert!(matches!(route.auth_source, DailyAuthSource::OpenAiCodex));
     let ProtocolOptions::CodexResponses(options) = route.protocol else { panic!("Codex protocol") };
     assert!(options.api_key.is_none());

@@ -1352,6 +1352,7 @@ mod tests {
             base_url: "https://example.invalid/v1".into(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         }
     }

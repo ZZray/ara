@@ -551,6 +551,7 @@ mod idle_tests {
                     base_url: String::new(),
                     reasoning: false,
                     max_tokens: None,
+                    context_window: None,
                     tokenizer: None,
                 },
                 provider: provider.clone(),

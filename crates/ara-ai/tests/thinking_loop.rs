@@ -274,6 +274,7 @@ fn model() -> Model {
         base_url: "https://unused.example".into(),
         reasoning: true,
         max_tokens: None,
+        context_window: None,
         tokenizer: None,
     }
 }

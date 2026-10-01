@@ -400,6 +400,9 @@ pub struct Model {
     pub base_url: String,
     pub reasoning: bool,
     pub max_tokens: Option<u64>,
+    /// Host-resolved prompt capacity in tokens, as OMP's numeric contextWindow.
+    /// None means unknown; this metadata is never sent on the wire.
+    pub context_window: Option<f64>,
     /// Local content tokenizer selected by the host; never sent on the wire.
     pub tokenizer: Option<crate::model_tokenizer::ModelTokenizer>,
 }

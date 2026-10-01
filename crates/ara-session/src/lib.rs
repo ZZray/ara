@@ -34,7 +34,10 @@ pub use loop_guard_notice::{
 };
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
-use ara_ai::{AssistantBlock, Message, ToolResultMessage, UserBlock, UserContent, UserMessage, now_ms};
+use ara_ai::{
+    AssistantBlock, AssistantMessage, Message, StopReason, ToolResultMessage, UserBlock, UserContent, UserMessage,
+    now_ms,
+};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
@@ -47,6 +50,7 @@ pub const CURRENT_SESSION_VERSION: u64 = 3;
 pub const SESSION_TITLE_SLOT_BYTES: usize = 256;
 pub const CORRUPT_HEADER_MESSAGE: &str = "session header is missing or malformed";
 pub const UNKNOWN_EFFECT_TEXT: &str = "Tool call was interrupted before its result was recorded; its effects are unknown. Inspect the affected state before retrying it.";
+pub const DISCARDED_ENTRY_BRANCH_MARKER: &str = "discarded-entry-branch";
 
 /// Native user command receipt (fixed OMP `session/messages.ts`). This stays
 /// distinct from the model's ordinary user message and from Agent tool calls.
@@ -403,6 +407,19 @@ pub struct Entry {
 }
 
 impl Entry {
+    fn is_service_tier_change(&self) -> bool {
+        self.kind == "service_tier_change"
+            && self.raw.get("serviceTier").is_some_and(|tier| tier.is_null() || tier.is_object())
+    }
+
+    fn is_discarded_entry_branch_marker(&self) -> bool {
+        self.kind == "branch_summary"
+            && self.raw.get("summary").and_then(Value::as_str) == Some("")
+            && self.raw.get("fromId").and_then(Value::as_str) == Some(self.parent_id.as_deref().unwrap_or("root"))
+            && self.raw.pointer("/details/kind").and_then(Value::as_str) == Some(DISCARDED_ENTRY_BRANCH_MARKER)
+            && self.raw.pointer("/details/discardedEntryId").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+    }
+
     pub fn bash_execution(&self) -> Option<BashExecutionMessage> {
         BashExecutionMessage::from_entry(&self.raw)
     }
@@ -648,6 +665,49 @@ pub struct Recovery {
     /// Earlier calls without results that can no longer be paired adjacently;
     /// left for the provider-side pairing guard and reported to the host.
     pub unpaired_earlier: Vec<String>,
+}
+
+/// A checked, temporary branch selection for fixed turn-recovery.ts:998-1059.
+/// This token is not persisted: only an actual summary/history rewrite or a
+/// restored assistant makes the selected branch durable.
+#[derive(Debug)]
+pub struct FailedAssistantRecovery {
+    session_id: String,
+    parent_branch: Vec<Entry>,
+    failed_entry: Entry,
+    assistant: AssistantMessage,
+    previous_compaction_id: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FailedAssistantRecoveryOutcome {
+    Committed,
+    /// Restore this exact message to the idle Agent before any queued continuation.
+    /// Empty error turns are restored only there, not appended to native history.
+    Restored {
+        message: Box<AssistantMessage>,
+        appended_entry_id: Option<String>,
+    },
+}
+
+fn is_empty_error_turn(message: &AssistantMessage) -> bool {
+    message.stop_reason == StopReason::Error
+        && !message.content.iter().any(|block| match block {
+            AssistantBlock::Text(text) => !ara_prompt::js::trim(&text.text).is_empty(),
+            AssistantBlock::Thinking(thinking) => {
+                !ara_prompt::js::trim(&thinking.thinking).is_empty()
+                    || thinking
+                        .thinking_signature
+                        .as_deref()
+                        .is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty())
+            }
+            AssistantBlock::RedactedThinking { data } => !ara_prompt::js::trim(data).is_empty(),
+            _ => true,
+        })
+}
+
+fn failed_recovery_error(message: impl Into<String>) -> SessionError {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into()).into()
 }
 
 pub struct SessionJournal {
@@ -1061,6 +1121,179 @@ impl SessionJournal {
         self.append_raw("message", f)
     }
 
+    /// Select the exact failed assistant's parent only in memory. The original
+    /// receipt and any off-branch children remain unchanged until real recovery.
+    /// This first recovery surface is deliberately limited to tool-free errors
+    /// and length stops; a failed tool call is not proof of absent side effects.
+    pub fn begin_failed_assistant_recovery(
+        &mut self,
+        expected_leaf: &str,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+    ) -> Result<FailedAssistantRecovery> {
+        if self.leaf_id() != Some(expected_leaf)
+            || !matches!(assistant.stop_reason, StopReason::Error | StopReason::Length)
+            || assistant.tool_calls().next().is_some()
+        {
+            return Err(failed_recovery_error("failed assistant recovery requires the exact tool-free failed branch"));
+        }
+        let branch = self.strict_compaction_branch().map_err(|error| failed_recovery_error(error.to_string()))?;
+        let index = branch
+            .iter()
+            .position(|entry| entry.id == entry_id)
+            .ok_or_else(|| failed_recovery_error("failed assistant entry is outside the current branch"))?;
+        if branch[index].message() != Some(Message::Assistant(assistant.clone()))
+            || branch[index + 1..].iter().any(|entry| !entry.is_service_tier_change())
+        {
+            return Err(failed_recovery_error("failed assistant entry or metadata tail changed"));
+        }
+        let parent_branch = branch[..index].iter().map(|entry| (**entry).clone()).collect::<Vec<_>>();
+        let previous_compaction_id =
+            parent_branch.iter().rev().find(|entry| entry.kind == "compaction").map(|entry| entry.id.clone());
+        let token = FailedAssistantRecovery {
+            session_id: self.session_id().to_owned(),
+            parent_branch,
+            failed_entry: (*branch[index]).clone(),
+            assistant: assistant.clone(),
+            previous_compaction_id,
+        };
+        self.leaf = token.failed_entry.parent_id.clone();
+        Ok(token)
+    }
+
+    /// Finish the temporary selection after the host's owned recovery attempt.
+    /// No-progress rollback appends a new native ID for contentful output and
+    /// always returns the failed message for restoring the idle Agent's tail.
+    pub fn finish_failed_assistant_recovery(
+        &mut self,
+        token: FailedAssistantRecovery,
+        history_rewritten: bool,
+    ) -> Result<FailedAssistantRecoveryOutcome> {
+        if self.session_id() != token.session_id {
+            return Err(failed_recovery_error("failed assistant recovery belongs to another Session"));
+        }
+        let branch = if self.leaf.is_none() {
+            Vec::new()
+        } else {
+            self.strict_compaction_branch().map_err(|error| failed_recovery_error(error.to_string()))?
+        };
+        if branch.len() < token.parent_branch.len()
+            || branch.iter().zip(&token.parent_branch).any(|(current, expected)| *current != expected)
+            || branch[token.parent_branch.len()..].iter().any(|entry| {
+                entry.kind != "compaction"
+                    && !entry.is_service_tier_change()
+                    && !entry.is_discarded_entry_branch_marker()
+            })
+        {
+            return Err(failed_recovery_error("failed assistant recovery owner branch changed"));
+        }
+        let latest_compaction = branch.iter().rev().find(|entry| entry.kind == "compaction").map(|entry| &entry.id);
+        if latest_compaction.map(String::as_str) != token.previous_compaction_id.as_deref() {
+            self.compacted_context_projection().map_err(|error| failed_recovery_error(error.to_string()))?;
+            return Ok(FailedAssistantRecoveryOutcome::Committed);
+        }
+        let durable_discard = branch[token.parent_branch.len()..].iter().any(|entry| {
+            entry.is_discarded_entry_branch_marker()
+                && entry.raw.pointer("/details/discardedEntryId").and_then(Value::as_str)
+                    == Some(token.failed_entry.id.as_str())
+        });
+        if history_rewritten && durable_discard {
+            return Ok(FailedAssistantRecoveryOutcome::Committed);
+        }
+        if history_rewritten
+            || durable_discard
+            || self.entries.iter().find(|entry| entry.id == token.failed_entry.id) != Some(&token.failed_entry)
+        {
+            return Err(failed_recovery_error("failed assistant recovery has no matching committed history receipt"));
+        }
+        let appended_entry_id = if is_empty_error_turn(&token.assistant) {
+            None
+        } else {
+            Some(self.append_message(&Message::Assistant(token.assistant.clone()))?)
+        };
+        Ok(FailedAssistantRecoveryOutcome::Restored { message: Box::new(token.assistant), appended_entry_id })
+    }
+
+    /// Fixed session-manager.ts:2678-2715. Durably bypass this exact failed
+    /// assistant. Known service-tier children are reparented in physical order;
+    /// any potentially content-bearing subtree is retained off branch.
+    pub fn discard_entry_durably(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+    ) -> Result<Option<String>> {
+        if self.leaf_id() != expected_leaf {
+            return Err(failed_recovery_error("durable discard branch changed"));
+        }
+        let Some(target) = self.entries.iter().find(|entry| entry.id == entry_id).cloned() else { return Ok(None) };
+        if target.message() != Some(Message::Assistant(assistant.clone()))
+            || !matches!(assistant.stop_reason, StopReason::Error | StopReason::Length)
+            || assistant.tool_calls().next().is_some()
+        {
+            return Err(failed_recovery_error("durable discard requires the exact tool-free failed assistant"));
+        }
+        let branch = if self.leaf.is_none() {
+            Vec::new()
+        } else {
+            self.strict_compaction_branch().map_err(|error| failed_recovery_error(error.to_string()))?
+        };
+        if let Some(index) = branch.iter().position(|entry| entry.id == entry_id) {
+            if branch[index + 1..].iter().any(|entry| !entry.is_service_tier_change()) {
+                return Err(failed_recovery_error("durable discard would bypass content on the current branch"));
+            }
+        } else if self.leaf != target.parent_id {
+            return Err(failed_recovery_error("durable discard has no matching selected parent"));
+        }
+        let child_ids = self
+            .entries
+            .iter()
+            .filter(|entry| entry.parent_id.as_deref() == Some(entry_id))
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        let reparent_children = child_ids
+            .iter()
+            .all(|id| self.entries.iter().find(|entry| &entry.id == id).is_some_and(Entry::is_service_tier_change));
+        let previous_entries = self.entries.clone();
+        let previous_ids = self.ids.clone();
+        let previous_leaf = self.leaf.clone();
+        let mut parent_id = target.parent_id;
+        if reparent_children {
+            for child_id in child_ids {
+                let child = self.entries.iter_mut().find(|entry| entry.id == child_id).expect("captured child");
+                child.parent_id = parent_id.clone();
+                child.raw["parentId"] = parent_id.clone().map(Value::String).unwrap_or(Value::Null);
+                parent_id = Some(child_id);
+            }
+            self.entries.retain(|entry| entry.id != entry_id);
+            self.ids.remove(entry_id);
+        }
+        let marker_id = generate_id(&self.ids);
+        let raw = json!({"type":"branch_summary", "id":marker_id, "parentId":parent_id,
+            "timestamp":now_iso(), "fromId":parent_id.as_deref().unwrap_or("root"), "summary":"",
+            "details":{"kind":DISCARDED_ENTRY_BRANCH_MARKER,"discardedEntryId":entry_id}});
+        self.entries.push(Entry { id: marker_id.clone(), parent_id, kind: "branch_summary".into(), raw });
+        self.ids.insert(marker_id.clone());
+        self.leaf = Some(marker_id.clone());
+        if let Err(error) = self.rewrite() {
+            self.entries = previous_entries;
+            self.ids = previous_ids;
+            self.leaf = previous_leaf;
+            return Err(error);
+        }
+        Ok(Some(marker_id))
+    }
+
+    /// Native metadata receipt, retained verbatim and excluded from messages.
+    pub fn append_service_tier_change(&mut self, service_tier: &Value) -> Result<String> {
+        if !service_tier.is_null() && !service_tier.is_object() {
+            return Err(failed_recovery_error("service tier must be a native family mapping or null"));
+        }
+        let mut fields = serde_json::Map::new();
+        fields.insert("serviceTier".into(), service_tier.clone());
+        self.append_raw("service_tier_change", fields)
+    }
+
     /// Fixed turn-recovery marks only the recorded failed entries on this
     /// branch. Pending retries do not invent a new persistent entry/state.
     /// Preserve every original receipt and atomically rewrite its metadata.
@@ -1317,6 +1550,7 @@ impl SessionJournal {
                     messages.push(SourcedMessage { entry_id: entry.id.clone(), message });
                 }
                 "model_change" | "label" | "title_change" => {}
+                _ if entry.is_service_tier_change() || entry.is_discarded_entry_branch_marker() => {}
                 _ => {
                     return Err(CompactionSourceError::UnsupportedContextEntry {
                         id: entry.id.clone(),
@@ -1428,6 +1662,7 @@ impl SessionJournal {
                 }
                 "custom_message" if entry.message().is_some() => {}
                 "model_change" | "label" | "title_change" => {}
+                _ if entry.is_service_tier_change() || entry.is_discarded_entry_branch_marker() => {}
                 "compaction" => {
                     let invalid = |field| CompactionProjectionError::InvalidField { id: entry.id.clone(), field };
                     let summary = entry.raw.get("summary").and_then(Value::as_str).ok_or_else(|| invalid("summary"))?;
@@ -1582,23 +1817,28 @@ impl SessionJournal {
     /// later messages stay raw. Falls back to [`build_context`](Self::build_context)
     /// when no valid compaction entry exists.
     pub fn model_context(&self) -> Vec<Message> {
-        let projection = match self.compacted_context_projection() {
-            Ok(p) => p,
-            Err(_) => return self.build_context(),
+        let messages = match self.compacted_context_projection() {
+            Ok(projection) if projection.items.iter().any(|item| matches!(item, CompactedContextItem::Summary(_))) => {
+                projection
+                    .items
+                    .into_iter()
+                    .map(|item| match item {
+                        CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
+                            "[Compacted summary of earlier turns; source entries withheld]\n{}",
+                            s.summary
+                        ))),
+                        CompactedContextItem::Message(m) => m.message.clone(),
+                    })
+                    .collect()
+            }
+            _ => self.build_context(),
         };
-        if !projection.items.iter().any(|i| matches!(i, CompactedContextItem::Summary(_))) {
-            return self.build_context();
-        }
-        projection
-            .items
+        // Fixed session-context.ts:346 preserves live/transcript receipts, but
+        // never sends an empty error turn back to the model after native resume.
+        // Source snapshots deliberately keep the exact original message/ID.
+        messages
             .into_iter()
-            .map(|item| match item {
-                CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
-                    "[Compacted summary of earlier turns; source entries withheld]\n{}",
-                    s.summary
-                ))),
-                CompactedContextItem::Message(m) => m.message.clone(),
-            })
+            .filter(|message| message.as_assistant().is_none_or(|assistant| !is_empty_error_turn(assistant)))
             .collect()
     }
 

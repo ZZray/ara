@@ -1362,6 +1362,7 @@ mod auth_header_tests {
             base_url: base_url.into(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         }
     }
@@ -1443,6 +1444,7 @@ mod strict_tool_tests {
             base_url: "https://api.anthropic.com/v1".into(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         };
         let context = Context {

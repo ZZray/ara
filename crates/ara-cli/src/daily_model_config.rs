@@ -7,8 +7,9 @@
 //! configuration, provider configuration, and protocol defaults.
 //! This is an explicit CLI subset, not full OMP auth-storage precedence:
 //! `auth:none` suppresses ambient credentials and Codex uses a stored account.
-//! Descriptive name/cost/contextWindow metadata does not change execution or
-//! the host's compaction threshold. Codex maxTokens remains capacity metadata.
+//! Configured contextWindow reaches the execution Model for host budgeting;
+//! absent capacity stays unknown until the full registry projection is ported.
+//! Descriptive name/cost stay metadata. Codex maxTokens remains capacity metadata.
 
 use crate::model_config_file::{ModelConfigLoad, ModelsConfigFile};
 use crate::model_route::{CredentialIdentity, ProtocolOptions, RequestAuthLease, is_credential_header};
@@ -312,6 +313,7 @@ pub fn resolve_daily_selection(
         return Err(error("reasoning", "reasoning configuration is only supported by Responses routes"));
     }
     let configured_cap = positive_cap(model.get("maxTokens"))?;
+    let context_window = model.get("contextWindow").and_then(Value::as_f64);
     let generation = DailyGeneration {
         max_tokens: cli.max_tokens.or(if api == DailyApi::OpenAiCodexResponses { None } else { configured_cap }),
         temperature: cli.temperature,
@@ -455,6 +457,7 @@ pub fn resolve_daily_selection(
         base_url,
         reasoning,
         max_tokens: configured_cap,
+        context_window,
         tokenizer,
     };
     let mut loop_guard_policy = crate::model_route::resolved_loop_guard_policy(&execution_model)

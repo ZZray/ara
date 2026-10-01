@@ -8,6 +8,8 @@
 use super::rpc_host_settings::{AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings};
 #[path = "rpc_host_loop_guard.rs"]
 mod loop_guard;
+#[path = "rpc_host_maintenance.rs"]
+mod maintenance;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -670,6 +672,8 @@ struct Host {
     output: Output,
     connection: CancellationToken,
     active: Option<ActiveRun>,
+    maintenance: Option<maintenance::ActiveMaintenance>,
+    maintenance_continue: Option<maintenance::PendingMaintenanceContinue>,
     sessions: SessionFactory,
     tool_bridge: Arc<ToolBridge>,
     uri_bridge: Arc<UriBridge>,
@@ -1219,6 +1223,8 @@ impl Host {
             || self.active.is_some()
             || self.retry.is_some()
             || self.header_continue.is_some()
+            || self.maintenance.is_some()
+            || self.maintenance_continue.is_some()
             || self.connection.is_cancelled()
         {
             return;
@@ -1292,6 +1298,9 @@ impl Host {
                 let mut journal = session.journal.lock().await;
                 journal.append_bash_execution(&pending.message)?;
                 session.messages.lock().unwrap().push(pending.message.event_message());
+                if let Some(message) = &model_message {
+                    self.extend_maintenance_context(&session, message);
+                }
                 if let Some(message) = model_message
                     && let Some(retry) = &mut self.retry
                     && retry.generation == self.prompt_generation
@@ -1330,6 +1339,12 @@ impl Host {
             return;
         }
         for pending in std::mem::take(&mut self.pending_bash) {
+            if self.maintenance.is_some()
+                && matches!(pending.target.lock().unwrap().destination, BashDestination::Current)
+            {
+                self.pending_bash.push(pending);
+                continue;
+            }
             let target = pending.target.clone();
             if let Err(error) = self.append_bash(pending).await {
                 self.bash_persistence_failed(&target, &error);
@@ -1370,7 +1385,7 @@ impl Host {
             let target = job.target.lock().unwrap();
             matches!(target.destination, BashDestination::Current)
                 && Arc::ptr_eq(&target.session, &self.session)
-                && self.active.is_some()
+                && (self.active.is_some() || self.maintenance.is_some())
         };
         let pending = PendingBash { target: job.target.clone(), message };
         if defer {
@@ -1628,11 +1643,12 @@ impl Host {
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before continuing");
         }
-        if self.active.is_some() {
+        if self.active.is_some() || self.maintenance.is_some() {
             bail!("Agent is already running; specify streamingBehavior: steer or followUp");
         }
         if message.is_some() {
             self.header_continue = None;
+            self.maintenance_continue = None;
             self.prompt_generation = self.prompt_generation.wrapping_add(1);
         }
         let header_guard_enabled = loop_guard::guard_enabled(self.loop_guard_settings)
@@ -1713,7 +1729,43 @@ impl Host {
                 }
             }
             let assistant = report.messages.iter().rev().find_map(Message::as_assistant);
+            let mut maintenance_blocked = false;
+            if report.end == RunEnd::Error
+                && let Some(message) = assistant
+            {
+                // Serial threshold compaction also joins completed(). Keep the
+                // maintenance future off the Windows main thread's small stack.
+                match Box::pin(self.begin_overflow_recovery(&active, message)).await {
+                    Ok(outcome) => {
+                        if outcome.continuation_scheduled || outcome.deferred_handoff {
+                            return;
+                        }
+                        maintenance_blocked = outcome.automatic_continuation_blocked || outcome.history_rewritten;
+                        if maintenance_blocked {
+                            self.finish_retry(None, Some("Context overflow recovery stopped".into()), false).await;
+                            self.auto_compaction_pending = false;
+                            self.drain_queues = self.agent.has_queued_messages();
+                            self.output.response(
+                                &active.command,
+                                None,
+                                Some(
+                                    message
+                                        .error_message
+                                        .clone()
+                                        .unwrap_or_else(|| "Context overflow recovery stopped".into()),
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        active.sink.persistence_failed(error);
+                        return;
+                    }
+                }
+            }
             if matches!(report.end, RunEnd::Error | RunEnd::Aborted)
+                && !maintenance_blocked
                 && let Some(message) = assistant
             {
                 match self.begin_retry(&active, message).await {
@@ -1765,6 +1817,9 @@ impl Host {
 
     async fn abort(&mut self) {
         self.header_continue = None;
+        // Keep the owned maintenance settlement out of the established
+        // new/switch/compact future layouts on the Windows main thread.
+        Box::pin(self.abort_maintenance()).await;
         self.finish_retry(None, Some("Retry cancelled".into()), false).await;
         self.auto_compaction_pending = false;
         self.drain_queues = false;
@@ -1786,6 +1841,8 @@ impl Host {
         if self.active.is_none()
             && self.retry.is_none()
             && self.header_continue.is_none()
+            && self.maintenance.is_none()
+            && self.maintenance_continue.is_none()
             && self.drain_queues
             && self.agent.has_queued_messages()
             && !self.connection.is_cancelled()
@@ -1906,7 +1963,7 @@ impl Host {
                 use ara_rpc::messages::{
                     RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessageSnapshot, RpcMessagesPageOptions, page_rpc_messages,
                 };
-                if self.active.is_some() {
+                if self.active.is_some() || self.maintenance.is_some() {
                     self.output.response_wire(
                         command,
                         None,
@@ -2073,7 +2130,13 @@ impl Host {
                 };
                 self.output.response(command, recognized.then(|| json!({"agentInvoked":true})), None);
                 self.drain_queues = true;
-                if self.active.is_some()
+                if self.maintenance.is_some() {
+                    if queue == Some(false) {
+                        self.agent.follow_up_input(input);
+                    } else {
+                        self.agent.steer_input(input);
+                    }
+                } else if self.active.is_some()
                     && let Some(steer) = queue
                 {
                     if steer {
@@ -2083,6 +2146,7 @@ impl Host {
                     }
                 } else {
                     if self.active.is_none() {
+                        self.maintenance_continue = None;
                         self.finish_retry(None, Some("Retry cancelled".into()), false).await;
                     }
                     self.maybe_auto_compact(std::slice::from_ref(&input.model)).await;
@@ -2295,6 +2359,8 @@ where
         output: output.clone(),
         connection: connection.clone(),
         active: None,
+        maintenance: None,
+        maintenance_continue: None,
         sessions,
         tool_bridge: tool_bridge.clone(),
         uri_bridge: uri_bridge.clone(),
@@ -2375,6 +2441,8 @@ where
             && host.active.is_none()
             && host.retry.is_none()
             && host.header_continue.is_none()
+            && host.maintenance.is_none()
+            && host.maintenance_continue.is_none()
             && host.bash_dispatcher.is_empty()
         {
             break;
@@ -2406,6 +2474,23 @@ where
                 let active = host.active.take().expect("selected active Run");
                 host.completed(active, result).await;
             }
+            result = async {
+                match &mut host.maintenance {
+                    Some(active) => (&mut active.task).await,
+                    None => pending().await,
+                }
+            }, if host.maintenance.is_some() => {
+                let active = host.maintenance.take().expect("selected context maintenance");
+                host.completed_maintenance(active, result).await;
+            }
+            _ = async {
+                match &host.maintenance_continue {
+                    Some(pending) => tokio::time::sleep_until(pending.deadline.into()).await,
+                    None => pending().await,
+                }
+            }, if host.maintenance_continue.is_some() => {
+                host.resume_maintenance_continue().await;
+            }
             _ = async {
                 match host.retry.as_ref().and_then(|retry| retry.deadline) {
                     Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
@@ -2428,6 +2513,7 @@ where
                     None => {
                         eof = true;
                         host.input_closed = true;
+                        host.abort_maintenance().await;
                         if host.header_continue.take().is_some() {
                             host.finish_retry(None, Some("Gemini continuation cancelled by EOF".into()), false).await;
                             host.drain_queues = false;
@@ -2502,6 +2588,7 @@ mod tests {
             base_url: String::new(),
             reasoning: false,
             max_tokens: None,
+            context_window: None,
             tokenizer: None,
         };
         let provider = super::super::ProviderFactory::startup(
@@ -2555,6 +2642,8 @@ mod tests {
             output: output.clone(),
             connection: connection.clone(),
             active: None,
+            maintenance: None,
+            maintenance_continue: None,
             sessions: SessionFactory {
                 dir: None,
                 cwd,

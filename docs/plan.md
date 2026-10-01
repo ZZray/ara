@@ -1,5 +1,16 @@
 # ARA execution plan
 
+**Latest checkpoint, 2026-10-01:** [soft overflow recovery](evidence/soft-overflow-recovery.md)
+is tested/audited bounded WIP: configured capacity → failed-turn transaction →
+cancellable soft summary → checked original-Session continuation/rollback.
+Modules 18/0/0; final backend 1,508/0/20, source unchanged; final CAS task
+31.523s including summary-time new Bash and tool-disabled reopen recall.
+Next batch: refine Responses contentful recovery evidence, then complete
+native summary budget/input folding and incomplete/length/terminal recovery;
+context promotion, all other methods and rescue continue after that.
+Use existing native input families, module checks while editing and one final
+shared gate. P1–P6 and complete parent surfaces remain open; no scope is dropped.
+
 **Draft v1, 2026-09-25.** This will be revised after the user's reference documents (`ara-doc-ref`) are added to the repository. It is a plan, not an implementation claim. Status lives in the [feature ledger](upstream/feature-ledger.md) and in `docs/evidence/`. Gates follow the [roadmap](roadmap.md) and [acceptance rules](acceptance.md).
 
 ## Goals
