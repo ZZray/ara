@@ -10,6 +10,16 @@
 
 ## Current priority: reproduce OMP before customization
 
+**Latest Provider ordering, user decision 2026-10-01:** deliver OpenAI-compatible
+protocols/custom configuration, then OpenAI account login for daily use. Other
+Provider compatibility is explicitly deferred and recorded in the
+[provider plan](provider-plan.md), including full cipher and advanced Codex
+transport parity. This changes Provider ordering; deferred work is not accepted
+or erased, and the independent Rust ARA/Core/P0–P6 goal remains intact.
+Use module tests and one shared final gate, reuse original OMP test inputs,
+and prefer the current local Manager → OMP management → CAS
+`deepseek-v4.1-flash` route for bounded real tasks.
+
 **User decision, 2026-09-30:** finish the fixed OMP behavior port first, then
 customize ARA. Track A and P1-P3 now take priority over new Track B/P4 features,
 product-specific additions and further V1 dogfood work. V1 is already accepted.
@@ -50,6 +60,16 @@ Do not use narrow fixture counts as an OMP completion percentage. No new
 completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
+
+Fixed model discovery/factory/manager checkpoint (2026-10-01, tested WIP):
+692 original-source discovery cases, 3,388 protobuf cases, 58 CA helper cases,
+actual HTTP/TLS/H2/process tests and independent review pass on the final
+snapshot. The one-command module/full run takes 198.755 seconds: module
+25/0/0, Windows full backend 1,469/0/20, inventory/deny/build PASS.
+An actual CAS file task and same-Session resume also pass. See
+[discovery evidence](evidence/model-discovery.md). Main registry/auth is still
+open; next deliver the custom OpenAI configuration and account-login daily
+path, with other Provider compatibility in the deferred register.
 
 Fixed model variants/lossless checkpoint (2026-10-01, tested WIP): all eight
 collapse exports and their mutable aliases/templates/reference identity, native

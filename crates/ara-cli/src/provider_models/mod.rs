@@ -1,0 +1,23 @@
+//! Fixed OMP 596f2da provider-models/index.ts native module surface.
+mod behavior;
+pub mod bundled_references;
+pub mod cache_provider_id;
+pub mod catalog_session;
+pub mod cline_pass;
+mod common;
+pub mod descriptor_types;
+pub mod descriptors;
+pub mod google;
+pub mod models_dev_policies;
+pub mod ollama;
+pub mod openai_compat;
+mod retry;
+pub mod special;
+pub mod static_data;
+pub use cache_provider_id::*;
+pub use descriptor_types::*;
+pub use descriptors::*;
+pub use google::*;
+pub use ollama::*;
+pub use openai_compat::*;
+pub use special::*;

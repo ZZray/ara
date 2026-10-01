@@ -143,8 +143,12 @@ task. Main/registry has not consumed these complete native dependencies yet.
 Complete discovery transports/normalization/model-manager, provider overrides,
 registry, AuthStorage/OAuth/usage/reserve/refresh/rotation/release, model/role/
 thinking/journal adoption, fallback/R2 and every remaining inventory/YAML
-boundary remain mandatory. The existing GH013 user choice is pending; no
-protection bypass, parity-data deletion, history rewrite or deployment occurred.
+boundary remain mandatory. GH013 was resolved on 2026-10-01 with the user's
+explicit approval of the four unchanged public upstream registration values.
+GitHub accepted their scoped false-positive reviews; remote `dev` was confirmed
+at `e1036bef55854a74d5c798239b5667832eb4329b`. Receipt:
+`C:\Temp\ara-model-discovery-batch\authorized-push-receipt.json`.
+No parity-data deletion, history rewrite or deployment occurred.
 
 The resumed interval is approximately 22:57–23:44 UTC on 2026-09-30, about
 47 minutes through final build; the receipt directory existed at 22:21:55 UTC

@@ -56,6 +56,22 @@ Windows full gate **1,451/0/10**. No new Linux/real-model trial or registry/main
 integration is claimed. Complete discovery/manager/overrides/registry/auth and
 live metadata/journal remain mandatory; all surface/phase/RPC markers stay open.
 
+Active fixed model discovery/factory/manager dependency (tested WIP):
+`ara-cli::{catalog_discovery,catalog_protobuf,catalog_proto_schemas,
+catalog_extra_ca,provider_models,model_manager,model_identity_wire,bun_hash}`
+and lossless `model_cache` companion reproduce bounded source behavior.
+[Discovery evidence](../evidence/model-discovery.md) records 692 original-source
+discovery cases, 3,388 protobuf cases, 58 CA cases and actual HTTP/TLS/H2,
+filesystem/process failures. Final one-command module 25/0/0 and Windows
+full gate 1,469/0/20, inventory/deny/build PASS; independent final review follows
+the important fixes. Existing explicit OpenAI-compatible CLI also passes a
+bounded local Manager → OMP management → CAS file task and same-Session resume.
+Main registry and OpenAI account login remain open. User decision 2026-10-01
+prioritizes custom OpenAI-compatible configuration and account login; other
+Provider compatibility, full cipher and Ollama Retry-After date parsing are
+explicitly deferred in the [provider register](../provider-plan.md).
+No new accepted command/surface/phase or full parity-marker advancement.
+
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:
 identify the underlying goal, distinguish hard constraints from historical

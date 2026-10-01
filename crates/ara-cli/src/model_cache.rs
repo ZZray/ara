@@ -28,7 +28,10 @@
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //! THE SOFTWARE.
 
+use crate::model_collapse::{SpecRef, VariantSpec, truthy};
+use crate::model_identity_wire::{copy_field, equals, text};
 use anyhow::{Context, Result};
+use ara_rpc::{WireString, WireValue};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -41,6 +44,12 @@ use std::time::Duration;
 pub const CACHE_SCHEMA_VERSION: i64 = 12;
 pub const HEADER_RESTORE_VERSION: i64 = 1;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(3000);
+struct RawSqliteText<'a>(&'a [u8]);
+impl rusqlite::ToSql for RawSqliteText<'_> {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(rusqlite::types::ValueRef::Text(self.0)))
+    }
+}
 
 /// All model metadata survives as JSON. As in the upstream JSON.parse contract,
 /// a malformed-but-valid non-array value is not normalized by the cache reader.
@@ -55,6 +64,27 @@ pub struct CacheEntry {
     pub unrestorable_header_model_ids: Vec<String>,
     pub legacy_header_restore_markers: bool,
     pub static_fingerprint: String,
+}
+
+/// The same SQLite schema with native ECMAScript metadata. JSON parsing keeps
+/// lone UTF-16 surrogates; JSON.stringify is applied only at the storage seam.
+#[derive(Clone)]
+pub struct WireCacheEntry {
+    pub models: VariantSpec,
+    pub fresh: bool,
+    pub authoritative: bool,
+    pub updated_at: f64,
+    pub header_omitted_model_ids: Vec<WireString>,
+    pub unrestorable_header_model_ids: Vec<WireString>,
+    pub legacy_header_restore_markers: bool,
+    pub static_fingerprint: WireString,
+}
+
+pub struct WireModelCacheWriteOptions<'a> {
+    pub authoritative: bool,
+    pub static_fingerprint: &'a WireString,
+    pub static_header_sources: &'a [SpecRef],
+    pub restorable_header_fallback: Option<&'a VariantSpec>,
 }
 
 /// Runtime headers never enter the persisted metadata. The optional trusted
@@ -100,6 +130,98 @@ pub struct SqliteModelCache {
 }
 
 impl SqliteModelCache {
+    pub fn read_model_cache_wire(
+        &self,
+        provider_id: &WireString,
+        ttl_ms: f64,
+        mut now: impl FnMut() -> f64,
+    ) -> Result<Option<WireCacheEntry>> {
+        let provider_key = crate::bun_hash::sqlite_text_bytes(provider_id);
+        let row = self.with_db(|db| Ok(db.query_row(
+            "SELECT version,updated_at,authoritative,static_fingerprint,models,header_omitted_model_ids,unrestorable_header_model_ids,header_restore_version FROM model_cache WHERE provider_id=?1",
+            [RawSqliteText(&provider_key)],
+            |row| Ok(CacheRow {
+                version: row.get(0)?, updated_at: row.get(1)?, authoritative: row.get(2)?,
+                static_fingerprint: match row.get_ref(3)? { rusqlite::types::ValueRef::Null => None, rusqlite::types::ValueRef::Text(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()), _ => row.get(3)? }, models: row.get(4)?, header_omitted_model_ids: row.get(5)?,
+                unrestorable_header_model_ids: row.get(6)?, header_restore_version: row.get(7)?,
+            }),
+        ).optional()?))?;
+        let Some(row) = row.filter(|row| row.version == CACHE_SCHEMA_VERSION) else {
+            return Ok(None);
+        };
+        let models =
+            VariantSpec::from_wire(WireValue::parse(&row.models).context("parse cached native model metadata")?);
+        let markers = |raw: &str| -> Result<Vec<WireString>> {
+            let value = WireValue::parse(raw).context("parse native cached header markers")?;
+            Ok(value.as_array().unwrap_or_default().iter().filter_map(WireValue::as_string).cloned().collect())
+        };
+        let omitted = markers(&row.header_omitted_model_ids)?;
+        let unrestorable = markers(&row.unrestorable_header_model_ids)?;
+        let age_ms = now() - row.updated_at;
+        Ok(Some(WireCacheEntry {
+            models,
+            fresh: age_ms.is_finite() && age_ms >= 0.0 && age_ms <= ttl_ms,
+            authoritative: row.authoritative == 1,
+            updated_at: row.updated_at,
+            header_omitted_model_ids: omitted,
+            unrestorable_header_model_ids: unrestorable,
+            legacy_header_restore_markers: row.header_restore_version < HEADER_RESTORE_VERSION,
+            static_fingerprint: row.static_fingerprint.unwrap_or_default().into(),
+        }))
+    }
+
+    pub fn write_model_cache_wire(
+        &self,
+        provider_id: &WireString,
+        updated_at: f64,
+        models: &[SpecRef],
+        options: WireModelCacheWriteOptions<'_>,
+    ) -> Result<()> {
+        let mut static_by_id = HashMap::new();
+        for model in options.static_header_sources {
+            if let Some(id) = text(model, "id") {
+                static_by_id.insert(id, model);
+            }
+        }
+        let mut omitted = Vec::new();
+        let mut unrestorable = Vec::new();
+        let mut cached = Vec::new();
+        for model in models {
+            let id = text(model, "id").context("native cache model id is not a string")?;
+            if model.record("headers").is_some_and(|headers| truthy(&headers.value) && !headers.own_keys().is_empty()) {
+                omitted.push(WireValue::String(id.clone()));
+                let source = static_by_id.get(&id).copied().or_else(|| {
+                    text(model, "requestModelId")
+                        .filter(|id| !id.is_empty())
+                        .and_then(|id| static_by_id.get(&id).copied())
+                });
+                let live_headers = model.record("headers");
+                let source_headers = source.and_then(|source| source.record("headers"));
+                let target =
+                    if source.is_some() { source_headers.as_ref() } else { options.restorable_header_fallback };
+                if !wire_headers_equal(live_headers.as_ref(), target) {
+                    unrestorable.push(WireValue::String(id));
+                }
+            }
+            let mut spec = (**model).clone();
+            spec.remove("headers");
+            spec.remove("compatConfig");
+            spec.remove("supportsComputerUseConfig");
+            copy_field(&mut spec, "supportsComputerUse", model, "supportsComputerUseConfig");
+            copy_field(&mut spec, "compat", model, "compatConfig");
+            cached.push(spec.to_wire_json());
+        }
+        let provider_key = crate::bun_hash::sqlite_text_bytes(provider_id);
+        let fingerprint = crate::bun_hash::sqlite_text_bytes(options.static_fingerprint);
+        let models_json = WireValue::Array(cached).stringify();
+        let omitted_json = WireValue::Array(omitted).stringify();
+        let unrestorable_json = WireValue::Array(unrestorable).stringify();
+        self.with_db(|db| {
+            db.execute("INSERT OR REPLACE INTO model_cache(provider_id,version,updated_at,authoritative,static_fingerprint,header_omitted_model_ids,unrestorable_header_model_ids,header_restore_version,models) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![RawSqliteText(&provider_key),CACHE_SCHEMA_VERSION,updated_at,i64::from(options.authoritative),RawSqliteText(&fingerprint),omitted_json,unrestorable_json,HEADER_RESTORE_VERSION,models_json])?;
+            Ok(())
+        })
+    }
     /// Open a retained connection, equivalent to upstream's shared default-path
     /// handle. The host injects the default path instead of this module finding it.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -264,6 +386,19 @@ impl SqliteModelCache {
             Ok(())
         })
     }
+}
+
+fn wire_headers_equal(left: Option<&VariantSpec>, right: Option<&VariantSpec>) -> bool {
+    if left.is_none_or(|headers| !truthy(&headers.value)) || right.is_none_or(|headers| !truthy(&headers.value)) {
+        return equals(left.map(|value| &value.value), right.map(|value| &value.value));
+    }
+    let (left, right) = (left.expect("truthy left"), right.expect("truthy right"));
+    for key in left.own_keys() {
+        if !equals(left.get_path(std::slice::from_ref(&key)), right.get_path(std::slice::from_ref(&key))) {
+            return false;
+        }
+    }
+    right.own_keys().iter().all(|key| left.own_keys().contains(key))
 }
 
 fn open_db(path: &Path) -> Result<Connection> {

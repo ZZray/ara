@@ -26,6 +26,15 @@ exclusions apply to that early host milestone only; they do not remove fixed
 OMP features from the full reproduction. P3 must close the required inventory
 before customization starts.
 
+**Provider ordering update, user decision 2026-10-01:** first deliver custom
+OpenAI-compatible protocol/configuration, then OpenAI account login for daily
+use. Remaining Provider compatibility is explicitly recorded and deferred;
+see the [provider plan](provider-plan.md). Reuse fixed OMP test inputs, verify
+by module and use a single final batch gate. The preferred live trial is the
+current local Manager → OMP management → CAS `deepseek-v4.1-flash` route.
+Deferred provider contracts are not accepted parity. Core/Session/RPC and
+P0–P6 requirements retain their existing ownership and acceptance boundaries.
+
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).

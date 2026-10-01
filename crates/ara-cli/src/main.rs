@@ -1559,6 +1559,7 @@ async fn run(args: Args) -> Result<i32> {
 
 #[tokio::main]
 async fn main() {
+    ara_cli::catalog_discovery::initialize_catalog_process_startup_tls();
     let args = Args::parse();
     let code = match run(args).await {
         Ok(code) => code,
