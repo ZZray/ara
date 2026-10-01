@@ -232,7 +232,10 @@ fn text_wait_ms(text: &str) -> Option<f64> {
 /// account. The Host still checks receipts, cancellation and policy.
 pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClass {
     use flag::*;
-    let supported = matches!(actual_api, "openai-completions" | "openai-responses" | "anthropic-messages");
+    let supported = matches!(
+        actual_api,
+        "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages"
+    );
     let evidence = message.failure_evidence.as_ref();
     let text = message.error_message.as_deref().unwrap_or("");
     let status = evidence.and_then(|e| e.status).or(message.error_status);

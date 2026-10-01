@@ -315,7 +315,8 @@ fn unique_call_id(base: String, used: &mut HashSet<String>) -> String {
 }
 
 fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
-    message.api == API
+    matches!(model.api.as_str(), API | super::openai_codex_responses::API)
+        && message.api == model.api
         && message.provider == model.provider
         && message.model == model.id
         && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse | StopReason::Length)
@@ -323,10 +324,11 @@ fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
 
 fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Option<Value>>> {
     if !same_responses_origin(message, model)
-        || !message.content.iter().any(|block| {
-            matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
-                || matches!(block, AssistantBlock::ToolCall(_))
-        })
+        || model.api != super::openai_codex_responses::API
+            && !message.content.iter().any(|block| {
+                matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                    || matches!(block, AssistantBlock::ToolCall(_))
+            })
     {
         return None;
     }
@@ -423,11 +425,12 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
         sanitized.push(Some(wire));
     }
     if native_items.next().is_some()
-        || !sanitized.iter().zip(&message.content).any(|(item, block)| {
-            item.is_some()
-                && (matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
-                    || matches!(block, AssistantBlock::ToolCall(_)))
-        })
+        || model.api != super::openai_codex_responses::API
+            && !sanitized.iter().zip(&message.content).any(|(item, block)| {
+                item.is_some()
+                    && (matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                        || matches!(block, AssistantBlock::ToolCall(_)))
+            })
     {
         return None;
     }
@@ -804,8 +807,17 @@ fn report_quarantined_tool(name: &str, reason: &str) {
 
 /// Build the outbound `/responses` body. No request or model state is retained.
 pub fn build_request(model: &Model, context: &Context, options: &RequestOptions) -> Result<Value, ProviderError> {
-    if model.api != API {
-        return Err(ProviderError::Config(format!("Responses encoder requires {API} model API")));
+    build_request_for_api(model, context, options, API)
+}
+
+pub(crate) fn build_request_for_api(
+    model: &Model,
+    context: &Context,
+    options: &RequestOptions,
+    api: &str,
+) -> Result<Value, ProviderError> {
+    if model.api != api {
+        return Err(ProviderError::Config(format!("Responses encoder requires {api} model API")));
     }
     if options.temperature.is_some_and(|value| !value.is_finite()) {
         return Err(ProviderError::Config("temperature must be finite".into()));
@@ -828,7 +840,8 @@ pub fn build_request(model: &Model, context: &Context, options: &RequestOptions)
             Message::Developer(developer) => {
                 let content = content_parts(&developer.content, options.supports_images);
                 if !content.is_empty() {
-                    input.push(json!({"role": "user", "content": content}));
+                    let role = if api == super::openai_codex_responses::API { "developer" } else { "user" };
+                    input.push(json!({"role": role, "content": content}));
                 }
             }
             Message::Assistant(assistant) => {
@@ -1046,11 +1059,27 @@ impl Default for StreamOptions {
 
 /// Stream one stateless Responses request through the shared Agent event port.
 pub fn stream(client: reqwest::Client, model: Model, context: Context, options: StreamOptions) -> AssistantStream {
+    stream_with_protocol(client, model, context, options, ResponsesProtocol::Compatible)
+}
+
+#[derive(Clone)]
+pub(crate) enum ResponsesProtocol {
+    Compatible,
+    Codex { session_id: Option<String> },
+}
+
+pub(crate) fn stream_with_protocol(
+    client: reqwest::Client,
+    model: Model,
+    context: Context,
+    options: StreamOptions,
+    protocol: ResponsesProtocol,
+) -> AssistantStream {
     let cancel = options.cancel.clone();
     crate::replay_safe_retry::with_replay_safe_stream_retry(model.clone(), cancel, false, move |cancel| {
         let mut options = options.clone();
         options.cancel = cancel;
-        stream_once(client.clone(), model.clone(), context.clone(), options)
+        stream_once(client.clone(), model.clone(), context.clone(), options, protocol.clone())
     })
 }
 
@@ -1059,6 +1088,7 @@ fn stream_once(
     model: Model,
     context: Context,
     options: StreamOptions,
+    protocol: ResponsesProtocol,
 ) -> crate::replay_safe_retry::AttemptStream {
     let (sink, events) = EventSink::channel();
     let error = Arc::new(Mutex::new(None));
@@ -1067,7 +1097,7 @@ fn stream_once(
         let start = Instant::now();
         let mut state = ResponsesStreamState::new(&model);
         let mut retry_blocked = false;
-        let result = run(&client, &model, &context, &options, &mut state, &sink, &mut retry_blocked).await;
+        let result = run(&client, &model, &context, (&options, &protocol), &mut state, &sink, &mut retry_blocked).await;
         let mut output = state.output.clone();
         output.duration = Some(start.elapsed().as_millis() as u64);
         match result {
@@ -1127,24 +1157,41 @@ async fn run(
     client: &reqwest::Client,
     model: &Model,
     context: &Context,
-    options: &StreamOptions,
+    transport: (&StreamOptions, &ResponsesProtocol),
     state: &mut ResponsesStreamState,
     sink: &EventSink,
     retry_blocked: &mut bool,
 ) -> Result<(), ProviderError> {
+    let (options, protocol) = transport;
     if options.cancel.is_cancelled() {
         return Err(ProviderError::Aborted);
     }
-    let base = model.base_url.trim_end_matches('/');
-    if base.is_empty() {
-        return Err(ProviderError::Config("Responses request has no base URL".into()));
-    }
-    let url = format!("{base}/responses");
     let mut request = options.request.clone();
     if let Some(session_state) = &options.session_state {
         request.native_history_replay = Some(session_state.is_warmed(&model.provider));
     }
-    let mut body = build_request(model, context, &request)?;
+    let (url, mut body, headers) = match protocol {
+        ResponsesProtocol::Compatible => {
+            let base = model.base_url.trim_end_matches('/');
+            if base.is_empty() {
+                return Err(ProviderError::Config("Responses request has no base URL".into()));
+            }
+            let mut headers = Vec::new();
+            if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
+                headers.push(("Authorization".to_owned(), format!("Bearer {key}")));
+            }
+            headers.extend(options.extra_headers.iter().cloned());
+            (format!("{base}/responses"), build_request(model, context, &request)?, headers)
+        }
+        ResponsesProtocol::Codex { session_id } => super::openai_codex_responses::prepare_request(
+            model,
+            context,
+            &request,
+            options.api_key.as_deref(),
+            &options.extra_headers,
+            session_id.as_deref(),
+        )?,
+    };
     let mut chain = if options.stateful_responses {
         options.session_state.as_ref().and_then(|state| ChainLease::begin(state.clone(), chain_key(model, options)))
     } else {
@@ -1163,11 +1210,6 @@ async fn run(
             sent_previous = true;
         }
     }
-    let mut headers = Vec::new();
-    if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
-        headers.push(("Authorization".to_owned(), format!("Bearer {key}")));
-    }
-    headers.extend(options.extra_headers.iter().cloned());
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|duration| started + duration);
     let mut retry_state = PostRetryState { retry_blocked, failure_evidence: &mut state.output.failure_evidence };
@@ -1254,6 +1296,12 @@ async fn run(
             ) {
                 progressed = true;
                 last_progress = Instant::now();
+            }
+            if matches!(protocol, ResponsesProtocol::Codex { .. })
+                && let Err(error) = super::openai_codex_responses::validate_event(&event)
+            {
+                state.replay_unsafe_wire_event = true;
+                return Err(error);
             }
             let updates = state.handle(&event).inspect_err(|error| {
                 state.output.failure_evidence =

@@ -11,8 +11,8 @@ parity and does not advance `ported_through_commit`.
 
 | Module | Current evidence | Next deliverable | Acceptance |
 | --- | --- | --- | --- |
-| OpenAI-compatible custom routes | Chat/Responses adapters and explicit CLI model/base URL/key environment configuration exist. The 2026-10-01 CAS task writes and verifies a file, then resumes the original Session. | Connect the existing native models config/cache to the main host; select custom profiles with CLI overrides, private key resolution, protocol options and journal attribution. | Module tests, a controlled upstream failure and one bounded CAS task on the delivered path. |
-| OpenAI account login | Native credential SQLite/CAS revisions/leases and per-request route resolver exist. No native login command or Codex provider binding is accepted. | Login, private persistence, refresh, account-specific Codex Responses requests, continuation and logout through existing Host interfaces. | One login/auth/transport module suite; account authorization and an actual bounded task. No successful token exchange alone counts as delivery. |
+| OpenAI-compatible custom routes | Native models.yml selection/CLI overrides/private key resolution now drive Chat/Responses tools and original Session resume. Module/full gate and a CAS artifact/restart task pass. See [daily evidence](evidence/openai-daily.md) and [usage](openai-daily.md). | Keep the usable bounded CLI slice; complete all-provider execution projection/registry in its later parity batch. | Windows 22 module scenes and 1,491 backend tests pass; live configured-route artifact and same-Session recall pass. Full Provider parity stays open. |
+| OpenAI account login | CLI device login/logout, private SQLite, refresh/settlement and dedicated Codex SSE route pass synthetic process/wire/restart/new-Session workflows. | Complete actual OpenAI device authorization and a bounded account-model task when user participation is available. Then finish recorded advanced transport/auth contracts. | Deterministic module/full gate passes. Actual account authorization/subscription model remains unverified; account point stays open. |
 | Other provider compatibility | Discovery/factory/manager dependencies have bounded source/native evidence; main registry is still disconnected. | Retain current implementation; address deferred contracts when the two daily-use modules are usable. | Separate later parity evidence; not a blocker for the daily-use milestone. |
 
 ### Verification and speed
@@ -49,6 +49,15 @@ Implementation estimates are updated after the actual login/config source scope
 review; account authorization time depends on the user's interaction. A full
 OMP/P0–P6 completion date is not yet supported by measured remaining throughput.
 
+The final daily-use check measured **134.536 seconds**, including cached compile,
+four module suites, one shared full gate, inventory, deny and binary build;
+the four suites themselves took 2.499 seconds and backend took 125.629 seconds.
+The configured CAS artifact task and original-Session restart took 7.146 seconds.
+Keep development checks scoped to the changed module; share the full gate only
+once the batch is stable. Reuse existing protocol framing and synthetic auth
+fixtures before adding a scenario. Earlier failed/superseded checks remain in
+the daily evidence; they do not change the final expected outcomes.
+
 ## Deferred compatibility register
 
 | Item | Evidence / dependency | Status |
@@ -57,6 +66,8 @@ OMP/P0–P6 completion date is not yet supported by measured remaining throughpu
 | Ollama Retry-After date parsing | Native RFC2822/RFC3339 parsing misses accepted fixed Bun `Date.parse` values, including RFC850. The source probe documents a >60-second retry decision difference. | Open source-backed review finding, deferred; do not claim complete Ollama retry parity. |
 | Other provider-specific auth/OAuth, usage/reserve/rotation | Existing catalogue/store/route foundations do not implement full provider auth lifecycle. | Deferred outside the first OpenAI account slice. |
 | Codex advanced transport parity | WS-first, Lite, native provider compaction and complete fixed transport recovery have their own source contracts. Daily-use SSE login must state its supported scope. | Later compatibility slice; account login cannot be labeled full Codex parity. |
+| Complete OpenAI account auth | Daily selection uses latest authorization; full credential commands/precedence, reserve/usage/rotation, browser callback and multi-account ranking are not covered. | Open; the current device/SSE route is a bounded Host slice. |
+| Codex RPC and full execution metadata | Current Codex CLI supports print/JSON and REPL; RPC is explicitly rejected before journal/auth DB/model work. Unsupported image/native items and execution fields fail explicitly. | Required later parity work, recorded rather than silently approximated. |
 | All-provider overrides/registry/discovery and extended metadata | Preserve the existing native model data, factories and manager; do not discard unsupported metadata while projecting a usable route. | Open; wire only what the current OpenAI deliverable needs first. |
 
 Core/session recovery, remaining RPC commands and product integration retain

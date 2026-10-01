@@ -66,11 +66,23 @@ filesystem/process failures. Final one-command module 25/0/0 and Windows
 full gate 1,469/0/20, inventory/deny/build PASS; independent final review follows
 the important fixes. Existing explicit OpenAI-compatible CLI also passes a
 bounded local Manager → OMP management → CAS file task and same-Session resume.
-Main registry and OpenAI account login remain open. User decision 2026-10-01
+Complete main registry/AuthStorage and live OpenAI account acceptance remain open. User decision 2026-10-01
 prioritizes custom OpenAI-compatible configuration and account login; other
 Provider compatibility, full cipher and Ollama Retry-After date parsing are
 explicitly deferred in the [provider register](../provider-plan.md).
 No new accepted command/surface/phase or full parity-marker advancement.
+
+Active OpenAI daily Host slice (audited bounded custom CLI, account live acceptance
+open): `daily_model_config` connects native models.yml selection and private
+request auth to Chat/Responses; `openai_codex_auth` and dedicated Codex SSE
+connect device login/logout, native SQLite refresh/settlement, encrypted history,
+tools, original Session restart and new Session identity. [Daily evidence](../evidence/openai-daily.md)
+records module 22/0/0, Windows full backend 1,491/0/20, inventory/deny/build and
+a configured CAS artifact/restart task. Custom CLI scope passes its bounded
+audit; actual OpenAI authorization and account-model acceptance remain open.
+The [provider register](../provider-plan.md) retains full auth/registry projection,
+Codex RPC/WS/Lite/native compaction and remaining providers as required later
+work. No surface/phase/RPC acceptance or marker advances.
 
 ARA-PS-01 (user-authorized intentional prompt difference, 2026-09-30): the
 default Agent prompt and its Workflow now guide evidence-based problem solving:

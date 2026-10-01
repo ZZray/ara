@@ -35,6 +35,13 @@ current local Manager → OMP management → CAS `deepseek-v4.1-flash` route.
 Deferred provider contracts are not accepted parity. Core/Session/RPC and
 P0–P6 requirements retain their existing ownership and acceptance boundaries.
 
+The [OpenAI daily checkpoint](evidence/openai-daily.md) now verifies configured
+Chat/Responses CLI routes and synthetic device/Codex SSE lifecycle with one
+shared Windows gate (module 22/0/0; backend 1,491/0/20; 134.536 seconds), plus
+a configured CAS artifact/restart task (7.146 seconds). Actual OpenAI account
+authorization and a subscription-model task remain open. [Usage](openai-daily.md)
+and the provider register describe the usable slice and required later contracts.
+
 The ordered slices and next-generation design are in the [execution plan](plan.md). The first implementing AI works on **P0 then P1**. Do not implement ARA-specific enhancements by weakening an OMP behavior.
 
 Each point moves through `planned → implementing → tested → audited → accepted`. A local commit can record an unfinished step but does not advance acceptance. See [acceptance](acceptance.md).

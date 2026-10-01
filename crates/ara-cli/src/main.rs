@@ -44,7 +44,7 @@ use ara_mcp::ServerConfig as McpServerConfig;
 use ara_session::{SessionJournal, latest_session};
 use ara_tools::{ToolContext, builtin_tools};
 use async_trait::async_trait;
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -79,6 +79,8 @@ enum Api {
     OpenaiCompletions,
     #[value(name = "openai-responses")]
     OpenaiResponses,
+    #[value(name = "openai-codex-responses")]
+    OpenaiCodexResponses,
     /// Discover this model's wire protocol from a dual-protocol proxy.
     #[value(name = "proxy-auto")]
     ProxyAuto,
@@ -90,6 +92,7 @@ impl Api {
             Self::AnthropicMessages => "anthropic-messages",
             Self::OpenaiCompletions => "openai-completions",
             Self::OpenaiResponses => "openai-responses",
+            Self::OpenaiCodexResponses => "openai-codex-responses",
             Self::ProxyAuto => "proxy-auto",
         }
     }
@@ -98,6 +101,8 @@ impl Api {
 #[derive(Parser, Debug, Clone)]
 #[command(name = "ara", version, about = "ARA agent (print mode, or a line REPL on a terminal)")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<AuthCommand>,
     /// Prompts, sent in order. Piped stdin is prepended to the first prompt
     /// (or used alone when no prompt is given). With no prompt on a terminal,
     /// a line REPL starts instead.
@@ -115,8 +120,11 @@ struct Args {
     #[arg(long)]
     model: Option<String>,
     /// Model wire protocol. proxy-auto probes an explicit dual-protocol proxy before starting a session.
-    #[arg(long, value_enum, default_value_t = Api::OpenaiCompletions)]
-    api: Api,
+    #[arg(long, value_enum)]
+    api: Option<Api>,
+    /// Models configuration file (default: $ARA_HOME/agent/models.yml).
+    #[arg(long)]
+    models_config: Option<PathBuf>,
     /// Local Claude content tokenizer metadata (no context gate yet): auto,
     /// none, claude-v3, claude-v47, claude-v5, or claude-v5-sonnet. Env: ARA_TOKENIZER.
     #[arg(long)]
@@ -234,6 +242,26 @@ struct Args {
     stream_idle_timeout: Option<f64>,
 }
 
+impl Args {
+    fn api(&self) -> Api {
+        self.api.unwrap_or(Api::OpenaiCompletions)
+    }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum AuthCommand {
+    /// Sign in to OpenAI using a device code.
+    Login {
+        #[arg(default_value = "openai-codex")]
+        provider: String,
+    },
+    /// Remove the saved OpenAI account credentials.
+    Logout {
+        #[arg(default_value = "openai-codex")]
+        provider: String,
+    },
+}
+
 fn parse_edit_mode(value: &str) -> Result<ara_edit::EditMode, String> {
     ara_edit::EditMode::parse(value)
         .ok_or_else(|| format!("unknown edit mode {value:?} (hashline, replace, patch, apply_patch, sloppy)"))
@@ -259,13 +287,18 @@ impl LoopHooks for CliHooks {
 fn ara_home() -> PathBuf {
     let home = std::env::var_os("ARA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".ara")))
+        .or_else(|| {
+            std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".ara"))
+        })
         .unwrap_or_else(|| PathBuf::from(".ara"));
     std::path::absolute(&home).unwrap_or(home)
 }
 
 fn user_home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// OMP `sanitizeText`: strip ANSI escape sequences, then C0/C1 controls other
@@ -529,11 +562,12 @@ fn read_stdin() -> Result<Option<String>> {
 struct Route {
     model: Model,
     stream_options: StreamOptions,
+    daily: Option<ara_cli::daily_model_config::DailySelection>,
 }
 
 /// Validate every argument that does not need the journal (no I/O side effects).
-fn resolve_route(args: &Args) -> Result<Route> {
-    if args.api == Api::ProxyAuto {
+fn validate_route_args(args: &Args) -> Result<()> {
+    if args.api() == Api::ProxyAuto {
         if args.resume.is_some() || args.continue_session {
             bail!("--api proxy-auto cannot resume a session; select an explicit --api and verify its endpoint");
         }
@@ -550,24 +584,34 @@ fn resolve_route(args: &Args) -> Result<Route> {
             bail!("--api proxy-auto cannot use a provider label with a different authentication scheme");
         }
     }
-    if args.reasoning && args.api != Api::OpenaiResponses {
-        bail!("--reasoning requires --api openai-responses");
+    if args.reasoning && !matches!(args.api(), Api::OpenaiResponses | Api::OpenaiCodexResponses) {
+        bail!("--reasoning requires --api openai-responses or openai-codex-responses");
     }
-    if args.responses_stateful && args.api != Api::OpenaiResponses {
+    if args.responses_stateful && args.api() != Api::OpenaiResponses {
         bail!("--responses-stateful requires --api openai-responses");
     }
-    if args.anthropic_strict_tools && args.api != Api::AnthropicMessages {
+    if args.anthropic_strict_tools && args.api() != Api::AnthropicMessages {
         bail!("--anthropic-strict-tools requires --api anthropic-messages");
     }
-    if args.chat_replay_reasoning_content && args.api != Api::OpenaiCompletions {
+    if args.chat_replay_reasoning_content && args.api() != Api::OpenaiCompletions {
         bail!("--chat-replay-reasoning-content requires --api openai-completions");
     }
-    if args.chat_mistral_compat && args.api != Api::OpenaiCompletions {
+    if args.chat_mistral_compat && args.api() != Api::OpenaiCompletions {
         bail!("--chat-mistral-compat requires --api openai-completions");
     }
-    if args.api != Api::OpenaiCompletions && args.report_request_text_tokens {
+    if args.api() != Api::OpenaiCompletions && args.report_request_text_tokens {
         bail!("--report-request-text-tokens requires --api openai-completions");
     }
+    for name in args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !TOOL_NAMES.contains(&name) {
+            bail!("unknown tool {name:?} (available: {})", TOOL_NAMES.join(", "));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_route(args: &Args) -> Result<Route> {
+    validate_route_args(args)?;
     let model_id = args
         .model
         .clone()
@@ -586,7 +630,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
         .clone()
         .or_else(|| env_first(&["ARA_BASE_URL", "ARA_TEST_BASE_URL", "OPENROUTER_BASE_URL"]).map(|(_, v)| v))
         .context("no base URL: pass --base-url or set ARA_BASE_URL")?;
-    if args.api == Api::ProxyAuto && is_official_anthropic(&base_url) {
+    if args.api() == Api::ProxyAuto && is_official_anthropic(&base_url) {
         bail!("--api proxy-auto requires a dual-protocol proxy, not the official Anthropic route");
     }
     let openrouter = is_openrouter(&base_url);
@@ -594,19 +638,19 @@ fn resolve_route(args: &Args) -> Result<Route> {
     // --api-key-env may be used for another endpoint.
     let api_key = match &args.api_key_env {
         Some(name) => Some(std::env::var(name).with_context(|| format!("environment variable {name} is not set"))?),
-        None if args.api == Api::AnthropicMessages && is_official_anthropic(&base_url) => {
+        None if args.api() == Api::AnthropicMessages && is_official_anthropic(&base_url) => {
             env_first(&["ANTHROPIC_API_KEY", "ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v)
         }
-        None if args.api == Api::AnthropicMessages => env_first(&["ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v),
+        None if args.api() == Api::AnthropicMessages => env_first(&["ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v),
         None if openrouter => env_first(&["OPENROUTER_API_KEY"]).map(|(_, v)| v),
         None => env_first(&["ARA_API_KEY", "ARA_TEST_API_KEY"]).map(|(_, v)| v),
     };
     let provider = args.provider.clone().unwrap_or_else(|| {
-        if args.api == Api::AnthropicMessages {
+        if args.api() == Api::AnthropicMessages {
             "anthropic".into()
         } else if openrouter {
             "openrouter".into()
-        } else if args.api == Api::ProxyAuto {
+        } else if args.api() == Api::ProxyAuto {
             "proxy".into()
         } else {
             "openai-compatible".into()
@@ -616,11 +660,6 @@ fn resolve_route(args: &Args) -> Result<Route> {
     for h in &args.headers {
         let (k, v) = h.split_once(':').with_context(|| format!("--header {h:?} must be `Name: value`"))?;
         extra_headers.push((k.trim().to_string(), v.trim().to_string()));
-    }
-    for name in args.tools.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-        if !TOOL_NAMES.contains(&name) {
-            bail!("unknown tool {name:?} (available: {})", TOOL_NAMES.join(", "));
-        }
     }
     let mut stream_options = StreamOptions { api_key, extra_headers, ..Default::default() };
     stream_options.compat.requires_reasoning_content_on_all_assistant_turns = args.chat_replay_reasoning_content;
@@ -638,7 +677,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
     Ok(Route {
         model: Model {
             id: model_id,
-            api: args.api.as_str().into(),
+            api: args.api().as_str().into(),
             provider,
             base_url,
             reasoning: args.reasoning,
@@ -646,7 +685,59 @@ fn resolve_route(args: &Args) -> Result<Route> {
             tokenizer,
         },
         stream_options,
+        daily: None,
     })
+}
+
+fn resolve_startup_route(args: &mut Args) -> Result<Route> {
+    use ara_cli::daily_model_config::{DailyOverrides, load_daily_config, resolve_daily_selection};
+    if args.models_config.is_none() && matches!(args.api(), Api::AnthropicMessages | Api::ProxyAuto) {
+        return resolve_route(args);
+    }
+    let path = args.models_config.clone().unwrap_or_else(|| ara_home().join("agent/models.yml"));
+    let config = load_daily_config(&path, args.models_config.is_some())?;
+    let configured_provider =
+        args.provider.as_deref().map(str::to_owned).or_else(|| std::env::var("ARA_PROVIDER").ok());
+    if config.is_none()
+        && args.api() != Api::OpenaiCodexResponses
+        && configured_provider.as_deref() != Some("openai-codex")
+    {
+        return resolve_route(args);
+    }
+    let headers = args
+        .headers
+        .iter()
+        .map(|header| {
+            let (name, value) = header.split_once(':').context("--header must be Name: value")?;
+            Ok((name.trim().to_owned(), value.trim().to_owned()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let overrides = DailyOverrides {
+        provider: args.provider.clone(),
+        model: args.model.clone(),
+        api: args.api.map(|api| api.as_str().to_owned()),
+        base_url: args.base_url.clone(),
+        api_key_env: args.api_key_env.clone(),
+        tokenizer: args.tokenizer.clone(),
+        headers,
+        reasoning: args.reasoning.then_some(true),
+        responses_stateful: args.responses_stateful.then_some(true),
+        chat_replay_reasoning_content: args.chat_replay_reasoning_content.then_some(true),
+        chat_mistral_compat: args.chat_mistral_compat.then_some(true),
+        max_tokens: args.max_tokens,
+        temperature: args.temperature,
+        stream_idle_timeout: args.stream_idle_timeout,
+    };
+    let selection = resolve_daily_selection(config.as_ref(), &overrides, &|name: &str| std::env::var(name).ok())?;
+    args.api = Some(Api::from_str(selection.api.as_str(), false).map_err(anyhow::Error::msg)?);
+    args.reasoning = selection.model.reasoning;
+    args.max_tokens = selection.generation.max_tokens;
+    args.temperature = selection.generation.temperature;
+    validate_route_args(args)?;
+    if args.api() == Api::OpenaiCodexResponses && args.mode == Mode::Rpc {
+        bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
+    }
+    Ok(Route { model: selection.model.clone(), stream_options: StreamOptions::default(), daily: Some(selection) })
 }
 
 /// V1-COMPACT: single-level soft compaction from the A3 pieces. The summary
@@ -730,7 +821,12 @@ async fn run_compaction(
     // A reasoning model spends part of it on thinking. `--max-tokens` caps it.
     const SUMMARY_MAX_TOKENS: u64 = 16_384 * 4 / 5;
     let max_tokens = args.max_tokens.map_or(SUMMARY_MAX_TOKENS, |cap| cap.min(SUMMARY_MAX_TOKENS));
-    let accepted = match summarize_sources(span, None, model, provider.as_ref(), max_tokens, deadline, cancel).await {
+    // The subscription endpoint rejects output caps. Omit the internal cap
+    // from its wire call and check the observed summary before adoption below.
+    let uncapped = CodexSummaryProvider(provider.as_ref());
+    let summary_provider: &dyn ModelProvider =
+        if model.api == "openai-codex-responses" { &uncapped } else { provider.as_ref() };
+    let accepted = match summarize_sources(span, None, model, summary_provider, max_tokens, deadline, cancel).await {
         Ok(a) => a,
         Err(e) => {
             // Show the stop reason, output tokens and the provider's status and
@@ -748,6 +844,14 @@ async fn run_compaction(
             return Ok(false);
         }
     };
+    if model.api == "openai-codex-responses" {
+        let estimated =
+            ara_agent::tokenizer::count_text(&accepted.text, ara_agent::tokenizer::EstimateMode::Approximate) as u64;
+        if accepted.usage.output.is_some_and(|tokens| tokens > max_tokens) || estimated > max_tokens {
+            eprintln!("ara: Codex summary exceeds the local adoption budget; session untouched");
+            return Ok(false);
+        }
+    }
     journal.append_compaction(
         &accepted.text,
         &cut.candidate.first_kept_entry_id,
@@ -764,6 +868,20 @@ async fn run_compaction(
     let kept = count_messages(context, MessageCountOptions::default());
     eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");
     Ok(true)
+}
+
+struct CodexSummaryProvider<'a>(&'a dyn ModelProvider);
+
+impl ModelProvider for CodexSummaryProvider<'_> {
+    fn stream(
+        &self,
+        model: &Model,
+        context: &ara_ai::Context,
+        mut options: ara_ai::CallOptions,
+    ) -> ara_ai::AssistantStream {
+        options.max_tokens = None;
+        self.0.stream(model, context, options)
+    }
 }
 
 /// Ctrl+C, plus Ctrl+Break on Windows (the console event another process can
@@ -826,6 +944,7 @@ struct ReplSession<'a> {
     cwd: &'a Path,
     model_ref: &'a str,
     skills: &'a [ara_discovery::LoadedSkill],
+    codex_factory: Option<&'a ProviderFactory>,
 }
 
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
@@ -848,6 +967,7 @@ async fn run_repl_loop(
     session: ReplSession<'_>,
     mut interrupts: Interrupts,
 ) -> Result<i32> {
+    let mut provider = provider.clone();
     eprintln!("ara: interactive session ({}). /help for commands.", model.id);
     let current_path = || async { sink.journal.lock().await.as_ref().map(|j| j.path().to_path_buf()) };
     if let Some(path) = current_path().await
@@ -903,7 +1023,7 @@ async fn run_repl_loop(
             }
             "/compact" => {
                 let token = cancel.child_token();
-                let step = run_compaction(args, model, provider, context, sink, &token, true);
+                let step = run_compaction(args, model, &provider, context, sink, &token, true);
                 if let Err(e) = interruptible(step, &token, &mut interrupts).await {
                     eprintln!("ara: compaction failed ({e:#}); session kept");
                 }
@@ -939,6 +1059,14 @@ async fn run_repl_loop(
                         }
                     }
                     _ => eprintln!("ara: new conversation (not persisted)"),
+                }
+                if let Some(factory) = session.codex_factory {
+                    let header = guard
+                        .as_ref()
+                        .map(|j| j.header().clone())
+                        .unwrap_or_else(|| ephemeral_header(session.cwd, None));
+                    let id = header["id"].as_str().context("new Session has no ID")?;
+                    provider = factory.route.bind_codex_session(factory.client.clone(), id.to_owned());
                 }
                 context.clear();
                 turn = 0;
@@ -1027,7 +1155,7 @@ async fn run_repl_loop(
         }
         if report.end == RunEnd::Completed {
             let token = cancel.child_token();
-            let step = run_compaction(args, model, provider, context, sink, &token, false);
+            let step = run_compaction(args, model, &provider, context, sink, &token, false);
             if let Err(e) = interruptible(step, &token, &mut interrupts).await {
                 eprintln!("ara: auto-compaction failed ({e:#}); session kept");
             }
@@ -1192,9 +1320,32 @@ async fn prepare_cli_setup(
 struct ProviderFactory {
     client: reqwest::Client,
     route: ara_cli::model_route::PreparedRoute,
+    account_auth: Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
 }
 
 impl ProviderFactory {
+    async fn daily(
+        client: reqwest::Client,
+        mut selection: ara_cli::daily_model_config::DailySelection,
+        session_id: Option<String>,
+    ) -> Result<Self> {
+        use ara_cli::daily_model_config::DailyAuthSource;
+        use ara_cli::model_route::{FixedRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver};
+        if let ProtocolOptions::CodexResponses(options) = &mut selection.protocol {
+            options.session_id = session_id;
+        }
+        let (auth, account_auth): (Arc<dyn RequestAuthResolver>, _) = match selection.auth_source {
+            DailyAuthSource::Fixed(lease) => (Arc::new(FixedRequestAuth::new(lease)), None),
+            DailyAuthSource::OpenAiCodex => {
+                let account = open_codex_auth(client.clone()).await?;
+                (account.clone(), Some(account))
+            }
+        };
+        let route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
+            .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?;
+        Ok(Self { client, route, account_auth })
+    }
+
     fn startup(
         client: reqwest::Client,
         model: Model,
@@ -1231,16 +1382,68 @@ impl ProviderFactory {
                 stateful_responses: responses_stateful,
                 ..Default::default()
             }),
+            Api::OpenaiCodexResponses => bail!("OpenAI account routes require the daily account resolver"),
             Api::ProxyAuto => bail!("proxy discovery must resolve to a concrete protocol"),
         };
         let route = PreparedRoute::new(model, protocol, auth, 0)
             .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
-        Ok(Self { client, route })
+        Ok(Self { client, route, account_auth: None })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {
         self.route.bind(self.client.clone(), None)
     }
+}
+
+async fn open_codex_auth(client: reqwest::Client) -> Result<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>> {
+    #[cfg(feature = "test-fixture")]
+    if let Ok(base) = std::env::var("ARA_TEST_CODEX_AUTH_BASE_URL") {
+        return Ok(Arc::new(
+            ara_cli::openai_codex_auth::OpenAiCodexAuth::open_with_endpoints(
+                ara_home().join("agent/auth.db"),
+                client,
+                &base,
+            )
+            .await?,
+        ));
+    }
+    Ok(Arc::new(ara_cli::openai_codex_auth::OpenAiCodexAuth::open(ara_home().join("agent/auth.db"), client).await?))
+}
+
+async fn run_auth_command(command: AuthCommand) -> Result<i32> {
+    let provider = match &command {
+        AuthCommand::Login { provider } | AuthCommand::Logout { provider } => provider,
+    };
+    if provider != "openai-codex" {
+        bail!("account login currently supports openai-codex; other providers are deferred");
+    }
+    let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?;
+    let auth = open_codex_auth(client).await?;
+    match command {
+        AuthCommand::Logout { .. } => {
+            auth.logout().await?;
+            eprintln!("ara: signed out of OpenAI");
+        }
+        AuthCommand::Login { .. } => {
+            let cancel = CancellationToken::new();
+            let mut interrupts = listen_for_interrupts()?;
+            let stop = cancel.clone();
+            let listener = tokio::spawn(async move {
+                if interrupts.recv().await.is_some() {
+                    stop.cancel();
+                }
+            });
+            let result = auth
+                .login_device(&cancel, |info| {
+                    eprintln!("ara: open {} and enter code {}", info.verification_url, info.user_code);
+                })
+                .await;
+            listener.abort();
+            result?;
+            eprintln!("ara: signed in to OpenAI; use --provider openai-codex --model <model-id>");
+        }
+    }
+    Ok(0)
 }
 
 fn ephemeral_header(cwd: &Path, parent: Option<&str>) -> serde_json::Value {
@@ -1257,12 +1460,30 @@ fn ephemeral_header(cwd: &Path, parent: Option<&str>) -> serde_json::Value {
 }
 
 async fn run(args: Args) -> Result<i32> {
+    let mut account_auth = None;
+    let result = run_inner(args, &mut account_auth).await;
+    // Normal error/deadline/first-interrupt exits must finish any dispatched
+    // refresh settlement before main shuts down the runtime. Hard process
+    // termination still cannot prove a remote grant's outcome.
+    if let Some(account) = account_auth {
+        account.wait_for_settlement().await;
+    }
+    result
+}
+
+async fn run_inner(
+    mut args: Args,
+    account_auth: &mut Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+) -> Result<i32> {
+    if let Some(command) = args.command.take() {
+        return run_auth_command(command).await;
+    }
     let _ = args.print;
     let rpc_mode = args.mode == Mode::Rpc;
     if rpc_mode && (args.repl || !args.prompts.is_empty() || args.print) {
         bail!("--mode rpc reads commands from stdin; omit --repl, --print and positional prompts");
     }
-    let mut route = resolve_route(&args)?;
+    let mut route = resolve_startup_route(&mut args)?;
     if args.mcp_config.is_none() && !args.mcp_allow.is_empty() {
         bail!("--mcp-allow requires --mcp-config");
     }
@@ -1293,7 +1514,7 @@ async fn run(args: Args) -> Result<i32> {
     };
     let launch_cwd = explicit_cwd.clone().map(Ok).unwrap_or_else(std::env::current_dir)?;
 
-    let selected_api = if args.api == Api::ProxyAuto {
+    let selected_api = if args.api() == Api::ProxyAuto {
         let api = proxy_discovery::discover_proxy_api(
             &route.model.base_url,
             &route.model.id,
@@ -1304,7 +1525,7 @@ async fn run(args: Args) -> Result<i32> {
         route.model.api = api.as_str().into();
         api
     } else {
-        args.api
+        args.api()
     };
 
     // Session journal (first journal I/O happens only after validation above).
@@ -1353,7 +1574,7 @@ async fn run(args: Args) -> Result<i32> {
         j.append_model_change(&model_ref)?;
     }
     let header = journal.as_ref().map(|j| j.header().clone()).unwrap_or_else(|| {
-        if rpc_mode {
+        if rpc_mode || selected_api == Api::OpenaiCodexResponses {
             ephemeral_header(&cwd, None)
         } else {
             serde_json::json!({"type":"session", "version":ara_session::CURRENT_SESSION_VERSION,
@@ -1393,19 +1614,32 @@ async fn run(args: Args) -> Result<i32> {
         None
     };
     let mut client_builder = reqwest::Client::builder();
-    if args.api == Api::ProxyAuto {
+    if matches!(args.api(), Api::ProxyAuto | Api::OpenaiCodexResponses) {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
     let client = client_builder.build().context("building HTTP client")?;
-    let provider_factory = ProviderFactory::startup(
-        client,
-        route.model.clone(),
-        selected_api,
-        stream_options,
-        args.anthropic_strict_tools,
-        args.responses_stateful,
-    )?;
+    let provider_factory = if let Some(mut selection) = route.daily.take() {
+        if let ara_cli::model_route::ProtocolOptions::Completions(options) = &mut selection.protocol {
+            options.request_text_observer = stream_options.request_text_observer.take();
+        }
+        ProviderFactory::daily(
+            client,
+            selection,
+            header.get("id").and_then(serde_json::Value::as_str).map(str::to_owned),
+        )
+        .await?
+    } else {
+        ProviderFactory::startup(
+            client,
+            route.model.clone(),
+            selected_api,
+            stream_options,
+            args.anthropic_strict_tools,
+            args.responses_stateful,
+        )?
+    };
     let provider = provider_factory.build();
+    *account_auth = provider_factory.account_auth.clone();
     let cancel = CancellationToken::new();
     if rpc_mode {
         let config = AgentConfig {
@@ -1432,9 +1666,6 @@ async fn run(args: Args) -> Result<i32> {
         };
         return rpc_host::run(config, skills, context, journal, header, max_time, sessions).await;
     }
-    // Only RPC retains the factory for future logical Sessions. In print mode
-    // dropping it also closes the observer channel once the provider is dropped.
-    drop(provider_factory);
     let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
@@ -1442,7 +1673,13 @@ async fn run(args: Args) -> Result<i32> {
 
     let mut interrupts = listen_for_interrupts()?;
     if repl_mode {
-        let session = ReplSession { dir: session_dir, cwd: &cwd, model_ref: &model_ref, skills: &skills };
+        let session = ReplSession {
+            dir: session_dir,
+            cwd: &cwd,
+            model_ref: &model_ref,
+            skills: &skills,
+            codex_factory: (selected_api == Api::OpenaiCodexResponses).then_some(&provider_factory),
+        };
         return run_repl_loop(
             &args,
             &route.model,
@@ -1458,6 +1695,7 @@ async fn run(args: Args) -> Result<i32> {
         )
         .await;
     }
+    drop(provider_factory);
     let c2 = cancel.clone();
     tokio::spawn(async move {
         if interrupts.recv().await.is_some() {

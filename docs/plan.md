@@ -61,6 +61,22 @@ completion-date estimate is asserted without measured module throughput.
 
 ## Where we are
 
+OpenAI daily Host checkpoint (2026-10-01): custom models.yml Chat/Responses
+configuration now reaches tools and original-Session restart. Device
+login/logout, private SQLite refresh/settlement and dedicated Codex SSE pass
+the controlled real-process workflow, including `/new` attribution and hidden
+reasoning replay. Windows module 22/0/0 and full backend 1,491/0/20,
+inventory/deny/build pass in 134.536 seconds; configured CAS artifact/restart
+passes in 7.146 seconds. [Daily evidence](evidence/openai-daily.md) and
+[usage](openai-daily.md) define the supported slice. Actual OpenAI authorization
+and an account-model task still require live acceptance. Complete AuthStorage,
+registry projection, Codex RPC/WS/Lite and other providers stay open/deferred;
+P0/V1 accepted, P1–P6 open, RPC 27/42 and the parity marker null remain unchanged.
+
+Next: close the actual account trial when device authorization is available;
+continue remaining Core/Session and RPC reproduction in coherent modules.
+Other Provider compatibility follows the recorded daily-use priorities.
+
 Fixed model discovery/factory/manager checkpoint (2026-10-01, tested WIP):
 692 original-source discovery cases, 3,388 protobuf cases, 58 CA helper cases,
 actual HTTP/TLS/H2/process tests and independent review pass on the final

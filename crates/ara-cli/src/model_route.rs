@@ -86,6 +86,7 @@ impl RequestAuthResolver for FixedRequestAuth {
 pub enum ProtocolOptions {
     Completions(ara_ai::providers::openai_completions::StreamOptions),
     Responses(ara_ai::providers::openai_responses::StreamOptions),
+    CodexResponses(ara_ai::providers::openai_codex_responses::StreamOptions),
     Anthropic(ara_ai::providers::anthropic::StreamOptions),
 }
 
@@ -94,6 +95,7 @@ impl ProtocolOptions {
         match self {
             Self::Completions(_) => "openai-completions",
             Self::Responses(_) => "openai-responses",
+            Self::CodexResponses(_) => "openai-codex-responses",
             Self::Anthropic(_) => "anthropic-messages",
         }
     }
@@ -105,6 +107,14 @@ impl ProtocolOptions {
             }
             Self::Responses(options) => {
                 options.api_key.is_some() || options.extra_headers.iter().any(|(name, _)| is_credential_header(name))
+            }
+            Self::CodexResponses(options) => {
+                options.api_key.is_some()
+                    || options.extra_headers.iter().any(|(name, _)| {
+                        is_credential_header(name)
+                            || name.eq_ignore_ascii_case("chatgpt-account-id")
+                            || name.eq_ignore_ascii_case("x-openai-internal-codex-residency")
+                    })
             }
             Self::Anthropic(options) => {
                 options.api_key.is_some() || options.extra_headers.iter().any(|(name, _)| is_credential_header(name))
@@ -126,6 +136,12 @@ impl ProtocolOptions {
                 base.extra_headers.extend(lease.headers);
                 Arc::new(OpenAIResponsesProvider { client, base })
             }
+            Self::CodexResponses(options) => {
+                let mut base = options.clone();
+                base.api_key = lease.api_key;
+                base.extra_headers.extend(lease.headers);
+                Arc::new(ara_ai::providers::openai_codex_responses::OpenAICodexResponsesProvider { client, base })
+            }
             Self::Anthropic(options) => {
                 let mut base = options.clone();
                 base.api_key = lease.api_key;
@@ -139,6 +155,7 @@ impl ProtocolOptions {
         let mut options = self.clone();
         match &mut options {
             Self::Completions(_) => {}
+            Self::CodexResponses(_) => {}
             Self::Responses(options) => {
                 options.session_state = Some(Arc::new(Default::default()));
             }
@@ -203,6 +220,16 @@ impl PreparedRoute {
         route.protocol = route.protocol.fresh_session();
         Arc::new(AuthenticatedRouteProvider { client, route, observer })
     }
+
+    /// Rebind Codex attribution to a new Host Session, retaining the same
+    /// private account resolver and its outstanding refresh settlement.
+    pub fn bind_codex_session(&self, client: reqwest::Client, session_id: String) -> Arc<dyn ModelProvider> {
+        let mut route = self.clone();
+        if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
+            options.session_id = Some(session_id);
+        }
+        route.bind(client, None)
+    }
 }
 
 /// Private attribution receipt, deliberately excluded from public events/journal.
@@ -258,11 +285,25 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     .await;
                 return;
             }
+            let resolving = route.auth.resolve(&model, &cancel);
+            tokio::pin!(resolving);
             let lease = tokio::select! {
                 biased;
-                _ = cancel.cancelled() => Err(AuthResolveError::Cancelled),
-                _ = tx.closed() => return,
-                result = route.auth.resolve(&model, &cancel) => result,
+                _ = cancel.cancelled() => {
+                    // An OAuth refresh may already have rotated a grant. Let
+                    // this account resolver settle its durable row before the
+                    // CLI can finish and shut down its runtime.
+                    if model.api == "openai-codex-responses" { let _ = resolving.await; }
+                    Err(AuthResolveError::Cancelled)
+                },
+                _ = tx.closed() => {
+                    if model.api == "openai-codex-responses" {
+                        cancel.cancel();
+                        let _ = resolving.await;
+                    }
+                    return;
+                },
+                result = &mut resolving => result,
             };
             let lease = match lease {
                 Ok(lease) => lease,
@@ -271,6 +312,12 @@ impl ModelProvider for AuthenticatedRouteProvider {
                         if error == AuthResolveError::Cancelled { StopReason::Aborted } else { StopReason::Error };
                     let text = match error {
                         AuthResolveError::Cancelled => "authentication cancelled",
+                        AuthResolveError::Unavailable if model.api == "openai-codex-responses" => {
+                            "OpenAI account is unavailable; run ara login"
+                        }
+                        AuthResolveError::Refresh if model.api == "openai-codex-responses" => {
+                            "OpenAI account refresh failed; run ara login again"
+                        }
                         AuthResolveError::Unavailable => "no configured authentication for this route",
                         AuthResolveError::Storage => "authentication storage failed",
                         AuthResolveError::Command => "authentication command failed",
