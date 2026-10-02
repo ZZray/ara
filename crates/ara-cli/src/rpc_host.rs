@@ -8,6 +8,8 @@
 use super::rpc_host_settings::{
     AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings, UnexpectedStopMode,
 };
+#[path = "rpc_host_handoff.rs"]
+mod handoff;
 #[cfg(test)]
 #[path = "rpc_host_local_reduction_tests.rs"]
 mod local_reduction_tests;
@@ -421,7 +423,7 @@ impl Session {
                 .ok()
                 .map(|timestamp| timestamp.timestamp_millis());
             messages.push(json!({"role":"compactionSummary","summary":summary.summary,
-                "tokensBefore":summary.tokens_before,"method":"soft","timestamp":timestamp}));
+                "tokensBefore":summary.tokens_before,"method":summary.method,"timestamp":timestamp}));
         }
         messages.extend(branch[start..].iter().filter_map(|entry| {
             entry
@@ -683,6 +685,7 @@ struct Host {
     output: Output,
     connection: CancellationToken,
     active: Option<ActiveRun>,
+    handoff_control: Arc<Mutex<handoff::HandoffControl>>,
     maintenance: Option<maintenance::ActiveMaintenance>,
     maintenance_continue: Option<maintenance::PendingMaintenanceContinue>,
     terminal_recovery: maintenance::TerminalRecoveryState,
@@ -1247,7 +1250,7 @@ impl Host {
         result
     }
 
-    async fn maybe_auto_compact(&mut self, pending: &[Message]) {
+    async fn maybe_auto_compact(&mut self, pending: &[Message]) -> bool {
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
         let threshold = self.sessions.args.compact_threshold;
         if self.active.is_some()
@@ -1257,7 +1260,7 @@ impl Host {
             || self.maintenance_continue.is_some()
             || self.connection.is_cancelled()
         {
-            return;
+            return true;
         }
         let messages = self.agent.messages().await;
         let tokens = self.context_tokens(&messages, pending).await;
@@ -1267,21 +1270,21 @@ impl Host {
                 self.output.frame(
                     json!({"type":"notice","level":"warning","source":"compaction","message":error.to_string()}),
                 );
-                return;
+                return true;
             }
         };
         if !self.compaction_policy.enabled() || threshold == 0 {
-            return;
+            return true;
         }
         if tokens <= threshold {
-            return;
+            return true;
         }
         let key = {
             let journal = self.session.journal.lock().await;
             (journal.session_id().to_owned(), journal.leaf_id().map(str::to_owned), tokens)
         };
         if self.auto_compaction_checked.as_ref() == Some(&key) {
-            return;
+            return true;
         }
         self.auto_compaction_checked = Some(key);
         self.output.frame(json!({"type":"auto_compaction_start","reason":"threshold","action":"context-full"}));
@@ -1300,7 +1303,37 @@ impl Host {
                 if progress {
                     break;
                 }
-                if method == "shake" {
+                if method == "handoff" {
+                    let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
+                    let summary = match handoff {
+                        Ok(Some(summary)) => summary,
+                        Ok(None) => continue,
+                        Err(error) if self.connection.is_cancelled() || ara_cli::handoff::is_cancelled(&error) => {
+                            return Err(error);
+                        }
+                        Err(_) => {
+                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                                "message":"Handoff compaction failed; trying the next preferred method"}));
+                            continue;
+                        }
+                    };
+                    progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, 0)), pending).await;
+                    if !progress {
+                        progress = self
+                            .rescue_local_history(
+                                settings.reserve_tokens,
+                                Some((threshold, 0)),
+                                ran_shake,
+                                pending,
+                                None,
+                            )
+                            .await?;
+                    }
+                    if !progress {
+                        bail!("Handoff could not create recovery headroom; automatic continuation stopped");
+                    }
+                    return Ok::<_, anyhow::Error>(summary);
+                } else if method == "shake" {
                     ran_shake = true;
                     self.shake_local_history(false, None).await?;
                     progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, freed)), pending).await;
@@ -1342,13 +1375,15 @@ impl Host {
             Ok(json!({"method":"shake","tokensAfter":self.context_tokens(&self.agent.messages().await, pending).await}))
         }
         .await;
+        let cancelled = result.as_ref().err().is_some_and(ara_cli::handoff::is_cancelled);
         let mut event = json!({"type":"auto_compaction_end","action":"context-full",
-            "aborted":self.connection.is_cancelled(),"willRetry":false});
+            "aborted":self.connection.is_cancelled() || cancelled,"willRetry":false});
         match result {
             Ok(result) => event["result"] = result,
             Err(error) => event["errorMessage"] = json!(super::sanitize_text(&error.to_string())),
         }
         self.output.frame(event);
+        !cancelled
     }
 
     async fn append_bash(&mut self, pending: PendingBash) -> Result<()> {
@@ -1968,7 +2003,10 @@ impl Host {
                 pending.truncate(1);
             }
             let pending = pending.into_iter().map(|input| input.model).collect::<Vec<_>>();
-            self.maybe_auto_compact(&pending).await;
+            if !self.maybe_auto_compact(&pending).await {
+                self.drain_queues = false;
+                return;
+            }
             let command = Command::new(wire(json!({"type":"prompt"})));
             if let Err(error) = self.start(None, command) {
                 self.drain_queues = false;
@@ -2010,6 +2048,9 @@ impl Host {
     }
 
     async fn execute(&mut self, command: &Command) -> Result<()> {
+        if handoff::HandoffControl::stops_handoff(command) {
+            self.handoff_control.lock().unwrap().consume_stop();
+        }
         match command.kind.as_str() {
             "set_auto_retry" => {
                 let enabled = match command.frame.get("enabled") {
@@ -2265,7 +2306,9 @@ impl Host {
                         self.maintenance_continue = None;
                         self.finish_retry(None, Some("Retry cancelled".into()), false).await;
                     }
-                    self.maybe_auto_compact(std::slice::from_ref(&input.model)).await;
+                    if !self.maybe_auto_compact(std::slice::from_ref(&input.model)).await {
+                        return Err(ara_cli::handoff::cancelled());
+                    }
                     self.start(
                         Some(input),
                         Command { id: command.id.clone(), kind: command.kind.clone(), frame: command.frame.clone() },
@@ -2275,7 +2318,9 @@ impl Host {
             "abort_and_prompt" => {
                 let message = command.message()?;
                 self.abort().await;
-                self.maybe_auto_compact(std::slice::from_ref(&message)).await;
+                if !self.maybe_auto_compact(std::slice::from_ref(&message)).await {
+                    return Err(ara_cli::handoff::cancelled());
+                }
                 self.output.response(command, None, None);
                 self.drain_queues = true;
                 self.start(
@@ -2440,6 +2485,7 @@ where
     let mut tool_loop_state = ToolLoopState::default();
     tool_loop_state.configure(tool_loop_settings);
     let connection = CancellationToken::new();
+    let handoff_control = Arc::new(Mutex::new(handoff::HandoffControl::default()));
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
     let output_task = tokio::spawn(write_output(writer, output_rx, connection.clone()));
@@ -2478,6 +2524,7 @@ where
         output: output.clone(),
         connection: connection.clone(),
         active: None,
+        handoff_control: handoff_control.clone(),
         maintenance: None,
         maintenance_continue: None,
         terminal_recovery: maintenance::TerminalRecoveryState::default(),
@@ -2514,6 +2561,7 @@ where
     let (input_tx, mut input_rx) = mpsc::unbounded_channel();
     let reader_output = output.clone();
     let reader_cancel = connection.clone();
+    let reader_handoff_control = handoff_control.clone();
     let reader_task = tokio::spawn(async move {
         let mut reader = RpcInputReader::new(input);
         loop {
@@ -2532,7 +2580,14 @@ where
                         bash_dispatcher.dispatch(command);
                         continue;
                     }
+                    let stops_handoff = handoff::HandoffControl::stops_handoff(&command);
+                    if stops_handoff {
+                        reader_handoff_control.lock().unwrap().queue_stop();
+                    }
                     if input_tx.send(command).is_err() {
+                        if stops_handoff {
+                            reader_handoff_control.lock().unwrap().consume_stop();
+                        }
                         break;
                     }
                 }
@@ -2541,6 +2596,7 @@ where
                 }
                 Ok(None) => break,
                 Err(error) => {
+                    reader_handoff_control.lock().unwrap().close_input();
                     tool_bridge.close("RPC input disconnected");
                     uri_bridge.close_connection("RPC input disconnected");
                     reader_cancel.cancel();
@@ -2548,6 +2604,7 @@ where
                 }
             }
         }
+        reader_handoff_control.lock().unwrap().close_input();
         // Unblock accepted work before the serial command owner drains/joins.
         tool_bridge.close("RPC host disconnected");
         uri_bridge.close_connection("RPC host disconnected");
@@ -2765,6 +2822,7 @@ mod tests {
             output: output.clone(),
             connection: connection.clone(),
             active: None,
+            handoff_control: Arc::new(Mutex::new(handoff::HandoffControl::default())),
             maintenance: None,
             maintenance_continue: None,
             terminal_recovery: maintenance::TerminalRecoveryState::default(),

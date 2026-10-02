@@ -719,6 +719,10 @@ async fn rpc_eof_drains_accepted_serial_summary_and_commits_before_shutdown() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_auto_compaction_persistent_policy_billed_threshold_and_single_fire() {
     let env = Env::new();
+    // This family asserts the native soft request's empty tools. Handoff is
+    // now an available default method and has its own live-context families.
+    std::fs::create_dir_all(env.home.path().join("agent")).unwrap();
+    std::fs::write(env.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
     let up = upstream(vec![
         answer_with_input("small first", 1),
         answer_with_input("small billed tail", 100_000),

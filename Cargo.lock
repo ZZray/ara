@@ -102,6 +102,7 @@ name = "ara-agent"
 version = "0.1.0"
 dependencies = [
  "ara-ai",
+ "ara-prompt",
  "ara-testkit",
  "async-trait",
  "futures",

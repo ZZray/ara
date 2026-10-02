@@ -270,6 +270,18 @@ impl PreparedRoute {
         }
         route.bind(client, None)
     }
+
+    /// A handoff reads the live cache prefix on independent protocol state.
+    /// Keep the original resolver; only its transport Session is a side identity.
+    pub fn bind_side_request(&self, client: reqwest::Client, session_id: &str) -> Arc<dyn ModelProvider> {
+        let mut route = self.clone();
+        if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
+            options.request.prompt_cache_key =
+                options.request.prompt_cache_key.clone().or_else(|| Some(session_id.to_owned()));
+            options.session_id = Some(format!("{session_id}:side:{}", uuid::Uuid::now_v7()));
+        }
+        route.bind(client, None)
+    }
 }
 
 /// Private attribution receipt, deliberately excluded from public events/journal.

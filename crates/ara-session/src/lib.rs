@@ -26,10 +26,12 @@
 //! v1/v2 migrations, SQL/Redis storage,
 //! listing/search, moving, title generation, blob externalization.
 
+mod handoff;
 mod loop_guard_notice;
 mod reduction;
 mod skill_prompt;
 
+pub use handoff::{NativeCompactionFileDetails, NativeHandoffError, NativeHandoffSnapshot, NativeHandoffSummary};
 pub use loop_guard_notice::{
     GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE, TOOL_CALL_LOOP_REDIRECT_TYPE,
 };
@@ -994,6 +996,11 @@ pub struct CompactionSummaryView {
     pub first_kept_entry_id: String,
     pub tokens_before: u64,
     pub timestamp: String,
+    /// Missing/null legacy method is normalized to soft. Native handoff
+    /// retains its method independently from the stored document text.
+    pub method: String,
+    /// Native cumulative file lists, never recovered by parsing model text.
+    pub file_details: Option<NativeCompactionFileDetails>,
     /// `None` means an imported entry has no verifiable source list.
     pub source_entry_ids: Option<Vec<String>>,
 }
@@ -2243,6 +2250,20 @@ impl SessionJournal {
         window_source_entry_ids: &[String],
         tokens_before: u64,
     ) -> std::result::Result<String, CompactionCommitError> {
+        let cumulative =
+            self.native_entry_compaction_sources(snapshot, summary, first_kept_entry_id, window_source_entry_ids)?;
+        Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative, tokens_before)?)
+    }
+
+    /// Shared source/cut validation only. Publication stays method-specific:
+    /// soft retains its existing append API; handoff publishes atomically.
+    fn native_entry_compaction_sources(
+        &self,
+        snapshot: &NativeProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+    ) -> std::result::Result<Vec<String>, CompactionCommitError> {
         let current = self.native_projected_compaction_snapshot()?;
         if snapshot != &current {
             return Err(CompactionCommitError::StaleSnapshot);
@@ -2291,7 +2312,7 @@ impl SessionJournal {
         if !safe_summary_prefix(&branch[..raw_kept], split) {
             return Err(CompactionCommitError::UnsafeSummaryBoundary);
         }
-        Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative, tokens_before)?)
+        Ok(cumulative)
     }
 
     /// Validate this exact projected window, then append one native soft
@@ -2393,8 +2414,8 @@ impl SessionJournal {
         Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative_sources, tokens_before)?)
     }
 
-    /// Strict, read-only projection of the current branch after a soft
-    /// compaction. Raw entries remain in the journal; the latest summary is a
+    /// Strict, read-only projection of the current branch after a checked
+    /// soft or handoff compaction. Raw entries remain in the journal; the latest summary is a
     /// distinct item followed by kept and later messages. This does not turn
     /// the summary into a user message or make a provider request.
     pub fn compacted_context_projection(
@@ -2437,13 +2458,35 @@ impl SessionJournal {
                         .and_then(Value::as_str)
                         .filter(|value| !value.is_empty())
                         .ok_or_else(|| invalid("timestamp"))?;
-                    if let Some(method) = entry.raw.get("method").filter(|value| !value.is_null()) {
-                        let method = method.as_str().ok_or_else(|| invalid("method"))?;
-                        if method != "soft" {
-                            return Err(CompactionProjectionError::UnsupportedMethod {
-                                id: entry.id.clone(),
-                                method: method.to_owned(),
-                            });
+                    let method = match entry.raw.get("method").filter(|value| !value.is_null()) {
+                        Some(method) => {
+                            let method = method.as_str().ok_or_else(|| invalid("method"))?;
+                            if !matches!(method, "soft" | "handoff") {
+                                return Err(CompactionProjectionError::UnsupportedMethod {
+                                    id: entry.id.clone(),
+                                    method: method.to_owned(),
+                                });
+                            }
+                            method
+                        }
+                        None => "soft",
+                    };
+                    let file_details = handoff::native_file_details(&entry.raw);
+                    if method == "handoff" {
+                        if entry_timestamp(&entry.raw).is_none() {
+                            return Err(invalid("timestamp"));
+                        }
+                        if file_details.is_none() {
+                            return Err(invalid("details"));
+                        }
+                        // Handoff is a text document, not provider replay or
+                        // an extension/native image archive admission path.
+                        if ["preserveData", "shortSummary", "providerPayload", "blocks", "images"]
+                            .iter()
+                            .any(|field| entry.raw.get(*field).is_some_and(|value| !value.is_null()))
+                            || !matches!(entry.raw.get("fromExtension"), None | Some(Value::Null | Value::Bool(false)))
+                        {
+                            return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                         }
                     }
                     if entry.raw.get("providerReplayThroughEntryId").is_some_and(|value| !value.is_null())
@@ -2457,7 +2500,7 @@ impl SessionJournal {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
                     let source_entry_ids = match entry.raw.get("sourceEntryIds") {
-                        None if allow_unanswered_user => {
+                        None if allow_unanswered_user || method == "handoff" => {
                             return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
                         }
                         None => None,
@@ -2483,6 +2526,8 @@ impl SessionJournal {
                             first_kept_entry_id: first_kept.to_owned(),
                             tokens_before,
                             timestamp: timestamp.to_owned(),
+                            method: method.to_owned(),
+                            file_details,
                             source_entry_ids,
                         },
                     ));
@@ -2544,7 +2589,7 @@ impl SessionJournal {
         self.append_raw("compaction", f)
     }
 
-    /// Model-visible messages honoring the latest valid soft summary: the
+    /// Model-visible messages honoring the latest valid soft/handoff summary: the
     /// summarized prefix is replaced by the summary text (sent as a user
     /// message so the model treats it as lower-trust prior context), kept and
     /// later messages stay raw. Falls back to [`build_context`](Self::build_context)
@@ -2556,6 +2601,7 @@ impl SessionJournal {
                     .items
                     .into_iter()
                     .map(|item| match item {
+                        CompactedContextItem::Summary(s) if s.method == "handoff" => handoff::model_message(&s),
                         CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
                             "[Compacted summary of earlier turns; source entries withheld]\n{}",
                             s.summary

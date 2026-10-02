@@ -281,7 +281,7 @@ pub(crate) fn prepare_request(
         ("user-agent".into(), concat!("ara/", env!("CARGO_PKG_VERSION")).into()),
     ]);
     if let Some(session_id) = session_id.filter(|id| !id.is_empty()) {
-        body["prompt_cache_key"] = json!(session_id);
+        body["prompt_cache_key"] = json!(request.prompt_cache_key.as_deref().unwrap_or(session_id));
         for name in ["session_id", "conversation_id", "x-client-request-id"] {
             headers.push((name.into(), session_id.into()));
         }

@@ -107,3 +107,34 @@ fallback/path-only workflows remain a separate required surface.
 [Local reducer evidence](../evidence/local-reducers.md) records source scope,
 executed receipts, corrected failures and the remaining contracts. This boundary
 does not accept full compaction or the whole Host.
+
+## Handoff document and live cache identity
+
+**Source-backed boundary, 2026-10-02, fixed OMP `596f2da`:** handoff reads
+the live base system prompt, normalized tool definitions and current history
+through the existing provider transform. A side protocol binding must retain
+the live prompt cache key while allocating its own transport Session identity;
+using the side identity as the cache key cold-misses the original prefix and
+sharing its append-only state can mix side output into ordinary turns. Private
+auth is resolved through the original route. The controlled wire family proves
+identity separation, not a measured provider cache hit.
+
+The generated document and its resume wrapper have different ownership. The
+journal stores the document plus native cumulative file lists; the model view
+adds the fixed handoff wrapper. File lists come from the consumed raw prefix
+and previous native details, never from parsing generated summary prose. The
+retained tail contributes no consumed file operations. Same-Session publication
+validates both the native cut and every original raw field before adding one
+compaction entry.
+
+Reader-time handoff interruption uses a separate child token. Pending accepted
+Abort commands and EOF must be visible even while the serial command owner is
+awaiting the side request. The slot and pending-stop count share a lock; the
+guard remains installed through publication. EOF does not acquire permission
+to cancel ordinary accepted Runs. Typed cancellation must survive the Host
+error boundary so a cancelled side request cannot trigger the next model
+method or a pending primary call.
+
+[Handoff evidence](../evidence/native-handoff.md) records the bounded execution,
+source scope and required gaps, including thinking effort, concurrent manual
+RPC, new/switch/branch interruption and native speculative maintenance.

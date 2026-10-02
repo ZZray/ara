@@ -106,6 +106,47 @@ async fn collect(mut stream: ara_ai::AssistantStream) -> AssistantMessage {
     .expect("bounded route stream")
 }
 
+#[tokio::test]
+async fn codex_side_calls_preserve_cache_prefix_and_isolate_transport_state() {
+    for cache_override in [None, Some("explicit-cache-key")] {
+        let server =
+            server(vec![responses("main"), responses("side one"), responses("side two"), responses("continued")]).await;
+        let model = model("openai-codex-responses", "openai-codex", server.base_url());
+        let auth = Arc::new(FixedRequestAuth::new(
+            RequestAuthLease::new(CredentialIdentity::Runtime, Some("synthetic fixture token".into()))
+                .with_headers(vec![("chatgpt-account-id".into(), "fixture-account".into())]),
+        ));
+        let mut options = ara_ai::providers::openai_codex_responses::StreamOptions {
+            session_id: Some("main-session".into()),
+            ..Default::default()
+        };
+        options.request.prompt_cache_key = cache_override.map(str::to_owned);
+        let route = PreparedRoute::new(model.clone(), ProtocolOptions::CodexResponses(options), auth, 9).unwrap();
+        let client = reqwest::Client::new();
+        let main = route.bind(client.clone(), None);
+        let side_one = route.bind_side_request(client.clone(), "main-session");
+        let side_two = route.bind_side_request(client, "main-session");
+        for (provider, expected) in
+            [(&main, "main"), (&side_one, "side one"), (&side_two, "side two"), (&main, "continued")]
+        {
+            assert_eq!(collect(provider.stream(&model, &context(), CallOptions::default())).await.text(), expected);
+        }
+        let requests = server.requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        for request in requests.iter() {
+            assert_eq!(request["body"]["prompt_cache_key"], cache_override.unwrap_or("main-session"));
+            assert_eq!(request["body"]["input"], requests[0]["body"]["input"]);
+            assert_eq!(request["headers"]["chatgpt-account-id"], "fixture-account");
+            assert_eq!(request["headers"]["session_id"], request["headers"]["conversation_id"]);
+            assert_eq!(request["headers"]["session_id"], request["headers"]["x-client-request-id"]);
+        }
+        assert_eq!(requests[0]["headers"]["session_id"], "main-session");
+        assert_eq!(requests[3]["headers"]["session_id"], "main-session");
+        assert!(requests[1]["headers"]["session_id"].as_str().unwrap().starts_with("main-session:side:"));
+        assert_ne!(requests[1]["headers"]["session_id"], requests[2]["headers"]["session_id"]);
+    }
+}
+
 struct ChangingAuth(AtomicUsize);
 
 #[async_trait]

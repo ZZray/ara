@@ -1,6 +1,26 @@
 # ARA execution plan
 
 **Latest checkpoint, 2026-10-02 (tested/audited bounded WIP):**
+[Native handoff](evidence/native-handoff.md) adds full live Context/side routing,
+checked same-Session document publication, manual REPL and RPC threshold/
+incomplete selection. Modules 147/0/0, Windows backend 1,565/0/20 and
+fmt/Clippy/inventory/deny/build pass one stable 461.085s command. Four actual
+Host flows pass, including threshold/incomplete × Abort/EOF with 2–7ms stop and
+no publication/fallback/primary request. Preferred CAS `deepseek-v4.1-flash`
+handoff → actual write/read → tool-disabled same-Session reopen passes in
+27.480s/five calls. One earlier document failed the strict marker criterion;
+its known-outcome receipts remain separate. Both attempts total six calls.
+Independent/Root audits bind 24 repository hashes plus the temporary runner,
+binary and artifacts. From about 08:55 UTC to 09:46 UTC takes 51min;
+documentation/Git closure is separate. Shared-dependency all-target rebuilding
+takes 4m39s of the 6m39s backend gate; group dependency/interface changes before
+later stable gates. Native thinking effort, concurrent manual RPC, replacement
+interruption and speculative maintenance remain open. P0/V1 accepted, P1–P6
+open, RPC 27/42 and full marker null remain. Next remote 120–240min,
+snapcompact 180–300min, frame rescue 30–60min net engineering; these are module
+estimates, not a whole-project ETA.
+
+**Latest checkpoint, 2026-10-02 (tested/audited bounded WIP):**
 [Local reducers](evidence/local-reducers.md) reproduce pruning,
 superseded/useless results, shake elide/images/thinking, checked raw Session
 rewrites, artifact recovery and ordinary tiered rescue. Final Windows backend
@@ -17,13 +37,14 @@ all-target recompilation and exposed a repaired default Windows stack overflow.
 Exact no-soft prepublication process injection remains NOT RUN. P0/V1 accepted,
 P1–P6 open, RPC 27/42 and full marker null remain unchanged.
 
-**Next modules, fixed-source inventory sized 2026-10-02:** handoff 45–90 minutes,
-remote 120–240 minutes, snapcompact 180–300 minutes, frame rescue 30–60 minutes
-of net engineering, total 6–11.5 hours for these four modules only. This excludes
+**Next modules, fixed-source inventory sized 2026-10-02:** handoff's bounded
+document path is now tested/audited above; its recorded parity gaps stay open.
+Next are remote 120–240 minutes, snapcompact 180–300 minutes and frame rescue
+30–60 minutes of net engineering, total 5.5–10 hours for these three modules only. This excludes
 shared gates/environment waits and is not the remaining whole-project ETA.
 Reuse live Context, Session commit/projection, configured routes/auth and the
 fixed native Rust renderer; concentrate native fixture families per module and
-share the final stable gate. Begin with handoff, then registry/auth callers and
+share the final stable gate. Begin with remote, then registry/auth callers and
 recorded raw-role/token/legacy/settings contracts as dependencies require.
 OpenAI account real tasks/Linux and other recorded differences remain open.
 

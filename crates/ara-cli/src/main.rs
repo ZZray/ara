@@ -998,6 +998,61 @@ async fn run_local_shake(
     Ok(true)
 }
 
+async fn run_repl_handoff(
+    config: &AgentConfig,
+    factory: &ProviderFactory,
+    keep_tokens: usize,
+    focus: Option<&str>,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    let snapshot = sink.journal.lock().await.as_ref().context("Session unavailable")?.native_handoff_snapshot()?;
+    let side = factory.route.bind_side_request(factory.client.clone(), &snapshot.projection.session_id);
+    let deadline = config.deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(120));
+    let Some(prepared) = ara_cli::handoff::prepare_handoff(
+        &snapshot,
+        context,
+        config,
+        side.as_ref(),
+        keep_tokens,
+        focus,
+        false,
+        deadline,
+        cancel,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    if cancel.is_cancelled() {
+        bail!("Handoff cancelled");
+    }
+    let tokens_before =
+        ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
+    let mut guard = sink.journal.lock().await;
+    let journal = guard.as_mut().context("Session unavailable")?;
+    if cancel.is_cancelled() {
+        bail!("Handoff cancelled");
+    }
+    if let Err(error) = journal.commit_native_entry_handoff(
+        &snapshot,
+        &prepared.summary,
+        &prepared.first_kept_entry_id,
+        &prepared.window_source_entry_ids,
+        tokens_before,
+    ) {
+        if error.history_published() {
+            *context = journal.model_context();
+            sink.persistence_failure(&error);
+        }
+        return Err(error.into());
+    }
+    *context = journal.model_context();
+    eprintln!("ara: handoff saved in the current Session; recent history kept");
+    Ok(true)
+}
+
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
 /// same Session journal. In text mode the answer streams to stdout and each
 /// tool call is reported on stderr as it starts and ends. Ctrl+C during a turn cancels only that turn (its
@@ -1069,7 +1124,7 @@ async fn run_repl_loop(
             "/exit" | "/quit" => break 0,
             "/help" => {
                 eprintln!(
-                    "commands: /help, /new, /clear, /compact, /exit, /shake [elide|images|thinking], /skill:<name> [arguments]"
+                    "commands: /help, /new, /clear, /compact, /exit, /shake [elide|images|thinking], /handoff [focus], /skill:<name> [arguments]"
                 );
                 for skill in session.skills {
                     eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
@@ -1191,6 +1246,44 @@ async fn run_repl_loop(
                 Ok(true) => provider = session.provider_factory.build(),
                 Ok(false) => {}
                 Err(error) => eprintln!("ara: shake failed ({error:#}); inspect the Session receipt"),
+            }
+            if sink.persist_failed.load(Ordering::SeqCst) {
+                break 1;
+            }
+            continue;
+        }
+        if input == "/handoff" || input.starts_with("/handoff ") {
+            let focus = input.strip_prefix("/handoff").unwrap().trim();
+            let token = cancel.child_token();
+            let config = AgentConfig {
+                model: model.clone(),
+                provider: provider.clone(),
+                system_prompt: system_prompt.clone(),
+                tools: tools.to_vec(),
+                tool_choice: None,
+                max_tokens: args.max_tokens,
+                temperature: args.temperature,
+                deadline: args.max_time.map(|seconds| Instant::now() + Duration::from_secs_f64(seconds.max(0.0))),
+                max_model_calls: args.max_model_calls,
+                hooks: hooks.clone(),
+            };
+            let step = run_repl_handoff(
+                &config,
+                session.provider_factory,
+                args.compact_keep_tokens,
+                (!focus.is_empty()).then_some(focus),
+                context,
+                sink,
+                &token,
+            );
+            match interruptible(step, &token, &mut interrupts).await {
+                Ok(true) => {
+                    let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
+                    provider =
+                        session.provider_factory.route.bind_codex_session(session.provider_factory.client.clone(), id);
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("ara: handoff failed ({error:#}); inspect the Session receipt"),
             }
             if sink.persist_failed.load(Ordering::SeqCst) {
                 break 1;

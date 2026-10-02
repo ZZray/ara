@@ -16,6 +16,7 @@ mod catalog_tls;
 pub mod context_budget;
 pub mod credential_store;
 pub mod daily_model_config;
+pub mod handoff;
 pub mod js_regex;
 pub mod local_reduction;
 pub mod model_cache;

@@ -195,6 +195,7 @@ pub(super) struct RecoveryCompactionSettings {
     pub method_order: Vec<String>,
     pub supersede_reads: bool,
     pub drop_useless: bool,
+    pub handoff_save_to_disk: bool,
 }
 
 impl AutoCompactionPolicy {
@@ -249,6 +250,11 @@ impl AutoCompactionPolicy {
             method_order,
             supersede_reads: boolean("supersedeReads")?,
             drop_useless: boolean("dropUseless")?,
+            handoff_save_to_disk: match field("handoffSaveToDisk") {
+                None | Some(Yaml::Null) => false,
+                Some(Yaml::Boolean(enabled)) => *enabled,
+                Some(_) => bail!("compaction.handoffSaveToDisk must be a boolean"),
+            },
         })
     }
 

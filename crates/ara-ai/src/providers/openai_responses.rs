@@ -41,6 +41,8 @@ pub struct RequestOptions {
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub tool_choice: Option<ToolChoice>,
+    /// Host cache identity may differ from a side request's transport Session.
+    pub prompt_cache_key: Option<String>,
     /// Host-confirmed input capability; unknown defaults to text only.
     pub supports_images: bool,
     /// `None` preserves stateless direct-call replay; a hosted cold session sets `false`.
@@ -1022,6 +1024,9 @@ pub(crate) fn build_request_for_api(
             body["tool_choice"] = wire;
         }
     }
+    if let Some(key) = options.prompt_cache_key.as_deref().filter(|key| !key.is_empty()) {
+        body["prompt_cache_key"] = json!(key);
+    }
     Ok(body)
 }
 
@@ -1419,6 +1424,7 @@ mod tests {
                 tool_choice: Some(ToolChoice::Tool("read".into())),
                 supports_images: false,
                 native_history_replay: None,
+                prompt_cache_key: None,
             },
         )
         .unwrap();

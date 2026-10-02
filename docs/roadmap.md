@@ -1,5 +1,13 @@
 # Delivery roadmap
 
+The [handoff checkpoint](evidence/native-handoff.md) adds live-context side
+requests, checked same-Session documents, REPL manual and automatic RPC
+threshold/incomplete selection. Modules 147/0, Windows 1,565/0/20, final Host
+flows/cancellation and actual CAS handoff/write/read/tool-disabled reopen pass.
+Independent/Root audits retain native effort/manual RPC/speculation/replacement
+and other recorded gaps. Next remote, snapcompact/frame rescue and registry/auth
+callers; P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker null remain.
+
 The [local reducer checkpoint](evidence/local-reducers.md) adds checked raw
 pruning/shake/artifact publication, usage-anchor rebase and ordinary tiered
 rescue. Final Windows 1,557/0/20 and Host 17/0 pass one stable 152.621s command;

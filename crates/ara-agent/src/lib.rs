@@ -15,3 +15,4 @@ pub use agent_loop::{
 pub use event::{AgentEvent, AgentEventSink, NullSink, RecordingSink};
 pub use tool::{AgentTool, Concurrency, ToolDecision, ToolError, ToolOutput, UpdateFn};
 pub mod compaction;
+pub mod handoff;

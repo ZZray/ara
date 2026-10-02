@@ -332,7 +332,7 @@ impl Host {
     }
     // Caller holds the journal across the synchronous branch transition.
     // Existing jobs keep their original raw branch; later jobs get a fresh owner.
-    fn maintenance_bash_transition(&mut self, parent: Option<String>) {
+    pub(super) fn maintenance_bash_transition(&mut self, parent: Option<String>) {
         let mut current = self.bash_dispatcher.current.lock().unwrap();
         for target in self.bash_targets.iter().filter_map(Weak::upgrade) {
             let mut target = target.lock().unwrap();
@@ -480,11 +480,49 @@ impl Host {
             self.restore_maintenance(recovery, &session).await?;
             return Err(error.into());
         }
-        // Follow the configured order among available native methods. Remote,
-        // frame and handoff methods retain their separately recorded open gates.
+        // Native handoff is inline for incomplete output and unavailable for
+        // overflow. Remote and frame methods keep their separately open gates.
         for method in &settings.method_order {
             if method == "soft" {
                 break;
+            }
+            if method == "handoff" && incomplete {
+                let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
+                match handoff {
+                    Ok(Some(_)) => {
+                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                            true
+                        } else {
+                            self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
+                        };
+                        if fits {
+                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            return Ok(MaintenanceOutcome {
+                                continuation_scheduled: true,
+                                history_rewritten: true,
+                                ..none
+                            });
+                        }
+                        return Ok(MaintenanceOutcome {
+                            automatic_continuation_blocked: true,
+                            history_rewritten: true,
+                            ..none
+                        });
+                    }
+                    Err(error) if self.connection.is_cancelled() || ara_cli::handoff::is_cancelled(&error) => {
+                        if !self.connection.is_cancelled() {
+                            self.restore_maintenance(recovery, &session).await?;
+                        }
+                        return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
+                    }
+                    Err(_) => {
+                        self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                            "message":"Handoff compaction failed; trying the next preferred method"}));
+                    }
+                    Ok(None) => {}
+                }
+                continue;
             }
             if method != "shake" {
                 continue;
