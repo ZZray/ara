@@ -1,6 +1,33 @@
 # ARA execution plan
 
-**Latest checkpoint, 2026-10-02:** [grouped raw entries](evidence/native-raw-entries.md)
+**Latest checkpoint, 2026-10-02 (tested/audited bounded WIP):**
+[Local reducers](evidence/local-reducers.md) reproduce pruning,
+superseded/useless results, shake elide/images/thinking, checked raw Session
+rewrites, artifact recovery and ordinary tiered rescue. Final Windows backend
+1,557/0/20, Host 17/0 and inventory/deny/build pass one stable 152.621s command.
+Five actual controlled Host families pass in 3.756s, including two >8MiB
+artifacts and Session A/B/A selectors. Preferred CAS `deepseek-v4.1-flash`
+read/write/read and tool-disabled original-Session reopen pass in 12.512s,
+five calls; the Manager gateway was unavailable and its private configured CAS
+route was verified. Independent and Root audits bind 25 hashes/binary/artifacts.
+From about 07:44 UTC to live verification about 08:50 UTC took 67 minutes;
+documentation/Git closure is separate. Successful final compile step is 0.427s;
+backend 139.010s includes lint/compiler work. A failed gate spent 4m27s on
+all-target recompilation and exposed a repaired default Windows stack overflow.
+Exact no-soft prepublication process injection remains NOT RUN. P0/V1 accepted,
+P1–P6 open, RPC 27/42 and full marker null remain unchanged.
+
+**Next modules, fixed-source inventory sized 2026-10-02:** handoff 45–90 minutes,
+remote 120–240 minutes, snapcompact 180–300 minutes, frame rescue 30–60 minutes
+of net engineering, total 6–11.5 hours for these four modules only. This excludes
+shared gates/environment waits and is not the remaining whole-project ETA.
+Reuse live Context, Session commit/projection, configured routes/auth and the
+fixed native Rust renderer; concentrate native fixture families per module and
+share the final stable gate. Begin with handoff, then registry/auth callers and
+recorded raw-role/token/legacy/settings contracts as dependencies require.
+OpenAI account real tasks/Linux and other recorded differences remain open.
+
+**Previous checkpoint, 2026-10-02:** [grouped raw entries](evidence/native-raw-entries.md)
 add native metadata/custom/hook/branch/Bash cuts, plural model fragments,
 single real source IDs, origin-aware prompt state and checked native writes with
 safe old V1 read compatibility across Session → Core → REPL/RPC. Twelve modules
@@ -11,15 +38,10 @@ The local Manager gateway was unavailable; direct CAS from its private config
 was verified. Independent and Root audits bind source, binary and artifacts.
 P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker null stay unchanged.
 
-**Next module and timing:** remaining compaction methods/reducers/rescue using
-the shared engine, followed by registry/auth execution for smart online/local
-and accepted-empty custom Host callers. Full raw roles/token/legacy replay,
-input/settings/receipt contracts, actual OpenAI account tasks and Linux remain
-required. Raw-entry implementation and initial final validation took about
-34 minutes, followed by review/document/commit closure. The earlier 45–90 minute
-estimate applied only to that batch. Size the next module from its exact source
-map before stating an ETA; full-project ETA still needs remaining inventory
-costs. Test counts/checkpoint counts are not total parity percentages.
+Raw-entry implementation and initial final validation took about 34 minutes,
+followed by review/document/commit closure. Its earlier 45–90 minute estimate
+applied only to that batch. Test/checkpoint counts are not parity percentages;
+full-project ETA still needs the remaining inventory costs.
 
 **Draft v1, 2026-09-25.** This will be revised after the user's reference documents (`ara-doc-ref`) are added to the repository. It is a plan, not an implementation claim. Status lives in the [feature ledger](upstream/feature-ledger.md) and in `docs/evidence/`. Gates follow the [roadmap](roadmap.md) and [acceptance rules](acceptance.md).
 

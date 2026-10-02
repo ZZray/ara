@@ -48,12 +48,26 @@ pub struct UriResource {
     pub immutable: bool,
 }
 
+/// An internal Host's authorized immutable file. Remote URI responses cannot
+/// supply this capability; ports opt in through `read_file` below.
+#[derive(Clone, Debug)]
+pub struct UriFileResource {
+    pub path: PathBuf,
+    pub content_type: String,
+    pub max_inline_bytes: Option<u64>,
+}
+
 /// Optional per-host content routing for `read` and `write`. The host owns
 /// registrations, permissions and request transport; ordinary tool gates still
 /// run before these methods. Other tools retain their filesystem contracts.
 #[async_trait]
 pub trait ContentUriPort: Send + Sync {
     fn route(&self, url: &str) -> ContentUriRoute;
+    /// Native artifacts can be larger than their inline limit. Let the read
+    /// tool apply its existing bounded file window without loading the blob.
+    async fn read_file(&self, _url: &str, _cancel: CancellationToken) -> Result<Option<UriFileResource>, ToolError> {
+        Ok(None)
+    }
     async fn read(&self, url: &str, cancel: CancellationToken) -> Result<UriResource, ToolError>;
     async fn write(&self, url: &str, content: &str, cancel: CancellationToken) -> Result<(), ToolError>;
 }

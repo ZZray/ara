@@ -721,13 +721,15 @@ async fn rpc_auto_compaction_persistent_policy_billed_threshold_and_single_fire(
     let env = Env::new();
     let up = upstream(vec![
         answer_with_input("small first", 1),
-        answer_with_input("small billed tail", 5000),
+        answer_with_input("small billed tail", 100_000),
         answer("automatic billed summary"),
         answer_with_input("after automatic summary", 1),
         answer("restart disabled answer"),
     ])
     .await;
-    let mut child = RpcChild::spawn(&env, &up, &["--compact-threshold", "1000"]);
+    // Native sizing includes system/tools; keep the recovery band above that
+    // fixed cost while the provider-reported prefix still triggers maintenance.
+    let mut child = RpcChild::spawn(&env, &up, &["--compact-threshold", "50000"]);
     child.ready();
     assert_eq!(child.state("auto-default")["autoCompactionEnabled"], true);
     toggle(&mut child, "auto-off", false);

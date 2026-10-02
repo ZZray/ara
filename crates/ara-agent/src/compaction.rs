@@ -24,6 +24,9 @@ use crate::tokenizer::{
 };
 use ara_ai::retry_classification::{RetryClass, classify_retry};
 
+#[path = "local_reduction.rs"]
+pub mod local_reduction;
+
 const TOOL_RESULT_MAX_CHARS: usize = 2_000;
 const MAX_SUMMARY_INPUT_BYTES: usize = 1_000_000;
 const MAX_SUMMARY_SOURCES: usize = 256;
@@ -48,6 +51,7 @@ pub enum NativeEntryOrigin {
     Developer,
     BashExecution,
     HookMessage,
+    FileMention,
     LegacyCustomMessage,
     LegacyBranchSummary,
     LegacyCompactionSummary,
@@ -70,6 +74,7 @@ impl NativeEntryOrigin {
                 | Self::Developer
                 | Self::BashExecution
                 | Self::HookMessage
+                | Self::FileMention
                 | Self::LegacyCustomMessage
                 | Self::LegacyBranchSummary
                 | Self::LegacyCompactionSummary
@@ -79,7 +84,12 @@ impl NativeEntryOrigin {
     fn is_cut_point(self) -> bool {
         !matches!(
             self,
-            Self::ToolResult | Self::Developer | Self::LegacyCustomMessage | Self::Metadata | Self::CompactionBoundary
+            Self::ToolResult
+                | Self::Developer
+                | Self::LegacyCustomMessage
+                | Self::FileMention
+                | Self::Metadata
+                | Self::CompactionBoundary
         )
     }
 
@@ -97,7 +107,14 @@ impl NativeEntryOrigin {
     }
 
     fn permits_historical_developer(self) -> bool {
-        matches!(self, Self::HookMessage | Self::LegacyCustomMessage | Self::CustomMessage | Self::LoopGuardNotice)
+        matches!(
+            self,
+            Self::HookMessage
+                | Self::FileMention
+                | Self::LegacyCustomMessage
+                | Self::CustomMessage
+                | Self::LoopGuardNotice
+        )
     }
 }
 
@@ -495,6 +512,10 @@ fn validate_native_entry_sources(sources: &[NativeEntrySource<'_>]) -> Result<()
             NativeEntryOrigin::BashExecution => {
                 matches!(source.messages, [] | [Message::User(_)])
             }
+            NativeEntryOrigin::FileMention => matches!(
+                source.messages,
+                [] | [Message::Developer(_)] | [Message::User(_)] | [Message::Developer(_), Message::User(_)]
+            ),
             NativeEntryOrigin::CustomMessage
             | NativeEntryOrigin::HookMessage
             | NativeEntryOrigin::LegacyCustomMessage => {

@@ -27,10 +27,15 @@
 //! listing/search, moving, title generation, blob externalization.
 
 mod loop_guard_notice;
+mod reduction;
 mod skill_prompt;
 
 pub use loop_guard_notice::{
     GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE, TOOL_CALL_LOOP_REDIRECT_TYPE,
+};
+pub use reduction::{
+    SessionReductionAction, SessionReductionEdit, SessionReductionError, SessionReductionReceipt, SessionReductionSlot,
+    SessionReductionSnapshot,
 };
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
@@ -307,6 +312,14 @@ pub enum SessionError {
 
 pub type Result<T> = std::result::Result<T, SessionError>;
 
+/// An atomic rewrite may have published its candidate before its final
+/// directory durability barrier fails. New checked transactions retain that
+/// distinction; the older `rewrite` facade keeps its existing error API.
+enum RewritePhaseError {
+    BeforePublication(SessionError),
+    PublishedButDurabilityUnknown(SessionError),
+}
+
 fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
@@ -489,6 +502,36 @@ impl Entry {
                 message.get("tokensBefore")?.as_u64()?;
                 Some(vec![summary_model_message(message, "compaction", message.get("timestamp")?.as_i64()?)?])
             }
+            "message" if self.role() == Some("fileMention") => file_mention_model_messages(self.raw.get("message")?),
+            "message" if self.role() == Some("toolResult") => {
+                let mut message = self.raw.get("message")?.clone();
+                if message.get("prunedAt").is_some() {
+                    // Fixed compaction/messages.ts getPrunedToolResultContent:
+                    // canonical projection only; original raw receipt stays intact.
+                    let blocks = message.get("content")?.as_array()?;
+                    let mut text = String::new();
+                    for block in blocks.iter().filter(|block| block["type"] == "text") {
+                        text.push_str(block["text"].as_str()?);
+                    }
+                    if text.is_empty() {
+                        text.push_str("[Output truncated]");
+                    }
+                    let first = blocks.iter().position(|block| block["type"] == "text");
+                    let mut content = Vec::new();
+                    if first.is_none() {
+                        content.push(json!({"type":"text","text":text}));
+                    }
+                    for (index, block) in blocks.iter().enumerate() {
+                        if block["type"] != "text" {
+                            content.push(block.clone());
+                        } else if first == Some(index) {
+                            content.push(json!({"type":"text","text":text}));
+                        }
+                    }
+                    message["content"] = json!(content);
+                }
+                Some(vec![serde_json::from_value(message).ok()?])
+            }
             "message" => Some(vec![serde_json::from_value(self.raw.get("message")?.clone()).ok()?]),
             "custom_message" => custom_entry_model_messages(&self.raw),
             "branch_summary" if self.is_discarded_entry_branch_marker() => Some(Vec::new()),
@@ -543,6 +586,7 @@ impl Entry {
                 Some("custom") => NativeEntryOrigin::LegacyCustomMessage,
                 Some("branchSummary") => NativeEntryOrigin::LegacyBranchSummary,
                 Some("compactionSummary") => NativeEntryOrigin::LegacyCompactionSummary,
+                Some("fileMention") => NativeEntryOrigin::FileMention,
                 _ => unreachable!("canonical message decoder recognized a fixed role"),
             },
             "custom_message" if self.is_user_skill_prompt_candidate() => NativeEntryOrigin::UserSkill,
@@ -566,6 +610,8 @@ impl Entry {
             let mut projected = messages.clone();
             if projected.len() == 1 {
                 projected.pop()
+            } else if projected.is_empty() {
+                None
             } else {
                 let content: Vec<UserBlock> = projected
                     .into_iter()
@@ -600,6 +646,53 @@ impl Entry {
 
 fn entry_timestamp(raw: &Value) -> Option<i64> {
     Some(chrono::DateTime::parse_from_rfc3339(raw.get("timestamp")?.as_str()?).ok()?.timestamp_millis())
+}
+
+/// Fixed session/messages.ts fileMention conversion: text files occupy the
+/// Developer slot, image files the User slot, in that order. Do not persist
+/// wrappers or manufacture text for an empty file list.
+fn file_mention_model_messages(raw: &Value) -> Option<Vec<Message>> {
+    let timestamp = raw.get("timestamp")?.as_i64()?;
+    let files = raw.get("files")?.as_array()?;
+    let mut text_files = Vec::new();
+    let mut image_files = Vec::new();
+    let mut images = Vec::new();
+    for file in files {
+        let path = file.get("path")?.as_str()?;
+        let content = match file.get("content") {
+            None | Some(Value::Null) => "",
+            Some(content) => content.as_str()?,
+        };
+        let wrapped = if content.is_empty() {
+            format!("<file path=\"{path}\">\n</file>")
+        } else {
+            format!("<file path=\"{path}\">\n{content}\n</file>")
+        };
+        match file.get("image") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => text_files.push(wrapped),
+            Some(image) => {
+                let image: UserBlock = serde_json::from_value(image.clone()).ok()?;
+                if !matches!(image, UserBlock::Image(_)) {
+                    return None;
+                }
+                image_files.push(wrapped);
+                images.push(image);
+            }
+        }
+    }
+    let mut messages = Vec::new();
+    if !text_files.is_empty() {
+        messages.push(Message::Developer(DeveloperMessage {
+            content: UserContent::Blocks(vec![UserBlock::text(text_files.join("\n"))]),
+            timestamp,
+        }));
+    }
+    if !image_files.is_empty() {
+        let mut content = vec![UserBlock::text(image_files.join("\n"))];
+        content.extend(images);
+        messages.push(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }));
+    }
+    Some(messages)
 }
 
 fn content_blocks(content: UserContent) -> Vec<UserBlock> {
@@ -721,6 +814,7 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
                 | NativeEntryOrigin::HookMessage
                 | NativeEntryOrigin::LegacyCustomMessage
                 | NativeEntryOrigin::LoopGuardNotice
+                | NativeEntryOrigin::FileMention
         );
         for message in group.messages {
             if !saw_message && !matches!(message, Message::User(_)) && !historical_custom {
@@ -806,6 +900,7 @@ fn native_kept_boundary_supported(branch: &[&Entry], index: usize) -> bool {
             NativeEntryOrigin::ToolResult
                 | NativeEntryOrigin::Developer
                 | NativeEntryOrigin::LegacyCustomMessage
+                | NativeEntryOrigin::FileMention
                 | NativeEntryOrigin::CompactionBoundary
         );
     }
@@ -860,6 +955,7 @@ pub enum NativeEntryOrigin {
     LegacyCustomMessage,
     LegacyBranchSummary,
     LegacyCompactionSummary,
+    FileMention,
     CustomMessage,
     UserSkill,
     SteeringUser,
@@ -1012,6 +1108,15 @@ pub struct FailedAssistantRecovery {
     failed_entry: Entry,
     assistant: AssistantMessage,
     previous_compaction_id: Option<String>,
+    local_history_rewritten: bool,
+}
+
+impl FailedAssistantRecovery {
+    /// A checked local transaction has published the matching discard marker.
+    /// Hosts retain this fact even when later rescue layers make no progress.
+    pub fn local_history_rewritten(&self) -> bool {
+        self.local_history_rewritten
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -1416,16 +1521,30 @@ impl SessionJournal {
     /// Atomic full rewrite: synced backup of damaged bytes, unique temp file,
     /// fsync, rename, and directory fsync where supported.
     fn rewrite(&mut self) -> Result<()> {
+        self.rewrite_with_directory_sync(sync_dir).map_err(|error| match error {
+            RewritePhaseError::BeforePublication(error) | RewritePhaseError::PublishedButDurabilityUnknown(error) => {
+                error
+            }
+        })
+    }
+
+    fn rewrite_with_directory_sync(
+        &mut self,
+        directory_sync: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> std::result::Result<(), RewritePhaseError> {
         if !self.persistent {
             return Ok(());
         }
         let dir = self.dir();
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir).map_err(|error| RewritePhaseError::BeforePublication(error.into()))?;
         if self.pending_backup && self.path.exists() {
             let backup = self.path.with_extension(format!("jsonl.torn-{}.bak", now_ms()));
-            fs::copy(&self.path, &backup)?;
-            OpenOptions::new().write(true).open(&backup)?.sync_all()?;
-            sync_dir(&dir)?;
+            let backed_up = (|| -> std::io::Result<()> {
+                fs::copy(&self.path, &backup)?;
+                OpenOptions::new().write(true).open(&backup)?.sync_all()?;
+                sync_dir(&dir)
+            })();
+            backed_up.map_err(|error| RewritePhaseError::BeforePublication(error.into()))?;
             self.report.backup = Some(backup);
             self.pending_backup = false;
         }
@@ -1435,13 +1554,13 @@ impl SessionJournal {
             let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
             f.write_all(self.file_body().as_bytes())?;
             f.sync_all()?;
-            fs::rename(&tmp, &self.path)?;
-            sync_dir(&dir)
+            fs::rename(&tmp, &self.path)
         })();
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
-            return Err(e.into());
+            return Err(RewritePhaseError::BeforePublication(e.into()));
         }
+        directory_sync(&dir).map_err(|error| RewritePhaseError::PublishedButDurabilityUnknown(error.into()))?;
         self.materialized = true;
         self.rewrite_required = false;
         Ok(())
@@ -1540,6 +1659,7 @@ impl SessionJournal {
             failed_entry: (*branch[index]).clone(),
             assistant: assistant.clone(),
             previous_compaction_id,
+            local_history_rewritten: false,
         };
         self.leaf = token.failed_entry.parent_id.clone();
         Ok(token)
@@ -1882,7 +2002,7 @@ impl SessionJournal {
             })?
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
-        let mut fields = notice.event_message().as_object().expect("notice is an object").clone();
+        let mut fields = notice.persistence_event_message().as_object().expect("notice is an object").clone();
         fields.remove("role");
         fields.insert("timestamp".into(), json!(timestamp));
         self.append_raw("custom_message", fields)
@@ -1960,6 +2080,10 @@ impl SessionJournal {
         if (self.persistent && !self.materialized) || self.leaf.is_none() {
             return Err(CompactionSourceError::NotDurable);
         }
+        self.strict_raw_branch()
+    }
+
+    fn strict_raw_branch(&self) -> std::result::Result<Vec<&Entry>, CompactionSourceError> {
         if self.rewrite_required {
             return Err(CompactionSourceError::UnrepairedJournal);
         }
@@ -1975,8 +2099,7 @@ impl SessionJournal {
                 return Err(CompactionSourceError::DuplicateEntryId { id: entry.id.clone() });
             }
         }
-        let leaf_id = self.leaf.as_ref().expect("checked leaf").clone();
-        let mut current = Some(leaf_id.as_str());
+        let mut current = self.leaf.as_deref();
         let mut seen = HashSet::new();
         let mut branch = Vec::new();
         while let Some(id) = current {

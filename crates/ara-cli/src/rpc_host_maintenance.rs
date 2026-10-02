@@ -2,11 +2,11 @@
 //! Other compaction methods and dead-end rescue remain required parity work.
 use super::*;
 use ara_agent::compaction::{
-    AcceptedSummary, SummaryOptions, SummarySource, select_native_compaction_cut, summarize_compaction_cut,
+    AcceptedSummary, SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
     summary_output_budget_tokens,
 };
 use ara_agent::tokenizer::{MessageCountOptions, count_messages};
-use ara_session::{FailedAssistantRecovery, FailedAssistantRecoveryOutcome, ProjectedCompactionSnapshot};
+use ara_session::{FailedAssistantRecovery, FailedAssistantRecoveryOutcome, NativeProjectedCompactionSnapshot};
 
 #[derive(Default)]
 pub(super) struct MaintenanceOutcome {
@@ -22,7 +22,7 @@ pub(super) struct ActiveMaintenance {
     session: Arc<Session>,
     generation: u64,
     command: Command,
-    snapshot: ProjectedCompactionSnapshot,
+    snapshot: NativeProjectedCompactionSnapshot,
     first_kept: String,
     tokens_before: u64,
     expected_messages: Vec<Message>,
@@ -79,7 +79,7 @@ fn persisted_assistant_id(active: &ActiveRun, message: &AssistantMessage) -> Res
         .context("recovery assistant has no persisted native entry ID")
 }
 
-fn retry_fit(window: Option<f64>, reserve: Option<f64>, messages: &[Message]) -> bool {
+pub(super) fn retry_tokens_fit(window: Option<f64>, reserve: Option<f64>, tokens: usize) -> bool {
     let Some(window) = window.filter(|window| window.is_finite() && *window > 0.0) else { return true };
     // Fixed agent compaction.ts:303-333. Preserve explicit/default provenance.
     let proportional = (window * 0.15).floor().max(1.0);
@@ -89,7 +89,7 @@ fn retry_fit(window: Option<f64>, reserve: Option<f64>, messages: &[Message]) ->
     } else {
         effective
     };
-    stored_tokens(messages) as f64 <= (window - resolved).max(0.0)
+    tokens as f64 <= (window - resolved).max(0.0)
 }
 
 impl Host {
@@ -417,7 +417,7 @@ impl Host {
             return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
         }
         let settings = self.compaction_policy.recovery_settings()?;
-        if !self.compaction_policy.enabled() || !settings.soft_available {
+        if !self.compaction_policy.enabled() || settings.method_order.is_empty() {
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
         }
         if incomplete {
@@ -448,7 +448,9 @@ impl Host {
             self.terminal_recovery.incomplete_attempts += 1;
         }
         // Validate the native output budget before changing the failed turn.
-        summary_output_budget_tokens(settings.reserve_tokens)?;
+        if settings.soft_available {
+            summary_output_budget_tokens(settings.reserve_tokens)?;
+        }
         // Explicit takeover closes the previous saga exactly once.
         if self.retry.is_some() {
             self.finish_retry(None, Some("Retry transferred to context overflow recovery".into()), false).await;
@@ -465,13 +467,12 @@ impl Host {
             .find_map(|(id, candidate)| (candidate.as_assistant() == Some(message)).then(|| id.clone()))
             .context("overflow assistant has no persisted native entry ID")?;
         let session = self.session.clone();
-        let (recovery, preparation) = {
+        let mut recovery = {
             let mut journal = session.journal.lock().await;
             let leaf = journal.leaf_id().context("overflow recovery has no active branch")?.to_owned();
             let recovery = journal.begin_failed_assistant_recovery(&leaf, &entry_id, message)?;
             self.maintenance_bash_transition(Some(leaf));
-            let preparation = journal.projected_compaction_snapshot();
-            (recovery, preparation)
+            recovery
         };
         let mut clean = messages;
         clean.pop();
@@ -479,15 +480,67 @@ impl Host {
             self.restore_maintenance(recovery, &session).await?;
             return Err(error.into());
         }
+        // Follow the configured order among available native methods. Remote,
+        // frame and handoff methods retain their separately recorded open gates.
+        for method in &settings.method_order {
+            if method == "soft" {
+                break;
+            }
+            if method != "shake" {
+                continue;
+            }
+            let reduced = self.shake_local_history(false, Some(&mut recovery)).await;
+            match reduced {
+                Ok(true) if self.recovery_fits(settings.reserve_tokens, None, &[]).await => {
+                    session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+                    let messages = self.agent.messages().await;
+                    self.queue_terminal_continue(active, messages);
+                    self.output.frame(json!({"type":"notice","level":"info","source":"compaction", "message":"Local shake restored the retry context; original output is available through artifact recovery."}));
+                    return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
+                }
+                Err(error) => {
+                    if !self.connection.is_cancelled() {
+                        self.restore_maintenance(recovery, &session).await?;
+                    }
+                    return Err(error);
+                }
+                _ => {}
+            }
+        }
+        if !settings.soft_available {
+            let rescued = self
+                .rescue_local_history(
+                    settings.reserve_tokens,
+                    None,
+                    settings.method_order.iter().any(|method| method == "shake"),
+                    &[],
+                    Some(&mut recovery),
+                )
+                .await;
+            let rescued = match rescued {
+                Ok(rescued) => rescued,
+                Err(error) => {
+                    if !self.connection.is_cancelled() {
+                        self.restore_maintenance(recovery, &session).await?;
+                    }
+                    return Err(error);
+                }
+            };
+            if rescued {
+                session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+                self.queue_terminal_continue(active, self.agent.messages().await);
+                return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
+            }
+            self.restore_maintenance(recovery, &session).await?;
+            return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, history_rewritten: true, ..none });
+        }
+        clean = self.agent.messages().await;
+        let preparation = session.journal.lock().await.native_projected_compaction_snapshot();
         let prepared = (|| -> Result<_> {
             let snapshot = preparation?;
-            let sources = snapshot
-                .messages
-                .iter()
-                .map(|m| SummarySource { entry_id: &m.entry_id, message: &m.message })
-                .collect::<Vec<_>>();
+            let sources = ara_cli::native_compaction::sources(&snapshot.entries);
             let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
-            let cut = select_native_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)?
+            let cut = select_native_entry_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)?
                 .context("No native message prefix can be compacted with the current keep-token budget")?;
             Ok((snapshot, cut))
         })();
@@ -510,12 +563,8 @@ impl Host {
         let reserve_tokens = settings.reserve_tokens;
         let host_cap = self.config.max_tokens;
         let task = tokio::spawn(async move {
-            let sources = task_snapshot
-                .messages
-                .iter()
-                .map(|m| SummarySource { entry_id: &m.entry_id, message: &m.message })
-                .collect::<Vec<_>>();
-            summarize_compaction_cut(
+            let sources = ara_cli::native_compaction::sources(&task_snapshot.entries);
+            summarize_native_entry_compaction_cut(
                 &sources,
                 &cut,
                 task_snapshot.previous_summary.as_ref().map(|s| s.summary.as_str()),
@@ -555,7 +604,8 @@ impl Host {
 
     async fn restore_maintenance(&mut self, recovery: FailedAssistantRecovery, session: &Arc<Session>) -> Result<()> {
         let mut journal = session.journal.lock().await;
-        let outcome = journal.finish_failed_assistant_recovery(recovery, false)?;
+        let rewritten = recovery.local_history_rewritten();
+        let outcome = journal.finish_failed_assistant_recovery(recovery, rewritten)?;
         let mut public = Session::public_messages(&journal);
         if let FailedAssistantRecoveryOutcome::Restored { message, appended_entry_id } = outcome {
             let message = *message;
@@ -596,7 +646,7 @@ impl Host {
                 bail!("Context changed during overflow recovery");
             }
             let mut journal = active.session.journal.lock().await;
-            if let Err(error) = journal.commit_native_projected_compaction(
+            if let Err(error) = journal.commit_native_entry_compaction(
                 &active.snapshot,
                 &accepted.text,
                 &active.first_kept,
@@ -617,6 +667,7 @@ impl Host {
             }
             *active.session.messages.lock().unwrap() = Session::public_messages(&journal);
             self.config.provider = self.sessions.provider.build();
+            self.publish_snapshot(&self.config);
             Ok::<_, anyhow::Error>(accepted)
         }
         .await;
@@ -643,11 +694,19 @@ impl Host {
         match result {
             Ok(accepted) => {
                 event["result"] = json!({"summary":accepted.text,"firstKeptEntryId":active.first_kept,"tokensBefore":active.tokens_before});
+                let fits = if self.recovery_fits(active.reserve_tokens, None, &[]).await {
+                    true
+                } else {
+                    match self.rescue_local_history(active.reserve_tokens, None, false, &[], None).await {
+                        Ok(fits) => fits,
+                        Err(error) => {
+                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction","message":error.to_string()}));
+                            false
+                        }
+                    }
+                };
                 let messages = self.agent.messages().await;
-                if !cancelled
-                    && !self.connection.is_cancelled()
-                    && retry_fit(self.config.model.context_window, active.reserve_tokens, &messages)
-                {
+                if !cancelled && !self.connection.is_cancelled() && fits {
                     self.maintenance_continue = Some(PendingMaintenanceContinue {
                         session: active.session,
                         generation: active.generation,
@@ -678,7 +737,9 @@ impl Host {
         if let Some(mut active) = self.maintenance.take() {
             active.cancel.cancel();
             let result = (&mut active.task).await;
-            self.completed_maintenance(active, result).await;
+            // Settlement now contains tiered local rescue. Keep its future
+            // out of the serial abort/new/switch state on Windows' main stack.
+            Box::pin(self.completed_maintenance(active, result)).await;
         }
     }
 
@@ -697,9 +758,7 @@ impl Host {
         if self.agent.has_queued_messages() {
             self.drain_queues = true;
             self.reconcile_queues().await;
-        } else if pending.check_fit
-            && !retry_fit(self.config.model.context_window, pending.reserve_tokens, &pending.expected_messages)
-        {
+        } else if pending.check_fit && !self.recovery_fits(pending.reserve_tokens, None, &[]).await {
             self.drain_queues = false;
             self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                 "message":"Context changed after compaction and no longer fits the model."}));

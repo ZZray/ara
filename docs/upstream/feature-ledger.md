@@ -1,5 +1,16 @@
 # OMP feature ledger
 
+**2026-10-02 local reducer checkpoint (tested/audited bounded WIP):**
+[Executed local reducer evidence](../evidence/local-reducers.md) maps fixed
+prune/shake/elide/images/thinking, artifact selector recovery, checked Session
+rewrite/atomic discard and ordinary tiered rescue to Core/Session/REPL/RPC.
+Final Windows 1,557/0/20, Host 17/0, controlled five families and actual CAS
+read/write/read/tool-disabled original-Session reopen pass; independent and Root
+audits bind 25 hashes and binary/artifacts. No full parent surface is accepted.
+Exact no-soft prepublication RPC process injection is NOT RUN; wider remote/
+handoff/snapcompact/frame rescue, registry/auth and all recorded contracts remain
+mandatory. P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker null remain.
+
 **2026-10-02 grouped native raw-entry checkpoint (tested/audited bounded WIP):**
 [Raw-entry evidence](../evidence/native-raw-entries.md) maps fixed raw candidates,
 metadata backtracking, custom/hook/branch/Bash origins and plural projections to

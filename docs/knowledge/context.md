@@ -71,3 +71,39 @@ new writer rule to all old records would invalidate already accepted history.
 bounded execution and audit. Full provider-native legacy summary payloads,
 attribution/historyRewriteAt, remaining raw roles/token contracts and other
 compaction methods remain open; this seam is not full surface acceptance.
+
+## Local history rewrite and usage anchors
+
+**Implemented boundary, 2026-10-02, fixed OMP `596f2da`:** a checked local
+rewrite keeps full raw identity and source slots separate from provider
+projection. Session validates exact snapshot/UTF-16 edits and publishes the
+candidate with its recovery discard marker atomically. Before-publication
+failure restores the previous in-memory state; after-publication directory durability
+failure retains the published candidate and requires Host fail-stop. Treating
+both as a generic rollback would leave model and disk history divergent.
+
+Reserved historical notices retain strict native provenance through a versioned
+reduction proof; only verified native regions and placeholders may replace them.
+Model/public/reopen views expose reduced content, while live event admission
+still requires the original native form. This is not a general way to elevate
+arbitrary user or tool content into a trusted Developer message.
+
+Fixed usage correction applies only to changed entries strictly before a valid
+provider anchor. Pending input and system/tool cost remain in the context floor.
+Images/rescue can invalidate an old billed prefix; a Host-local rebase preserves
+the rewritten estimate until a fresh valid usage receipt arrives. Subsequent
+stale pruning must retain that invalidation, and fresh total-only usage is still
+a new report. The rebase never alters original provider usage or claims exact
+wire-fit without a native tokenizer/projection. A no-op rescue cannot establish
+progress simply because the unchanged estimate fits.
+
+Artifact numeric IDs belong to a selected Session. Explicit Host URI
+registration and Removed tombstones precede native resolution. Large artifact
+selectors stream through the existing line-window reader; whole internal
+materialization retains the fixed 8MiB bound. Native nonpersistent artifact
+save exists, but fixed URI recovery resolves disk Sessions only. Full registry
+fallback/path-only workflows remain a separate required surface.
+
+[Local reducer evidence](../evidence/local-reducers.md) records source scope,
+executed receipts, corrected failures and the remaining contracts. This boundary
+does not accept full compaction or the whole Host.

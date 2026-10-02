@@ -17,7 +17,7 @@ pub fn extension_event_message(entry: &Entry) -> Option<Value> {
         let message = entry.raw.get("message")?;
         return matches!(
             message.get("role")?.as_str()?,
-            "custom" | "hookMessage" | "branchSummary" | "compactionSummary"
+            "custom" | "hookMessage" | "fileMention" | "branchSummary" | "compactionSummary"
         )
         .then(|| message.clone());
     }
@@ -54,6 +54,7 @@ pub fn sources(entries: &[NativeCompactionEntry]) -> Vec<NativeEntrySource<'_>> 
                 SessionOrigin::Developer => CoreOrigin::Developer,
                 SessionOrigin::BashExecution => CoreOrigin::BashExecution,
                 SessionOrigin::HookMessage => CoreOrigin::HookMessage,
+                SessionOrigin::FileMention => CoreOrigin::FileMention,
                 SessionOrigin::LegacyCustomMessage => CoreOrigin::LegacyCustomMessage,
                 SessionOrigin::LegacyBranchSummary => CoreOrigin::LegacyBranchSummary,
                 SessionOrigin::LegacyCompactionSummary => CoreOrigin::LegacyCompactionSummary,

@@ -8,10 +8,15 @@
 use super::rpc_host_settings::{
     AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings, UnexpectedStopMode,
 };
+#[cfg(test)]
+#[path = "rpc_host_local_reduction_tests.rs"]
+mod local_reduction_tests;
 #[path = "rpc_host_loop_guard.rs"]
 mod loop_guard;
 #[path = "rpc_host_maintenance.rs"]
 mod maintenance;
+#[path = "rpc_host_reduction.rs"]
+mod reduction;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -359,6 +364,7 @@ impl Command {
 
 struct Session {
     journal: tokio::sync::Mutex<SessionJournal>,
+    artifacts: Arc<ara_cli::session_artifacts::SessionArtifacts>,
     // Public completed messages only. A partial is kept separately and never
     // appended by get_messages while the provider is still producing it.
     messages: Mutex<Vec<Value>>,
@@ -384,7 +390,9 @@ impl Session {
         // Native provenance comes from the active raw branch. Reopening never
         // needs the historical Skill file, nor equality against model content.
         let public_messages = Self::public_messages(&journal);
+        let artifacts = ara_cli::session_artifacts::SessionArtifacts::for_journal(&journal);
         Ok(Arc::new(Self {
+            artifacts,
             name: Mutex::new((!journal.title().title.is_empty()).then(|| journal.title().title.clone())),
             file: journal.is_persistent().then(|| journal.path().into()),
             journal: tokio::sync::Mutex::new(journal),
@@ -678,9 +686,11 @@ struct Host {
     maintenance: Option<maintenance::ActiveMaintenance>,
     maintenance_continue: Option<maintenance::PendingMaintenanceContinue>,
     terminal_recovery: maintenance::TerminalRecoveryState,
+    local_context_rebase: Option<reduction::ContextRebase>,
     sessions: SessionFactory,
     tool_bridge: Arc<ToolBridge>,
     uri_bridge: Arc<UriBridge>,
+    artifact_router: Arc<ara_cli::session_artifacts::ArtifactUriRouter>,
     host_tools: Vec<HostToolDefinition>,
     snapshot: Arc<RwLock<ExecutionSnapshot>>,
     // Deliberate abort keeps queued input visible but suppresses autonomous
@@ -986,6 +996,7 @@ impl Host {
         saga.expected_messages = messages;
         if class.stale_responses {
             self.config.provider = self.sessions.provider.build();
+            self.publish_snapshot(&self.config);
         }
         self.auto_compaction_pending = false;
         Ok(true)
@@ -1225,6 +1236,7 @@ impl Host {
             self.bash_target = target;
             // The rewritten context invalidates stateful provider replay.
             self.config.provider = self.sessions.provider.build();
+            self.publish_snapshot(&self.config);
             Ok(json!({"summary":accepted.text,"firstKeptEntryId":cut.first_kept_entry_id,
                 "tokensBefore":tokens_before}))
         }
@@ -1238,9 +1250,7 @@ impl Host {
     async fn maybe_auto_compact(&mut self, pending: &[Message]) {
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
         let threshold = self.sessions.args.compact_threshold;
-        if !self.compaction_policy.enabled()
-            || threshold == 0
-            || self.active.is_some()
+        if self.active.is_some()
             || self.retry.is_some()
             || self.header_continue.is_some()
             || self.maintenance.is_some()
@@ -1250,33 +1260,19 @@ impl Host {
             return;
         }
         let messages = self.agent.messages().await;
-        // Fixed threshold uses billed context floored by the stored estimate.
-        // The projected transcript contains only kept/post-summary messages.
-        let billed = messages
-            .iter()
-            .rev()
-            .find_map(|message| match message {
-                Message::Assistant(message)
-                    if message.model == self.config.model.id
-                        && message.provider == self.config.model.provider
-                        && matches!(message.stop_reason, ara_ai::StopReason::Stop | ara_ai::StopReason::Length) =>
-                {
-                    Some(
-                        message
-                            .usage
-                            .input
-                            .unwrap_or(0)
-                            .saturating_add(message.usage.cache_read.unwrap_or(0))
-                            .saturating_add(message.usage.cache_write.unwrap_or(0)),
-                    )
-                }
-                Message::Assistant(_) => Some(0),
-                _ => None,
-            })
-            .unwrap_or(0);
-        let stored = count_messages(&messages, MessageCountOptions::default());
-        let pending_tokens = count_messages(pending, MessageCountOptions::default());
-        let tokens = stored.max(usize::try_from(billed).unwrap_or(usize::MAX)).saturating_add(pending_tokens);
+        let tokens = self.context_tokens(&messages, pending).await;
+        let freed = match self.prune_local_history().await {
+            Ok(freed) => freed,
+            Err(error) => {
+                self.output.frame(
+                    json!({"type":"notice","level":"warning","source":"compaction","message":error.to_string()}),
+                );
+                return;
+            }
+        };
+        if !self.compaction_policy.enabled() || threshold == 0 {
+            return;
+        }
         if tokens <= threshold {
             return;
         }
@@ -1289,10 +1285,62 @@ impl Host {
         }
         self.auto_compaction_checked = Some(key);
         self.output.frame(json!({"type":"auto_compaction_start","reason":"threshold","action":"context-full"}));
-        let result = Box::pin(self.compact_with_options(
-            None,
-            ara_agent::compaction::SummaryOptions { oneshot_retry: None, max_tokens: self.config.max_tokens },
-        ))
+        let result = async {
+            let settings = self.compaction_policy.recovery_settings()?;
+            let floor = self
+                .non_message_tokens()
+                .saturating_add(count_messages(
+                    &self.agent.messages().await,
+                    MessageCountOptions { exclude_encrypted_reasoning: true },
+                ))
+                .saturating_add(count_messages(pending, MessageCountOptions { exclude_encrypted_reasoning: true }));
+            let mut progress = tokens.saturating_sub(freed).max(floor) <= (threshold as f64 * 0.8).floor() as usize;
+            let mut ran_shake = false;
+            for method in &settings.method_order {
+                if progress {
+                    break;
+                }
+                if method == "shake" {
+                    ran_shake = true;
+                    self.shake_local_history(false, None).await?;
+                    progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, freed)), pending).await;
+                } else if method == "soft" {
+                    let summary = Box::pin(self.compact_with_options(
+                        None,
+                        ara_agent::compaction::SummaryOptions {
+                            oneshot_retry: None,
+                            max_tokens: self.config.max_tokens,
+                        },
+                    ))
+                    .await?;
+                    progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, 0)), pending).await;
+                    if !progress {
+                        progress = self
+                            .rescue_local_history(
+                                settings.reserve_tokens,
+                                Some((threshold, 0)),
+                                ran_shake,
+                                pending,
+                                None,
+                            )
+                            .await?;
+                    }
+                    if !progress {
+                        bail!("Compaction could not create recovery headroom; automatic continuation stopped");
+                    }
+                    return Ok::<_, anyhow::Error>(summary);
+                }
+            }
+            if !progress {
+                progress = self
+                    .rescue_local_history(settings.reserve_tokens, Some((threshold, 0)), ran_shake, pending, None)
+                    .await?;
+            }
+            if !progress {
+                bail!("Local maintenance could not create recovery headroom; automatic continuation stopped");
+            }
+            Ok(json!({"method":"shake","tokensAfter":self.context_tokens(&self.agent.messages().await, pending).await}))
+        }
         .await;
         let mut event = json!({"type":"auto_compaction_end","action":"context-full",
             "aborted":self.connection.is_cancelled(),"willRetry":false});
@@ -1579,6 +1627,8 @@ impl Host {
         self.publish_snapshot(&config);
         self.agent = agent;
         self.terminal_recovery = maintenance::TerminalRecoveryState::default();
+        self.local_context_rebase = None;
+        self.artifact_router.bind(session.artifacts.clone());
         self.session = session;
         self.config = config;
         self.skills = skills;
@@ -2398,13 +2448,15 @@ where
         Arc::new(move |frame| emitter_output.send(OutputItem::Frame(frame)));
     let tool_bridge = ToolBridge::new(emitter.clone());
     let uri_bridge = UriBridge::new(emitter);
+    let session = Session::new(journal, header, &messages)?;
+    let artifact_router =
+        ara_cli::session_artifacts::ArtifactUriRouter::new(session.artifacts.clone(), Some(uri_bridge.clone()));
     if let Some(context) = sessions.tool_context.take() {
-        context.set_uri_port(uri_bridge.clone());
+        context.set_uri_port(artifact_router.clone());
     }
-    sessions.uri_port = Some(uri_bridge.clone());
+    sessions.uri_port = Some(artifact_router.clone());
     let snapshot = Arc::new(RwLock::new(ExecutionSnapshot::from_config(&config)));
     config.hooks = Arc::new(RpcHooks { base: config.hooks.clone(), snapshot: snapshot.clone() });
-    let session = Session::new(journal, header, &messages)?;
     let bash_target =
         Arc::new(Mutex::new(BashTarget { session: session.clone(), destination: BashDestination::Current }));
     let (bash_done_tx, mut bash_done_rx) = mpsc::unbounded_channel();
@@ -2429,9 +2481,11 @@ where
         maintenance: None,
         maintenance_continue: None,
         terminal_recovery: maintenance::TerminalRecoveryState::default(),
+        local_context_rebase: None,
         sessions,
         tool_bridge: tool_bridge.clone(),
         uri_bridge: uri_bridge.clone(),
+        artifact_router,
         host_tools: Vec::new(),
         snapshot,
         drain_queues: true,
@@ -2550,7 +2604,7 @@ where
                 }
             }, if host.maintenance.is_some() => {
                 let active = host.maintenance.take().expect("selected context maintenance");
-                host.completed_maintenance(active, result).await;
+                Box::pin(host.completed_maintenance(active, result)).await;
             }
             _ = async {
                 match &host.maintenance_continue {
@@ -2648,7 +2702,7 @@ mod tests {
             .collect()
     }
 
-    fn fixture() -> (Host, mpsc::UnboundedReceiver<OutputItem>) {
+    pub(super) fn fixture() -> (Host, mpsc::UnboundedReceiver<OutputItem>) {
         let cwd = std::env::current_dir().unwrap();
         let model = ara_ai::Model {
             id: "terminal-fixture".into(),
@@ -2714,6 +2768,7 @@ mod tests {
             maintenance: None,
             maintenance_continue: None,
             terminal_recovery: maintenance::TerminalRecoveryState::default(),
+            local_context_rebase: None,
             sessions: SessionFactory {
                 dir: None,
                 cwd,
@@ -2725,6 +2780,7 @@ mod tests {
             },
             tool_bridge: ToolBridge::new(emitter.clone()),
             uri_bridge: UriBridge::new(emitter),
+            artifact_router: ara_cli::session_artifacts::ArtifactUriRouter::new(session.artifacts.clone(), None),
             host_tools: Vec::new(),
             snapshot,
             drain_queues: false,

@@ -854,6 +854,9 @@ impl ReadTool {
         if cancel.is_cancelled() {
             return Err(ToolError(format!("Host URI read for {url} was aborted")));
         }
+        if let Some(source) = port.read_file(&url, cancel.clone()).await? {
+            return self.read_file_content_uri(source, url, sel, cancel).await;
+        }
         let resource = port.read(&url, cancel.clone()).await?;
         // Fixed multi-range in-memory reads do not truncate either; the
         // ordinary single-range resource caps remain scheme-specific.
@@ -934,6 +937,49 @@ impl ReadTool {
             Ok(ToolOutput::text(window.text).with_details(details))
         })
         .await
+    }
+
+    async fn read_file_content_uri(
+        &self,
+        source: crate::UriFileResource,
+        url: String,
+        selector: Selector,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let line_numbers = self.ctx.line_numbers;
+        crate::run_blocking("Read artifact", cancel, move |work| {
+            if work.is_cancelled() {
+                return Err(ToolError(format!("Read of {url} was aborted")));
+            }
+            let file = std::fs::File::open(&source.path)
+                .map_err(|error| ToolError(format!("Cannot read {url}: {error}")))?;
+            let meta = file.metadata().map_err(|error| ToolError(format!("Cannot read {url}: {error}")))?;
+            if meta.is_dir() {
+                return Err(ToolError(format!("Artifact resolved to a directory, not a file: {url}")));
+            }
+            if selector.range.is_none() && selector.multi_ranges.is_empty() && !selector.raw
+                && source.max_inline_bytes.is_some_and(|limit| meta.len() > limit)
+            {
+                return Err(ToolError(format!(
+                    "Artifact is {} bytes; full internal resolution is blocked. Use read selectors such as {url}:1-3000 or {url}:raw:1-3000, and use the artifact file path for search/copy workflows: {}",
+                    meta.len(), source.path.display()
+                )));
+            }
+            let numbering = if selector.raw || !line_numbers { Numbering::None } else { Numbering::Pipe };
+            let window = read_window(
+                std::io::BufReader::new(file), meta.len(), &url, &selector,
+                ReadRender { numbering, text_resource: false, ignore_result_limits: !selector.multi_ranges.is_empty(), block_context: None },
+                &work,
+            ).map_err(ToolError)?;
+            if work.is_cancelled() {
+                return Err(ToolError(format!("Read of {url} was aborted")));
+            }
+            let mut details = window.details;
+            details["contentType"] = json!(source.content_type);
+            details["resolvedPath"] = json!(source.path.to_string_lossy());
+            details["meta"] = json!({"source":{"type":"internal","value":url}});
+            Ok(ToolOutput::text(window.text).with_details(details))
+        }).await
     }
 }
 

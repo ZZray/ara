@@ -192,6 +192,9 @@ pub(super) struct AutoCompactionPolicy {
 pub(super) struct RecoveryCompactionSettings {
     pub reserve_tokens: Option<f64>,
     pub soft_available: bool,
+    pub method_order: Vec<String>,
+    pub supersede_reads: bool,
+    pub drop_useless: bool,
 }
 
 impl AutoCompactionPolicy {
@@ -228,12 +231,25 @@ impl AutoCompactionPolicy {
         if reserve_tokens.is_some_and(|value| !value.is_finite()) {
             bail!("compaction.reserveTokens must be finite");
         }
-        let soft_available = match field("methodOrder") {
-            None | Some(Yaml::Null) => true,
-            Some(Yaml::Array(methods)) => methods.iter().any(|method| method.as_str() == Some("soft")),
-            Some(_) => false,
+        let method_order = match field("methodOrder") {
+            None | Some(Yaml::Null) => DEFAULT_METHOD_ORDER.iter().map(|method| (*method).into()).collect(),
+            Some(Yaml::Array(methods)) => methods.iter().filter_map(Yaml::as_str).map(str::to_owned).collect(),
+            Some(_) => Vec::new(),
         };
-        Ok(RecoveryCompactionSettings { reserve_tokens, soft_available })
+        let boolean = |name: &str| -> Result<bool> {
+            match field(name) {
+                None | Some(Yaml::Null) => Ok(true),
+                Some(Yaml::Boolean(value)) => Ok(*value),
+                Some(_) => bail!("compaction.{name} must be a boolean"),
+            }
+        };
+        Ok(RecoveryCompactionSettings {
+            reserve_tokens,
+            soft_available: method_order.iter().any(|method| method == "soft"),
+            method_order,
+            supersede_reads: boolean("supersedeReads")?,
+            drop_useless: boolean("dropUseless")?,
+        })
     }
 
     pub(super) fn set_enabled(&mut self, enabled: bool) -> Result<()> {

@@ -1,5 +1,16 @@
 # Delivery roadmap
 
+The [local reducer checkpoint](evidence/local-reducers.md) adds checked raw
+pruning/shake/artifact publication, usage-anchor rebase and ordinary tiered
+rescue. Final Windows 1,557/0/20 and Host 17/0 pass one stable 152.621s command;
+five actual controlled Host families pass in 3.756s and actual preferred CAS
+artifact recovery/write/read/original-Session reopen passes in 12.512s/five
+calls. Independent and Root audits bind 25 hashes/binary/artifacts. Exact
+no-soft prepublication process injection remains NOT RUN. Next are handoff,
+remote, snapcompact/frame rescue and registry/auth callers; native tokenizer,
+full role/legacy/settings contracts and recorded gaps remain required. P0/V1
+accepted, P1–P6 open, RPC 27/42 and full marker null are unchanged.
+
 The latest [grouped raw-entry checkpoint](evidence/native-raw-entries.md) adds
 native metadata/custom/hook/branch/Bash cuts, zero/one/many model fragments per
 raw ID, single-ID summary provenance and safe old V1 read compatibility. Twelve

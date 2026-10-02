@@ -94,16 +94,19 @@ def main() -> int:
     code, compiler = run("compile", compile_command)
     binaries = {}
     if code == 0:
+        metadata = json.loads(subprocess.check_output(
+            ["cargo", "metadata", "--no-deps", "--format-version=1", "--locked"], cwd=ROOT, env=env))
+        package_names = {package["id"]: package["name"] for package in metadata["packages"]}
         for line in compiler.splitlines():
             message = json.loads(line)
             if message.get("reason") == "compiler-artifact" and message.get("executable") and "test" in message["target"]["kind"]:
-                binaries[message["target"]["name"]] = message["executable"]
-        for module, (_, target) in selected.items():
-            if target not in binaries:
+                binaries[(package_names[message["package_id"]], message["target"]["name"])] = message["executable"]
+        for module, (package, target) in selected.items():
+            if (package, target) not in binaries:
                 code = 126
                 print("Missing compiled module target: " + target, flush=True)
                 break
-            code, _ = run(module, [binaries[target], "--nocapture"])
+            code, _ = run(module, [binaries[(package, target)], "--nocapture"])
             if code:
                 break
     if code == 0 and args.full:

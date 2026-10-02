@@ -771,7 +771,7 @@ async fn run_compaction(
         }
     };
     let mut guard = sink.journal.lock().await;
-    let Some(journal) = guard.as_mut() else {
+    let Some(journal) = guard.as_mut().filter(|journal| journal.is_persistent()) else {
         notice("it needs a session (--no-session is set)".into());
         return Ok(false);
     };
@@ -929,6 +929,73 @@ struct ReplSession<'a> {
     skills: &'a [ara_discovery::LoadedSkill],
     provider_factory: &'a ProviderFactory,
     mcp_config: &'a Option<McpServerConfig>,
+    artifact_router: Arc<ara_cli::session_artifacts::ArtifactUriRouter>,
+}
+
+async fn run_local_shake(
+    mode: &str,
+    model: &ara_ai::Model,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    artifacts: &ara_cli::session_artifacts::SessionArtifacts,
+    non_message: usize,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    use ara_agent::compaction::local_reduction::ShakeConfig;
+    use ara_cli::local_reduction::{HostReductionPolicy, prepare_images, prepare_shake, prepare_thinking};
+    let snapshot = sink.journal.lock().await.as_ref().context("Session unavailable")?.raw_reduction_snapshot()?;
+    let policy = HostReductionPolicy {
+        keep_boundary_id: snapshot
+            .entries
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == "compaction")
+            .and_then(|entry| entry.raw["firstKeptEntryId"].as_str())
+            .map(str::to_owned),
+        ..Default::default()
+    };
+    let mut prepared = match mode {
+        "elide" => {
+            prepare_shake(snapshot, model, &ShakeConfig::aggressive(), &policy, artifacts, ara_ai::now_ms()).await?
+        }
+        "images" => prepare_images(snapshot, model)?,
+        "thinking" => prepare_thinking(snapshot, model)?,
+        _ => bail!("Unknown shake mode: {mode}. Expected elide, images or thinking"),
+    };
+    if cancel.is_cancelled() {
+        bail!("Shake aborted");
+    }
+    if mode == "elide"
+        && let Some(edit) =
+            ara_cli::context_budget::anchor_edit(&prepared.snapshot, &prepared.entry_tokens_freed, non_message)
+    {
+        prepared.edits.push(edit);
+    }
+    if prepared.edits.is_empty() {
+        eprintln!("ara: shake {mode}: nothing to reduce");
+        return Ok(false);
+    }
+    let mut guard = sink.journal.lock().await;
+    let journal = guard.as_mut().context("Session unavailable")?;
+    if let Err(error) = journal.commit_reduction(&prepared.snapshot, &prepared.edits) {
+        if error.history_published() {
+            *context = journal.model_context();
+            sink.persistence_failure(&error);
+        }
+        return Err(error.into());
+    }
+    *context = journal.model_context();
+    let counts = &prepared.plan.counts;
+    eprintln!(
+        "ara: shake {mode}: {} tool results, {} blocks, {} images, {} thinking blocks; ~{} tokens freed{}",
+        counts.tool_results_dropped,
+        counts.blocks_dropped,
+        counts.images_dropped,
+        counts.thinking_blocks_dropped,
+        prepared.tokens_freed,
+        prepared.artifact_id.map(|id| format!("; recover: artifact://{id}")).unwrap_or_default()
+    );
+    Ok(true)
 }
 
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
@@ -955,7 +1022,8 @@ async fn run_repl_loop(
     let mut system_prompt = system_prompt.to_vec();
     let mut hooks = hooks.clone();
     eprintln!("ara: interactive session ({}). /help for commands.", model.id);
-    let current_path = || async { sink.journal.lock().await.as_ref().map(|j| j.path().to_path_buf()) };
+    let current_path =
+        || async { sink.journal.lock().await.as_ref().filter(|j| j.is_persistent()).map(|j| j.path().to_path_buf()) };
     if let Some(path) = current_path().await
         && path.exists()
     {
@@ -1000,7 +1068,9 @@ async fn run_repl_loop(
         match input.as_str() {
             "/exit" | "/quit" => break 0,
             "/help" => {
-                eprintln!("commands: /help, /new, /clear, /compact, /exit, /skill:<name> [arguments]");
+                eprintln!(
+                    "commands: /help, /new, /clear, /compact, /exit, /shake [elide|images|thinking], /skill:<name> [arguments]"
+                );
                 for skill in session.skills {
                     eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
                 }
@@ -1065,6 +1135,9 @@ async fn run_repl_loop(
                         match fresh {
                             Ok(fresh) => {
                                 let previous = std::mem::replace(journal, fresh);
+                                session
+                                    .artifact_router
+                                    .bind(ara_cli::session_artifacts::SessionArtifacts::for_journal(journal));
                                 if args.mode == Mode::Json {
                                     sink.write_line(&journal.header().to_string());
                                 }
@@ -1083,6 +1156,13 @@ async fn run_repl_loop(
                             }
                         }
                     }
+                    (Some(journal), None) => {
+                        *journal = SessionJournal::in_memory(ephemeral_header(session.cwd, None))?;
+                        session
+                            .artifact_router
+                            .bind(ara_cli::session_artifacts::SessionArtifacts::for_journal(journal));
+                        eprintln!("ara: new conversation (not persisted)");
+                    }
                     _ => eprintln!("ara: new conversation (not persisted)"),
                 }
                 let factory = session.provider_factory;
@@ -1099,6 +1179,23 @@ async fn run_repl_loop(
                 continue;
             }
             _ => {}
+        }
+        if input == "/shake" || input.starts_with("/shake ") {
+            let mode = input.strip_prefix("/shake").unwrap().trim();
+            let mode = if mode.is_empty() { "elide" } else { mode };
+            let store = session.artifact_router.current_store();
+            let token = cancel.child_token();
+            let non_message = ara_cli::context_budget::non_message_tokens(model, &system_prompt, tools);
+            let step = run_local_shake(mode, model, context, sink, &store, non_message, &token);
+            match interruptible(step, &token, &mut interrupts).await {
+                Ok(true) => provider = session.provider_factory.build(),
+                Ok(false) => {}
+                Err(error) => eprintln!("ara: shake failed ({error:#}); inspect the Session receipt"),
+            }
+            if sink.persist_failed.load(Ordering::SeqCst) {
+                break 1;
+            }
+            continue;
         }
         turn += 1;
         eprintln!("Working... (turn {turn})");
@@ -1722,6 +1819,17 @@ async fn run_inner(
         };
         return rpc_host::run(config, skills, context, journal, header, max_time, sessions).await;
     }
+    let journal = Some(match journal {
+        Some(journal) => journal,
+        None => SessionJournal::in_memory(header.clone())?,
+    });
+    let artifact_router = ara_cli::session_artifacts::ArtifactUriRouter::new(
+        ara_cli::session_artifacts::SessionArtifacts::for_journal(journal.as_ref().expect("Session initialized")),
+        None,
+    );
+    if let Some(context) = &tool_context {
+        context.set_uri_port(artifact_router.clone());
+    }
     let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
@@ -1736,6 +1844,7 @@ async fn run_inner(
             skills: &skills,
             provider_factory: &provider_factory,
             mcp_config: &mcp_config,
+            artifact_router,
         };
         return run_repl_loop(
             &args,
