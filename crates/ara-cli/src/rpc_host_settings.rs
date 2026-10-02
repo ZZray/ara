@@ -196,6 +196,7 @@ pub(super) struct RecoveryCompactionSettings {
     pub supersede_reads: bool,
     pub drop_useless: bool,
     pub handoff_save_to_disk: bool,
+    pub remote: ara_agent::remote::RemoteSettings,
 }
 
 impl AutoCompactionPolicy {
@@ -217,11 +218,14 @@ impl AutoCompactionPolicy {
 
     pub(super) fn recovery_settings(&self) -> Result<RecoveryCompactionSettings> {
         let loaded = self.path.as_ref().map(|path| read_document(path)).transpose()?.flatten();
-        let group = loaded
+        let group = match loaded
             .as_ref()
             .and_then(|(document, _)| document.as_hash())
             .and_then(|root| root.get(&Yaml::String("compaction".into())))
-            .and_then(Yaml::as_hash);
+        {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("compaction settings must be a mapping")?),
+        };
         let field = |name: &str| group.and_then(|group| group.get(&Yaml::String(name.into())));
         let reserve_tokens = match field("reserveTokens") {
             None | Some(Yaml::Null) => None,
@@ -254,6 +258,15 @@ impl AutoCompactionPolicy {
                 None | Some(Yaml::Null) => false,
                 Some(Yaml::Boolean(enabled)) => *enabled,
                 Some(_) => bail!("compaction.handoffSaveToDisk must be a boolean"),
+            },
+            remote: ara_agent::remote::RemoteSettings {
+                enabled: boolean("remoteEnabled")?,
+                streaming_v2_enabled: boolean("remoteStreamingV2Enabled")?,
+                endpoint: match field("remoteEndpoint") {
+                    None | Some(Yaml::Null) => None,
+                    Some(Yaml::String(endpoint)) => Some(endpoint.clone()),
+                    Some(_) => bail!("compaction.remoteEndpoint must be a string"),
+                },
             },
         })
     }
@@ -501,6 +514,35 @@ fn write_atomically(path: &Path, source: &str, expected: Option<&str>, group: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_policy_defaults_reloads_and_scoped_writes_preserve_native_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        let mut policy = AutoCompactionPolicy::load(directory.path()).unwrap();
+        let defaults = policy.recovery_settings().unwrap();
+        assert!(defaults.remote.enabled && defaults.remote.streaming_v2_enabled);
+        assert!(defaults.remote.endpoint.is_none());
+        std::fs::write(&path, "compaction:\n  remoteEnabled: false\n  remoteStreamingV2Enabled: false\n  remoteEndpoint: http://fixture.invalid/compact\ncustom: preserved\n").unwrap();
+        let configured = policy.recovery_settings().unwrap();
+        assert!(!configured.remote.enabled && !configured.remote.streaming_v2_enabled);
+        assert_eq!(configured.remote.endpoint.as_deref(), Some("http://fixture.invalid/compact"));
+        policy.set_enabled(false).unwrap();
+        let reloaded = policy.recovery_settings().unwrap();
+        assert!(!reloaded.remote.enabled && !reloaded.remote.streaming_v2_enabled);
+        assert_eq!(reloaded.remote.endpoint, configured.remote.endpoint);
+        assert_eq!(read_document(&path).unwrap().unwrap().0["custom"].as_str(), Some("preserved"));
+        for source in [
+            "compaction:\n  remoteEnabled: 'false'\n",
+            "compaction:\n  remoteStreamingV2Enabled: 1\n",
+            "compaction:\n  remoteEndpoint: true\n",
+            "compaction: scalar\n",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            assert!(policy.recovery_settings().is_err(), "{source}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        }
+    }
 
     #[test]
     fn default_true_is_lazy_and_first_write_uses_yml() {

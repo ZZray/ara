@@ -3,7 +3,7 @@
 //! Source: fixed OMP 596f2da7101178214aa27a753529d15e6b7ad91d,
 //! `providers/openai-codex-responses.ts` (request, URL and SSE headers),
 //! `providers/openai-codex/request-transformer.ts` and `catalog/src/wire/codex.ts`.
-//! This entry supports text and function tools. WS, Lite, native compaction,
+//! This entry supports text, function tools and checked remote replay. WS, Lite,
 //! account selection and OAuth are outside this transport's scope.
 
 use super::openai_completions::RetryPolicy;
@@ -126,6 +126,7 @@ pub fn is_reserved_header(name: &str) -> bool {
         "x-codex-installation-id",
         "x-codex-window-id",
         "x-codex-turn-metadata",
+        "x-codex-beta-features",
         "x-models-etag",
     ]
     .iter()
@@ -141,6 +142,7 @@ fn supported_native_item(item: &Value, history: bool) -> bool {
     let supported = matches!(kind, Some("message" | "reasoning" | "function_call"))
         || history
             && (kind == Some("function_call_output")
+                || crate::remote_compaction::valid_compaction_item(item)
                 || kind.is_none() && item.get("role").is_some_and(Value::is_string));
     supported
         && item.get("content").and_then(Value::as_array).is_none_or(|parts| {

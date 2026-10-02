@@ -1,5 +1,26 @@
 # ARA execution plan
 
+**Latest checkpoint, 2026-10-02 (bounded remote WIP):**
+[Remote compaction](evidence/remote-compaction.md) adds native V1/V2 wire,
+generic full/short summary, strict same-Session replay/readable fallback,
+manual RPC/REPL and threshold/incomplete integration. Source is frozen to the
+fixed OMP commit; remaining native/account/provider families stay required.
+Modules 150/0/0 pass. Composite Windows backend 1,578/0/20, current
+fmt/Clippy/doc/inventory/deny/build and final binary Host 5/5 pass. Earlier full
+invocations remain FAIL; unchanged completed crates are reused rather than
+replayed. The settled preferred CAS generic summary/write/read/no-tools reopen
+task passes in 18.106s/six calls on its recorded earlier binary; the final
+strict empty reducer guard and two stale fixture inputs have explicit source
+equivalence, not a new live trial. Final scope has 34 source/test/runner paths.
+About 09:57–11:31 UTC is 94min for implementation/verification; documentation
+and Git closure are separate. Native/account real tasks and Linux stay open.
+Next are snapcompact and frame rescue as one coherent module. Fixed source
+includes the original Rust renderer, fonts and tests, reducing the current
+implementation/integration/review estimate to 120–210min, followed by remaining
+remote/handoff contracts and Provider priorities; this named-module estimate
+is not a whole-project completion time. P0/V1
+accepted; P1–P6 open; RPC 27/42; full marker null.
+
 **Latest checkpoint, 2026-10-02 (tested/audited bounded WIP):**
 [Native handoff](evidence/native-handoff.md) adds full live Context/side routing,
 checked same-Session document publication, manual REPL and RPC threshold/

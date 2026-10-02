@@ -138,3 +138,34 @@ method or a pending primary call.
 [Handoff evidence](../evidence/native-handoff.md) records the bounded execution,
 source scope and required gaps, including thinking effort, concurrent manual
 RPC, new/switch/branch interruption and native speculative maintenance.
+
+## Native remote replay and readable history
+
+Fixed OMP `596f2da` remote compaction consumes full history, including its recent
+tail. Its structural kept-prefix boundary and provider replay-through boundary
+therefore differ. Only new raw entries after replay-through follow the checked
+opaque carrier; repeated remote requests reuse the previous replacement plus
+that new raw tail. Sending the structural kept tail again would duplicate
+already absorbed history. The carrier is model-only projection and is never
+persisted as a fabricated model response or usage receipt.
+
+Raw originals remain the authority for a disabled/foreign/incompatible route.
+Local reducers must stop at the active opaque compaction entry so they do not
+modify hidden originals needed by that later readable projection. Native
+compaction permits supported pictures while the text serializer keeps its own
+limits. Structural validation still checks complete tool pairs and unknown
+effects. A checked empty native carrier with no pending calls may continue,
+while an ordinary completed Assistant retains the existing queue requirement.
+
+Healthy empty/lazy Sessions are not durable compaction sources, but still allow
+first-prompt adoption. Their raw journal must be validated before returning an
+empty context, including malformed/invalid/duplicate records. Treating every
+missing leaf as a fresh Session can erase the observable damaged-resume error.
+Local reducers also validate that raw journal, then report no native protection
+boundary for a healthy empty/lazy Session. Requiring a durable compaction
+projection here would turn their ordinary no-op into an error before any Run.
+
+[Remote evidence](../evidence/remote-compaction.md), dated 2026-10-02, records
+actual repeat/reopen and disabled/foreign flows plus damaged-empty checks and
+the generic real task. Full remote parity and its listed native/provider/Host
+gaps remain open.

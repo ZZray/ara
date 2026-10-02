@@ -7,6 +7,8 @@ pub mod event;
 pub mod json;
 pub mod model_tokenizer;
 pub mod providers;
+pub mod remote_compaction;
+pub mod remote_compaction_v2;
 pub(crate) mod replay_safe_retry;
 pub(crate) mod responses_sse;
 pub(crate) mod responses_stream;

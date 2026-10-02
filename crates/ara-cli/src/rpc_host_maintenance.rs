@@ -1,5 +1,5 @@
-//! Fixed OMP 596f2da same-route soft overflow recovery. Other native methods,
-//! Other compaction methods and dead-end rescue remain required parity work.
+//! Fixed OMP 596f2da same-route overflow and incomplete-output recovery.
+//! Snapcompact and other unported method surfaces retain separate gates.
 use super::*;
 use ara_agent::compaction::{
     AcceptedSummary, SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
@@ -480,11 +480,56 @@ impl Host {
             self.restore_maintenance(recovery, &session).await?;
             return Err(error.into());
         }
-        // Native handoff is inline for incomplete output and unavailable for
-        // overflow. Remote and frame methods keep their separately open gates.
+        // Native handoff is available for incomplete output. Remote accepts
+        // both overflow and incomplete recovery; frame keeps its open gate.
         for method in &settings.method_order {
             if method == "soft" {
                 break;
+            }
+            if method == "remote" {
+                let remote =
+                    Box::pin(self.remote_history(
+                        None,
+                        SummaryOptions { oneshot_retry: None, max_tokens: self.config.max_tokens },
+                    ))
+                    .await;
+                match remote {
+                    Ok(Some(_)) => {
+                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                            true
+                        } else {
+                            self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
+                        };
+                        if fits && !self.maintenance_stop_requested() {
+                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            return Ok(MaintenanceOutcome {
+                                continuation_scheduled: true,
+                                history_rewritten: true,
+                                ..none
+                            });
+                        }
+                        return Ok(MaintenanceOutcome {
+                            automatic_continuation_blocked: true,
+                            history_rewritten: true,
+                            ..none
+                        });
+                    }
+                    Err(error)
+                        if self.connection.is_cancelled() || ara_cli::remote_compaction::is_cancelled(&error) =>
+                    {
+                        // Publication errors fail-stop; an unpublished cancel
+                        // returns ownership of the failed turn to its saga.
+                        if !self.connection.is_cancelled() {
+                            self.restore_maintenance(recovery, &session).await?;
+                        }
+                        return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
+                    }
+                    Err(_) => self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                        "message":"Remote compaction failed; trying the next preferred method"})),
+                    Ok(None) => {}
+                }
+                continue;
             }
             if method == "handoff" && incomplete {
                 let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
@@ -654,7 +699,7 @@ impl Host {
                     AgentEvent::MessageEnd { message: Message::Assistant(message.clone()) }.full()["message"].clone(),
                 );
             }
-            let mut messages = journal.model_context();
+            let mut messages = self.route_model_context(&journal)?;
             if messages.last().and_then(Message::as_assistant) != Some(&message) {
                 messages.push(Message::Assistant(message));
             }
@@ -698,10 +743,10 @@ impl Host {
                 return Err(error.into());
             }
             committed = true;
-            if let Err(error) = self.agent.replace_idle_messages(journal.model_context()) {
+            if let Err(error) = self.adopt_route_context(&journal) {
                 *active.session.persistence_error.lock().unwrap() = Some(error.to_string());
                 self.connection.cancel();
-                return Err(error.into());
+                return Err(error);
             }
             *active.session.messages.lock().unwrap() = Session::public_messages(&journal);
             self.config.provider = self.sessions.provider.build();
@@ -784,7 +829,7 @@ impl Host {
     pub(super) async fn resume_maintenance_continue(&mut self) {
         let Some(pending) = self.maintenance_continue.take() else { return };
         if self.input_closed
-            || self.connection.is_cancelled()
+            || self.maintenance_stop_requested()
             || pending.generation != self.prompt_generation
             || !Arc::ptr_eq(&pending.session, &self.session)
             || self.agent.messages().await != pending.expected_messages

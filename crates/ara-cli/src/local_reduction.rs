@@ -588,13 +588,43 @@ pub async fn prepare_shake(
 }
 
 pub fn prepare_images(snapshot: SessionReductionSnapshot, _model: &Model) -> Result<PreparedReduction> {
+    prepare_images_after_boundary(snapshot, _model, None)
+}
+
+/// Native replay has already absorbed older raw history. Keep that source
+/// evidence intact while reducing only the represented tail after its carrier.
+pub fn prepare_images_after_boundary(
+    snapshot: SessionReductionSnapshot,
+    _model: &Model,
+    boundary: Option<&str>,
+) -> Result<PreparedReduction> {
     let entries = map_entries(&snapshot, None, &HostReductionPolicy::default())?;
-    let plan = core::plan_drop_images(&entries)?;
+    let start = boundary
+        .map(|id| {
+            entries.iter().position(|entry| entry.entry_id == id).context("native replay reduction boundary is absent")
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let plan = core::plan_drop_images(&entries[start..])?;
     Ok(prepared(snapshot, plan, TokenEstimation::NotMeasured))
 }
 
 pub fn prepare_thinking(snapshot: SessionReductionSnapshot, _model: &Model) -> Result<PreparedReduction> {
+    prepare_thinking_after_boundary(snapshot, _model, None)
+}
+
+pub fn prepare_thinking_after_boundary(
+    snapshot: SessionReductionSnapshot,
+    _model: &Model,
+    boundary: Option<&str>,
+) -> Result<PreparedReduction> {
     let entries = map_entries(&snapshot, None, &HostReductionPolicy::default())?;
-    let plan = core::plan_drop_thinking(&entries)?;
+    let start = boundary
+        .map(|id| {
+            entries.iter().position(|entry| entry.entry_id == id).context("native replay reduction boundary is absent")
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let plan = core::plan_drop_thinking(&entries[start..])?;
     Ok(prepared(snapshot, plan, TokenEstimation::NotMeasured))
 }

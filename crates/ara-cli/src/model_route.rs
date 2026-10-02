@@ -234,6 +234,44 @@ impl PreparedRoute {
         &self.model
     }
 
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn remote_supports_images(&self) -> bool {
+        match &self.protocol {
+            ProtocolOptions::Responses(base) => base.request.supports_images,
+            ProtocolOptions::CodexResponses(base) => base.request.supports_images,
+            _ => false,
+        }
+    }
+
+    /// Bind remote maintenance to the same private credential resolver. The
+    /// options contain Host context/cache identity, never a stored API key.
+    pub fn bind_remote(
+        &self,
+        client: reqwest::Client,
+        mut options: ara_ai::remote_compaction::RemoteRequestOptions,
+    ) -> Arc<dyn ara_agent::remote::RemoteCompactionTransport> {
+        match &self.protocol {
+            ProtocolOptions::Completions(base) => options.extra_headers.extend(base.extra_headers.clone()),
+            ProtocolOptions::Responses(base) => {
+                options.extra_headers.extend(base.extra_headers.clone());
+                options.supports_images = base.request.supports_images;
+                options.prompt_cache_key = options.prompt_cache_key.or_else(|| base.request.prompt_cache_key.clone());
+            }
+            ProtocolOptions::CodexResponses(base) => {
+                options.extra_headers.extend(base.extra_headers.clone());
+                options.supports_images = base.request.supports_images;
+                options.session_id = options.session_id.or_else(|| base.session_id.clone());
+                options.prompt_cache_key = options.prompt_cache_key.or_else(|| base.request.prompt_cache_key.clone());
+            }
+            ProtocolOptions::Anthropic(base) => options.extra_headers.extend(base.extra_headers.clone()),
+        }
+        options.api_key = None;
+        Arc::new(AuthenticatedRemoteTransport { client, route: self.clone(), options })
+    }
+
     pub fn loop_guard_policy(&self) -> ara_ai::thinking_loop::LoopGuardPolicy {
         self.loop_guard_policy
     }
@@ -281,6 +319,93 @@ impl PreparedRoute {
             options.session_id = Some(format!("{session_id}:side:{}", uuid::Uuid::now_v7()));
         }
         route.bind(client, None)
+    }
+}
+
+struct AuthenticatedRemoteTransport {
+    client: reqwest::Client,
+    route: PreparedRoute,
+    options: ara_ai::remote_compaction::RemoteRequestOptions,
+}
+
+impl AuthenticatedRemoteTransport {
+    async fn options(
+        &self,
+        model: &Model,
+        cancel: &CancellationToken,
+    ) -> Result<ara_ai::remote_compaction::RemoteRequestOptions, ara_ai::remote_compaction::RemoteError> {
+        use ara_ai::{ProviderError, remote_compaction::RemoteError};
+        if model != &self.route.model {
+            return Err(RemoteError {
+                cause: ProviderError::Config("model does not match the prepared maintenance route".into()),
+                attempts: Vec::new(),
+                auth_failed: false,
+            });
+        }
+        // Resolve directly and await settlement. Account resolvers already own
+        // cancellation-safe refresh workers and their durable unknown outcome.
+        let lease = self.route.auth.resolve(model, cancel).await.map_err(|error| RemoteError {
+            cause: if error == AuthResolveError::Cancelled {
+                ProviderError::Aborted
+            } else {
+                ProviderError::Config(
+                    match error {
+                        AuthResolveError::Unavailable => "Remote compaction credentials unavailable",
+                        AuthResolveError::Storage => "Remote compaction authentication storage failed",
+                        AuthResolveError::Command => "Remote compaction authentication command failed",
+                        _ => "Remote compaction authentication refresh failed",
+                    }
+                    .into(),
+                )
+            },
+            attempts: Vec::new(),
+            auth_failed: error == AuthResolveError::Unavailable,
+        })?;
+        if cancel.is_cancelled() {
+            return Err(RemoteError { cause: ProviderError::Aborted, attempts: Vec::new(), auth_failed: false });
+        }
+        let mut options = self.options.clone();
+        options.cancel = cancel.clone();
+        options.api_key = lease.api_key;
+        options.extra_headers.extend(lease.headers);
+        Ok(options)
+    }
+}
+
+#[async_trait]
+impl ara_agent::remote::RemoteCompactionTransport for AuthenticatedRemoteTransport {
+    async fn native(
+        &self,
+        model: &Model,
+        context: &Context,
+        request: ara_ai::remote_compaction::RemoteNativeRequest,
+        cancel: &CancellationToken,
+    ) -> Result<ara_ai::remote_compaction::RemoteResult, ara_ai::remote_compaction::RemoteError> {
+        let options = self.options(model, cancel).await?;
+        ara_ai::remote_compaction::request_native(self.client.clone(), model.clone(), context.clone(), request, options)
+            .await
+    }
+
+    async fn generic(
+        &self,
+        model: &Model,
+        endpoint: &str,
+        request: ara_ai::remote_compaction::RemoteGenericRequest,
+        cancel: &CancellationToken,
+    ) -> Result<ara_ai::remote_compaction::RemoteResult, ara_ai::remote_compaction::RemoteError> {
+        let options = self.options(model, cancel).await?;
+        let mut wire_model = model.clone();
+        if let Some(id) = &options.generic_model {
+            wire_model.id.clone_from(id);
+        }
+        ara_ai::remote_compaction::request_generic(
+            self.client.clone(),
+            wire_model,
+            endpoint.to_owned(),
+            request,
+            options,
+        )
+        .await
     }
 }
 

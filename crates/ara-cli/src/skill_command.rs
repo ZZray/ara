@@ -162,7 +162,15 @@ mod tests {
     #[test]
     fn custom_agent_end_preserves_provider_payload_redaction() {
         let cancel = CancellationToken::new();
-        let host = HostSink::new(Mode::Json, false, None, cancel, ara_edit::EditMode::Hashline);
+        let journal = ara_session::SessionJournal::in_memory(
+            json!({"type":"session","version":3,"id":"redaction-fixture","cwd":".","timestamp":"2026-10-02T00:00:00Z"}),
+        )
+        .unwrap();
+        let artifacts = ara_cli::session_artifacts::ArtifactUriRouter::new(
+            ara_cli::session_artifacts::SessionArtifacts::for_journal(&journal),
+            None,
+        );
+        let host = HostSink::new(Mode::Json, false, None, cancel, ara_edit::EditMode::Hashline, artifacts);
         let prompt =
             UserSkillPrompt::new(UserContent::Text("body".into()), Some(json!({"originalText":"/skill:proof\n"})));
         let projected = prompt.model_message();

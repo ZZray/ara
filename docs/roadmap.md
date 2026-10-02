@@ -1,5 +1,17 @@
 # Delivery roadmap
 
+The [remote checkpoint](evidence/remote-compaction.md) adds native V1/V2 and
+generic remote wire, strict route-aware Session replay/readable fallback,
+manual/threshold/incomplete Host selection and cancellation. Modules 150/0/0,
+composite Windows backend 1,578/0/20 and final Host 5/5 pass. The settled CAS
+generic write/read/reopen task is reused under recorded source equivalence
+with its earlier binary identified. Failed whole invocations are retained;
+unchanged completed crates are reused and the remaining Session/target suffix
+is exercised. Full remote, native/account real tasks, Linux and listed gaps
+remain open. Next: snapcompact/frame rescue, reusing the fixed Rust renderer
+and source test families (120–210min planning estimate for that batch).
+P0/V1 accepted; P1–P6 open; RPC 27/42; full marker null remain.
+
 The [handoff checkpoint](evidence/native-handoff.md) adds live-context side
 requests, checked same-Session documents, REPL manual and automatic RPC
 threshold/incomplete selection. Modules 147/0, Windows 1,565/0/20, final Host

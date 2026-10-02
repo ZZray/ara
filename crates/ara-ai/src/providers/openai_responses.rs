@@ -588,8 +588,17 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
                 }
                 json!({"type":"function_call_output","call_id":wire_id,"output":output})
             }
-            "compaction" => json!({"type":"compaction","encrypted_content":item.get("encrypted_content")?.as_str()?}),
-            "compaction_summary" => json!({"type":"compaction_summary","summary":item.get("summary")?.as_str()?}),
+            "compaction" if item.get("encrypted_content")?.is_string() => {
+                let mut wire = item.clone();
+                wire.as_object_mut()?.remove("status");
+                wire
+            }
+            // Fixed OMP admits this item by type, including a type-only item.
+            "compaction_summary" => {
+                let mut wire = item.clone();
+                wire.as_object_mut()?.remove("status");
+                wire
+            }
             "item_reference" => continue,
             _ => return None,
         };
@@ -600,6 +609,39 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
     }
     let pending_calls = call_ids.into_iter().filter(|(_, wire_id)| pending.contains(wire_id)).collect();
     Some(FullNativeHistory { items, pending_calls })
+}
+
+pub(crate) fn checked_remote_replacement(model: &Model, items: &[Value], supports_images: bool) -> Option<Value> {
+    if !items.iter().any(crate::remote_compaction::valid_compaction_item) {
+        return None;
+    }
+    let payload = json!({
+        "type":"openaiResponsesHistory", "provider":model.provider,
+        "endpointSha256": responses_endpoint_fingerprint(&model.base_url),
+        "dt":false, "remoteCompaction":true, "items":items,
+    });
+    let mut message = AssistantMessage::empty(&model.api, &model.provider, &model.id);
+    message.provider_payload = Some(payload.clone());
+    full_native_history(&message, model, supports_images)?;
+    Some(payload)
+}
+
+fn checked_remote_snapshot(message: &AssistantMessage, model: &Model, supports_images: bool) -> bool {
+    message.provider_payload.as_ref().is_some_and(|payload| {
+        payload.get("remoteCompaction") == Some(&Value::Bool(true))
+            && payload
+                .get("items")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(crate::remote_compaction::valid_compaction_item))
+            && full_native_history(message, model, supports_images).is_some()
+    })
+}
+
+pub(crate) fn remote_compaction_carrier(message: &AssistantMessage, model: &Model) -> bool {
+    message.content.is_empty()
+        && message.stop_reason == StopReason::Stop
+        && checked_remote_snapshot(message, model, true)
+        && full_native_history(message, model, true).is_some_and(|history| history.pending_calls.is_empty())
 }
 
 enum ReplayedCall {
@@ -847,7 +889,8 @@ pub(crate) fn build_request_for_api(
                 }
             }
             Message::Assistant(assistant) => {
-                if options.native_history_replay.unwrap_or(true)
+                if (options.native_history_replay.unwrap_or(true)
+                    || checked_remote_snapshot(assistant, model, options.supports_images))
                     && let Some(snapshot) = full_native_history(assistant, model, options.supports_images)
                 {
                     saw_full_snapshot = true;

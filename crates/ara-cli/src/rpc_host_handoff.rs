@@ -31,7 +31,15 @@ impl HandoffControl {
         }
     }
 
-    fn begin(control: &Arc<Mutex<Self>>, connection: &CancellationToken) -> HandoffGuard {
+    pub(super) fn stop_requested(&self) -> bool {
+        self.queued_stops > 0 || self.input_closed
+    }
+
+    pub(super) fn abort_requested(&self) -> bool {
+        self.queued_stops > 0
+    }
+
+    pub(super) fn begin(control: &Arc<Mutex<Self>>, connection: &CancellationToken) -> HandoffGuard {
         let cancel = connection.child_token();
         let mut state = control.lock().unwrap();
         // Installing the slot and checking accepted stops share the reader's
@@ -44,9 +52,9 @@ impl HandoffControl {
     }
 }
 
-struct HandoffGuard {
+pub(super) struct HandoffGuard {
     control: Arc<Mutex<HandoffControl>>,
-    cancel: CancellationToken,
+    pub(super) cancel: CancellationToken,
 }
 
 impl Drop for HandoffGuard {
@@ -118,7 +126,7 @@ impl Host {
             if error.history_published() {
                 *session.persistence_error.lock().unwrap() = Some(error.to_string());
                 self.connection.cancel();
-                self.agent.replace_idle_messages(journal.model_context())?;
+                self.agent.replace_idle_messages(self.route_model_context(&journal)?)?;
                 *session.messages.lock().unwrap() = Session::public_messages(&journal);
                 self.config.provider = self
                     .sessions
@@ -129,10 +137,10 @@ impl Host {
             }
             return Err(error.into());
         }
-        if let Err(error) = self.agent.replace_idle_messages(journal.model_context()) {
+        if let Err(error) = self.adopt_route_context(&journal) {
             *session.persistence_error.lock().unwrap() = Some(error.to_string());
             self.connection.cancel();
-            return Err(error.into());
+            return Err(error);
         }
         *session.messages.lock().unwrap() = Session::public_messages(&journal);
         self.maintenance_bash_transition(old_leaf);

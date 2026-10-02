@@ -329,7 +329,10 @@ pub async fn agent_loop_continue(
         return Err(LoopError::CannotContinue("Cannot continue: no messages in context".into()));
     };
     let unpaired = unpaired_tool_call_tail(context).is_some();
-    if matches!(last, Message::Assistant(_)) && !unpaired {
+    if matches!(last, Message::Assistant(_))
+        && !unpaired
+        && !ara_ai::remote_compaction::is_native_compaction_carrier(last, &config.model)
+    {
         return Err(LoopError::CannotContinue("Cannot continue from message role: assistant".into()));
     }
     if unpaired && tail == UnpairedTail::Refuse {

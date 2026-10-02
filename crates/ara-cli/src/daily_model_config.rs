@@ -244,7 +244,18 @@ pub fn resolve_daily_selection(
     };
     reject_fields(
         &provider,
-        &["api", "baseUrl", "apiKey", "auth", "authHeader", "headers", "compat", "models", "modelOverrides"],
+        &[
+            "api",
+            "baseUrl",
+            "apiKey",
+            "auth",
+            "authHeader",
+            "headers",
+            "compat",
+            "models",
+            "modelOverrides",
+            "remoteCompaction",
+        ],
         "provider",
     )?;
     let mut model = match provider.get("models") {
@@ -259,8 +270,13 @@ pub fn resolve_daily_selection(
         _ => Map::new(),
     };
     if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)) {
-        let overrides = object(Some(value), "provider/modelOverrides")?;
-        reject_fields(&overrides, &["contextPromotionTarget"], "provider/modelOverrides")?;
+        let mut overrides = object(Some(value), "provider/modelOverrides")?;
+        reject_fields(&overrides, &["contextPromotionTarget", "remoteCompaction"], "provider/modelOverrides")?;
+        if let Some(remote) =
+            merge_remote_configuration(model.get("remoteCompaction"), overrides.get("remoteCompaction"))?
+        {
+            overrides.insert("remoteCompaction".into(), remote);
+        }
         model.extend(overrides);
     }
     reject_fields(
@@ -280,6 +296,7 @@ pub fn resolve_daily_selection(
             "supportsTools",
             "headers",
             "compat",
+            "remoteCompaction",
         ],
         "model",
     )?;
@@ -469,6 +486,24 @@ pub fn resolve_daily_selection(
     }
     let mut metadata = json!({"provider":execution_model.provider,"id":execution_model.id,
         "api":execution_model.api,"contextWindow":execution_model.context_window});
+    let bundled_remote = {
+        crate::model_identity::bundled_model_list()
+            .iter()
+            .find(|row| {
+                row["provider"].as_str() == Some(execution_model.provider.as_str())
+                    && row["id"].as_str() == Some(execution_model.id.as_str())
+            })
+            .and_then(|row| row.get("remoteCompaction"))
+    };
+    // Fixed model-patch.ts merges each field, modelOverrides > authored
+    // model > bundled model > provider, preserving every omitted field.
+    let remote = merge_remote_configuration(provider.get("remoteCompaction"), bundled_remote)?;
+    let remote = merge_remote_configuration(remote.as_ref(), model.get("remoteCompaction"))?;
+    if let Some(remote) = remote {
+        serde_json::from_value::<ara_ai::remote_compaction::RemoteConfig>(remote.clone())
+            .map_err(|_| error("remoteCompaction", "invalid remote compaction options"))?;
+        metadata["remoteCompaction"] = remote;
+    }
     let promotion_target = model.get("contextPromotionTarget").or_else(|| {
         crate::model_identity::bundled_model_list()
             .iter()
@@ -482,6 +517,21 @@ pub fn resolve_daily_selection(
         metadata["contextPromotionTarget"] = target.clone();
     }
     Ok(DailySelection { model: execution_model, metadata, api, protocol, generation, auth_source, loop_guard_policy })
+}
+
+fn merge_remote_configuration(
+    base: Option<&Value>,
+    authored: Option<&Value>,
+) -> Result<Option<Value>, DailyConfigError> {
+    let mut result = Map::new();
+    for value in [base, authored].into_iter().flatten().filter(|value| !value.is_null()) {
+        let object = value.as_object().ok_or_else(|| error("remoteCompaction", "must be an object"))?;
+        serde_json::from_value::<ara_ai::remote_compaction::RemoteConfig>(value.clone())
+            .map_err(|_| error("remoteCompaction", "invalid remote compaction options"))?;
+        result.extend(object.clone());
+    }
+    Ok((base.is_some_and(|value| !value.is_null()) || authored.is_some_and(|value| !value.is_null()))
+        .then_some(Value::Object(result)))
 }
 
 const PROMOTION_ROUTE_ENV: &[&str] = &[
@@ -498,7 +548,7 @@ const PROMOTION_ROUTE_ENV: &[&str] = &[
 
 fn promotion_metadata(row: &Value) -> Value {
     let mut metadata = json!({});
-    for field in ["provider", "id", "api", "contextWindow", "contextPromotionTarget"] {
+    for field in ["provider", "id", "api", "contextWindow", "contextPromotionTarget", "remoteCompaction"] {
         if let Some(value) = row.get(field) {
             metadata[field] = value.clone();
         }

@@ -19,6 +19,8 @@ mod loop_guard;
 mod maintenance;
 #[path = "rpc_host_reduction.rs"]
 mod reduction;
+#[path = "rpc_host_remote.rs"]
+mod remote;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -1137,13 +1139,57 @@ impl Host {
     }
 
     async fn compact(&mut self, focus: Option<&str>) -> Result<Value> {
-        // Native split/fold summaries keep large async state. Do not embed it
-        // in the shared RPC command future, including Session join/abort paths.
-        Box::pin(self.compact_with_options(
-            focus,
-            ara_agent::compaction::SummaryOptions { max_tokens: self.config.max_tokens, ..Default::default() },
-        ))
-        .await
+        if focus.is_some_and(|focus| focus.len() > 1_000_000) {
+            bail!("compaction instructions exceed the summary input limit");
+        }
+        let drain = self.drain_queues;
+        self.is_compacting = true;
+        self.abort().await;
+        // Fixed manual compaction selects remote/snapcompact/soft in the
+        // configured order. Handoff and shake belong to automatic recovery.
+        // Snapcompact retains its separately recorded unported gate.
+        let result = async {
+            let settings = self.compaction_policy.recovery_settings()?;
+            for method in &settings.method_order {
+                if method == "remote" {
+                    let remote = Box::pin(self.remote_history(
+                        focus,
+                        ara_agent::compaction::SummaryOptions {
+                            max_tokens: self.config.max_tokens,
+                            ..Default::default()
+                        },
+                    ))
+                    .await;
+                    match remote {
+                        Ok(Some(summary)) => return Ok(summary),
+                        Ok(None) => {}
+                        Err(error)
+                            if self.connection.is_cancelled() || ara_cli::remote_compaction::is_cancelled(&error) =>
+                        {
+                            return Err(error);
+                        }
+                        Err(_) => self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                            "message":"Remote compaction failed; trying the next preferred method"})),
+                    }
+                } else if method == "soft" {
+                    // Keep large split/fold state off the shared command future.
+                    return Box::pin(self.compact_with_options(
+                        focus,
+                        ara_agent::compaction::SummaryOptions {
+                            max_tokens: self.config.max_tokens,
+                            ..Default::default()
+                        },
+                    ))
+                    .await;
+                }
+            }
+            bail!("No available manual compaction method is configured")
+        }
+        .await;
+        self.is_compacting = false;
+        self.auto_compaction_pending = false;
+        self.drain_queues = drain && !self.maintenance_stop_requested();
+        result
     }
 
     async fn compact_with_options(
@@ -1213,10 +1259,10 @@ impl Host {
                 }
                 return Err(error.into());
             }
-            if let Err(error) = self.agent.replace_idle_messages(journal.model_context()) {
+            if let Err(error) = self.adopt_route_context(&journal) {
                 *self.session.persistence_error.lock().unwrap() = Some(error.to_string());
                 self.connection.cancel();
-                return Err(error.into());
+                return Err(error);
             }
             *self.session.messages.lock().unwrap() = Session::public_messages(&journal);
             // Reader-only Bash remains independent during the summary. Hold
@@ -1303,7 +1349,49 @@ impl Host {
                 if progress {
                     break;
                 }
-                if method == "handoff" {
+                if method == "remote" {
+                    let remote = Box::pin(self.remote_history(
+                        None,
+                        ara_agent::compaction::SummaryOptions {
+                            oneshot_retry: None,
+                            max_tokens: self.config.max_tokens,
+                        },
+                    ))
+                    .await;
+                    let summary = match remote {
+                        Ok(Some(summary)) => summary,
+                        Ok(None) => continue,
+                        Err(error)
+                            if self.connection.is_cancelled() || ara_cli::remote_compaction::is_cancelled(&error) =>
+                        {
+                            return Err(error);
+                        }
+                        Err(_) => {
+                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                                "message":"Remote compaction failed; trying the next preferred method"}));
+                            continue;
+                        }
+                    };
+                    progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, 0)), pending).await;
+                    if !progress {
+                        progress = self
+                            .rescue_local_history(
+                                settings.reserve_tokens,
+                                Some((threshold, 0)),
+                                ran_shake,
+                                pending,
+                                None,
+                            )
+                            .await?;
+                    }
+                    if !progress {
+                        bail!("Remote compaction could not create recovery headroom; automatic continuation stopped");
+                    }
+                    if self.maintenance_stop_requested() {
+                        return Err(ara_cli::handoff::cancelled());
+                    }
+                    return Ok::<_, anyhow::Error>(summary);
+                } else if method == "handoff" {
                     let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
                     let summary = match handoff {
                         Ok(Some(summary)) => summary,
@@ -1375,7 +1463,8 @@ impl Host {
             Ok(json!({"method":"shake","tokensAfter":self.context_tokens(&self.agent.messages().await, pending).await}))
         }
         .await;
-        let cancelled = result.as_ref().err().is_some_and(ara_cli::handoff::is_cancelled);
+        let cancelled = result.as_ref().err().is_some_and(ara_cli::remote_compaction::is_cancelled);
+        let ready = result.is_ok() && !self.connection.is_cancelled();
         let mut event = json!({"type":"auto_compaction_end","action":"context-full",
             "aborted":self.connection.is_cancelled() || cancelled,"willRetry":false});
         match result {
@@ -1383,7 +1472,7 @@ impl Host {
             Err(error) => event["errorMessage"] = json!(super::sanitize_text(&error.to_string())),
         }
         self.output.frame(event);
-        !cancelled
+        ready && !cancelled
     }
 
     async fn append_bash(&mut self, pending: PendingBash) -> Result<()> {
@@ -1711,7 +1800,7 @@ impl Host {
         let same_file = self.session.file.as_ref().is_some_and(|current| {
             std::fs::canonicalize(current).ok().zip(std::fs::canonicalize(&path).ok()).is_some_and(|(a, b)| a == b)
         });
-        let messages = journal.model_context();
+        let messages = self.route_model_context(&journal)?;
         let unchanged = same_file
             && journal.header()["id"] == self.session.header["id"]
             && replay_messages_equal(&messages, &self.agent.messages().await);
@@ -1720,7 +1809,7 @@ impl Host {
         // Keep unavailable saved selections intact, as fixed switch's fallback
         // does; role/catalog/thinking restoration remains a mapped WIP gap.
         super::recover_session(&mut journal)?;
-        let messages = journal.model_context();
+        let messages = self.route_model_context(&journal)?;
         let header = journal.header().clone();
         self.adopt(Some(journal), header, messages, config, skills).await?;
         Ok(false)
@@ -1744,12 +1833,17 @@ impl Host {
         let (config, skills) = self.session_config(true).await?;
         let journal = self.session.journal.lock().await.fork_at(parent.as_deref(), self.sessions.dir.as_deref())?;
         let header = journal.header().clone();
-        let messages = journal.model_context();
+        let messages = self.route_model_context(&journal)?;
         self.adopt(Some(journal), header, messages, config, skills).await?;
         Ok(text)
     }
 
     fn start(&mut self, message: Option<AgentInput>, command: Command) -> Result<()> {
+        // The reader can accept Abort while an inline side request returns,
+        // before the serial command queue gets its next turn.
+        if self.handoff_control.lock().unwrap().abort_requested() {
+            return Err(ara_cli::handoff::cancelled());
+        }
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before continuing");
         }
@@ -2495,6 +2589,13 @@ where
     let tool_bridge = ToolBridge::new(emitter.clone());
     let uri_bridge = UriBridge::new(emitter);
     let session = Session::new(journal, header, &messages)?;
+    let messages = ara_cli::remote_compaction::route_context(
+        &*session.journal.lock().await,
+        &config.model,
+        sessions.provider.metadata.as_ref(),
+        &compaction_policy.recovery_settings()?.remote,
+        sessions.provider.route.remote_supports_images(),
+    )?;
     let artifact_router =
         ara_cli::session_artifacts::ArtifactUriRouter::new(session.artifacts.clone(), Some(uri_bridge.clone()));
     if let Some(context) = sessions.tool_context.take() {

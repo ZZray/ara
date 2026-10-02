@@ -398,6 +398,7 @@ struct HostSink {
     /// The current assistant message has streamed text.
     streamed: AtomicBool,
     journal: tokio::sync::Mutex<Option<SessionJournal>>,
+    artifacts: Arc<ara_cli::session_artifacts::ArtifactUriRouter>,
     persist_failed: AtomicBool,
     /// Auto-compaction already said why it cannot run; it says so once per process.
     compaction_notice_shown: AtomicBool,
@@ -419,6 +420,7 @@ impl HostSink {
         journal: Option<SessionJournal>,
         cancel: CancellationToken,
         edit_mode: ara_edit::EditMode,
+        artifacts: Arc<ara_cli::session_artifacts::ArtifactUriRouter>,
     ) -> HostSink {
         HostSink {
             mode,
@@ -426,6 +428,7 @@ impl HostSink {
             line_open: AtomicBool::new(false),
             streamed: AtomicBool::new(false),
             journal: tokio::sync::Mutex::new(journal),
+            artifacts,
             persist_failed: AtomicBool::new(false),
             compaction_notice_shown: AtomicBool::new(false),
             cancel,
@@ -747,8 +750,171 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
 #[allow(clippy::too_many_arguments)]
 async fn run_compaction(
     args: &Args,
-    model: &ara_ai::Model,
-    provider: &Arc<dyn ModelProvider>,
+    config: &AgentConfig,
+    factory: &ProviderFactory,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    manual: bool,
+) -> Result<bool> {
+    let tokens = ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default());
+    if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
+        return Ok(false);
+    }
+    let policy = rpc_host_settings::AutoCompactionPolicy::load(&ara_home().join("agent"))?;
+    if !manual && !policy.enabled() {
+        return Ok(false);
+    }
+    let settings = policy.recovery_settings()?;
+    for method in &settings.method_order {
+        if cancel.is_cancelled() {
+            return Err(ara_cli::handoff::cancelled());
+        }
+        let result = match method.as_str() {
+            "remote" => run_remote_compaction(args, config, factory, &settings, context, sink, cancel, manual).await,
+            "soft" => run_soft_compaction(args, config, factory, context, sink, cancel, manual).await,
+            // These automatic REPL methods retain their separately recorded
+            // implementation scope; /handoff and /shake remain explicit commands.
+            _ => continue,
+        };
+        match result {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error)
+                if ara_cli::remote_compaction::is_cancelled(&error) || sink.persist_failed.load(Ordering::SeqCst) =>
+            {
+                return Err(error);
+            }
+            Err(error) => eprintln!("ara: {method} compaction failed ({error:#}); trying the next configured method"),
+        }
+    }
+    Ok(false)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_remote_compaction(
+    args: &Args,
+    config: &AgentConfig,
+    factory: &ProviderFactory,
+    settings: &rpc_host_settings::RecoveryCompactionSettings,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    manual: bool,
+) -> Result<bool> {
+    use ara_agent::compaction::SummaryOptions;
+    use ara_ai::remote_compaction::RemoteRequestOptions;
+    use ara_cli::remote_compaction::{model_config, native_replay_available, prepare_remote};
+    let remote_config = model_config(factory.metadata.as_ref())?;
+    if !ara_agent::remote::remote_available(&config.model, &remote_config, &settings.remote) {
+        return Ok(false);
+    }
+    let snapshot = {
+        let guard = sink.journal.lock().await;
+        let Some(journal) = guard.as_ref().filter(|journal| journal.is_persistent()) else { return Ok(false) };
+        let available = native_replay_available(
+            journal,
+            &config.model,
+            factory.metadata.as_ref(),
+            &settings.remote,
+            factory.route.remote_supports_images(),
+        )?;
+        journal.native_remote_snapshot(&config.model, available)?
+    };
+    let transport = factory.route.bind_remote(
+        factory.client.clone(),
+        RemoteRequestOptions {
+            session_id: Some(snapshot.projection.session_id.clone()),
+            generic_model: remote_config.model.clone(),
+            ..Default::default()
+        },
+    );
+    // Capture the same Session artifact owner before awaiting the side call.
+    let artifacts = sink.artifacts.current_store();
+    let prepared = prepare_remote(
+        &snapshot,
+        config,
+        transport,
+        &remote_config,
+        &settings.remote,
+        args.compact_keep_tokens,
+        None,
+        settings.reserve_tokens,
+        SummaryOptions {
+            oneshot_retry: if manual { SummaryOptions::default().oneshot_retry } else { None },
+            max_tokens: args.max_tokens,
+        },
+        Instant::now() + Duration::from_secs(120),
+        cancel,
+    )
+    .await;
+    let prepared = match prepared {
+        Ok(Some(prepared)) => {
+            record_remote_attempts(sink, &artifacts, &prepared.attempts).await?;
+            prepared
+        }
+        Ok(None) => return Ok(false),
+        Err(error) => {
+            if let Some(failure) = error.downcast_ref::<ara_cli::remote_compaction::RemotePreparationError>() {
+                record_remote_attempts(sink, &artifacts, &failure.attempts).await?;
+            }
+            return Err(error);
+        }
+    };
+    let tokens_before =
+        ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
+    let mut guard = sink.journal.lock().await;
+    let journal = guard.as_mut().context("Session unavailable")?;
+    if cancel.is_cancelled() {
+        return Err(ara_cli::handoff::cancelled());
+    }
+    if let Err(error) = prepared.commit(journal, &snapshot, tokens_before) {
+        if error.history_published() {
+            sink.persistence_failure(&error);
+            let _ = factory.adopt_context(journal, context, sink);
+        }
+        return Err(error.into());
+    }
+    factory.adopt_context(journal, context, sink)?;
+    eprintln!("ara: remote compaction saved in the current Session; {} request attempts", prepared.attempts.len());
+    Ok(true)
+}
+
+async fn record_remote_attempts(
+    sink: &HostSink,
+    artifacts: &ara_cli::session_artifacts::SessionArtifacts,
+    attempts: &[ara_ai::remote_compaction::RemoteAttempt],
+) -> Result<()> {
+    if attempts.is_empty() {
+        return Ok(());
+    }
+    let receipts: Vec<serde_json::Value> = attempts
+        .iter()
+        .map(|attempt| {
+            serde_json::json!({
+                "elapsedMs":attempt.elapsed_ms, "usage":attempt.usage,
+                "status":attempt.status, "failed":attempt.error.is_some(),
+            })
+        })
+        .collect();
+    let content = serde_json::to_string(&serde_json::json!({"method":"remote", "attempts":receipts}))?;
+    match artifacts.save(&content, "remote-compaction").await {
+        Ok(id) => {
+            eprintln!("ara: remote compaction receipts: artifact://{id}");
+            Ok(())
+        }
+        Err(error) => {
+            sink.persistence_failure(&error);
+            Err(error)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_soft_compaction(
+    args: &Args,
+    config: &AgentConfig,
+    factory: &ProviderFactory,
     context: &mut Vec<Message>,
     sink: &HostSink,
     cancel: &CancellationToken,
@@ -758,6 +924,8 @@ async fn run_compaction(
         SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
     };
     use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+    let model = &config.model;
+    let provider = &config.provider;
     let tokens = count_messages(context, MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
@@ -840,6 +1008,9 @@ async fn run_compaction(
             return Ok(false);
         }
     };
+    if cancel.is_cancelled() {
+        return Err(ara_cli::handoff::cancelled());
+    }
     journal.commit_native_entry_compaction(
         &snapshot,
         &accepted.text,
@@ -847,7 +1018,7 @@ async fn run_compaction(
         &accepted.window_source_entry_ids,
         tokens as u64,
     )?;
-    *context = journal.model_context();
+    factory.adopt_context(journal, context, sink)?;
     let kept = count_messages(context, MessageCountOptions::default());
     eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");
     Ok(true)
@@ -932,9 +1103,11 @@ struct ReplSession<'a> {
     artifact_router: Arc<ara_cli::session_artifacts::ArtifactUriRouter>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_local_shake(
     mode: &str,
     model: &ara_ai::Model,
+    factory: &ProviderFactory,
     context: &mut Vec<Message>,
     sink: &HostSink,
     artifacts: &ara_cli::session_artifacts::SessionArtifacts,
@@ -942,24 +1115,42 @@ async fn run_local_shake(
     cancel: &CancellationToken,
 ) -> Result<bool> {
     use ara_agent::compaction::local_reduction::ShakeConfig;
-    use ara_cli::local_reduction::{HostReductionPolicy, prepare_images, prepare_shake, prepare_thinking};
-    let snapshot = sink.journal.lock().await.as_ref().context("Session unavailable")?.raw_reduction_snapshot()?;
+    use ara_cli::local_reduction::{
+        HostReductionPolicy, prepare_images_after_boundary, prepare_shake, prepare_thinking_after_boundary,
+    };
+    let settings = rpc_host_settings::AutoCompactionPolicy::load(&ara_home().join("agent"))?.recovery_settings()?;
+    let (snapshot, native_boundary) = {
+        let guard = sink.journal.lock().await;
+        let journal = guard.as_ref().context("Session unavailable")?;
+        (
+            journal.raw_reduction_snapshot()?,
+            ara_cli::remote_compaction::native_reduction_boundary(
+                journal,
+                model,
+                factory.metadata.as_ref(),
+                &settings.remote,
+                factory.route.remote_supports_images(),
+            )?,
+        )
+    };
     let policy = HostReductionPolicy {
-        keep_boundary_id: snapshot
-            .entries
-            .iter()
-            .rev()
-            .find(|entry| entry.kind == "compaction")
-            .and_then(|entry| entry.raw["firstKeptEntryId"].as_str())
-            .map(str::to_owned),
+        keep_boundary_id: native_boundary.clone().or_else(|| {
+            snapshot
+                .entries
+                .iter()
+                .rev()
+                .find(|entry| entry.kind == "compaction")
+                .and_then(|entry| entry.raw["firstKeptEntryId"].as_str())
+                .map(str::to_owned)
+        }),
         ..Default::default()
     };
     let mut prepared = match mode {
         "elide" => {
             prepare_shake(snapshot, model, &ShakeConfig::aggressive(), &policy, artifacts, ara_ai::now_ms()).await?
         }
-        "images" => prepare_images(snapshot, model)?,
-        "thinking" => prepare_thinking(snapshot, model)?,
+        "images" => prepare_images_after_boundary(snapshot, model, native_boundary.as_deref())?,
+        "thinking" => prepare_thinking_after_boundary(snapshot, model, native_boundary.as_deref())?,
         _ => bail!("Unknown shake mode: {mode}. Expected elide, images or thinking"),
     };
     if cancel.is_cancelled() {
@@ -979,12 +1170,12 @@ async fn run_local_shake(
     let journal = guard.as_mut().context("Session unavailable")?;
     if let Err(error) = journal.commit_reduction(&prepared.snapshot, &prepared.edits) {
         if error.history_published() {
-            *context = journal.model_context();
             sink.persistence_failure(&error);
+            let _ = factory.adopt_context(journal, context, sink);
         }
         return Err(error.into());
     }
-    *context = journal.model_context();
+    factory.adopt_context(journal, context, sink)?;
     let counts = &prepared.plan.counts;
     eprintln!(
         "ara: shake {mode}: {} tool results, {} blocks, {} images, {} thinking blocks; ~{} tokens freed{}",
@@ -1043,12 +1234,12 @@ async fn run_repl_handoff(
         tokens_before,
     ) {
         if error.history_published() {
-            *context = journal.model_context();
             sink.persistence_failure(&error);
+            let _ = factory.adopt_context(journal, context, sink);
         }
         return Err(error.into());
     }
-    *context = journal.model_context();
+    factory.adopt_context(journal, context, sink)?;
     eprintln!("ara: handoff saved in the current Session; recent history kept");
     Ok(true)
 }
@@ -1134,9 +1325,33 @@ async fn run_repl_loop(
             }
             "/compact" => {
                 let token = cancel.child_token();
-                let step = run_compaction(args, model, &provider, context, sink, &token, true);
-                if let Err(e) = interruptible(step, &token, &mut interrupts).await {
-                    eprintln!("ara: compaction failed ({e:#}); session kept");
+                let config = AgentConfig {
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    system_prompt: system_prompt.clone(),
+                    tools: tools.to_vec(),
+                    tool_choice: None,
+                    max_tokens: args.max_tokens,
+                    temperature: args.temperature,
+                    deadline: None,
+                    max_model_calls: args.max_model_calls,
+                    hooks: hooks.clone(),
+                };
+                let step = run_compaction(args, &config, session.provider_factory, context, sink, &token, true);
+                match interruptible(step, &token, &mut interrupts).await {
+                    Ok(true) => {
+                        let id =
+                            sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
+                        provider = session
+                            .provider_factory
+                            .route
+                            .bind_codex_session(session.provider_factory.client.clone(), id);
+                    }
+                    Ok(false) => {}
+                    Err(e) => eprintln!("ara: compaction failed ({e:#}); inspect the Session receipt"),
+                }
+                if sink.persist_failed.load(Ordering::SeqCst) {
+                    break 1;
                 }
                 continue;
             }
@@ -1241,7 +1456,8 @@ async fn run_repl_loop(
             let store = session.artifact_router.current_store();
             let token = cancel.child_token();
             let non_message = ara_cli::context_budget::non_message_tokens(model, &system_prompt, tools);
-            let step = run_local_shake(mode, model, context, sink, &store, non_message, &token);
+            let step =
+                run_local_shake(mode, model, session.provider_factory, context, sink, &store, non_message, &token);
             match interruptible(step, &token, &mut interrupts).await {
                 Ok(true) => provider = session.provider_factory.build(),
                 Ok(false) => {}
@@ -1371,9 +1587,18 @@ async fn run_repl_loop(
         }
         if report.end == RunEnd::Completed {
             let token = cancel.child_token();
-            let step = run_compaction(args, model, &provider, context, sink, &token, false);
-            if let Err(e) = interruptible(step, &token, &mut interrupts).await {
-                eprintln!("ara: auto-compaction failed ({e:#}); session kept");
+            let step = run_compaction(args, &config, session.provider_factory, context, sink, &token, false);
+            match interruptible(step, &token, &mut interrupts).await {
+                Ok(true) => {
+                    let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
+                    provider =
+                        session.provider_factory.route.bind_codex_session(session.provider_factory.client.clone(), id);
+                }
+                Ok(false) => {}
+                Err(e) => eprintln!("ara: auto-compaction failed ({e:#}); inspect the Session receipt"),
+            }
+            if sink.persist_failed.load(Ordering::SeqCst) {
+                break 1;
             }
         }
     };
@@ -1557,6 +1782,30 @@ struct ProviderFactory {
 }
 
 impl ProviderFactory {
+    fn context_for(&self, journal: &SessionJournal) -> Result<Vec<Message>> {
+        let settings = rpc_host_settings::AutoCompactionPolicy::load(&ara_home().join("agent"))?.recovery_settings()?;
+        ara_cli::remote_compaction::route_context(
+            journal,
+            self.route.model(),
+            self.metadata.as_ref(),
+            &settings.remote,
+            self.route.remote_supports_images(),
+        )
+    }
+
+    fn adopt_context(&self, journal: &SessionJournal, context: &mut Vec<Message>, sink: &HostSink) -> Result<()> {
+        match self.context_for(journal) {
+            Ok(messages) => {
+                *context = messages;
+                Ok(())
+            }
+            Err(error) => {
+                sink.persistence_failure(&error);
+                Err(error)
+            }
+        }
+    }
+
     async fn daily(
         client: reqwest::Client,
         mut selection: ara_cli::daily_model_config::DailySelection,
@@ -1813,7 +2062,6 @@ async fn run_inner(
         None
     };
     let model_ref = format!("{}/{}", route.model.provider, route.model.id);
-    let mut context: Vec<Message> = journal.as_ref().map(SessionJournal::model_context).unwrap_or_default();
     if let Some(j) = journal.as_mut()
         && j.current_model().as_deref() != Some(model_ref.as_str())
     {
@@ -1884,7 +2132,9 @@ async fn run_inner(
             args.responses_stateful,
         )?
     };
-    let provider = provider_factory.build();
+    let mut context =
+        journal.as_ref().map(|journal| provider_factory.context_for(journal)).transpose()?.unwrap_or_default();
+    let mut provider = provider_factory.build();
     *account_auth = provider_factory.account_auth.clone();
     let cancel = CancellationToken::new();
     if rpc_mode {
@@ -1923,7 +2173,14 @@ async fn run_inner(
     if let Some(context) = &tool_context {
         context.set_uri_port(artifact_router.clone());
     }
-    let sink = HostSink::new(args.mode, repl_mode && args.mode == Mode::Text, journal, cancel.clone(), args.edit_mode);
+    let sink = HostSink::new(
+        args.mode,
+        repl_mode && args.mode == Mode::Text,
+        journal,
+        cancel.clone(),
+        args.edit_mode,
+        artifact_router.clone(),
+    );
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
     }
@@ -1954,7 +2211,6 @@ async fn run_inner(
         )
         .await;
     }
-    drop(provider_factory);
     let c2 = cancel.clone();
     tokio::spawn(async move {
         if interrupts.recv().await.is_some() {
@@ -1970,6 +2226,7 @@ async fn run_inner(
         eprintln!("Working...");
     }
     let mut end = RunEnd::Completed;
+    let mut last_printable_assistant = None;
     for prompt in prompts {
         let config = AgentConfig {
             model: route.model.clone(),
@@ -1985,14 +2242,26 @@ async fn run_inner(
         };
         let report =
             agent_loop(vec![Message::User(UserMessage::text(prompt))], &mut context, &config, &cancel, &sink).await;
+        // Provider-native compaction replaces the model view with an opaque
+        // replay carrier. Print the actual completed response, not that carrier.
+        last_printable_assistant = context.iter().rev().find_map(Message::as_assistant).cloned();
         end = report.end;
         if end != RunEnd::Completed {
             break;
         }
-        if let Err(e) = run_compaction(&args, &route.model, &provider, &mut context, &sink, &cancel, false).await {
-            eprintln!("ara: auto-compaction failed ({e:#}); session kept");
+        match run_compaction(&args, &config, &provider_factory, &mut context, &sink, &cancel, false).await {
+            Ok(true) => {
+                let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
+                provider = provider_factory.route.bind_codex_session(provider_factory.client.clone(), id);
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!("ara: auto-compaction failed ({e:#}); inspect the Session receipt"),
+        }
+        if sink.persist_failed.load(Ordering::SeqCst) {
+            break;
         }
     }
+    drop(provider_factory);
     drop(provider);
     if let Some(task) = request_text_task {
         let _ = task.await;
@@ -2008,7 +2277,7 @@ async fn run_inner(
         eprintln!("ara: session {}", path.display());
     }
     let mut code = 0;
-    let last = context.iter().rev().find_map(Message::as_assistant).cloned();
+    let last = last_printable_assistant.or_else(|| context.iter().rev().find_map(Message::as_assistant).cloned());
     match end {
         RunEnd::Completed => {
             if let Some(a) = &last {
@@ -2058,7 +2327,7 @@ async fn run_inner(
 async fn main() {
     ara_cli::catalog_discovery::initialize_catalog_process_startup_tls();
     let args = Args::parse();
-    let code = match run(args).await {
+    let code = match Box::pin(run(args)).await {
         Ok(code) => code,
         Err(e) => {
             eprintln!("ara: {e:#}");
@@ -2135,7 +2404,18 @@ const x = 2;
         let path = j.path().to_path_buf();
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        let sink = HostSink::new(Mode::Text, false, Some(j), CancellationToken::new(), ara_edit::EditMode::Hashline);
+        let artifacts = ara_cli::session_artifacts::ArtifactUriRouter::new(
+            ara_cli::session_artifacts::SessionArtifacts::for_journal(&j),
+            None,
+        );
+        let sink = HostSink::new(
+            Mode::Text,
+            false,
+            Some(j),
+            CancellationToken::new(),
+            ara_edit::EditMode::Hashline,
+            artifacts,
+        );
         sink.emit(AgentEvent::MessageEnd { message: Message::Assistant(a) }).await;
         assert!(sink.persist_failed.load(Ordering::SeqCst));
         assert!(sink.cancel.is_cancelled(), "tools of an unrecorded message must not run");

@@ -671,6 +671,25 @@ pub fn select_native_entry_compaction_cut(
     keep_recent_tokens: usize,
     previous_summary: Option<&str>,
 ) -> Result<Option<NativeCompactionCut>, SummaryInputError> {
+    select_native_entry_cut(sources, keep_recent_tokens, previous_summary, true)
+}
+
+/// Native remote encoders preserve images and provider replay. Select the
+/// identical structural raw cut without applying a text summarizer's codec.
+pub fn select_native_remote_compaction_cut(
+    sources: &[NativeEntrySource<'_>],
+    keep_recent_tokens: usize,
+    previous_summary: Option<&str>,
+) -> Result<Option<NativeCompactionCut>, SummaryInputError> {
+    select_native_entry_cut(sources, keep_recent_tokens, previous_summary, false)
+}
+
+fn select_native_entry_cut(
+    sources: &[NativeEntrySource<'_>],
+    keep_recent_tokens: usize,
+    previous_summary: Option<&str>,
+    text_summary: bool,
+) -> Result<Option<NativeCompactionCut>, SummaryInputError> {
     validate_native_entry_sources(sources)?;
     let cut_points: Vec<usize> = sources
         .iter()
@@ -709,7 +728,9 @@ pub fn select_native_entry_compaction_cut(
         return Ok(None);
     }
     let (turn_start_index, history_end_index) = native_entry_cut_at(sources, cut_index, previous_summary)?;
-    serialize_native_entry_sources_for_summary(&sources[..cut_index])?;
+    if text_summary {
+        serialize_native_entry_sources_for_summary(&sources[..cut_index])?;
+    }
     let estimated_retained_raw_tokens = suffix_tokens[cut_index];
     Ok(Some(NativeCompactionCut {
         first_kept_index: cut_index,

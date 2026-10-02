@@ -42,7 +42,7 @@ fn window(snapshot: &NativeHandoffSnapshot, first_kept: &str) -> Vec<String> {
 fn summary(journal: &SessionJournal) -> ara_session::CompactionSummaryView {
     let projection = journal.compacted_context_projection().unwrap();
     let CompactedContextItem::Summary(summary) = &projection.items[0] else { panic!("native summary first") };
-    summary.clone()
+    summary.as_ref().clone()
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn handoff_exact_raw_stale_and_unsupported_legacy_replay_refuse_without_writes()
     let id = journal.entries().last().unwrap().id.clone();
     let good: Vec<Value> =
         fs::read_to_string(journal.path()).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    for fault in ["sources", "details", "remote", "extension", "archive", "provider"] {
+    for fault in ["sources", "details", "method", "extension", "archive", "provider"] {
         let mut lines = good.clone();
         let raw = lines.iter_mut().find(|entry| entry["id"] == id).unwrap();
         match fault {
@@ -178,8 +178,8 @@ fn handoff_exact_raw_stale_and_unsupported_legacy_replay_refuse_without_writes()
             "details" => {
                 raw["details"]["readFiles"] = json!("not native arrays");
             }
-            "remote" => {
-                raw["method"] = json!("remote");
+            "method" => {
+                raw["method"] = json!("unrecognized");
             }
             "extension" => {
                 raw["fromExtension"] = json!(true);

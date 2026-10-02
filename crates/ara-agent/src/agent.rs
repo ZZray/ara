@@ -386,7 +386,12 @@ impl Agent {
                     crate::agent_loop::UNPAIRED_TAIL_REFUSED.into(),
                 )));
             }
-            if messages.is_empty() || matches!(messages.last(), Some(Message::Assistant(_))) {
+            if messages.is_empty()
+                || messages.last().is_some_and(|last| {
+                    matches!(last, Message::Assistant(_))
+                        && !ara_ai::remote_compaction::is_native_compaction_carrier(last, &config.model)
+                })
+            {
                 if cancel.is_cancelled() || config.deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                     return Err(AgentError::CannotContinue(LoopError::CannotContinue(
                         "Cannot continue: run was cancelled or deadline passed".into(),

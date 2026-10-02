@@ -212,10 +212,10 @@ fn malformed_compactions_and_off_branch_kept_ids_fail_without_writes() {
         (
             {
                 let mut e = good.clone();
-                e["method"] = json!("remote");
+                e["method"] = json!("unrecognized");
                 e
             },
-            CompactionProjectionError::UnsupportedMethod { id: "c1".into(), method: "remote".into() },
+            CompactionProjectionError::UnsupportedMethod { id: "c1".into(), method: "unrecognized".into() },
         ),
         (
             {

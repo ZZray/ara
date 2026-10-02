@@ -33,5 +33,6 @@ pub mod models_config;
 pub mod native_compaction;
 pub mod openai_codex_auth;
 pub mod provider_models;
+pub mod remote_compaction;
 pub mod retry_fallback;
 pub mod session_artifacts;

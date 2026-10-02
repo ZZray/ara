@@ -22,13 +22,14 @@
 //! results were recorded are paired with explicit "effect unknown" results on
 //! resume instead of being replayed.
 //!
-//! Not ported (open): provider-native compaction replay, label editing,
+//! Not ported (open): complete provider-native compaction replay, label editing,
 //! v1/v2 migrations, SQL/Redis storage,
 //! listing/search, moving, title generation, blob externalization.
 
 mod handoff;
 mod loop_guard_notice;
 mod reduction;
+mod remote;
 mod skill_prompt;
 
 pub use handoff::{NativeCompactionFileDetails, NativeHandoffError, NativeHandoffSnapshot, NativeHandoffSummary};
@@ -39,6 +40,7 @@ pub use reduction::{
     SessionReductionAction, SessionReductionEdit, SessionReductionError, SessionReductionReceipt, SessionReductionSlot,
     SessionReductionSnapshot,
 };
+pub use remote::{NativeRemoteError, NativeRemoteReplay, NativeRemoteSnapshot, NativeRemoteSummary};
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
 use ara_ai::{
@@ -804,6 +806,12 @@ fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Mess
 /// A native Assistant cut may summarize the current user prompt before its
 /// answer. Tool ownership and unknown effects still require complete pairs.
 fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
+    safe_compaction_prefix(branch, allow_unanswered_user, false)
+}
+
+/// Native replay preserves image-bearing messages; all raw ownership,
+/// complete-pair and unknown-effect checks remain shared with text summaries.
+fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native_replay: bool) -> bool {
     let branch = &branch[active_context_start(branch)..];
     let mut saw_message = false;
     let mut pending: HashMap<String, String> = HashMap::new();
@@ -826,7 +834,8 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
             match &message {
                 Message::User(user) => {
                     if !pending.is_empty()
-                        || matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
+                        || !native_replay
+                            && matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
                     {
                         return false;
                     }
@@ -842,14 +851,16 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
                 Message::Developer(developer) => {
                     if !historical_custom
                         || !pending.is_empty()
-                        || matches!(&developer.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
+                        || !native_replay
+                            && matches!(&developer.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
                     {
                         return false;
                     }
                 }
                 Message::Assistant(assistant) => {
                     if !pending.is_empty()
-                        || assistant.content.iter().any(|block| matches!(block, AssistantBlock::Image(_)))
+                        || !native_replay
+                            && assistant.content.iter().any(|block| matches!(block, AssistantBlock::Image(_)))
                     {
                         return false;
                     }
@@ -861,7 +872,7 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
                     }
                 }
                 Message::ToolResult(result) => {
-                    if result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
+                    if !native_replay && result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
                         || result.details.as_ref().is_some_and(|details| {
                             details.get("panicked").and_then(Value::as_bool) == Some(true)
                                 || (details.get("__synthetic").and_then(Value::as_bool) == Some(true)
@@ -933,7 +944,7 @@ pub struct CompactionSourceSnapshot {
     pub messages: Vec<SourcedMessage>,
 }
 
-/// Current soft summary and its still-raw source window. A previous summary
+/// Current readable summary and its still-raw source window. A previous summary
 /// is derived evidence, never a fabricated raw source message. Unlike the
 /// single-level snapshot, this view also supports a native in-memory journal.
 #[derive(Debug, Clone, PartialEq)]
@@ -993,21 +1004,27 @@ pub struct NativeProjectedCompactionSnapshot {
 pub struct CompactionSummaryView {
     pub entry_id: String,
     pub summary: String,
+    /// Generic remote endpoint's shorter display summary. Empty is a supplied
+    /// value; absence remains distinct from an empty provider response field.
+    pub short_summary: Option<String>,
     pub first_kept_entry_id: String,
     pub tokens_before: u64,
     pub timestamp: String,
-    /// Missing/null legacy method is normalized to soft. Native handoff
-    /// retains its method independently from the stored document text.
+    /// Missing/null legacy method is normalized to soft. Native methods retain
+    /// their identity independently from stored document/placeholder text.
     pub method: String,
     /// Native cumulative file lists, never recovered by parsing model text.
     pub file_details: Option<NativeCompactionFileDetails>,
+    /// Provider-native state covers the submitted recent tail as well as the
+    /// replaced prefix. This remains derived state, never a raw model receipt.
+    pub remote: Option<NativeRemoteReplay>,
     /// `None` means an imported entry has no verifiable source list.
     pub source_entry_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompactedContextItem {
-    Summary(CompactionSummaryView),
+    Summary(Box<CompactionSummaryView>),
     Message(Box<SourcedMessage>),
 }
 
@@ -2190,7 +2207,7 @@ impl SessionJournal {
         let mut source_ids = HashSet::new();
         for item in projection.items {
             match item {
-                CompactedContextItem::Summary(summary) => previous_summary = Some(summary),
+                CompactedContextItem::Summary(summary) => previous_summary = Some(*summary),
                 CompactedContextItem::Message(message) => {
                     if !source_ids.insert(message.entry_id.clone()) {
                         return Err(
@@ -2214,14 +2231,35 @@ impl SessionJournal {
     pub fn native_projected_compaction_snapshot(
         &self,
     ) -> std::result::Result<NativeProjectedCompactionSnapshot, CompactionProjectionError> {
-        let projection = self.compacted_context_projection()?;
+        self.native_projected_compaction_snapshot_with_route(None)
+    }
+
+    /// Use exactly the active route's native replay availability for both
+    /// preparation and model context. An unreadable remote boundary is skipped
+    /// in favor of an earlier readable text summary or its original raw inputs.
+    pub fn native_projected_compaction_snapshot_for_route(
+        &self,
+        active_model: &ara_ai::Model,
+        native_replay_available: bool,
+    ) -> std::result::Result<NativeProjectedCompactionSnapshot, CompactionProjectionError> {
+        self.native_projected_compaction_snapshot_with_route(Some((active_model, native_replay_available)))
+    }
+
+    fn native_projected_compaction_snapshot_with_route(
+        &self,
+        route: Option<(&ara_ai::Model, bool)>,
+    ) -> std::result::Result<NativeProjectedCompactionSnapshot, CompactionProjectionError> {
+        let projection = self.compacted_context_projection_with_route(route)?;
         let previous_summary = projection.items.into_iter().find_map(|item| match item {
-            CompactedContextItem::Summary(summary) => Some(summary),
+            CompactedContextItem::Summary(summary) => Some(*summary),
             _ => None,
         });
         let raw_branch = self.strict_compaction_branch()?;
         let branch = &raw_branch[active_context_start(&raw_branch)..];
         let start = previous_summary.as_ref().map_or(0, |summary| {
+            if summary.remote.is_some() {
+                return branch.iter().position(|entry| entry.id == summary.entry_id).expect("validated remote ID") + 1;
+            }
             branch
                 .iter()
                 .position(|entry| entry.id == summary.first_kept_entry_id)
@@ -2265,7 +2303,27 @@ impl SessionJournal {
         window_source_entry_ids: &[String],
     ) -> std::result::Result<Vec<String>, CompactionCommitError> {
         let current = self.native_projected_compaction_snapshot()?;
-        if snapshot != &current {
+        self.native_entry_compaction_sources_from_current(
+            snapshot,
+            &current,
+            summary,
+            first_kept_entry_id,
+            window_source_entry_ids,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn native_entry_compaction_sources_from_current(
+        &self,
+        snapshot: &NativeProjectedCompactionSnapshot,
+        current: &NativeProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+        native_replay: bool,
+    ) -> std::result::Result<Vec<String>, CompactionCommitError> {
+        if snapshot != current {
             return Err(CompactionCommitError::StaleSnapshot);
         }
         if summary.trim().is_empty() || summary.len() > 1_000_000 {
@@ -2285,13 +2343,21 @@ impl SessionJournal {
         if expected.is_empty() || window_source_entry_ids != expected.as_slice() {
             return Err(CompactionCommitError::InvalidWindow);
         }
-        let mut cumulative = match current.previous_summary {
-            Some(summary) => summary.source_entry_ids.ok_or(CompactionCommitError::MissingPreviousSources)?,
-            None => Vec::new(),
-        };
-        cumulative.extend(expected);
+        if current.previous_summary.as_ref().is_some_and(|summary| summary.source_entry_ids.is_none()) {
+            return Err(CompactionCommitError::MissingPreviousSources);
+        }
         let raw_branch = self.strict_compaction_branch().map_err(CompactionProjectionError::from)?;
         let branch = &raw_branch[active_context_start(&raw_branch)..];
+        // A remote payload also covers its previous retained tail. Its original
+        // sourceEntryIds retain their replaced-prefix meaning; the next summary
+        // carries every now-consumed original ID forward without inventing raw
+        // observations from the opaque placeholder.
+        let raw_start = branch
+            .iter()
+            .position(|entry| entry.id == current.entries[0].entry_id)
+            .ok_or(CompactionCommitError::InvalidWindow)?;
+        let mut cumulative = context_source_ids(&branch[..raw_start]);
+        cumulative.extend(expected);
         let raw_kept = branch
             .iter()
             .position(|entry| entry.id == first_kept_entry_id)
@@ -2309,7 +2375,7 @@ impl SessionJournal {
             return Err(CompactionCommitError::InvalidWindow);
         }
         let split = current.entries[kept].origin != NativeEntryOrigin::User;
-        if !safe_summary_prefix(&branch[..raw_kept], split) {
+        if !safe_compaction_prefix(&branch[..raw_kept], split, native_replay) {
             return Err(CompactionCommitError::UnsafeSummaryBoundary);
         }
         Ok(cumulative)
@@ -2414,12 +2480,28 @@ impl SessionJournal {
         Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative_sources, tokens_before)?)
     }
 
-    /// Strict, read-only projection of the current branch after a checked
-    /// soft or handoff compaction. Raw entries remain in the journal; the latest summary is a
+    /// Strict, read-only projection after the latest readable text compaction.
+    /// Opaque remote boundaries are skipped without a native active route.
+    /// Raw entries remain in the journal; the latest summary is a
     /// distinct item followed by kept and later messages. This does not turn
     /// the summary into a user message or make a provider request.
     pub fn compacted_context_projection(
         &self,
+    ) -> std::result::Result<CompactedContextProjection, CompactionProjectionError> {
+        self.compacted_context_projection_with_route(None)
+    }
+
+    pub fn compacted_context_projection_for_route(
+        &self,
+        active_model: &ara_ai::Model,
+        native_replay_available: bool,
+    ) -> std::result::Result<CompactedContextProjection, CompactionProjectionError> {
+        self.compacted_context_projection_with_route(Some((active_model, native_replay_available)))
+    }
+
+    fn compacted_context_projection_with_route(
+        &self,
+        route: Option<(&ara_ai::Model, bool)>,
     ) -> std::result::Result<CompactedContextProjection, CompactionProjectionError> {
         let raw_branch = self.strict_compaction_branch()?;
         let branch = &raw_branch[active_context_start(&raw_branch)..];
@@ -2447,7 +2529,9 @@ impl SessionJournal {
                     }
                     let allow_unanswered_user =
                         branch[kept_index].native_compaction_entry()?.origin != NativeEntryOrigin::User;
-                    if !safe_summary_prefix(&branch[..kept_index], allow_unanswered_user) {
+                    let native_replay = entry.raw["method"] == "remote"
+                        && entry.raw.get("preserveData").is_some_and(|value| !value.is_null());
+                    if !safe_compaction_prefix(&branch[..kept_index], allow_unanswered_user, native_replay) {
                         return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
                     }
                     let tokens_before =
@@ -2461,7 +2545,7 @@ impl SessionJournal {
                     let method = match entry.raw.get("method").filter(|value| !value.is_null()) {
                         Some(method) => {
                             let method = method.as_str().ok_or_else(|| invalid("method"))?;
-                            if !matches!(method, "soft" | "handoff") {
+                            if !matches!(method, "soft" | "handoff" | "remote") {
                                 return Err(CompactionProjectionError::UnsupportedMethod {
                                     id: entry.id.clone(),
                                     method: method.to_owned(),
@@ -2472,6 +2556,14 @@ impl SessionJournal {
                         None => "soft",
                     };
                     let file_details = handoff::native_file_details(&entry.raw);
+                    let short_summary = match (method == "remote")
+                        .then(|| entry.raw.get("shortSummary"))
+                        .flatten()
+                        .filter(|value| !value.is_null())
+                    {
+                        Some(value) => Some(value.as_str().ok_or_else(|| invalid("shortSummary"))?.to_owned()),
+                        None => None,
+                    };
                     if method == "handoff" {
                         if entry_timestamp(&entry.raw).is_none() {
                             return Err(invalid("timestamp"));
@@ -2489,18 +2581,19 @@ impl SessionJournal {
                             return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                         }
                     }
-                    if entry.raw.get("providerReplayThroughEntryId").is_some_and(|value| !value.is_null())
-                        || entry.raw.get("fromExtension").and_then(Value::as_bool) == Some(true)
-                        || entry.raw.get("preserveData").is_some_and(|value| match value {
-                            Value::Null => false,
-                            Value::Object(fields) => !fields.is_empty(),
-                            _ => true,
-                        })
+                    if method != "remote"
+                        && (entry.raw.get("providerReplayThroughEntryId").is_some_and(|value| !value.is_null())
+                            || entry.raw.get("fromExtension").and_then(Value::as_bool) == Some(true)
+                            || entry.raw.get("preserveData").is_some_and(|value| match value {
+                                Value::Null => false,
+                                Value::Object(fields) => !fields.is_empty(),
+                                _ => true,
+                            }))
                     {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
                     let source_entry_ids = match entry.raw.get("sourceEntryIds") {
-                        None if allow_unanswered_user || method == "handoff" => {
+                        None if allow_unanswered_user || matches!(method, "handoff" | "remote") => {
                             return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
                         }
                         None => None,
@@ -2518,16 +2611,35 @@ impl SessionJournal {
                         }
                         Some(_) => return Err(invalid("sourceEntryIds")),
                     };
+                    let remote = if method == "remote" {
+                        remote::validate_remote_entry(branch, index, kept_index, entry)?
+                    } else {
+                        None
+                    };
+                    let start = if let Some(remote) = &remote {
+                        if !remote::reusable(remote, route) {
+                            continue;
+                        }
+                        branch[..index]
+                            .iter()
+                            .position(|entry| entry.id == remote.replay_through_entry_id)
+                            .expect("validated replay-through ID")
+                            + 1
+                    } else {
+                        kept_index
+                    };
                     latest = Some((
-                        kept_index,
+                        start,
                         CompactionSummaryView {
                             entry_id: entry.id.clone(),
                             summary: summary.to_owned(),
+                            short_summary,
                             first_kept_entry_id: first_kept.to_owned(),
                             tokens_before,
                             timestamp: timestamp.to_owned(),
                             method: method.to_owned(),
                             file_details,
+                            remote,
                             source_entry_ids,
                         },
                     ));
@@ -2540,7 +2652,7 @@ impl SessionJournal {
 
         let mut items = Vec::new();
         let start = if let Some((kept_index, summary)) = &latest {
-            items.push(CompactedContextItem::Summary(summary.clone()));
+            items.push(CompactedContextItem::Summary(Box::new(summary.clone())));
             *kept_index
         } else {
             0
@@ -2595,12 +2707,26 @@ impl SessionJournal {
     /// later messages stay raw. Falls back to [`build_context`](Self::build_context)
     /// when no valid compaction entry exists.
     pub fn model_context(&self) -> Vec<Message> {
-        let messages = match self.compacted_context_projection() {
+        self.model_context_with_route(None)
+    }
+
+    /// A temporary active-route Assistant carrier exposes checked native replay
+    /// to its provider encoder. It is not appended as an invented response or
+    /// usage receipt. Other routes retain readable original source context.
+    pub fn model_context_for_route(&self, active_model: &ara_ai::Model, native_replay_available: bool) -> Vec<Message> {
+        self.model_context_with_route(Some((active_model, native_replay_available)))
+    }
+
+    fn model_context_with_route(&self, route: Option<(&ara_ai::Model, bool)>) -> Vec<Message> {
+        let messages = match self.compacted_context_projection_with_route(route) {
             Ok(projection) if projection.items.iter().any(|item| matches!(item, CompactedContextItem::Summary(_))) => {
                 projection
                     .items
                     .into_iter()
                     .map(|item| match item {
+                        CompactedContextItem::Summary(s) if s.remote.is_some() => {
+                            remote::model_message(&s, route.expect("readable native replay has a route").0)
+                        }
                         CompactedContextItem::Summary(s) if s.method == "handoff" => handoff::model_message(&s),
                         CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
                             "[Compacted summary of earlier turns; source entries withheld]\n{}",

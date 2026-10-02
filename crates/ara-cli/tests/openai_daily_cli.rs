@@ -311,6 +311,9 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert!(String::from_utf8_lossy(&login.stderr).contains("CLI-FIXTURE"));
     assert!(!host.sessions.exists());
     host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
+    // This account workflow serves ordinary Responses and soft summaries.
+    // Native remote endpoints have their own grouped Host fixture.
+    std::fs::write(host.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
     let mut first = host.command("openai-codex", &["--mode", "json", "--tools", "write", "write daily.txt"]);
     first.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     let first = success(&output(first).await);

@@ -2,7 +2,7 @@
 use super::*;
 use ara_agent::compaction::local_reduction::{PruneConfig, ShakeConfig, SupersedePruneConfig};
 use ara_cli::local_reduction::{
-    HostReductionPolicy, PreparedReduction, prepare_images, prepare_prune, prepare_shake, prepare_stale,
+    HostReductionPolicy, PreparedReduction, prepare_images_after_boundary, prepare_prune, prepare_shake, prepare_stale,
 };
 
 /// Fixed rebaseAfterCompaction invalidates the pre-rewrite usage prefix until
@@ -16,15 +16,28 @@ pub(super) struct ContextRebase {
 }
 
 impl Host {
-    fn reduction_policy(&self, snapshot: &ara_session::SessionReductionSnapshot) -> HostReductionPolicy {
-        HostReductionPolicy {
-            keep_boundary_id: snapshot
-                .entries
-                .iter()
-                .rev()
-                .find(|entry| entry.kind == "compaction")
-                .and_then(|entry| entry.raw["firstKeptEntryId"].as_str())
-                .map(str::to_owned),
+    fn reduction_policy(
+        &self,
+        snapshot: &ara_session::SessionReductionSnapshot,
+        journal: &SessionJournal,
+    ) -> Result<HostReductionPolicy> {
+        let native_boundary = ara_cli::remote_compaction::native_reduction_boundary(
+            journal,
+            &self.config.model,
+            self.sessions.provider.metadata.as_ref(),
+            &self.compaction_policy.recovery_settings()?.remote,
+            self.sessions.provider.route.remote_supports_images(),
+        )?;
+        Ok(HostReductionPolicy {
+            keep_boundary_id: native_boundary.or_else(|| {
+                snapshot
+                    .entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.kind == "compaction")
+                    .and_then(|entry| entry.raw["firstKeptEntryId"].as_str())
+                    .map(str::to_owned)
+            }),
             prefix_binding: self
                 .sessions
                 .provider
@@ -32,7 +45,7 @@ impl Host {
                 .as_ref()
                 .is_some_and(|model| model["thinking"]["prefixBinding"] == true),
             protected_read_paths: Vec::new(),
-        }
+        })
     }
 
     pub(super) fn non_message_tokens(&self) -> usize {
@@ -132,17 +145,19 @@ impl Host {
         };
         if let Err(error) = committed {
             if error.history_published() {
-                let _ = self.agent.replace_idle_messages(journal.model_context());
+                if let Ok(context) = self.route_model_context(&journal) {
+                    let _ = self.agent.replace_idle_messages(context);
+                }
                 *session.messages.lock().unwrap() = Session::public_messages(&journal);
                 *session.persistence_error.lock().unwrap() = Some(error.to_string());
                 self.connection.cancel();
             }
             return Err(error.into());
         }
-        if let Err(error) = self.agent.replace_idle_messages(journal.model_context()) {
+        if let Err(error) = self.adopt_route_context(&journal) {
             *session.persistence_error.lock().unwrap() = Some(error.to_string());
             self.connection.cancel();
-            return Err(error.into());
+            return Err(error);
         }
         *session.messages.lock().unwrap() = Session::public_messages(&journal);
         self.config.provider = self.sessions.provider.build();
@@ -162,8 +177,12 @@ impl Host {
     pub(super) async fn prune_local_history(&mut self) -> Result<usize> {
         let settings = self.compaction_policy.recovery_settings()?;
         let expected = self.agent.messages().await;
-        let snapshot = self.session.journal.lock().await.raw_reduction_snapshot()?;
-        let policy = self.reduction_policy(&snapshot);
+        let (snapshot, policy) = {
+            let journal = self.session.journal.lock().await;
+            let snapshot = journal.raw_reduction_snapshot()?;
+            let policy = self.reduction_policy(&snapshot, &journal)?;
+            (snapshot, policy)
+        };
         let config = SupersedePruneConfig {
             prune_useless: settings.drop_useless,
             idle_flush_ms: 90.0 * 60_000.0,
@@ -188,8 +207,12 @@ impl Host {
             return Ok(freed);
         }
         let expected = self.agent.messages().await;
-        let snapshot = self.session.journal.lock().await.raw_reduction_snapshot()?;
-        let policy = self.reduction_policy(&snapshot);
+        let (snapshot, policy) = {
+            let journal = self.session.journal.lock().await;
+            let snapshot = journal.raw_reduction_snapshot()?;
+            let policy = self.reduction_policy(&snapshot, &journal)?;
+            (snapshot, policy)
+        };
         let config = PruneConfig {
             prune_useless: settings.drop_useless,
             cache_warm_suffix_tokens: Some(8_000.0),
@@ -207,8 +230,12 @@ impl Host {
         recovery: Option<&mut ara_session::FailedAssistantRecovery>,
     ) -> Result<bool> {
         let expected = self.agent.messages().await;
-        let snapshot = self.session.journal.lock().await.raw_reduction_snapshot()?;
-        let policy = self.reduction_policy(&snapshot);
+        let (snapshot, policy) = {
+            let journal = self.session.journal.lock().await;
+            let snapshot = journal.raw_reduction_snapshot()?;
+            let policy = self.reduction_policy(&snapshot, &journal)?;
+            (snapshot, policy)
+        };
         let config = if rescue { ShakeConfig::rescue() } else { ShakeConfig::default() };
         let prepared =
             prepare_shake(snapshot, &self.config.model, &config, &policy, &self.session.artifacts, ara_ai::now_ms())
@@ -265,8 +292,19 @@ impl Host {
             return Ok(false);
         }
         let expected = self.agent.messages().await;
-        let snapshot = self.session.journal.lock().await.raw_reduction_snapshot()?;
-        let prepared = prepare_images(snapshot, &self.config.model)?;
+        let (snapshot, native_boundary) = {
+            let journal = self.session.journal.lock().await;
+            let snapshot = journal.raw_reduction_snapshot()?;
+            let boundary = ara_cli::remote_compaction::native_reduction_boundary(
+                &journal,
+                &self.config.model,
+                self.sessions.provider.metadata.as_ref(),
+                &self.compaction_policy.recovery_settings()?.remote,
+                self.sessions.provider.route.remote_supports_images(),
+            )?;
+            (snapshot, boundary)
+        };
+        let prepared = prepare_images_after_boundary(snapshot, &self.config.model, native_boundary.as_deref())?;
         let changed = self.commit_local_reduction(prepared, &expected, false, recovery).await?;
         if changed {
             self.rebase_local_context().await;
