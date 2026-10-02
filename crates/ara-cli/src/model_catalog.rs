@@ -370,7 +370,7 @@ mod tests {
         }
         for (field, value) in [
             ("requestModelId", json!("upstream-id")),
-            ("tokenizer", json!("qwen3")),
+            ("tokenizer", json!("future-tokenizer")),
             ("contextWindow", json!(200_000)),
             ("compat", json!({"wireModelIdMode":"openrouter"})),
             ("thinking", json!({"mode":"effort","efforts":["high"]})),

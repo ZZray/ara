@@ -37,6 +37,10 @@ impl Host {
     }
 
     fn command(&self, provider: &str, arguments: &[&str]) -> Command {
+        self.command_for_model(provider, "daily-model", arguments)
+    }
+
+    fn command_for_model(&self, provider: &str, model: &str, arguments: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ara"));
         for name in [
             "ARA_MODEL",
@@ -63,7 +67,7 @@ impl Host {
             .current_dir(self.work.path())
             .args([
                 "--model",
-                "daily-model",
+                model,
                 "--provider",
                 provider,
                 "--no-skills",
@@ -270,6 +274,48 @@ async fn unsupported_selected_configuration_fails_before_journal_or_model_reques
     assert!(!host.sessions.exists());
     assert!(!host.home.path().join("agent/auth.db").exists());
     assert_eq!(up.served(), 0);
+}
+
+#[tokio::test]
+async fn native_catalog_tokenizer_executes_without_an_override_and_rejects_unknown_names_before_effects() {
+    let host = Host::new();
+    let up = upstream(json!([{"events":[text("Native count."),finish("stop"),done()]}])).await;
+    host.config("openai-completions", &up.base_url(), "none");
+    let path = host.home.path().join("agent/models.yml");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let model_id = "deepseek-v4.1-flash";
+    value["providers"]["custom"]["models"][0]["id"] = json!(model_id);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let result = output(host.command_for_model(
+        "custom",
+        model_id,
+        &["--report-request-text-tokens", "--tools", "", "native count"],
+    ))
+    .await;
+    assert!(success(&result).contains("Native count."));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    let body = &requests[0]["body"];
+    assert_eq!(body["model"], model_id);
+    assert!(body.get("tokenizer").is_none());
+    let fragments: Vec<_> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["content"].as_str().expect("text-only fixture"))
+        .collect();
+    let expected = ara_ai::model_tokenizer::count_family_fragments(ara_ai::ModelTokenizer::DeepSeekV3, fragments);
+    let ara_ai::model_tokenizer::ModelContentCount::Exact(expected) = expected else { panic!("exact native count") };
+    let diagnostics = String::from_utf8_lossy(&result.stderr);
+    assert!(diagnostics.contains(&format!("Exact({expected})")), "{diagnostics}");
+    assert!(diagnostics.contains("complete=true"));
+    drop(requests);
+    let before = std::fs::read(host.session()).unwrap();
+    let failure = output(host.command_for_model("custom", model_id, &["--tokenizer", "unrecognized", "fail"])).await;
+    assert_eq!(failure.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&failure.stderr).contains("tokenizer"));
+    assert_eq!(std::fs::read(host.session()).unwrap(), before);
+    assert_eq!(up.served(), 1);
 }
 
 #[cfg(feature = "test-fixture")]

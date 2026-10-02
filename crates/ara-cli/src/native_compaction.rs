@@ -6,6 +6,7 @@
 
 use ara_agent::compaction::{NativeEntryOrigin as CoreOrigin, NativeEntrySource};
 use ara_agent::tokenizer::{MessageCountOptions, count_message};
+use ara_ai::{Message, Model};
 use ara_session::{Entry, NativeCompactionEntry, NativeEntryOrigin as SessionOrigin};
 use serde_json::{Value, json};
 
@@ -43,6 +44,18 @@ pub fn extension_event_message(entry: &Entry) -> Option<Value> {
 }
 
 pub fn sources(entries: &[NativeCompactionEntry]) -> Vec<NativeEntrySource<'_>> {
+    sources_with_counter(entries, |message| count_message(message, MessageCountOptions::default()))
+}
+
+pub fn sources_for_model<'a>(entries: &'a [NativeCompactionEntry], model: &Model) -> Vec<NativeEntrySource<'a>> {
+    let tokenizer = crate::context_budget::tokenizer(model);
+    sources_with_counter(entries, |message| tokenizer.count_message(message, MessageCountOptions::default()))
+}
+
+fn sources_with_counter<'a>(
+    entries: &'a [NativeCompactionEntry],
+    count: impl Fn(&Message) -> usize,
+) -> Vec<NativeEntrySource<'a>> {
     entries
         .iter()
         .map(|entry| NativeEntrySource {
@@ -67,10 +80,7 @@ pub fn sources(entries: &[NativeCompactionEntry]) -> Vec<NativeEntrySource<'_>> 
                 SessionOrigin::CompactionBoundary => CoreOrigin::CompactionBoundary,
             },
             messages: &entry.messages,
-            raw_message_tokens: entry
-                .raw_token_message
-                .as_ref()
-                .map_or(0, |message| count_message(message, MessageCountOptions::default())),
+            raw_message_tokens: entry.raw_token_message.as_ref().map_or(0, &count),
         })
         .collect()
 }

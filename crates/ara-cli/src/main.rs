@@ -32,10 +32,7 @@ use ara_agent::{AgentConfig, AgentEvent, AgentEventSink, LoopHooks, RunEnd, agen
 mod skill_command;
 use ara_ai::providers::openai_completions::{PreparedRequestTextObservation, RequestTextObserver, StreamOptions};
 use ara_ai::providers::openai_responses::StreamOptions as ResponsesStreamOptions;
-use ara_ai::{
-    AssistantMessageEvent, Message, Model, ModelProvider, ModelTokenizer, StopReason, UserMessage,
-    resolve_known_claude_tokenizer,
-};
+use ara_ai::{AssistantMessageEvent, Message, Model, ModelProvider, ModelTokenizer, StopReason, UserMessage};
 use ara_context::{
     DateCwdReminder, InternalUrls, PromptTool, SystemPromptOptions, build_system_prompt, resolve_prompt_input,
 };
@@ -125,8 +122,8 @@ struct Args {
     /// Models configuration file (default: $ARA_HOME/agent/models.yml).
     #[arg(long)]
     models_config: Option<PathBuf>,
-    /// Local Claude content tokenizer metadata (no context gate yet): auto,
-    /// none, claude-v3, claude-v47, claude-v5, or claude-v5-sonnet. Env: ARA_TOKENIZER.
+    /// Local catalog content tokenizer: auto, none, claude-v3, claude-v47,
+    /// claude-v5, claude-v5-sonnet, qwen3, deepseek-v3, kimi-k2 or glm5. Env: ARA_TOKENIZER.
     #[arg(long)]
     tokenizer: Option<String>,
     /// Report selected-family counts for prepared message text on stderr.
@@ -627,10 +624,11 @@ fn resolve_route(args: &Args) -> Result<Route> {
         .context("no model: pass --model or set ARA_MODEL")?;
     let tokenizer_choice = args.tokenizer.clone().or_else(|| env_first(&["ARA_TOKENIZER"]).map(|(_, value)| value));
     let tokenizer = match tokenizer_choice.as_deref() {
-        None | Some("auto") => resolve_known_claude_tokenizer(&model_id),
+        None | Some("auto") =>
+            ara_cli::model_policy::resolve_model_tokenizer(&model_id)?.and_then(ModelTokenizer::from_name),
         Some("none") => None,
         Some(name) => Some(ModelTokenizer::from_name(name).with_context(|| {
-            format!("unknown tokenizer {name:?}; use auto, none, claude-v3, claude-v47, claude-v5 or claude-v5-sonnet")
+            format!("unknown tokenizer {name:?}; use auto, none, claude-v3, claude-v47, claude-v5, claude-v5-sonnet, qwen3, deepseek-v3, kimi-k2 or glm5")
         })?),
     };
     let base_url = args
@@ -778,7 +776,8 @@ async fn run_compaction_with_selection(
     manual: bool,
     selection: Option<&ara_cli::snapcompact::ManualCompactArgs>,
 ) -> Result<bool> {
-    let tokens = ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default());
+    let tokens = ara_cli::context_budget::tokenizer(&config.model)
+        .count_messages(context, ara_agent::tokenizer::MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
     }
@@ -883,7 +882,8 @@ async fn run_snapcompact(
     let source = snapshot.clone();
     let model = config.model.clone();
     let keep_tokens = args.compact_keep_tokens;
-    let tokens_before = ara_agent::tokenizer::count_messages(context, Default::default()) as u64;
+    let tokens_before =
+        ara_cli::context_budget::tokenizer(&config.model).count_messages(context, Default::default()) as u64;
     let prepared = tokio::task::spawn_blocking(move || {
         ara_cli::snapcompact::prepare_snapcompact(&source, &model, keep_tokens, tokens_before, &policy)
     })
@@ -1001,8 +1001,8 @@ async fn run_remote_compaction(
             return Err(error);
         }
     };
-    let tokens_before =
-        ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
+    let tokens_before = ara_cli::context_budget::tokenizer(&config.model)
+        .count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
     let mut guard = sink.journal.lock().await;
     let journal = guard.as_mut().context("Session unavailable")?;
     if cancel.is_cancelled() {
@@ -1064,10 +1064,10 @@ async fn run_soft_compaction(
     use ara_agent::compaction::{
         SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
     };
-    use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+    use ara_agent::tokenizer::MessageCountOptions;
     let model = &config.model;
     let provider = &config.provider;
-    let tokens = count_messages(context, MessageCountOptions::default());
+    let tokens = ara_cli::context_budget::tokenizer(model).count_messages(context, MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
     }
@@ -1091,7 +1091,7 @@ async fn run_soft_compaction(
             return Ok(false);
         }
     };
-    let sources = ara_cli::native_compaction::sources(&snapshot.entries);
+    let sources = ara_cli::native_compaction::sources_for_model(&snapshot.entries, model);
     let previous_summary =
         snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
     let previous_summary = previous_summary.as_deref();
@@ -1162,7 +1162,7 @@ async fn run_soft_compaction(
         tokens as u64,
     )?;
     factory.adopt_context(journal, context, sink)?;
-    let kept = count_messages(context, MessageCountOptions::default());
+    let kept = ara_cli::context_budget::tokenizer(model).count_messages(context, MessageCountOptions::default());
     eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");
     Ok(true)
 }
@@ -1362,8 +1362,8 @@ async fn run_repl_handoff(
     if cancel.is_cancelled() {
         bail!("Handoff cancelled");
     }
-    let tokens_before =
-        ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
+    let tokens_before = ara_cli::context_budget::tokenizer(&config.model)
+        .count_messages(context, ara_agent::tokenizer::MessageCountOptions::default()) as u64;
     let mut guard = sink.journal.lock().await;
     let journal = guard.as_mut().context("Session unavailable")?;
     if cancel.is_cancelled() {

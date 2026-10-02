@@ -11,9 +11,9 @@ use std::fmt::Write;
 
 use anyhow::{Context, Result, bail};
 use ara_agent::compaction::local_reduction::{self as core, *};
-use ara_agent::tokenizer::{EstimateMode, IMAGE_TOKEN_ESTIMATE, count_fragments};
+use ara_agent::tokenizer::{IMAGE_TOKEN_ESTIMATE, TokenCountMode, Tokenizer};
 use ara_ai::Model;
-use ara_ai::model_tokenizer::{ModelContentCount, ModelTokenizer, count_model_fragments};
+use ara_ai::model_tokenizer::ModelTokenizer;
 use ara_session::{SessionReductionAction, SessionReductionEdit, SessionReductionSlot, SessionReductionSnapshot};
 use serde_json::Value;
 
@@ -39,6 +39,8 @@ pub enum TokenEstimation {
     /// Exact selected-family content fragments, with estimated images/frames.
     /// This is not an exact raw/wire request total or a hard context-fit proof.
     ModelFamilyContent(ModelTokenizer),
+    /// Exact O200kBase fragments for an explicitly accurate unknown model.
+    DefaultNativeContent,
     ApproximateUtf8Fragments,
     NotMeasured,
 }
@@ -61,22 +63,19 @@ pub struct PreparedReduction {
     pub token_estimation: TokenEstimation,
 }
 
-struct ModelCounter<'a> {
-    model: &'a Model,
+struct ModelCounter {
+    tokenizer: Tokenizer,
     overflowed: Cell<bool>,
 }
 
-impl<'a> ModelCounter<'a> {
-    fn new(model: &'a Model) -> Self {
-        Self { model, overflowed: Cell::new(false) }
+impl ModelCounter {
+    fn new(model: &Model) -> Self {
+        Self { tokenizer: crate::context_budget::tokenizer(model), overflowed: Cell::new(false) }
     }
     fn measure<'b>(&self, fragments: impl IntoIterator<Item = &'b str>) -> Result<usize> {
-        let fragments: Vec<&str> = fragments.into_iter().collect();
-        match count_model_fragments(self.model, fragments.iter().copied()) {
-            ModelContentCount::Exact(count) => usize::try_from(count).context("local reduction content count overflow"),
-            ModelContentCount::UnknownTokenizer => Ok(count_fragments(fragments, EstimateMode::Approximate)),
-            ModelContentCount::CountOverflow => bail!("local reduction content count overflow"),
-        }
+        self.tokenizer
+            .count_fragments_checked(fragments, TokenCountMode::Approximate)
+            .context("local reduction content count failed")
     }
     fn checked(&self) -> Result<()> {
         if self.overflowed.get() {
@@ -85,11 +84,15 @@ impl<'a> ModelCounter<'a> {
         Ok(())
     }
     fn estimation(&self) -> TokenEstimation {
-        self.model.tokenizer.map_or(TokenEstimation::ApproximateUtf8Fragments, TokenEstimation::ModelFamilyContent)
+        match self.tokenizer.encoding() {
+            Some(family) => TokenEstimation::ModelFamilyContent(family),
+            None if self.tokenizer.uses_native(TokenCountMode::Approximate) => TokenEstimation::DefaultNativeContent,
+            None => TokenEstimation::ApproximateUtf8Fragments,
+        }
     }
 }
 
-impl ReductionTokenizer for ModelCounter<'_> {
+impl ReductionTokenizer for ModelCounter {
     fn count_fragments(&self, fragments: &[&str]) -> usize {
         match self.measure(fragments.iter().copied()) {
             Ok(count) => count,
@@ -159,7 +162,7 @@ fn text_fragments<'a>(value: &'a Value, include_empty: bool, fragments: &mut Vec
 /// Raw native message counting, independently of model-visible projections.
 /// ARA's Developer wire role uses the User text recipe; native Custom and
 /// FileMention keep the fixed tokenizer default-zero contribution.
-fn raw_message_tokens(message: &Value, counter: &ModelCounter<'_>) -> Result<usize> {
+fn raw_message_tokens(message: &Value, counter: &ModelCounter) -> Result<usize> {
     let mut fragments: Vec<Cow<'_, str>> = Vec::new();
     let mut extra: usize = 0;
     match message["role"].as_str() {
@@ -259,7 +262,7 @@ fn json_truthy(value: &Value) -> bool {
 
 fn map_entries(
     snapshot: &SessionReductionSnapshot,
-    counter: Option<&ModelCounter<'_>>,
+    counter: Option<&ModelCounter>,
     policy: &HostReductionPolicy,
 ) -> Result<Vec<ReductionEntry>> {
     let mut entries = Vec::with_capacity(snapshot.entries.len());

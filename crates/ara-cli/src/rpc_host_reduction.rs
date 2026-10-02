@@ -62,8 +62,9 @@ impl Host {
             && messages.starts_with(&rebase.messages)
             && latest_anchor_id.as_ref().is_none_or(|id| rebase.invalidated_anchor_ids.contains(id))
         {
-            let tail = ara_agent::tokenizer::count_messages(&messages[rebase.messages.len()..], Default::default());
-            let pending = ara_agent::tokenizer::count_messages(
+            let tail = ara_cli::context_budget::tokenizer(&self.config.model)
+                .count_messages(&messages[rebase.messages.len()..], Default::default());
+            let pending = ara_cli::context_budget::tokenizer(&self.config.model).count_messages(
                 pending,
                 ara_agent::tokenizer::MessageCountOptions { exclude_encrypted_reasoning: true },
             );
@@ -74,21 +75,28 @@ impl Host {
                 .saturating_add(tail)
                 .saturating_add(pending);
             let floor = current_non_message
-                .saturating_add(ara_agent::tokenizer::count_messages(
+                .saturating_add(ara_cli::context_budget::tokenizer(&self.config.model).count_messages(
                     messages,
                     ara_agent::tokenizer::MessageCountOptions { exclude_encrypted_reasoning: true },
                 ))
                 .saturating_add(pending);
             return anchored.max(floor);
         }
-        ara_cli::context_budget::context_tokens(&journal, messages, pending, self.non_message_tokens())
+        ara_cli::context_budget::context_tokens_for_model(
+            &self.config.model,
+            &journal,
+            messages,
+            pending,
+            self.non_message_tokens(),
+        )
     }
 
     async fn rebase_local_context(&mut self) {
         let messages = self.agent.messages().await;
         let non_message = self.non_message_tokens();
-        let prompt_tokens =
-            non_message.saturating_add(ara_agent::tokenizer::count_messages(&messages, Default::default()));
+        let prompt_tokens = non_message.saturating_add(
+            ara_cli::context_budget::tokenizer(&self.config.model).count_messages(&messages, Default::default()),
+        );
         let invalidated_anchor_ids = self
             .session
             .journal
@@ -254,11 +262,11 @@ impl Host {
         if let Some((threshold, prune_saved)) = threshold {
             let floor = self
                 .non_message_tokens()
-                .saturating_add(ara_agent::tokenizer::count_messages(
+                .saturating_add(ara_cli::context_budget::tokenizer(&self.config.model).count_messages(
                     &messages,
                     ara_agent::tokenizer::MessageCountOptions { exclude_encrypted_reasoning: true },
                 ))
-                .saturating_add(ara_agent::tokenizer::count_messages(
+                .saturating_add(ara_cli::context_budget::tokenizer(&self.config.model).count_messages(
                     pending,
                     ara_agent::tokenizer::MessageCountOptions { exclude_encrypted_reasoning: true },
                 ));

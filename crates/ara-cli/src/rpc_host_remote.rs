@@ -148,9 +148,9 @@ impl Host {
         {
             bail!("Context or route changed during remote compaction");
         }
-        let tokens_before =
-            ara_agent::tokenizer::count_messages(&messages, ara_agent::tokenizer::MessageCountOptions::default())
-                as u64;
+        let tokens_before = ara_cli::context_budget::tokenizer(&model)
+            .count_messages(&messages, ara_agent::tokenizer::MessageCountOptions::default())
+            as u64;
         let mut journal = session.journal.lock().await;
         if guard.cancel.is_cancelled() {
             return Err(ara_cli::handoff::cancelled());

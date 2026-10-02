@@ -1,11 +1,13 @@
-//! Encoding-generic text input copied from the pinned OMP tokenizer.
+//! Encoding-generic text input: UTF-8 / UTF-16 / UTF-32, xutf-style.
 //!
 //! No transcoding, no scratch buffers. The pipeline runs natively in the
-//! input's own code units. A JS UTF-16 string can be counted directly.
+//! input's own code units: the pre-tokenizer scans a codepoint cursor over
+//! `&[U]`, and the BPE stage looks ranks up in a lazily-expanded per-flavor
+//! table view (see `bpe.rs`). A JS UTF-16 string is tokenized directly.
 //!
 //! Decoding is permissive (xutf semantics): malformed sequences and lone
 //! surrogates decode as U+FFFD and consume minimally. Valid text behaves
-//! identically across flavors, so counts are flavor-invariant.
+//! identically across flavors, so counts/ids are flavor-invariant.
 
 use std::hash::Hash;
 
@@ -22,6 +24,9 @@ pub trait Unit: Copy + Eq + Ord + Hash + 'static {
     /// Identity byte view when this flavor already is UTF-8 (`u8` only).
     /// Lets the engine skip per-piece re-encoding for `str` input.
     fn as_utf8(units: &[Self]) -> Option<&[u8]>;
+
+    /// The unit as an ASCII byte when it encodes one (`< 0x80`).
+    fn ascii(self) -> Option<u8>;
 }
 
 impl Unit for u8 {
@@ -65,6 +70,11 @@ impl Unit for u8 {
     fn as_utf8(units: &[Self]) -> Option<&[u8]> {
         Some(units)
     }
+
+    #[inline]
+    fn ascii(self) -> Option<u8> {
+        (self < 0x80).then_some(self)
+    }
 }
 
 impl Unit for u16 {
@@ -94,6 +104,11 @@ impl Unit for u16 {
     fn as_utf8(_units: &[Self]) -> Option<&[u8]> {
         None
     }
+
+    #[inline]
+    fn ascii(self) -> Option<u8> {
+        (self < 0x80).then_some(self as u8)
+    }
 }
 
 impl Unit for u32 {
@@ -111,5 +126,102 @@ impl Unit for u32 {
     #[inline]
     fn as_utf8(_units: &[Self]) -> Option<&[u8]> {
         None
+    }
+
+    #[inline]
+    fn ascii(self) -> Option<u8> {
+        (self < 0x80).then_some(self as u8)
+    }
+}
+
+/// Borrowable text in any flavor. Public entry type for
+/// [`Encoding::count`](crate::utok::Encoding::count) / `encode`.
+pub trait Utf {
+    type Unit: Unit;
+    fn units(&self) -> &[Self::Unit];
+}
+
+impl Utf for str {
+    type Unit = u8;
+
+    #[inline]
+    fn units(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl Utf for String {
+    type Unit = u8;
+
+    #[inline]
+    fn units(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl Utf for [u16] {
+    type Unit = u16;
+
+    #[inline]
+    fn units(&self) -> &[u16] {
+        self
+    }
+}
+
+impl Utf for Vec<u16> {
+    type Unit = u16;
+
+    #[inline]
+    fn units(&self) -> &[u16] {
+        self
+    }
+}
+
+impl Utf for [u32] {
+    type Unit = u32;
+
+    #[inline]
+    fn units(&self) -> &[u32] {
+        self
+    }
+}
+
+impl Utf for Vec<u32> {
+    type Unit = u32;
+
+    #[inline]
+    fn units(&self) -> &[u32] {
+        self
+    }
+}
+
+/// Codepoint cursor over units — the pre-tokenizer's scan primitive.
+pub struct Cursor<'a, U: Unit> {
+    pub units: &'a [U],
+    pub pos: usize,
+}
+
+impl<'a, U: Unit> Cursor<'a, U> {
+    #[inline]
+    pub const fn new(units: &'a [U]) -> Self {
+        Self { units, pos: 0 }
+    }
+
+    /// Codepoint at the cursor without advancing.
+    #[inline]
+    pub fn peek(&self) -> Option<(char, usize)> {
+        (self.pos < self.units.len()).then(|| U::decode(self.units, self.pos))
+    }
+
+    /// Codepoint after `(cp, len)` from `peek` (one-codepoint lookahead).
+    #[inline]
+    pub fn peek2(&self, first_len: usize) -> Option<(char, usize)> {
+        let j = self.pos + first_len;
+        (j < self.units.len()).then(|| U::decode(self.units, j))
+    }
+
+    #[inline]
+    pub const fn advance(&mut self, n: usize) {
+        self.pos += n;
     }
 }

@@ -1,22 +1,22 @@
 # Delivery roadmap
 
-**Current checkpoint, 2026-10-02 UTC (tested bounded composition WIP):**
-[Native composition](evidence/model-composition.md) ports model-patch/custom-model
-helpers, actual private header donors and a pure static registry snapshot adapter
-into the supported daily CLI. Eight module families pass 167/0/0; the retained
-native collapse oracle passes 3/0/0 over 1,995 cases. Final Windows backend
-1,643/0/20, format/Clippy/inventory/build PASS; the whole gate retains the existing
-ttf-parser advisory FAIL. One new modelOverrides CAS artifact/original-Session
-task passes in 14.880s/five calls, with explicit --tokenizer none. Full loader/
-async discovery/runtime/auth/selector and native tokenizer execution remain
-required. No complete surface or phase is accepted. The 111-surface inventory
-remains 26 implementing, one tested, 84 open; the ledger now has 59 bounded
-points: 35 limited acceptances, 22 implementing and two tested. P0/V1 accepted,
-P1–P6 open, RPC 27/42, marker null. About 113min for implementation/verification,
-then documentation/Git closure; original named-batch estimate 90–150min.
-Next: full registry loader/cache/discovery/runtime/auth callers. Investigate
-avoiding unused static-catalog initialization; reuse original module families
-and one stable final gate. No reliable full OMP/P0–P6 ETA is available.
+**Current checkpoint, 2026-10-02 UTC (tested bounded native-tokenizer WIP):**
+[Native tokenizer](evidence/native-tokenizer.md) restores the pinned universal
+encoders/scanners/vocabularies under ara-ctok, all eight catalog families and
+model-aware Core/reference Host sizing. Ten native encodings are distinct from
+the eight catalog families. Grouped modules pass 200/0/0; final Windows backend
+1,682/0/20, format/Clippy/inventory/build PASS. The whole gate retains the
+existing ttf-parser advisory FAIL. One new default-DeepSeek CAS artifact and
+tool-disabled original-Session recall passes in 14.468s/5 calls,
+with exact prepared-message-text observations and no tokenizer override.
+The ledger now has 60 bounded points: 35 limited acceptances, 23 implementing,
+two tested. The 111-surface inventory remains 26 implementing/one tested/84 open,
+zero complete acceptances. P0/V1 accepted; P1–P6 open; RPC 27/42; marker null.
+Implementation/verification/review about 65min before documentation/Git closure.
+Next: full registry loader/cache I/O, async discovery/hydration/coalescing,
+runtime/auth/selector callers and the recorded remaining tokenizer contracts.
+Reuse original module families and one stable final gate; reduce build
+concurrency for memory-heavy Windows linking. No reliable full-project ETA.
 
 The latest [synchronous config-value checkpoint](evidence/model-config-values.md)
 ports native command caches and live headers into supported daily OpenAI Host

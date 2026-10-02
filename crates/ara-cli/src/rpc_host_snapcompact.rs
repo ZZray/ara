@@ -14,7 +14,7 @@ impl Host {
     async fn snapcompact_policy(&self, pending: &[Message]) -> Result<SnapcompactPolicy> {
         let settings = self.compaction_policy.recovery_settings()?;
         let options = ara_agent::tokenizer::MessageCountOptions { exclude_encrypted_reasoning: true };
-        let pending_tokens = ara_agent::tokenizer::count_messages(pending, options);
+        let pending_tokens = ara_cli::context_budget::tokenizer(&self.config.model).count_messages(pending, options);
         Ok(SnapcompactPolicy {
             shape: settings.snapcompact_shape,
             reserve_tokens: settings.reserve_tokens,
@@ -105,7 +105,8 @@ impl Host {
         self.agent.replace_idle_messages(expected.clone())?;
         let snapshot = session.journal.lock().await.native_snapcompact_snapshot()?;
         let policy = self.snapcompact_policy(pending).await?;
-        let tokens_before = ara_agent::tokenizer::count_messages(&expected, Default::default()) as u64;
+        let tokens_before =
+            ara_cli::context_budget::tokenizer(&self.config.model).count_messages(&expected, Default::default()) as u64;
         let keep_tokens = self.sessions.args.compact_keep_tokens;
         let source = snapshot.clone();
         let worker_model = model.clone();

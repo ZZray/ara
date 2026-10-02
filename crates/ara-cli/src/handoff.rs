@@ -70,7 +70,7 @@ pub async fn prepare_handoff(
         return Err(cancelled());
     }
     let projection = &snapshot.projection;
-    let sources = crate::native_compaction::sources(&projection.entries);
+    let sources = crate::native_compaction::sources_for_model(&projection.entries, &config.model);
     let previous = projection.previous_summary.as_ref();
     let cut = select_native_entry_compaction_cut(&sources, keep_tokens, previous.map(|entry| entry.summary.as_str()))
         .map_err(|error| anyhow::anyhow!("{error}"))?

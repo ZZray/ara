@@ -2,21 +2,26 @@
 //! Counts remain estimates where the selected native tokenizer is unavailable.
 use ara_agent::{
     AgentTool,
-    tokenizer::{EstimateMode, MessageCountOptions, count_fragments, count_messages},
+    tokenizer::{MessageCountOptions, TokenCountMode, Tokenizer, TokenizerPolicy, count_messages},
 };
-use ara_ai::{
-    Message, Model,
-    model_tokenizer::{ModelContentCount, count_model_fragments},
-};
+use ara_ai::{Message, Model};
 use ara_session::{Entry, SessionJournal, SessionReductionAction, SessionReductionEdit, SessionReductionSnapshot};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
+/// Capture Host policy once per counter; the reusable Core reads no environment.
+pub fn tokenizer(model: &Model) -> Tokenizer {
+    Tokenizer::with_policy(
+        Some(model),
+        TokenizerPolicy {
+            test_environment: false,
+            accurate_unknown: std::env::var("ARA_TOKENIZER_ACCURATE").is_ok_and(|value| value == "1"),
+        },
+    )
+}
+
 pub fn text_tokens(model: &Model, fragments: &[&str]) -> usize {
-    match count_model_fragments(model, fragments.iter().copied()) {
-        ModelContentCount::Exact(tokens) => usize::try_from(tokens).unwrap_or(usize::MAX),
-        _ => count_fragments(fragments.iter().copied(), EstimateMode::Approximate),
-    }
+    tokenizer(model).count_fragments(fragments.iter().copied(), TokenCountMode::Approximate)
 }
 
 pub fn non_message_tokens(model: &Model, prompt: &[String], tools: &[Arc<dyn AgentTool>]) -> usize {
@@ -108,9 +113,32 @@ pub fn context_tokens(
     pending: &[Message],
     non_message: usize,
 ) -> usize {
-    let pending_tokens = count_messages(pending, MessageCountOptions { exclude_encrypted_reasoning: true });
+    context_tokens_with_counter(journal, messages, pending, non_message, count_messages)
+}
+
+pub fn context_tokens_for_model(
+    model: &Model,
+    journal: &SessionJournal,
+    messages: &[Message],
+    pending: &[Message],
+    non_message: usize,
+) -> usize {
+    let tokenizer = tokenizer(model);
+    context_tokens_with_counter(journal, messages, pending, non_message, |messages, options| {
+        tokenizer.count_messages(messages, options)
+    })
+}
+
+fn context_tokens_with_counter(
+    journal: &SessionJournal,
+    messages: &[Message],
+    pending: &[Message],
+    non_message: usize,
+    count: impl Fn(&[Message], MessageCountOptions) -> usize,
+) -> usize {
+    let pending_tokens = count(pending, MessageCountOptions { exclude_encrypted_reasoning: true });
     let stored = non_message
-        .saturating_add(count_messages(messages, MessageCountOptions { exclude_encrypted_reasoning: true }))
+        .saturating_add(count(messages, MessageCountOptions { exclude_encrypted_reasoning: true }))
         .saturating_add(pending_tokens);
     let provider = journal.raw_reduction_snapshot().ok().and_then(|snapshot| {
         let (index, prompt) = anchor(&snapshot)?;
@@ -124,7 +152,7 @@ pub fn context_tokens(
         Some(
             base.saturating_sub(removed)
                 .saturating_add(non_message.saturating_sub(previous_non_message))
-                .saturating_add(count_messages(&messages[position + 1..], MessageCountOptions::default()))
+                .saturating_add(count(&messages[position + 1..], MessageCountOptions::default()))
                 .saturating_add(pending_tokens),
         )
     });

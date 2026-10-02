@@ -237,3 +237,23 @@ unstarted helper; do not replay an unknown-effect command. Hard termination
 retains its unknown-effect boundary. [Executed config-value evidence](../evidence/model-config-values.md)
 records the observed premature exit, repaired actual Host and remaining full
 registry/auth/Bun/Linux and dependency-acceptance obligations.
+
+
+### Native tokenizer metadata and Host policy
+
+The fixed catalog has eight tokenizer families; the native encoder crate has
+ten encodings, including Cl100kBase/O200kBase. These are separate contracts.
+Resolve family from catalog identity/requestModelId and carry it on Model;
+provider/API names are insufficient evidence. Strict or explicitly accurate
+unknown content uses O200kBase. Other unknown estimates remain approximate.
+Host captures environment policy and injects it into immutable Core counters;
+Core does not read product configuration or environment variables. Prepared
+message-text observations exclude schemas, images, wire framing and billing.
+
+Pinned xutf1.5.0 uses Unicode17 NFC and Unicode16 category/script data. A stable
+replacement must preserve this mixed version contract. Claude content can have
+more tokens than UTF-8 bytes, including the two-byte/three-token ξ case; a raw
+byte shortcut cannot prove a strict budget fit. Fresh counts avoid stale mutable
+message caches until an identity/version contract exists. See the [source,
+executed evidence and required gaps](../evidence/native-tokenizer.md); full
+tokenizer/cache/platform and unknown-accurate Core summary parity stay open.

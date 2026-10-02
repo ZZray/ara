@@ -5,7 +5,7 @@
 use anyhow::{Context as _, Result, bail};
 use ara_agent::{
     compaction,
-    tokenizer::{MessageCountOptions, count_messages},
+    tokenizer::{MessageCountOptions, Tokenizer},
 };
 use ara_ai::{Context, Message, Model};
 use ara_session::{NativeSnapcompactSnapshot, NativeSnapcompactSummary};
@@ -157,6 +157,7 @@ fn summary(result: &CompactionResult) -> NativeSnapcompactSummary {
 }
 
 fn result_tokens(
+    tokenizer: &Tokenizer,
     result: &CompactionResult,
     kept: &[Message],
     non_message: usize,
@@ -166,8 +167,8 @@ fn result_tokens(
     let message = ara_session::snapcompact::model_message_from_summary(&result.summary, result.preserve_data.as_ref());
     non_message
         .saturating_add(pending)
-        .saturating_add(count_messages(kept, options))
-        .saturating_add(ara_agent::tokenizer::count_message(&message, options))
+        .saturating_add(tokenizer.count_messages(kept, options))
+        .saturating_add(tokenizer.count_message(&message, options))
 }
 
 fn files(snapshot: &NativeSnapcompactSnapshot, prefix: usize) -> FileOperations {
@@ -206,8 +207,9 @@ pub fn prepare_snapcompact(
     tokens_before: u64,
     policy: &SnapcompactPolicy,
 ) -> Result<Option<PreparedSnapcompact>> {
+    let tokenizer = crate::context_budget::tokenizer(model);
     let projection = &snapshot.projection;
-    let sources = crate::native_compaction::sources(&projection.entries);
+    let sources = crate::native_compaction::sources_for_model(&projection.entries, model);
     let previous = projection.previous_summary.as_ref();
     // Native structural cuts support archived images; the soft-summary codec
     // would reject them before snapcompact's own serializer can handle them.
@@ -258,7 +260,7 @@ pub fn prepare_snapcompact(
     let max_frames = regular_max_frames(
         model,
         policy,
-        count_messages(&kept, Default::default()),
+        tokenizer.count_messages(&kept, Default::default()),
         snap::geometry(&default_shape, None).capacity,
     );
     if max_frames == 0 {
@@ -280,8 +282,9 @@ pub fn prepare_snapcompact(
         bail!("snapcompact exceeds the standing image payload budget")
     }
     let tokens_after =
-        result_tokens(&result, &kept, policy.non_message_tokens, policy.pending_tokens, Default::default());
+        result_tokens(&tokenizer, &result, &kept, policy.non_message_tokens, policy.pending_tokens, Default::default());
     let reduction_tokens = result_tokens(
+        &tokenizer,
         &result,
         &kept,
         policy.non_message_tokens,
@@ -289,9 +292,9 @@ pub fn prepare_snapcompact(
         MessageCountOptions { exclude_encrypted_reasoning: true },
     );
     let baseline_messages: Vec<_> = projection.entries.iter().flat_map(|entry| entry.messages.clone()).collect();
-    let baseline = policy
-        .non_message_tokens
-        .saturating_add(count_messages(&baseline_messages, MessageCountOptions { exclude_encrypted_reasoning: true }));
+    let baseline = policy.non_message_tokens.saturating_add(
+        tokenizer.count_messages(&baseline_messages, MessageCountOptions { exclude_encrypted_reasoning: true }),
+    );
     if reduction_tokens >= baseline {
         bail!("snapcompact would not reduce context")
     }
@@ -319,6 +322,7 @@ pub fn prepare_frame_rescue(
     policy: &SnapcompactPolicy,
     threshold: f64,
 ) -> Result<Option<PreparedSnapcompact>> {
+    let tokenizer = crate::context_budget::tokenizer(model);
     let Some(previous) = snapshot.projection.previous_summary.as_ref() else { return Ok(None) };
     let Some(archive) = previous.archive.as_ref() else { return Ok(None) };
     if archive.frames.len() <= 1 {
@@ -332,7 +336,7 @@ pub fn prepare_frame_rescue(
         model,
         policy,
         threshold,
-        count_messages(&kept, Default::default()),
+        tokenizer.count_messages(&kept, Default::default()),
         snap::geometry(&default_shape, None).capacity,
     );
     if max_frames == 0 || max_frames >= archive.frames.len() {
@@ -369,7 +373,7 @@ pub fn prepare_frame_rescue(
         return Ok(None);
     }
     let tokens_after =
-        result_tokens(&result, &kept, policy.non_message_tokens, policy.pending_tokens, Default::default());
+        result_tokens(&tokenizer, &result, &kept, policy.non_message_tokens, policy.pending_tokens, Default::default());
     Ok(Some(PreparedSnapcompact {
         summary: summary(&result),
         result,

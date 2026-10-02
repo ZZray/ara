@@ -1,6 +1,6 @@
 [package]
 name = "ara-ctok"
-description = "Exact Claude content token counts from the pinned OMP ctok reconstruction"
+description = "Universal offline tokenization from the pinned OMP native tokenizer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,5 +12,8 @@ unicode-normalization.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+fancy-regex = "=0.16.2"
+regex = "=1.13.1"
 serde.workspace = true
 serde_json.workspace = true
+tiktoken-rs = "=0.11.0"

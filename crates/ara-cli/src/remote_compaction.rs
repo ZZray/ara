@@ -253,7 +253,7 @@ pub async fn prepare_remote(
     let mut attempts = Vec::new();
     let projection = &snapshot.projection;
     if snapshot.native_replay_available && replay_available(&config.model, remote_config, settings) {
-        let sources = crate::native_compaction::sources(&projection.entries);
+        let sources = crate::native_compaction::sources_for_model(&projection.entries, &config.model);
         let previous_summary = projection.previous_summary.as_ref().map(|summary| summary.summary.as_str());
         let previous_text = projection
             .previous_summary
@@ -349,7 +349,7 @@ pub async fn prepare_remote(
     }
     // A text model must read real sources, never an opaque native placeholder.
     let projection = &snapshot.readable;
-    let sources = crate::native_compaction::sources(&projection.entries);
+    let sources = crate::native_compaction::sources_for_model(&projection.entries, &config.model);
     let previous = projection.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
     let previous = previous.as_deref();
     let Some(cut) = compaction::select_native_entry_compaction_cut(&sources, keep_tokens, previous)

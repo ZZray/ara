@@ -99,9 +99,9 @@ impl Host {
             return Err(ara_cli::handoff::cancelled());
         }
         let Some(prepared) = prepared else { return Ok(None) };
-        let tokens_before =
-            ara_agent::tokenizer::count_messages(&messages, ara_agent::tokenizer::MessageCountOptions::default())
-                as u64;
+        let tokens_before = ara_cli::context_budget::tokenizer(&self.config.model)
+            .count_messages(&messages, ara_agent::tokenizer::MessageCountOptions::default())
+            as u64;
         if auto
             && self.compaction_policy.recovery_settings()?.handoff_save_to_disk
             && let Some(directory) = session.artifacts.directory()

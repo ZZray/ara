@@ -1,14 +1,19 @@
-//! Exact Claude content-token counts from OMP `crates/pi-natives/src/utok/claude`
+//! Universal offline tokenization from OMP `crates/pi-natives/src/utok`
 //! at 596f2da7101178214aa27a753529d15e6b7ad91d.
 //!
-//! The ported implementation and vocabulary data retain the pinned OMP MIT
-//! license and the separate `data/LICENSE.ctok` notice. Counts are exact for
-//! the selected reconstruction family, not a provider's entire wire request.
+//! Vocabulary data is embedded; counting requires no network or tokenizer
+//! runtime. [`Encoding`] counts ordinary content for every pinned family and
+//! encodes token IDs for the BPE families. Claude provides reconstructed counts
+//! only. Counts exclude special tokens, chat templates and provider wire frames.
+//!
+//! The port retains the pinned OMP MIT license (`LICENSE.omp`), the separate
+//! `data/LICENSE.ctok` notice and the Unicode data notice (`data/LICENSE-UNICODE`).
 
 mod utok;
 mod xutf_compat;
 
 pub use utok::claude::Family as ClaudeFamily;
+pub use utok::{Cursor, Encoding, RankTable, Unit, Utf};
 
 /// Count ordinary message content without the fixed Claude message frame.
 pub fn count_content(text: &str, family: ClaudeFamily) -> u32 {
@@ -20,6 +25,13 @@ pub fn count_content(text: &str, family: ClaudeFamily) -> u32 {
 /// substituted for a failed exact count.
 pub fn count_fragments<'a>(fragments: impl IntoIterator<Item = &'a str>, family: ClaudeFamily) -> Option<u64> {
     fragments.into_iter().try_fold(0u64, |sum, text| sum.checked_add(u64::from(count_content(text, family))))
+}
+
+/// Sum ordinary content counts with each fragment tokenized separately using
+/// an explicitly selected encoding. Returns `None` if the aggregate exceeds
+/// `u64`; no approximate fallback is substituted for an exact count.
+pub fn count_encoding_fragments<'a>(fragments: impl IntoIterator<Item = &'a str>, encoding: Encoding) -> Option<u64> {
+    fragments.into_iter().try_fold(0u64, |sum, text| sum.checked_add(u64::from(encoding.count(text))))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

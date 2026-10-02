@@ -1,17 +1,21 @@
-//! Host-selected tokenizer metadata. The fixed OMP catalog resolves a family
-//! before Agent counting; ARA recognizes only canonical Claude ids here until
-//! its broader catalog identity policy is ported.
+//! Native content encodings selected by fixed OMP catalog metadata.
+//! Catalog identity resolution is Host-owned; the Core counts the family
+//! materialized on the model without guessing from a provider or API.
 
 use crate::Model;
-use ara_ctok::ClaudeFamily;
+use ara_ctok::Encoding;
 
-/// Embedded Claude content-token reconstruction selected for a model.
+/// The eight catalog families, distinct from native OpenAI fallback encodings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelTokenizer {
     ClaudeV3,
     ClaudeV47,
     ClaudeV5,
     ClaudeV5Sonnet,
+    Qwen3,
+    DeepSeekV3,
+    KimiK2,
+    Glm5,
 }
 
 impl ModelTokenizer {
@@ -21,7 +25,24 @@ impl ModelTokenizer {
             "claude-v47" => Some(Self::ClaudeV47),
             "claude-v5" => Some(Self::ClaudeV5),
             "claude-v5-sonnet" => Some(Self::ClaudeV5Sonnet),
+            "qwen3" => Some(Self::Qwen3),
+            "deepseek-v3" => Some(Self::DeepSeekV3),
+            "kimi-k2" => Some(Self::KimiK2),
+            "glm5" => Some(Self::Glm5),
             _ => None,
+        }
+    }
+
+    pub fn encoding(self) -> Encoding {
+        match self {
+            Self::ClaudeV3 => Encoding::ClaudeV3,
+            Self::ClaudeV47 => Encoding::ClaudeV47,
+            Self::ClaudeV5 => Encoding::ClaudeV5,
+            Self::ClaudeV5Sonnet => Encoding::ClaudeV5Sonnet,
+            Self::Qwen3 => Encoding::Qwen3,
+            Self::DeepSeekV3 => Encoding::DeepSeekV3,
+            Self::KimiK2 => Encoding::KimiK2,
+            Self::Glm5 => Encoding::Glm5,
         }
     }
 }
@@ -36,14 +57,27 @@ pub enum ModelContentCount {
 }
 
 pub fn count_model_fragments<'a>(model: &Model, fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
-    let family = match model.tokenizer {
-        Some(ModelTokenizer::ClaudeV3) => ClaudeFamily::V3,
-        Some(ModelTokenizer::ClaudeV47) => ClaudeFamily::V47,
-        Some(ModelTokenizer::ClaudeV5) => ClaudeFamily::V5,
-        Some(ModelTokenizer::ClaudeV5Sonnet) => ClaudeFamily::V5Sonnet,
-        None => return ModelContentCount::UnknownTokenizer,
-    };
-    match ara_ctok::count_fragments(fragments, family) {
+    match model.tokenizer {
+        Some(family) => count_family_fragments(family, fragments),
+        None => ModelContentCount::UnknownTokenizer,
+    }
+}
+
+pub fn count_family_fragments<'a>(
+    family: ModelTokenizer,
+    fragments: impl IntoIterator<Item = &'a str>,
+) -> ModelContentCount {
+    count_encoding_fragments(family.encoding(), fragments)
+}
+
+/// OMP's native default for strict or explicitly accurate unknown-model counts.
+/// A missing catalog family remains unknown in `count_model_fragments`.
+pub fn count_default_fragments<'a>(fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
+    count_encoding_fragments(Encoding::O200kBase, fragments)
+}
+
+fn count_encoding_fragments<'a>(encoding: Encoding, fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
+    match ara_ctok::count_encoding_fragments(fragments, encoding) {
         Some(count) => ModelContentCount::Exact(count),
         None => ModelContentCount::CountOverflow,
     }

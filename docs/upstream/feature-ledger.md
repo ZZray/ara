@@ -1,22 +1,22 @@
 # OMP feature ledger
 
-**Current checkpoint, 2026-10-02 UTC (tested bounded composition WIP):**
-[Native composition](../evidence/model-composition.md) ports model-patch/custom-model
-helpers, actual private header donors and a pure static registry snapshot adapter
-into the supported daily CLI. Eight module families pass 167/0/0; the retained
-native collapse oracle passes 3/0/0 over 1,995 cases. Final Windows backend
-1,643/0/20, format/Clippy/inventory/build PASS; the whole gate retains the existing
-ttf-parser advisory FAIL. One new modelOverrides CAS artifact/original-Session
-task passes in 14.880s/five calls, with explicit --tokenizer none. Full loader/
-async discovery/runtime/auth/selector and native tokenizer execution remain
-required. No complete surface or phase is accepted. The 111-surface inventory
-remains 26 implementing, one tested, 84 open; the ledger now has 59 bounded
-points: 35 limited acceptances, 22 implementing and two tested. P0/V1 accepted,
-P1–P6 open, RPC 27/42, marker null. About 113min for implementation/verification,
-then documentation/Git closure; original named-batch estimate 90–150min.
-Next: full registry loader/cache/discovery/runtime/auth callers. Investigate
-avoiding unused static-catalog initialization; reuse original module families
-and one stable final gate. No reliable full OMP/P0–P6 ETA is available.
+**Current checkpoint, 2026-10-02 UTC (tested bounded native-tokenizer WIP):**
+[Native tokenizer](../evidence/native-tokenizer.md) restores the pinned universal
+encoders/scanners/vocabularies under ara-ctok, all eight catalog families and
+model-aware Core/reference Host sizing. Ten native encodings are distinct from
+the eight catalog families. Grouped modules pass 200/0/0; final Windows backend
+1,682/0/20, format/Clippy/inventory/build PASS. The whole gate retains the
+existing ttf-parser advisory FAIL. One new default-DeepSeek CAS artifact and
+tool-disabled original-Session recall passes in 14.468s/5 calls,
+with exact prepared-message-text observations and no tokenizer override.
+The ledger now has 60 bounded points: 35 limited acceptances, 23 implementing,
+two tested. The 111-surface inventory remains 26 implementing/one tested/84 open,
+zero complete acceptances. P0/V1 accepted; P1–P6 open; RPC 27/42; marker null.
+Implementation/verification/review about 65min before documentation/Git closure.
+Next: full registry loader/cache I/O, async discovery/hydration/coalescing,
+runtime/auth/selector callers and the recorded remaining tokenizer contracts.
+Reuse original module families and one stable final gate; reduce build
+concurrency for memory-heavy Windows linking. No reliable full-project ETA.
 
 **2026-10-02 synchronous config-command checkpoint (tested bounded WIP):**
 [Executed evidence](../evidence/model-config-values.md) maps the complete
@@ -278,6 +278,7 @@ For each row, include normal and failure/cancellation behavior, source commit, e
 | AGT-TOKENIZERa | AGT-TOKENIZER: fixed OMP `packages/agent/src/tokenizer.ts` text/fragment estimates and existing message forms (B-540a38ae98 B-abee44be18) | `ara-agent::tokenizer` | No native exact counter or model family metadata yet; raw bytes are not a universal token upper bound (pinned Claude counterexamples), so no budget verdict API; no message cache | [AGT-TOKENIZERa](../evidence/agt-tokenizer-estimate.md): corrected crate tests 24/24 and strict crate Clippy pass on Windows | implementing (WIP) |
 | AGT-TOKENIZERb | AGT-TOKENIZER: fixed OMP `crates/pi-natives/src/utok/claude` plus `packages/agent/src/tokenizer.ts` selected-family strict content count (B-7b9bae56e4, partial) | `ara-ctok` | Claude families only; stable Unicode replacement for nightly `xutf`; no byte shortcut, unknown model fallback or provider-wire budget gate | [AGT-TOKENIZERb](../evidence/agt-tokenizer-claude.md): 493 ctok rows × 3 families, 63 Sonnet 5 rows, 2 integration tests, Windows stable tests/Clippy/deny | implementing (WIP; full point still open) |
 | AGT-TOKENIZERc | AGT-TOKENIZER: fixed OMP catalog `model-tokenizer.ts` and Agent `Tokenizer` model selection (partial) | `ara-ai::model_tokenizer`, `ara-agent::tokenizer`, CLI route metadata | Canonical Claude ids and explicit override only; no full catalog taxonomy, loop call, provider-wire count or hard budget gate | [AGT-TOKENIZERc](../evidence/agt-tokenizer-model-selection.md): source-backed family boundaries, Agent fragment tests, CLI route tests; full backend gate open | implementing (WIP; full point still open) |
+| AGT-TOKENIZERe | AGT-TOKENIZER + bounded CA-MODEL-REGISTRY/CA-COMPACTION-HOST: fixed pi-natives utok, Agent tokenizer.ts, catalog family resolution | ara-ctok; ara-ai::model_tokenizer; ara-agent::tokenizer; reference CLI/RPC sizing callers | Ten native encodings/eight catalog families; fresh counts and explicit Host policy. Provider framing/extensions/cache/N-API/Rayon/platform and unknown-model accurate Core summary policy remain required; strict budget deliberately avoids the unsafe native byte shortcut | [Native evidence](../evidence/native-tokenizer.md): modules200/0/0, Windows1,682/0/20, actual default-DeepSeek artifact/original-Session task with exact prepared text observations, independent source/artifact audit | implementing (tested bounded WIP; dependency gate FAIL; no full surface acceptance) |
 | SES-01a | CA-SESSION-JOURNAL: v3 file layout, title slot, lazy materialization, per-entry append (B-74f01cedc8, B-405741c2e3, B-0e65df2ed1) | `ara-session::SessionJournal::{create,append_*,persist,rewrite}` | Appends are fsynced; rewrites are atomic with directory sync; failed append rolls back | [SES-01](../evidence/ses-01-session-journal.md) | accepted ([real-model trials](../evidence/real-model-a1-a2-20260925.md)) |
 | SES-01b | CA-SESSION-JOURNAL: loader, malformed skip + rewrite, corrupt header (B-af6346b2a8, B-c1d3d6809c), branch walk | `ara-session::SessionJournal::{open,branch,build_context}` | Torn bytes backed up before rewrite; unsupported versions rejected (migrations open); compaction context not ported | SES-01 tests | accepted ([real-model trials](../evidence/real-model-a1-a2-20260925.md)) |
 | SES-01c | CA-TURN-RECOVERY (ARA decision): interrupted tool calls on resume | `ara-session::SessionJournal::recover_interrupted_tool_calls` | Explicit `interrupted_unknown_effect` error results, never replay (AGENTS.md); OMP's turn-recovery policies otherwise open | SES-01 recovery tests | accepted ([real-model trials](../evidence/real-model-a1-a2-20260925.md)) |

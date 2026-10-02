@@ -99,6 +99,65 @@ fn configured_context_window_and_native_custom_defaults_reach_execution_route() 
 }
 
 #[test]
+fn catalog_tokenizers_and_explicit_host_overrides_preserve_the_wire_model_id() {
+    use ara_ai::ModelTokenizer as T;
+    for (id, family) in [
+        ("deepseek-v4.1-flash", T::DeepSeekV3),
+        ("qwen3.5-35b-a3b", T::Qwen3),
+        ("kimi-k2.5", T::KimiK2),
+        ("glm-5", T::Glm5),
+        ("claude-opus-4.7", T::ClaudeV47),
+    ] {
+        let config = config(json!({"api":"openai-completions","baseUrl":"http://localhost/v1",
+            "auth":"none","models":[{"id":id,"input":["text"]}]}));
+        // Counting-family coverage uses the currently supported non-reasoning
+        // Chat projection; provider reasoning transport has its own gate.
+        let cli = DailyOverrides {
+            provider: Some("custom".into()),
+            model: Some(id.into()),
+            reasoning: Some(false),
+            ..Default::default()
+        };
+        let selection = resolve_daily_selection(Some(&config), &cli, &no_env).unwrap();
+        assert_eq!(selection.model.id, id);
+        assert_eq!(selection.model.tokenizer, Some(family), "{id}");
+        let overridden = DailyOverrides { tokenizer: Some("none".into()), ..cli.clone() };
+        assert_eq!(resolve_daily_selection(Some(&config), &overridden, &no_env).unwrap().model.tokenizer, None);
+        let overridden = DailyOverrides { tokenizer: Some("kimi-k2".into()), ..cli };
+        assert_eq!(
+            resolve_daily_selection(Some(&config), &overridden, &no_env).unwrap().model.tokenizer,
+            Some(T::KimiK2)
+        );
+    }
+    for id in ["unclassified-alias", "qwen3-32b", "glm-4", "deepseek-r1-distill-qwen-32b"] {
+        let cli = DailyOverrides {
+            model: Some(id.into()),
+            base_url: Some("http://localhost/v1".into()),
+            ..Default::default()
+        };
+        let selection = resolve_daily_selection(None, &cli, &no_env).unwrap();
+        assert_eq!(selection.model.tokenizer, None, "{id}");
+        assert_eq!(selection.model.id, id);
+    }
+    let cli = DailyOverrides {
+        model: Some("unclassified-alias".into()),
+        base_url: Some("http://localhost/v1".into()),
+        ..Default::default()
+    };
+    let selection =
+        resolve_daily_selection(None, &cli, &|name: &str| (name == "ARA_TOKENIZER").then(|| "glm5".into())).unwrap();
+    assert_eq!(selection.model.tokenizer, Some(T::Glm5));
+    let cli = DailyOverrides { tokenizer: Some("none".into()), ..cli };
+    assert_eq!(
+        resolve_daily_selection(None, &cli, &|name: &str| (name == "ARA_TOKENIZER").then(|| "glm5".into()))
+            .unwrap()
+            .model
+            .tokenizer,
+        None
+    );
+}
+
+#[test]
 fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_overrides() {
     let baseline = json!({"providers":{
         "source":{"api":"openai-responses","baseUrl":"https://source.example/v1","auth":"none",

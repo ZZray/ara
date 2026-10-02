@@ -18,7 +18,7 @@ use crate::model_route::{CredentialIdentity, ProtocolOptions, RequestAuthLease, 
 use crate::models_config::ModelsConfig;
 use crate::static_model_registry::StaticModelRegistry;
 use ara_ai::Model;
-use ara_ai::model_tokenizer::{ModelTokenizer, resolve_known_claude_tokenizer};
+use ara_ai::model_tokenizer::ModelTokenizer;
 use ara_ai::providers::{openai_completions as chat, openai_responses as responses};
 use serde_json::{Map, Value, json};
 use std::{fmt, path::Path, time::Duration};
@@ -354,9 +354,13 @@ pub fn resolve_daily_selection(
     if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)).and_then(|v| v.get("compat")) {
         compat.extend(object(Some(value), "model override/compat")?);
     }
+    let mut tokenizer_model_id = model_id.clone();
     if let Some(selected) = &catalog_model {
         let safe: Value = serde_json::from_str(&selected.spec().to_wire_json().stringify())
             .map_err(|_| error("model", "catalog metadata is not valid JSON"))?;
+        if let Some(request_id) = safe.get("requestModelId").and_then(Value::as_str) {
+            tokenizer_model_id = request_id.into();
+        }
         for field in [
             "name",
             "api",
@@ -452,7 +456,9 @@ pub fn resolve_daily_selection(
         .or_else(|| env_first(env, &["ARA_TOKENIZER"]).map(|(_, v)| v))
         .or_else(|| text(&model, "tokenizer"));
     let tokenizer = match tokenizer_name.as_deref() {
-        None | Some("auto") => resolve_known_claude_tokenizer(&model_id),
+        None | Some("auto") => crate::model_policy::resolve_model_tokenizer(&tokenizer_model_id)
+            .map_err(|_| error("tokenizer", "catalog tokenizer identity resolution failed"))?
+            .and_then(ModelTokenizer::from_name),
         Some("none") => None,
         Some(name) => Some(
             ModelTokenizer::from_name(name)

@@ -5,7 +5,8 @@ use ara_agent::compaction::{
     AcceptedSummary, SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
     summary_output_budget_tokens,
 };
-use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+use ara_agent::tokenizer::MessageCountOptions;
+use ara_ai::Model;
 use ara_session::{FailedAssistantRecovery, FailedAssistantRecoveryOutcome, NativeProjectedCompactionSnapshot};
 
 #[derive(Default)]
@@ -56,8 +57,9 @@ fn produced_output(message: &AssistantMessage) -> bool {
     ara_session::assistant_turn_produced_output(message)
 }
 
-fn stored_tokens(messages: &[Message]) -> usize {
-    count_messages(messages, MessageCountOptions { exclude_encrypted_reasoning: true })
+fn stored_tokens(model: &Model, messages: &[Message]) -> usize {
+    ara_cli::context_budget::tokenizer(model)
+        .count_messages(messages, MessageCountOptions { exclude_encrypted_reasoning: true })
 }
 
 // Known buckets are a lower bound, never a claim that unknown usage is zero.
@@ -407,7 +409,7 @@ impl Host {
         let trusted_payload = payload
             && window.is_some_and(|window| {
                 reported.map_or(!class.overflow && !usage_overflow, |reported| reported as f64 <= window)
-                    && (stored_tokens(&messages) as f64) < window * 0.9
+                    && (stored_tokens(&self.config.model, &messages) as f64) < window * 0.9
             });
         if payload && (trusted_payload || !class.overflow && window.is_none()) {
             let mut clean = messages;
@@ -688,7 +690,7 @@ impl Host {
         let preparation = session.journal.lock().await.native_projected_compaction_snapshot();
         let prepared = (|| -> Result<_> {
             let snapshot = preparation?;
-            let sources = ara_cli::native_compaction::sources(&snapshot.entries);
+            let sources = ara_cli::native_compaction::sources_for_model(&snapshot.entries, &self.config.model);
             let previous =
                 snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
             let previous = previous.as_deref();
@@ -715,7 +717,7 @@ impl Host {
         let reserve_tokens = settings.reserve_tokens;
         let host_cap = self.config.max_tokens;
         let task = tokio::spawn(async move {
-            let sources = ara_cli::native_compaction::sources(&task_snapshot.entries);
+            let sources = ara_cli::native_compaction::sources_for_model(&task_snapshot.entries, &model);
             summarize_native_entry_compaction_cut(
                 &sources,
                 &cut,
@@ -743,7 +745,7 @@ impl Host {
             },
             snapshot,
             first_kept,
-            tokens_before: stored_tokens(&clean) as u64,
+            tokens_before: stored_tokens(&self.config.model, &clean) as u64,
             expected_messages: clean,
             recovery,
             reserve_tokens: settings.reserve_tokens,

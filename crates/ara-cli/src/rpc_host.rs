@@ -1218,7 +1218,7 @@ impl Host {
         use ara_agent::compaction::{
             select_native_entry_compaction_cut, summarize_native_entry_compaction_cut, summary_output_budget_tokens,
         };
-        use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+        use ara_agent::tokenizer::MessageCountOptions;
         if self.session.persistence_error.lock().unwrap().is_some() {
             bail!("session persistence failed; restart from the journal before compacting");
         }
@@ -1241,11 +1241,12 @@ impl Host {
             let previous =
                 snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
             let previous = previous.as_deref();
-            let sources = ara_cli::native_compaction::sources(&snapshot.entries);
+            let sources = ara_cli::native_compaction::sources_for_model(&snapshot.entries, &self.config.model);
             let cut = select_native_entry_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
                 .map_err(|error| anyhow::anyhow!("{error}"))?
                 .context("No native message prefix can be compacted with the current keep-token budget")?;
-            let tokens_before = count_messages(&current, MessageCountOptions::default()) as u64;
+            let tokens_before = ara_cli::context_budget::tokenizer(&self.config.model)
+                .count_messages(&current, MessageCountOptions::default()) as u64;
             let seconds = self.max_time.unwrap_or(120.0).clamp(0.0, 120.0);
             let deadline = Instant::now() + Duration::from_secs_f64(seconds);
             let settings = self.compaction_policy.recovery_settings()?;
@@ -1317,7 +1318,7 @@ impl Host {
     }
 
     async fn maybe_auto_compact(&mut self, pending: &[Message]) -> bool {
-        use ara_agent::tokenizer::{MessageCountOptions, count_messages};
+        use ara_agent::tokenizer::MessageCountOptions;
         let threshold = self.sessions.args.compact_threshold;
         if self.active.is_some()
             || self.retry.is_some()
@@ -1360,11 +1361,11 @@ impl Host {
             let settings = self.compaction_policy.recovery_settings()?;
             let floor = self
                 .non_message_tokens()
-                .saturating_add(count_messages(
+                .saturating_add(ara_cli::context_budget::tokenizer(&self.config.model).count_messages(
                     &self.agent.messages().await,
                     MessageCountOptions { exclude_encrypted_reasoning: true },
                 ))
-                .saturating_add(count_messages(pending, MessageCountOptions { exclude_encrypted_reasoning: true }));
+                .saturating_add(ara_cli::context_budget::tokenizer(&self.config.model).count_messages(pending, MessageCountOptions { exclude_encrypted_reasoning: true }));
             let mut progress = tokens.saturating_sub(freed).max(floor) <= (threshold as f64 * 0.8).floor() as usize;
             let mut ran_shake = false;
             for method in &settings.method_order {
