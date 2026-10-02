@@ -3,8 +3,13 @@
 ## Requirement and scope
 
 Target remains fixed OMP `596f2da7101178214aa27a753529d15e6b7ad91d`.
-Base HEAD is `10e027da122e24df8accc773bede7b8ba2e3c962`. This uncommitted
-worktree extends MODEL-COMPOSITION-01, not the accepted surface count.
+Base HEAD is `10e027da122e24df8accc773bede7b8ba2e3c962`. Tested WIP commit
+`eab38d36e97e8f5a679aa1d4138494d3eb96fd30` extends MODEL-COMPOSITION-01,
+not the accepted surface count. It is pushed to `origin/dev`; a separate
+`git ls-remote` confirms the exact remote SHA. The initial HTTP 408 attempt
+does not update the remote; one HTTP/1.1 retry succeeds. A single CI snapshot
+shows repository checks `37066768536`, directory I/O `37066768497` and Skill
+invocation `37066768500` still in progress; no Linux PASS is claimed.
 No full CA-MODEL-REGISTRY, AI-AUTH, phase or parity marker is accepted.
 
 | Fixed source | Rust owner and exercised scope |

@@ -1,5 +1,21 @@
 # Handoff 2026-10-03 — production registry WIP
 
+## Git closure checkpoint, 2026-10-02 UTC
+
+Tested WIP commit `eab38d36e97e8f5a679aa1d4138494d3eb96fd30` is pushed to
+`origin/dev`; `git ls-remote` independently confirms the exact SHA. The first
+push ends with HTTP 408 and leaves the remote at `10e027d`; one HTTP/1.1 retry
+succeeds. The commit receipt binds all 35 tested scope files and preserves
+the 57 unrelated vendor files. No code or paid-model rerun is needed for this
+documentation-only closure. Earlier uncommitted/unpushed checkpoints below
+are retained as historical states.
+
+One CI snapshot reports repository checks `37066768536`, directory I/O
+`37066768497` and Skill invocation `37066768500` in progress, not accepted.
+Backend 1,707/0/20 and the actual CAS task remain the executed Windows evidence;
+the dependency advisory keeps the whole gate failed and this checkpoint WIP.
+Counts and next full Auth/selector/Host work remain unchanged.
+
 ## Final validation checkpoint, 2026-10-02 21:13 UTC
 
 [Production Registry evidence](../evidence/model-registry.md) now records the
