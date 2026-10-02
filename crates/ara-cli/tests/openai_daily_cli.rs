@@ -7,7 +7,9 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(feature = "test-fixture")]
+use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 struct Host {
     home: tempfile::TempDir,
@@ -251,6 +253,172 @@ async fn configured_responses_stream_tool_artifact_and_restart_use_the_original_
     assert!(journal.contains("openai-responses"));
 }
 
+/// This exercises the production startup/Registry/cache/Session path using
+/// controlled JSON and SSE upstreams. It is not a real-model acceptance trial.
+#[tokio::test]
+async fn discovered_registry_model_cold_tools_hot_cache_and_config_replacement_keep_original_session() {
+    use ara_cli::model_cache::SqliteModelCache;
+    use ara_cli::model_registry_loader::STARTUP_CACHE_TTL_MS;
+    use ara_testkit::chunks::tool_call;
+
+    fn discovery_config(host: &Host, endpoint: &str) {
+        let path = host.home.path().join("agent/models.yml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // No static models: production selection must obtain catalog metadata
+        // from discovery/cache. Header-free keyless transport has no omitted
+        // header marker requiring an authenticated restoration fallback.
+        let config = json!({"providers":{"custom":{"api":"openai-completions","baseUrl":endpoint,
+            "auth":"none","discovery":{"type":"openai-models-list","timeoutMs":2000}}}});
+        std::fs::write(path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    }
+
+    fn registry_command(host: &Host, arguments: &[&str]) -> Command {
+        let mut command = host.command_for_model("custom", "registry-fixture-model", arguments);
+        // Global background discovery is part of the production entrypoint.
+        // Isolate credentials and routing from the developer's environment.
+        command.env_clear();
+        for name in ["PATH", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATHEXT"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command
+            .env("HOME", host.home.path())
+            .env("ARA_HOME", host.home.path())
+            .env("USERPROFILE", host.home.path())
+            .env("TMP", host.home.path())
+            .env("TEMP", host.home.path())
+            .args(["--max-tokens", "128"]);
+        command
+    }
+
+    async fn registry_output(command: Command) -> Output {
+        tokio::time::timeout(
+            Duration::from_secs(25),
+            tokio::process::Command::from(command).kill_on_drop(true).output(),
+        )
+        .await
+        .expect("production Registry CLI exceeded the 25-second process deadline")
+        .unwrap()
+    }
+
+    fn header(output: &Output) -> Value {
+        let stdout = success(output);
+        serde_json::from_str(stdout.lines().next().expect("JSON mode Session header")).unwrap()
+    }
+
+    fn cache_entry(host: &Host) -> ara_cli::model_cache::WireCacheEntry {
+        let path = host.home.path().join("agent/model-cache.db");
+        assert!(path.is_file(), "real production CLI must write its SQLite cache");
+        let cache = SqliteModelCache::open(path).unwrap();
+        cache
+            .read_model_cache_wire(&"custom:openai-models-list-context-v3".into(), STARTUP_CACHE_TTL_MS, || {
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64() * 1000.0
+            })
+            .unwrap()
+            .expect("configured discovery namespace must be persisted")
+    }
+
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let host = Host::new();
+        let first = upstream(json!([
+            {"body":json!({"data":[{"id":"registry-fixture-model","context_length":8192}]}).to_string()},
+            {"events":[tool_call(0,"registry-write","write",&json!({"path":"registry-proof.txt","content":"registry proof\n"}).to_string()),finish("tool_calls"),done()]},
+            {"events":[tool_call(0,"registry-read","read",&json!({"path":"registry-proof.txt"}).to_string()),finish("tool_calls"),done()]},
+            {"events":[text("Cold discovery and tools accepted."),finish("stop"),done()]},
+            {"events":[text("Cached resume accepted."),finish("stop"),done()]}
+        ])).await;
+        discovery_config(&host, &first.base_url());
+        assert!(!host.home.path().join("agent/model-cache.db").exists());
+        let cold = registry_output(registry_command(&host,
+            &["--mode","json","--tools","write,read","write registry-proof.txt then read it"])).await;
+        let original = header(&cold);
+        assert!(success(&cold).contains("Cold discovery and tools accepted."));
+        let session = host.session();
+        let artifact = host.work.path().join("registry-proof.txt");
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "registry proof\n");
+        let cached = cache_entry(&host);
+        assert!(cached.fresh && cached.authoritative);
+        assert!(cached.header_omitted_model_ids.is_empty() && cached.unrestorable_header_model_ids.is_empty());
+        assert_eq!(cached.models.value.as_array().unwrap().len(), 1);
+        let cached_model = &cached.models.value.as_array().unwrap()[0];
+        assert_eq!(cached_model.get("id"), Some(&ara_rpc::WireValue::String("registry-fixture-model".into())));
+        assert_eq!(cached_model.get("contextWindow"), Some(&ara_rpc::WireValue::Number(8192.0)));
+        {
+            let requests = first.requests.lock().await;
+            assert_eq!(requests.len(), 4, "cold discovery adds one GET to the three actual model calls");
+            assert_eq!(requests[0]["request"], "GET /v1/models HTTP/1.1");
+            assert!(requests[1..].iter().all(|request| request["request"] == "POST /v1/chat/completions HTTP/1.1"
+                && request["body"]["model"] == "registry-fixture-model"));
+            let messages = requests[3]["body"]["messages"].as_array().unwrap();
+            assert!(messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == "registry-read"
+                && message["content"].as_str().is_some_and(|content| content.contains("registry proof"))),
+                "the follow-up model call must receive the real read tool result");
+        }
+
+        // There is no CLI offline flag. A same-directory warm restart with an
+        // unchanged config proves OnlineIfUncached takes the actual SQLite row:
+        // its script has only SSE left, and a second GET fails the count gate.
+        let warm = registry_output(registry_command(&host,
+            &["--mode","json","--tools","read","--resume",session.to_str().unwrap(),"continue from the artifact"])).await;
+        assert_eq!(header(&warm)["id"], original["id"]);
+        assert!(success(&warm).contains("Cached resume accepted."));
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "registry proof\n");
+        let after_warm = cache_entry(&host);
+        assert_eq!(after_warm.updated_at, cached.updated_at, "a warm process must not refresh the selected configured cache");
+        {
+            let requests = first.requests.lock().await;
+            assert_eq!(requests.len(), 5);
+            assert_eq!(requests.iter().filter(|request| request["request"] == "GET /v1/models HTTP/1.1").count(), 1);
+            let messages = requests[4]["body"]["messages"].as_array().unwrap();
+            assert!(messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == "registry-write"));
+            assert!(messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == "registry-read"));
+        }
+
+        let replacement = upstream(json!([
+            {"body":json!({"data":[{"id":"registry-fixture-model","context_length":6144}]}).to_string()},
+            {"events":[text("Replacement route accepted."),finish("stop"),done()]}
+        ])).await;
+        // Ensure the replaced source's mtime crosses the fixed loader's integer
+        // millisecond comparison even on a fast local filesystem.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        discovery_config(&host, &replacement.base_url());
+        let replaced = registry_output(registry_command(&host,
+            &["--mode","json","--tools","read","--resume",session.to_str().unwrap(),"continue after replacing the catalog source"])).await;
+        assert_eq!(header(&replaced)["id"], original["id"]);
+        assert!(success(&replaced).contains("Replacement route accepted."));
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "registry proof\n");
+        assert_eq!(first.served(), 5, "configuration replacement must stop routing to the original source");
+        {
+            let requests = replacement.requests.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0]["request"], "GET /v1/models HTTP/1.1");
+            assert_eq!(requests[1]["request"], "POST /v1/chat/completions HTTP/1.1");
+            let messages = requests[1]["body"]["messages"].as_array().unwrap();
+            assert!(messages.iter().any(|message| message["role"] == "tool" && message["tool_call_id"] == "registry-read"));
+        }
+        let refreshed = cache_entry(&host);
+        assert!(refreshed.fresh && refreshed.authoritative && refreshed.updated_at > cached.updated_at);
+        let model = &refreshed.models.value.as_array().unwrap()[0];
+        assert_eq!(model.get("contextWindow"), Some(&ara_rpc::WireValue::Number(6144.0)));
+        assert_eq!(model.get("baseUrl"), Some(&ara_rpc::WireValue::String(replacement.base_url().into())));
+        let journal: Vec<Value> = std::fs::read_to_string(&session).unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        // Native title-slot metadata may precede the actual Session header.
+        let session_headers = journal.iter().filter(|entry| entry["type"] == "session").collect::<Vec<_>>();
+        assert_eq!(session_headers.len(), 1);
+        assert_eq!(session_headers[0]["id"], original["id"]);
+        for call_id in ["registry-write","registry-read"] {
+            assert_eq!(journal.iter().filter(|entry| entry["message"]["role"] == "toolResult"
+                && entry["message"]["toolCallId"] == call_id).count(), 1,
+                "resuming an accepted tool receipt must not replay the tool");
+        }
+        assert_eq!(std::fs::read_dir(&host.sessions).unwrap().flatten().filter(|entry|
+            entry.path().extension().is_some_and(|extension| extension == "jsonl")).count(), 1,
+            "all three real processes must keep the original Session file");
+    }).await.expect("grouped Registry process scenario exceeded the 120-second test deadline");
+}
+
 #[tokio::test]
 async fn unsupported_selected_configuration_fails_before_journal_or_model_request() {
     let host = Host::new();
@@ -270,7 +438,11 @@ async fn unsupported_selected_configuration_fails_before_journal_or_model_reques
     host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
     let rpc = output(host.command("openai-codex", &["--mode", "rpc"])).await;
     assert_eq!(rpc.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&rpc.stderr).contains("supports print and REPL"));
+    assert!(
+        String::from_utf8_lossy(&rpc.stderr).contains("supports print and REPL"),
+        "{}",
+        String::from_utf8_lossy(&rpc.stderr)
+    );
     assert!(!host.sessions.exists());
     assert!(!host.home.path().join("agent/auth.db").exists());
     assert_eq!(up.served(), 0);
@@ -360,6 +532,28 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert!(String::from_utf8_lossy(&login.stderr).contains("CLI-FIXTURE"));
     assert!(!host.sessions.exists());
     host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
+    // This controlled account/Responses workflow starts with a fresh real
+    // catalog cache. Cold per-account discovery is exercised by the Registry
+    // module; synthetic account tokens must not reach the public catalog.
+    let cache = ara_cli::model_cache::SqliteModelCache::for_path(host.home.path().join("agent/model-cache.db"));
+    let bundled = ara_cli::model_identity_wire::bundled_provider_models(&"openai-codex".into());
+    let fingerprint = ara_cli::model_manager::fingerprint_static_models(
+        &ara_cli::model_manager::ModelArray::new(bundled.clone()),
+        true,
+    );
+    cache
+        .write_model_cache_wire(
+            &"openai-codex".into(),
+            chrono::Utc::now().timestamp_millis() as f64,
+            &[],
+            ara_cli::model_cache::WireModelCacheWriteOptions {
+                authoritative: true,
+                static_fingerprint: &fingerprint,
+                static_header_sources: &bundled,
+                restorable_header_fallback: None,
+            },
+        )
+        .unwrap();
     // This account workflow serves ordinary Responses and soft summaries.
     // Native remote endpoints have their own grouped Host fixture.
     std::fs::write(host.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
@@ -439,8 +633,9 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
     assert_eq!(up.served(), 13);
 
-    // A deadline during refresh must settle before normal process exit. A new
-    // process must not automatically replay that unknown refresh grant.
+    // Expired account preflight runs before the turn's --max-time deadline.
+    // Its own OAuth transport timeout must settle before normal process exit;
+    // a new process must not automatically replay the unknown refresh grant.
     let database = host.home.path().join("agent/auth.db");
     {
         use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};

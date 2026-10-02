@@ -280,6 +280,7 @@ fn raw_spec(value: &RawModelValue) -> VariantSpec {
     match value {
         RawModelValue::Undefined => VariantSpec { value: W::Null, undefined_paths: vec![Vec::new()] },
         RawModelValue::Value(value) => value.clone(),
+        RawModelValue::SharedValue(value) => value.as_ref().clone(),
         RawModelValue::Models(value) => specs_value(&value.snapshot()),
     }
 }

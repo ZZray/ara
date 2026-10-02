@@ -3,7 +3,7 @@
 #![cfg(feature = "test-fixture")]
 
 use ara_ai::{CallOptions, Context, Message, Model, StopReason, UserMessage};
-use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};
+use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
 use ara_cli::model_route::{AuthResolveError, CredentialIdentity, PreparedRoute, ProtocolOptions, RequestAuthResolver};
 use ara_cli::openai_codex_auth::{CodexAuthError, OpenAiCodexAuth};
 use ara_testkit::{FakeUpstream, Script};
@@ -27,10 +27,14 @@ fn jwt(payload: Value) -> String {
 }
 
 fn access(account: &str, residency: &str) -> String {
+    access_with_email(account, residency, " NEW@Example.COM ")
+}
+
+fn access_with_email(account: &str, residency: &str, email: &str) -> String {
     jwt(json!({"https://api.openai.com/auth": {
         "chatgpt_account_id": account, "chatgpt_data_residency": residency,
         "chatgpt_plan_type": "new-plan",
-    }, "https://api.openai.com/profile": {"email": " NEW@Example.COM "}}))
+    }, "https://api.openai.com/profile": {"email": email}}))
 }
 
 fn model(base_url: String) -> Model {
@@ -68,9 +72,12 @@ async fn auth(path: &Path, fake: &FakeUpstream) -> OpenAiCodexAuth {
 
 fn seed(path: &Path, account: &str, authorized_at: Option<i64>, expires: i64) -> i64 {
     let store = SqliteCredentialStore::open(path).unwrap();
+    let email = format!("{account}@example.invalid");
     let mut fields = json!({
-        "access": access(account, "old-region"), "refresh": "fixture-refresh-original", "expires": expires,
-        "accountId": account, "email": "old@example.com", "orgId": "original-org", "orgName": "original-plan",
+        "access": access_with_email(account, "old-region", &email), "refresh": "fixture-refresh-original", "expires": expires,
+        // Native credential replacement identifies Codex by email + org.
+        // Distinct accounts must have distinct identities before row tests run.
+        "accountId": account, "email": email, "orgId": "original-org", "orgName": "original-plan",
     })
     .as_object()
     .unwrap()
@@ -437,4 +444,227 @@ async fn oauth_route_and_fixture_endpoints_cannot_be_redirected_to_arbitrary_hos
         production.resolve(&mismatch, &CancellationToken::new()).await,
         Err(AuthResolveError::Unavailable)
     ));
+}
+
+#[tokio::test]
+async fn exact_discovery_accounts_keep_row_affinity_refresh_fences_and_unknown_outcome_settlement() {
+    let row_fields = |row: &StoredAuthCredential| match &row.credential {
+        AuthCredential::OAuth { fields } => Value::Object(fields.clone()),
+        _ => panic!("expected an OAuth discovery row"),
+    };
+
+    // The older row has no interactive authorizedAt marker. Discovery includes
+    // it, whereas normal request auth still selects the latest interactive row.
+    // Two service connections resolving that exact id share one refresh grant.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let legacy = seed(&path, "legacy", None, 0);
+        let selected = seed(&path, "selected", Some(99), now_ms() + 3_600_000);
+        let token = access("legacy", "refreshed-legacy");
+        let mut refreshed = response(json!({"access_token":token,"refresh_token":"legacy-rotated","expires_in":3600}));
+        refreshed["delay_ms"] = 150.into();
+        let fake = upstream(vec![refreshed]).await;
+        let first = auth(&path, &fake).await;
+        let second = auth(&path, &fake).await;
+        assert_eq!(
+            first.stored_oauth_snapshot().unwrap().iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![legacy, selected]
+        );
+        assert_eq!(fake.served(), 0, "snapshot does not refresh credentials");
+        let cancel = CancellationToken::new();
+        let (a, b) = tokio::join!(
+            first.resolve_discovery_account(legacy, &cancel),
+            second.resolve_discovery_account(legacy, &cancel)
+        );
+        for row in [a.unwrap(), b.unwrap()] {
+            assert_eq!(row.id, legacy);
+            assert_eq!(row_fields(&row)["access"], token);
+            assert_eq!(row_fields(&row)["accountId"], "legacy");
+            assert!(row_fields(&row).get("authorizedAt").is_none());
+        }
+        assert_eq!(fake.served(), 1);
+        assert_eq!(fields(&path, legacy)["refresh"], "legacy-rotated");
+        let target = model(format!("http://{}/backend-api", fake.addr));
+        let request = first.resolve(&target, &cancel).await.unwrap();
+        assert!(matches!(request.identity(), CredentialIdentity::Stored { id, .. } if *id == selected));
+        assert_eq!(fake.served(), 1, "exact discovery did not change latest interactive request selection");
+    }
+
+    // Different row ids independently own their grants. Request admission is
+    // ordered only to associate the two scripted responses deterministically;
+    // both refresh workers remain active while the responses are delayed.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let first_id = seed(&path, "first-account", None, 0);
+        let second_id = seed(&path, "second-account", Some(42), 0);
+        let first_token = access("first-account", "first-refreshed");
+        let second_token = access("second-account", "second-refreshed");
+        let mut first_reply = response(json!({"access_token":first_token,"expires_in":3600}));
+        let mut second_reply = response(json!({"access_token":second_token,"expires_in":3600}));
+        first_reply["delay_ms"] = 150.into();
+        second_reply["delay_ms"] = 150.into();
+        let fake = upstream(vec![first_reply, second_reply]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let first_worker = service.clone();
+        let first =
+            tokio::spawn(
+                async move { first_worker.resolve_discovery_account(first_id, &CancellationToken::new()).await },
+            );
+        wait_requests(&fake, 1).await;
+        let second_worker = service.clone();
+        let second =
+            tokio::spawn(
+                async move { second_worker.resolve_discovery_account(second_id, &CancellationToken::new()).await },
+            );
+        wait_requests(&fake, 2).await;
+        for (row, id, token) in [
+            (first.await.unwrap().unwrap(), first_id, first_token),
+            (second.await.unwrap().unwrap(), second_id, second_token),
+        ] {
+            assert_eq!(row.id, id);
+            assert_eq!(row_fields(&row)["access"], token);
+            assert_eq!(fields(&path, id)["access"], token);
+        }
+        assert_eq!(fake.served(), 2);
+        service.resolve_discovery_account(first_id, &CancellationToken::new()).await.unwrap();
+        service.resolve_discovery_account(second_id, &CancellationToken::new()).await.unwrap();
+        assert_eq!(fake.served(), 2, "fresh exact rows do not replay grants");
+    }
+
+    // A dropped consumer leaves an owned settlement worker. Only its unchanged
+    // expired row is disabled; a fresh latest sibling remains usable for normal
+    // requests but must never satisfy the failed exact-id lookup after restart.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let target_id = seed(&path, "non-selected", Some(1), 0);
+        let sibling_id = seed(&path, "fresh-sibling", Some(99), now_ms() + 3_600_000);
+        let sibling_before = fields(&path, sibling_id);
+        let mut reply = response(json!({"access_token":access("non-selected", "uncommitted"),"expires_in":3600}));
+        reply["delay_ms"] = 1000.into();
+        let fake = upstream(vec![reply]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let worker = service.clone();
+        let resolving =
+            tokio::spawn(async move { worker.resolve_discovery_account(target_id, &CancellationToken::new()).await });
+        wait_requests(&fake, 1).await;
+        resolving.abort();
+        let _ = resolving.await;
+        tokio::time::timeout(Duration::from_secs(3), service.wait_for_settlement())
+            .await
+            .expect("exact-row worker settles after caller drop");
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        assert_eq!(
+            store.list_auth_credentials(Some("openai-codex")).unwrap().iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![sibling_id]
+        );
+        let disabled = store.list_disabled_credentials(Some("openai-codex")).unwrap();
+        assert_eq!(disabled.len(), 1);
+        assert_eq!(disabled[0].id, target_id);
+        assert_eq!(disabled[0].cause, "refresh outcome unknown; login required");
+        assert_eq!(fields(&path, sibling_id), sibling_before);
+        drop(service);
+        let reopened = auth(&path, &fake).await;
+        assert!(matches!(
+            reopened.resolve_discovery_account(target_id, &CancellationToken::new()).await,
+            Err(CodexAuthError::LoginRequired)
+        ));
+        let target = model(format!("http://{}/backend-api", fake.addr));
+        let request = reopened.resolve(&target, &CancellationToken::new()).await.unwrap();
+        assert!(matches!(request.identity(), CredentialIdentity::Stored { id, .. } if *id == sibling_id));
+        assert_eq!(fake.served(), 1, "restart must not replay the unknown exact-row refresh");
+    }
+
+    // Reuse the existing raw-data/lease fixture interventions for an exact
+    // non-selected row: lease loss cannot adopt a sibling; a peer-written fresh
+    // target may be adopted; logging in a different account cannot redirect the
+    // target's successful refresh/readback.
+    for race in 0..3 {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let target_id = seed(&path, "target-account", None, 0);
+        let sibling_id = seed(&path, "fresh-sibling", Some(99), now_ms() + 3_600_000);
+        let sibling_before = fields(&path, sibling_id);
+        let uncommitted = access("target-account", "network-response");
+        let mut reply =
+            response(json!({"access_token":uncommitted,"refresh_token":"network-rotated","expires_in":3600}));
+        reply["delay_ms"] = 150.into();
+        let fake = upstream(vec![reply]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let worker = service.clone();
+        let resolving =
+            tokio::spawn(async move { worker.resolve_discovery_account(target_id, &CancellationToken::new()).await });
+        wait_requests(&fake, 1).await;
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        let row = store
+            .list_auth_credentials(Some("openai-codex"))
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id == target_id)
+            .unwrap();
+        let original_data = row.serialized_data.clone();
+        let peer_token = access("target-account", "persisted-peer");
+        if race == 0 {
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute(
+                "UPDATE auth_credential_refresh_leases SET owner='controlled-peer' WHERE credential_id=?1",
+                [target_id],
+            )
+            .unwrap();
+        } else if race == 1 {
+            let mut replacement = row_fields(&row).as_object().unwrap().clone();
+            replacement.insert("access".into(), peer_token.clone().into());
+            replacement.insert("refresh".into(), "persisted-peer-refresh".into());
+            replacement.insert("expires".into(), (now_ms() + 3_600_000).into());
+            let db = rusqlite::Connection::open(&path).unwrap();
+            db.execute(
+                "UPDATE auth_credential_refresh_leases SET owner='controlled-peer' WHERE credential_id=?1",
+                [target_id],
+            )
+            .unwrap();
+            assert!(
+                store
+                    .try_update_auth_credential_if_matches(
+                        target_id,
+                        &row.serialized_data,
+                        &AuthCredential::oauth(replacement),
+                        None
+                    )
+                    .unwrap()
+            );
+        } else {
+            seed(&path, "new-interactive-login", Some(100), now_ms() + 3_600_000);
+        }
+        let result = resolving.await.unwrap();
+        service.wait_for_settlement().await;
+        if race == 0 {
+            assert!(
+                matches!(result, Err(CodexAuthError::LoginRequired)),
+                "fresh sibling cannot satisfy an exact-row fence loss"
+            );
+            let disabled = store.list_disabled_credentials(Some("openai-codex")).unwrap();
+            assert_eq!(disabled.len(), 1);
+            assert_eq!(disabled[0].id, target_id);
+            assert_eq!(disabled[0].cause, "refresh outcome unknown; login required");
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let raw: String =
+                db.query_row("SELECT data FROM auth_credentials WHERE id=?1", [target_id], |row| row.get(0)).unwrap();
+            assert_eq!(raw, original_data, "uncommitted network token was not persisted");
+            let reopened = auth(&path, &fake).await;
+            assert!(matches!(
+                reopened.resolve_discovery_account(target_id, &CancellationToken::new()).await,
+                Err(CodexAuthError::LoginRequired)
+            ));
+        } else {
+            let resolved = result.unwrap();
+            assert_eq!(resolved.id, target_id);
+            let expected = if race == 1 { peer_token } else { uncommitted };
+            assert_eq!(row_fields(&resolved)["access"], expected);
+            assert_eq!(fields(&path, target_id)["access"], expected);
+        }
+        assert_eq!(fields(&path, sibling_id), sibling_before);
+        assert_eq!(fake.served(), 1);
+    }
 }

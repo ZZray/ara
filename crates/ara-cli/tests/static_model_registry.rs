@@ -434,3 +434,81 @@ fn collapse_uses_actual_family_first_member_sidecar_then_rebinds_retired_alias_o
     assert!(Arc::ptr_eq(&all[0], &first));
     assert!(Arc::ptr_eq(&all[0], &all[1]), "native interning picks the first row even when duplicate base rows remain");
 }
+
+#[test]
+fn cache_and_discovery_updates_preserve_lazy_identity_and_authoritative_empty_publication() {
+    // Fixed model-registry lazy-loading/runtime-provider families: a scoped
+    // cache read must not evict another provider's already observed model.
+    let p = model("p", "a", header_slot("p"));
+    let q = model("q", "b", header_slot("q"));
+    let registry = StaticModelRegistry::from_inputs(
+        None,
+        StaticRegistryInputs { bundled_models: vec![p.clone(), q.clone()], ..Default::default() },
+    )
+    .unwrap();
+    let q_before = registry.find_exact(&"q".into(), &"b".into()).unwrap().unwrap();
+    let cached = model("p", "cached", header_slot("cache"));
+    registry.inject_standard_cache_snapshot(vec![cached], providers(&["p"]), &providers(&["p"])).unwrap();
+    assert!(registry.find_exact(&"p".into(), &"a".into()).unwrap().is_none());
+    assert!(registry.find_exact(&"p".into(), &"cached".into()).unwrap().is_some());
+    let q_after = registry.find_exact(&"q".into(), &"b".into()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&q_before, &q_after));
+    assert_eq!(
+        registry.models_for_provider_lookup(&"q".into()).unwrap().len(),
+        1,
+        "injection must not turn the lazy catalog into a whole-catalog lookup"
+    );
+    let dynamic = model("p", "dynamic", header_slot("dynamic"));
+    registry.publish_discovery(vec![dynamic], providers(&["p"]), &providers(&["p"]), &[], false).unwrap();
+    assert!(registry.find_exact(&"p".into(), &"cached".into()).unwrap().is_none());
+    assert!(registry.find_exact(&"p".into(), &"dynamic".into()).unwrap().is_some());
+    let full = registry.get_all().unwrap();
+    assert_eq!(full.len(), 2);
+    assert!(Arc::ptr_eq(
+        &q_after,
+        full.iter().find(|model| text(model.spec(), "provider").unwrap().equals_ascii("q")).unwrap()
+    ));
+    registry.publish_discovery(Vec::new(), providers(&["p"]), &providers(&["p"]), &[], false).unwrap();
+    let full = registry.get_all().unwrap();
+    assert_eq!(full.len(), 1, "an authoritative empty response removes prior provider rows");
+    assert!(text(full[0].spec(), "provider").unwrap().equals_ascii("q"));
+}
+
+#[test]
+fn scoped_metrics_merge_keeps_prior_provider_metrics_and_private_donors() {
+    let p = model("p", "a", header_slot("p-secret"));
+    let q = model("q", "b", header_slot("q-secret"));
+    let registry = StaticModelRegistry::from_inputs(
+        None,
+        StaticRegistryInputs { bundled_models: vec![p.clone(), q.clone()], ..Default::default() },
+    )
+    .unwrap();
+    registry
+        .publish_discovery(
+            vec![p.clone()],
+            OrderedProviderSet::default(),
+            &providers(&["p"]),
+            &[Arc::new(VariantSpec::from_json(&json!({"id":"a","tps":101})))],
+            true,
+        )
+        .unwrap();
+    registry
+        .publish_discovery(
+            vec![q],
+            OrderedProviderSet::default(),
+            &providers(&["q"]),
+            &[Arc::new(VariantSpec::from_json(&json!({"id":"b","tps":202})))],
+            false,
+        )
+        .unwrap();
+    let all = registry.get_all().unwrap();
+    assert_eq!(
+        wire(all.iter().find(|row| text(row.spec(), "id").unwrap().equals_ascii("a")).unwrap(), "tps"),
+        number(101.0)
+    );
+    assert_eq!(
+        wire(all.iter().find(|row| text(row.spec(), "id").unwrap().equals_ascii("b")).unwrap(), "tps"),
+        number(202.0)
+    );
+    assert!(all.iter().all(|row| row.spec().get("headers").is_none()));
+}

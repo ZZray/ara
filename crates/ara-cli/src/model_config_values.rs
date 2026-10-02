@@ -185,7 +185,7 @@ impl ConfigValueResolver {
         self.resolve_config_value_checked(value_config, context, options, &|| true).ok().flatten()
     }
 
-    fn resolve_config_value_checked(
+    pub(crate) fn resolve_config_value_checked(
         &self,
         value_config: &str,
         context: &ConfigValueContext<'_>,
@@ -535,6 +535,9 @@ pub struct ResolvedConfigHeaders {
 pub struct ConfigHeaderCancelled;
 
 impl ResolvedConfigHeaders {
+    pub(crate) fn from_pairs(entries: Vec<(String, String)>) -> Self {
+        Self { entries }
+    }
     pub fn get(&self, key: &str) -> Option<&str> {
         self.entries.iter().find(|(name, _)| name == key).map(|(_, value)| value.as_str())
     }

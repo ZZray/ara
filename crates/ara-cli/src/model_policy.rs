@@ -750,6 +750,7 @@ pub fn xai_responses_reasoning_effort_map(model_id: &str) -> Result<Value, Catal
     })
 }
 fn has_local_loopback_base_url(base_url: &str) -> bool {
+    static PRIVATE_172: OnceLock<Regex> = OnceLock::new();
     let Ok(url) = reqwest::Url::parse(base_url) else {
         return false;
     };
@@ -757,7 +758,7 @@ fn has_local_loopback_base_url(base_url: &str) -> bool {
     matches!(host.as_str(), "localhost" | "127.0.0.1" | "0.0.0.0" | "::1" | "[::1]")
         || host.starts_with("10.")
         || host.starts_with("192.168.")
-        || regex(r"^172\.(1[6-9]|2[0-9]|3[01])\.").is_match(&host)
+        || PRIVATE_172.get_or_init(|| regex(r"^172\.(1[6-9]|2[0-9]|3[01])\.")).is_match(&host)
         || host.ends_with(".local")
 }
 fn local_provider(provider: &str) -> bool {

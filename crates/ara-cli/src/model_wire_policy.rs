@@ -1426,18 +1426,18 @@ fn tokenizer(id: &WireString) -> Option<&'static str> {
 }
 fn replace_regex(
     value: &WireString,
-    pattern: &str,
-    flags: &str,
+    regex: &mut JsRegExp,
+    global: bool,
     replacement: &str,
 ) -> Result<WireString, CollapseError> {
-    let mut regex = JsRegExp::new(pattern.into(), flags).map_err(|e| CollapseError::new(e.to_string()))?;
+    regex.set_last_index(0.0);
     let mut cursor = 0;
     let mut out = Vec::new();
     while let Some(hit) = regex.exec(value) {
         out.extend(&value.units()[cursor..hit.index]);
         out.extend(replacement.encode_utf16());
         cursor = hit.end;
-        if !flags.contains('g') {
+        if !global {
             break;
         }
     }
@@ -1445,10 +1445,29 @@ fn replace_regex(
     Ok(WireString::from_units(out))
 }
 fn clean_name(name: &WireString) -> Result<WireString, CollapseError> {
-    let cleaned = replace_regex(name, r"^[A-Za-z][A-Za-z0-9 .+&'-]{0,23}: ", "", "")?;
-    let cleaned = replace_regex(&cleaned, r"\s*\((?:latest|Antigravity|\$+|>?\d+% off|retires [^)]*)\)", "g", "")?;
-    let cleaned = trim(&replace_regex(&cleaned, " {2,}", "g", " ")?);
-    Ok(if cleaned.is_empty() { name.clone() } else { cleaned })
+    // Fixed catalog/utils.ts retains its display-name expressions. Each Rust
+    // worker likewise compiles these constants once; replacement resets their
+    // state before use, as a fresh call to String.replace does upstream.
+    thread_local! {
+        static NAME_REGEXES: std::cell::RefCell<Result<[JsRegExp; 3], CollapseError>> =
+            std::cell::RefCell::new((|| {
+                let compile = |pattern: &str, flags: &str| JsRegExp::new(pattern.into(), flags)
+                    .map_err(|error| CollapseError::new(error.to_string()));
+                Ok([
+                    compile(r"^[A-Za-z][A-Za-z0-9 .+&'-]{0,23}: ", "")?,
+                    compile(r"\s*\((?:latest|Antigravity|\$+|>?\d+% off|retires [^)]*)\)", "g")?,
+                    compile(" {2,}", "g")?,
+                ])
+            })());
+    }
+    NAME_REGEXES.with(|regexes| {
+        let mut regexes = regexes.borrow_mut();
+        let regexes = regexes.as_mut().map_err(|error| error.clone())?;
+        let cleaned = replace_regex(name, &mut regexes[0], false, "")?;
+        let cleaned = replace_regex(&cleaned, &mut regexes[1], true, "")?;
+        let cleaned = trim(&replace_regex(&cleaned, &mut regexes[2], true, " ")?);
+        Ok(if cleaned.is_empty() { name.clone() } else { cleaned })
+    })
 }
 fn number(spec: &VariantSpec, key: &str) -> Option<f64> {
     match spec.get(key) {

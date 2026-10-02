@@ -130,6 +130,12 @@ impl Drop for CancelOnDrop {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CredentialSelection {
+    LatestInteractive,
+    ExactRow(i64),
+}
+
 impl OpenAiCodexAuth {
     /// The supplied client must disable redirects to keep OAuth grants at the
     /// authorized endpoint. Hosts may configure their own proxy/TLS policy.
@@ -295,17 +301,78 @@ impl OpenAiCodexAuth {
         response_json(request, cancel).await
     }
 
-    async fn selected(&self) -> Result<StoredAuthCredential, CodexAuthError> {
-        self.db(|store| store.list_auth_credentials(Some(PROVIDER)))
-            .await?
+    /// Read-only observation for the synchronous Registry/extension interfaces.
+    /// The lock covers only the SQLite snapshot, never a Host callback or network.
+    pub fn stored_oauth_snapshot(&self) -> Result<Vec<StoredAuthCredential>, CodexAuthError> {
+        let store = self.store.lock().map_err(|_| CodexAuthError::Storage)?;
+        Ok(store
+            .list_auth_credentials(Some(PROVIDER))
+            .map_err(|_| CodexAuthError::Storage)?
             .into_iter()
-            .filter_map(|row| {
-                let at = oauth_fields(&row.credential)?.get("authorizedAt")?.as_i64()?;
-                Some((at, row.id, row))
-            })
-            .max_by_key(|(at, id, _)| (*at, *id))
-            .map(|(_, _, row)| row)
-            .ok_or(CodexAuthError::LoginRequired)
+            .filter(|row| oauth_fields(&row.credential).is_some())
+            .collect())
+    }
+
+    /// Native discovery selection observes the persisted unscoped block. A
+    /// damaged advisory block read does not make an otherwise valid row unusable.
+    pub async fn discovery_blocked_ids(&self) -> Result<Vec<i64>, CodexAuthError> {
+        self.db(|store| {
+            let rows = store.list_auth_credentials(Some(PROVIDER))?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|row| {
+                    store.get_credential_block(row.id, "openai-codex:oauth", "").ok().flatten().map(|_| row.id)
+                })
+                .collect())
+        })
+        .await
+    }
+
+    async fn selected(&self, selection: CredentialSelection) -> Result<StoredAuthCredential, CodexAuthError> {
+        let rows = self.db(|store| store.list_auth_credentials(Some(PROVIDER))).await?;
+        match selection {
+            CredentialSelection::LatestInteractive => rows
+                .into_iter()
+                .filter_map(|row| {
+                    let at = oauth_fields(&row.credential)?.get("authorizedAt")?.as_i64()?;
+                    Some((at, row.id, row))
+                })
+                .max_by_key(|(at, id, _)| (*at, *id))
+                .map(|(_, _, row)| row),
+            CredentialSelection::ExactRow(id) => {
+                rows.into_iter().find(|row| row.id == id && oauth_fields(&row.credential).is_some())
+            }
+        }
+        .ok_or(CodexAuthError::LoginRequired)
+    }
+
+    /// Resolve only this durable account. A refresh fence never adopts a sibling.
+    pub async fn resolve_discovery_account(
+        &self,
+        id: i64,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        self.resolve_owned(CredentialSelection::ExactRow(id), cancel).await
+    }
+
+    async fn resolve_owned(
+        &self,
+        selection: CredentialSelection,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        let settlement = PendingSettlement::register(self.pending.clone());
+        if cancel.is_cancelled() {
+            return Err(CodexAuthError::Cancelled);
+        }
+        let child = cancel.child_token();
+        let _cleanup = CancelOnDrop(child.clone());
+        let service = self.clone();
+        tokio::spawn(async move {
+            let _settlement = settlement;
+            service.resolve_credential(selection, &child).await
+        })
+        .await
+        .map_err(|_| CodexAuthError::Storage)?
     }
 
     fn permitted_model(&self, model: &Model) -> bool {
@@ -328,22 +395,19 @@ impl OpenAiCodexAuth {
             && url.fragment().is_none()
     }
 
-    async fn resolve_inner(
+    async fn resolve_credential(
         &self,
-        model: &Model,
+        selection: CredentialSelection,
         cancel: &CancellationToken,
-    ) -> Result<RequestAuthLease, CodexAuthError> {
-        if !self.permitted_model(model) {
-            return Err(CodexAuthError::InvalidEndpoint);
-        }
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
         let wait_started = Instant::now();
         loop {
             if cancel.is_cancelled() {
                 return Err(CodexAuthError::Cancelled);
             }
-            let selected = self.selected().await?;
+            let selected = self.selected(selection).await?;
             if fresh(&selected) {
-                return lease_from_row(selected);
+                return Ok(selected);
             }
             // Validate the selected account before taking a lease; do not rotate
             // silently to an older account when its credentials are malformed.
@@ -363,16 +427,16 @@ impl OpenAiCodexAuth {
                 cancellable_sleep(Duration::from_millis(50), cancel).await?;
                 continue;
             }
-            let result = self.refresh_owned(id, &owner, cancel).await;
+            let result = self.refresh_owned(id, &owner, selection, cancel).await;
             let release_owner = owner.clone();
             self.db(move |store| store.release_credential_refresh_lease(id, &release_owner)).await?;
             match result {
-                Ok(Some(row)) => return lease_from_row(row),
+                Ok(Some(row)) => return Ok(row),
                 Ok(None) => {
                     // CAS/fence loss: only a persisted, currently selected fresh
                     // credential may be returned. Never use the uncommitted token.
-                    let current = self.selected().await?;
-                    return if fresh(&current) { lease_from_row(current) } else { Err(CodexAuthError::LoginRequired) };
+                    let current = self.selected(selection).await?;
+                    return if fresh(&current) { Ok(current) } else { Err(CodexAuthError::LoginRequired) };
                 }
                 Err(error) => return Err(error),
             }
@@ -383,11 +447,12 @@ impl OpenAiCodexAuth {
         &self,
         id: i64,
         owner: &str,
+        selection: CredentialSelection,
         cancel: &CancellationToken,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
         // Re-read after acquiring the durable lease, never refresh the pre-lease
         // snapshot. Login/logout from another connection may already have won.
-        let current = self.selected().await?;
+        let current = self.selected(selection).await?;
         if current.id != id {
             return Ok(if fresh(&current) { Some(current) } else { None });
         }
@@ -451,7 +516,7 @@ impl OpenAiCodexAuth {
                         // A storage error can occur after SQL committed. First
                         // consult the durable row; otherwise fence the unchanged
                         // grant so a later request cannot replay it automatically.
-                        let recovered = self.adopt_or_disable_after_fence_loss(id, expected).await?;
+                        let recovered = self.adopt_or_disable_after_fence_loss(id, expected, selection).await?;
                         if recovered.is_some() {
                             return Ok(recovered);
                         }
@@ -459,9 +524,9 @@ impl OpenAiCodexAuth {
                     }
                 };
                 if !committed {
-                    return self.adopt_or_disable_after_fence_loss(id, expected).await;
+                    return self.adopt_or_disable_after_fence_loss(id, expected, selection).await;
                 }
-                let persisted = self.selected().await?;
+                let persisted = self.selected(selection).await?;
                 Ok(if fresh(&persisted) { Some(persisted) } else { None })
             }
             Err(error) => {
@@ -485,7 +550,7 @@ impl OpenAiCodexAuth {
                 if disabled {
                     Err(error)
                 } else {
-                    self.adopt_or_disable_after_fence_loss(id, current.serialized_data).await
+                    self.adopt_or_disable_after_fence_loss(id, current.serialized_data, selection).await
                 }
             }
         }
@@ -495,8 +560,9 @@ impl OpenAiCodexAuth {
         &self,
         id: i64,
         expected: String,
+        selection: CredentialSelection,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
-        let current = self.selected().await?;
+        let current = self.selected(selection).await?;
         if fresh(&current) {
             return Ok(Some(current));
         }
@@ -515,30 +581,17 @@ impl OpenAiCodexAuth {
 #[async_trait]
 impl RequestAuthResolver for OpenAiCodexAuth {
     async fn resolve(&self, model: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
-        // Registration precedes spawn and every cancellation check. A Host
-        // barrier observes any worker which could have dispatched a grant.
-        let settlement = PendingSettlement::register(self.pending.clone());
-        if cancel.is_cancelled() {
-            return Err(AuthResolveError::Cancelled);
+        if !self.permitted_model(model) {
+            return Err(AuthResolveError::Unavailable);
         }
-        let child = cancel.child_token();
-        let _cleanup = CancelOnDrop(child.clone());
-        let service = self.clone();
-        let model = model.clone();
-        // JoinHandle drop detaches rather than aborts: cancellation cleanup and
-        // durable unknown-outcome disabling remain owned by this worker.
-        tokio::spawn(async move {
-            let _settlement = settlement;
-            service.resolve_inner(&model, &child).await
-        })
-        .await
-        .map_err(|_| AuthResolveError::Storage)?
-        .map_err(|error| match error {
-            CodexAuthError::Cancelled => AuthResolveError::Cancelled,
-            CodexAuthError::Storage => AuthResolveError::Storage,
-            CodexAuthError::LoginRequired | CodexAuthError::InvalidEndpoint => AuthResolveError::Unavailable,
-            _ => AuthResolveError::Refresh,
-        })
+        self.resolve_owned(CredentialSelection::LatestInteractive, cancel).await.and_then(lease_from_row).map_err(
+            |error| match error {
+                CodexAuthError::Cancelled => AuthResolveError::Cancelled,
+                CodexAuthError::Storage => AuthResolveError::Storage,
+                CodexAuthError::LoginRequired | CodexAuthError::InvalidEndpoint => AuthResolveError::Unavailable,
+                _ => AuthResolveError::Refresh,
+            },
+        )
     }
 }
 

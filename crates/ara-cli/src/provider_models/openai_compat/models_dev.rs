@@ -653,8 +653,8 @@ struct CatalogFallback {
 #[async_trait]
 impl crate::model_manager::ModelsDevFallback for CatalogFallback {
     async fn fetch(&self) -> Result<RawModelValue, DiscoveryError> {
-        Ok(RawModelValue::Value(
-            super::super::catalog_session::fetch_revalidated_with_timeout(
+        Ok(RawModelValue::SharedValue(
+            super::super::catalog_session::fetch_revalidated_shared_with_timeout(
                 &self.context,
                 &self.host,
                 self.explicit,
@@ -664,9 +664,14 @@ impl crate::model_manager::ModelsDevFallback for CatalogFallback {
         ))
     }
     fn map(&self, payload: RawModelValue, _: &WireString) -> Result<RawModelValue, DiscoveryError> {
-        let models = match payload {
-            RawModelValue::Value(payload) if matches!(payload.value, WireValue::Object(_)) => {
-                map_models_dev_to_models(&payload, &self.descriptors)?
+        let value = match &payload {
+            RawModelValue::Value(value) => Some(value),
+            RawModelValue::SharedValue(value) => Some(value.as_ref()),
+            _ => None,
+        };
+        let models = match value {
+            Some(payload) if matches!(payload.value, WireValue::Object(_)) => {
+                map_models_dev_to_models(payload, &self.descriptors)?
             }
             _ => Vec::new(),
         };

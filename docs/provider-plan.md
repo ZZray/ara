@@ -1,5 +1,17 @@
 # Provider delivery plan
 
+**Current checkpoint, 2026-10-02 21:13 UTC (production Registry WIP):**
+[Production Registry](evidence/model-registry.md) now connects private daily
+OpenAI projection to loader/cache/discovery and the shared Codex account owner.
+Controlled account-directory/refresh/restart groups and final Windows backend
+1,707/0/20 PASS; actual CAS artifact/original-Session recall PASS in 14.278s/five
+calls with native tokenizer selection. Independent POST approves bounded WIP;
+the existing dependency advisory leaves the whole gate FAIL. Actual OpenAI
+authorization/model task, complete AuthStorage ranking/usage/sticky/blocks,
+login/static-key fallback, advanced transports and other Providers stay required.
+The 111-surface/60-point counts remain unchanged: started coverage 24.3%, bounded
+limited acceptances 58.3%, P0/V1 accepted and P1–P6 open. No full-project ETA.
+
 **Current checkpoint, 2026-10-02 UTC (tested bounded native-tokenizer WIP):**
 [Native tokenizer](evidence/native-tokenizer.md) restores the pinned universal
 encoders/scanners/vocabularies under ara-ctok, all eight catalog families and
@@ -42,7 +54,7 @@ parity and does not advance `ported_through_commit`.
 | --- | --- | --- | --- |
 | OpenAI-compatible custom routes | Native models.yml selection/CLI overrides/private key resolution now drive Chat/Responses tools and original Session resume. Module/full gate and a CAS artifact/restart task pass. See [daily evidence](evidence/openai-daily.md) and [usage](openai-daily.md). | Keep the usable bounded CLI slice; complete all-provider execution projection/registry in its later parity batch. | Windows 22 module scenes and 1,491 backend tests pass; live configured-route artifact and same-Session recall pass. Full Provider parity stays open. |
 | OpenAI account login | CLI device login/logout, private SQLite, refresh/settlement and dedicated Codex SSE route pass synthetic process/wire/restart/new-Session workflows. | Complete actual OpenAI device authorization and a bounded account-model task when user participation is available. Then finish recorded advanced transport/auth contracts. | Deterministic module/full gate passes. Actual account authorization/subscription model remains unverified; account point stays open. |
-| Other provider compatibility | Discovery/factory/manager dependencies have bounded source/native evidence; main registry is still disconnected. | Retain current implementation; address deferred contracts when the two daily-use modules are usable. | Separate later parity evidence; not a blocker for the daily-use milestone. |
+| Other provider compatibility | Discovery/factory/manager and production Registry Host seams have bounded source/native evidence. Other provider execution/auth contracts remain open. | Retain current implementation; address deferred contracts after the two daily-use modules. | Separate later parity evidence; not a blocker for the daily-use milestone. |
 
 ### Verification and speed
 

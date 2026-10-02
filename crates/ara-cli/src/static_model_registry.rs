@@ -27,7 +27,8 @@ use crate::{
     model_patch::{
         HeaderSlot, HostModel, HostModelRef, ModelPatch, ModelTransportPolicy, OrderedProviderSet, ProviderOverride,
         apply_model_override, apply_model_patch, build_host_model, drop_provider_models, merge_by_model_key,
-        merge_compat, merge_header_sources, merge_provider_remote_compaction_config, to_host_model_spec,
+        merge_compat, merge_discovered_model, merge_header_sources, merge_provider_remote_compaction_config,
+        to_host_model_spec,
     },
     models_config::ModelsConfig,
 };
@@ -53,6 +54,7 @@ pub struct StaticRegistryInputs {
     pub metrics_models: Vec<SpecRef>,
     pub extended_context: bool,
     pub disabled_providers: OrderedProviderSet,
+    pub llama_cpp_providers: OrderedProviderSet,
 }
 
 impl Default for StaticRegistryInputs {
@@ -69,6 +71,7 @@ impl Default for StaticRegistryInputs {
             metrics_models: Vec::new(),
             extended_context: true,
             disabled_providers: OrderedProviderSet::default(),
+            llama_cpp_providers: OrderedProviderSet::default(),
         }
     }
 }
@@ -88,11 +91,26 @@ struct ParsedConfig {
 }
 
 struct RegistryState {
-    collapse: CollapseRuntime,
+    collapse: Arc<Mutex<CollapseRuntime>>,
     built_in_by_provider: HashMap<WireString, Vec<HostModelRef>>,
     interned: HashMap<WireString, HostModelRef>,
     provider_lookups: HashMap<WireString, Vec<HostModelRef>>,
     full_snapshot: Option<Vec<HostModelRef>>,
+    unprojected_snapshot: Option<Vec<HostModelRef>>,
+    loaded_standard_models: Option<Vec<HostModelRef>>,
+    loaded_standard_authority: Option<OrderedProviderSet>,
+    discovered_models: Option<Vec<HostModelRef>>,
+    discovered_authority: Option<OrderedProviderSet>,
+    live_metrics: Option<CatalogMetricsIndex>,
+    runtime_overlays: Option<Vec<CustomModelOverlay>>,
+    runtime_overrides: Vec<(WireString, ProviderOverride)>,
+    revision: u64,
+}
+
+/// Whole-catalog Host projection. Callbacks execute outside composition locks.
+pub trait ModelCatalogProjection: Send + Sync {
+    fn has_modifiers(&self) -> bool;
+    fn project(&self, models: &[HostModelRef]) -> Vec<HostModelRef>;
 }
 
 /// One fixed configuration/snapshot generation. Create a new adapter when the
@@ -102,6 +120,7 @@ pub struct StaticModelRegistry {
     inputs: StaticRegistryInputs,
     metrics: CatalogMetricsIndex,
     state: Mutex<RegistryState>,
+    projection: Mutex<Option<Arc<dyn ModelCatalogProjection>>>,
 }
 
 fn fixed_error(message: &str) -> CollapseError {
@@ -206,7 +225,10 @@ fn normalize_discovery_override_base_url(fields: &VariantSpec) -> Option<Variant
     Some(VariantSpec::from_wire(WireValue::String(normalized.into())))
 }
 
-fn parse_config(config: Option<&ModelsConfig>) -> Result<ParsedConfig, CollapseError> {
+fn parse_config(
+    config: Option<&ModelsConfig>,
+    resolved_header_presence: Option<&HashMap<WireString, bool>>,
+) -> Result<ParsedConfig, CollapseError> {
     let mut parsed = ParsedConfig::default();
     let Some(providers) = config.and_then(|config| config.value().get("providers")).and_then(Value::as_object) else {
         return Ok(parsed);
@@ -223,7 +245,9 @@ fn parse_config(config: Option<&ModelsConfig>) -> Result<ParsedConfig, CollapseE
             .is_some_and(truthy)
             .then(|| VariantSpec::from_json(&serde_json::json!({"disableStrictTools":true})));
         let compat = merge_compat(compat.as_ref(), disable_strict.as_ref());
-        let override_present = headers.as_source().is_some()
+        let override_present = resolved_header_presence
+            .and_then(|presence| presence.get(&provider).copied())
+            .unwrap_or_else(|| headers.as_source().is_some())
             || api_key.as_ref().is_some_and(|value| !value.is_empty())
             || fields.get("authHeader").is_some()
             || [
@@ -330,7 +354,15 @@ fn wrap_bundled_model(spec: &SpecRef) -> Result<HostModelRef, CollapseError> {
     HostModel::new(Arc::new(fields), headers)
 }
 
-fn bundled_host_models() -> Result<&'static [HostModelRef], CollapseError> {
+/// Restore a sparse cache/discovery ModelSpec without putting headers into
+/// its safe metadata. A bundled Model is already materialized and uses the
+/// separate wrapper above.
+pub(crate) fn host_model_from_spec(spec: &SpecRef) -> Result<HostModelRef, CollapseError> {
+    let model = wrap_bundled_model(spec)?;
+    build_host_model(model.spec(), model.headers().clone())
+}
+
+pub(crate) fn bundled_host_models() -> Result<&'static [HostModelRef], CollapseError> {
     static MODELS: OnceLock<Result<Vec<HostModelRef>, CollapseError>> = OnceLock::new();
     MODELS
         .get_or_init(|| bundled_models().iter().map(wrap_bundled_model).collect())
@@ -406,6 +438,16 @@ impl StaticModelRegistry {
     }
 
     pub fn from_inputs(config: Option<&ModelsConfig>, inputs: StaticRegistryInputs) -> Result<Self, CollapseError> {
+        Self::from_loader_inputs(config, inputs, None)
+    }
+
+    /// A production loader observes eagerly resolved header presence while
+    /// retaining the raw live source for subsequent requests.
+    pub fn from_loader_inputs(
+        config: Option<&ModelsConfig>,
+        inputs: StaticRegistryInputs,
+        resolved_header_presence: Option<&HashMap<WireString, bool>>,
+    ) -> Result<Self, CollapseError> {
         for model in inputs
             .bundled_models
             .iter()
@@ -422,16 +464,26 @@ impl StaticModelRegistry {
         }
         let metrics = CatalogMetricsIndex::new(&inputs.metrics_models);
         Ok(Self {
-            config: parse_config(config)?,
+            config: parse_config(config, resolved_header_presence)?,
             inputs,
             metrics,
             state: Mutex::new(RegistryState {
-                collapse: CollapseRuntime::new()?,
+                collapse: Arc::new(Mutex::new(CollapseRuntime::new()?)),
                 built_in_by_provider: HashMap::new(),
                 interned: HashMap::new(),
                 provider_lookups: HashMap::new(),
                 full_snapshot: None,
+                unprojected_snapshot: None,
+                loaded_standard_models: None,
+                loaded_standard_authority: None,
+                discovered_models: None,
+                discovered_authority: None,
+                live_metrics: None,
+                runtime_overlays: None,
+                runtime_overrides: Vec::new(),
+                revision: 0,
             }),
+            projection: Mutex::new(None),
         })
     }
 
@@ -448,7 +500,297 @@ impl StaticModelRegistry {
         self.config.provider_overrides.get(provider)
     }
 
-    fn known_static_providers(&self) -> OrderedProviderSet {
+    pub fn install_projection(&self, projection: Arc<dyn ModelCatalogProjection>) {
+        *self.projection.lock().expect("registry projection poisoned") = Some(projection);
+    }
+
+    pub fn install_runtime_layers(
+        &self,
+        overlays: Vec<CustomModelOverlay>,
+        overrides: Vec<(WireString, ProviderOverride)>,
+    ) {
+        let mut state = self.state.lock().expect("static registry poisoned");
+        state.runtime_overlays = Some(overlays);
+        state.runtime_overrides = overrides;
+        state.revision = state.revision.wrapping_add(1);
+    }
+
+    pub fn has_full_snapshot(&self) -> bool {
+        self.state.lock().expect("static registry poisoned").full_snapshot.is_some()
+    }
+
+    pub fn invalidate_provider(&self, provider: &WireString) {
+        let mut touched = OrderedProviderSet::default();
+        touched.insert(provider.clone());
+        Self::invalidate_touched(&mut self.state.lock().expect("static registry poisoned"), &touched);
+    }
+
+    pub fn invalidate_all_provider_lookups(&self) {
+        let mut state = self.state.lock().expect("static registry poisoned");
+        state.provider_lookups.clear();
+        state.interned.clear();
+        state.revision = state.revision.wrapping_add(1);
+    }
+
+    pub fn collapse_runtime(&self) -> Arc<Mutex<CollapseRuntime>> {
+        self.state.lock().expect("static registry poisoned").collapse.clone()
+    }
+
+    fn apply_llama_cpp_fixups(&self, models: Vec<HostModelRef>) -> Result<Vec<HostModelRef>, CollapseError> {
+        use crate::model_registry_discovery::{
+            apply_llama_cpp_qwen_thinking, ensure_llama_cpp_v1_base_url, normalize_llama_cpp_base_url,
+        };
+        models
+            .into_iter()
+            .map(|model| {
+                if !text(model.spec(), "provider")
+                    .is_some_and(|provider| self.inputs.llama_cpp_providers.contains(&provider))
+                {
+                    return Ok(model);
+                }
+                let model =
+                    apply_llama_cpp_qwen_thinking(&model).map_err(|_| fixed_error("llama.cpp model fixups failed"))?;
+                if !model.spec().get("transport").is_some_and(truthy)
+                    && !text(model.spec(), "baseUrl")
+                        .is_some_and(|base| base.units().ends_with(&"/v1".encode_utf16().collect::<Vec<_>>()))
+                {
+                    let mut fields = to_host_model_spec(&model);
+                    let base = normalize_llama_cpp_base_url(text(model.spec(), "baseUrl").as_ref());
+                    fields.set("baseUrl", WireValue::String(ensure_llama_cpp_v1_base_url(&base)));
+                    build_host_model(&fields, model.headers().clone())
+                } else {
+                    Ok(model)
+                }
+            })
+            .collect()
+    }
+
+    pub fn register_runtime_models(
+        &self,
+        provider: &WireString,
+        overlays: &[CustomModelOverlay],
+        retained: Option<&ProviderOverride>,
+    ) -> Result<(), CollapseError> {
+        let mut state = self.state.lock().expect("static registry poisoned");
+        let mut models = state.unprojected_snapshot.clone().unwrap_or_default();
+        models.retain(|model| text(model.spec(), "provider").as_ref() != Some(provider));
+        for overlay in overlays {
+            let model = finalize_custom_model(overlay, CustomModelBuildOptions { use_defaults: true })?;
+            models.push(match retained {
+                Some(override_) => apply_provider_transport(&model, override_, false)?,
+                None => model,
+            });
+        }
+        state.unprojected_snapshot = Some(self.apply_provider_bedrock_overrides(models)?);
+        state.revision = state.revision.wrapping_add(1);
+        let full = state.full_snapshot.is_some();
+        drop(state);
+        if full {
+            self.reproject_full_snapshot(false)?;
+        }
+        Ok(())
+    }
+
+    pub fn apply_runtime_transport(
+        &self,
+        provider: &WireString,
+        incoming: &ProviderOverride,
+    ) -> Result<(), CollapseError> {
+        let mut state = self.state.lock().expect("static registry poisoned");
+        if state.full_snapshot.is_none() {
+            return Ok(());
+        }
+        let models = state
+            .unprojected_snapshot
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|model| {
+                if text(model.spec(), "provider").as_ref() == Some(provider) {
+                    apply_provider_transport(&model, incoming, false)
+                } else {
+                    Ok(model)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        state.unprojected_snapshot = Some(self.apply_llama_cpp_fixups(models)?);
+        state.revision = state.revision.wrapping_add(1);
+        drop(state);
+        self.reproject_full_snapshot(false)
+    }
+
+    fn reproject_full_snapshot(&self, intern: bool) -> Result<(), CollapseError> {
+        loop {
+            let projection = self.projection.lock().expect("registry projection poisoned").clone();
+            let (models, revision) = {
+                let state = self.state.lock().expect("static registry poisoned");
+                (state.unprojected_snapshot.clone().unwrap_or_default(), state.revision)
+            };
+            let projected = projection.map_or_else(|| models.clone(), |projection| projection.project(&models));
+            let mut state = self.state.lock().expect("static registry poisoned");
+            if state.revision != revision {
+                continue;
+            }
+            state.full_snapshot = Some(self.project_metrics(&mut state, projected, intern)?);
+            return Ok(());
+        }
+    }
+
+    pub fn prepare_cached_provider_models(
+        &self,
+        provider: &WireString,
+        models: Vec<HostModelRef>,
+    ) -> Result<Vec<HostModelRef>, CollapseError> {
+        let models = models
+            .into_iter()
+            .map(|model| match self.config.provider_overrides.get(provider) {
+                Some(override_) => apply_provider_transport(&model, override_, true),
+                None => Ok(model),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.prepare_cached_discovery_models(provider, models)
+    }
+
+    pub fn prepare_cached_discovery_models(
+        &self,
+        _provider: &WireString,
+        models: Vec<HostModelRef>,
+    ) -> Result<Vec<HostModelRef>, CollapseError> {
+        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+        let models = self.apply_model_overrides(&mut state, models)?;
+        self.apply_hardcoded_model_policies(models)
+    }
+
+    fn invalidate_touched(state: &mut RegistryState, touched: &OrderedProviderSet) {
+        state.revision = state.revision.wrapping_add(1);
+        for provider in touched.iter() {
+            let prefix = key(provider, &WireString::from(""));
+            state.interned.retain(|key, _| !key.units().starts_with(prefix.units()));
+            state.provider_lookups.remove(&lower(&trim(provider)));
+        }
+    }
+
+    /// A cache slice arrives after its Host I/O has settled. Other model
+    /// references and the lazy/full distinction survive the injection.
+    pub fn inject_standard_cache_snapshot(
+        &self,
+        models: Vec<HostModelRef>,
+        authoritative: OrderedProviderSet,
+        touched: &OrderedProviderSet,
+    ) -> Result<(), CollapseError> {
+        for model in &models {
+            identity(model)?;
+        }
+        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+        state.loaded_standard_models = Some(models);
+        state.loaded_standard_authority = Some(authoritative);
+        Self::invalidate_touched(&mut state, touched);
+        if state.full_snapshot.is_some() {
+            let unprojected = self.compose_unprojected_models(&mut state, None)?;
+            state.unprojected_snapshot = Some(unprojected);
+        }
+        let full = state.full_snapshot.is_some();
+        drop(state);
+        if full {
+            self.reproject_full_snapshot(true)?;
+        }
+        Ok(())
+    }
+
+    /// Match the native runtime merge against the old unprojected snapshot.
+    /// Empty authoritative discoveries still touch and replace their provider.
+    pub fn publish_discovery(
+        &self,
+        discovered: Vec<HostModelRef>,
+        authoritative: OrderedProviderSet,
+        touched: &OrderedProviderSet,
+        metric_models: &[SpecRef],
+        replace_metrics: bool,
+    ) -> Result<(), CollapseError> {
+        for model in &discovered {
+            identity(model)?;
+        }
+        if metric_models
+            .iter()
+            .any(|model| model.own_keys().iter().any(|key| key.equals_ascii("headers") || key.equals_ascii("apiKey")))
+        {
+            return Err(fixed_error("Catalog metrics input must contain safe metadata only"));
+        }
+        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+        if replace_metrics {
+            let incoming = CatalogMetricsIndex::new(metric_models);
+            if !incoming.is_empty() {
+                state.live_metrics = Some(incoming);
+            }
+        } else {
+            state
+                .live_metrics
+                .get_or_insert_with(|| CatalogMetricsIndex::new(&self.inputs.metrics_models))
+                .add(metric_models);
+        }
+        if discovered.is_empty() && authoritative.is_empty() {
+            return Ok(());
+        }
+        let existing = match &state.unprojected_snapshot {
+            Some(models) => models.clone(),
+            None => self.compose_unprojected_models(&mut state, Some(touched))?,
+        };
+        let references = crate::provider_model_reference::ProviderModelReferenceIndex::with_collapse_runtime(
+            &existing,
+            state.collapse.clone(),
+        )?;
+        let merged = discovered
+            .iter()
+            .map(|model| {
+                let (provider, id) = identity(model)?;
+                let donor = references.resolve(&provider, &id)?;
+                merge_discovered_model(model, donor.as_ref(), self.config.provider_overrides.get(&provider))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let merged = self.apply_hardcoded_model_policies(merged)?;
+        let mut runtime = state
+            .discovered_models
+            .as_ref()
+            .unwrap_or(&self.inputs.runtime_discovered_models)
+            .iter()
+            .filter(|model| text(model.spec(), "provider").is_none_or(|provider| !touched.contains(&provider)))
+            .cloned()
+            .collect::<Vec<_>>();
+        runtime.extend(merged.iter().cloned());
+        let mut all_authority = OrderedProviderSet::default();
+        for provider in
+            state.discovered_authority.as_ref().unwrap_or(&self.inputs.runtime_authoritative_providers).iter()
+        {
+            if !touched.contains(provider) {
+                all_authority.insert(provider.clone());
+            }
+        }
+        for provider in authoritative.iter() {
+            all_authority.insert(provider.clone());
+        }
+        state.discovered_models = Some(runtime);
+        state.discovered_authority = Some(all_authority);
+        Self::invalidate_touched(&mut state, touched);
+        if state.full_snapshot.is_some() {
+            let base = drop_provider_models(&existing, &authoritative);
+            let resolved = self.merge_resolved_models(&base, &merged)?;
+            let unprojected = self.apply_overlay_layers(&mut state, &resolved, None)?;
+            state.unprojected_snapshot = Some(unprojected);
+        }
+        let full = state.full_snapshot.is_some();
+        drop(state);
+        if full {
+            self.reproject_full_snapshot(false)?;
+        }
+        Ok(())
+    }
+
+    pub fn known_provider_ids(&self) -> Result<OrderedProviderSet, CollapseError> {
+        let state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+        Ok(self.known_static_providers(&state))
+    }
+
+    fn known_static_providers(&self, state: &RegistryState) -> OrderedProviderSet {
         let mut providers = OrderedProviderSet::default();
         for model in &self.inputs.bundled_models {
             if let Some(provider) = text(model.spec(), "provider") {
@@ -459,9 +801,9 @@ impl StaticModelRegistry {
             providers.insert(provider.clone());
         }
         for models in [
-            &self.inputs.cached_standard_models,
+            state.loaded_standard_models.as_ref().unwrap_or(&self.inputs.cached_standard_models),
             &self.inputs.cached_discoverable_models,
-            &self.inputs.runtime_discovered_models,
+            state.discovered_models.as_ref().unwrap_or(&self.inputs.runtime_discovered_models),
         ] {
             for model in models {
                 if let Some(provider) = text(model.spec(), "provider") {
@@ -469,7 +811,12 @@ impl StaticModelRegistry {
                 }
             }
         }
-        for model in self.config.custom_models.iter().chain(&self.inputs.runtime_model_overlays) {
+        for model in self
+            .config
+            .custom_models
+            .iter()
+            .chain(state.runtime_overlays.as_ref().unwrap_or(&self.inputs.runtime_model_overlays))
+        {
             if let Some(provider) = text(model.fields(), "provider") {
                 providers.insert(provider);
             }
@@ -637,6 +984,8 @@ impl StaticModelRegistry {
         }
         state
             .collapse
+            .lock()
+            .map_err(|_| fixed_error("Model alias state is unavailable"))?
             .collapse_built_variants_with_donors(&specs)?
             .into_iter()
             .map(|(output, donor)| {
@@ -669,8 +1018,12 @@ impl StaticModelRegistry {
             .map(|model| {
                 let (provider, _) = identity(&model)?;
                 let Some(overrides) = self.config.model_overrides.get(&provider) else { return Ok(model) };
-                let Some(override_) =
-                    resolve_model_override_with_aliases(overrides, &model, &mut state.collapse, &has_live)?
+                let Some(override_) = resolve_model_override_with_aliases(
+                    overrides,
+                    &model,
+                    &mut *state.collapse.lock().map_err(|_| fixed_error("Model alias state is unavailable"))?,
+                    &has_live,
+                )?
                 else {
                     return Ok(model);
                 };
@@ -700,21 +1053,42 @@ impl StaticModelRegistry {
             .collect()
     }
 
-    fn compose_static_models(
+    fn compose_unprojected_models(
         &self,
         state: &mut RegistryState,
         providers: Option<&OrderedProviderSet>,
     ) -> Result<Vec<HostModelRef>, CollapseError> {
         let built = self.load_built_in_models(state, providers)?;
         let built = self.apply_hardcoded_model_policies(built)?;
-        let built = drop_provider_models(&built, &self.inputs.cached_authoritative_providers);
-        let standard = select_models(&self.inputs.cached_standard_models, providers);
+        let built = drop_provider_models(
+            &built,
+            state.loaded_standard_authority.as_ref().unwrap_or(&self.inputs.cached_authoritative_providers),
+        );
+        let standard = select_models(
+            state.loaded_standard_models.as_ref().unwrap_or(&self.inputs.cached_standard_models),
+            providers,
+        );
         let defaults = self.merge_resolved_models(&built, &standard)?;
         let discoverable = select_models(&self.inputs.cached_discoverable_models, providers);
         let defaults = self.merge_resolved_models(&defaults, &discoverable)?;
-        let defaults = drop_provider_models(&defaults, &self.inputs.runtime_authoritative_providers);
-        let runtime = select_models(&self.inputs.runtime_discovered_models, providers);
+        let defaults = drop_provider_models(
+            &defaults,
+            state.discovered_authority.as_ref().unwrap_or(&self.inputs.runtime_authoritative_providers),
+        );
+        let runtime = select_models(
+            state.discovered_models.as_ref().unwrap_or(&self.inputs.runtime_discovered_models),
+            providers,
+        );
         let defaults = self.merge_resolved_models(&defaults, &runtime)?;
+        self.apply_overlay_layers(state, &defaults, providers)
+    }
+
+    fn apply_overlay_layers(
+        &self,
+        state: &mut RegistryState,
+        defaults: &[HostModelRef],
+        providers: Option<&OrderedProviderSet>,
+    ) -> Result<Vec<HostModelRef>, CollapseError> {
         let select_overlays = |overlays: &[CustomModelOverlay]| {
             overlays
                 .iter()
@@ -726,53 +1100,103 @@ impl StaticModelRegistry {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        let custom = self.merge_custom_models(&defaults, &select_overlays(&self.config.custom_models))?;
-        let runtime = self.merge_custom_models(&custom, &select_overlays(&self.inputs.runtime_model_overlays))?;
+        let custom = self.merge_custom_models(defaults, &select_overlays(&self.config.custom_models))?;
+        let runtime = self.merge_custom_models(
+            &custom,
+            &select_overlays(state.runtime_overlays.as_ref().unwrap_or(&self.inputs.runtime_model_overlays)),
+        )?;
         let collapsed = self.collapse_models(state, &runtime)?;
         let overridden = self.apply_model_overrides(state, collapsed)?;
         let bedrock = self.apply_provider_bedrock_overrides(overridden)?;
-        let specs: Vec<_> = bedrock.iter().map(|model| model.spec().clone()).collect();
-        let metrics = apply_catalog_metrics(&specs, &self.metrics);
-        bedrock
+        let runtime = bedrock
+            .into_iter()
+            .map(|model| {
+                let (provider, _) = identity(&model)?;
+                match state.runtime_overrides.iter().find(|(name, _)| name == &provider) {
+                    Some((_, override_)) => apply_provider_transport(&model, override_, false),
+                    None => Ok(model),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.apply_llama_cpp_fixups(runtime)
+    }
+
+    fn project_metrics(
+        &self,
+        state: &mut RegistryState,
+        models: Vec<HostModelRef>,
+        intern: bool,
+    ) -> Result<Vec<HostModelRef>, CollapseError> {
+        let specs: Vec<_> = models.iter().map(|model| model.spec().clone()).collect();
+        let metrics = apply_catalog_metrics(&specs, state.live_metrics.as_ref().unwrap_or(&self.metrics));
+        models
             .into_iter()
             .zip(metrics)
             .map(|(model, spec)| {
                 let model = if Arc::ptr_eq(model.spec(), &spec) { model } else { model.with_spec(spec)? };
                 let (provider, id) = identity(&model)?;
-                Ok(state.interned.entry(key(&provider, &id)).or_insert(model).clone())
+                if intern { Ok(state.interned.entry(key(&provider, &id)).or_insert(model).clone()) } else { Ok(model) }
             })
             .collect()
     }
 
-    fn lookup_locked(
+    fn compose_projected(
         &self,
-        state: &mut RegistryState,
-        provider: &WireString,
+        providers: Option<&OrderedProviderSet>,
+        lookup: Option<&WireString>,
+        full: bool,
     ) -> Result<Vec<HostModelRef>, CollapseError> {
-        if let Some(models) = &state.full_snapshot {
-            return Ok(models.clone());
+        loop {
+            let projection = self.projection.lock().expect("registry projection poisoned").clone();
+            let whole = projection.as_ref().is_some_and(|projection| projection.has_modifiers());
+            let (unprojected, revision) = {
+                let mut state = self.state.lock().expect("static registry poisoned");
+                if let Some(models) = &state.full_snapshot {
+                    return Ok(if lookup.is_some() { models.clone() } else { select_models(models, providers) });
+                }
+                if let Some(models) = lookup.and_then(|lookup| state.provider_lookups.get(lookup)) {
+                    return Ok(models.clone());
+                }
+                let models = self.compose_unprojected_models(&mut state, if whole { None } else { providers })?;
+                (models, state.revision)
+            };
+            let projected =
+                projection.map_or_else(|| unprojected.clone(), |projection| projection.project(&unprojected));
+            let mut state = self.state.lock().expect("static registry poisoned");
+            if state.revision != revision {
+                continue;
+            }
+            let projected = self.project_metrics(&mut state, projected, false)?;
+            let selected = select_models(&projected, providers)
+                .into_iter()
+                .map(|model| {
+                    let (provider, id) = identity(&model)?;
+                    Ok(state.interned.entry(key(&provider, &id)).or_insert(model).clone())
+                })
+                .collect::<Result<Vec<_>, CollapseError>>()?;
+            if full {
+                state.unprojected_snapshot = Some(unprojected);
+                state.full_snapshot = Some(selected.clone());
+                state.provider_lookups.clear();
+            } else if let Some(lookup) = lookup {
+                state.provider_lookups.insert(lookup.clone(), selected.clone());
+            }
+            return Ok(selected);
         }
+    }
+
+    pub fn models_for_provider_lookup(&self, provider: &WireString) -> Result<Vec<HostModelRef>, CollapseError> {
         let normalized = lower(&trim(provider));
         if normalized.is_empty() {
             return Ok(Vec::new());
         }
-        if let Some(models) = state.provider_lookups.get(&normalized) {
-            return Ok(models.clone());
-        }
         let mut matching = OrderedProviderSet::default();
-        for candidate in self.known_static_providers().iter() {
+        for candidate in self.known_provider_ids()?.iter() {
             if lower(candidate) == normalized {
                 matching.insert(candidate.clone());
             }
         }
-        let models = self.compose_static_models(state, Some(&matching))?;
-        state.provider_lookups.insert(normalized, models.clone());
-        Ok(models)
-    }
-
-    pub fn models_for_provider_lookup(&self, provider: &WireString) -> Result<Vec<HostModelRef>, CollapseError> {
-        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
-        self.lookup_locked(&mut state, provider)
+        self.compose_projected(Some(&matching), Some(&normalized), false)
     }
 
     /// Only exact provider/ID equality. General selector resolution is separate.
@@ -789,29 +1213,41 @@ impl StaticModelRegistry {
         provider: &WireString,
         id: &WireString,
     ) -> Result<Option<HostModelRef>, CollapseError> {
-        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
-        let models = self.lookup_locked(&mut state, provider)?;
+        let models = self.models_for_provider_lookup(provider)?;
         if let Some(model) = models.iter().find(|model| {
             text(model.spec(), "provider").as_ref() == Some(provider) && text(model.spec(), "id").as_ref() == Some(id)
         }) {
             return Ok(Some(model.clone()));
         }
-        let Some(alias) = state.collapse.resolve_variant_selector(provider, id)? else { return Ok(None) };
+        let Some(alias) = self
+            .collapse_runtime()
+            .lock()
+            .map_err(|_| fixed_error("Model alias state is unavailable"))?
+            .resolve_variant_selector(provider, id)?
+        else {
+            return Ok(None);
+        };
         Ok(models.into_iter().find(|model| {
             text(model.spec(), "provider").as_ref() == Some(provider)
                 && text(model.spec(), "id").as_ref() == Some(&alias)
         }))
     }
 
+    pub fn find_reference(
+        &self,
+        provider: &WireString,
+        id: &WireString,
+    ) -> Result<Option<HostModelRef>, CollapseError> {
+        let models = self.models_for_provider_lookup(provider)?;
+        crate::provider_model_reference::ProviderModelReferenceIndex::with_collapse_runtime(
+            &models,
+            self.collapse_runtime(),
+        )?
+        .resolve(provider, id)
+    }
+
     pub fn get_all(&self) -> Result<Vec<HostModelRef>, CollapseError> {
-        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
-        if let Some(models) = &state.full_snapshot {
-            return Ok(models.clone());
-        }
-        let models = self.compose_static_models(&mut state, None)?;
-        state.full_snapshot = Some(models.clone());
-        state.provider_lookups.clear();
-        Ok(models)
+        self.compose_projected(None, None, true)
     }
 
     /// `has_auth` is a Host availability observation, memoized per provider for
@@ -850,15 +1286,15 @@ impl StaticModelRegistry {
                 .collect());
         }
         let mut available = OrderedProviderSet::default();
-        for provider in self.known_static_providers().iter() {
+        let known_providers = {
+            let state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+            self.known_static_providers(&state)
+        };
+        for provider in known_providers.iter() {
             if requested.contains(&lower(provider)) && is_available(provider) {
                 available.insert(provider.clone());
             }
         }
-        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
-        if let Some(models) = &state.full_snapshot {
-            return Ok(select_models(models, Some(&available)));
-        }
-        self.compose_static_models(&mut state, Some(&available))
+        self.compose_projected(Some(&available), None, false)
     }
 }

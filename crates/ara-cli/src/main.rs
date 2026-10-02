@@ -568,6 +568,7 @@ struct Route {
     model: Model,
     stream_options: StreamOptions,
     daily: Option<ara_cli::daily_model_config::DailySelection>,
+    registry: Option<ara_cli::model_registry::ModelRegistry>,
 }
 
 /// Validate every argument that does not need the journal (no I/O side effects).
@@ -693,11 +694,19 @@ fn resolve_route(args: &Args) -> Result<Route> {
         },
         stream_options,
         daily: None,
+        registry: None,
     })
 }
 
-fn resolve_startup_route(args: &mut Args) -> Result<Route> {
-    use ara_cli::daily_model_config::{DailyOverrides, load_daily_config, resolve_daily_selection};
+async fn resolve_startup_route(
+    args: &mut Args,
+    project_dir: &Path,
+    account_auth: &mut Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    registry_cancel: &CancellationToken,
+) -> Result<Route> {
+    use ara_cli::daily_model_config::{
+        DailyOverrides, load_daily_config, resolve_daily_selection_with_registry, validate_daily_auth_ownership,
+    };
     use ara_cli::model_config_values::{ConfigValueEnvironment, ProcessConfigEnvironment};
     if args.models_config.is_none() && matches!(args.api(), Api::AnthropicMessages | Api::ProxyAuto) {
         return resolve_route(args);
@@ -706,6 +715,11 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
     let config = load_daily_config(&path, args.models_config.is_some())?;
     let configured_provider =
         args.provider.as_deref().map(str::to_owned).or_else(|| std::env::var("ARA_PROVIDER").ok());
+    if args.mode == Mode::Rpc
+        && (args.api() == Api::OpenaiCodexResponses || configured_provider.as_deref() == Some("openai-codex"))
+    {
+        bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
+    }
     if config.is_none()
         && args.api() != Api::OpenaiCodexResponses
         && configured_provider.as_deref() != Some("openai-codex")
@@ -736,8 +750,50 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
         temperature: args.temperature,
         stream_idle_timeout: args.stream_idle_timeout,
     };
-    let selection =
-        resolve_daily_selection(config.as_ref(), &overrides, &|name: &str| ProcessConfigEnvironment.get(name))?;
+    validate_daily_auth_ownership(config.as_ref(), &overrides, &|name: &str| ProcessConfigEnvironment.get(name))?;
+    let mut host = ara_cli::model_registry::ModelRegistryHost::for_process(
+        project_dir.to_path_buf(),
+        &ara_home().join("agent/model-cache.db"),
+    )?;
+    host.cancel = registry_cancel.clone();
+    // Ordinary routes without stored accounts use environment credentials and
+    // do not create an unrelated account database during catalog startup.
+    if configured_provider.as_deref() == Some("openai-codex") || ara_home().join("agent/auth.db").exists() {
+        let account =
+            open_codex_auth(reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?).await?;
+        // Install the owner before any Registry preflight can refresh a grant,
+        // including failures before the request factory is built.
+        *account_auth = Some(account.clone());
+        host.credentials = Arc::new(ara_cli::model_registry::OpenAiCodexRegistryCredentials::new(
+            host.factory.environment.clone(),
+            account,
+            registry_cancel.clone(),
+        ));
+    }
+    let registry = ara_cli::model_registry::ModelRegistry::open(
+        ara_cli::model_config_file::ModelsConfigFile::new(&path)?,
+        Default::default(),
+        host,
+    )
+    .await?;
+    if registry.config_error().is_some() {
+        bail!("models configuration changed or could not be loaded; correct the file");
+    }
+    if let Some(provider) = configured_provider.as_ref() {
+        let mut selected = ara_cli::model_patch::OrderedProviderSet::default();
+        selected.insert(provider.as_str().into());
+        registry
+            .runtime()
+            .refresh_discoverable_providers(selected, ara_cli::model_manager::ModelRefreshStrategy::OnlineIfUncached)
+            .await?;
+    }
+    let config = registry.config();
+    let selection = resolve_daily_selection_with_registry(
+        config.as_ref(),
+        &overrides,
+        &|name: &str| ProcessConfigEnvironment.get(name),
+        &registry,
+    )?;
     args.api = Some(Api::from_str(selection.api.as_str(), false).map_err(anyhow::Error::msg)?);
     args.reasoning = selection.model.reasoning;
     args.max_tokens = selection.generation.max_tokens;
@@ -746,7 +802,12 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
     if args.api() == Api::OpenaiCodexResponses && args.mode == Mode::Rpc {
         bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
     }
-    Ok(Route { model: selection.model.clone(), stream_options: StreamOptions::default(), daily: Some(selection) })
+    Ok(Route {
+        model: selection.model.clone(),
+        stream_options: StreamOptions::default(),
+        daily: Some(selection),
+        registry: Some(registry),
+    })
 }
 
 /// Native message cuts retain a complete tool boundary and may split a turn
@@ -1979,6 +2040,7 @@ impl ProviderFactory {
         session_id: Option<String>,
         cwd: &Path,
         cancel: &CancellationToken,
+        shared_account: Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
     ) -> Result<Self> {
         use ara_cli::daily_model_config::DailyAuthSource;
         use ara_cli::model_route::{FixedRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver};
@@ -1988,11 +2050,15 @@ impl ProviderFactory {
         let (auth, account_auth): (Arc<dyn RequestAuthResolver>, _) = match selection.auth_source {
             DailyAuthSource::Fixed(lease) => (Arc::new(FixedRequestAuth::new(lease)), None),
             DailyAuthSource::OpenAiCodex => {
-                let account = open_codex_auth(client.clone()).await?;
+                let account = shared_account.clone().context("OpenAI account owner is unavailable")?;
                 (account.clone(), Some(account))
             }
             DailyAuthSource::Configured(spec) => {
-                let account = if spec.codex_account { Some(open_codex_auth(client.clone()).await?) } else { None };
+                let account = if spec.codex_account {
+                    Some(shared_account.context("OpenAI account owner is unavailable")?)
+                } else {
+                    None
+                };
                 let inner = account.clone().map(|account| account as Arc<dyn RequestAuthResolver>);
                 let auth = ara_cli::config_request_auth::ConfigRequestAuth::new(spec, cwd.to_path_buf(), inner);
                 auth.prepare(cancel)
@@ -2134,7 +2200,9 @@ fn ephemeral_header(cwd: &Path, parent: Option<&str>) -> serde_json::Value {
 
 async fn run(args: Args) -> Result<i32> {
     let mut account_auth = None;
-    let result = run_inner(args, &mut account_auth).await;
+    let registry_cancel = CancellationToken::new();
+    let result = run_inner(args, &mut account_auth, &registry_cancel).await;
+    registry_cancel.cancel();
     // Normal error/deadline/first-interrupt exits must finish any dispatched
     // refresh settlement before main shuts down the runtime. Hard process
     // termination still cannot prove a remote grant's outcome.
@@ -2148,6 +2216,7 @@ async fn run(args: Args) -> Result<i32> {
 async fn run_inner(
     mut args: Args,
     account_auth: &mut Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    registry_cancel: &CancellationToken,
 ) -> Result<i32> {
     if let Some(command) = args.command.take() {
         return run_auth_command(command).await;
@@ -2157,7 +2226,56 @@ async fn run_inner(
     if rpc_mode && (args.repl || !args.prompts.is_empty() || args.print) {
         bail!("--mode rpc reads commands from stdin; omit --repl, --print and positional prompts");
     }
-    let mut route = resolve_startup_route(&mut args)?;
+    // Proxy auto-discovery explicitly forbids resume. Reject that pure CLI
+    // contract before looking for a journal; config-selected APIs are resolved
+    // and validated by the route projection below.
+    if args.api() == Api::ProxyAuto {
+        validate_route_args(&args)?;
+    }
+    let explicit_cwd = match &args.cwd {
+        Some(c) => {
+            let canonical = std::fs::canonicalize(c).with_context(|| format!("--cwd {}", c.display()))?;
+            Some(plain_drive_path(canonical))
+        }
+        None => None,
+    };
+    let launch_cwd = explicit_cwd.clone().map(Ok).unwrap_or_else(std::env::current_dir)?;
+    let mut cwd = launch_cwd.clone();
+    let session_dir =
+        (!args.no_session).then(|| args.session_dir.clone().unwrap_or_else(|| default_session_dir(&launch_cwd)));
+    let resume_path = match (&session_dir, &args.resume, args.continue_session) {
+        (Some(_), Some(path), _) => Some(path.clone()),
+        (Some(dir), None, true) => {
+            Some(latest_session(dir).with_context(|| format!("no session to continue in {}", dir.display()))?)
+        }
+        _ => None,
+    };
+    // Read the resumed journal once to establish helper cwd. Blob resolution,
+    // recovery and all journal writes remain after route validation below.
+    let resumed_journal = resume_path
+        .as_ref()
+        .map(|path| SessionJournal::open(path).with_context(|| format!("opening session {}", path.display())))
+        .transpose()?;
+    if let Some(session_cwd) = resumed_journal
+        .as_ref()
+        .and_then(|journal| journal.header().get("cwd"))
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+    {
+        match &explicit_cwd {
+            Some(c) if c != &session_cwd => eprintln!(
+                "ara: warning: session was recorded in {} but tools run in --cwd {}",
+                session_cwd.display(),
+                c.display()
+            ),
+            Some(_) => {}
+            None if session_cwd.is_dir() => cwd = session_cwd,
+            None => {
+                bail!("session cwd {} no longer exists; pass --cwd to choose where tools run", session_cwd.display())
+            }
+        }
+    }
+    let mut route = resolve_startup_route(&mut args, &cwd, account_auth, registry_cancel).await?;
     if args.mcp_config.is_none() && !args.mcp_allow.is_empty() {
         bail!("--mcp-allow requires --mcp-config");
     }
@@ -2179,15 +2297,6 @@ async fn run_inner(
     if prompts.is_empty() && !repl_mode && !rpc_mode {
         bail!("no prompt given (pass it as an argument or on stdin)");
     }
-    let explicit_cwd = match &args.cwd {
-        Some(c) => {
-            let canonical = std::fs::canonicalize(c).with_context(|| format!("--cwd {}", c.display()))?;
-            Some(plain_drive_path(canonical))
-        }
-        None => None,
-    };
-    let launch_cwd = explicit_cwd.clone().map(Ok).unwrap_or_else(std::env::current_dir)?;
-
     let selected_api = if args.api() == Api::ProxyAuto {
         let api = proxy_discovery::discover_proxy_api(
             &route.model.base_url,
@@ -2202,37 +2311,11 @@ async fn run_inner(
         args.api()
     };
 
-    // Session journal (first journal I/O happens only after validation above).
-    let mut cwd = launch_cwd.clone();
-    let session_dir =
-        (!args.no_session).then(|| args.session_dir.clone().unwrap_or_else(|| default_session_dir(&launch_cwd)));
+    // Create or mutate the journal only after validation above.
     let mut journal = if let Some(dir) = &session_dir {
-        let path = match (&args.resume, args.continue_session) {
-            (Some(p), _) => Some(p.clone()),
-            (None, true) => {
-                Some(latest_session(dir).with_context(|| format!("no session to continue in {}", dir.display()))?)
-            }
-            _ => None,
-        };
-        Some(match path {
-            Some(p) => {
-                let mut j = SessionJournal::open_with_blob_directory(&p, &ara_blobs_directory())
-                    .with_context(|| format!("opening session {}", p.display()))?;
-                if let Some(session_cwd) = j.header().get("cwd").and_then(|v| v.as_str()).map(PathBuf::from) {
-                    match &explicit_cwd {
-                        Some(c) if c != &session_cwd => eprintln!(
-                            "ara: warning: session was recorded in {} but tools run in --cwd {}",
-                            session_cwd.display(),
-                            c.display()
-                        ),
-                        Some(_) => {}
-                        None if session_cwd.is_dir() => cwd = session_cwd,
-                        None => bail!(
-                            "session cwd {} no longer exists; pass --cwd to choose where tools run",
-                            session_cwd.display()
-                        ),
-                    }
-                }
+        Some(match resumed_journal {
+            Some(mut j) => {
+                j.bind_blob_directory(&ara_blobs_directory())?;
                 recover_session(&mut j)?;
                 j
             }
@@ -2303,6 +2386,7 @@ async fn run_inner(
             header.get("id").and_then(serde_json::Value::as_str).map(str::to_owned),
             &cwd,
             &cancel,
+            account_auth.clone(),
         )
         .await?
     } else {
@@ -2318,7 +2402,15 @@ async fn run_inner(
     let mut context =
         journal.as_ref().map(|journal| provider_factory.context_for(journal)).transpose()?.unwrap_or_default();
     let mut provider = provider_factory.build();
-    *account_auth = provider_factory.account_auth.clone();
+    if let Some(account) = &provider_factory.account_auth {
+        *account_auth = Some(account.clone());
+    }
+    // Match fixed main.ts: start discovery after Session/Host construction.
+    // Catalog refresh remains background work; normal print shutdown drains
+    // owned authentication and config helpers without awaiting the catalog.
+    if let Some(registry) = &route.registry {
+        registry.runtime().refresh_in_background(ara_cli::model_manager::ModelRefreshStrategy::OnlineIfUncached);
+    }
     if rpc_mode {
         let config = AgentConfig {
             model: route.model,

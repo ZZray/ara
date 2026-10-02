@@ -179,12 +179,15 @@ pub async fn fetch_lm_studio_native_model_metadata(
         timed_fetch(ctx, request, 250.0).await
     };
     let payload = response.ok().filter(|r| r.ok()).and_then(|r| r.json().ok());
-    let Some(payload) = payload.filter(|p| matches!(p.value, WireValue::Object(_))) else {
-        return Ok(None);
-    };
-    let Some(entries) = payload.get("data").and_then(WireValue::as_array) else {
-        return Ok(None);
-    };
+    Ok(payload.as_ref().and_then(parse_lm_studio_native_model_metadata))
+}
+
+/// Shared payload mapping; callers retain their own fetch and auth ownership.
+pub fn parse_lm_studio_native_model_metadata(payload: &VariantSpec) -> Option<HashMap<WireString, VariantSpec>> {
+    if !matches!(payload.value, WireValue::Object(_)) {
+        return None;
+    }
+    let entries = payload.get("data").and_then(WireValue::as_array)?;
     let mut out = HashMap::new();
     for entry in entries {
         if !matches!(entry, WireValue::Object(_)) {
@@ -218,7 +221,7 @@ pub async fn fetch_lm_studio_native_model_metadata(
         }
         out.insert(id, metadata);
     }
-    Ok(Some(out))
+    Some(out)
 }
 pub fn lm_studio_model_manager_options(
     default: &CatalogContext,

@@ -76,6 +76,7 @@ impl ModelArray {
 pub enum RawModelValue {
     Undefined,
     Value(VariantSpec),
+    SharedValue(Arc<VariantSpec>),
     Models(Arc<ModelArray>),
 }
 impl RawModelValue {
@@ -87,13 +88,15 @@ impl RawModelValue {
     }
     pub fn is_null(&self) -> bool {
         matches!(self,Self::Value(value) if matches!(value.value,WireValue::Null))
+            || matches!(self,Self::SharedValue(value) if matches!(value.value,WireValue::Null))
     }
     pub fn from_discovery(result: DiscoveryResult) -> Result<Self, DiscoveryError> {
         result.map(|models| models.map_or_else(Self::null, Self::models))
     }
-    fn rows(&self) -> Vec<SpecRef> {
+    pub(crate) fn rows(&self) -> Vec<SpecRef> {
         match self {
             Self::Models(models) => models.snapshot(),
+            Self::SharedValue(value) => Self::Value(value.as_ref().clone()).rows(),
             Self::Value(value) if matches!(value.value, WireValue::Array(_)) => value
                 .value
                 .as_array()
@@ -225,6 +228,9 @@ impl ModelManager {
                 if match value {
                     RawModelValue::Undefined => false,
                     RawModelValue::Value(spec) => !spec.undefined_paths.contains(&Vec::new()) && truthy(&spec.value),
+                    RawModelValue::SharedValue(spec) => {
+                        !spec.undefined_paths.contains(&Vec::new()) && truthy(&spec.value)
+                    }
                     RawModelValue::Models(_) => true,
                 } =>
             {
@@ -512,6 +518,22 @@ struct Restored {
     models: Vec<SpecRef>,
     unresolved: HashSet<WireString>,
 }
+
+/// Shared donor decision for the Manager and opaque Host startup loader.
+/// Current markers prove both ordinary donors failed; only legacy markers
+/// permit the historical request-model recovery.
+pub(crate) fn cached_header_restore_source_id(
+    cache: &WireCacheEntry,
+    id: &WireString,
+    request: Option<&WireString>,
+    has_static: &dyn Fn(&WireString) -> bool,
+) -> Option<WireString> {
+    if cache.unrestorable_header_model_ids.contains(id) {
+        if cache.legacy_header_restore_markers { request.filter(|id| has_static(id)).cloned() } else { None }
+    } else {
+        Some(id).filter(|id| has_static(id)).or_else(|| request.filter(|id| has_static(id))).cloned()
+    }
+}
 fn restore_cached_model_headers(
     cache: Option<&WireCacheEntry>,
     static_models: &[SpecRef],
@@ -533,15 +555,9 @@ fn restore_cached_model_headers(
             }
             let unrestorable = cache.unrestorable_header_model_ids.contains(&id);
             let request = text(&model, "requestModelId").filter(|id| !id.is_empty());
-            let source = if unrestorable {
-                if cache.legacy_header_restore_markers {
-                    request.as_ref().and_then(|id| static_by_id.get(id))
-                } else {
-                    None
-                }
-            } else {
-                static_by_id.get(&id).or_else(|| request.as_ref().and_then(|id| static_by_id.get(id)))
-            };
+            let source_id =
+                cached_header_restore_source_id(cache, &id, request.as_ref(), &|id| static_by_id.contains_key(id));
+            let source = source_id.as_ref().and_then(|id| static_by_id.get(id));
             let headers = source.and_then(|source| source.record("headers")).filter(|v| truthy(&v.value));
             let headers = headers.or_else(|| (!unrestorable).then(|| fallback.cloned()).flatten());
             if let Some(headers) = headers {

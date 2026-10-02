@@ -1,5 +1,18 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-02 21:13 UTC (production Registry WIP):**
+[Production Registry evidence](evidence/model-registry.md) records connected
+loader/cache/discovery/runtime/account Host paths and startup-order repairs.
+Final backend 1,707/0/20 and actual preferred CAS task/reopen 14.278s/five calls
+PASS; independent final POST approves bounded WIP. Dependency acceptance still
+fails on the existing unmaintained ttf-parser advisory. Current counts remain
+111 surfaces with 27 started/84 open/zero complete acceptances; bounded points
+35 limited acceptances/23 implementing/two tested. P0/V1 accepted, P1–P6 open,
+RPC 27/42 and full marker null. This is about 198min to actual validation before
+documentation/Git closure. Reuse module groups and a stable batch gate; next
+complete recorded AuthStorage/selector/Host contracts. Full-project ETA remains
+unsupported; actual OpenAI authorization and platform evidence remain pending.
+
 **Current checkpoint, 2026-10-02 UTC (tested bounded native-tokenizer WIP):**
 [Native tokenizer](evidence/native-tokenizer.md) restores the pinned universal
 encoders/scanners/vocabularies under ara-ctok, all eight catalog families and

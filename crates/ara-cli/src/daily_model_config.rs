@@ -255,6 +255,91 @@ pub fn resolve_daily_selection(
     cli: &DailyOverrides,
     env: &dyn DailyEnvironment,
 ) -> Result<DailySelection, DailyConfigError> {
+    let registry = StaticModelRegistry::from_config(config)
+        .map_err(|_| error("model", "cannot compose the native static model catalog"))?;
+    resolve_daily_selection_with_lookup(config, cli, env, &|provider, id| {
+        registry.find_exact(provider, id).map_err(|_| error("model", "cannot compose the selected native model"))
+    })
+}
+
+/// Bind daily request projection to the already loaded production catalog.
+/// Catalog membership remains metadata; request authentication is Host-owned.
+pub fn resolve_daily_selection_with_registry(
+    config: Option<&ModelsConfig>,
+    cli: &DailyOverrides,
+    env: &dyn DailyEnvironment,
+    registry: &crate::model_registry::ModelRegistry,
+) -> Result<DailySelection, DailyConfigError> {
+    resolve_daily_selection_with_lookup(config, cli, env, &|provider, id| {
+        registry.find_reference(provider, id).map_err(|_| error("model", "cannot load the selected native model"))
+    })
+}
+
+/// Check authored authentication ownership before Registry loading can execute
+/// config helpers or open persistent account storage. Values stay unresolved;
+/// the final projection still validates the actual catalog header donors.
+pub fn validate_daily_auth_ownership(
+    config: Option<&ModelsConfig>,
+    cli: &DailyOverrides,
+    env: &dyn DailyEnvironment,
+) -> Result<(), DailyConfigError> {
+    let provider_id = cli.provider.clone().or_else(|| env_first(env, &["ARA_PROVIDER"]).map(|(_, value)| value));
+    let model_id =
+        cli.model.clone().or_else(|| env_first(env, &["ARA_MODEL", "ARA_TEST_MODEL_ID"]).map(|(_, value)| value));
+    let provider = object(
+        provider_id.as_ref().and_then(|id| config.and_then(|config| config.value().get("providers")?.get(id))),
+        "provider",
+    )?;
+    let model = object(
+        provider.get("models").and_then(Value::as_array).and_then(|models| {
+            models.iter().rev().find(|model| model.get("id").and_then(Value::as_str) == model_id.as_deref())
+        }),
+        "model",
+    )?;
+    let model_override =
+        object(model_id.as_ref().and_then(|id| provider.get("modelOverrides")?.get(id)), "provider/modelOverrides")?;
+    let api_text = cli
+        .api
+        .clone()
+        .or_else(|| text(&model_override, "api"))
+        .or_else(|| text(&model, "api"))
+        .or_else(|| text(&provider, "api"))
+        .unwrap_or_else(|| {
+            if provider_id.as_deref() == Some("openai-codex") { "openai-codex-responses" } else { "openai-completions" }
+                .into()
+        });
+    let api = DailyApi::parse(&api_text)?;
+    let mut headers = Vec::new();
+    for source in [&provider, &model, &model_override] {
+        config_headers(source.get("headers"), &mut headers, env)?;
+    }
+    for (name, value) in &cli.headers {
+        merge_header(&mut headers, name.trim().into(), value.trim().into())?;
+    }
+    let (credential_headers, ordinary_headers): (Vec<_>, Vec<_>) =
+        headers.into_iter().partition(|(name, _)| is_credential_header(name));
+    resolve_auth(
+        &provider,
+        cli,
+        env,
+        provider_id.as_deref().unwrap_or("openai-compatible"),
+        api,
+        false,
+        credential_headers,
+        &ordinary_headers,
+    )?;
+    Ok(())
+}
+
+type DailyModelLookup<'a> =
+    dyn Fn(&ara_rpc::WireString, &ara_rpc::WireString) -> Result<Option<HostModelRef>, DailyConfigError> + 'a;
+
+fn resolve_daily_selection_with_lookup(
+    config: Option<&ModelsConfig>,
+    cli: &DailyOverrides,
+    env: &dyn DailyEnvironment,
+    lookup: &DailyModelLookup<'_>,
+) -> Result<DailySelection, DailyConfigError> {
     let model_id = cli
         .model
         .clone()
@@ -262,13 +347,10 @@ pub fn resolve_daily_selection(
         .filter(|id| !id.is_empty())
         .ok_or_else(|| error("model", "select an explicit model with --model or ARA_MODEL"))?;
     let provider_id = cli.provider.clone().or_else(|| env_first(env, &["ARA_PROVIDER"]).map(|(_, v)| v));
-    let registry = StaticModelRegistry::from_config(config)
-        .map_err(|_| error("model", "cannot compose the native static model catalog"))?;
     let catalog_model = provider_id
         .as_ref()
-        .map(|provider| registry.find_exact(&provider.as_str().into(), &model_id.as_str().into()))
-        .transpose()
-        .map_err(|_| error("model", "cannot compose the selected native model"))?
+        .map(|provider| lookup(&provider.as_str().into(), &model_id.as_str().into()))
+        .transpose()?
         .flatten();
     let providers = config.and_then(|c| c.value().get("providers")).and_then(Value::as_object);
     let provider = match (&provider_id, providers) {
@@ -293,6 +375,7 @@ pub fn resolve_daily_selection(
             "modelOverrides",
             "remoteCompaction",
             "disableStrictTools",
+            "discovery",
         ],
         "provider",
     )?;
@@ -629,8 +712,16 @@ pub fn resolve_daily_selection(
             codex_protocol(ordinary_headers, watchdog)
         }
     };
+    let execution_id = catalog_model
+        .as_ref()
+        .and_then(|model| {
+            crate::model_identity_wire::text(model.spec(), "requestModelId")
+                .or_else(|| crate::model_identity_wire::text(model.spec(), "id"))
+        })
+        .and_then(|id| id.to_utf8().ok())
+        .unwrap_or(model_id);
     let execution_model = Model {
-        id: model_id,
+        id: execution_id,
         api: api.as_str().into(),
         provider: provider_id,
         base_url,

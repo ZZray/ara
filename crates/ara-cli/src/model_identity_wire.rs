@@ -253,6 +253,10 @@ fn bracket_candidates(id: &WireString) -> Vec<WireString> {
     }
     out
 }
+
+pub(crate) fn strip_bracketed_model_id_affixes(id: &WireString) -> Option<WireString> {
+    bracket_candidates(id).into_iter().next()
+}
 fn suffixes() -> &'static Vec<WireString> {
     static SUFFIXES: OnceLock<Vec<WireString>> = OnceLock::new();
     SUFFIXES.get_or_init(|| {

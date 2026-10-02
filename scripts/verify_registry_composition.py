@@ -18,6 +18,13 @@ shared.MODULES = {
     "selection": ("ara-cli", "daily_model_config"),
     "host": ("ara-cli", "config_command_cli"),
     "daily-cli": ("ara-cli", "openai_daily_cli"),
+    "loader": ("ara-cli", "model_registry_loader"),
+    "discovery": ("ara-cli", "model_registry_discovery"),
+    "runtime": ("ara-cli", "model_registry_runtime"),
+    "extensions": ("ara-cli", "model_registry_extensions"),
+    "references": ("ara-cli", "provider_model_reference"),
+    "registry": ("ara-cli", "model_registry"),
+    "accounts": ("ara-cli", "openai_codex_auth"),
 }
 
 original_source_pins = inherited.source_pins

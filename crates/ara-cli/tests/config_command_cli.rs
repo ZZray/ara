@@ -907,6 +907,28 @@ async fn codex_rejects_owned_config_before_helpers_and_preserves_account_with_al
         let store = SqliteCredentialStore::open(host.home.path().join("agent/auth.db")).unwrap();
         store.upsert_auth_credential_for_provider("openai-codex", &AuthCredential::oauth(fields)).unwrap();
         drop(store);
+        // Account request ownership is exercised against the loopback server.
+        // Keep synthetic tokens out of the public catalog; cold account catalog
+        // discovery has its own production Registry group.
+        let cache = ara_cli::model_cache::SqliteModelCache::for_path(host.home.path().join("agent/model-cache.db"));
+        let bundled = ara_cli::model_identity_wire::bundled_provider_models(&"openai-codex".into());
+        let fingerprint = ara_cli::model_manager::fingerprint_static_models(
+            &ara_cli::model_manager::ModelArray::new(bundled.clone()),
+            true,
+        );
+        cache
+            .write_model_cache_wire(
+                &"openai-codex".into(),
+                chrono::Utc::now().timestamp_millis() as f64,
+                &[],
+                ara_cli::model_cache::WireModelCacheWriteOptions {
+                    authoritative: true,
+                    static_fingerprint: &fingerprint,
+                    static_header_sources: &bundled,
+                    restorable_header_fallback: None,
+                },
+            )
+            .unwrap();
         let mut command = host.command(
             "openai-codex",
             &["--cwd", host.project.path().to_str().unwrap(), "--mode", "json", "--tools", "", "account header"],

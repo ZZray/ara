@@ -1,5 +1,18 @@
 # Delivery roadmap
 
+**Current checkpoint, 2026-10-02 21:13 UTC (production Registry WIP):**
+[Production Registry](evidence/model-registry.md) binds loader/cache/discovery,
+runtime extensions and owned Codex account discovery into the reference Host.
+Final Windows backend 1,707/0/20, fmt/Clippy/inventory/build PASS; complete
+dependency gate retains the existing unmaintained ttf-parser advisory FAIL.
+Current preferred CAS artifact and tool-disabled original-Session recall PASS
+in 14.278s/five calls, on the same frozen binary. Independent final POST approves
+only this bounded WIP. Counts stay 111 surfaces (26 implementing/one tested/84
+open, zero complete acceptances) and 60 bounded points (35 limited acceptances,
+23 implementing/two tested). P0/V1 accepted, P1–P6 open, RPC 27/42, marker null.
+Next: recorded full AuthStorage/selector/Host contracts, actual account
+authorization, platform and deferred Providers. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-02 UTC (tested bounded native-tokenizer WIP):**
 [Native tokenizer](evidence/native-tokenizer.md) restores the pinned universal
 encoders/scanners/vocabularies under ara-ctok, all eight catalog families and

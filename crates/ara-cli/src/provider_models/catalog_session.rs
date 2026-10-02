@@ -14,7 +14,7 @@ pub const MODELS_DEV_URL: &str = "https://catalog.stencil.so/models.json.zstd";
 #[derive(Default)]
 struct SessionState {
     inflight: Option<Arc<Flight>>,
-    payload: Option<VariantSpec>,
+    payload: Option<Arc<VariantSpec>>,
     etag: Option<WireString>,
 }
 #[derive(Default)]
@@ -23,7 +23,7 @@ struct Session {
 }
 #[derive(Default)]
 struct Flight {
-    result: Mutex<Option<Result<VariantSpec, DiscoveryError>>>,
+    result: Mutex<Option<Result<Arc<VariantSpec>, DiscoveryError>>>,
     notify: Notify,
 }
 type FetchSessions = HashMap<usize, (Weak<dyn DiscoveryTransport>, Arc<Session>)>;
@@ -52,6 +52,15 @@ pub async fn fetch_revalidated_well_known_models(
     explicit: bool,
     signal: Option<DiscoverySignal>,
 ) -> Result<VariantSpec, DiscoveryError> {
+    fetch_revalidated_shared(context, host, explicit, signal).await.map(|payload| payload.as_ref().clone())
+}
+
+async fn fetch_revalidated_shared(
+    context: &CatalogContext,
+    host: &ProviderFactoryHost,
+    explicit: bool,
+    signal: Option<DiscoverySignal>,
+) -> Result<Arc<VariantSpec>, DiscoveryError> {
     let session = host.sessions.get(context, explicit);
     let flight = {
         let mut state = session.state.lock().expect("catalog state poisoned");
@@ -76,6 +85,8 @@ pub async fn fetch_revalidated_well_known_models(
     let wait = async {
         loop {
             let notified = flight.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(result) = flight.result.lock().expect("catalog result poisoned").clone() {
                 return result;
             }
@@ -104,6 +115,7 @@ pub async fn fetch_well_known_models(
             .expect("catalog state poisoned")
             .payload
             .clone()
+            .map(|payload| payload.as_ref().clone())
             .ok_or(error),
     }
 }
@@ -119,11 +131,23 @@ pub async fn fetch_revalidated_with_timeout(
     drop(timer);
     result
 }
+pub(crate) async fn fetch_revalidated_shared_with_timeout(
+    context: &CatalogContext,
+    host: &ProviderFactoryHost,
+    explicit: bool,
+    milliseconds: f64,
+) -> Result<Arc<VariantSpec>, DiscoveryError> {
+    let signal = DiscoverySignal::default();
+    let timer = start_discovery_timeout(&signal, milliseconds);
+    let result = fetch_revalidated_shared(context, host, explicit, Some(signal)).await;
+    drop(timer);
+    result
+}
 async fn fetch_payload(
     context: &CatalogContext,
     session: &Session,
     user_agent: WireString,
-) -> Result<VariantSpec, DiscoveryError> {
+) -> Result<Arc<VariantSpec>, DiscoveryError> {
     let mut headers =
         vec![("Accept".into(), "application/zstd, application/json".into()), ("User-Agent".into(), user_agent)];
     {
@@ -156,9 +180,9 @@ async fn fetch_payload(
     };
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
     let text = String::from_utf8_lossy(bytes);
-    let payload = VariantSpec::from_wire(
+    let payload = Arc::new(VariantSpec::from_wire(
         WireValue::parse(&text).map_err(|error| DiscoveryError::named("SyntaxError", error.to_string()))?,
-    );
+    ));
     let mut state = session.state.lock().expect("catalog state poisoned");
     state.payload = Some(payload.clone());
     state.etag = response
