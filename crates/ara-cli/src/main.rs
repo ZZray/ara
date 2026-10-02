@@ -700,6 +700,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
 
 fn resolve_startup_route(args: &mut Args) -> Result<Route> {
     use ara_cli::daily_model_config::{DailyOverrides, load_daily_config, resolve_daily_selection};
+    use ara_cli::model_config_values::{ConfigValueEnvironment, ProcessConfigEnvironment};
     if args.models_config.is_none() && matches!(args.api(), Api::AnthropicMessages | Api::ProxyAuto) {
         return resolve_route(args);
     }
@@ -737,7 +738,8 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
         temperature: args.temperature,
         stream_idle_timeout: args.stream_idle_timeout,
     };
-    let selection = resolve_daily_selection(config.as_ref(), &overrides, &|name: &str| std::env::var(name).ok())?;
+    let selection =
+        resolve_daily_selection(config.as_ref(), &overrides, &|name: &str| ProcessConfigEnvironment.get(name))?;
     args.api = Some(Api::from_str(selection.api.as_str(), false).map_err(anyhow::Error::msg)?);
     args.reasoning = selection.model.reasoning;
     args.max_tokens = selection.generation.max_tokens;
@@ -1975,6 +1977,8 @@ impl ProviderFactory {
         client: reqwest::Client,
         mut selection: ara_cli::daily_model_config::DailySelection,
         session_id: Option<String>,
+        cwd: &Path,
+        cancel: &CancellationToken,
     ) -> Result<Self> {
         use ara_cli::daily_model_config::DailyAuthSource;
         use ara_cli::model_route::{FixedRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver};
@@ -1986,6 +1990,15 @@ impl ProviderFactory {
             DailyAuthSource::OpenAiCodex => {
                 let account = open_codex_auth(client.clone()).await?;
                 (account.clone(), Some(account))
+            }
+            DailyAuthSource::Configured(spec) => {
+                let account = if spec.codex_account { Some(open_codex_auth(client.clone()).await?) } else { None };
+                let inner = account.clone().map(|account| account as Arc<dyn RequestAuthResolver>);
+                let auth = ara_cli::config_request_auth::ConfigRequestAuth::new(spec, cwd.to_path_buf(), inner);
+                auth.prepare(cancel)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("configured authentication command preparation failed"))?;
+                (Arc::new(auth), account)
             }
         };
         let loop_guard_policy = configured_loop_guard_policy(selection.loop_guard_policy)?;
@@ -2128,6 +2141,7 @@ async fn run(args: Args) -> Result<i32> {
     if let Some(account) = account_auth {
         account.wait_for_settlement().await;
     }
+    ara_cli::config_request_auth::wait_for_config_settlement().await;
     result
 }
 
@@ -2278,6 +2292,7 @@ async fn run_inner(
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
     let client = client_builder.build().context("building HTTP client")?;
+    let cancel = CancellationToken::new();
     let provider_factory = if let Some(mut selection) = route.daily.take() {
         if let ara_cli::model_route::ProtocolOptions::Completions(options) = &mut selection.protocol {
             options.request_text_observer = stream_options.request_text_observer.take();
@@ -2286,6 +2301,8 @@ async fn run_inner(
             client,
             selection,
             header.get("id").and_then(serde_json::Value::as_str).map(str::to_owned),
+            &cwd,
+            &cancel,
         )
         .await?
     } else {
@@ -2302,7 +2319,6 @@ async fn run_inner(
         journal.as_ref().map(|journal| provider_factory.context_for(journal)).transpose()?.unwrap_or_default();
     let mut provider = provider_factory.build();
     *account_auth = provider_factory.account_auth.clone();
-    let cancel = CancellationToken::new();
     if rpc_mode {
         let config = AgentConfig {
             model: route.model,

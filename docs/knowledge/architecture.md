@@ -200,3 +200,22 @@ snapshot; the next call refreshes it. Run budgets, deadlines and hooks remain
 Run-owned. Pure catalogue lookup does not resolve authentication, and catalogue
 metadata that execution cannot yet represent is rejected rather than discarded.
 See the [bounded evidence and remaining contracts](../evidence/model-auth-foundation.md).
+
+**Command-value ownership, 2026-10-02 (tested bounded WIP):** native synchronous
+models configuration is materialized after the reference Host knows the
+effective cwd. Provider headers precede eager key installation because a header
+helper can create input needed by the key helper. Raw source chains belong to
+the private lease resolver, with the native process-shared command cache; they
+are not model or journal metadata. Ordinary wire retry keeps its lease. Selected
+pre-output HTTP 401 refresh invalidates the provider's key and all model/override
+header commands, settles the old request and records a separate fresh identity
+only when a changed bearer permits another request.
+
+Joining a Run is insufficient for a dropped authentication consumer: the CLI
+uses `std::process::exit`, which can terminate a still-owned blocking helper.
+Register pending helper ownership before worker dispatch and wait for all
+started helpers at normal process shutdown. Check cancellation before every
+unstarted helper; do not replay an unknown-effect command. Hard termination
+retains its unknown-effect boundary. [Executed config-value evidence](../evidence/model-config-values.md)
+records the observed premature exit, repaired actual Host and remaining full
+registry/auth/Bun/Linux and dependency-acceptance obligations.

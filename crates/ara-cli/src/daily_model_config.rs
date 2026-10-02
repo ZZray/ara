@@ -11,6 +11,7 @@
 //! absent capacity stays unknown until the full registry projection is ported.
 //! Descriptive name/cost stay metadata. Codex maxTokens remains capacity metadata.
 
+use crate::config_request_auth::ConfigRequestAuthSpec;
 use crate::model_config_file::{ModelConfigLoad, ModelsConfigFile};
 use crate::model_route::{CredentialIdentity, ProtocolOptions, RequestAuthLease, is_credential_header};
 use crate::models_config::ModelsConfig;
@@ -87,6 +88,7 @@ pub struct DailyGeneration {
 pub enum DailyAuthSource {
     Fixed(RequestAuthLease),
     OpenAiCodex,
+    Configured(ConfigRequestAuthSpec),
 }
 
 /// Protocol settings contain no API key or credential header. Root binds the
@@ -197,10 +199,35 @@ fn merge_header(headers: &mut Vec<(String, String)>, name: String, value: String
     Ok(())
 }
 
-fn config_headers(value: Option<&Value>, headers: &mut Vec<(String, String)>) -> Result<(), DailyConfigError> {
+fn raw_config_headers(value: Option<&Value>) -> Result<Vec<(String, String)>, DailyConfigError> {
+    object(value, "headers")?
+        .into_iter()
+        .map(|(name, value)| {
+            http::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| error("headers", "invalid header name"))?;
+            let value = value.as_str().ok_or_else(|| error("headers", "header value must be a string"))?;
+            Ok((name, value.to_owned()))
+        })
+        .collect()
+}
+
+fn config_headers(
+    value: Option<&Value>,
+    headers: &mut Vec<(String, String)>,
+    env: &dyn DailyEnvironment,
+) -> Result<(), DailyConfigError> {
     for (name, value) in object(value, "headers")? {
         let value = value.as_str().ok_or_else(|| error("headers", "header value must be a string"))?;
-        merge_header(headers, name, value.into())?;
+        // Validate names now, without launching a helper before project cwd is
+        // known. The private request resolver validates actual returned values.
+        let resolved = if value.starts_with('!') {
+            "pending-command".into()
+        } else {
+            env.get(value).filter(|value| !value.is_empty()).unwrap_or_else(|| value.into())
+        };
+        if !resolved.is_empty() {
+            merge_header(headers, name, resolved)?;
+        }
     }
     Ok(())
 }
@@ -269,9 +296,15 @@ pub fn resolve_daily_selection(
         }
         _ => Map::new(),
     };
+    let mut model_override_headers = None;
     if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)) {
         let mut overrides = object(Some(value), "provider/modelOverrides")?;
-        reject_fields(&overrides, &["contextPromotionTarget", "remoteCompaction"], "provider/modelOverrides")?;
+        reject_fields(
+            &overrides,
+            &["contextPromotionTarget", "remoteCompaction", "headers"],
+            "provider/modelOverrides",
+        )?;
+        model_override_headers = overrides.remove("headers");
         if let Some(remote) =
             merge_remote_configuration(model.get("remoteCompaction"), overrides.get("remoteCompaction"))?
         {
@@ -357,8 +390,14 @@ pub fn resolve_daily_selection(
         ),
     };
     let mut headers = Vec::new();
-    config_headers(provider.get("headers"), &mut headers)?;
-    config_headers(model.get("headers"), &mut headers)?;
+    let header_sources = vec![
+        raw_config_headers(provider.get("headers"))?,
+        raw_config_headers(model.get("headers"))?,
+        raw_config_headers(model_override_headers.as_ref())?,
+    ];
+    config_headers(provider.get("headers"), &mut headers, env)?;
+    config_headers(model.get("headers"), &mut headers, env)?;
+    config_headers(model_override_headers.as_ref(), &mut headers, env)?;
     for (name, value) in &cli.headers {
         merge_header(&mut headers, name.trim().into(), value.trim().into())?;
     }
@@ -391,10 +430,30 @@ pub fn resolve_daily_selection(
     }
     let supports_images =
         model.get("input").and_then(Value::as_array).map(|v| v.iter().any(|v| v.as_str() == Some("image")));
-    let (credential_headers, ordinary_headers): (Vec<_>, Vec<_>) =
+    let (credential_headers, mut ordinary_headers): (Vec<_>, Vec<_>) =
         headers.into_iter().partition(|(name, _)| is_credential_header(name));
-    let auth_source =
+    let mut auth_source =
         resolve_auth(&provider, cli, env, &provider_id, api, openrouter, credential_headers, &ordinary_headers)?;
+    let command_key = text(&provider, "apiKey").filter(|value| value.starts_with('!'));
+    if command_key.is_some() || header_sources.iter().any(|source| !source.is_empty()) {
+        let codex_account = matches!(auth_source, DailyAuthSource::OpenAiCodex);
+        let base = match auth_source {
+            DailyAuthSource::Fixed(lease) => lease.with_headers(Vec::new()),
+            DailyAuthSource::OpenAiCodex => RequestAuthLease::new(CredentialIdentity::Keyless, None),
+            DailyAuthSource::Configured(_) => unreachable!(),
+        };
+        auth_source = DailyAuthSource::Configured(ConfigRequestAuthSpec {
+            base,
+            key_config: (cli.api_key_env.is_none()).then(|| command_key.clone()).flatten(),
+            startup_key: text(&provider, "apiKey"),
+            header_sources,
+            invalidation_values: provider_command_values(&provider),
+            cli_headers: cli.headers.clone(),
+            auth_header: provider.get("authHeader").and_then(Value::as_bool) == Some(true),
+            codex_account,
+        });
+        ordinary_headers.clear();
+    }
     let protocol = match api {
         DailyApi::OpenAiCompletions => {
             let mut options = chat::StreamOptions {
@@ -653,7 +712,13 @@ pub fn resolve_daily_promotion_selection(
         .any(|headers| headers.keys().any(|name| is_credential_header(name)));
     if provider.get("auth").and_then(Value::as_str) != Some("none")
         && !credential_header
-        && matches!(&selection.auth_source, DailyAuthSource::Fixed(lease) if lease.identity() == &CredentialIdentity::Keyless)
+        && match &selection.auth_source {
+            DailyAuthSource::Fixed(lease) => lease.identity() == &CredentialIdentity::Keyless,
+            DailyAuthSource::Configured(spec) => {
+                spec.base.identity() == &CredentialIdentity::Keyless && spec.key_config.is_none()
+            }
+            DailyAuthSource::OpenAiCodex => false,
+        }
     {
         return Err(error("contextPromotionTarget/auth", "target has no configured usable credential"));
     }
@@ -704,15 +769,14 @@ fn resolve_auth(
             return Err(error("provider/auth", "auth none conflicts with explicitly configured credentials"));
         }
         (CredentialIdentity::Keyless, None)
+    } else if provider.get("apiKey").and_then(Value::as_str).is_some_and(|value| value.starts_with('!')) {
+        (CredentialIdentity::Config { provider: provider_id.into() }, None)
     } else if let Some((variable, key)) = env_first(env, &["ARA_API_KEY", "ARA_TEST_API_KEY"]) {
         (CredentialIdentity::Environment { variable }, Some(key))
     } else if let Some(value) = provider.get("apiKey").and_then(Value::as_str) {
-        if value.starts_with('!') {
-            return Err(error("provider/apiKey", "command values are not supported by the daily CLI"));
-        }
         match env.get(value) {
             Some(key) if !key.is_empty() => (CredentialIdentity::Environment { variable: value.into() }, Some(key)),
-            Some(_) => return Err(error("provider/apiKey", "referenced environment variable is empty")),
+            Some(_) => (CredentialIdentity::Config { provider: provider_id.into() }, Some(value.into())),
             None => (CredentialIdentity::Config { provider: provider_id.into() }, Some(value.into())),
         }
     } else {
@@ -723,6 +787,38 @@ fn resolve_auth(
         }
     };
     Ok(DailyAuthSource::Fixed(RequestAuthLease::new(identity, key).with_headers(credential_headers)))
+}
+
+fn provider_command_values(provider: &Map<String, Value>) -> Vec<String> {
+    let mut values: Vec<String> = text(provider, "apiKey").into_iter().collect();
+    let headers = |value: &Value| {
+        value
+            .get("headers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|headers| headers.values())
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    values.extend(
+        provider
+            .get("headers")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|headers| headers.values())
+            .filter_map(Value::as_str)
+            .map(str::to_owned),
+    );
+    for model in provider.get("models").and_then(Value::as_array).into_iter().flatten() {
+        values.extend(headers(model));
+    }
+    for model in
+        provider.get("modelOverrides").and_then(Value::as_object).into_iter().flat_map(|models| models.values())
+    {
+        values.extend(headers(model));
+    }
+    values
 }
 
 fn codex_protocol(headers: Vec<(String, String)>, watchdog: Option<Option<Duration>>) -> ProtocolOptions {

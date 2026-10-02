@@ -45,6 +45,15 @@ impl RequestAuthLease {
     pub fn identity(&self) -> &CredentialIdentity {
         &self.identity
     }
+
+    pub(crate) fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
+
+    pub(crate) fn extend_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers.extend(headers);
+        self
+    }
 }
 
 /// Safe failure categories. Resolver diagnostics must retain secrets privately.
@@ -61,6 +70,24 @@ pub enum AuthResolveError {
 pub trait RequestAuthResolver: Send + Sync {
     /// Called for each logical model call, never for ordinary availability queries.
     async fn resolve(&self, model: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError>;
+
+    /// A started external credential operation must settle before Host shutdown.
+    fn requires_settlement(&self) -> bool {
+        false
+    }
+
+    /// Native configured-command refresh, distinct from ordinary wire retries.
+    fn supports_auth_refresh(&self) -> bool {
+        false
+    }
+
+    async fn refresh(
+        &self,
+        _model: &Model,
+        _cancel: &CancellationToken,
+    ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        Ok(None)
+    }
 }
 
 /// An already authorized host override; this does not claim native auth precedence.
@@ -470,11 +497,11 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     // An OAuth refresh may already have rotated a grant. Let
                     // this account resolver settle its durable row before the
                     // CLI can finish and shut down its runtime.
-                    if model.api == "openai-codex-responses" { let _ = resolving.await; }
+                    if model.api == "openai-codex-responses" || route.auth.requires_settlement() { let _ = resolving.await; }
                     Err(AuthResolveError::Cancelled)
                 },
                 _ = tx.closed() => {
-                    if model.api == "openai-codex-responses" {
+                    if model.api == "openai-codex-responses" || route.auth.requires_settlement() {
                         cancel.cancel();
                         let _ = resolving.await;
                     }
@@ -508,7 +535,7 @@ impl ModelProvider for AuthenticatedRouteProvider {
                 let _ = tx.send(error_event(&model, StopReason::Aborted, "authentication cancelled")).await;
                 return;
             }
-            let identity = RequestIdentity {
+            let mut identity = RequestIdentity {
                 call_id: uuid::Uuid::now_v7(),
                 route_generation: route.generation,
                 provider: model.provider.clone(),
@@ -519,13 +546,18 @@ impl ModelProvider for AuthenticatedRouteProvider {
                 let _ = tx.send(error_event(&model, StopReason::Error, "request attribution persistence failed")).await;
                 return;
             }
-            let provider = route.protocol.provider(client, lease);
+            let rejected_key = lease.api_key.clone();
+            let provider = route.protocol.provider(client.clone(), lease);
             let mut options = options;
             options.cancel = cancel.clone();
-            let mut inner =
-                ara_ai::thinking_loop::with_thinking_loop_guard(&model, options, route.loop_guard_policy, |options| {
-                    provider.stream(&model, &context, options)
-                });
+            let mut inner = ara_ai::thinking_loop::with_thinking_loop_guard(
+                &model,
+                options.clone(),
+                route.loop_guard_policy,
+                |options| provider.stream(&model, &context, options),
+            );
+            let mut refreshed = false;
+            let mut emitted = false;
             loop {
                 let event = tokio::select! {
                     event = inner.recv() => event,
@@ -570,6 +602,73 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     failure.same_route_blocked = true;
                     let _ = tx.send(AssistantMessageEvent::Error { reason: StopReason::Error, error }).await;
                     return;
+                }
+                // A typed HTTP rejection before any stream output can safely
+                // re-mint configured commands once. Transport retries above
+                // retain the old lease; this is the separate native auth path.
+                let rejected_auth = terminal
+                    && event.partial().stop_reason == StopReason::Error
+                    && event.partial().failure_evidence.as_ref().is_some_and(|failure| {
+                        failure.kind == ara_ai::retry_classification::ProviderErrorKind::Http
+                            && failure.status == Some(401)
+                            && !failure.replay_blocked
+                    })
+                    && event.partial().content.is_empty();
+                if !refreshed && !emitted && rejected_auth && route.auth.supports_auth_refresh() {
+                    refreshed = true;
+                    let refreshing = route.auth.refresh(&model, &cancel);
+                    tokio::pin!(refreshing);
+                    let next = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            let _ = refreshing.await;
+                            Err(AuthResolveError::Cancelled)
+                        },
+                        _ = tx.closed() => {
+                            cancel.cancel();
+                            let _ = refreshing.await;
+                            return;
+                        },
+                        result = &mut refreshing => result,
+                    };
+                    match next {
+                        Ok(Some(lease)) if !cancel.is_cancelled() && lease.api_key != rejected_key => {
+                            identity = RequestIdentity {
+                                call_id: uuid::Uuid::now_v7(),
+                                route_generation: route.generation,
+                                provider: model.provider.clone(),
+                                model_id: model.id.clone(),
+                                credential: lease.identity.clone(),
+                            };
+                            if observer.as_ref().is_some_and(|observer| observer.started(&identity).is_err()) {
+                                let _ = tx
+                                    .send(error_event(
+                                        &model,
+                                        StopReason::Error,
+                                        "request attribution persistence failed",
+                                    ))
+                                    .await;
+                                return;
+                            }
+                            let provider = route.protocol.provider(client.clone(), lease);
+                            inner = ara_ai::thinking_loop::with_thinking_loop_guard(
+                                &model,
+                                options.clone(),
+                                route.loop_guard_policy,
+                                |options| provider.stream(&model, &context, options),
+                            );
+                            continue;
+                        }
+                        Ok(_) => {}
+                        Err(AuthResolveError::Cancelled) => {
+                            let _ = tx.send(error_event(&model, StopReason::Aborted, "authentication cancelled")).await;
+                            return;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                if !terminal {
+                    emitted = true;
                 }
                 if tx.send(event).await.is_err() {
                     cancel.cancel();

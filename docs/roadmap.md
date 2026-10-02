@@ -1,5 +1,15 @@
 # Delivery roadmap
 
+The latest [synchronous config-value checkpoint](evidence/model-config-values.md)
+ports native command caches and live headers into supported daily OpenAI Host
+request leases, preserving eager load order, selected 401 refresh and owned
+helper settlement. Modules 48/0/0 and final Windows backend 1,625/0/20 pass;
+one actual CAS artifact/original-Session recall passes in 13.524s/five calls.
+The whole gate still fails on the existing renderer dependency advisory.
+Full registry/auth, Bun/Linux and other declared contracts remain required.
+The 111-surface map is now 26 implementing/one tested/84 open, with no accepted
+complete surface. P0/V1 accepted, P1–P6 open, RPC 27/42 and marker null remain.
+
 The current [snapcompact checkpoint](evidence/snapcompact.md) adds a neutral
 fixed Rust renderer/font crate, native archive/serialization, frame token
 accounting, image blob persistence, checked Session publication/reopen and

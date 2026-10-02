@@ -112,6 +112,7 @@ impl Host {
 
     async fn try_context_promotion(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
         use ara_cli::daily_model_config::{load_daily_config, resolve_daily_promotion_selection};
+        use ara_cli::model_config_values::{ConfigValueEnvironment, ProcessConfigEnvironment};
         let agent_dir = super::super::ara_home().join("agent");
         let Some(metadata) = self.sessions.provider.metadata.as_ref() else { return Ok(false) };
         let prepared = async {
@@ -120,8 +121,9 @@ impl Host {
             }
             let path = self.sessions.args.models_config.clone().unwrap_or_else(|| agent_dir.join("models.yml"));
             let models = load_daily_config(&path, self.sessions.args.models_config.is_some())?;
-            let Some(selection) =
-                resolve_daily_promotion_selection(models.as_ref(), metadata, &|name: &str| std::env::var(name).ok())?
+            let Some(selection) = resolve_daily_promotion_selection(models.as_ref(), metadata, &|name: &str| {
+                ProcessConfigEnvironment.get(name)
+            })?
             else {
                 return Ok(None);
             };
@@ -134,6 +136,8 @@ impl Host {
                 self.sessions.provider.client.clone(),
                 selection,
                 self.session.header["id"].as_str().map(str::to_owned),
+                &self.sessions.cwd,
+                &active.cancel,
             )
             .await?;
             provider

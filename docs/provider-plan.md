@@ -1,5 +1,16 @@
 # Provider delivery plan
 
+**Latest checkpoint, 2026-10-02:** [Synchronous config commands](evidence/model-config-values.md)
+now bind native key/provider/model/override headers into supported daily
+OpenAI private leases. Eager header-before-key order and selected 401 refresh
+are source-backed; normal exit waits for started helpers. Modules 48/0/0 and
+Windows 1,625/0/20 pass; actual CAS task/same-Session recall takes 13.524s.
+The existing renderer dependency advisory keeps the complete gate FAIL.
+Full registry/auth/account, Bun/Linux and other Provider work remain open.
+This batch takes about 56min before review/documentation; the final backend
+takes 301.553s, including 153s recompilation. Continue grouped module checks
+and one stable-source gate; full-project ETA is still unsupported.
+
 ## Current user priority — 2026-10-01
 
 The user changes provider ordering: first OpenAI-compatible protocols with a
@@ -94,6 +105,7 @@ Development checks stay scoped; share the final comprehensive build once.
 | Complete OpenAI account auth | Daily selection uses latest authorization; full credential commands/precedence, reserve/usage/rotation, browser callback and multi-account ranking are not covered. | Open; the current device/SSE route is a bounded Host slice. |
 | Codex RPC and full execution metadata | Current Codex CLI supports print/JSON and REPL; RPC is explicitly rejected before journal/auth DB/model work. Unsupported image/native items and execution fields fail explicitly. | Required later parity work, recorded rather than silently approximated. |
 | All-provider overrides/registry/discovery and extended metadata | Preserve the existing native model data, factories and manager; do not discard unsupported metadata while projecting a usable route. | Open; wire only what the current OpenAI deliverable needs first. |
+| Full registry config/auth callers and async resolver | The synchronous command/live-header primitive and selected OpenAI 401 path are now tested; full load/discovery/runtime overlays, central precedence/rotation and separate Brush/process-tree resolver are not exercised end to end. Rust suppresses raw helper stderr; Bun compatibility and Linux process execution remain unverified. | Required later parity; the bounded command checkpoint does not complete this row. |
 
 Core/session recovery, remaining RPC commands and product integration retain
 their existing plans. This provider reprioritization does not silently accept

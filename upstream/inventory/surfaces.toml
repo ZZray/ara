@@ -811,8 +811,8 @@ id = "CA-MODEL-REGISTRY"
 title = "Model registry, resolution, discovery, custom models"
 scope = "provider"
 gate = "P2"
-owner = "tbd"
-status = "open"
+owner = "ara-cli model configuration / registry callers (bounded WIP)"
+status = "implementing"
 match = [
   '^packages/coding-agent/src/config/(model-[^/]*|models-config[^/]*|custom-models|provider-globals|service-tier|api-key-resolver)\.ts$',
   '^packages/coding-agent/test/(model-|models-|issue-970|issue-2761|xiaomi|lm-studio|dry-balance)[^/]*\.test\.ts$',

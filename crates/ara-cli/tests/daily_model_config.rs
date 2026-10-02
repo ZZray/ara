@@ -231,7 +231,9 @@ fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     assert_eq!(route.generation.max_tokens, Some(64));
     let ProtocolOptions::Completions(options) = &route.protocol else { panic!("Chat protocol") };
     assert!(options.api_key.is_none());
-    assert_eq!(options.extra_headers, vec![("x-route".into(), "cli".into())]);
+    // Configured headers now materialize into the private per-request lease;
+    // actual CLI wire tests check provider/model/override/CLI precedence.
+    assert!(options.extra_headers.is_empty());
     assert_eq!(options.idle_timeout, Some(Duration::from_millis(1250)));
     // supportsDeveloperRole governs explicit developer messages. A system
     // prompt on this non-reasoning model remains a system message upstream.
@@ -248,9 +250,10 @@ fn chat_selection_precedence_reaches_encoder_and_keeps_auth_private() {
     assert_eq!(body["messages"][0]["role"], "developer");
     assert_eq!(body["stream_options"]["include_usage"], true);
     assert!(body.get("thinkingLoopGuard").is_none());
-    let DailyAuthSource::Fixed(lease) = route.auth_source else { panic!("fixed lease") };
-    assert_eq!(lease.identity(), &CredentialIdentity::Environment { variable: "EXPLICIT_KEY".into() });
-    assert!(PreparedRoute::new(route.model, route.protocol, Arc::new(FixedRequestAuth::new(lease)), 0).is_ok());
+    let DailyAuthSource::Configured(spec) = route.auth_source else { panic!("configured private lease") };
+    assert_eq!(spec.base.identity(), &CredentialIdentity::Environment { variable: "EXPLICIT_KEY".into() });
+    let auth = ara_cli::config_request_auth::ConfigRequestAuth::new(spec, std::env::current_dir().unwrap(), None);
+    assert!(PreparedRoute::new(route.model, route.protocol, Arc::new(auth), 0).is_ok());
 }
 
 #[test]
@@ -303,10 +306,10 @@ fn unsupported_selected_semantics_and_missing_selection_fail_explicitly() {
     assert!(failure.contains("compat/extraBody"));
     assert!(!failure.contains("secret-value"));
     let mut provider = custom("openai-completions");
-    provider["apiKey"] = json!("!echo private-command");
+    provider["headers"] = json!({"bad name":"!echo private-command"});
     let cfg = config(provider);
     let failure = resolve_daily_selection(Some(&cfg), &cli, &no_env).err().unwrap().to_string();
-    assert!(failure.contains("apiKey"));
+    assert!(failure.contains("headers"));
     assert!(!failure.contains("private-command"));
     let cfg = config(custom("openai-responses"));
     let missing_provider = DailyOverrides { provider: None, ..selected() };

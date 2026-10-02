@@ -76,7 +76,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-TOOL-MEDIA | Image generation, image inspection and TTS tools | service | P3 | tbd | 16 (5/11) | 2673 | 93 | open |
 | CA-TOOL-MISC | Other tools (review, security scan, vibe, xdev, hub, skills, debug) | service | P3 | tbd | 71 (13/58) | 6643 | 864 | open |
 | CA-CONFIG | Settings and config files | host | P2 | tbd | 22 (9/12) | 10721 | 272 | open |
-| CA-MODEL-REGISTRY | Model registry, resolution, discovery, custom models | provider | P2 | tbd | 34 (14/20) | 8110 | 523 | open |
+| CA-MODEL-REGISTRY | Model registry, resolution, discovery, custom models | provider | P2 | ara-cli model configuration / registry callers (bounded WIP) | 34 (14/20) | 8110 | 523 | implementing |
 | CA-KEYBINDINGS | Keybindings | host-ui | P3 | host | 7 (1/6) | 750 | 47 | open |
 | CA-SYSPROMPT | System prompt assembly and prompt templates | core | P1 | tbd | 189 (2/8) | 1370 | 74 | open |
 | CA-DISCOVERY | Context file, agent, rule and plugin discovery | core | P1 | tbd | 85 (28/30) | 9176 | 291 | open |

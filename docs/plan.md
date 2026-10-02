@@ -1,6 +1,24 @@
 # ARA execution plan
 
-**Current checkpoint, 2026-10-02 (tested bounded WIP, not accepted):**
+**Current checkpoint, 2026-10-02 (tested bounded command-auth WIP):**
+[Synchronous config values](evidence/model-config-values.md) now retain native
+command caches/live headers, eager header-before-key order and private daily
+OpenAI request/selected 401 refresh. Started helpers settle before normal CLI
+exit. Six module families total 48/0/0; the final Windows backend is 1,625/0/20.
+Format, Clippy, inventory and build pass. The whole gate remains FAIL only on
+the existing snapcompact `ttf-parser` advisory; no policy exception is added.
+The final binary passes one actual preferred CAS read/write/read task and
+tool-disabled original-Session recall in 13.524s/five calls. Independent POST
+and Root audits retain full-registry/auth/Bun/Linux/account gaps.
+The inventory has 111 surfaces: 26 implementing, one tested, 84 open and no
+accepted complete surface. P0/V1 accepted; P1–P6 open; RPC 27/42; marker null.
+Implementation/verification takes about 56min, then review/documentation.
+Next: remaining full registry/auth callers and recorded Core/Host contracts;
+dependency policy and failed vision acceptance stay required. Keep affected
+module checks scoped and share one final stable-source gate. No reliable total
+OMP/P0–P6 completion date is supported by measured remaining throughput.
+
+**Previous checkpoint, 2026-10-02 (tested bounded WIP, not accepted):**
 [Snapcompact/frame rescue](evidence/snapcompact.md) has the fixed native
 renderer/fonts and Core/Session/reference-Host integration. Native module
 families pass 219/0/0; composite Windows tests pass 1,616/0/20.
