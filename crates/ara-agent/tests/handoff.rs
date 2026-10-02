@@ -106,7 +106,12 @@ fn live_context() -> Context {
         messages: vec![
             Message::User(UserMessage {
                 content: UserContent::Blocks(vec![
-                    UserBlock::Image(ImageContent { data: "original-image".into(), mime_type: "image/png".into() }),
+                    UserBlock::Image(ImageContent {
+                        detail: None,
+                        compaction_frame: false,
+                        data: "original-image".into(),
+                        mime_type: "image/png".into(),
+                    }),
                     UserBlock::text("original user task"),
                 ]),
                 synthetic: None,
@@ -136,6 +141,8 @@ async fn native_live_context_and_terminal_text_extraction_family() {
             }));
             message.content.push(tool("read", "never-executed.rs"));
             message.content.push(AssistantBlock::Image(ImageContent {
+                detail: None,
+                compaction_frame: false,
                 data: "never-returned".into(),
                 mime_type: "image/png".into(),
             }));

@@ -294,6 +294,11 @@ fn ara_home() -> PathBuf {
     std::path::absolute(&home).unwrap_or(home)
 }
 
+/// Fixed utils/dirs.ts getBlobsDir, under the reference Host's agent data root.
+fn ara_blobs_directory() -> PathBuf {
+    ara_home().join("agent").join("blobs")
+}
+
 fn user_home() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -757,6 +762,20 @@ async fn run_compaction(
     cancel: &CancellationToken,
     manual: bool,
 ) -> Result<bool> {
+    run_compaction_with_selection(args, config, factory, context, sink, cancel, manual, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_compaction_with_selection(
+    args: &Args,
+    config: &AgentConfig,
+    factory: &ProviderFactory,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    manual: bool,
+    selection: Option<&ara_cli::snapcompact::ManualCompactArgs>,
+) -> Result<bool> {
     let tokens = ara_agent::tokenizer::count_messages(context, ara_agent::tokenizer::MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
@@ -766,13 +785,35 @@ async fn run_compaction(
         return Ok(false);
     }
     let settings = policy.recovery_settings()?;
-    for method in &settings.method_order {
+    let methods = selection.and_then(|selection| selection.methods.as_ref()).unwrap_or(&settings.method_order);
+    let focus = selection.and_then(|selection| selection.focus.as_deref());
+    for method in methods {
         if cancel.is_cancelled() {
             return Err(ara_cli::handoff::cancelled());
         }
         let result = match method.as_str() {
-            "remote" => run_remote_compaction(args, config, factory, &settings, context, sink, cancel, manual).await,
-            "soft" => run_soft_compaction(args, config, factory, context, sink, cancel, manual).await,
+            "remote" => {
+                run_remote_compaction(args, config, factory, &settings, context, sink, cancel, manual, focus).await
+            }
+            "snapcompact" if focus.is_none_or(str::is_empty) => {
+                run_snapcompact(
+                    args,
+                    config,
+                    factory,
+                    &settings,
+                    context,
+                    sink,
+                    cancel,
+                    selection.is_some_and(|selection| {
+                        selection
+                            .methods
+                            .as_ref()
+                            .is_some_and(|methods| methods.len() == 1 && methods[0] == "snapcompact")
+                    }),
+                )
+                .await
+            }
+            "soft" => run_soft_compaction(args, config, factory, context, sink, cancel, manual, focus).await,
             // These automatic REPL methods retain their separately recorded
             // implementation scope; /handoff and /shake remain explicit commands.
             _ => continue,
@@ -785,10 +826,106 @@ async fn run_compaction(
             {
                 return Err(error);
             }
+            Err(error)
+                if selection
+                    .is_some_and(|selection| selection.methods.as_ref().is_some_and(|methods| methods.len() == 1)) =>
+            {
+                return Err(error);
+            }
             Err(error) => eprintln!("ara: {method} compaction failed ({error:#}); trying the next configured method"),
         }
     }
     Ok(false)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_snapcompact(
+    args: &Args,
+    config: &AgentConfig,
+    factory: &ProviderFactory,
+    settings: &rpc_host_settings::RecoveryCompactionSettings,
+    context: &mut Vec<Message>,
+    sink: &HostSink,
+    cancel: &CancellationToken,
+    explicit: bool,
+) -> Result<bool> {
+    if !ara_cli::snapcompact::supports_images(factory.metadata.as_ref()) {
+        if explicit {
+            bail!("/compact snapcompact requires a vision-capable model")
+        }
+        return Ok(false);
+    }
+    if cancel.is_cancelled() {
+        return Err(ara_cli::handoff::cancelled());
+    }
+    let snapshot = {
+        let guard = sink.journal.lock().await;
+        let Some(journal) = guard.as_ref().filter(|journal| journal.is_persistent()) else {
+            if explicit {
+                bail!("snapcompact requires a persistent Session")
+            }
+            return Ok(false);
+        };
+        journal.native_snapcompact_snapshot()?
+    };
+    let policy = ara_cli::snapcompact::SnapcompactPolicy {
+        shape: settings.snapcompact_shape.clone(),
+        reserve_tokens: settings.reserve_tokens,
+        non_message_tokens: ara_cli::context_budget::non_message_tokens(
+            &config.model,
+            &config.system_prompt,
+            &config.tools,
+        ),
+        pending_tokens: 0,
+    };
+    let source = snapshot.clone();
+    let model = config.model.clone();
+    let keep_tokens = args.compact_keep_tokens;
+    let tokens_before = ara_agent::tokenizer::count_messages(context, Default::default()) as u64;
+    let prepared = tokio::task::spawn_blocking(move || {
+        ara_cli::snapcompact::prepare_snapcompact(&source, &model, keep_tokens, tokens_before, &policy)
+    })
+    .await?;
+    if cancel.is_cancelled() {
+        return Err(ara_cli::handoff::cancelled());
+    }
+    let Some(prepared) = prepared? else {
+        if explicit {
+            bail!("Nothing to compact (already compacted or session too small)")
+        }
+        return Ok(false);
+    };
+    let mut guard = sink.journal.lock().await;
+    let journal = guard.as_mut().context("Session unavailable during snapcompact")?;
+    if cancel.is_cancelled() {
+        return Err(ara_cli::handoff::cancelled());
+    }
+    if let Err(error) = journal.commit_native_entry_snapcompact(
+        &snapshot,
+        &prepared.summary,
+        &prepared.result.first_kept_entry_id,
+        &prepared.window_source_entry_ids,
+        tokens_before,
+    ) {
+        if error.history_published() {
+            sink.persist_failed.store(true, Ordering::SeqCst);
+            cancel.cancel();
+            *context = journal.model_context();
+        }
+        return Err(error.into());
+    }
+    *context = ara_cli::remote_compaction::route_context(
+        journal,
+        &config.model,
+        factory.metadata.as_ref(),
+        &settings.remote,
+        factory.route.remote_supports_images(),
+    )?;
+    eprintln!(
+        "ara: snapcompact archive persisted in the current Session; estimated context {} tokens",
+        prepared.tokens_after
+    );
+    Ok(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -801,6 +938,7 @@ async fn run_remote_compaction(
     sink: &HostSink,
     cancel: &CancellationToken,
     manual: bool,
+    focus: Option<&str>,
 ) -> Result<bool> {
     use ara_agent::compaction::SummaryOptions;
     use ara_ai::remote_compaction::RemoteRequestOptions;
@@ -838,7 +976,7 @@ async fn run_remote_compaction(
         &remote_config,
         &settings.remote,
         args.compact_keep_tokens,
-        None,
+        focus,
         settings.reserve_tokens,
         SummaryOptions {
             oneshot_retry: if manual { SummaryOptions::default().oneshot_retry } else { None },
@@ -919,6 +1057,7 @@ async fn run_soft_compaction(
     sink: &HostSink,
     cancel: &CancellationToken,
     manual: bool,
+    focus: Option<&str>,
 ) -> Result<bool> {
     use ara_agent::compaction::{
         SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
@@ -951,7 +1090,9 @@ async fn run_soft_compaction(
         }
     };
     let sources = ara_cli::native_compaction::sources(&snapshot.entries);
-    let previous_summary = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
+    let previous_summary =
+        snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
+    let previous_summary = previous_summary.as_deref();
     let cut = match select_native_entry_compaction_cut(&sources, args.compact_keep_tokens, previous_summary) {
         Ok(Some(cut)) => cut,
         Ok(None) => {
@@ -981,7 +1122,7 @@ async fn run_soft_compaction(
         &sources,
         &cut,
         previous_summary,
-        None,
+        focus,
         model,
         summary_provider,
         None,
@@ -1323,7 +1464,14 @@ async fn run_repl_loop(
                 eprintln!("Ctrl+C during a turn cancels it; Ctrl+C at the prompt exits.");
                 continue;
             }
-            "/compact" => {
+            command if command == "/compact" || command.starts_with("/compact ") => {
+                let selection = match ara_cli::snapcompact::parse_manual_args(command.trim_start_matches("/compact")) {
+                    Ok(selection) => selection,
+                    Err(error) => {
+                        eprintln!("ara: {error}");
+                        continue;
+                    }
+                };
                 let token = cancel.child_token();
                 let config = AgentConfig {
                     model: model.clone(),
@@ -1337,7 +1485,16 @@ async fn run_repl_loop(
                     max_model_calls: args.max_model_calls,
                     hooks: hooks.clone(),
                 };
-                let step = run_compaction(args, &config, session.provider_factory, context, sink, &token, true);
+                let step = run_compaction_with_selection(
+                    args,
+                    &config,
+                    session.provider_factory,
+                    context,
+                    sink,
+                    &token,
+                    true,
+                    Some(&selection),
+                );
                 match interruptible(step, &token, &mut interrupts).await {
                     Ok(true) => {
                         let id =
@@ -1398,10 +1555,12 @@ async fn run_repl_loop(
                 let mut guard = sink.journal.lock().await;
                 match (guard.as_mut(), &session.dir) {
                     (Some(journal), Some(dir)) => {
-                        let fresh = SessionJournal::create(dir, session.cwd).and_then(|mut j| {
-                            j.append_model_change(session.model_ref)?;
-                            Ok(j)
-                        });
+                        let fresh =
+                            SessionJournal::create_with_blob_directory(dir, session.cwd, &ara_blobs_directory())
+                                .and_then(|mut j| {
+                                    j.append_model_change(session.model_ref)?;
+                                    Ok(j)
+                                });
                         match fresh {
                             Ok(fresh) => {
                                 let previous = std::mem::replace(journal, fresh);
@@ -1611,6 +1770,12 @@ async fn run_repl_loop(
 }
 
 fn recover_session(j: &mut SessionJournal) -> Result<()> {
+    if !j.report.blob_warnings.is_empty() {
+        eprintln!(
+            "ara: {} missing or malformed image blob reference(s); restore the Session blob store to recover those images",
+            j.report.blob_warnings.len()
+        );
+    }
     if j.report.malformed_records > 0 {
         eprintln!("ara: skipped {} malformed record(s) in {}", j.report.malformed_records, j.path().display());
     }
@@ -2037,7 +2202,8 @@ async fn run_inner(
         };
         Some(match path {
             Some(p) => {
-                let mut j = SessionJournal::open(&p).with_context(|| format!("opening session {}", p.display()))?;
+                let mut j = SessionJournal::open_with_blob_directory(&p, &ara_blobs_directory())
+                    .with_context(|| format!("opening session {}", p.display()))?;
                 if let Some(session_cwd) = j.header().get("cwd").and_then(|v| v.as_str()).map(PathBuf::from) {
                     match &explicit_cwd {
                         Some(c) if c != &session_cwd => eprintln!(
@@ -2056,7 +2222,7 @@ async fn run_inner(
                 recover_session(&mut j)?;
                 j
             }
-            None => SessionJournal::create(dir, &cwd)?,
+            None => SessionJournal::create_with_blob_directory(dir, &cwd, &ara_blobs_directory())?,
         })
     } else {
         None

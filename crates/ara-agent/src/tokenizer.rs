@@ -13,6 +13,8 @@ use ara_ai::{AssistantBlock, Message, UserBlock, UserContent};
 
 /// OMP's fixed tool-result image estimate, also used for ARA assistant images.
 pub const IMAGE_TOKEN_ESTIMATE: usize = 1200;
+/// Fixed snapcompact estimate, only for images attached to derived summaries.
+pub const SNAPCOMPACT_FRAME_TOKEN_ESTIMATE: usize = 5024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EstimateMode {
@@ -46,6 +48,7 @@ fn count_user_content(content: &UserContent) -> usize {
         // tool results, so user images are intentionally omitted here too.
         UserContent::Blocks(blocks) => blocks.iter().fold(0usize, |sum, block| match block {
             UserBlock::Text(text) => sum.saturating_add(count_text(&text.text, EstimateMode::Approximate)),
+            UserBlock::Image(image) if image.compaction_frame => sum.saturating_add(SNAPCOMPACT_FRAME_TOKEN_ESTIMATE),
             UserBlock::Image(_) => sum,
         }),
     }

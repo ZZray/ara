@@ -376,6 +376,8 @@ fn parse_tool_result(value: &Value, server: &str, tool: &str) -> Result<ToolOutp
             Some("text") => blocks
                 .push(UserBlock::text(part.get("text").and_then(Value::as_str).ok_or("MCP text content is invalid")?)),
             Some("image") => blocks.push(UserBlock::Image(ImageContent {
+                detail: None,
+                compaction_frame: false,
                 data: part.get("data").and_then(Value::as_str).ok_or("MCP image data is invalid")?.to_owned(),
                 mime_type: part
                     .get("mimeType")

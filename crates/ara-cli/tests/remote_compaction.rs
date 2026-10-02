@@ -198,7 +198,12 @@ async fn native_whole_history_checked_publication_reopen_and_iterative_replay_fa
     let damaged = SessionJournal::open(&damaged_path).unwrap();
     assert!(host::route_context(&damaged, &active, None, &RemoteSettings::default(), true).is_err());
     assert_eq!(std::fs::read_to_string(&damaged_path).unwrap(), damaged_bytes);
-    let covered_image = ara_ai::ImageContent { data: "aQ==".into(), mime_type: "image/png".into() };
+    let covered_image = ara_ai::ImageContent {
+        data: "aQ==".into(),
+        mime_type: "image/png".into(),
+        detail: None,
+        compaction_frame: false,
+    };
     journal
         .append_message(&Message::User(UserMessage {
             content: ara_ai::UserContent::Blocks(vec![

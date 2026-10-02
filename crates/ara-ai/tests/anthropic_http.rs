@@ -1209,7 +1209,12 @@ fn replay_repairs_tool_tail_adjacent_assistants_and_error_images() {
                 tool_name: "read".into(),
                 content: vec![
                     UserBlock::text("read failed"),
-                    UserBlock::Image(ara_ai::ImageContent { data: "YQ==".into(), mime_type: "image/png".into() }),
+                    UserBlock::Image(ara_ai::ImageContent {
+                        detail: None,
+                        compaction_frame: false,
+                        data: "YQ==".into(),
+                        mime_type: "image/png".into(),
+                    }),
                 ],
                 details: None,
                 is_error: true,
@@ -1246,7 +1251,14 @@ async fn actual_messages_request_normalizes_images_and_keeps_unsupported_mime_vi
     )
     .await
     .unwrap();
-    let image = |mime_type: &str| UserBlock::Image(ImageContent { data: "YQ==".into(), mime_type: mime_type.into() });
+    let image = |mime_type: &str| {
+        UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
+            data: "YQ==".into(),
+            mime_type: mime_type.into(),
+        })
+    };
     let context = Context {
         messages: vec![
             Message::User(UserMessage {
@@ -1295,7 +1307,14 @@ async fn actual_messages_request_keeps_error_image_hints_and_unsupported_text_in
     )
     .await
     .unwrap();
-    let image = |mime_type: &str| UserBlock::Image(ImageContent { data: "YQ==".into(), mime_type: mime_type.into() });
+    let image = |mime_type: &str| {
+        UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
+            data: "YQ==".into(),
+            mime_type: mime_type.into(),
+        })
+    };
     let mut assistant = AssistantMessage::empty("anthropic-messages", "anthropic", "claude-fixture");
     assistant.content = ["a", "b", "c", "d", "e"]
         .into_iter()

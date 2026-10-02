@@ -1,5 +1,31 @@
 # References, memory, and context
 
+## Native archive source and image ownership
+
+**Source-backed implemented boundary, 2026-10-02, fixed OMP `596f2da`:**
+an archive image is distinguished from an ordinary User image only after
+strict archive/source validation. Its runtime frame marker is derived again
+on projection and never persisted as an independent trust claim. Known source
+ownership and the original `archiveSourceEntryId` must survive every soft
+summary in an archive-to-soft-to-soft chain; absence of legacy sources remains
+unknown. Accepting arbitrary preserved images as native archive frames would
+change token accounting and promote unsupported raw image summaries.
+
+The Host owns the blob location. Complete content-addressed bytes are published
+before their reference enters a Session rewrite; the journal still owns the
+history-publication/fail-stop boundary. Missing or malformed blob references
+are retained with diagnostics rather than silently erased. Existing canonical
+regular files are currently reused without content revalidation.
+
+Threshold rescue uses a configured sizing band, while threshold maintenance
+and overflow retry retain distinct success predicates. A smaller published
+archive can still lack headroom; its receipt/warning must identify the latest
+actual publication. An unpublished attempt must not stamp old history. The
+end event precedes one no-progress notice. These facts do not establish full
+settings/concurrency or actual model readability. Both initial CAS image tasks
+failed strict acceptance; [snapcompact evidence](../evidence/snapcompact.md)
+records their results and the mandatory remaining contracts.
+
 **Product requirement:** user-provided references, files, observations, and corrections need durable identity and provenance across turns and compaction. The original input and source metadata remain retrievable; a model-generated summary is a derived view, not a replacement. This is a planned ARA extension after the fixed OMP behavior is understood and tested.
 
 Represent a reference with an owner, source and source time, content type, immutable revision, sensitivity/access scope, and explicit link to the Session or Task that admitted it. A correction creates a new revision or supersedes a prior one; it does not rewrite the original. Retrieval should expose the chosen revision and citation. Deletion/revocation must prevent later model context from reusing inaccessible material while preserving only the audit metadata permitted by the host.

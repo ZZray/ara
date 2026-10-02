@@ -36,6 +36,7 @@ ara-prompt.workspace = true
 ara-rpc.workspace = true
 ara-discovery.workspace = true
 ara-session.workspace = true
+ara-snapcompact.workspace = true
 ara-tools.workspace = true
 ara-edit.workspace = true
 async-trait.workspace = true

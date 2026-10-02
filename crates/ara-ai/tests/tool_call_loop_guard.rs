@@ -175,9 +175,12 @@ fn fixed_tool_call_loop_module_corpus() {
     let mut native = guard(2.0, &[]);
     assert!(native.record_turn(&message(vec![call("first", "read", args.clone())]), &[]).is_none());
     let mut native_result = result("second", "ignored-name", "\u{feff} first \t second\u{0085}third \u{2003}");
-    native_result
-        .content
-        .push(UserBlock::Image(ImageContent { data: "not text".into(), mime_type: "image/png".into() }));
+    native_result.content.push(UserBlock::Image(ImageContent {
+        detail: None,
+        compaction_frame: false,
+        data: "not text".into(),
+        mime_type: "image/png".into(),
+    }));
     native_result.content.push(UserBlock::text(" fourth \n fifth \u{feff}"));
     let detection = native
         .record_turn(

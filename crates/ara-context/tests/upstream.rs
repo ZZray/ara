@@ -478,6 +478,8 @@ fn date_cwd_reminder_injection() {
 
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ara_ai::ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "img".into(),
             mime_type: "image/png".into(),
         })]),

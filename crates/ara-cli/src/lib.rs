@@ -36,3 +36,4 @@ pub mod provider_models;
 pub mod remote_compaction;
 pub mod retry_fallback;
 pub mod session_artifacts;
+pub mod snapcompact;

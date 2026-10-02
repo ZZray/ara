@@ -237,7 +237,7 @@ fn content_parts(content: &UserContent, supports_images: bool) -> Vec<Value> {
                         parts.push(json!({"type": "input_text", "text": text.text}));
                     }
                     UserBlock::Image(image) if supports_images => parts.push(json!({
-                        "type": "input_image", "detail": "auto",
+                        "type": "input_image", "detail": image.detail.clone().unwrap_or_else(|| json!("auto")),
                         "image_url": format!("data:{};base64,{}", image.mime_type, image.data),
                     })),
                     UserBlock::Image(_) => omitted_images = true,
@@ -262,7 +262,7 @@ fn tool_output(blocks: &[UserBlock], supports_images: bool) -> Value {
                     UserBlock::Text(text) => json!({"type": "input_text", "text": text.text}),
                     UserBlock::Image(image) => json!({
                         "type": "input_image",
-                        "detail": "auto",
+                        "detail": image.detail.clone().unwrap_or_else(|| json!("auto")),
                         "image_url": format!("data:{};base64,{}", image.mime_type, image.data),
                     }),
                 })
@@ -2089,7 +2089,12 @@ mod tests {
 
     #[test]
     fn images_are_native_only_with_confirmed_model_capability() {
-        let image = UserBlock::Image(crate::types::ImageContent { data: "AQI=".into(), mime_type: "image/png".into() });
+        let image = UserBlock::Image(crate::types::ImageContent {
+            detail: None,
+            compaction_frame: false,
+            data: "AQI=".into(),
+            mime_type: "image/png".into(),
+        });
         let context = Context {
             messages: vec![Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::text("look"), image.clone()]),
@@ -2132,5 +2137,39 @@ mod tests {
                 "type": "input_image", "detail": "auto", "image_url": "data:image/png;base64,AQI="
             })
         );
+        // One grouped fixture proves the archive's original detail survives
+        // generic Responses and OpenAI-compatible Chat.
+        for detail in [json!("original"), json!("low"), json!("auto")] {
+            let frame = UserBlock::Image(crate::types::ImageContent {
+                data: "AQI=".into(),
+                mime_type: "image/png".into(),
+                detail: Some(detail.clone()),
+                compaction_frame: true,
+            });
+            let context = Context {
+                messages: vec![Message::User(UserMessage {
+                    content: UserContent::Blocks(vec![frame]),
+                    synthetic: None,
+                    timestamp: 0,
+                })],
+                ..Context::default()
+            };
+            let options = RequestOptions { supports_images: true, ..RequestOptions::default() };
+            assert_eq!(
+                build_request(&model(), &context, &options).unwrap()["input"][0]["content"][0]["detail"],
+                detail
+            );
+            let mut chat_model = model();
+            chat_model.api = "openai-completions".into();
+            let chat = crate::providers::openai_completions::convert_messages(
+                &chat_model,
+                &context,
+                &crate::providers::openai_completions::OpenAICompat::default(),
+            );
+            assert_eq!(chat[0]["content"][0]["image_url"]["detail"], detail);
+            let encoded = serde_json::to_value(&context.messages[0]).unwrap();
+            assert_eq!(encoded["content"][0]["detail"], detail);
+            assert!(encoded["content"][0].get("compactionFrame").is_none(), "archive marker is derived at projection");
+        }
     }
 }

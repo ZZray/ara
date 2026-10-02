@@ -480,8 +480,8 @@ impl Host {
             self.restore_maintenance(recovery, &session).await?;
             return Err(error.into());
         }
-        // Native handoff is available for incomplete output. Remote accepts
-        // both overflow and incomplete recovery; frame keeps its open gate.
+        // Native handoff is available for incomplete output. Remote and local
+        // image archives accept overflow and incomplete recovery.
         for method in &settings.method_order {
             if method == "soft" {
                 break;
@@ -527,6 +527,42 @@ impl Host {
                     }
                     Err(_) => self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                         "message":"Remote compaction failed; trying the next preferred method"})),
+                    Ok(None) => {}
+                }
+                continue;
+            }
+            if method == "snapcompact" {
+                let compacted = Box::pin(self.snapcompact_history(&[])).await;
+                match compacted {
+                    Ok(Some(_)) => {
+                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                            true
+                        } else {
+                            self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
+                        };
+                        if fits && !self.maintenance_stop_requested() {
+                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            return Ok(MaintenanceOutcome {
+                                continuation_scheduled: true,
+                                history_rewritten: true,
+                                ..none
+                            });
+                        }
+                        return Ok(MaintenanceOutcome {
+                            automatic_continuation_blocked: true,
+                            history_rewritten: true,
+                            ..none
+                        });
+                    }
+                    Err(error) if self.maintenance_stop_requested() || ara_cli::handoff::is_cancelled(&error) => {
+                        if !self.connection.is_cancelled() {
+                            self.restore_maintenance(recovery, &session).await?;
+                        }
+                        return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
+                    }
+                    Err(error) => self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                        "message":format!("Snapcompact unavailable ({error}); trying the next preferred method")})),
                     Ok(None) => {}
                 }
                 continue;
@@ -590,6 +626,33 @@ impl Host {
                 _ => {}
             }
         }
+        // Tier zero can publish a new compaction entry while the failed turn
+        // is provisionally detached. Settle that exact owner once before the
+        // lower tiers perform raw edits; never rebase an ownership receipt.
+        let frame_rescue = self.rescue_snapcompact_frames(settings.reserve_tokens, None, &[]).await;
+        let frame_rescue = match frame_rescue {
+            Ok(result) => result,
+            Err(error) => {
+                if !self.connection.is_cancelled() {
+                    self.restore_maintenance(recovery, &session).await?;
+                }
+                return Err(error);
+            }
+        };
+        if let Some(entry_id) = frame_rescue {
+            session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
+            let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                true
+            } else {
+                self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
+            };
+            if fits && !self.maintenance_stop_requested() {
+                self.queue_terminal_continue(active, self.agent.messages().await);
+                return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
+            }
+            self.stamp_frame_dead_end(&entry_id, true).await?;
+            return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, history_rewritten: true, ..none });
+        }
         if !settings.soft_available {
             let rescued = self
                 .rescue_local_history(
@@ -622,7 +685,9 @@ impl Host {
         let prepared = (|| -> Result<_> {
             let snapshot = preparation?;
             let sources = ara_cli::native_compaction::sources(&snapshot.entries);
-            let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
+            let previous =
+                snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
+            let previous = previous.as_deref();
             let cut = select_native_entry_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)?
                 .context("No native message prefix can be compacted with the current keep-token budget")?;
             Ok((snapshot, cut))
@@ -650,7 +715,7 @@ impl Host {
             summarize_native_entry_compaction_cut(
                 &sources,
                 &cut,
-                task_snapshot.previous_summary.as_ref().map(|s| s.summary.as_str()),
+                task_snapshot.previous_summary.as_ref().map(|s| s.previous_summary_for_text_compaction()).as_deref(),
                 None,
                 &model,
                 provider.as_ref(),

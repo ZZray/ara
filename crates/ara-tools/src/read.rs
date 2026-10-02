@@ -1194,7 +1194,12 @@ impl AgentTool for ReadTool {
             return Ok(ToolOutput {
                 content: vec![
                     UserBlock::text(format!("Read image file [{mime}] {display} ({})", format_bytes(meta.len()))),
-                    UserBlock::Image(ImageContent { data, mime_type: mime.into() }),
+                    UserBlock::Image(ImageContent {
+                        detail: None,
+                        compaction_frame: false,
+                        data,
+                        mime_type: mime.into(),
+                    }),
                 ],
                 details: Some(json!({"resolvedPath": resolved, "fileSize": meta.len()})),
                 is_error: false,

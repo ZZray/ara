@@ -136,6 +136,8 @@ async fn native_host_images_rebase_stale_prune_and_fresh_total_usage_family() {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
             data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB".into(),
             mime_type: "image/png".into(),
+            detail: None,
+            compaction_frame: false,
         })]),
         synthetic: None,
         timestamp: ara_ai::now_ms(),

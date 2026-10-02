@@ -38,6 +38,15 @@ pub struct ImageContent {
     pub data: String,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
+    /// OpenAI resolution hint. Imported archive metadata retains its original
+    /// JSON value; generated frames use auto/low/high/original.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
+    /// Runtime attribution for a derived compaction image, never raw user
+    /// input or persisted image data. Ordinary user images keep their existing
+    /// tokenizer behavior; only these summary frames receive the frame charge.
+    #[serde(skip)]
+    pub compaction_frame: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

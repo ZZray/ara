@@ -95,7 +95,7 @@ fn configured_context_window_reaches_execution_route_and_absence_stays_unknown()
 fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_overrides() {
     let baseline = json!({"providers":{
         "source":{"api":"openai-responses","baseUrl":"https://source.example/v1","auth":"none",
-            "models":[{"id":"small","contextWindow":100,"contextPromotionTarget":"target/group/large"}]},
+            "models":[{"id":"small","contextWindow":100,"input":["text"],"contextPromotionTarget":"target/group/large"}]},
         "target":{"api":"openai-completions","baseUrl":"https://target.example/v1","apiKey":"TARGET_KEY",
             "models":[{"id":"group/large","contextWindow":200,"maxTokens":512,"input":["text"]}]}
     }});
@@ -121,7 +121,8 @@ fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_ov
         &env,
     )
     .unwrap();
-    assert_eq!(current.metadata.as_object().unwrap().len(), 5);
+    assert_eq!(current.metadata.as_object().unwrap().len(), 6);
+    assert_eq!(current.metadata["input"], json!(["text"]));
     assert_eq!(current.metadata["contextWindow"].as_f64(), Some(100.0));
     assert_eq!(current.metadata["contextPromotionTarget"], "target/group/large");
     let promoted = resolve_daily_promotion_selection(Some(&config), &current.metadata, &env).unwrap().unwrap();
@@ -129,6 +130,7 @@ fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_ov
     assert_eq!(promoted.model.id, "group/large");
     assert_eq!(promoted.model.base_url, "https://target.example/v1");
     assert_eq!(promoted.model.context_window, Some(200.0));
+    assert_eq!(promoted.metadata["input"], json!(["text"]));
     assert_eq!(promoted.api, DailyApi::OpenAiCompletions);
     assert_eq!(promoted.generation.max_tokens, Some(512));
     let DailyAuthSource::Fixed(lease) = promoted.auth_source else { panic!("target key lease") };

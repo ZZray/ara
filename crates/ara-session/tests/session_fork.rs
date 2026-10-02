@@ -44,6 +44,8 @@ fn in_memory_keeps_host_identity_native_ids_empty_users_images_and_skills_withou
     let empty = journal.append_message(&Message::User(UserMessage::text(""))).unwrap();
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "aW1hZ2U=".into(),
             mime_type: "image/png".into(),
         })]),

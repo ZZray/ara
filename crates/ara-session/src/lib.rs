@@ -24,14 +24,18 @@
 //!
 //! Not ported (open): complete provider-native compaction replay, label editing,
 //! v1/v2 migrations, SQL/Redis storage,
-//! listing/search, moving, title generation, blob externalization.
+//! listing/search, moving, title generation, generic lossy persistence trimming.
+//! Image/blob persistence is available when the Host binds its blob directory.
 
+pub mod blob;
 mod handoff;
 mod loop_guard_notice;
 mod reduction;
 mod remote;
 mod skill_prompt;
+pub mod snapcompact;
 
+pub use blob::{BlobStore, BlobWarning};
 pub use handoff::{NativeCompactionFileDetails, NativeHandoffError, NativeHandoffSnapshot, NativeHandoffSummary};
 pub use loop_guard_notice::{
     GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE, TOOL_CALL_LOOP_REDIRECT_TYPE,
@@ -42,6 +46,7 @@ pub use reduction::{
 };
 pub use remote::{NativeRemoteError, NativeRemoteReplay, NativeRemoteSnapshot, NativeRemoteSummary};
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
+pub use snapcompact::{NativeSnapcompactError, NativeSnapcompactSnapshot, NativeSnapcompactSummary};
 
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, Message, StopReason, ToolResultMessage, UserBlock, UserContent,
@@ -765,6 +770,13 @@ fn custom_model_messages(raw: &Value) -> Option<Vec<Message>> {
 
 fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Message> {
     let summary = raw.get("summary")?.as_str()?;
+    if kind == "compaction" && ara_snapcompact::get_preserved_archive(raw.get("preserveData")).is_some() {
+        let mut message = snapcompact::model_message_from_summary(summary, raw.get("preserveData"));
+        if let Message::User(user) = &mut message {
+            user.timestamp = timestamp;
+        }
+        return Some(message);
+    }
     let content = if kind == "branch" {
         vec![UserBlock::text(
             ara_prompt::prompt::render(
@@ -775,7 +787,13 @@ fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Mess
         )]
     } else if let Some(blocks) = raw.get("blocks") {
         let mut content = vec![UserBlock::text(summary)];
-        content.extend(serde_json::from_value::<Vec<UserBlock>>(blocks.clone()).ok()?);
+        let mut blocks = serde_json::from_value::<Vec<UserBlock>>(blocks.clone()).ok()?;
+        for block in &mut blocks {
+            if let UserBlock::Image(image) = block {
+                image.compaction_frame = true;
+            }
+        }
+        content.extend(blocks);
         content
     } else {
         let template = if raw.get("method").and_then(Value::as_str) == Some("handoff") {
@@ -786,9 +804,14 @@ fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Mess
         let text = ara_prompt::prompt::render(template, &json!({"summary":summary})).ok()?;
         let mut content = vec![UserBlock::text(text)];
         if let Some(images) = raw.get("images") {
-            let images: Vec<UserBlock> = serde_json::from_value(images.clone()).ok()?;
+            let mut images: Vec<UserBlock> = serde_json::from_value(images.clone()).ok()?;
             if images.iter().any(|block| !matches!(block, UserBlock::Image(_))) {
                 return None;
+            }
+            for block in &mut images {
+                if let UserBlock::Image(image) = block {
+                    image.compaction_frame = true;
+                }
             }
             content.extend(images);
         }
@@ -812,11 +835,31 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
 /// Native replay preserves image-bearing messages; all raw ownership,
 /// complete-pair and unknown-effect checks remain shared with text summaries.
 fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native_replay: bool) -> bool {
+    safe_compaction_prefix_with_archive(branch, allow_unanswered_user, native_replay, None)
+}
+
+/// Text replacement may migrate a previously verified archive. Only its
+/// already covered raw prefix and that exact derived archive entry admit
+/// pictures; newly consumed raw pictures keep the ordinary soft gate.
+fn safe_compaction_prefix_with_archive(
+    branch: &[&Entry],
+    allow_unanswered_user: bool,
+    native_replay: bool,
+    previous_archive: Option<&CompactionSummaryView>,
+) -> bool {
     let branch = &branch[active_context_start(branch)..];
+    let previous_archive = previous_archive
+        .filter(|summary| summary.source_entry_ids.is_some())
+        .and_then(|summary| summary.archive_image_boundary.as_ref());
+    let archive_prefix_end =
+        previous_archive.and_then(|boundary| branch.iter().position(|entry| entry.id == boundary.first_kept_entry_id));
     let mut saw_message = false;
     let mut pending: HashMap<String, String> = HashMap::new();
     let mut ends_with_user = false;
-    for entry in branch {
+    for (index, entry) in branch.iter().enumerate() {
+        let images_allowed = native_replay
+            || archive_prefix_end.is_some_and(|end| index < end)
+            || previous_archive.is_some_and(|summary| summary.entry_id == entry.id);
         let Ok(group) = entry.native_compaction_entry() else { return false };
         let historical_custom = matches!(
             group.origin,
@@ -834,7 +877,7 @@ fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native
             match &message {
                 Message::User(user) => {
                     if !pending.is_empty()
-                        || !native_replay
+                        || !images_allowed
                             && matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
                     {
                         return false;
@@ -851,7 +894,7 @@ fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native
                 Message::Developer(developer) => {
                     if !historical_custom
                         || !pending.is_empty()
-                        || !native_replay
+                        || !images_allowed
                             && matches!(&developer.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
                     {
                         return false;
@@ -859,7 +902,7 @@ fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native
                 }
                 Message::Assistant(assistant) => {
                     if !pending.is_empty()
-                        || !native_replay
+                        || !images_allowed
                             && assistant.content.iter().any(|block| matches!(block, AssistantBlock::Image(_)))
                     {
                         return false;
@@ -872,7 +915,7 @@ fn safe_compaction_prefix(branch: &[&Entry], allow_unanswered_user: bool, native
                     }
                 }
                 Message::ToolResult(result) => {
-                    if !native_replay && result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
+                    if !images_allowed && result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
                         || result.details.as_ref().is_some_and(|details| {
                             details.get("panicked").and_then(Value::as_bool) == Some(true)
                                 || (details.get("__synthetic").and_then(Value::as_bool) == Some(true)
@@ -1000,7 +1043,7 @@ pub struct NativeProjectedCompactionSnapshot {
 
 /// A derived summary remains distinct from a user message. The host/Agent
 /// owns conversion to a model-visible message and must keep its attribution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompactionSummaryView {
     pub entry_id: String,
     pub summary: String,
@@ -1018,8 +1061,21 @@ pub struct CompactionSummaryView {
     /// Provider-native state covers the submitted recent tail as well as the
     /// replaced prefix. This remains derived state, never a raw model receipt.
     pub remote: Option<NativeRemoteReplay>,
+    /// Typed bitmap archive, reconstructed from the original preserve slot.
+    pub archive: Option<ara_snapcompact::Archive>,
+    /// Derived from a source-validated archive and carried through later soft
+    /// replacements. It exempts only images in that already covered prefix.
+    pub archive_image_boundary: Option<ArchiveImageBoundary>,
+    /// Original preserve state remains separate from its runtime projection.
+    pub preserve_data: Option<Value>,
     /// `None` means an imported entry has no verifiable source list.
     pub source_entry_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveImageBoundary {
+    pub entry_id: String,
+    pub first_kept_entry_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1110,6 +1166,9 @@ pub struct LoadReport {
     pub malformed_records: usize,
     /// Backup of the original bytes written before the torn file is rewritten.
     pub backup: Option<PathBuf>,
+    /// Unresolved imported image references remain in the raw entry; the Host
+    /// can surface these warnings without treating missing bytes as success.
+    pub blob_warnings: Vec<BlobWarning>,
 }
 
 /// Outcome of [`SessionJournal::recover_interrupted_tool_calls`].
@@ -1224,6 +1283,7 @@ pub struct SessionJournal {
     rewrite_required: bool,
     loaded_invalid_utf8: bool,
     pending_backup: bool,
+    blob_store: Option<BlobStore>,
     pub report: LoadReport,
 }
 
@@ -1261,6 +1321,7 @@ impl SessionJournal {
             rewrite_required: false,
             loaded_invalid_utf8: false,
             pending_backup: false,
+            blob_store: None,
             report: LoadReport::default(),
         })
     }
@@ -1287,6 +1348,7 @@ impl SessionJournal {
             rewrite_required: false,
             loaded_invalid_utf8: false,
             pending_backup: false,
+            blob_store: None,
             report: LoadReport::default(),
         })
     }
@@ -1322,6 +1384,7 @@ impl SessionJournal {
             header["additionalDirectories"] = directories.clone();
         }
         let mut fork = Self::in_memory(header)?;
+        fork.blob_store = self.blob_store.clone();
         if leaf.is_none() {
             if !self.title.title.is_empty() {
                 fork.set_session_name(&self.title.title, self.title.source.as_deref().unwrap_or("auto"))?;
@@ -1427,6 +1490,8 @@ impl SessionJournal {
                     let parent_id = value.get("parentId").and_then(Value::as_str).map(str::to_string);
                     ids.insert(id.clone());
                     // Duplicate ids keep both lines; lookups resolve to the last (OMP index semantics).
+                    let mut value = value;
+                    blob::repair_truncated_archive(&mut value);
                     entries.push(Entry { id, parent_id, kind, raw: value });
                 }
                 _ => malformed += 1,
@@ -1454,8 +1519,52 @@ impl SessionJournal {
             rewrite_required: damaged,
             loaded_invalid_utf8,
             pending_backup: damaged,
-            report: LoadReport { malformed_records: malformed, backup: None },
+            blob_store: None,
+            report: LoadReport { malformed_records: malformed, backup: None, blob_warnings: Vec::new() },
         })
+    }
+
+    /// The Host supplies the same global blob directory for every Session.
+    /// Resolution completes before this constructor returns a usable journal.
+    pub fn open_with_blob_directory(path: &Path, blob_directory: &Path) -> Result<SessionJournal> {
+        let mut journal = Self::open(path)?;
+        journal.bind_blob_directory(blob_directory)?;
+        Ok(journal)
+    }
+
+    pub fn create_with_blob_directory(session_dir: &Path, cwd: &Path, blob_directory: &Path) -> Result<SessionJournal> {
+        Self::create_with_parent_and_blob_directory(session_dir, cwd, None, blob_directory)
+    }
+
+    pub fn create_with_parent_and_blob_directory(
+        session_dir: &Path,
+        cwd: &Path,
+        parent: Option<&str>,
+        blob_directory: &Path,
+    ) -> Result<SessionJournal> {
+        let mut journal = Self::create_with_parent(session_dir, cwd, parent)?;
+        journal.bind_blob_directory(blob_directory)?;
+        Ok(journal)
+    }
+
+    /// Prepare all resolutions before adopting them, including for journals
+    /// constructed in memory by an SDK Host. A read error leaves the view intact.
+    pub fn bind_blob_directory(&mut self, blob_directory: &Path) -> Result<()> {
+        let store = BlobStore::new(blob_directory);
+        let mut entries = self.entries.clone();
+        let mut warnings = Vec::new();
+        for entry in &mut entries {
+            blob::repair_truncated_archive(&mut entry.raw);
+            blob::resolve_entry(&mut entry.raw, &store, &mut warnings)?;
+        }
+        self.entries = entries;
+        self.report.blob_warnings.extend(warnings);
+        self.blob_store = Some(store);
+        Ok(())
+    }
+
+    pub fn blob_directory(&self) -> Option<&Path> {
+        self.blob_store.as_ref().map(BlobStore::directory)
     }
 
     pub fn path(&self) -> &Path {
@@ -1525,13 +1634,20 @@ impl SessionJournal {
         format!("{value}\n")
     }
 
-    fn file_body(&self) -> String {
+    fn persisted_line(&self, value: &Value) -> std::io::Result<String> {
+        match &self.blob_store {
+            Some(store) => Ok(Self::line_for(&blob::prepare_entry(value, store)?)),
+            None => Ok(Self::line_for(value)),
+        }
+    }
+
+    fn file_body(&self) -> std::io::Result<String> {
         let mut body = serialize_title_slot(&self.title);
         body.push_str(&Self::line_for(&self.header));
         for e in &self.entries {
-            body.push_str(&Self::line_for(&e.raw));
+            body.push_str(&self.persisted_line(&e.raw)?);
         }
-        body
+        Ok(body)
     }
 
     fn has_assistant(&self) -> bool {
@@ -1576,7 +1692,7 @@ impl SessionJournal {
             self.path.with_extension(format!("jsonl.tmp-{}-{}", std::process::id(), uuid::Uuid::new_v4().simple()));
         let written = (|| -> std::io::Result<()> {
             let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-            f.write_all(self.file_body().as_bytes())?;
+            f.write_all(self.file_body()?.as_bytes())?;
             f.sync_all()?;
             fs::rename(&tmp, &self.path)
         })();
@@ -1600,8 +1716,9 @@ impl SessionJournal {
         if !self.materialized || self.rewrite_required {
             return self.rewrite();
         }
+        let line = self.persisted_line(entry_raw)?;
         let mut f = OpenOptions::new().append(true).open(&self.path)?;
-        f.write_all(Self::line_for(entry_raw).as_bytes())?;
+        f.write_all(line.as_bytes())?;
         f.sync_data()?;
         Ok(())
     }
@@ -2290,7 +2407,25 @@ impl SessionJournal {
     ) -> std::result::Result<String, CompactionCommitError> {
         let cumulative =
             self.native_entry_compaction_sources(snapshot, summary, first_kept_entry_id, window_source_entry_ids)?;
-        Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative, tokens_before)?)
+        let preserve = snapshot.previous_summary.as_ref().and_then(|previous| {
+            let state = ara_snapcompact::strip_preserved_archive(previous.preserve_data.as_ref());
+            let mut state = state?.as_object()?.clone();
+            state.remove("openaiRemoteCompaction");
+            (!state.is_empty()).then_some(Value::Object(state))
+        });
+        let archive_source = snapshot
+            .previous_summary
+            .as_ref()
+            .and_then(|previous| previous.archive_image_boundary.as_ref())
+            .map(|boundary| boundary.entry_id.as_str());
+        Ok(self.append_compaction_with_preserve(
+            summary,
+            first_kept_entry_id,
+            &cumulative,
+            tokens_before,
+            preserve.as_ref(),
+            archive_source,
+        )?)
     }
 
     /// Shared source/cut validation only. Publication stays method-specific:
@@ -2375,7 +2510,12 @@ impl SessionJournal {
             return Err(CompactionCommitError::InvalidWindow);
         }
         let split = current.entries[kept].origin != NativeEntryOrigin::User;
-        if !safe_compaction_prefix(&branch[..raw_kept], split, native_replay) {
+        if !safe_compaction_prefix_with_archive(
+            &branch[..raw_kept],
+            split,
+            native_replay,
+            current.previous_summary.as_ref(),
+        ) {
             return Err(CompactionCommitError::UnsafeSummaryBoundary);
         }
         Ok(cumulative)
@@ -2530,8 +2670,20 @@ impl SessionJournal {
                     let allow_unanswered_user =
                         branch[kept_index].native_compaction_entry()?.origin != NativeEntryOrigin::User;
                     let native_replay = entry.raw["method"] == "remote"
-                        && entry.raw.get("preserveData").is_some_and(|value| !value.is_null());
-                    if !safe_compaction_prefix(&branch[..kept_index], allow_unanswered_user, native_replay) {
+                        && entry.raw.get("preserveData").is_some_and(|value| !value.is_null())
+                        || ara_snapcompact::get_preserved_archive(entry.raw.get("preserveData")).is_some();
+                    let soft =
+                        matches!(entry.raw.get("method"), None | Some(Value::Null)) || entry.raw["method"] == "soft";
+                    let migrated_archive = soft.then(|| latest.as_ref().map(|(_, summary)| summary)).flatten();
+                    let migrated_boundary = migrated_archive
+                        .filter(|summary| summary.source_entry_ids.is_some())
+                        .and_then(|summary| summary.archive_image_boundary.clone());
+                    if !safe_compaction_prefix_with_archive(
+                        &branch[..kept_index],
+                        allow_unanswered_user,
+                        native_replay,
+                        migrated_archive,
+                    ) {
                         return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
                     }
                     let tokens_before =
@@ -2545,7 +2697,7 @@ impl SessionJournal {
                     let method = match entry.raw.get("method").filter(|value| !value.is_null()) {
                         Some(method) => {
                             let method = method.as_str().ok_or_else(|| invalid("method"))?;
-                            if !matches!(method, "soft" | "handoff" | "remote") {
+                            if !matches!(method, "soft" | "handoff" | "remote" | "snapcompact") {
                                 return Err(CompactionProjectionError::UnsupportedMethod {
                                     id: entry.id.clone(),
                                     method: method.to_owned(),
@@ -2556,7 +2708,13 @@ impl SessionJournal {
                         None => "soft",
                     };
                     let file_details = handoff::native_file_details(&entry.raw);
-                    let short_summary = match (method == "remote")
+                    let archive = ara_snapcompact::get_preserved_archive(entry.raw.get("preserveData"));
+                    if archive.is_some()
+                        && entry.raw.get("preserveData").and_then(|data| data.get("openaiRemoteCompaction")).is_some()
+                    {
+                        return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
+                    }
+                    let short_summary = match matches!(method, "remote" | "snapcompact")
                         .then(|| entry.raw.get("shortSummary"))
                         .flatten()
                         .filter(|value| !value.is_null())
@@ -2584,16 +2742,25 @@ impl SessionJournal {
                     if method != "remote"
                         && (entry.raw.get("providerReplayThroughEntryId").is_some_and(|value| !value.is_null())
                             || entry.raw.get("fromExtension").and_then(Value::as_bool) == Some(true)
-                            || entry.raw.get("preserveData").is_some_and(|value| match value {
-                                Value::Null => false,
-                                Value::Object(fields) => !fields.is_empty(),
-                                _ => true,
-                            }))
+                            || archive.is_none()
+                                && entry.raw.get("preserveData").is_some_and(|value| match value {
+                                    Value::Null => false,
+                                    Value::Object(fields) => {
+                                        fields.contains_key("snapcompact")
+                                            || fields.contains_key("openaiRemoteCompaction")
+                                    }
+                                    _ => true,
+                                }))
                     {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
+                    if method == "snapcompact" && archive.is_none() {
+                        return Err(invalid("preserveData.snapcompact"));
+                    }
                     let source_entry_ids = match entry.raw.get("sourceEntryIds") {
-                        None if allow_unanswered_user || matches!(method, "handoff" | "remote") => {
+                        None if archive.is_none()
+                            && (allow_unanswered_user || matches!(method, "handoff" | "remote" | "snapcompact")) =>
+                        {
                             return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
                         }
                         None => None,
@@ -2610,6 +2777,23 @@ impl SessionJournal {
                             Some(ids)
                         }
                         Some(_) => return Err(invalid("sourceEntryIds")),
+                    };
+                    if soft && let Some(source) = entry.raw.get("archiveSourceEntryId").filter(|value| !value.is_null())
+                    {
+                        let source = source.as_str().ok_or_else(|| invalid("archiveSourceEntryId"))?;
+                        if migrated_boundary.as_ref().is_none_or(|boundary| boundary.entry_id != source) {
+                            return Err(invalid("archiveSourceEntryId"));
+                        }
+                    }
+                    let archive_image_boundary = if archive.is_some() && source_entry_ids.is_some() {
+                        Some(ArchiveImageBoundary {
+                            entry_id: entry.id.clone(),
+                            first_kept_entry_id: first_kept.to_owned(),
+                        })
+                    } else if soft && source_entry_ids.is_some() {
+                        migrated_boundary
+                    } else {
+                        None
                     };
                     let remote = if method == "remote" {
                         remote::validate_remote_entry(branch, index, kept_index, entry)?
@@ -2640,6 +2824,9 @@ impl SessionJournal {
                             method: method.to_owned(),
                             file_details,
                             remote,
+                            archive,
+                            archive_image_boundary,
+                            preserve_data: entry.raw.get("preserveData").filter(|value| !value.is_null()).cloned(),
                             source_entry_ids,
                         },
                     ));
@@ -2692,12 +2879,30 @@ impl SessionJournal {
         source_entry_ids: &[String],
         tokens_before: u64,
     ) -> Result<String> {
+        self.append_compaction_with_preserve(summary, first_kept_entry_id, source_entry_ids, tokens_before, None, None)
+    }
+
+    fn append_compaction_with_preserve(
+        &mut self,
+        summary: &str,
+        first_kept_entry_id: &str,
+        source_entry_ids: &[String],
+        tokens_before: u64,
+        preserve_data: Option<&Value>,
+        archive_source_entry_id: Option<&str>,
+    ) -> Result<String> {
         let mut f = serde_json::Map::new();
         f.insert("method".into(), json!("soft"));
         f.insert("summary".into(), json!(summary));
         f.insert("firstKeptEntryId".into(), json!(first_kept_entry_id));
         f.insert("sourceEntryIds".into(), json!(source_entry_ids));
         f.insert("tokensBefore".into(), json!(tokens_before));
+        if let Some(preserve) = preserve_data {
+            f.insert("preserveData".into(), preserve.clone());
+        }
+        if let Some(source) = archive_source_entry_id {
+            f.insert("archiveSourceEntryId".into(), json!(source));
+        }
         self.append_raw("compaction", f)
     }
 
@@ -2728,6 +2933,16 @@ impl SessionJournal {
                             remote::model_message(&s, route.expect("readable native replay has a route").0)
                         }
                         CompactedContextItem::Summary(s) if s.method == "handoff" => handoff::model_message(&s),
+                        CompactedContextItem::Summary(s) if s.archive.is_some() => {
+                            let mut message =
+                                snapcompact::model_message_from_summary(&s.summary, s.preserve_data.as_ref());
+                            if let Message::User(user) = &mut message {
+                                user.timestamp = chrono::DateTime::parse_from_rfc3339(&s.timestamp)
+                                    .map(|timestamp| timestamp.timestamp_millis())
+                                    .unwrap_or(0);
+                            }
+                            message
+                        }
                         CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
                             "[Compacted summary of earlier turns; source entries withheld]\n{}",
                             s.summary

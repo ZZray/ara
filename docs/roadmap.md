@@ -1,5 +1,16 @@
 # Delivery roadmap
 
+The current [snapcompact checkpoint](evidence/snapcompact.md) adds a neutral
+fixed Rust renderer/font crate, native archive/serialization, frame token
+accounting, image blob persistence, checked Session publication/reopen and
+reference Host frame rescue. Modules 219/0/0 and composite Windows tests
+1,616/0/20 pass. Two real CAS image tasks fail strict artifact/tool criteria;
+the dependency audit fails on the upstream unmaintained font parser. Neither
+gate is waived. CTX-SNAP-01 remains implementing. Remaining registry/auth
+callers and Core/Host contracts follow; actual image-task/account/Linux and
+dependency acceptance stays open. The 111-surface inventory remains
+17 implementing/94 open, P0/V1 accepted, P1–P6 open, RPC 27/42 and marker null.
+
 The [remote checkpoint](evidence/remote-compaction.md) adds native V1/V2 and
 generic remote wire, strict route-aware Session replay/readable fallback,
 manual/threshold/incomplete Host selection and cancellation. Modules 150/0/0,

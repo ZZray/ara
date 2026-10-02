@@ -9,7 +9,10 @@ publish.workspace = true
 [dependencies]
 ara-ai.workspace = true
 ara-prompt.workspace = true
+ara-snapcompact.workspace = true
+base64.workspace = true
 chrono.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

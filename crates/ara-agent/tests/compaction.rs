@@ -73,6 +73,8 @@ fn tool_receipt_and_failure_status_survive_summary_input() {
 fn images_and_untrusted_source_ids_fail_instead_of_losing_evidence() {
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "YWJj".into(),
             mime_type: "image/png".into(),
         })]),

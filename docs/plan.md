@@ -1,5 +1,20 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-02 (tested bounded WIP, not accepted):**
+[Snapcompact/frame rescue](evidence/snapcompact.md) has the fixed native
+renderer/fonts and Core/Session/reference-Host integration. Native module
+families pass 219/0/0; composite Windows tests pass 1,616/0/20.
+Two isolated preferred CAS image tasks fail artifact/ordering acceptance after
+seven settled calls; dependency audit fails on an upstream unmaintained font
+parser. No policy exception is added. Both gates remain required open work.
+This adds one implementing point, not a completed parent surface. The full
+inventory remains 111 surfaces, 17 implementing and 94 open. P0/V1 accepted;
+P1–P6 open; RPC 27/42 and null full marker remain. These coarse statuses and
+bounded point counts are not a weighted total completion percentage, and no
+reliable full-project ETA exists. Next: remaining registry/auth callers and
+recorded Core/Host contracts; retain failed vision acceptance, dependency
+policy resolution and Codex image transport as explicit work.
+
 **Latest checkpoint, 2026-10-02 (bounded remote WIP):**
 [Remote compaction](evidence/remote-compaction.md) adds native V1/V2 wire,
 generic full/short summary, strict same-Session replay/readable fallback,

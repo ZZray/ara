@@ -234,7 +234,12 @@ fn mistral_thinking(text: &str) -> String {
 }
 
 fn image_url(block: &crate::types::ImageContent) -> Value {
-    json!({"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", block.mime_type, block.data)}})
+    let mut image =
+        json!({"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", block.mime_type, block.data)}});
+    if let Some(detail) = &block.detail {
+        image["image_url"]["detail"] = detail.clone();
+    }
+    image
 }
 
 /// OMP `convertMessages` for the default compat profile.
@@ -1714,6 +1719,8 @@ mod tests {
                     tool_call_id: "x".into(),
                     tool_name: "read".into(),
                     content: vec![UserBlock::Image(crate::types::ImageContent {
+                        detail: None,
+                        compaction_frame: false,
                         mime_type: "image/png".into(),
                         data: "aGVsbG8=".into(),
                     })],

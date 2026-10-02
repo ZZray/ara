@@ -506,7 +506,12 @@ async fn one_shot_rejects_incomplete_empty_tool_and_error_responses() {
     let mut mismatch = AssistantMessage::empty("openai-completions", "test", "summary-model");
     mismatch.content.push(AssistantBlock::text("looks done"));
     let mut image = AssistantMessage::empty("openai-completions", "test", "summary-model");
-    image.content.push(AssistantBlock::Image(ImageContent { data: "YWJj".into(), mime_type: "image/png".into() }));
+    image.content.push(AssistantBlock::Image(ImageContent {
+        detail: None,
+        compaction_frame: false,
+        data: "YWJj".into(),
+        mime_type: "image/png".into(),
+    }));
     let mut huge = AssistantMessage::empty("openai-completions", "test", "summary-model");
     huge.content.push(AssistantBlock::text("x".repeat(1_000_001)));
     let mut misleading = AssistantMessage::empty("openai-completions", "test", "summary-model");
@@ -845,6 +850,8 @@ async fn native_raw_entry_summary_call_module_families() {
         let image = || {
             Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    detail: None,
+                    compaction_frame: false,
                     data: "AA==".into(),
                     mime_type: "image/png".into(),
                 })]),
@@ -876,6 +883,8 @@ async fn native_raw_entry_summary_call_module_families() {
         if case == "history-image" {
             let Message::User(user) = &mut groups[0][0] else { unreachable!() };
             user.content = UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                detail: None,
+                compaction_frame: false,
                 data: "AA==".into(),
                 mime_type: "image/png".into(),
             })]);

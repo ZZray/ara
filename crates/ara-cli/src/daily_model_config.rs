@@ -486,6 +486,9 @@ pub fn resolve_daily_selection(
     }
     let mut metadata = json!({"provider":execution_model.provider,"id":execution_model.id,
         "api":execution_model.api,"contextWindow":execution_model.context_window});
+    if let Some(input) = model.get("input") {
+        metadata["input"] = input.clone();
+    }
     let bundled_remote = {
         crate::model_identity::bundled_model_list()
             .iter()
@@ -548,7 +551,7 @@ const PROMOTION_ROUTE_ENV: &[&str] = &[
 
 fn promotion_metadata(row: &Value) -> Value {
     let mut metadata = json!({});
-    for field in ["provider", "id", "api", "contextWindow", "contextPromotionTarget", "remoteCompaction"] {
+    for field in ["provider", "id", "api", "input", "contextWindow", "contextPromotionTarget", "remoteCompaction"] {
         if let Some(value) = row.get(field) {
             metadata[field] = value.clone();
         }

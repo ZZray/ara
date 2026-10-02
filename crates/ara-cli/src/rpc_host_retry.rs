@@ -171,7 +171,12 @@ mod tests {
         );
         for block in [
             AssistantBlock::text("delivered"),
-            AssistantBlock::Image(ImageContent { data: "opaque".into(), mime_type: "image/png".into() }),
+            AssistantBlock::Image(ImageContent {
+                data: "opaque".into(),
+                mime_type: "image/png".into(),
+                detail: None,
+                compaction_frame: false,
+            }),
         ] {
             message.content = vec![block];
             assert_eq!(disposition(&message, &[user.clone(), Message::Assistant(message.clone())], &class), None);

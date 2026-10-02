@@ -89,7 +89,10 @@ def main() -> int:
     # Only compile the selected module executables here. The optional backend
     # gate owns the complete all-target build/test once the batch is stable.
     for target in sorted({target for _, target in selected.values()}):
-        compile_command.extend(("--test", target))
+        if target == "@lib":
+            compile_command.append("--lib")
+        else:
+            compile_command.extend(("--test", target))
     compile_command.extend(("--all-features", "--locked", "--no-run", "--message-format=json"))
     code, compiler = run("compile", compile_command)
     binaries = {}
@@ -99,8 +102,10 @@ def main() -> int:
         package_names = {package["id"]: package["name"] for package in metadata["packages"]}
         for line in compiler.splitlines():
             message = json.loads(line)
-            if message.get("reason") == "compiler-artifact" and message.get("executable") and "test" in message["target"]["kind"]:
-                binaries[(package_names[message["package_id"]], message["target"]["name"])] = message["executable"]
+            if message.get("reason") == "compiler-artifact" and message.get("executable") and message.get("profile", {}).get("test"):
+                kind = message["target"]["kind"]
+                target = "@lib" if "lib" in kind else message["target"]["name"]
+                binaries[(package_names[message["package_id"]], target)] = message["executable"]
         for module, (package, target) in selected.items():
             if (package, target) not in binaries:
                 code = 126

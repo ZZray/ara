@@ -11,6 +11,11 @@ ARA contains Rust translations of behavior from [Oh My Pi](https://github.com/ca
 - `crates/ara-agent`: from `packages/agent`. `prompts/` includes the pinned compaction summary templates listed in its README.
 - `crates/ara-ctok`: Claude token-count reconstruction adapted from fixed OMP `crates/pi-natives/src/utok/{claude,utf.rs}`. The two embedded ctok vocabularies and reference fixtures come from that same commit. `crates/ara-ctok/data/LICENSE.ctok` preserves the additional MIT notice for the measured vocabulary and reconstruction; ARA replaces upstream's nightly-only `xutf` calls with stable Unicode crates.
 - `crates/ara-session`: from `packages/coding-agent` session storage.
+- `crates/ara-snapcompact`: from fixed `packages/snapcompact` and
+  `crates/pi-natives/src/snapcompact.rs`, including its native renderer,
+  prompts, shape table and tests. Bundled X.org BDF and unscii fonts retain
+  their source notices. Silver is licensed separately under CC BY 4.0;
+  its complete attribution is in `crates/ara-snapcompact/src/fonts/Silver.LICENSE`.
 - `crates/ara-tools`: from the `packages/coding-agent` tools, plus Rust adapted from `crates/pi-natives` (`grep.rs`, `glob.rs`, `glob_util.rs`, `edit.rs`).
 - `crates/ara-walk`: from `crates/pi-walker` (ignore-state traversal).
 - `crates/vendor/ara-diff`, `crates/vendor/ara-ast`, `crates/vendor/ara-edit`: upstream crates `crates/pi-diff`, `crates/pi-ast` and `crates/pi-edit`, copied verbatim except for the ARA renaming and the local modifications listed in `crates/vendor/README.md` (`ara-ast` also carries upstream `pi-ast`'s own `LICENSE`).

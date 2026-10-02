@@ -434,7 +434,12 @@ mod tests {
             tokio::spawn(async move {
                 let mut partial = AssistantMessage::empty(&model.api, &model.provider, &model.id);
                 assert!(sink.push(AssistantMessageEvent::Start { partial: partial.clone() }).await);
-                let image = ImageContent { data: "YQ==".into(), mime_type: "image/png".into() };
+                let image = ImageContent {
+                    detail: None,
+                    compaction_frame: false,
+                    data: "YQ==".into(),
+                    mime_type: "image/png".into(),
+                };
                 partial.content.push(AssistantBlock::Image(image.clone()));
                 assert!(
                     sink.push(AssistantMessageEvent::ImageEnd {

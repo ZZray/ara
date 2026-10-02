@@ -98,7 +98,12 @@ fn persists_one_custom_entry_and_reopens_without_skill_file() {
 fn block_content_and_images_remain_typed_without_details_in_model() {
     let content = UserContent::Blocks(vec![
         UserBlock::text("instructions"),
-        UserBlock::Image(ImageContent { data: "aGVsbG8=".into(), mime_type: "image/png".into() }),
+        UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
+            data: "aGVsbG8=".into(),
+            mime_type: "image/png".into(),
+        }),
     ]);
     let prompt = UserSkillPrompt {
         content: content.clone(),
@@ -125,7 +130,12 @@ fn image_bearing_skill_is_not_summarized_by_text_only_compaction() {
     let prompt = UserSkillPrompt {
         content: UserContent::Blocks(vec![
             UserBlock::text("inspect image"),
-            UserBlock::Image(ImageContent { data: "aGVsbG8=".into(), mime_type: "image/png".into() }),
+            UserBlock::Image(ImageContent {
+                detail: None,
+                compaction_frame: false,
+                data: "aGVsbG8=".into(),
+                mime_type: "image/png".into(),
+            }),
         ]),
         details: None,
         timestamp: TIMESTAMP,

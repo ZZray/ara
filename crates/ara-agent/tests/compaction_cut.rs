@@ -340,6 +340,8 @@ fn rejects_invalid_first_kept_id_and_noncomplete_history() {
 fn structural_boundary_does_not_claim_prompt_payload_support() {
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "YWJj".into(),
             mime_type: "image/png".into(),
         })]),
@@ -432,6 +434,8 @@ fn keeps_an_unfinished_tool_tail_raw_and_reports_oversized_recent_turn() {
 fn refuses_a_cut_whose_summary_prompt_cannot_preserve_its_source() {
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "YWJj".into(),
             mime_type: "image/png".into(),
         })]),
@@ -449,6 +453,8 @@ fn refuses_a_cut_whose_summary_prompt_cannot_preserve_its_source() {
 fn falls_back_to_an_earlier_boundary_to_keep_unsupported_content_raw() {
     let image = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+            detail: None,
+            compaction_frame: false,
             data: "YWJj".into(),
             mime_type: "image/png".into(),
         })]),
@@ -559,6 +565,8 @@ fn native_cut_preserves_summary_safety_and_exact_snapshot_ids() {
         if case == "image" {
             messages[0] = Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    detail: None,
+                    compaction_frame: false,
                     data: "AA==".into(),
                     mime_type: "image/png".into(),
                 })]),
@@ -758,6 +766,8 @@ fn native_raw_entry_summary_preserves_group_identity_and_safety_module() {
             "forged-origin" => groups[2] = vec![assistant(StopReason::Stop, None)],
             "image" => groups[2].push(Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    detail: None,
+                    compaction_frame: false,
                     data: "AA==".into(),
                     mime_type: "image/png".into(),
                 })]),

@@ -1,6 +1,6 @@
 use ara_agent::tokenizer::{
-    EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, ModelContentCount, count_fragments, count_message,
-    count_messages, count_model_fragments, count_text,
+    EstimateMode, IMAGE_TOKEN_ESTIMATE, MessageCountOptions, ModelContentCount, SNAPCOMPACT_FRAME_TOKEN_ESTIMATE,
+    count_fragments, count_message, count_messages, count_model_fragments, count_text,
 };
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, Message, Model, ModelTokenizer, TextContent,
@@ -9,7 +9,7 @@ use ara_ai::{
 use serde_json::{Map, Value};
 
 fn image() -> ImageContent {
-    ImageContent { data: "AA==".into(), mime_type: "image/png".into() }
+    ImageContent { detail: None, compaction_frame: false, data: "AA==".into(), mime_type: "image/png".into() }
 }
 
 fn model(tokenizer: Option<ModelTokenizer>) -> Model {
@@ -70,6 +70,23 @@ fn estimates_supported_message_blocks_without_stale_cache() {
     }
     // The fixed OMP implementation estimates user text but not user images.
     assert_eq!(count_message(&user, MessageCountOptions::default()), 2);
+
+    if let Message::User(message) = &mut user {
+        let mut frame = image();
+        frame.compaction_frame = true;
+        frame.detail = Some(serde_json::json!("original"));
+        message.content = UserContent::Blocks(vec![
+            UserBlock::text("abcde"),
+            UserBlock::Image(image()),
+            UserBlock::Image(frame.clone()),
+            UserBlock::Image(frame),
+        ]);
+    }
+    assert_eq!(
+        count_message(&user, MessageCountOptions::default()),
+        2 + 2 * SNAPCOMPACT_FRAME_TOKEN_ESTIMATE,
+        "derived archive frames count 5024 each; original user pictures remain zero"
+    );
 
     let developer = Message::Developer(DeveloperMessage { content: UserContent::Text("测试".into()), timestamp: 0 });
     assert_eq!(count_message(&developer, MessageCountOptions::default()), 2);

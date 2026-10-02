@@ -196,6 +196,7 @@ pub(super) struct RecoveryCompactionSettings {
     pub supersede_reads: bool,
     pub drop_useless: bool,
     pub handoff_save_to_disk: bool,
+    pub snapcompact_shape: String,
     pub remote: ara_agent::remote::RemoteSettings,
 }
 
@@ -248,12 +249,29 @@ impl AutoCompactionPolicy {
                 Some(_) => bail!("compaction.{name} must be a boolean"),
             }
         };
+        let snapcompact = loaded
+            .as_ref()
+            .and_then(|(document, _)| document.as_hash())
+            .and_then(|root| root.get(&Yaml::String("snapcompact".into())));
+        let snapcompact_shape = match snapcompact {
+            None | Some(Yaml::Null) => "auto".to_owned(),
+            Some(value) => match value
+                .as_hash()
+                .context("snapcompact settings must be a mapping")?
+                .get(&Yaml::String("shape".into()))
+            {
+                None | Some(Yaml::Null) => "auto".to_owned(),
+                Some(Yaml::String(shape)) => shape.clone(),
+                Some(_) => bail!("snapcompact.shape must be a string"),
+            },
+        };
         Ok(RecoveryCompactionSettings {
             reserve_tokens,
             soft_available: method_order.iter().any(|method| method == "soft"),
             method_order,
             supersede_reads: boolean("supersedeReads")?,
             drop_useless: boolean("dropUseless")?,
+            snapcompact_shape,
             handoff_save_to_disk: match field("handoffSaveToDisk") {
                 None | Some(Yaml::Null) => false,
                 Some(Yaml::Boolean(enabled)) => *enabled,

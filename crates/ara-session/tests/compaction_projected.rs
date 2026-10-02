@@ -80,6 +80,94 @@ fn consecutive_soft_summaries_preserve_cumulative_raw_sources_and_reopen_project
     assert_eq!(fs::read(&path).unwrap(), bytes);
 }
 
+#[test]
+fn verified_archive_migrates_opaque_metadata_across_two_soft_summaries_without_admitting_new_images() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+    let picture =
+        || ImageContent { data: "AQI=".into(), mime_type: "image/png".into(), detail: None, compaction_frame: false };
+    let first = [
+        journal
+            .append_message(&Message::User(UserMessage {
+                content: UserContent::Blocks(vec![
+                    UserBlock::text("prior source picture"),
+                    UserBlock::Image(picture()),
+                ]),
+                synthetic: None,
+                timestamp: 1,
+            }))
+            .unwrap(),
+        journal.append_message(&assistant("prior source read")).unwrap(),
+    ];
+    let second = turn(&mut journal, "second retained");
+    let snapshot = journal.native_snapcompact_snapshot().unwrap();
+    let archive = ara_session::NativeSnapcompactSummary {
+        summary: "Archive caption".into(),
+        short_summary: None,
+        preserve_data: Some(
+            json!({"snapcompact":{"text":"Full retained archive source.","textHead":"Full retained archive source.",
+            "frames":[{"data":"AQI=","mimeType":"image/png","chars":1,"cols":1,"rows":1}]},
+            "opaqueHostState":{"marker":"unchanged","nested":[1,2,3]}}),
+        ),
+        read_files: vec![],
+        modified_files: vec![],
+    };
+    let archive_id = journal.commit_native_entry_snapcompact(&snapshot, &archive, &second[0], &first, 200).unwrap();
+    let third = turn(&mut journal, "third retained");
+    let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+    let before = journal.entries().to_vec();
+    let disk = fs::read(journal.path()).unwrap();
+    assert!(matches!(
+        journal.commit_native_entry_compaction(&snapshot, "", &third[0], &second, 100),
+        Err(CompactionCommitError::InvalidSummary)
+    ));
+    assert_eq!(journal.entries(), before);
+    assert_eq!(fs::read(journal.path()).unwrap(), disk, "failure keeps the old frame archive");
+    journal
+        .commit_native_entry_compaction(&snapshot, "Archive plus second completed", &third[0], &second, 100)
+        .unwrap();
+    let mut journal = SessionJournal::open(journal.path()).unwrap();
+    let raw = &journal.entries().last().unwrap().raw;
+    assert_eq!(raw["preserveData"], json!({"opaqueHostState":{"marker":"unchanged","nested":[1,2,3]}}));
+    assert_eq!(raw["archiveSourceEntryId"], archive_id);
+    let fourth = turn(&mut journal, "fourth retained");
+    let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+    journal
+        .commit_native_entry_compaction(&snapshot, "Archive plus second and third completed", &fourth[0], &third, 80)
+        .unwrap();
+    let mut journal = SessionJournal::open(journal.path()).unwrap();
+    assert_eq!(journal.entries().last().unwrap().raw["archiveSourceEntryId"], archive_id);
+    assert_eq!(
+        journal
+            .native_projected_compaction_snapshot()
+            .unwrap()
+            .previous_summary
+            .unwrap()
+            .archive_image_boundary
+            .unwrap()
+            .entry_id,
+        archive_id
+    );
+    // The grant describes prior archive coverage, never the current new window.
+    let new_picture_id = journal
+        .append_message(&Message::User(UserMessage {
+            content: UserContent::Blocks(vec![UserBlock::Image(picture())]),
+            synthetic: None,
+            timestamp: 1,
+        }))
+        .unwrap();
+    let new_answer_id = journal.append_message(&assistant("new picture processed")).unwrap();
+    let fifth = turn(&mut journal, "fifth retained");
+    let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+    let window = fourth.into_iter().chain([new_picture_id, new_answer_id]).collect::<Vec<_>>();
+    let disk = fs::read(journal.path()).unwrap();
+    assert!(matches!(
+        journal.commit_native_entry_compaction(&snapshot, "cannot hide the new picture", &fifth[0], &window, 60),
+        Err(CompactionCommitError::UnsafeSummaryBoundary)
+    ));
+    assert_eq!(fs::read(journal.path()).unwrap(), disk);
+}
+
 /// Fixed native cuts can summarize a user prompt before its answer, then
 /// summarize that retained Assistant on the next cut without losing raw IDs.
 #[test]
@@ -270,7 +358,8 @@ fn receipt(id: &str, details: Option<Value>) -> Message {
 
 #[test]
 fn commit_cannot_hide_images_unpaired_calls_or_unknown_effect_receipts() {
-    let image = ImageContent { data: "YWJj".into(), mime_type: "image/png".into() };
+    let image =
+        ImageContent { detail: None, compaction_frame: false, data: "YWJj".into(), mime_type: "image/png".into() };
     let image_user = Message::User(UserMessage {
         content: UserContent::Blocks(vec![UserBlock::Image(image.clone())]),
         synthetic: None,

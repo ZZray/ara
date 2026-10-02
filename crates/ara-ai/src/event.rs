@@ -186,7 +186,8 @@ mod tests {
 
     #[test]
     fn image_end_keeps_content_and_current_snapshot() {
-        let image = ImageContent { data: "YQ==".into(), mime_type: "image/png".into() };
+        let image =
+            ImageContent { detail: None, compaction_frame: false, data: "YQ==".into(), mime_type: "image/png".into() };
         let mut partial = AssistantMessage::empty("openai-completions", "fake", "model");
         partial.content.push(AssistantBlock::Image(image.clone()));
         let event = AssistantMessageEvent::ImageEnd { content_index: 0, content: image, partial: partial.clone() };

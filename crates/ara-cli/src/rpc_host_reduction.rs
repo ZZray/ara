@@ -279,6 +279,18 @@ impl Host {
         if self.connection.is_cancelled() {
             return Ok(false);
         }
+        // A failed-assistant owner must be consumed after an archive append
+        // before any further raw edits. Its call site performs tier zero first.
+        let rescued_archive = if recovery.is_none() {
+            self.rescue_snapcompact_frames(reserve, threshold.map(|(limit, _)| limit), pending).await?
+        } else {
+            None
+        };
+        if rescued_archive.is_some()
+            && self.recovery_fits(reserve, threshold.map(|(limit, _)| (limit, 0)), pending).await
+        {
+            return Ok(true);
+        }
         if !skip_elide {
             let changed = self.shake_local_history(true, recovery.as_deref_mut()).await?;
             if changed {
@@ -309,6 +321,10 @@ impl Host {
         if changed {
             self.rebase_local_context().await;
         }
-        Ok(changed && self.recovery_fits(reserve, threshold.map(|(limit, _)| (limit, 0)), pending).await)
+        let fits = changed && self.recovery_fits(reserve, threshold.map(|(limit, _)| (limit, 0)), pending).await;
+        if !fits && let Some(entry_id) = rescued_archive {
+            self.stamp_frame_dead_end(&entry_id, threshold.is_none()).await?;
+        }
+        Ok(fits)
     }
 }

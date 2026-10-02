@@ -10,6 +10,7 @@ members = [
   "crates/ara-prompt",
   "crates/ara-rpc",
   "crates/ara-session",
+  "crates/ara-snapcompact",
   "crates/ara-tools",
   "crates/ara-testkit",
   "crates/ara-walk",
@@ -35,6 +36,7 @@ ara-ai = { path = "crates/ara-ai" }
 ara-agent = { path = "crates/ara-agent" }
 ara-mcp = { path = "crates/ara-mcp" }
 ara-session = { path = "crates/ara-session" }
+ara-snapcompact = { path = "crates/ara-snapcompact" }
 ara-tools = { path = "crates/ara-tools" }
 ara-testkit = { path = "crates/ara-testkit" }
 ara-walk = { path = "crates/ara-walk" }
@@ -49,6 +51,8 @@ ara-diff = { path = "crates/vendor/ara-diff" }
 ara-edit = { path = "crates/vendor/ara-edit" }
 anyhow = "1"
 base64 = "0.22"
+fontdue = { version = "0.9", default-features = false }
+png = "0.18"
 async-trait = "0.1"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

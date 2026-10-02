@@ -996,7 +996,12 @@ async fn prepared_text_observation_matches_retried_wire_body() {
             Message::User(UserMessage {
                 content: UserContent::Blocks(vec![
                     UserBlock::text("ask"),
-                    UserBlock::Image(ImageContent { data: "YWJj".into(), mime_type: "image/png".into() }),
+                    UserBlock::Image(ImageContent {
+                        detail: None,
+                        compaction_frame: false,
+                        data: "YWJj".into(),
+                        mime_type: "image/png".into(),
+                    }),
                 ]),
                 synthetic: None,
                 timestamp: 0,
@@ -1008,7 +1013,12 @@ async fn prepared_text_observation_matches_retried_wire_body() {
                 content: vec![
                     UserBlock::text("one"),
                     UserBlock::text("two"),
-                    UserBlock::Image(ImageContent { data: "YWJj".into(), mime_type: "image/png".into() }),
+                    UserBlock::Image(ImageContent {
+                        detail: None,
+                        compaction_frame: false,
+                        data: "YWJj".into(),
+                        mime_type: "image/png".into(),
+                    }),
                 ],
                 details: None,
                 is_error: false,

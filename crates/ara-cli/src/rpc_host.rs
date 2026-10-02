@@ -21,6 +21,8 @@ mod maintenance;
 mod reduction;
 #[path = "rpc_host_remote.rs"]
 mod remote;
+#[path = "rpc_host_snapcompact.rs"]
+mod snapcompact;
 use super::rpc_host_tools::{HostToolDefinition, ToolBridge, normalize_host_tool_definitions};
 use super::rpc_host_uris::UriBridge;
 use anyhow::{Context as _, Result, bail};
@@ -343,7 +345,12 @@ impl Command {
                 .iter()
                 .map(|image| {
                     let image = Command::new(image.clone());
-                    Ok(ImageContent { data: image.string("data")?, mime_type: image.string("mimeType")? })
+                    Ok(ImageContent {
+                        data: image.string("data")?,
+                        mime_type: image.string("mimeType")?,
+                        detail: None,
+                        compaction_frame: false,
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?,
             Some(_) => bail!("images must be an array"),
@@ -1147,7 +1154,6 @@ impl Host {
         self.abort().await;
         // Fixed manual compaction selects remote/snapcompact/soft in the
         // configured order. Handoff and shake belong to automatic recovery.
-        // Snapcompact retains its separately recorded unported gate.
         let result = async {
             let settings = self.compaction_policy.recovery_settings()?;
             for method in &settings.method_order {
@@ -1170,6 +1176,18 @@ impl Host {
                         }
                         Err(_) => self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                             "message":"Remote compaction failed; trying the next preferred method"})),
+                    }
+                } else if method == "snapcompact" && focus.is_none_or(str::is_empty) {
+                    match Box::pin(self.snapcompact_history(&[])).await {
+                        Ok(Some(summary)) => return Ok(summary),
+                        Ok(None) => {}
+                        Err(error) if self.maintenance_stop_requested() || ara_cli::handoff::is_cancelled(&error) => {
+                            return Err(error);
+                        }
+                        Err(error) => {
+                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                            "message":format!("Snapcompact failed ({error}); trying the next preferred method")}))
+                        }
                     }
                 } else if method == "soft" {
                     // Keep large split/fold state off the shared command future.
@@ -1220,7 +1238,9 @@ impl Host {
             // Check recovery/admission before billing or changing the journal.
             self.agent.replace_idle_messages(current.clone())?;
             let snapshot = self.session.journal.lock().await.native_projected_compaction_snapshot()?;
-            let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
+            let previous =
+                snapshot.previous_summary.as_ref().map(|summary| summary.previous_summary_for_text_compaction());
+            let previous = previous.as_deref();
             let sources = ara_cli::native_compaction::sources(&snapshot.entries);
             let cut = select_native_entry_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
                 .map_err(|error| anyhow::anyhow!("{error}"))?
@@ -1332,8 +1352,10 @@ impl Host {
         if self.auto_compaction_checked.as_ref() == Some(&key) {
             return true;
         }
+        let initial_leaf = key.1.clone();
         self.auto_compaction_checked = Some(key);
         self.output.frame(json!({"type":"auto_compaction_start","reason":"threshold","action":"context-full"}));
+        let mut no_progress = false;
         let result = async {
             let settings = self.compaction_policy.recovery_settings()?;
             let floor = self
@@ -1385,12 +1407,45 @@ impl Host {
                             .await?;
                     }
                     if !progress {
+                        no_progress = true;
                         bail!("Remote compaction could not create recovery headroom; automatic continuation stopped");
                     }
                     if self.maintenance_stop_requested() {
                         return Err(ara_cli::handoff::cancelled());
                     }
                     return Ok::<_, anyhow::Error>(summary);
+                } else if method == "snapcompact" {
+                    if !ara_cli::snapcompact::supports_images(self.sessions.provider.metadata.as_ref()) { continue; }
+                    let attempt = Box::pin(self.snapcompact_history(pending)).await;
+                    let summary = match attempt {
+                        Ok(Some(summary)) => Some(summary),
+                        Ok(None) => None,
+                        Err(error) if self.maintenance_stop_requested() || ara_cli::handoff::is_cancelled(&error) => {
+                            return Err(error);
+                        }
+                        Err(error) => {
+                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
+                                "message":format!("Snapcompact unavailable ({error}); trying the next preferred method")}));
+                            continue;
+                        }
+                    };
+                    progress = self.recovery_fits(settings.reserve_tokens, Some((threshold, 0)), pending).await;
+                    if !progress {
+                        progress = self.rescue_local_history(settings.reserve_tokens, Some((threshold, 0)),
+                            ran_shake, pending, None).await?;
+                    }
+                    if let Some(summary) = summary {
+                        if !progress {
+                            no_progress = true;
+                            let latest = self.session.journal.lock().await.native_snapcompact_snapshot()?
+                                .projection.previous_summary.map(|summary| summary.entry_id);
+                            if let Some(entry_id) = latest {
+                                self.stamp_frame_dead_end(&entry_id, false).await?;
+                            }
+                            bail!("Snapcompact could not create recovery headroom; automatic continuation stopped")
+                        }
+                        return Ok::<_, anyhow::Error>(summary);
+                    }
                 } else if method == "handoff" {
                     let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
                     let summary = match handoff {
@@ -1418,6 +1473,7 @@ impl Host {
                             .await?;
                     }
                     if !progress {
+                        no_progress = true;
                         bail!("Handoff could not create recovery headroom; automatic continuation stopped");
                     }
                     return Ok::<_, anyhow::Error>(summary);
@@ -1447,6 +1503,7 @@ impl Host {
                             .await?;
                     }
                     if !progress {
+                        no_progress = true;
                         bail!("Compaction could not create recovery headroom; automatic continuation stopped");
                     }
                     return Ok::<_, anyhow::Error>(summary);
@@ -1458,6 +1515,7 @@ impl Host {
                     .await?;
             }
             if !progress {
+                no_progress = true;
                 bail!("Local maintenance could not create recovery headroom; automatic continuation stopped");
             }
             Ok(json!({"method":"shake","tokensAfter":self.context_tokens(&self.agent.messages().await, pending).await}))
@@ -1471,7 +1529,34 @@ impl Host {
             Ok(result) => event["result"] = result,
             Err(error) => event["errorMessage"] = json!(super::sanitize_text(&error.to_string())),
         }
+        if no_progress && !self.maintenance_stop_requested() {
+            let journal = self.session.journal.lock().await;
+            if journal.leaf_id() != initial_leaf.as_deref()
+                && let Ok(snapshot) = journal.native_snapcompact_snapshot()
+                && let Some(summary) = snapshot.projection.previous_summary.filter(|summary| summary.archive.is_some())
+            {
+                let mut published = json!({"summary":summary.summary,"shortSummary":summary.short_summary,
+                    "method":"snapcompact","entryId":summary.entry_id,"firstKeptEntryId":summary.first_kept_entry_id,
+                    "tokensBefore":summary.tokens_before});
+                if let Some(preserve) = summary.preserve_data_without_archive() {
+                    published["preserveData"] = preserve;
+                }
+                event["result"] = published;
+            }
+        }
         self.output.frame(event);
+        if no_progress && !self.maintenance_stop_requested() {
+            let journal = self.session.journal.lock().await;
+            let published_warning = (journal.leaf_id() != initial_leaf.as_deref())
+                .then(|| journal.native_snapcompact_snapshot().ok())
+                .flatten()
+                .and_then(|snapshot| snapshot.projection.previous_summary)
+                .and_then(|summary| journal.entries().iter().find(|entry| entry.id == summary.entry_id))
+                .and_then(|entry| entry.raw["warning"].as_str())
+                .filter(|warning| warning.starts_with("Compaction freed too little context to make progress"));
+            let warning = published_warning.map(str::to_owned).unwrap_or_else(|| snapcompact::dead_end_warning(None));
+            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction","message":warning}));
+        }
         ready && !cancelled
     }
 
@@ -1767,7 +1852,14 @@ impl Host {
             .sessions
             .dir
             .as_ref()
-            .map(|dir| SessionJournal::create_with_parent(dir, &self.sessions.cwd, parent))
+            .map(|dir| {
+                SessionJournal::create_with_parent_and_blob_directory(
+                    dir,
+                    &self.sessions.cwd,
+                    parent,
+                    &super::ara_blobs_directory(),
+                )
+            })
             .transpose()?;
         if let Some(journal) = journal.as_mut() {
             journal.append_model_change(&format!("{}/{}", config.model.provider, config.model.id))?;
@@ -1789,7 +1881,8 @@ impl Host {
         }
         // Join before opening, including a current lazy journal which was not
         // on disk before its accepted Run's final cancellation receipt.
-        let mut journal = SessionJournal::open(&path).with_context(|| format!("opening session {}", path.display()))?;
+        let mut journal = SessionJournal::open_with_blob_directory(&path, &super::ara_blobs_directory())
+            .with_context(|| format!("opening session {}", path.display()))?;
         if let Some(cwd) = journal.header().get("cwd").and_then(Value::as_str)
             && lexical_absolute(std::path::Path::new(cwd))? != lexical_absolute(&self.sessions.cwd)?
         {
