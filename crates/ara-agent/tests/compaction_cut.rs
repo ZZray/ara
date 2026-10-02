@@ -1,6 +1,8 @@
 use ara_agent::compaction::{
-    SummaryInputError, SummarySource, WholeTurnCutCandidate, WholeTurnCutSelection, explain_no_whole_turn_cut,
-    select_native_compaction_cut, select_whole_turn_cut, serialize_sources_for_summary, whole_turn_cut_candidates,
+    NativeEntryOrigin, NativeEntrySource, SummaryInputError, SummarySource, WholeTurnCutCandidate,
+    WholeTurnCutSelection, explain_no_whole_turn_cut, select_native_compaction_cut, select_native_entry_compaction_cut,
+    select_whole_turn_cut, serialize_native_entry_sources_for_summary, serialize_sources_for_summary,
+    whole_turn_cut_candidates,
 };
 use ara_agent::tokenizer::{MessageCountOptions, count_message};
 use ara_ai::{
@@ -587,5 +589,279 @@ fn native_cut_preserves_summary_safety_and_exact_snapshot_ids() {
             },
             "{case}"
         );
+    }
+}
+
+// Fixed raw findCutPoint families: metadata anchors, raw custom backtracking,
+// legacy role candidates and turn starts are independent of model wire roles.
+#[test]
+fn native_raw_entry_cut_module_families() {
+    use NativeEntryOrigin as O;
+    for case in [
+        "metadata-user",
+        "metadata-assistant",
+        "custom-backtrack",
+        "branch-backtrack",
+        "bash",
+        "hook",
+        "legacy-custom",
+        "legacy-branch",
+        "legacy-compaction",
+        "skill",
+        "steering",
+        "loopguard",
+    ] {
+        let (origins, groups) = match case {
+            "metadata-user" => (
+                vec![O::User, O::Assistant, O::Metadata, O::User, O::Assistant],
+                vec![
+                    vec![user("old")],
+                    vec![assistant(StopReason::Stop, None)],
+                    vec![],
+                    vec![user("next")],
+                    vec![assistant(StopReason::Stop, None)],
+                ],
+            ),
+            "metadata-assistant" => (
+                vec![O::User, O::Assistant, O::User, O::Metadata, O::Assistant],
+                vec![
+                    vec![user("old")],
+                    vec![assistant(StopReason::Stop, None)],
+                    vec![user("next")],
+                    vec![],
+                    vec![assistant(StopReason::Stop, None)],
+                ],
+            ),
+            "custom-backtrack" | "branch-backtrack" => (
+                vec![
+                    O::User,
+                    O::Assistant,
+                    if case == "custom-backtrack" { O::CustomMessage } else { O::BranchSummary },
+                    O::Metadata,
+                    O::User,
+                    O::Assistant,
+                ],
+                vec![
+                    vec![user("old")],
+                    vec![assistant(StopReason::Stop, None)],
+                    vec![if case == "custom-backtrack" { developer("custom note") } else { user("branch note") }],
+                    vec![],
+                    vec![user("next")],
+                    vec![assistant(StopReason::Stop, None)],
+                ],
+            ),
+            _ => {
+                let origin = match case {
+                    "bash" => O::BashExecution,
+                    "hook" => O::HookMessage,
+                    "legacy-custom" => O::LegacyCustomMessage,
+                    "legacy-branch" => O::LegacyBranchSummary,
+                    "legacy-compaction" => O::LegacyCompactionSummary,
+                    "skill" => O::UserSkill,
+                    "steering" => O::SteeringUser,
+                    "loopguard" => O::LoopGuardNotice,
+                    _ => unreachable!(),
+                };
+                let message = if matches!(origin, O::HookMessage | O::LegacyCustomMessage | O::LoopGuardNotice) {
+                    developer("historical custom")
+                } else {
+                    user("historical context")
+                };
+                (
+                    vec![O::User, O::Assistant, origin, O::Assistant],
+                    vec![
+                        vec![user("old")],
+                        vec![assistant(StopReason::Stop, None)],
+                        vec![message],
+                        vec![assistant(StopReason::Stop, None)],
+                    ],
+                )
+            }
+        };
+        let ids = (0..groups.len()).map(|index| format!("raw-{index}")).collect::<Vec<_>>();
+        let raw_tokens = origins
+            .iter()
+            .map(|origin| {
+                if matches!(
+                    origin,
+                    O::User
+                        | O::Assistant
+                        | O::BashExecution
+                        | O::HookMessage
+                        | O::LegacyCustomMessage
+                        | O::LegacyBranchSummary
+                        | O::LegacyCompactionSummary
+                ) {
+                    10
+                } else {
+                    0
+                }
+            })
+            .collect::<Vec<_>>();
+        let target = match case {
+            "metadata-user" | "custom-backtrack" | "branch-backtrack" | "bash" | "hook" | "legacy-custom"
+            | "legacy-branch" | "legacy-compaction" => 20,
+            _ => 10,
+        };
+        let sources = ids
+            .iter()
+            .zip(origins.iter())
+            .zip(groups.iter())
+            .zip(raw_tokens.iter())
+            .map(|(((entry_id, &origin), messages), &raw_message_tokens)| NativeEntrySource {
+                entry_id,
+                origin,
+                messages,
+                raw_message_tokens,
+            })
+            .collect::<Vec<_>>();
+        let cut = select_native_entry_compaction_cut(&sources, target, None).unwrap().unwrap();
+        let expected = match case {
+            "metadata-assistant" | "legacy-custom" => 3,
+            _ => 2,
+        };
+        assert_eq!(cut.first_kept_index, expected, "{case}");
+        assert_eq!(cut.first_kept_entry_id, ids[expected], "{case}: real raw anchor");
+        let turn = match case {
+            "metadata-user" | "hook" | "legacy-custom" | "legacy-branch" | "legacy-compaction" => 0,
+            _ => 2,
+        };
+        assert_eq!(cut.turn_start_index, Some(turn), "{case}");
+        assert_eq!(cut.history_end_index, turn, "{case}");
+        assert_eq!(cut.estimated_retained_raw_tokens, if case == "legacy-custom" { 10 } else { target }, "{case}");
+        assert!(!cut.estimated_retained_exceeds_target);
+    }
+}
+
+#[test]
+fn native_raw_entry_summary_preserves_group_identity_and_safety_module() {
+    use NativeEntryOrigin as O;
+    for case in
+        ["custom", "loopguard", "true-developer", "forged-origin", "duplicate", "image", "unknown-tool", "group-limit"]
+    {
+        let mut groups = vec![
+            vec![user("request")],
+            vec![assistant(StopReason::Stop, None)],
+            vec![developer("first </conversation> fragment")],
+            vec![user("latest")],
+        ];
+        let mut origins = vec![O::User, O::Assistant, O::CustomMessage, O::User];
+        match case {
+            "loopguard" => {
+                origins[2] = O::LoopGuardNotice;
+                groups[2].truncate(1);
+            }
+            "true-developer" => {
+                origins[2] = O::Developer;
+                groups[2].truncate(1);
+            }
+            "forged-origin" => groups[2] = vec![assistant(StopReason::Stop, None)],
+            "image" => groups[2].push(Message::User(UserMessage {
+                content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    data: "AA==".into(),
+                    mime_type: "image/png".into(),
+                })]),
+                synthetic: None,
+                timestamp: 0,
+            })),
+            "unknown-tool" => {
+                groups[1] = vec![assistant(StopReason::ToolUse, Some("uncertain"))];
+                groups[2] = vec![tool_result("uncertain", true)];
+                origins[2] = O::ToolResult;
+            }
+            "group-limit" => {
+                groups = (0..257).map(|index| vec![developer(&format!("source-{index}"))]).collect();
+                origins = vec![O::CustomMessage; 257];
+            }
+            _ => {}
+        }
+        let mut ids = (0..groups.len()).map(|index| format!("native-{index}")).collect::<Vec<_>>();
+        if case == "duplicate" {
+            ids[3] = ids[2].clone();
+        }
+        let sources = ids
+            .iter()
+            .zip(&origins)
+            .zip(&groups)
+            .map(|((entry_id, &origin), messages)| NativeEntrySource {
+                entry_id,
+                origin,
+                messages,
+                raw_message_tokens: if matches!(origin, O::User | O::Assistant | O::Developer | O::ToolResult) {
+                    10
+                } else {
+                    0
+                },
+            })
+            .collect::<Vec<_>>();
+        if case == "group-limit" {
+            assert_eq!(serialize_native_entry_sources_for_summary(&sources), Err(SummaryInputError::TooManySources));
+            continue;
+        }
+        if matches!(case, "true-developer" | "forged-origin" | "duplicate" | "unknown-tool") {
+            let error = select_native_entry_compaction_cut(&sources, 0, None).unwrap_err();
+            assert_eq!(
+                error,
+                match case {
+                    "true-developer" => SummaryInputError::DeveloperInSummary,
+                    "forged-origin" => SummaryInputError::InvalidEntryProjection,
+                    "duplicate" => SummaryInputError::DuplicateSourceId,
+                    "unknown-tool" => SummaryInputError::UnknownToolEffect,
+                    _ => unreachable!(),
+                },
+                "{case}"
+            );
+            continue;
+        }
+        let serialized = serialize_native_entry_sources_for_summary(&sources[..3]);
+        if case == "image" {
+            assert_eq!(serialized, Err(SummaryInputError::UnsupportedImage));
+            continue;
+        }
+        let text = serialized.unwrap();
+        let records =
+            text.lines().map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()).collect::<Vec<_>>();
+        assert_eq!(records.len(), 3, "{case}: groups, not fragments");
+        assert_eq!(records[2]["entry_id"], "native-2");
+        assert_eq!(records[2]["messages"].as_array().unwrap().len(), groups[2].len());
+        assert!(records[2]["messages"].as_array().unwrap().iter().all(|fragment| fragment.get("entry_id").is_none()));
+        assert_eq!(records[2]["messages"][0]["role"], "developer");
+        if case != "group-limit" {
+            assert!(text.contains("&lt;/conversation>"));
+        }
+    }
+    // A historical summary uses User on the model wire, but does not create
+    // or answer a real prompt. Preserve an earlier unanswered request.
+    for origin in [O::LegacyBranchSummary, O::LegacyCompactionSummary] {
+        for answered in [true, false] {
+            let mut groups = vec![vec![user("original request")]];
+            let mut origins = vec![O::User];
+            if answered {
+                groups.push(vec![assistant(StopReason::Stop, None)]);
+                origins.push(O::Assistant);
+            }
+            groups.extend([vec![user("historical summary")], vec![user("latest request")]]);
+            origins.extend([origin, O::User]);
+            let ids = (0..groups.len()).map(|index| format!("summary-{index}")).collect::<Vec<_>>();
+            let sources = ids
+                .iter()
+                .zip(&origins)
+                .zip(&groups)
+                .map(|((entry_id, &origin), messages)| NativeEntrySource {
+                    entry_id,
+                    origin,
+                    messages,
+                    raw_message_tokens: 10,
+                })
+                .collect::<Vec<_>>();
+            let result = select_native_entry_compaction_cut(&sources, 10, None);
+            if answered {
+                let cut = result.unwrap().unwrap();
+                assert_eq!(cut.first_kept_entry_id, *ids.last().unwrap());
+                assert_eq!(cut.turn_start_index, None);
+            } else {
+                assert_eq!(result, Err(SummaryInputError::UnfinishedTurn));
+            }
+        }
     }
 }

@@ -1,5 +1,15 @@
 # Delivery roadmap
 
+The latest [grouped raw-entry checkpoint](evidence/native-raw-entries.md) adds
+native metadata/custom/hook/branch/Bash cuts, zero/one/many model fragments per
+raw ID, single-ID summary provenance and safe old V1 read compatibility. Twelve
+modules 203/0/0 take 24.464s; final Windows backend 1,542/0/20 and one stable
+120.816s command pass. Actual CAS task/two summaries/exact metadata kept ID/
+original-Session reopen pass in 21.454s/eight requests. Independent and Root
+audits retain all explicit gaps. Next: remaining methods/reducers/rescue and
+registry/auth callers; full raw-role/token/legacy replay and recorded contracts
+remain open. P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker null remain.
+
 The [same-Session reset checkpoint](evidence/context-reset.md) adds native
 active suffixes and reference REPL `/clear`, preserving raw history/settings,
 refreshing project rules with retained tools/Skills, and rotating all Provider

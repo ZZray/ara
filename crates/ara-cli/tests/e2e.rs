@@ -289,7 +289,6 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
         {"events":[text("First."),finish("stop"),done()]},
         {"events":[text("Second."),finish("stop"),done()]},
         {"events":[text("First Skill task finished."),finish("stop"),done()]},
-        {"events":[text("First Skill task finished."),finish("stop"),done()]},
         {"events":[text("Third."),finish("stop"),done()]}
     ]}))
     .await;
@@ -308,8 +307,10 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
     assert_eq!(compactions.len(), 1, "{entries:?}");
     let compaction = compactions[0];
     let before_kept = entries.iter().position(|entry| entry["id"] == compaction["firstKeptEntryId"]).unwrap();
-    assert_eq!(entries[before_kept]["message"]["role"], "assistant");
-    assert_eq!(entries[before_kept]["message"]["content"][0]["text"], "Second.");
+    // Native backtracking keeps the custom Skill receipt before its Assistant;
+    // its real ID cannot be substituted with the next projected message ID.
+    assert_eq!(entries[before_kept]["id"], skills[1]["id"]);
+    assert_eq!(entries[before_kept]["type"], "custom_message");
     let expected: Vec<_> = entries[..before_kept]
         .iter()
         .filter(|entry| entry["type"] == "message" || entry["type"] == "custom_message")
@@ -317,11 +318,11 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
         .collect();
     assert_eq!(compaction["sourceEntryIds"], json!(expected));
     assert!(expected.contains(&skills[0]["id"]));
-    assert!(expected.contains(&skills[1]["id"]));
+    assert!(!expected.contains(&skills[1]["id"]));
     assert_eq!(skills[0]["details"]["originalText"], "/skill:proof first-args\n");
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 5);
-    let summaries: Vec<_> = reqs[2..4]
+    assert_eq!(reqs.len(), 4);
+    let summaries: Vec<_> = reqs[2..3]
         .iter()
         .map(|request| {
             assert!(tools_absent_or_empty(&request["body"]));
@@ -329,11 +330,11 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
         })
         .collect();
     assert!(summaries.iter().any(|text| text.contains("User: first-args")));
-    assert!(summaries.iter().any(|text| text.contains("User: kept-args")));
-    let last = request_text(reqs[4]["body"]["messages"].as_array().unwrap());
+    assert!(summaries.iter().all(|text| !text.contains("User: kept-args")));
+    let last = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
     assert!(last.contains("First Skill task finished.") && last.contains("Second."));
     assert!(!last.contains("User: first-args"));
-    assert!(!last.contains("User: kept-args"));
+    assert!(last.contains("User: kept-args"));
     drop(reqs);
     std::fs::remove_file(path).unwrap();
     let resumed = upstream(json!({"responses":[{"events":[text("Restored."),finish("stop"),done()]}]})).await;
@@ -347,7 +348,7 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
     let last = request_text(reqs[0]["body"]["messages"].as_array().unwrap());
     assert!(last.contains("First Skill task finished.") && last.contains("Second."));
     assert!(!last.contains("User: first-args"));
-    assert!(!last.contains("User: kept-args"));
+    assert!(last.contains("User: kept-args"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

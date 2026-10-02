@@ -755,7 +755,7 @@ async fn run_compaction(
     manual: bool,
 ) -> Result<bool> {
     use ara_agent::compaction::{
-        SummaryOptions, SummarySource, select_native_compaction_cut, summarize_compaction_cut,
+        SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
     };
     use ara_agent::tokenizer::{MessageCountOptions, count_messages};
     let tokens = count_messages(context, MessageCountOptions::default());
@@ -775,20 +775,16 @@ async fn run_compaction(
         notice("it needs a session (--no-session is set)".into());
         return Ok(false);
     };
-    let snapshot = match journal.projected_compaction_snapshot() {
+    let snapshot = match journal.native_projected_compaction_snapshot() {
         Ok(s) => s,
         Err(e) => {
             notice(format!("the session source is unavailable ({e})"));
             return Ok(false);
         }
     };
-    let sources: Vec<SummarySource<'_>> = snapshot
-        .messages
-        .iter()
-        .map(|m| SummarySource { entry_id: m.entry_id.as_str(), message: &m.message })
-        .collect();
+    let sources = ara_cli::native_compaction::sources(&snapshot.entries);
     let previous_summary = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
-    let cut = match select_native_compaction_cut(&sources, args.compact_keep_tokens, previous_summary) {
+    let cut = match select_native_entry_compaction_cut(&sources, args.compact_keep_tokens, previous_summary) {
         Ok(Some(cut)) => cut,
         Ok(None) => {
             notice("no earlier message prefix can be summarized at this retention target".into());
@@ -813,7 +809,7 @@ async fn run_compaction(
         oneshot_retry: if manual { SummaryOptions::default().oneshot_retry } else { None },
         max_tokens: args.max_tokens,
     };
-    let accepted = match summarize_compaction_cut(
+    let accepted = match summarize_native_entry_compaction_cut(
         &sources,
         &cut,
         previous_summary,
@@ -844,7 +840,7 @@ async fn run_compaction(
             return Ok(false);
         }
     };
-    journal.commit_native_projected_compaction(
+    journal.commit_native_entry_compaction(
         &snapshot,
         &accepted.text,
         &cut.first_kept_entry_id,

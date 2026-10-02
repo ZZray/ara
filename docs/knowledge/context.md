@@ -41,3 +41,33 @@ The same journal writer retains late user Bash on its captured pre-compaction
 branch. Fixed OMP restores the active leaf in memory but rebuilds from the last
 raw entry on reopen. Preserve that source-backed distinction while reproducing
 OMP; changing persisted leaf semantics belongs to later customization.
+
+## Raw entry identity and model fragments
+
+**Implemented boundary, 2026-10-02, fixed OMP `596f2da`:** a raw Session
+entry owns one real ID and origin, independently of its zero/one/multiple
+provider-visible messages. Session validates and projects that group; Core
+borrows it through an explicit Host mapping without a Session dependency.
+Native cuts retain metadata IDs and use raw origin for backtracking/turn starts.
+Only raw `type=message` contributes to the reverse retention estimate; custom,
+branch and metadata entries do not. Excluded Bash can count for that estimate
+while contributing no model message or summary source. These extension-role
+estimates are text proxies, not full native tokenizer or hard wire-fit evidence.
+
+A summarized context-bearing raw group contributes its ID once. Custom images
+remain ordered Developer text plus User image fragments (image-only has a User
+fragment); old single-message snapshot APIs explicitly reject multiple fragments.
+Context/reopen uses plural projection directly, so a compatibility API error
+cannot resurrect the replaced raw prefix. Public RPC history retains the native
+custom/hook/branch receipt. Reserved malformed Skill/LoopGuard records fail
+before generic conversion. Verified historical LoopGuard/custom Developer
+projections can be summarized; a genuine raw Developer message remains protected.
+Branch/legacy summary User projections neither create nor answer a real prompt.
+New checked native writes enforce raw metadata backtracking; readers also accept
+safe older V1 summaries whose kept User follows title metadata. Applying the
+new writer rule to all old records would invalidate already accepted history.
+
+[Grouped raw-entry evidence](../evidence/native-raw-entries.md) records the
+bounded execution and audit. Full provider-native legacy summary payloads,
+attribution/historyRewriteAt, remaining raw roles/token contracts and other
+compaction methods remain open; this seam is not full surface acceptance.

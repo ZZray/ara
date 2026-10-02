@@ -37,6 +37,82 @@ pub struct SummarySource<'a> {
     pub message: &'a Message,
 }
 
+/// The raw Session entry kind, independently of its runtime model projection.
+/// Hosts must derive this from the checked journal source, not the wire role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeEntryOrigin {
+    User,
+    Assistant,
+    ToolResult,
+    Developer,
+    BashExecution,
+    HookMessage,
+    LegacyCustomMessage,
+    LegacyBranchSummary,
+    LegacyCompactionSummary,
+    CustomMessage,
+    UserSkill,
+    SteeringUser,
+    LoopGuardNotice,
+    BranchSummary,
+    Metadata,
+    CompactionBoundary,
+}
+
+impl NativeEntryOrigin {
+    fn is_raw_message(self) -> bool {
+        matches!(
+            self,
+            Self::User
+                | Self::Assistant
+                | Self::ToolResult
+                | Self::Developer
+                | Self::BashExecution
+                | Self::HookMessage
+                | Self::LegacyCustomMessage
+                | Self::LegacyBranchSummary
+                | Self::LegacyCompactionSummary
+        )
+    }
+
+    fn is_cut_point(self) -> bool {
+        !matches!(
+            self,
+            Self::ToolResult | Self::Developer | Self::LegacyCustomMessage | Self::Metadata | Self::CompactionBoundary
+        )
+    }
+
+    fn starts_turn(self) -> bool {
+        matches!(
+            self,
+            Self::User
+                | Self::BashExecution
+                | Self::CustomMessage
+                | Self::UserSkill
+                | Self::SteeringUser
+                | Self::LoopGuardNotice
+                | Self::BranchSummary
+        )
+    }
+
+    fn permits_historical_developer(self) -> bool {
+        matches!(self, Self::HookMessage | Self::LegacyCustomMessage | Self::CustomMessage | Self::LoopGuardNotice)
+    }
+}
+
+/// One real raw entry may project to zero, one, or several ordered messages.
+/// Cuts and provenance never split a group or manufacture fragment entry IDs.
+#[derive(Clone, Copy)]
+pub struct NativeEntrySource<'a> {
+    pub entry_id: &'a str,
+    pub origin: NativeEntryOrigin,
+    pub messages: &'a [Message],
+    /// Estimate the original raw `type=message` once. Non-message entries
+    /// contribute zero to fixed OMP's reverse keep budget.
+    pub raw_message_tokens: usize,
+}
+
 /// A structural boundary before a user message. The preceding messages pass
 /// completed-turn and receipt validation; this entry and later messages stay
 /// raw. Prompt construction must still reject unsupported payloads or size.
@@ -56,9 +132,9 @@ pub struct WholeTurnCutSelection {
     pub estimated_retained_exceeds_target: bool,
 }
 
-/// Fixed OMP's message cut can retain an assistant and its following tool
-/// results. The host owns raw non-message backtracking and Session proof; this
-/// message-only adapter does not implement Bash/custom/reset entry boundaries.
+/// Fixed OMP's cut can retain an assistant and its following tool results.
+/// Indexes refer to messages in the legacy API and raw entry groups in the
+/// native entry API. The host owns the current Session source proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeCompactionCut {
     pub first_kept_index: usize,
@@ -110,6 +186,7 @@ pub enum SummaryInputError {
     UnpairedToolResult,
     UnknownToolEffect,
     NoLeadingPrompt,
+    InvalidEntryProjection,
 }
 
 impl std::fmt::Display for SummaryInputError {
@@ -132,6 +209,7 @@ impl std::fmt::Display for SummaryInputError {
                 f.write_str("compaction cannot hide a tool call whose execution effect is unknown")
             }
             Self::NoLeadingPrompt => f.write_str("compaction source span does not start with a user prompt"),
+            Self::InvalidEntryProjection => f.write_str("compaction raw entry kind and model projection do not match"),
         }
     }
 }
@@ -391,6 +469,237 @@ pub fn select_native_compaction_cut(
     }))
 }
 
+fn validate_native_entry_sources(sources: &[NativeEntrySource<'_>]) -> Result<(), SummaryInputError> {
+    let mut ids = HashSet::new();
+    for source in sources {
+        if source.entry_id.is_empty() || !source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(SummaryInputError::InvalidSourceId);
+        }
+        if !ids.insert(source.entry_id) {
+            return Err(SummaryInputError::DuplicateSourceId);
+        }
+        let valid = match source.origin {
+            NativeEntryOrigin::User
+            | NativeEntryOrigin::UserSkill
+            | NativeEntryOrigin::SteeringUser
+            | NativeEntryOrigin::LegacyBranchSummary
+            | NativeEntryOrigin::LegacyCompactionSummary
+            | NativeEntryOrigin::BranchSummary => {
+                matches!(source.messages, [Message::User(_)])
+            }
+            NativeEntryOrigin::Assistant => matches!(source.messages, [Message::Assistant(_)]),
+            NativeEntryOrigin::ToolResult => matches!(source.messages, [Message::ToolResult(_)]),
+            NativeEntryOrigin::Developer | NativeEntryOrigin::LoopGuardNotice => {
+                matches!(source.messages, [Message::Developer(_)])
+            }
+            NativeEntryOrigin::BashExecution => {
+                matches!(source.messages, [] | [Message::User(_)])
+            }
+            NativeEntryOrigin::CustomMessage
+            | NativeEntryOrigin::HookMessage
+            | NativeEntryOrigin::LegacyCustomMessage => {
+                let text_only = |content: &UserContent| match content {
+                    UserContent::Text(_) => true,
+                    UserContent::Blocks(blocks) => blocks.iter().all(|block| matches!(block, UserBlock::Text(_))),
+                };
+                let has_image = |content: &UserContent| {
+                    matches!(content,
+                    UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
+                };
+                match source.messages {
+                    [Message::Developer(developer)] => text_only(&developer.content),
+                    [Message::User(user)] => {
+                        source.origin == NativeEntryOrigin::LegacyCustomMessage || has_image(&user.content)
+                    }
+                    [Message::Developer(developer), Message::User(user)] => {
+                        text_only(&developer.content) && has_image(&user.content)
+                    }
+                    _ => false,
+                }
+            }
+            NativeEntryOrigin::Metadata | NativeEntryOrigin::CompactionBoundary => source.messages.is_empty(),
+        };
+        if !valid || (!source.origin.is_raw_message() && source.raw_message_tokens != 0) {
+            return Err(SummaryInputError::InvalidEntryProjection);
+        }
+    }
+    Ok(())
+}
+
+fn validate_native_summary_span(
+    sources: &[NativeEntrySource<'_>],
+    allow_unanswered_prompt: bool,
+) -> Result<(), SummaryInputError> {
+    validate_native_entry_sources(sources)?;
+    let context_sources = sources.iter().filter(|source| !source.messages.is_empty()).count();
+    if context_sources == 0 {
+        return Err(SummaryInputError::EmptySources);
+    }
+    if context_sources > MAX_SUMMARY_SOURCES {
+        return Err(SummaryInputError::TooManySources);
+    }
+    let mut pending: HashMap<&str, &str> = HashMap::new();
+    let mut ends_with_prompt = false;
+    for source in sources {
+        for message in source.messages {
+            match message {
+                Message::User(_) => {
+                    if !pending.is_empty() {
+                        return Err(SummaryInputError::UnfinishedTurn);
+                    }
+                    ends_with_prompt |= matches!(
+                        source.origin,
+                        NativeEntryOrigin::User
+                            | NativeEntryOrigin::UserSkill
+                            | NativeEntryOrigin::SteeringUser
+                            | NativeEntryOrigin::BashExecution
+                            | NativeEntryOrigin::LegacyCustomMessage
+                    );
+                }
+                Message::Developer(_) => {
+                    if !source.origin.permits_historical_developer() {
+                        return Err(SummaryInputError::DeveloperInSummary);
+                    }
+                    if !pending.is_empty() {
+                        return Err(SummaryInputError::UnfinishedTurn);
+                    }
+                    // Historical notes retain their Developer wire role but
+                    // cannot answer an earlier real user request.
+                }
+                Message::Assistant(assistant) => {
+                    if !pending.is_empty() {
+                        return Err(SummaryInputError::UnfinishedTurn);
+                    }
+                    ends_with_prompt = false;
+                    for call in assistant.tool_calls() {
+                        if pending.insert(&call.id, &call.name).is_some() {
+                            return Err(SummaryInputError::UnfinishedTurn);
+                        }
+                    }
+                }
+                Message::ToolResult(result) => {
+                    if has_unknown_tool_effect(result) {
+                        return Err(SummaryInputError::UnknownToolEffect);
+                    }
+                    match pending.remove(result.tool_call_id.as_str()) {
+                        Some(name) if name == result.tool_name => {}
+                        _ => return Err(SummaryInputError::UnpairedToolResult),
+                    }
+                    ends_with_prompt = false;
+                }
+            }
+        }
+    }
+    if !pending.is_empty() || (ends_with_prompt && !allow_unanswered_prompt) {
+        return Err(SummaryInputError::UnfinishedTurn);
+    }
+    Ok(())
+}
+
+fn native_entry_cut_at(
+    sources: &[NativeEntrySource<'_>],
+    index: usize,
+    previous_summary: Option<&str>,
+) -> Result<(Option<usize>, usize), SummaryInputError> {
+    validate_native_entry_sources(sources)?;
+    let Some(first) = sources.iter().find(|source| !source.messages.is_empty()) else {
+        return Err(SummaryInputError::EmptySources);
+    };
+    if first.origin == NativeEntryOrigin::Assistant
+        && !previous_summary.is_some_and(|summary| !summary.trim().is_empty())
+    {
+        return Err(SummaryInputError::NoLeadingPrompt);
+    }
+    let Some(kept) = sources.get(index) else { return Err(SummaryInputError::InvalidSourceId) };
+    if index == 0 {
+        return Err(SummaryInputError::EmptySources);
+    }
+    let previous = sources[index - 1].origin;
+    if !previous.is_raw_message() && previous != NativeEntryOrigin::CompactionBoundary {
+        return Err(SummaryInputError::InvalidSourceId);
+    }
+    let mut native_boundary = false;
+    for source in &sources[index..] {
+        if source.origin.is_cut_point() {
+            native_boundary = true;
+            break;
+        }
+        if source.origin.is_raw_message() || source.origin == NativeEntryOrigin::CompactionBoundary {
+            break;
+        }
+    }
+    if !native_boundary {
+        return Err(SummaryInputError::InvalidSourceId);
+    }
+    let turn_start = if kept.origin == NativeEntryOrigin::User {
+        None
+    } else {
+        (0..=index).rev().find(|&i| sources[i].origin.starts_turn())
+    };
+    validate_native_summary_span(&sources[..index], kept.origin != NativeEntryOrigin::User)?;
+    Ok((turn_start, turn_start.unwrap_or(index)))
+}
+
+/// Port fixed `findValidCutPoints` / `findCutPoint` over raw entry groups.
+/// Only raw message entries trigger the reverse token threshold. Backtracking
+/// includes adjacent raw metadata/custom/branch entries and stops at any raw
+/// message or compaction barrier. The final raw origin decides turn splitting,
+/// independently of the runtime Developer/User projection of custom content.
+pub fn select_native_entry_compaction_cut(
+    sources: &[NativeEntrySource<'_>],
+    keep_recent_tokens: usize,
+    previous_summary: Option<&str>,
+) -> Result<Option<NativeCompactionCut>, SummaryInputError> {
+    validate_native_entry_sources(sources)?;
+    let cut_points: Vec<usize> = sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| source.origin.is_cut_point().then_some(index))
+        .collect();
+    let Some(&first_cut) = cut_points.first() else { return Ok(None) };
+    let mut suffix_tokens = vec![0usize; sources.len() + 1];
+    for index in (0..sources.len()).rev() {
+        suffix_tokens[index] = suffix_tokens[index + 1].saturating_add(if sources[index].origin.is_raw_message() {
+            sources[index].raw_message_tokens
+        } else {
+            0
+        });
+    }
+    let mut cut_index = first_cut;
+    for index in (0..sources.len()).rev() {
+        if !sources[index].origin.is_raw_message() {
+            continue;
+        }
+        if suffix_tokens[index] >= keep_recent_tokens {
+            if let Some(&valid) = cut_points.iter().find(|&&valid| valid >= index) {
+                cut_index = valid;
+            }
+            break;
+        }
+    }
+    while cut_index > 0 {
+        let previous = sources[cut_index - 1].origin;
+        if previous.is_raw_message() || previous == NativeEntryOrigin::CompactionBoundary {
+            break;
+        }
+        cut_index -= 1;
+    }
+    if cut_index == 0 || sources[..cut_index].iter().all(|source| source.messages.is_empty()) {
+        return Ok(None);
+    }
+    let (turn_start_index, history_end_index) = native_entry_cut_at(sources, cut_index, previous_summary)?;
+    serialize_native_entry_sources_for_summary(&sources[..cut_index])?;
+    let estimated_retained_raw_tokens = suffix_tokens[cut_index];
+    Ok(Some(NativeCompactionCut {
+        first_kept_index: cut_index,
+        first_kept_entry_id: sources[cut_index].entry_id.to_owned(),
+        turn_start_index,
+        history_end_index,
+        estimated_retained_raw_tokens,
+        estimated_retained_exceeds_target: estimated_retained_raw_tokens > keep_recent_tokens,
+    }))
+}
+
 /// Enumerate structurally safe, message-only, whole-turn cuts. Unlike fixed
 /// OMP's split-turn cut, these never hide a partial tool cycle or turn prefix.
 /// A developer message in the summarized prefix would lose its priority when
@@ -499,29 +808,26 @@ pub fn select_whole_turn_cut(
 }
 
 #[derive(Serialize)]
+struct SummaryEntry<'a> {
+    entry_id: &'a str,
+    #[serde(flatten)]
+    message: SummaryMessage<'a>,
+}
+
+#[derive(Serialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
-enum SummaryEntry<'a> {
-    User {
-        entry_id: &'a str,
-        content: String,
-    },
-    Developer {
-        entry_id: &'a str,
-        content: String,
-    },
-    Assistant {
-        entry_id: &'a str,
-        blocks: Vec<SummaryBlock<'a>>,
-        stop_reason: &'a str,
-    },
-    ToolResult {
-        entry_id: &'a str,
-        tool_call_id: &'a str,
-        tool_name: &'a str,
-        content: String,
-        is_error: bool,
-        unknown_effect: bool,
-    },
+enum SummaryMessage<'a> {
+    User { content: String },
+    Developer { content: String },
+    Assistant { blocks: Vec<SummaryBlock<'a>>, stop_reason: &'a str },
+    ToolResult { tool_call_id: &'a str, tool_name: &'a str, content: String, is_error: bool, unknown_effect: bool },
+}
+
+#[derive(Serialize)]
+struct NativeSummaryEntry<'a> {
+    entry_id: &'a str,
+    origin: NativeEntryOrigin,
+    messages: Vec<SummaryMessage<'a>>,
 }
 
 #[derive(Serialize)]
@@ -564,70 +870,95 @@ pub fn serialize_sources_for_summary(sources: &[SummarySource<'_>]) -> Result<St
         if source.entry_id.is_empty() || !source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
             return Err(SummaryInputError::InvalidSourceId);
         }
-        let entry = match source.message {
-            Message::User(user) => {
-                SummaryEntry::User { entry_id: source.entry_id, content: text_content(&user.content)? }
-            }
-            Message::Developer(developer) => {
-                SummaryEntry::Developer { entry_id: source.entry_id, content: text_content(&developer.content)? }
-            }
-            Message::Assistant(assistant) => {
-                let mut blocks = Vec::new();
-                for block in &assistant.content {
-                    match block {
-                        AssistantBlock::Text(text) => blocks.push(SummaryBlock::Text { text: &text.text }),
-                        AssistantBlock::ToolCall(call) => blocks.push(SummaryBlock::ToolCall {
-                            id: &call.id,
-                            name: &call.name,
-                            arguments: &call.arguments,
-                        }),
-                        AssistantBlock::Image(_) => return Err(SummaryInputError::UnsupportedImage),
-                        AssistantBlock::Thinking(_) | AssistantBlock::RedactedThinking { .. } => {}
-                    }
-                }
-                SummaryEntry::Assistant {
-                    entry_id: source.entry_id,
-                    blocks,
-                    stop_reason: assistant.stop_reason.as_str(),
+        let entry = SummaryEntry { entry_id: source.entry_id, message: summary_message(source.message)? };
+        append_summary_record(&mut output, &entry)?;
+    }
+    Ok(output)
+}
+
+fn summary_message(message: &Message) -> Result<SummaryMessage<'_>, SummaryInputError> {
+    Ok(match message {
+        Message::User(user) => SummaryMessage::User { content: text_content(&user.content)? },
+        Message::Developer(developer) => SummaryMessage::Developer { content: text_content(&developer.content)? },
+        Message::Assistant(assistant) => {
+            let mut blocks = Vec::new();
+            for block in &assistant.content {
+                match block {
+                    AssistantBlock::Text(text) => blocks.push(SummaryBlock::Text { text: &text.text }),
+                    AssistantBlock::ToolCall(call) => blocks.push(SummaryBlock::ToolCall {
+                        id: &call.id,
+                        name: &call.name,
+                        arguments: &call.arguments,
+                    }),
+                    AssistantBlock::Image(_) => return Err(SummaryInputError::UnsupportedImage),
+                    AssistantBlock::Thinking(_) | AssistantBlock::RedactedThinking { .. } => {}
                 }
             }
-            Message::ToolResult(result) => {
-                let mut content = String::new();
-                for block in &result.content {
-                    match block {
-                        UserBlock::Text(part) => {
-                            if part.text.len() > MAX_SUMMARY_INPUT_BYTES.saturating_sub(content.len()) {
-                                return Err(SummaryInputError::TooLarge);
-                            }
-                            content.push_str(&part.text);
+            SummaryMessage::Assistant { blocks, stop_reason: assistant.stop_reason.as_str() }
+        }
+        Message::ToolResult(result) => {
+            let mut content = String::new();
+            for block in &result.content {
+                match block {
+                    UserBlock::Text(part) => {
+                        if part.text.len() > MAX_SUMMARY_INPUT_BYTES.saturating_sub(content.len()) {
+                            return Err(SummaryInputError::TooLarge);
                         }
-                        UserBlock::Image(_) => return Err(SummaryInputError::UnsupportedImage),
+                        content.push_str(&part.text);
                     }
-                }
-                let unknown_effect = has_unknown_tool_effect(result);
-                SummaryEntry::ToolResult {
-                    entry_id: source.entry_id,
-                    tool_call_id: &result.tool_call_id,
-                    tool_name: &result.tool_name,
-                    content: truncate_tool_result(&content),
-                    is_error: result.is_error,
-                    unknown_effect,
+                    UserBlock::Image(_) => return Err(SummaryInputError::UnsupportedImage),
                 }
             }
-        };
-        let remaining = MAX_SUMMARY_INPUT_BYTES.saturating_sub(output.len());
-        let mut buffer = BoundedBuffer { bytes: Vec::new(), max: remaining };
-        serde_json::to_writer(&mut buffer, &entry).map_err(|_| SummaryInputError::TooLarge)?;
-        let line = String::from_utf8(buffer.bytes).expect("JSON is UTF-8");
-        let escaped = escape_summary_boundary_tags(&line);
-        let separator = usize::from(!output.is_empty());
-        if escaped.len() + separator > remaining {
-            return Err(SummaryInputError::TooLarge);
+            let unknown_effect = has_unknown_tool_effect(result);
+            SummaryMessage::ToolResult {
+                tool_call_id: &result.tool_call_id,
+                tool_name: &result.tool_name,
+                content: truncate_tool_result(&content),
+                is_error: result.is_error,
+                unknown_effect,
+            }
         }
-        if separator != 0 {
-            output.push('\n');
+    })
+}
+
+fn append_summary_record(output: &mut String, entry: &impl Serialize) -> Result<(), SummaryInputError> {
+    let remaining = MAX_SUMMARY_INPUT_BYTES.saturating_sub(output.len());
+    let mut buffer = BoundedBuffer { bytes: Vec::new(), max: remaining };
+    serde_json::to_writer(&mut buffer, entry).map_err(|_| SummaryInputError::TooLarge)?;
+    let line = String::from_utf8(buffer.bytes).expect("JSON is UTF-8");
+    let escaped = escape_summary_boundary_tags(&line);
+    let separator = usize::from(!output.is_empty());
+    if escaped.len() + separator > remaining {
+        return Err(SummaryInputError::TooLarge);
+    }
+    if separator != 0 {
+        output.push('\n');
+    }
+    output.push_str(&escaped);
+    Ok(())
+}
+
+/// Serialize one nested JSONL record per context-bearing raw entry. Metadata
+/// and excluded Bash have no prompt record or summary provenance. Every
+/// projection fragment remains ordered inside its real source group; private
+/// reasoning is omitted and any image fails before a provider call.
+pub fn serialize_native_entry_sources_for_summary(
+    sources: &[NativeEntrySource<'_>],
+) -> Result<String, SummaryInputError> {
+    validate_native_entry_sources(sources)?;
+    if sources.iter().filter(|source| !source.messages.is_empty()).count() > MAX_SUMMARY_SOURCES {
+        return Err(SummaryInputError::TooManySources);
+    }
+    let mut output = String::new();
+    for source in sources.iter().filter(|source| !source.messages.is_empty()) {
+        if source.messages.iter().any(|message| matches!(message, Message::Developer(_)))
+            && !source.origin.permits_historical_developer()
+        {
+            return Err(SummaryInputError::DeveloperInSummary);
         }
-        output.push_str(&escaped);
+        let messages = source.messages.iter().map(summary_message).collect::<Result<Vec<_>, _>>()?;
+        let entry = NativeSummaryEntry { entry_id: source.entry_id, origin: source.origin, messages };
+        append_summary_record(&mut output, &entry)?;
     }
     Ok(output)
 }
@@ -999,8 +1330,51 @@ struct SummaryWindow {
     text: Option<String>,
 }
 
+// The fold/retry engine is shared by legacy message sources and native raw
+// entry groups. Only input serialization, window boundaries and ID extraction
+// vary; provider calls, cancellation and actual receipts have one owner.
+#[derive(Clone, Copy)]
+enum SummaryHistorySources<'a> {
+    Messages(&'a [SummarySource<'a>]),
+    NativeEntries(&'a [NativeEntrySource<'a>]),
+}
+
+impl SummaryHistorySources<'_> {
+    fn len(self) -> usize {
+        match self {
+            Self::Messages(sources) => sources.len(),
+            Self::NativeEntries(sources) => sources.len(),
+        }
+    }
+
+    fn has_context(self) -> bool {
+        match self {
+            Self::Messages(sources) => !sources.is_empty(),
+            Self::NativeEntries(sources) => sources.iter().any(|source| !source.messages.is_empty()),
+        }
+    }
+
+    fn serialize(self, start: usize, end: usize) -> Result<String, SummaryInputError> {
+        match self {
+            Self::Messages(sources) => serialize_sources_for_summary(&sources[start..end]),
+            Self::NativeEntries(sources) => serialize_native_entry_sources_for_summary(&sources[start..end]),
+        }
+    }
+
+    fn ids(self, start: usize, end: usize) -> Vec<String> {
+        match self {
+            Self::Messages(sources) => sources[start..end].iter().map(|source| source.entry_id.to_owned()).collect(),
+            Self::NativeEntries(sources) => sources[start..end]
+                .iter()
+                .filter(|source| !source.messages.is_empty())
+                .map(|source| source.entry_id.to_owned())
+                .collect(),
+        }
+    }
+}
+
 fn plan_summary_windows(
-    sources: &[SummarySource<'_>],
+    sources: SummaryHistorySources<'_>,
     model: &Model,
     budget_tokens: u64,
     start: usize,
@@ -1010,7 +1384,10 @@ fn plan_summary_windows(
     let mut first = start;
     let mut current_tokens = 0u64;
     for index in start..end {
-        let text = serialize_sources_for_summary(&sources[index..index + 1])?;
+        let text = sources.serialize(index, index + 1)?;
+        if text.is_empty() {
+            continue;
+        }
         let tokens = summary_text_tokens(model, &text);
         if current_tokens > 0 && current_tokens.saturating_add(tokens) > budget_tokens {
             windows.push(SummaryWindow { start: first, end: index, budget_tokens, text: None });
@@ -1095,7 +1472,7 @@ pub async fn summarize_sources_with_instructions(
     validate_completed_summary_span(sources)
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
     summarize_history(
-        sources,
+        SummaryHistorySources::Messages(sources),
         previous_summary,
         custom_instructions,
         model,
@@ -1111,7 +1488,7 @@ pub async fn summarize_sources_with_instructions(
 
 #[allow(clippy::too_many_arguments)]
 async fn summarize_history(
-    sources: &[SummarySource<'_>],
+    sources: SummaryHistorySources<'_>,
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
     model: &Model,
@@ -1122,7 +1499,8 @@ async fn summarize_history(
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<AcceptedSummary, SummaryCallError> {
-    let conversation = serialize_sources_for_summary(sources)
+    let conversation = sources
+        .serialize(0, sources.len())
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
     if max_output_tokens == 0 {
         return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
@@ -1146,7 +1524,8 @@ async fn summarize_history(
     while let Some(window) = pending.pop_front() {
         let text = match window.text {
             Some(text) => text,
-            None => serialize_sources_for_summary(&sources[window.start..window.end])
+            None => sources
+                .serialize(window.start, window.end)
                 .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?,
         };
         let tokens = summary_text_tokens(model, &text);
@@ -1163,8 +1542,7 @@ async fn summarize_history(
                 return Err(failure);
             }
         };
-        let ids: Vec<String> =
-            sources[window.start..window.end].iter().map(|source| source.entry_id.to_owned()).collect();
+        let ids = sources.ids(window.start, window.end);
         match summarize_window_with_retry(
             prompt,
             model,
@@ -1195,7 +1573,7 @@ async fn summarize_history(
                     overflow_replanned: false,
                 });
                 carried_summary = Some(accepted.text.clone());
-                accepted.window_source_entry_ids = sources.iter().map(|source| source.entry_id.to_owned()).collect();
+                accepted.window_source_entry_ids = sources.ids(0, sources.len());
                 final_summary = Some(accepted);
             }
             Err(mut failure) => {
@@ -1336,30 +1714,127 @@ pub async fn summarize_compaction_cut(
     }
     let history_sources = &sources[..history_end];
     let prefix_sources = &sources[history_end..cut.first_kept_index];
-    if options.max_tokens == Some(0) {
-        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
-    }
-    let history_budget = summary_output_budget_tokens(raw_reserve)?.min(options.max_tokens.unwrap_or(u64::MAX));
-    let prefix_budget = if prefix_sources.is_empty() {
-        0
-    } else {
-        summary_budget_tokens(raw_reserve, 0.5)?.min(options.max_tokens.unwrap_or(u64::MAX))
-    };
-    let prefix_prompt = if prefix_sources.is_empty() {
+    let prefix_conversation = if prefix_sources.is_empty() {
         None
     } else {
         validate_summary_span(prefix_sources, true)
             .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
-        let conversation = serialize_sources_for_summary(prefix_sources)
+        Some(
+            serialize_sources_for_summary(prefix_sources)
+                .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?,
+        )
+    };
+    summarize_prepared_compaction_cut(
+        SummaryHistorySources::Messages(history_sources),
+        prefix_conversation,
+        prefix_sources.iter().map(|source| source.entry_id.to_owned()).collect(),
+        sources[..cut.first_kept_index].iter().map(|source| source.entry_id.to_owned()).collect(),
+        previous_summary,
+        custom_instructions,
+        model,
+        provider,
+        raw_reserve,
+        options,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+/// Summarize a native raw cut without dropping or duplicating projection
+/// fragments. Metadata has no summary record; custom/hook/LoopGuard historical
+/// content retains its checked origin beside its runtime Developer role. This
+/// uses the same fold, split-prefix, retry and receipt engine as the legacy API.
+#[allow(clippy::too_many_arguments)]
+pub async fn summarize_native_entry_compaction_cut(
+    sources: &[NativeEntrySource<'_>],
+    cut: &NativeCompactionCut,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    raw_reserve: Option<f64>,
+    options: SummaryOptions,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    let (turn_start, history_end) = native_entry_cut_at(sources, cut.first_kept_index, previous_summary)
+        .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    if sources[cut.first_kept_index].entry_id != cut.first_kept_entry_id
+        || cut.turn_start_index != turn_start
+        || cut.history_end_index != history_end
+    {
+        return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::InvalidSourceId), None));
+    }
+    // Validate every discarded fragment before opening either independent
+    // request, including images in history while the prefix itself is text.
+    serialize_native_entry_sources_for_summary(&sources[..cut.first_kept_index])
+        .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    let history_sources = SummaryHistorySources::NativeEntries(&sources[..history_end]);
+    let prefix_sources = &sources[history_end..cut.first_kept_index];
+    let prefix_conversation = if prefix_sources.iter().all(|source| source.messages.is_empty()) {
+        None
+    } else {
+        validate_native_summary_span(prefix_sources, true)
             .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+        Some(
+            serialize_native_entry_sources_for_summary(prefix_sources)
+                .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?,
+        )
+    };
+    summarize_prepared_compaction_cut(
+        history_sources,
+        prefix_conversation,
+        SummaryHistorySources::NativeEntries(prefix_sources).ids(0, prefix_sources.len()),
+        SummaryHistorySources::NativeEntries(sources).ids(0, cut.first_kept_index),
+        previous_summary,
+        custom_instructions,
+        model,
+        provider,
+        raw_reserve,
+        options,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn summarize_prepared_compaction_cut(
+    history_sources: SummaryHistorySources<'_>,
+    prefix_conversation: Option<String>,
+    prefix_source_entry_ids: Vec<String>,
+    window_source_entry_ids: Vec<String>,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    raw_reserve: Option<f64>,
+    options: SummaryOptions,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    if options.max_tokens == Some(0) {
+        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
+    }
+    let history_budget = summary_output_budget_tokens(raw_reserve)?.min(options.max_tokens.unwrap_or(u64::MAX));
+    let prefix_budget = if prefix_conversation.is_none() {
+        0
+    } else {
+        summary_budget_tokens(raw_reserve, 0.5)?.min(options.max_tokens.unwrap_or(u64::MAX))
+    };
+    let prefix_prompt = if let Some(conversation) = prefix_conversation {
         let user_prompt =
             format!("<conversation>\n{conversation}\n</conversation>\n\n{TURN_PREFIX_SUMMARIZATION_PROMPT}");
         if user_prompt.len() > MAX_SUMMARY_INPUT_BYTES {
             return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::TooLarge), None));
         }
         Some(SummaryPrompt { system_prompt: SUMMARIZATION_SYSTEM_PROMPT, user_prompt })
+    } else {
+        None
     };
-    let has_history = !history_sources.is_empty() || previous_summary.is_some_and(|summary| !summary.trim().is_empty());
+    let has_history =
+        history_sources.has_context() || previous_summary.is_some_and(|summary| !summary.trim().is_empty());
     let operation_cancel = cancel.child_token();
     let _operation_guard = operation_cancel.clone().drop_guard();
     let history_future = async {
@@ -1388,7 +1863,7 @@ pub async fn summarize_compaction_cut(
     };
     let prefix_future = async {
         let result = if let Some(prompt) = prefix_prompt {
-            let ids: Vec<String> = prefix_sources.iter().map(|source| source.entry_id.to_owned()).collect();
+            let ids = prefix_source_entry_ids;
             match summarize_window_with_retry(
                 prompt,
                 model,
@@ -1469,8 +1944,7 @@ pub async fn summarize_compaction_cut(
             return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::EmptySources), None));
         }
     };
-    accepted.window_source_entry_ids =
-        sources[..cut.first_kept_index].iter().map(|source| source.entry_id.to_owned()).collect();
+    accepted.window_source_entry_ids = window_source_entry_ids;
     accepted.usage = aggregate_summary_usage(&receipts);
     accepted.invocations = receipts;
     if cancel.is_cancelled() || Instant::now() >= deadline {

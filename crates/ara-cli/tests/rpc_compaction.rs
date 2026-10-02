@@ -333,6 +333,121 @@ fn answer_with_input(message: &str, input: u64) -> Value {
         {"data":{"choices":[],"usage":{"prompt_tokens":input,"completion_tokens":1,"total_tokens":input+1}}},done()]})
 }
 
+// Fixed raw-cut/custom conversion families, exercised through a real RPC
+// child and same-Session reopen. One group keeps metadata identity, all image
+// fragments and historical notice sources; unsupported input bills no call.
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_raw_entry_metadata_custom_branch_and_reopen_module() {
+    use ara_ai::{AssistantBlock, AssistantMessage, Message, UserMessage};
+    use ara_session::LoopGuardNotice;
+    for case in ["text", "image-prefix", "forged-notice"] {
+        let env = Env::new();
+        let mut seed = SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+        let old_user = seed.append_message(&Message::User(UserMessage::text("old raw request"))).unwrap();
+        let make_assistant = |text: &str| {
+            let mut message = AssistantMessage::empty("openai-completions", "fixture", "fake-model");
+            message.content.push(AssistantBlock::text(text));
+            Message::Assistant(message)
+        };
+        let old_answer = seed.append_message(&make_assistant("old reply")).unwrap();
+        let notice = seed.append_loop_guard_notice(&LoopGuardNotice::thinking_loop()).unwrap();
+        let file = seed.path().to_owned();
+        drop(seed);
+        let mut rows = journal(&file);
+        let mut append = |id: &str, mut row: Value| {
+            row["id"] = json!(id);
+            row["parentId"] = rows.last().unwrap()["id"].clone();
+            row["timestamp"] = json!("2026-10-02T00:00:00.123Z");
+            rows.push(row);
+        };
+        let image = json!({"type":"image","data":"AA==","mimeType":"image/png"});
+        let old_content = if case == "image-prefix" {
+            json!([{"type":"text","text":"old custom fact"},image.clone()])
+        } else {
+            json!("old custom fact")
+        };
+        append(
+            "old-custom",
+            json!({"type":"custom_message","customType":"note","content":old_content,"display":false,"attribution":"agent"}),
+        );
+        append("old-branch", json!({"type":"branch_summary","fromId":old_user,"summary":"old branch fact"}));
+        append(
+            "excluded-bash",
+            json!({"type":"message","message":{"role":"bashExecution","command":"fixture","output":"excluded raw command","exitCode":0,"cancelled":false,"truncated":false,"excludeFromContext":true,"timestamp":1}}),
+        );
+        append("last-old-answer", json!({"type":"message","message":make_assistant("last old reply")}));
+        append("kept-metadata", json!({"type":"label","label":"retained boundary"}));
+        append("kept-user", json!({"type":"message","message":Message::User(UserMessage::text("kept user request"))}));
+        append(
+            "kept-images",
+            json!({"type":"custom_message","customType":"attachment","content":[{"type":"text","text":"retained image caption"},image.clone()],"display":true,"attribution":"agent"}),
+        );
+        append(
+            "kept-image-only",
+            json!({"type":"custom_message","customType":"image-only","content":[image],"display":true,"attribution":"user"}),
+        );
+        append("tail-answer", json!({"type":"message","message":make_assistant("tail reply")}));
+        if case == "forged-notice" {
+            rows.iter_mut().find(|row| row["id"] == notice).unwrap()["content"] = json!("forged notice");
+        }
+        std::fs::write(&file, rows.iter().map(|row| format!("{row}\n")).collect::<String>()).unwrap();
+        let up = upstream(vec![answer("history summary"), answer("prefix summary"), answer("continued")]).await;
+        let mut child = RpcChild::spawn(&env, &up, &["--resume", file.to_str().unwrap(), "--compact-keep-tokens", "6"]);
+        child.ready();
+        let public = child.messages("raw-public");
+        assert!(public.iter().any(|message| message["role"] == "custom"
+            && message["customType"] == "attachment"
+            && message["content"].as_array().unwrap().len() == 2));
+        // Opening a native Session may refresh its title cache. Compaction's
+        // atomicity is measured from the accepted, ready Session snapshot.
+        let original = std::fs::read(&file).unwrap();
+        child.send(json!({"id":"raw-compact","type":"compact"}));
+        let result = child.response("raw-compact");
+        assert_eq!(result["success"], case == "text", "{case}: {result}");
+        if case == "text" {
+            assert_eq!(result["data"]["firstKeptEntryId"], "kept-metadata");
+            let after = journal(&file);
+            let summary = summary_entries(&after)[0];
+            assert_eq!(
+                summary["sourceEntryIds"],
+                json!([old_user, old_answer, notice, "old-custom", "old-branch", "last-old-answer"])
+            );
+            assert!(std::fs::read(&file).unwrap().starts_with(&original));
+            assert!(SessionJournal::open(&file).unwrap().model_context().iter().any(|message|
+                matches!(message, Message::Developer(developer) if developer.content.plain_text() == "retained image caption")));
+            child.run("after-raw", "continue retained raw context");
+            let messages = child.messages("raw-after");
+            child.finish();
+            let mut reopened = RpcChild::spawn(&env, &up, &["--resume", file.to_str().unwrap()]);
+            reopened.ready();
+            assert_eq!(reopened.messages("raw-reopened"), messages);
+            reopened.finish();
+            let requests = up.requests.lock().await;
+            assert_eq!(requests.len(), 3);
+            let summaries =
+                requests[..2].iter().map(|request| request["body"]["messages"].to_string()).collect::<String>();
+            for id in ["old-custom", "old-branch", notice.as_str()] {
+                assert_eq!(summaries.matches(&format!("\\\"entry_id\\\":\\\"{id}\\\"")).count(), 1, "{summaries}");
+            }
+            let next = &requests[2]["body"]["messages"];
+            assert!(
+                next.as_array()
+                    .unwrap()
+                    .iter()
+                    // This fake model does not advertise Developer support;
+                    // the existing Chat encoder uses its User fallback.
+                    .any(|message| message["role"] == "user" && message_text(message) == "retained image caption")
+            );
+            assert!(next.to_string().contains("image_url"));
+            assert!(!next.to_string().contains("old raw request"));
+        } else {
+            assert_eq!(std::fs::read(&file).unwrap(), original);
+            child.finish();
+            assert_eq!(up.served(), 0, "invalid summary input must not bill a provider call");
+        }
+    }
+}
+
 /// A single request gate in front of FakeUpstream. The gate announces that
 /// the actual HTTP request was accepted, then forwards it only on release.
 /// All model responses and request evidence still come from FakeUpstream.

@@ -421,6 +421,7 @@ impl Session {
                 .map(|bash| bash.event_message())
                 .or_else(|| entry.skill_prompt().map(|prompt| prompt.event_message()))
                 .or_else(|| entry.loop_guard_notice().map(|notice| notice.event_message()))
+                .or_else(|| ara_cli::native_compaction::extension_event_message(entry))
                 .or_else(|| entry.message().map(|message| AgentEvent::MessageEnd { message }.full()["message"].clone()))
         }));
         messages
@@ -1137,7 +1138,7 @@ impl Host {
         options: ara_agent::compaction::SummaryOptions,
     ) -> Result<Value> {
         use ara_agent::compaction::{
-            SummarySource, select_native_compaction_cut, summarize_compaction_cut, summary_output_budget_tokens,
+            select_native_entry_compaction_cut, summarize_native_entry_compaction_cut, summary_output_budget_tokens,
         };
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
         if self.session.persistence_error.lock().unwrap().is_some() {
@@ -1158,14 +1159,10 @@ impl Host {
             let current = self.agent.messages().await;
             // Check recovery/admission before billing or changing the journal.
             self.agent.replace_idle_messages(current.clone())?;
-            let snapshot = self.session.journal.lock().await.projected_compaction_snapshot()?;
+            let snapshot = self.session.journal.lock().await.native_projected_compaction_snapshot()?;
             let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
-            let sources = snapshot
-                .messages
-                .iter()
-                .map(|message| SummarySource { entry_id: message.entry_id.as_str(), message: &message.message })
-                .collect::<Vec<_>>();
-            let cut = select_native_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
+            let sources = ara_cli::native_compaction::sources(&snapshot.entries);
+            let cut = select_native_entry_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
                 .map_err(|error| anyhow::anyhow!("{error}"))?
                 .context("No native message prefix can be compacted with the current keep-token budget")?;
             let tokens_before = count_messages(&current, MessageCountOptions::default()) as u64;
@@ -1173,7 +1170,7 @@ impl Host {
             let deadline = Instant::now() + Duration::from_secs_f64(seconds);
             let settings = self.compaction_policy.recovery_settings()?;
             summary_output_budget_tokens(settings.reserve_tokens)?;
-            let accepted = summarize_compaction_cut(
+            let accepted = summarize_native_entry_compaction_cut(
                 &sources,
                 &cut,
                 previous,
@@ -1189,7 +1186,7 @@ impl Host {
             .map_err(|error| anyhow::anyhow!("Compaction summary failed: {error}"))?;
             let mut journal = self.session.journal.lock().await;
             let old_leaf = journal.leaf_id().map(str::to_owned);
-            if let Err(error) = journal.commit_native_projected_compaction(
+            if let Err(error) = journal.commit_native_entry_compaction(
                 &snapshot,
                 &accepted.text,
                 &cut.first_kept_entry_id,

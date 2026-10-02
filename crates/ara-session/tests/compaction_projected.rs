@@ -4,7 +4,7 @@ use ara_ai::{
 };
 use ara_session::{
     BashExecutionMessage, CompactedContextItem, CompactionCommitError, CompactionProjectionError,
-    CompactionSourceError, ProjectedCompactionSnapshot, SessionJournal,
+    CompactionSourceError, NativeEntryOrigin, ProjectedCompactionSnapshot, SessionJournal,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -653,4 +653,314 @@ fn reset_boundaries_do_not_bypass_full_raw_parent_and_id_validation() {
         assert_eq!(reopened.compacted_context_projection(), Err(CompactionProjectionError::Source(expected)));
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
+}
+
+fn native_fixture(entries: &[Value]) -> (tempfile::TempDir, SessionJournal) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("native.jsonl");
+    let mut lines = vec![
+        json!({"type":"session","version":3,"id":"native-entry-session","timestamp":"2026-10-02T00:00:00Z","cwd":"/"}),
+    ];
+    for (index, fields) in entries.iter().enumerate() {
+        let mut raw = json!({"id":format!("raw{index}"),"parentId":if index == 0 { Value::Null } else { json!(format!("raw{}", index-1)) },"timestamp":"2026-10-02T00:00:00Z"});
+        raw.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+        lines.push(raw);
+    }
+    fs::write(&path, lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+    let journal = SessionJournal::open(&path).unwrap();
+    (directory, journal)
+}
+
+#[test]
+fn native_entry_groups_preserve_metadata_kept_ids_split_cuts_and_reopen_sources() {
+    for split in [false, true] {
+        let mut raw = vec![
+            json!({"type":"message","message":user("first")}),
+            json!({"type":"message","message":assistant("first")}),
+        ];
+        if split {
+            raw.push(json!({"type":"message","message":user("second")}));
+        }
+        let kept_index = raw.len();
+        raw.extend([
+            json!({"type":"custom","customType":"extension-state","data":{"retained":42}}),
+            json!({"type":"service_tier_change","serviceTier":{"openai":"default"}}),
+        ]);
+        if !split {
+            raw.push(json!({"type":"message","message":user("second")}));
+        }
+        raw.push(json!({"type":"message","message":assistant("second")}));
+        let (_directory, mut journal) = native_fixture(&raw);
+        let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+        assert_eq!(snapshot.entries.len(), raw.len());
+        assert_eq!(snapshot.entries[kept_index].origin, NativeEntryOrigin::Metadata);
+        assert!(
+            snapshot.entries[kept_index].messages.is_empty()
+                && snapshot.entries[kept_index].raw_token_message.is_none()
+        );
+        assert_eq!(snapshot.entries.iter().filter(|entry| entry.raw_token_message.is_some()).count(), 4);
+        let window: Vec<String> = snapshot.entries[..kept_index].iter().map(|entry| entry.entry_id.clone()).collect();
+        let kept_id = snapshot.entries[kept_index].entry_id.clone();
+        journal
+            .commit_native_entry_compaction(
+                &snapshot,
+                "first and optional pending second prompt",
+                &kept_id,
+                &window,
+                100,
+            )
+            .unwrap();
+        let context = journal.model_context();
+        assert_eq!(context.len(), if split { 2 } else { 3 });
+        assert_eq!(context.last().unwrap(), &assistant("second"));
+        let next = turn(&mut journal, "next");
+        let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+        assert_eq!(snapshot.entries[0].entry_id, kept_id);
+        assert_eq!(snapshot.entries[0].origin, NativeEntryOrigin::Metadata);
+        assert!(snapshot.entries.iter().any(|entry| entry.origin == NativeEntryOrigin::CompactionBoundary));
+        let index = snapshot.entries.iter().position(|entry| entry.entry_id == next[0]).unwrap();
+        let second_window: Vec<String> = snapshot.entries[..index]
+            .iter()
+            .filter(|entry| !entry.messages.is_empty())
+            .map(|entry| entry.entry_id.clone())
+            .collect();
+        journal
+            .commit_native_entry_compaction(&snapshot, "all previous turns done", &next[0], &second_window, 80)
+            .unwrap();
+        let bytes = fs::read(journal.path()).unwrap();
+        let reopened = SessionJournal::open(journal.path()).unwrap();
+        assert_eq!(reopened.entries(), journal.entries());
+        assert_eq!(
+            reopened.native_projected_compaction_snapshot().unwrap(),
+            journal.native_projected_compaction_snapshot().unwrap()
+        );
+        let expected: Vec<String> = window.into_iter().chain(second_window).collect();
+        assert_eq!(
+            reopened
+                .native_projected_compaction_snapshot()
+                .unwrap()
+                .previous_summary
+                .unwrap()
+                .source_entry_ids
+                .unwrap(),
+            expected
+        );
+        assert!(!expected.contains(&kept_id));
+        assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn native_entry_origins_keep_custom_branch_skill_steering_and_legacy_projection() {
+    let notice = ara_session::LoopGuardNotice::thinking_loop().event_message();
+    let custom =
+        json!({"type":"custom_message","customType":"extension-prompt","content":"generic source","display":true});
+    let legacy_custom = json!({"type":"message","message":{"role":"custom","customType":"legacy-prompt","content":"legacy custom","display":false,"timestamp":4}});
+    let cases = [
+        (custom, NativeEntryOrigin::CustomMessage),
+        (
+            json!({"type":"branch_summary","summary":"branch source","fromId":"prior-branch"}),
+            NativeEntryOrigin::BranchSummary,
+        ),
+        (
+            json!({"type":"message","message":{"role":"hookMessage","customType":"old-hook","content":"hook source","display":false,"timestamp":4}}),
+            NativeEntryOrigin::HookMessage,
+        ),
+        (legacy_custom, NativeEntryOrigin::LegacyCustomMessage),
+        (
+            json!({"type":"message","message":{"role":"branchSummary","summary":"legacy branch","fromId":"prior-branch","timestamp":4}}),
+            NativeEntryOrigin::LegacyBranchSummary,
+        ),
+        (
+            json!({"type":"message","message":{"role":"compactionSummary","summary":"legacy summary","tokensBefore":100,"timestamp":4}}),
+            NativeEntryOrigin::LegacyCompactionSummary,
+        ),
+        (
+            json!({"type":"custom_message","customType":"skill-prompt","content":"user skill","display":true,"attribution":"user"}),
+            NativeEntryOrigin::UserSkill,
+        ),
+        (
+            json!({"type":"custom_message","customType":notice["customType"],"content":notice["content"],"display":false,"attribution":"agent"}),
+            NativeEntryOrigin::LoopGuardNotice,
+        ),
+        (
+            json!({"type":"custom_message","customType":"collab-prompt","content":[{"type":"text","text":"steer one"},{"type":"text","text":"steer two"}],"display":true,"attribution":"user"}),
+            NativeEntryOrigin::SteeringUser,
+        ),
+        (
+            json!({"type":"custom_message","customType":"skill-prompt","content":"agent skill","display":false,"attribution":"agent"}),
+            NativeEntryOrigin::CustomMessage,
+        ),
+    ];
+    let mut raw = Vec::new();
+    for (entry, _) in &cases {
+        raw.extend([entry.clone(), json!({"type":"message","message":assistant("done")})]);
+    }
+    let kept_index = raw.len();
+    raw.extend([
+        json!({"type":"message","message":user("kept")}),
+        json!({"type":"message","message":assistant("kept")}),
+    ]);
+    let (_directory, mut journal) = native_fixture(&raw);
+    let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+    for (index, (_, origin)) in cases.iter().enumerate() {
+        let group = &snapshot.entries[index * 2];
+        assert_eq!(group.origin, *origin);
+        assert_eq!(group.messages.len(), 1);
+        assert_eq!(group.raw_token_message.is_some(), raw[index * 2]["type"] == "message");
+        match origin {
+            NativeEntryOrigin::CustomMessage
+            | NativeEntryOrigin::LoopGuardNotice
+            | NativeEntryOrigin::HookMessage
+            | NativeEntryOrigin::LegacyCustomMessage => assert!(matches!(group.messages[0], Message::Developer(_))),
+            _ => assert!(matches!(group.messages[0], Message::User(_))),
+        }
+    }
+    let Message::User(steering) = &snapshot.entries[16].messages[0] else { panic!("steering User fragment") };
+    assert!(steering.content.plain_text().contains("</system-notice>\nsteer one\nsteer two"));
+    let sources: Vec<String> = snapshot.entries[..kept_index].iter().map(|entry| entry.entry_id.clone()).collect();
+    let kept_id = snapshot.entries[kept_index].entry_id.clone();
+    let bytes = fs::read(journal.path()).unwrap();
+    for fault in ["origin", "raw-token", "fragment", "order", "owner"] {
+        let mut stale = snapshot.clone();
+        match fault {
+            "origin" => stale.entries[0].origin = NativeEntryOrigin::User,
+            "raw-token" => stale.entries[0].raw_token_message = Some(user("fake raw budget")),
+            "fragment" => stale.entries[0].messages[0] = user("fake projection"),
+            "order" => stale.entries.swap(0, 1),
+            _ => stale.session_id = "foreign".into(),
+        }
+        assert!(matches!(
+            journal.commit_native_entry_compaction(&stale, "forged", &kept_id, &sources, 100),
+            Err(CompactionCommitError::StaleSnapshot)
+        ));
+        assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    }
+    journal
+        .commit_native_entry_compaction(&snapshot, "custom and branch history completed", &kept_id, &sources, 100)
+        .unwrap();
+    let reopened = SessionJournal::open(journal.path()).unwrap();
+    assert_eq!(
+        reopened.native_projected_compaction_snapshot().unwrap().previous_summary.unwrap().source_entry_ids.unwrap(),
+        sources
+    );
+    assert_eq!(reopened.entries(), journal.entries());
+    assert_eq!(reopened.model_context().len(), 3);
+}
+
+#[test]
+fn native_multi_fragments_stay_one_raw_group_and_images_cannot_be_hidden() {
+    for kind in ["custom_message", "hookMessage"] {
+        let payload = json!({"customType":"mixed-attachment","content":[{"type":"text","text":"one"},{"type":"image","data":"YWJj","mimeType":"image/png"},{"type":"text","text":"two"}],"display":false,"timestamp":4});
+        let mixed = if kind == "custom_message" {
+            let mut raw = payload.clone();
+            raw.as_object_mut().unwrap().remove("timestamp");
+            raw["type"] = json!(kind);
+            raw
+        } else {
+            let mut message = payload;
+            message["role"] = json!(kind);
+            json!({"type":"message","message":message})
+        };
+        let hidden = json!({"type":"message","message":{"role":"bashExecution","command":"private","output":"excluded output","cancelled":false,"truncated":false,"timestamp":4,"excludeFromContext":true}});
+        let raw = [
+            json!({"type":"message","message":user("first")}),
+            json!({"type":"message","message":assistant("first")}),
+            hidden,
+            mixed,
+            json!({"type":"message","message":assistant("attachment received")}),
+            json!({"type":"message","message":user("kept")}),
+            json!({"type":"message","message":assistant("kept")}),
+        ];
+        let (_directory, mut journal) = native_fixture(&raw);
+        let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+        assert!(snapshot.entries[2].messages.is_empty() && snapshot.entries[2].raw_token_message.is_some());
+        let mixed = &snapshot.entries[3];
+        assert_eq!(mixed.messages.len(), 2);
+        assert_eq!(mixed.raw_token_message.is_some(), kind == "hookMessage");
+        let Message::Developer(text) = &mixed.messages[0] else { panic!("text Developer") };
+        assert_eq!(text.content.plain_text(), "one\ntwo");
+        let Message::User(images) = &mixed.messages[1] else { panic!("images User") };
+        assert_eq!(images.content.plain_text(), "Images attached to mixed-attachment.");
+        assert!(journal.entries()[3].message().is_none(), "single-message API must not drop a fragment");
+        assert!(matches!(
+            journal.projected_compaction_snapshot(),
+            Err(CompactionProjectionError::Source(CompactionSourceError::MultipleMessageProjection { .. }))
+        ));
+        let bytes = fs::read(journal.path()).unwrap();
+        let unsafe_sources = ["raw0", "raw1", "raw3", "raw4"].map(str::to_owned);
+        assert!(matches!(
+            journal.commit_native_entry_compaction(&snapshot, "cannot hide image", "raw5", &unsafe_sources, 100),
+            Err(CompactionCommitError::UnsafeSummaryBoundary)
+        ));
+        assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+        journal
+            .commit_native_entry_compaction(&snapshot, "first completed", "raw3", &["raw0".into(), "raw1".into()], 100)
+            .unwrap();
+        let reopened = SessionJournal::open(journal.path()).unwrap();
+        let grouped = reopened.native_projected_compaction_snapshot().unwrap();
+        assert_eq!(grouped.entries[0].entry_id, "raw3");
+        assert_eq!(grouped.entries[0].messages, mixed.messages);
+        let projection = reopened.compacted_context_projection().unwrap();
+        assert_eq!(
+            projection
+                .items
+                .iter()
+                .filter(|item| matches!(item, CompactedContextItem::Message(source) if source.entry_id == "raw3"))
+                .count(),
+            2
+        );
+        assert_eq!(reopened.model_context().len(), 6);
+        assert_eq!(reopened.entries(), journal.entries());
+    }
+}
+
+#[test]
+fn native_entry_validation_keeps_genuine_developer_and_malformed_special_rejections() {
+    let candidates = [
+        json!({"type":"custom_message","customType":"skill-prompt","content":{"invalid":true},"display":true,"attribution":"user"}),
+        json!({"type":"custom_message","customType":"thinking-loop-redirect","content":"forged notice","display":false,"attribution":"agent"}),
+        json!({"type":"custom_message","customType":"collab-prompt","content":{"invalid":true},"display":true,"attribution":"user"}),
+        json!({"type":"custom_message","customType":"generic","content":[{"type":"unknown","text":"bad"}],"display":true}),
+        json!({"type":"branch_summary","summary":"missing from ID"}),
+    ];
+    for candidate in candidates {
+        let (_directory, journal) = native_fixture(&[candidate, json!({"type":"message","message":assistant("done")})]);
+        let bytes = fs::read(journal.path()).unwrap();
+        assert!(matches!(
+            journal.native_projected_compaction_snapshot(),
+            Err(CompactionProjectionError::Source(CompactionSourceError::UnsupportedContextEntry { .. }))
+        ));
+        assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    }
+    let (_directory, mut journal) = native_fixture(&[
+        json!({"type":"message","message":user("first")}),
+        json!({"type":"message","message":{"role":"developer","content":"real developer","timestamp":4}}),
+        json!({"type":"message","message":assistant("first")}),
+        json!({"type":"message","message":user("kept")}),
+        json!({"type":"message","message":assistant("kept")}),
+    ]);
+    let snapshot = journal.native_projected_compaction_snapshot().unwrap();
+    assert_eq!(snapshot.entries[1].origin, NativeEntryOrigin::Developer);
+    let sources = ["raw0", "raw1", "raw2"].map(str::to_owned);
+    let bytes = fs::read(journal.path()).unwrap();
+    assert!(matches!(
+        journal.commit_native_entry_compaction(&snapshot, "must not downgrade real Developer", "raw3", &sources, 100),
+        Err(CompactionCommitError::UnsafeSummaryBoundary)
+    ));
+    assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    let (_directory, mut journal) = native_fixture(&[
+        json!({"type":"message","message":user("tool pending")}),
+        json!({"type":"message","message":call()}),
+        json!({"type":"custom_message","customType":"later-prompt","content":"new context","display":false}),
+    ]);
+    let bytes = fs::read(journal.path()).unwrap();
+    let recovery = journal.recover_interrupted_tool_calls().unwrap();
+    assert!(recovery.paired.is_empty());
+    assert_eq!(recovery.unpaired_earlier, ["call-1"]);
+    assert_eq!(
+        fs::read(journal.path()).unwrap(),
+        bytes,
+        "new custom context cannot receive an adjacent synthetic tool receipt"
+    );
 }

@@ -22,8 +22,8 @@
 //! results were recorded are paired with explicit "effect unknown" results on
 //! resume instead of being replayed.
 //!
-//! Not ported (open): compaction/branch-summary entries in live model context building,
-//! label editing, general custom-entry semantics, v1/v2 migrations, SQL/Redis storage,
+//! Not ported (open): provider-native compaction replay, label editing,
+//! v1/v2 migrations, SQL/Redis storage,
 //! listing/search, moving, title generation, blob externalization.
 
 mod loop_guard_notice;
@@ -35,8 +35,8 @@ pub use loop_guard_notice::{
 pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 
 use ara_ai::{
-    AssistantBlock, AssistantMessage, Message, StopReason, ToolResultMessage, UserBlock, UserContent, UserMessage,
-    now_ms,
+    AssistantBlock, AssistantMessage, DeveloperMessage, Message, StopReason, ToolResultMessage, UserBlock, UserContent,
+    UserMessage, now_ms,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -436,7 +436,7 @@ impl Entry {
     }
 
     fn is_decodable_message(&self) -> bool {
-        if self.role() == Some("bashExecution") { self.bash_execution().is_some() } else { self.message().is_some() }
+        self.model_messages().is_some()
     }
 
     /// Original user-invoked Skill identity, independent of its model projection.
@@ -454,17 +454,140 @@ impl Entry {
             && self.raw.get("attribution").and_then(Value::as_str) == Some("user")
     }
 
-    /// Model-visible message, including a directly invoked Skill custom entry.
+    /// Compatibility projection for consumers that require exactly one
+    /// message. Multi-fragment entries must use [`model_messages`](Self::model_messages).
     pub fn message(&self) -> Option<Message> {
+        let mut messages = self.model_messages()?;
+        (messages.len() == 1).then(|| messages.remove(0))
+    }
+
+    /// Canonical ordered provider fragments. `None` identifies an unknown or
+    /// malformed entry; an empty vector is a recognized non-context entry.
+    pub fn model_messages(&self) -> Option<Vec<Message>> {
         match self.kind.as_str() {
-            "message" if self.role() == Some("bashExecution") => self.bash_execution()?.model_message(),
-            "message" => serde_json::from_value(self.raw.get("message")?.clone()).ok(),
-            "custom_message" => self
-                .skill_prompt()
-                .map(|prompt| prompt.model_message())
-                .or_else(|| self.loop_guard_notice().map(|notice| notice.model_message())),
+            "message" if self.role() == Some("bashExecution") => {
+                Some(self.bash_execution()?.model_message().into_iter().collect())
+            }
+            "message" if self.role() == Some("hookMessage") => custom_model_messages(self.raw.get("message")?),
+            "message" if self.role() == Some("custom") => {
+                let mut raw = self.raw.get("message")?.clone();
+                let timestamp =
+                    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(raw.get("timestamp")?.as_i64()?)?
+                        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                        .to_string();
+                raw["type"] = json!("custom_message");
+                raw["timestamp"] = json!(timestamp);
+                custom_entry_model_messages(&raw)
+            }
+            "message" if self.role() == Some("branchSummary") => {
+                let message = self.raw.get("message")?;
+                message.get("fromId")?.as_str()?;
+                Some(vec![summary_model_message(message, "branch", message.get("timestamp")?.as_i64()?)?])
+            }
+            "message" if self.role() == Some("compactionSummary") => {
+                let message = self.raw.get("message")?;
+                message.get("tokensBefore")?.as_u64()?;
+                Some(vec![summary_model_message(message, "compaction", message.get("timestamp")?.as_i64()?)?])
+            }
+            "message" => Some(vec![serde_json::from_value(self.raw.get("message")?.clone()).ok()?]),
+            "custom_message" => custom_entry_model_messages(&self.raw),
+            "branch_summary" if self.is_discarded_entry_branch_marker() => Some(Vec::new()),
+            "branch_summary" => {
+                self.raw.get("fromId")?.as_str()?;
+                Some(vec![summary_model_message(&self.raw, "branch", entry_timestamp(&self.raw)?)?])
+            }
+            "compaction" => Some(Vec::new()),
+            _ if self.is_metadata() => Some(Vec::new()),
             _ => None,
         }
+    }
+
+    fn is_metadata(&self) -> bool {
+        if self.kind == "custom"
+            && self.raw.get("customType").and_then(Value::as_str) == Some(ACCEPTED_TERMINAL_EMPTY_STOP_MARKER)
+        {
+            return self.is_accepted_terminal_empty_stop_marker();
+        }
+        matches!(
+            self.kind.as_str(),
+            "model_change"
+                | "label"
+                | "title_change"
+                | "thinking_level_change"
+                | "ttsr_injection"
+                | "session_init"
+                | "mode_change"
+                | "credential_pin"
+                | "model_usage"
+        ) || (self.kind == "custom" && self.raw.get("customType").and_then(Value::as_str).is_some())
+            || self.is_service_tier_change()
+            || self.is_accepted_terminal_empty_stop_marker()
+    }
+
+    fn native_compaction_entry(&self) -> std::result::Result<NativeCompactionEntry, CompactionSourceError> {
+        let messages = self.model_messages().ok_or_else(|| {
+            if self.kind == "message" {
+                CompactionSourceError::UndecodableMessage { id: self.id.clone() }
+            } else {
+                CompactionSourceError::UnsupportedContextEntry { id: self.id.clone(), kind: self.kind.clone() }
+            }
+        })?;
+        let origin = match self.kind.as_str() {
+            "message" => match self.role() {
+                Some("user") => NativeEntryOrigin::User,
+                Some("assistant") => NativeEntryOrigin::Assistant,
+                Some("toolResult") => NativeEntryOrigin::ToolResult,
+                Some("developer") => NativeEntryOrigin::Developer,
+                Some("bashExecution") => NativeEntryOrigin::BashExecution,
+                Some("hookMessage") => NativeEntryOrigin::HookMessage,
+                Some("custom") => NativeEntryOrigin::LegacyCustomMessage,
+                Some("branchSummary") => NativeEntryOrigin::LegacyBranchSummary,
+                Some("compactionSummary") => NativeEntryOrigin::LegacyCompactionSummary,
+                _ => unreachable!("canonical message decoder recognized a fixed role"),
+            },
+            "custom_message" if self.is_user_skill_prompt_candidate() => NativeEntryOrigin::UserSkill,
+            "custom_message" if LoopGuardNotice::is_candidate(&self.raw) => NativeEntryOrigin::LoopGuardNotice,
+            "custom_message" if self.raw["customType"] == "collab-prompt" && self.raw["attribution"] == "user" => {
+                NativeEntryOrigin::SteeringUser
+            }
+            "custom_message" => NativeEntryOrigin::CustomMessage,
+            "branch_summary" if self.is_discarded_entry_branch_marker() => NativeEntryOrigin::Metadata,
+            "branch_summary" => NativeEntryOrigin::BranchSummary,
+            "compaction" => NativeEntryOrigin::CompactionBoundary,
+            _ => NativeEntryOrigin::Metadata,
+        };
+        // Count one proxy per raw `message`, never once per projected fragment.
+        // Native Bash/legacy-role estimation remains a text projection proxy.
+        let raw_token_message = if self.role() == Some("bashExecution") {
+            let mut bash = self.bash_execution().expect("canonical Bash decoded");
+            bash.exclude_from_context = None;
+            bash.model_message()
+        } else if self.kind == "message" {
+            let mut projected = messages.clone();
+            if projected.len() == 1 {
+                projected.pop()
+            } else {
+                let content: Vec<UserBlock> = projected
+                    .into_iter()
+                    .flat_map(|message| match message {
+                        Message::Developer(message) => content_blocks(message.content),
+                        Message::User(message) => content_blocks(message.content),
+                        _ => unreachable!("only native custom projections have multiple fragments"),
+                    })
+                    .collect();
+                Some(Message::Developer(DeveloperMessage {
+                    content: UserContent::Blocks(content),
+                    timestamp: self
+                        .raw
+                        .pointer("/message/timestamp")
+                        .and_then(Value::as_i64)
+                        .expect("native timestamp decoded"),
+                }))
+            }
+        } else {
+            None
+        };
+        Ok(NativeCompactionEntry { entry_id: self.id.clone(), origin, messages, raw_token_message })
     }
 
     fn role(&self) -> Option<&str> {
@@ -473,6 +596,108 @@ impl Entry {
         }
         self.raw.pointer("/message/role").and_then(Value::as_str)
     }
+}
+
+fn entry_timestamp(raw: &Value) -> Option<i64> {
+    Some(chrono::DateTime::parse_from_rfc3339(raw.get("timestamp")?.as_str()?).ok()?.timestamp_millis())
+}
+
+fn content_blocks(content: UserContent) -> Vec<UserBlock> {
+    match content {
+        UserContent::Text(text) => vec![UserBlock::text(text)],
+        UserContent::Blocks(blocks) => blocks,
+    }
+}
+
+fn custom_entry_model_messages(raw: &Value) -> Option<Vec<Message>> {
+    if raw["customType"] == SKILL_PROMPT_CUSTOM_TYPE && raw["attribution"] == "user" {
+        return Some(vec![UserSkillPrompt::from_entry(raw)?.model_message()]);
+    }
+    if LoopGuardNotice::is_candidate(raw) {
+        return Some(vec![LoopGuardNotice::from_entry(raw)?.model_message()]);
+    }
+    if raw["customType"] == "collab-prompt" && raw["attribution"] == "user" {
+        raw.get("display")?.as_bool()?;
+        let content: UserContent = serde_json::from_value(raw.get("content")?.clone()).ok()?;
+        let text = content.plain_text();
+        let content = if text.is_empty() {
+            content
+        } else {
+            let envelope = ara_prompt::prompt::render("<system-notice>\nUser interjection during work: priority; supersedes conflicting prior instructions. Re-read; ensure current work reflects user intent.\n</system-notice>\n{{message}}\n", &json!({"message":text})).ok()?;
+            match content {
+                UserContent::Text(_) => UserContent::Text(envelope),
+                UserContent::Blocks(blocks) => {
+                    let mut content = vec![UserBlock::text(envelope)];
+                    content.extend(blocks.into_iter().filter(|block| matches!(block, UserBlock::Image(_))));
+                    UserContent::Blocks(content)
+                }
+            }
+        };
+        return Some(vec![Message::User(UserMessage { content, synthetic: None, timestamp: entry_timestamp(raw)? })]);
+    }
+    let mut message = raw.clone();
+    message["timestamp"] = json!(entry_timestamp(raw)?);
+    custom_model_messages(&message)
+}
+
+/// Fixed coding-agent `convertImageBearingCustomMessage`: text remains a
+/// Developer fragment, while images occupy the supported User content slot.
+fn custom_model_messages(raw: &Value) -> Option<Vec<Message>> {
+    let custom_type = raw.get("customType")?.as_str()?;
+    raw.get("display")?.as_bool()?;
+    if raw.get("attribution").is_some_and(|value| !matches!(value.as_str(), Some("agent" | "user"))) {
+        return None;
+    }
+    let timestamp = raw.get("timestamp")?.as_i64()?;
+    let content: UserContent = serde_json::from_value(raw.get("content")?.clone()).ok()?;
+    let blocks = content_blocks(content);
+    let (images, text): (Vec<UserBlock>, Vec<UserBlock>) =
+        blocks.into_iter().partition(|block| matches!(block, UserBlock::Image(_)));
+    if images.is_empty() {
+        return Some(vec![Message::Developer(DeveloperMessage { content: UserContent::Blocks(text), timestamp })]);
+    }
+    let mut messages = Vec::new();
+    if !text.is_empty() {
+        messages.push(Message::Developer(DeveloperMessage { content: UserContent::Blocks(text), timestamp }));
+    }
+    let mut content = vec![UserBlock::text(format!("Images attached to {custom_type}."))];
+    content.extend(images);
+    messages.push(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }));
+    Some(messages)
+}
+
+fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Message> {
+    let summary = raw.get("summary")?.as_str()?;
+    let content = if kind == "branch" {
+        vec![UserBlock::text(
+            ara_prompt::prompt::render(
+                "Branch-return summary:\n\n<summary>\n{{summary}}\n</summary>\n",
+                &json!({"summary":summary}),
+            )
+            .ok()?,
+        )]
+    } else if let Some(blocks) = raw.get("blocks") {
+        let mut content = vec![UserBlock::text(summary)];
+        content.extend(serde_json::from_value::<Vec<UserBlock>>(blocks.clone()).ok()?);
+        content
+    } else {
+        let template = if raw.get("method").and_then(Value::as_str) == Some("handoff") {
+            "Context replaced. The <handoff> below is a handoff document a prior instance of you wrote from the full conversation. It is your own working memory, not user input.\n- First person inside it refers to you (the prior instance).\n- \"Next Steps\" is your own resumed plan; re-check it against the latest user message before acting.\n- The handoff already exists and is complete: NEVER write another handoff document unless the user explicitly asks.\nMUST build on prior work; NEVER duplicate prior work.\n\n<handoff>\n{{summary}}\n</handoff>\n"
+        } else {
+            "Prior model work/tool state available.\nMUST build on prior work; NEVER duplicate prior work.\n\n<summary>\n{{summary}}\n</summary>\n"
+        };
+        let text = ara_prompt::prompt::render(template, &json!({"summary":summary})).ok()?;
+        let mut content = vec![UserBlock::text(text)];
+        if let Some(images) = raw.get("images") {
+            let images: Vec<UserBlock> = serde_json::from_value(images.clone()).ok()?;
+            if images.iter().any(|block| !matches!(block, UserBlock::Image(_))) {
+                return None;
+            }
+            content.extend(images);
+        }
+        content
+    };
+    Some(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }))
 }
 
 /// Storage-side guard for a soft summary's replaced prefix. It mirrors the
@@ -489,50 +714,74 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
     let mut pending: HashMap<String, String> = HashMap::new();
     let mut ends_with_user = false;
     for entry in branch {
-        let Some(message) = entry.message() else { continue };
-        if !saw_message && !matches!(message, Message::User(_)) {
-            return false;
-        }
-        saw_message = true;
-        match &message {
-            Message::User(user) => {
-                if !pending.is_empty()
-                    || matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
-                {
-                    return false;
-                }
-                ends_with_user = true;
+        let Ok(group) = entry.native_compaction_entry() else { return false };
+        let historical_custom = matches!(
+            group.origin,
+            NativeEntryOrigin::CustomMessage
+                | NativeEntryOrigin::HookMessage
+                | NativeEntryOrigin::LegacyCustomMessage
+                | NativeEntryOrigin::LoopGuardNotice
+        );
+        for message in group.messages {
+            if !saw_message && !matches!(message, Message::User(_)) && !historical_custom {
+                return false;
             }
-            Message::Developer(_) => return false,
-            Message::Assistant(assistant) => {
-                if !pending.is_empty()
-                    || assistant.content.iter().any(|block| matches!(block, AssistantBlock::Image(_)))
-                {
-                    return false;
+            saw_message = true;
+            match &message {
+                Message::User(user) => {
+                    if !pending.is_empty()
+                        || matches!(&user.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
+                    {
+                        return false;
+                    }
+                    ends_with_user |= matches!(
+                        group.origin,
+                        NativeEntryOrigin::User
+                            | NativeEntryOrigin::UserSkill
+                            | NativeEntryOrigin::SteeringUser
+                            | NativeEntryOrigin::BashExecution
+                            | NativeEntryOrigin::LegacyCustomMessage
+                    );
                 }
-                ends_with_user = false;
-                for call in assistant.tool_calls() {
-                    if pending.insert(call.id.clone(), call.name.clone()).is_some() {
+                Message::Developer(developer) => {
+                    if !historical_custom
+                        || !pending.is_empty()
+                        || matches!(&developer.content, UserContent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, UserBlock::Image(_))))
+                    {
                         return false;
                     }
                 }
-            }
-            Message::ToolResult(result) => {
-                if result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
-                    || result.details.as_ref().is_some_and(|details| {
-                        details.get("panicked").and_then(Value::as_bool) == Some(true)
-                            || (details.get("__synthetic").and_then(Value::as_bool) == Some(true)
-                                && details.get("source").and_then(Value::as_str) == Some("interrupted_unknown_effect")
-                                && details.get("executed").and_then(Value::as_str) == Some("unknown"))
-                    })
-                {
-                    return false;
+                Message::Assistant(assistant) => {
+                    if !pending.is_empty()
+                        || assistant.content.iter().any(|block| matches!(block, AssistantBlock::Image(_)))
+                    {
+                        return false;
+                    }
+                    ends_with_user = false;
+                    for call in assistant.tool_calls() {
+                        if pending.insert(call.id.clone(), call.name.clone()).is_some() {
+                            return false;
+                        }
+                    }
                 }
-                match pending.remove(result.tool_call_id.as_str()) {
-                    Some(name) if name == result.tool_name => {}
-                    _ => return false,
+                Message::ToolResult(result) => {
+                    if result.content.iter().any(|block| matches!(block, UserBlock::Image(_)))
+                        || result.details.as_ref().is_some_and(|details| {
+                            details.get("panicked").and_then(Value::as_bool) == Some(true)
+                                || (details.get("__synthetic").and_then(Value::as_bool) == Some(true)
+                                    && details.get("source").and_then(Value::as_str)
+                                        == Some("interrupted_unknown_effect")
+                                    && details.get("executed").and_then(Value::as_str) == Some("unknown"))
+                        })
+                    {
+                        return false;
+                    }
+                    match pending.remove(result.tool_call_id.as_str()) {
+                        Some(name) if name == result.tool_name => {}
+                        _ => return false,
+                    }
+                    ends_with_user = false;
                 }
-                ends_with_user = false;
             }
         }
     }
@@ -544,6 +793,31 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
 /// history and provenance checks before selecting this model-visible suffix.
 fn active_context_start(branch: &[&Entry]) -> usize {
     branch.iter().rposition(|entry| entry.kind == "reset_boundary").map_or(0, |index| index + 1)
+}
+
+fn native_kept_boundary_supported(branch: &[&Entry], index: usize) -> bool {
+    for entry in &branch[index..] {
+        let Ok(group) = entry.native_compaction_entry() else { return false };
+        if group.origin == NativeEntryOrigin::Metadata {
+            continue;
+        }
+        return !matches!(
+            group.origin,
+            NativeEntryOrigin::ToolResult
+                | NativeEntryOrigin::Developer
+                | NativeEntryOrigin::LegacyCustomMessage
+                | NativeEntryOrigin::CompactionBoundary
+        );
+    }
+    false
+}
+
+fn context_source_ids(branch: &[&Entry]) -> Vec<String> {
+    branch
+        .iter()
+        .filter(|entry| entry.model_messages().is_some_and(|messages| !messages.is_empty()))
+        .map(|entry| entry.id.clone())
+        .collect()
 }
 
 /// One decoded message tied to its actual journal entry ID. This is an
@@ -571,6 +845,48 @@ pub struct ProjectedCompactionSnapshot {
     pub leaf_id: String,
     pub previous_summary: Option<CompactionSummaryView>,
     pub messages: Vec<SourcedMessage>,
+}
+
+/// Verified source shape, independent of its provider-visible role. Only the
+/// Session decoder assigns this origin; checked commits compare it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeEntryOrigin {
+    User,
+    Assistant,
+    ToolResult,
+    Developer,
+    BashExecution,
+    HookMessage,
+    LegacyCustomMessage,
+    LegacyBranchSummary,
+    LegacyCompactionSummary,
+    CustomMessage,
+    UserSkill,
+    SteeringUser,
+    LoopGuardNotice,
+    BranchSummary,
+    Metadata,
+    CompactionBoundary,
+}
+
+/// One real raw entry, with zero or more ordered model fragments. No cut,
+/// token estimate or source ID may split or duplicate this group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeCompactionEntry {
+    pub entry_id: String,
+    pub origin: NativeEntryOrigin,
+    pub messages: Vec<Message>,
+    /// Counted once for raw `type=message`. Native extension-role estimates
+    /// currently use a text model projection proxy, including excluded Bash.
+    pub raw_token_message: Option<Message>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeProjectedCompactionSnapshot {
+    pub session_id: String,
+    pub leaf_id: String,
+    pub previous_summary: Option<CompactionSummaryView>,
+    pub entries: Vec<NativeCompactionEntry>,
 }
 
 /// A derived summary remains distinct from a user message. The host/Agent
@@ -623,6 +939,8 @@ pub enum CompactionSourceError {
     ParentNotEarlier { child_id: String, parent_id: String },
     #[error("session message entry {id} cannot be decoded")]
     UndecodableMessage { id: String },
+    #[error("session entry {id} has multiple model fragments; use the grouped native snapshot")]
+    MultipleMessageProjection { id: String },
     #[error("session entry {id} has unsupported context type {kind}")]
     UnsupportedContextEntry { id: String, kind: String },
 }
@@ -1708,32 +2026,19 @@ impl SessionJournal {
         let branch = self.strict_compaction_branch()?;
         let mut messages = Vec::new();
         for entry in &branch[active_context_start(&branch)..] {
-            match entry.kind.as_str() {
-                "message" if entry.is_excluded_bash_execution() => {}
-                "message" => messages.push(SourcedMessage {
-                    entry_id: entry.id.clone(),
-                    message: entry
-                        .message()
-                        .ok_or_else(|| CompactionSourceError::UndecodableMessage { id: entry.id.clone() })?,
-                }),
-                "custom_message" => {
-                    let message = entry.message().ok_or_else(|| CompactionSourceError::UnsupportedContextEntry {
-                        id: entry.id.clone(),
-                        kind: entry.kind.clone(),
-                    })?;
-                    messages.push(SourcedMessage { entry_id: entry.id.clone(), message });
-                }
-                "model_change" | "label" | "title_change" => {}
-                _ if entry.is_service_tier_change()
-                    || entry.is_discarded_entry_branch_marker()
-                    || entry.is_accepted_terminal_empty_stop_marker() => {}
-                _ => {
-                    return Err(CompactionSourceError::UnsupportedContextEntry {
-                        id: entry.id.clone(),
-                        kind: entry.kind.clone(),
-                    });
-                }
+            if entry.kind == "compaction" {
+                return Err(CompactionSourceError::UnsupportedContextEntry {
+                    id: entry.id.clone(),
+                    kind: entry.kind.clone(),
+                });
             }
+            let group = entry.native_compaction_entry()?;
+            if group.messages.len() > 1 {
+                return Err(CompactionSourceError::MultipleMessageProjection { id: entry.id.clone() });
+            }
+            messages.extend(
+                group.messages.into_iter().map(|message| SourcedMessage { entry_id: entry.id.clone(), message }),
+            );
         }
         Ok(CompactionSourceSnapshot {
             session_id: self.session_id().to_owned(),
@@ -1752,10 +2057,18 @@ impl SessionJournal {
         let projection = self.compacted_context_projection()?;
         let mut previous_summary = None;
         let mut messages = Vec::new();
+        let mut source_ids = HashSet::new();
         for item in projection.items {
             match item {
                 CompactedContextItem::Summary(summary) => previous_summary = Some(summary),
-                CompactedContextItem::Message(message) => messages.push(*message),
+                CompactedContextItem::Message(message) => {
+                    if !source_ids.insert(message.entry_id.clone()) {
+                        return Err(
+                            CompactionSourceError::MultipleMessageProjection { id: message.entry_id.clone() }.into()
+                        );
+                    }
+                    messages.push(*message);
+                }
             }
         }
         Ok(ProjectedCompactionSnapshot {
@@ -1764,6 +2077,98 @@ impl SessionJournal {
             previous_summary,
             messages,
         })
+    }
+
+    /// Native raw groups on the retained active branch. Metadata and prior
+    /// compaction barriers stay present even though they project no messages.
+    pub fn native_projected_compaction_snapshot(
+        &self,
+    ) -> std::result::Result<NativeProjectedCompactionSnapshot, CompactionProjectionError> {
+        let projection = self.compacted_context_projection()?;
+        let previous_summary = projection.items.into_iter().find_map(|item| match item {
+            CompactedContextItem::Summary(summary) => Some(summary),
+            _ => None,
+        });
+        let raw_branch = self.strict_compaction_branch()?;
+        let branch = &raw_branch[active_context_start(&raw_branch)..];
+        let start = previous_summary.as_ref().map_or(0, |summary| {
+            branch
+                .iter()
+                .position(|entry| entry.id == summary.first_kept_entry_id)
+                .expect("projection validated raw kept ID")
+        });
+        let entries = branch[start..]
+            .iter()
+            .map(|entry| entry.native_compaction_entry())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(NativeProjectedCompactionSnapshot {
+            session_id: self.session_id().to_owned(),
+            leaf_id: self.leaf.as_ref().expect("validated leaf").clone(),
+            previous_summary,
+            entries,
+        })
+    }
+
+    /// Accept one summary derived from the exact current raw groups. A kept
+    /// metadata ID is preserved; source IDs count each discarded context-
+    /// bearing raw entry once, independently of fragment count.
+    pub fn commit_native_entry_compaction(
+        &mut self,
+        snapshot: &NativeProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+        tokens_before: u64,
+    ) -> std::result::Result<String, CompactionCommitError> {
+        let current = self.native_projected_compaction_snapshot()?;
+        if snapshot != &current {
+            return Err(CompactionCommitError::StaleSnapshot);
+        }
+        if summary.trim().is_empty() || summary.len() > 1_000_000 {
+            return Err(CompactionCommitError::InvalidSummary);
+        }
+        let kept = current
+            .entries
+            .iter()
+            .position(|entry| entry.entry_id == first_kept_entry_id)
+            .filter(|index| *index > 0)
+            .ok_or(CompactionCommitError::InvalidWindow)?;
+        let expected: Vec<String> = current.entries[..kept]
+            .iter()
+            .filter(|entry| !entry.messages.is_empty())
+            .map(|entry| entry.entry_id.clone())
+            .collect();
+        if expected.is_empty() || window_source_entry_ids != expected.as_slice() {
+            return Err(CompactionCommitError::InvalidWindow);
+        }
+        let mut cumulative = match current.previous_summary {
+            Some(summary) => summary.source_entry_ids.ok_or(CompactionCommitError::MissingPreviousSources)?,
+            None => Vec::new(),
+        };
+        cumulative.extend(expected);
+        let raw_branch = self.strict_compaction_branch().map_err(CompactionProjectionError::from)?;
+        let branch = &raw_branch[active_context_start(&raw_branch)..];
+        let raw_kept = branch
+            .iter()
+            .position(|entry| entry.id == first_kept_entry_id)
+            .ok_or(CompactionCommitError::InvalidWindow)?;
+        // New native cuts backtrack to the first adjacent non-message.
+        // Readers also accept older V1 summaries keeping User after title
+        // metadata, so already accepted persisted history stays usable.
+        let backtracked = raw_kept
+            .checked_sub(1)
+            .is_some_and(|previous| matches!(branch[previous].kind.as_str(), "message" | "compaction"));
+        if !backtracked
+            || !native_kept_boundary_supported(branch, raw_kept)
+            || cumulative != context_source_ids(&branch[..raw_kept])
+        {
+            return Err(CompactionCommitError::InvalidWindow);
+        }
+        let split = current.entries[kept].origin != NativeEntryOrigin::User;
+        if !safe_summary_prefix(&branch[..raw_kept], split) {
+            return Err(CompactionCommitError::UnsafeSummaryBoundary);
+        }
+        Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative, tokens_before)?)
     }
 
     /// Validate this exact projected window, then append one native soft
@@ -1854,13 +2259,7 @@ impl SessionJournal {
             .iter()
             .position(|entry| entry.id == first_kept_entry_id)
             .ok_or(CompactionCommitError::InvalidWindow)?;
-        let raw_sources: Vec<String> = branch[..raw_kept_index]
-            .iter()
-            .filter(|entry| {
-                matches!(entry.kind.as_str(), "message" | "custom_message") && !entry.is_excluded_bash_execution()
-            })
-            .map(|entry| entry.id.clone())
-            .collect();
+        let raw_sources = context_source_ids(&branch[..raw_kept_index]);
         if cumulative_sources != raw_sources {
             return Err(CompactionCommitError::InvalidWindow);
         }
@@ -1883,16 +2282,6 @@ impl SessionJournal {
         let mut latest: Option<(usize, CompactionSummaryView)> = None;
         for (index, entry) in branch.iter().enumerate() {
             match entry.kind.as_str() {
-                "message" => {
-                    if !entry.is_decodable_message() {
-                        return Err(CompactionSourceError::UndecodableMessage { id: entry.id.clone() }.into());
-                    }
-                }
-                "custom_message" if entry.message().is_some() => {}
-                "model_change" | "label" | "title_change" => {}
-                _ if entry.is_service_tier_change()
-                    || entry.is_discarded_entry_branch_marker()
-                    || entry.is_accepted_terminal_empty_stop_marker() => {}
                 "compaction" => {
                     let invalid = |field| CompactionProjectionError::InvalidField { id: entry.id.clone(), field };
                     let summary = entry.raw.get("summary").and_then(Value::as_str).ok_or_else(|| invalid("summary"))?;
@@ -1907,16 +2296,13 @@ impl SessionJournal {
                         .ok_or_else(|| invalid("firstKeptEntryId"))?;
                     let kept_index = branch[..index]
                         .iter()
-                        .position(|candidate| {
-                            candidate.id == first_kept
-                                && matches!(candidate.kind.as_str(), "message" | "custom_message")
-                        })
+                        .position(|candidate| candidate.id == first_kept)
                         .ok_or_else(|| CompactionProjectionError::MissingKeptMessage { id: entry.id.clone() })?;
-                    let allow_unanswered_user = match branch[kept_index].message() {
-                        Some(Message::User(_)) => false,
-                        Some(Message::Assistant(_)) => true,
-                        _ => return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() }),
-                    };
+                    if !native_kept_boundary_supported(&branch[..index], kept_index) {
+                        return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
+                    }
+                    let allow_unanswered_user =
+                        branch[kept_index].native_compaction_entry()?.origin != NativeEntryOrigin::User;
                     if !safe_summary_prefix(&branch[..kept_index], allow_unanswered_user) {
                         return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
                     }
@@ -1958,14 +2344,7 @@ impl SessionJournal {
                                 .map(|id| id.as_str().filter(|id| !id.is_empty()).map(str::to_owned))
                                 .collect::<Option<_>>()
                                 .ok_or_else(|| invalid("sourceEntryIds"))?;
-                            let expected: Vec<String> = branch[..kept_index]
-                                .iter()
-                                .filter(|candidate| {
-                                    matches!(candidate.kind.as_str(), "message" | "custom_message")
-                                        && !candidate.is_excluded_bash_execution()
-                                })
-                                .map(|candidate| candidate.id.clone())
-                                .collect();
+                            let expected = context_source_ids(&branch[..kept_index]);
                             if ids.is_empty() || ids != expected {
                                 return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
                             }
@@ -1986,11 +2365,7 @@ impl SessionJournal {
                     ));
                 }
                 _ => {
-                    return Err(CompactionSourceError::UnsupportedContextEntry {
-                        id: entry.id.clone(),
-                        kind: entry.kind.clone(),
-                    }
-                    .into());
+                    entry.native_compaction_entry()?;
                 }
             }
         }
@@ -2003,9 +2378,7 @@ impl SessionJournal {
             0
         };
         for entry in &branch[start..] {
-            if matches!(entry.kind.as_str(), "message" | "custom_message")
-                && let Some(message) = entry.message()
-            {
+            for message in entry.native_compaction_entry()?.messages {
                 items.push(CompactedContextItem::Message(Box::new(SourcedMessage {
                     entry_id: entry.id.clone(),
                     message,
@@ -2024,7 +2397,7 @@ impl SessionJournal {
     /// counted by [`undecodable_messages`](Self::undecodable_messages).
     pub fn build_context(&self) -> Vec<Message> {
         let branch = self.branch();
-        branch[active_context_start(&branch)..].iter().filter_map(|entry| entry.message()).collect()
+        branch[active_context_start(&branch)..].iter().filter_map(|entry| entry.model_messages()).flatten().collect()
     }
 
     /// Append a soft-compaction summary. The summarized prefix stays raw in
@@ -2083,8 +2456,7 @@ impl SessionJournal {
         self.branch()
             .into_iter()
             .filter(|e| {
-                (e.kind == "message" || e.is_user_skill_prompt_candidate() || LoopGuardNotice::is_candidate(&e.raw))
-                    && !e.is_decodable_message()
+                matches!(e.kind.as_str(), "message" | "custom_message" | "branch_summary") && !e.is_decodable_message()
             })
             .count()
     }
@@ -2143,8 +2515,11 @@ impl SessionJournal {
             }
             let tail_is_results_only = Some(i) == last_assistant
                 && branch[i + 1..].iter().all(|f| {
-                    (f.kind != "message" || f.role() == Some("toolResult") || f.is_excluded_bash_execution())
-                        && !f.is_user_skill_prompt_candidate()
+                    if f.kind == "message" {
+                        f.role() == Some("toolResult") || f.is_excluded_bash_execution()
+                    } else {
+                        f.model_messages().is_some_and(|messages| messages.is_empty())
+                    }
                 });
             if !tail_is_results_only {
                 recovery.unpaired_earlier.extend(missing.into_iter().map(|(id, _)| id));

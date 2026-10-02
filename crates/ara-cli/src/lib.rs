@@ -27,6 +27,7 @@ pub mod model_policy;
 pub mod model_route;
 pub mod model_wire_policy;
 pub mod models_config;
+pub mod native_compaction;
 pub mod openai_codex_auth;
 pub mod provider_models;
 pub mod retry_fallback;

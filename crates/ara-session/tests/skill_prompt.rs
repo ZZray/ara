@@ -191,7 +191,7 @@ fn summarized_skill_id_is_required_exactly_in_source_list() {
 }
 
 #[test]
-fn unknown_and_agent_attributed_custom_entries_stay_unsupported() {
+fn generic_and_agent_attributed_custom_entries_project_to_developer() {
     for (custom_type, attribution) in [("other", "user"), ("skill-prompt", "agent")] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.jsonl");
@@ -204,16 +204,13 @@ fn unknown_and_agent_attributed_custom_entries_stay_unsupported() {
         );
         let journal = SessionJournal::open(&path).unwrap();
         assert!(journal.branch()[0].skill_prompt().is_none());
-        assert_eq!(journal.build_context().len(), 1);
-        assert_eq!(journal.undecodable_messages(), 0);
-        assert_eq!(
-            journal.compaction_source_snapshot(),
-            Err(CompactionSourceError::UnsupportedContextEntry { id: "custom".into(), kind: "custom_message".into() })
+        assert_eq!(journal.build_context().len(), 2);
+        assert!(
+            matches!(&journal.build_context()[0], Message::Developer(message) if message.content.plain_text() == "x")
         );
-        assert!(matches!(
-            journal.compacted_context_projection(),
-            Err(CompactionProjectionError::Source(CompactionSourceError::UnsupportedContextEntry { .. }))
-        ));
+        assert_eq!(journal.undecodable_messages(), 0);
+        assert_eq!(journal.compaction_source_snapshot().unwrap().messages[0].entry_id, "custom");
+        assert!(journal.compacted_context_projection().is_ok());
     }
 }
 

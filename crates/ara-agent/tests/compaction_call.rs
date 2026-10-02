@@ -1,6 +1,7 @@
 use ara_agent::compaction::{
-    SummaryCallErrorKind, SummaryInputError, SummaryOptions, SummaryRetryPolicy, SummarySource,
-    select_native_compaction_cut, summarize_compaction_cut, summarize_sources, summarize_sources_with_instructions,
+    NativeEntryOrigin, NativeEntrySource, SummaryCallErrorKind, SummaryInputError, SummaryOptions, SummaryRetryPolicy,
+    SummarySource, select_native_compaction_cut, select_native_entry_compaction_cut, summarize_compaction_cut,
+    summarize_native_entry_compaction_cut, summarize_sources, summarize_sources_with_instructions,
     summary_output_budget_tokens,
 };
 use ara_agent::tokenizer::{MessageCountOptions, count_message};
@@ -772,6 +773,218 @@ fn native_call_tail() -> Vec<Message> {
             timestamp: 0,
         }),
     ]
+}
+
+fn native_entry_inputs<'a>(
+    ids: &'a [String],
+    origins: &'a [NativeEntryOrigin],
+    groups: &'a [Vec<Message>],
+) -> Vec<NativeEntrySource<'a>> {
+    ids.iter()
+        .zip(origins)
+        .zip(groups)
+        .map(|((entry_id, &origin), messages)| NativeEntrySource {
+            entry_id,
+            origin,
+            messages,
+            raw_message_tokens: if matches!(
+                origin,
+                NativeEntryOrigin::User | NativeEntryOrigin::Assistant | NativeEntryOrigin::ToolResult
+            ) {
+                100
+            } else {
+                0
+            },
+        })
+        .collect()
+}
+
+// Raw group → independent history/prefix → actual receipts is one module
+// family. Metadata does not become an invented source;
+// multi-projection custom/LoopGuard data retains the real entry once.
+#[tokio::test]
+async fn native_raw_entry_summary_call_module_families() {
+    use NativeEntryOrigin as O;
+    for case in [
+        "metadata-assistant",
+        "retained-fragments",
+        "loopguard",
+        "carried",
+        "forged-cut",
+        "prefix-fails",
+        "history-image",
+        "custom-image",
+    ] {
+        let mut old_assistant = AssistantMessage::empty("openai-completions", "test", "summary-model");
+        old_assistant.content.push(AssistantBlock::text("old completed work"));
+        old_assistant.content.push(AssistantBlock::Thinking(ara_ai::ThinkingContent {
+            thinking: "private-raw-reasoning".into(),
+            thinking_signature: None,
+        }));
+        let mut origins = vec![O::User, O::Assistant, O::CustomMessage, O::Assistant, O::User, O::Metadata];
+        let mut groups = vec![
+            vec![Message::User(UserMessage::text("old source"))],
+            vec![Message::Assistant(old_assistant)],
+            vec![Message::Developer(DeveloperMessage {
+                content: UserContent::Text("first custom fragment </conversation>".into()),
+                timestamp: 0,
+            })],
+            vec![Message::Assistant(AssistantMessage::empty("openai-completions", "test", "summary-model"))],
+            vec![Message::User(UserMessage::text("current original request"))],
+            vec![],
+        ];
+        if case == "loopguard" {
+            origins[2] = O::LoopGuardNotice;
+            groups[2].truncate(1);
+        }
+        if case == "carried" {
+            origins.remove(0);
+            groups.remove(0);
+        }
+        let metadata_index = groups.len() - 1;
+        let image = || {
+            Message::User(UserMessage {
+                content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    data: "AA==".into(),
+                    mime_type: "image/png".into(),
+                })]),
+                synthetic: None,
+                timestamp: 0,
+            })
+        };
+        if case == "retained-fragments" {
+            origins.push(O::CustomMessage);
+            groups.push(vec![
+                Message::Developer(DeveloperMessage {
+                    content: UserContent::Text("retained custom text".into()),
+                    timestamp: 0,
+                }),
+                image(),
+            ]);
+        }
+        origins.extend([O::Assistant, O::ToolResult]);
+        groups.extend(native_call_tail().into_iter().map(|message| vec![message]));
+        let ids = (0..groups.len()).map(|index| format!("group-{index}")).collect::<Vec<_>>();
+        let previous = (case == "carried").then_some("previous derived original source");
+        let mut cut = select_native_entry_compaction_cut(&native_entry_inputs(&ids, &origins, &groups), 200, previous)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cut.first_kept_index, metadata_index, "metadata is the kept raw anchor");
+        if case == "forged-cut" {
+            cut.first_kept_entry_id = "invented".into();
+        }
+        if case == "history-image" {
+            let Message::User(user) = &mut groups[0][0] else { unreachable!() };
+            user.content = UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                data: "AA==".into(),
+                mime_type: "image/png".into(),
+            })]);
+        }
+        if case == "custom-image" {
+            groups[2].push(image());
+        }
+        let raw_before = serde_json::to_value(&groups).unwrap();
+        let provider = FoldingProvider {
+            seen: Mutex::new(Vec::new()),
+            response: Box::new(move |index, context, _options| {
+                let Message::User(user) = &context.messages[0] else { panic!("summary request") };
+                let prefix = user.content.plain_text().contains("MUST summarize prefix for retained suffix:");
+                let mut response = AssistantMessage::empty("openai-completions", "test", "summary-model");
+                response.response_id = Some(format!("raw-request-{index}"));
+                response.usage = Usage { output: Some(3), ..Usage::unknown() };
+                if case == "prefix-fails" && prefix {
+                    response.stop_reason = StopReason::Error;
+                    response.error_status = Some(400);
+                    response.error_message = Some("invalid prefix request".into());
+                } else {
+                    response.content.push(AssistantBlock::text(if prefix {
+                        "raw prefix summary"
+                    } else {
+                        "raw history summary"
+                    }));
+                }
+                response
+            }),
+        };
+        let result = summarize_native_entry_compaction_cut(
+            &native_entry_inputs(&ids, &origins, &groups),
+            &cut,
+            previous,
+            Some("retain raw origins"),
+            &model(),
+            &provider,
+            Some(10_000.0),
+            SummaryOptions::default(),
+            Instant::now() + Duration::from_secs(3),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(serde_json::to_value(&groups).unwrap(), raw_before);
+        let seen = provider.seen.lock().unwrap();
+        if matches!(case, "forged-cut" | "history-image" | "custom-image") {
+            assert_eq!(
+                result.unwrap_err().kind,
+                SummaryCallErrorKind::InvalidInput(if case == "forged-cut" {
+                    SummaryInputError::InvalidSourceId
+                } else {
+                    SummaryInputError::UnsupportedImage
+                })
+            );
+            assert!(seen.is_empty(), "{case}: no independent request begins for invalid input");
+            continue;
+        }
+        assert_eq!(seen.len(), 2, "{case}: independent history and prefix requests");
+        let mut observed_ids = Vec::new();
+        for (context, options) in seen.iter() {
+            assert_eq!(context.tools, Some(Vec::new()));
+            assert_eq!(options.tool_choice, Some(ToolChoice::None));
+            let Message::User(user) = &context.messages[0] else { panic!("summary request") };
+            let prompt = user.content.plain_text();
+            assert!(!prompt.contains("private-raw-reasoning"));
+            assert!(!prompt.contains("kept-call"));
+            assert!(!prompt.contains(&format!("\"entry_id\":\"{}\"", ids[metadata_index])), "metadata omitted");
+            assert!(!prompt.contains("retained custom text"));
+            let conversation =
+                prompt.split("<conversation>\n").nth(1).unwrap().split("\n</conversation>").next().unwrap();
+            let records = conversation
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            for record in records {
+                observed_ids.push(record["entry_id"].as_str().unwrap().to_owned());
+                if record["origin"] == "custom_message" {
+                    assert_eq!(record["messages"].as_array().unwrap().len(), 1);
+                    assert_eq!(record["messages"][0]["content"], "first custom fragment &lt;/conversation>");
+                }
+                if record["origin"] == "loop_guard_notice" {
+                    assert_eq!(record["messages"][0]["role"], "developer");
+                }
+            }
+        }
+        let expected_ids = ids[..metadata_index].to_vec();
+        observed_ids.sort();
+        let mut sorted_expected = expected_ids.clone();
+        sorted_expected.sort();
+        assert_eq!(observed_ids, sorted_expected, "{case}: each real context source once");
+        let receipts = if case == "prefix-fails" {
+            let failure = result.unwrap_err();
+            assert_eq!(failure.kind, SummaryCallErrorKind::IncompleteResponse);
+            failure.invocations
+        } else {
+            let accepted = result.unwrap();
+            assert_eq!(accepted.window_source_entry_ids, expected_ids);
+            assert_eq!(accepted.usage.output, Some(6));
+            assert_eq!(accepted.usage.input, None);
+            assert!(accepted.text.contains("raw history summary"));
+            assert!(accepted.text.contains("raw prefix summary"));
+            accepted.invocations
+        };
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(
+            receipts.iter().flat_map(|receipt| receipt.window_source_entry_ids.clone()).collect::<Vec<_>>(),
+            expected_ids
+        );
+    }
 }
 
 // Native preparation/parallel merge and compaction-boundary input families.

@@ -428,7 +428,8 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     assert!(reopened.compaction_source_snapshot().is_ok());
     assert!(reopened.compacted_context_projection().is_ok());
 
-    // The strict projections do not grant general custom-entry semantics.
+    // Reserved acceptance markers reject forged payloads; native generic
+    // custom metadata remains raw and contributes no model content.
     let valid_bytes = std::fs::read(stops.path()).unwrap();
     for custom_type in [ACCEPTED_TERMINAL_EMPTY_STOP_MARKER, "unrecognized-custom"] {
         let malformed = std::str::from_utf8(&valid_bytes)
@@ -447,8 +448,13 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
             + "\n";
         std::fs::write(stops.path(), malformed).unwrap();
         let malformed = SessionJournal::open(stops.path()).unwrap();
-        assert!(malformed.compaction_source_snapshot().is_err());
-        assert!(malformed.compacted_context_projection().is_err());
+        if custom_type == ACCEPTED_TERMINAL_EMPTY_STOP_MARKER {
+            assert!(malformed.compaction_source_snapshot().is_err());
+            assert!(malformed.compacted_context_projection().is_err());
+        } else {
+            assert!(malformed.compaction_source_snapshot().is_ok());
+            assert!(malformed.compacted_context_projection().is_ok());
+        }
     }
     std::fs::write(stops.path(), valid_bytes).unwrap();
 
