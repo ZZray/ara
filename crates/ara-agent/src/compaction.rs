@@ -3,12 +3,13 @@
 //! Follows fixed OMP `packages/agent/src/compaction/utils.ts` and
 //! `compaction.ts` at 596f2da7101178214aa27a753529d15e6b7ad91d.
 //! ARA uses JSONL provenance, excludes private reasoning, and bounds input.
-//! This module plans structural whole-turn cuts and a provisional recent-message
-//! target, but does not write a Session compaction or change model context.
+//! Native message cuts retain recent work and summarize split turn prefixes;
+//! legacy whole-turn helpers remain separate. This never writes a Session.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ara_ai::{
     AssistantBlock, AssistantMessage, AssistantMessageEvent, CallOptions, Context, ContextRecoveryEvidence, JsonObject,
@@ -55,6 +56,47 @@ pub struct WholeTurnCutSelection {
     pub estimated_retained_exceeds_target: bool,
 }
 
+/// Fixed OMP's message cut can retain an assistant and its following tool
+/// results. The host owns raw non-message backtracking and Session proof; this
+/// message-only adapter does not implement Bash/custom/reset entry boundaries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeCompactionCut {
+    pub first_kept_index: usize,
+    pub first_kept_entry_id: String,
+    pub turn_start_index: Option<usize>,
+    pub history_end_index: usize,
+    pub estimated_retained_raw_tokens: usize,
+    pub estimated_retained_exceeds_target: bool,
+}
+
+/// Native one-shot budget; None in SummaryOptions explicitly disables it when
+/// the caller owns an outer compaction retry budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SummaryRetryPolicy {
+    pub max_attempts: usize,
+    pub base_delay_ms: u64,
+    pub max_delay_ms: u64,
+}
+
+impl Default for SummaryRetryPolicy {
+    fn default() -> Self {
+        Self { max_attempts: 3, base_delay_ms: 500, max_delay_ms: 30_000 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SummaryOptions {
+    pub oneshot_retry: Option<SummaryRetryPolicy>,
+    /// Caller output cap applied independently to history and turn prefix.
+    pub max_tokens: Option<u64>,
+}
+
+impl Default for SummaryOptions {
+    fn default() -> Self {
+        Self { oneshot_retry: Some(SummaryRetryPolicy::default()), max_tokens: None }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SummaryInputError {
     EmptySources,
@@ -99,6 +141,7 @@ impl std::error::Error for SummaryInputError {}
 /// A one-shot request prepared from source-tagged, lower-trust history. This
 /// is not a context-fit claim; callers must enforce model limits and only
 /// accept a completed, nonempty summary before committing any rewrite.
+#[derive(Clone)]
 pub struct SummaryPrompt {
     pub system_prompt: &'static str,
     pub user_prompt: String,
@@ -107,6 +150,7 @@ pub struct SummaryPrompt {
 const SUMMARIZATION_SYSTEM_PROMPT: &str = include_str!("../prompts/summarization-system.md");
 const SUMMARIZATION_PROMPT: &str = include_str!("../prompts/compaction-summary.md");
 const UPDATE_SUMMARIZATION_PROMPT: &str = include_str!("../prompts/compaction-update-summary.md");
+const TURN_PREFIX_SUMMARIZATION_PROMPT: &str = include_str!("../prompts/compaction-turn-prefix.md");
 
 /// Escape harness-owned tags in untrusted text. Each candidate scans only to
 /// the next delimiter, so malformed input cannot cause quadratic work.
@@ -194,6 +238,13 @@ fn has_unknown_tool_effect(result: &ToolResultMessage) -> bool {
 /// than OMP. The Session owner must still prove IDs and messages correspond to
 /// the current branch and commit against that branch's leaf.
 pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<(), SummaryInputError> {
+    validate_summary_span(sources, false)
+}
+
+fn validate_summary_span(
+    sources: &[SummarySource<'_>],
+    allow_unanswered_prompt: bool,
+) -> Result<(), SummaryInputError> {
     if sources.is_empty() {
         return Err(SummaryInputError::EmptySources);
     }
@@ -241,10 +292,103 @@ pub fn validate_completed_summary_span(sources: &[SummarySource<'_>]) -> Result<
             }
         }
     }
-    if !pending.is_empty() || ends_with_user {
+    if !pending.is_empty() || (ends_with_user && !allow_unanswered_prompt) {
         return Err(SummaryInputError::UnfinishedTurn);
     }
     Ok(())
+}
+
+fn native_cut_at(
+    sources: &[SummarySource<'_>],
+    index: usize,
+    previous_summary: Option<&str>,
+) -> Result<(Option<usize>, usize), SummaryInputError> {
+    let Some(first) = sources.first() else { return Err(SummaryInputError::EmptySources) };
+    if !matches!(first.message, Message::User(_))
+        && !(matches!(first.message, Message::Assistant(_))
+            && previous_summary.is_some_and(|summary| !summary.trim().is_empty()))
+    {
+        return Err(if matches!(first.message, Message::Developer(_)) {
+            SummaryInputError::DeveloperInSummary
+        } else {
+            SummaryInputError::NoLeadingPrompt
+        });
+    }
+    let Some(kept) = sources.get(index) else { return Err(SummaryInputError::InvalidSourceId) };
+    let split = matches!(kept.message, Message::Assistant(_));
+    if index == 0 || !matches!(kept.message, Message::User(_) | Message::Assistant(_)) {
+        return Err(SummaryInputError::EmptySources);
+    }
+    // Validate the complete discarded prefix together, so a history/prefix
+    // split never makes an orphan tool result look safe. A user-only prefix is
+    // intentional: the retained assistant answers that very user request.
+    validate_summary_span(&sources[..index], split)?;
+    let mut ids = HashSet::new();
+    for source in &sources[..=index] {
+        if source.entry_id.is_empty() || !source.entry_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+            return Err(SummaryInputError::InvalidSourceId);
+        }
+        if !ids.insert(source.entry_id) {
+            return Err(SummaryInputError::DuplicateSourceId);
+        }
+    }
+    if split {
+        let turn_start = (0..index).rev().find(|&i| matches!(sources[i].message, Message::User(_))).unwrap_or(0);
+        Ok((Some(turn_start), turn_start))
+    } else {
+        Ok((None, index))
+    }
+}
+
+/// Message-only port of fixed compaction.ts:499. Walk backward until the
+/// accumulated estimate reaches the target, then select the first user or
+/// assistant boundary at or after that index. With no later valid boundary,
+/// native retains its first boundary; that no-op returns None here. This is
+/// deliberately not a suffix-at-most-target search. The host must still prove
+/// the exact source snapshot and map raw non-message entry boundaries.
+pub fn select_native_compaction_cut(
+    sources: &[SummarySource<'_>],
+    keep_recent_tokens: usize,
+    previous_summary: Option<&str>,
+) -> Result<Option<NativeCompactionCut>, SummaryInputError> {
+    let cut_points: Vec<usize> = sources
+        .iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            matches!(source.message, Message::User(_) | Message::Assistant(_)).then_some(index)
+        })
+        .collect();
+    let Some(&first_cut) = cut_points.first() else { return Ok(None) };
+    let mut suffix_tokens = vec![0usize; sources.len() + 1];
+    let mut cut_index = first_cut;
+    for index in (0..sources.len()).rev() {
+        suffix_tokens[index] = suffix_tokens[index + 1]
+            .saturating_add(count_message(sources[index].message, MessageCountOptions::default()));
+    }
+    for index in (0..sources.len()).rev() {
+        if suffix_tokens[index] >= keep_recent_tokens {
+            if let Some(&valid) = cut_points.iter().find(|&&valid| valid >= index) {
+                cut_index = valid;
+            }
+            break;
+        }
+    }
+    if cut_index == 0 {
+        return Ok(None);
+    }
+    let (turn_start_index, history_end_index) = native_cut_at(sources, cut_index, previous_summary)?;
+    // Check payload support without treating the unanswered turn prefix as a
+    // completed whole turn or exposing the retained tool cycle to summarization.
+    serialize_sources_for_summary(&sources[..cut_index])?;
+    let estimated_retained_raw_tokens = suffix_tokens[cut_index];
+    Ok(Some(NativeCompactionCut {
+        first_kept_index: cut_index,
+        first_kept_entry_id: sources[cut_index].entry_id.to_owned(),
+        turn_start_index,
+        history_end_index,
+        estimated_retained_raw_tokens,
+        estimated_retained_exceeds_target: estimated_retained_raw_tokens > keep_recent_tokens,
+    }))
 }
 
 /// Enumerate structurally safe, message-only, whole-turn cuts. Unlike fixed
@@ -555,8 +699,9 @@ pub struct AcceptedSummary {
     pub window_source_entry_ids: Vec<String>,
     pub model_id: String,
     pub response_id: Option<String>,
-    /// Usage and response metadata describe the final successful fold request.
-    /// Every request, including rejected overflow attempts, is in `invocations`.
+    /// Legacy folds expose their final request usage. The native cut API sums
+    /// actual invocation buckets only when every invocation reports that bucket.
+    /// Every request, including rejected attempts, is in `invocations`.
     pub usage: Usage,
     pub duration_ms: Option<u64>,
     pub ttft_ms: Option<u64>,
@@ -576,6 +721,7 @@ pub enum SummaryCallErrorKind {
     UnsupportedResponseImage,
     EmptySummary,
     SummaryTooLarge,
+    OutputBudgetExceeded,
 }
 
 /// `usage` is present only when a terminal model message was received. Its
@@ -605,6 +751,11 @@ pub struct SummaryInvocationReceipt {
     pub error_kind: Option<SummaryCallErrorKind>,
     /// Classified from the complete terminal message before diagnostics truncate.
     pub classification: Option<RetryClass>,
+    /// Fixed-prompt retry gate assessed on the complete terminal, separate
+    /// from context-rewrite eligibility (ordinary usage admission may wait).
+    pub oneshot_retry_eligible: bool,
+    /// Maximum finite provider header/text hint before diagnostic truncation.
+    pub oneshot_retry_wait_ms: Option<f64>,
     pub overflow_replanned: bool,
 }
 
@@ -627,7 +778,57 @@ fn rejected(kind: SummaryCallErrorKind, usage: Option<Usage>) -> SummaryCallErro
     }
 }
 
-fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> SummaryCallError {
+fn summary_oneshot_retry_eligible(message: &AssistantMessage, actual_api: &str) -> bool {
+    let class = classify_retry(message, actual_api);
+    let wire_veto = matches!(
+        message.terminal_context_recovery,
+        Some(ContextRecoveryEvidence::NativeOutput | ContextRecoveryEvidence::NativeValidation)
+    ) || message.failure_evidence.as_ref().is_some_and(|evidence| {
+        matches!(
+            evidence.context_recovery,
+            Some(ContextRecoveryEvidence::NativeOutput | ContextRecoveryEvidence::NativeValidation)
+        )
+    });
+    class.retriable
+        && !class.abort
+        && !class.overflow
+        && !class.replay_blocked
+        && !wire_veto
+        && message.tool_calls().next().is_none()
+}
+
+fn summary_oneshot_retry_wait(message: &AssistantMessage, actual_api: &str) -> Option<f64> {
+    let header = message
+        .failure_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.wait_ms)
+        .filter(|delay| delay.is_finite() && *delay >= 0.0);
+    // Existing classification prefers its header evidence over text. One-shot
+    // native policy takes the larger hint, so independently classify the text.
+    let mut text_only = message.clone();
+    text_only.failure_evidence = None;
+    let extracted = classify_retry(&text_only, actual_api).wait_ms;
+    let suffix = message.error_message.as_deref().unwrap_or("").split_whitespace().find_map(|part| {
+        let (name, value) = part.split_once('=')?;
+        if !name.eq_ignore_ascii_case("retry-after-ms") {
+            return None;
+        }
+        let delay = value.parse::<f64>().ok()?;
+        (delay.is_finite() && delay > 0.0).then_some(delay.ceil())
+    });
+    let text = match (extracted, suffix) {
+        (Some(extracted), Some(suffix)) => Some(extracted.max(suffix)),
+        (Some(delay), None) | (None, Some(delay)) => Some(delay),
+        (None, None) => None,
+    };
+    match (header, text) {
+        (Some(header), Some(text)) => Some(header.max(text)),
+        (Some(delay), None) | (None, Some(delay)) => Some(delay),
+        (None, None) => None,
+    }
+}
+
+fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage, actual_api: &str) -> SummaryCallError {
     let mut failure = rejected(kind, Some(message.usage.clone()));
     failure.provider_status = message.error_status;
     failure.stop_reason = Some(message.stop_reason);
@@ -639,7 +840,9 @@ fn rejected_terminal(kind: SummaryCallErrorKind, message: &AssistantMessage) -> 
         stop_reason: Some(message.stop_reason),
         provider_status: message.error_status,
         error_kind: Some(kind),
-        classification: Some(classify_retry(message, &message.api)),
+        classification: Some(classify_retry(message, actual_api)),
+        oneshot_retry_eligible: summary_oneshot_retry_eligible(message, actual_api),
+        oneshot_retry_wait_ms: summary_oneshot_retry_wait(message, actual_api),
         overflow_replanned: false,
     });
     failure
@@ -649,8 +852,9 @@ fn rejected_terminal_event(
     kind: SummaryCallErrorKind,
     reason: StopReason,
     message: &AssistantMessage,
+    actual_api: &str,
 ) -> SummaryCallError {
-    let mut failure = rejected_terminal(kind, message);
+    let mut failure = rejected_terminal(kind, message, actual_api);
     failure.stop_reason = Some(reason);
     failure.invocations.last_mut().expect("terminal invocation").stop_reason = Some(reason);
     failure
@@ -666,6 +870,8 @@ fn rejected_invocation(kind: SummaryCallErrorKind, usage: Option<Usage>) -> Summ
         provider_status: None,
         error_kind: Some(kind),
         classification: None,
+        oneshot_retry_eligible: false,
+        oneshot_retry_wait_ms: None,
         overflow_replanned: false,
     });
     failure
@@ -696,10 +902,10 @@ fn accept_summary_response(
         || message.error_message.is_some()
         || message.error_status.is_some()
     {
-        return Err(rejected_terminal_event(SummaryCallErrorKind::IncompleteResponse, reason, &message));
+        return Err(rejected_terminal_event(SummaryCallErrorKind::IncompleteResponse, reason, &message, &model.api));
     }
     if saw_tool_call_event || message.tool_calls().next().is_some() {
-        return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));
+        return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message, &model.api));
     }
     let mut text = String::new();
     let mut first_text = true;
@@ -708,7 +914,7 @@ fn accept_summary_response(
             AssistantBlock::Text(part) => {
                 let separator = usize::from(!first_text);
                 if part.text.len() > MAX_SUMMARY_OUTPUT_BYTES.saturating_sub(text.len()).saturating_sub(separator) {
-                    return Err(rejected_terminal(SummaryCallErrorKind::SummaryTooLarge, &message));
+                    return Err(rejected_terminal(SummaryCallErrorKind::SummaryTooLarge, &message, &model.api));
                 }
                 if separator != 0 {
                     text.push('\n');
@@ -717,16 +923,16 @@ fn accept_summary_response(
                 first_text = false;
             }
             AssistantBlock::ToolCall(_) => {
-                return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message));
+                return Err(rejected_terminal(SummaryCallErrorKind::UnexpectedToolCall, &message, &model.api));
             }
             AssistantBlock::Image(_) => {
-                return Err(rejected_terminal(SummaryCallErrorKind::UnsupportedResponseImage, &message));
+                return Err(rejected_terminal(SummaryCallErrorKind::UnsupportedResponseImage, &message, &model.api));
             }
             AssistantBlock::Thinking(_) | AssistantBlock::RedactedThinking { .. } => {}
         }
     }
     if text.trim().is_empty() {
-        return Err(rejected_terminal(SummaryCallErrorKind::EmptySummary, &message));
+        return Err(rejected_terminal(SummaryCallErrorKind::EmptySummary, &message, &model.api));
     }
     Ok(AcceptedSummary {
         text,
@@ -744,11 +950,15 @@ fn accept_summary_response(
 /// Native output budget uses the raw reserve, not the context-fit reserve.
 /// Fixed `compaction.ts:1543,857` defaults to 16384 and caps at 16384.
 pub fn summary_output_budget_tokens(raw_reserve: Option<f64>) -> Result<u64, SummaryCallError> {
+    summary_budget_tokens(raw_reserve, 0.8)
+}
+
+fn summary_budget_tokens(raw_reserve: Option<f64>, fraction: f64) -> Result<u64, SummaryCallError> {
     let reserve = raw_reserve.unwrap_or(MAX_SUMMARY_TOKENS as f64);
     if !reserve.is_finite() || reserve < 0.0 {
         return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
     }
-    let output = (0.8 * reserve).floor().min(MAX_SUMMARY_TOKENS as f64) as u64;
+    let output = (fraction * reserve).floor().min(MAX_SUMMARY_TOKENS as f64) as u64;
     if output == 0 {
         return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
     }
@@ -884,6 +1094,34 @@ pub async fn summarize_sources_with_instructions(
 ) -> Result<AcceptedSummary, SummaryCallError> {
     validate_completed_summary_span(sources)
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    summarize_history(
+        sources,
+        previous_summary,
+        custom_instructions,
+        model,
+        provider,
+        max_output_tokens,
+        SummaryOptions { oneshot_retry: None, max_tokens: None },
+        false,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn summarize_history(
+    sources: &[SummarySource<'_>],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    max_output_tokens: u64,
+    options: SummaryOptions,
+    native_acceptance: bool,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
     let conversation = serialize_sources_for_summary(sources)
         .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
     if max_output_tokens == 0 {
@@ -927,8 +1165,23 @@ pub async fn summarize_sources_with_instructions(
         };
         let ids: Vec<String> =
             sources[window.start..window.end].iter().map(|source| source.entry_id.to_owned()).collect();
-        match summarize_window(prompt, model, provider, max_output_tokens, deadline, cancel).await {
+        match summarize_window_with_retry(
+            prompt,
+            model,
+            provider,
+            max_output_tokens,
+            options,
+            native_acceptance,
+            deadline,
+            cancel,
+        )
+        .await
+        {
             Ok(mut accepted) => {
+                for receipt in &mut accepted.invocations {
+                    receipt.window_source_entry_ids = ids.clone();
+                }
+                invocations.append(&mut accepted.invocations);
                 invocations.push(SummaryInvocationReceipt {
                     window_source_entry_ids: ids,
                     usage: Some(accepted.usage.clone()),
@@ -937,6 +1190,8 @@ pub async fn summarize_sources_with_instructions(
                     provider_status: None,
                     error_kind: None,
                     classification: None,
+                    oneshot_retry_eligible: false,
+                    oneshot_retry_wait_ms: None,
                     overflow_replanned: false,
                 });
                 carried_summary = Some(accepted.text.clone());
@@ -961,12 +1216,16 @@ pub async fn summarize_sources_with_instructions(
                         provider_status: failure.provider_status,
                         error_kind: Some(failure.kind),
                         classification: None,
+                        oneshot_retry_eligible: false,
+                        oneshot_retry_wait_ms: None,
                         overflow_replanned: false,
                     });
                 }
                 let halved = window.budget_tokens.min(tokens) / 2;
+                for receipt in &mut failure.invocations {
+                    receipt.window_source_entry_ids = ids.clone();
+                }
                 let receipt = failure.invocations.last_mut().expect("one actual invocation receipt");
-                receipt.window_source_entry_ids = ids;
                 let replan =
                     receipt.classification.is_some_and(|class| class.overflow && !class.context_recovery_blocked)
                         && matches!(
@@ -1001,11 +1260,305 @@ pub async fn summarize_sources_with_instructions(
     Ok(accepted)
 }
 
+fn accepted_invocation(accepted: &AcceptedSummary, ids: Vec<String>) -> SummaryInvocationReceipt {
+    SummaryInvocationReceipt {
+        window_source_entry_ids: ids,
+        usage: Some(accepted.usage.clone()),
+        response_id: accepted.response_id.clone(),
+        stop_reason: Some(accepted.terminal_reason),
+        provider_status: None,
+        error_kind: None,
+        classification: None,
+        oneshot_retry_eligible: false,
+        oneshot_retry_wait_ms: None,
+        overflow_replanned: false,
+    }
+}
+
+fn aggregate_summary_usage(receipts: &[SummaryInvocationReceipt]) -> Usage {
+    if receipts.is_empty() {
+        return Usage::unknown();
+    }
+    let sum = |bucket: fn(&Usage) -> Option<u64>| {
+        receipts.iter().try_fold(0u64, |total, receipt| total.checked_add(bucket(receipt.usage.as_ref()?)?))
+    };
+    let cost = receipts.iter().try_fold(ara_ai::Cost::default(), |mut total, receipt| {
+        let cost = receipt.usage.as_ref()?.cost.as_ref()?;
+        total.input += cost.input;
+        total.output += cost.output;
+        total.cache_read += cost.cache_read;
+        total.cache_write += cost.cache_write;
+        total.total += cost.total;
+        (total.input.is_finite()
+            && total.output.is_finite()
+            && total.cache_read.is_finite()
+            && total.cache_write.is_finite()
+            && total.total.is_finite())
+        .then_some(total)
+    });
+    Usage {
+        input: sum(|usage| usage.input),
+        output: sum(|usage| usage.output),
+        cache_read: sum(|usage| usage.cache_read),
+        cache_write: sum(|usage| usage.cache_write),
+        total_tokens: sum(|usage| usage.total_tokens),
+        reasoning_tokens: sum(|usage| usage.reasoning_tokens),
+        cost,
+    }
+}
+
+/// Native split-turn compaction over a host-pinned message snapshot. History
+/// uses the existing bounded fold and previous-summary/custom focus; the
+/// independent turn-prefix call uses the exact upstream prompt and half the
+/// raw reserve. All calls share cancellation/deadline, and any branch failure
+/// discards every partial summary while retaining actual invocation receipts.
+/// This never commits a Session entry or proves the raw entry adapter surface.
+#[allow(clippy::too_many_arguments)]
+pub async fn summarize_compaction_cut(
+    sources: &[SummarySource<'_>],
+    cut: &NativeCompactionCut,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    raw_reserve: Option<f64>,
+    options: SummaryOptions,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    let (turn_start, history_end) = native_cut_at(sources, cut.first_kept_index, previous_summary)
+        .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+    if sources[cut.first_kept_index].entry_id != cut.first_kept_entry_id
+        || cut.turn_start_index != turn_start
+        || cut.history_end_index != history_end
+    {
+        return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::InvalidSourceId), None));
+    }
+    let history_sources = &sources[..history_end];
+    let prefix_sources = &sources[history_end..cut.first_kept_index];
+    if options.max_tokens == Some(0) {
+        return Err(rejected(SummaryCallErrorKind::InvalidMaxTokens, None));
+    }
+    let history_budget = summary_output_budget_tokens(raw_reserve)?.min(options.max_tokens.unwrap_or(u64::MAX));
+    let prefix_budget = if prefix_sources.is_empty() {
+        0
+    } else {
+        summary_budget_tokens(raw_reserve, 0.5)?.min(options.max_tokens.unwrap_or(u64::MAX))
+    };
+    let prefix_prompt = if prefix_sources.is_empty() {
+        None
+    } else {
+        validate_summary_span(prefix_sources, true)
+            .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+        let conversation = serialize_sources_for_summary(prefix_sources)
+            .map_err(|error| rejected(SummaryCallErrorKind::InvalidInput(error), None))?;
+        let user_prompt =
+            format!("<conversation>\n{conversation}\n</conversation>\n\n{TURN_PREFIX_SUMMARIZATION_PROMPT}");
+        if user_prompt.len() > MAX_SUMMARY_INPUT_BYTES {
+            return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::TooLarge), None));
+        }
+        Some(SummaryPrompt { system_prompt: SUMMARIZATION_SYSTEM_PROMPT, user_prompt })
+    };
+    let has_history = !history_sources.is_empty() || previous_summary.is_some_and(|summary| !summary.trim().is_empty());
+    let operation_cancel = cancel.child_token();
+    let _operation_guard = operation_cancel.clone().drop_guard();
+    let history_future = async {
+        let result = if has_history {
+            summarize_history(
+                history_sources,
+                previous_summary,
+                custom_instructions,
+                model,
+                provider,
+                history_budget,
+                options,
+                true,
+                deadline,
+                &operation_cancel,
+            )
+            .await
+            .map(Some)
+        } else {
+            Ok(None)
+        };
+        if result.is_err() {
+            operation_cancel.cancel();
+        }
+        result
+    };
+    let prefix_future = async {
+        let result = if let Some(prompt) = prefix_prompt {
+            let ids: Vec<String> = prefix_sources.iter().map(|source| source.entry_id.to_owned()).collect();
+            match summarize_window_with_retry(
+                prompt,
+                model,
+                provider,
+                prefix_budget,
+                options,
+                true,
+                deadline,
+                &operation_cancel,
+            )
+            .await
+            {
+                Ok(mut accepted) => {
+                    for receipt in &mut accepted.invocations {
+                        receipt.window_source_entry_ids = ids.clone();
+                    }
+                    let receipt = accepted_invocation(&accepted, ids.clone());
+                    accepted.invocations.push(receipt);
+                    accepted.window_source_entry_ids = ids;
+                    Ok(Some(accepted))
+                }
+                Err(mut failure) => {
+                    for receipt in &mut failure.invocations {
+                        receipt.window_source_entry_ids = ids.clone();
+                    }
+                    Err(failure)
+                }
+            }
+        } else {
+            Ok(None)
+        };
+        if result.is_err() {
+            operation_cancel.cancel();
+        }
+        result
+    };
+    let (history_result, prefix_result) = tokio::join!(history_future, prefix_future);
+    let mut receipts = Vec::new();
+    for result in [&history_result, &prefix_result] {
+        match result {
+            Ok(Some(accepted)) => receipts.extend(accepted.invocations.iter().cloned()),
+            Err(failure) => receipts.extend(failure.invocations.iter().cloned()),
+            Ok(None) => {}
+        }
+    }
+    // Prefer the original branch error over its sibling's cancellation receipt.
+    let failure = [&history_result, &prefix_result]
+        .into_iter()
+        .filter_map(|result| result.as_ref().err())
+        .find(|failure| failure.kind != SummaryCallErrorKind::Cancelled)
+        .or_else(|| history_result.as_ref().err())
+        .or_else(|| prefix_result.as_ref().err());
+    if let Some(failure) = failure {
+        let mut failure = failure.clone();
+        failure.usage = (!receipts.is_empty()).then(|| Box::new(aggregate_summary_usage(&receipts)));
+        failure.invocations = receipts;
+        return Err(failure);
+    }
+    let history = history_result.expect("branch failures handled");
+    let prefix = prefix_result.expect("branch failures handled");
+    let mut accepted = match (history, prefix) {
+        (Some(history), Some(mut prefix)) => {
+            prefix.text = format!("{}\n\n---\n\n**Turn Context (split turn):**\n\n{}", history.text, prefix.text);
+            if history.terminal_reason == StopReason::Length {
+                prefix.terminal_reason = StopReason::Length;
+            }
+            prefix.response_id = None;
+            prefix.duration_ms = None;
+            prefix.ttft_ms = None;
+            prefix
+        }
+        (None, Some(mut prefix)) => {
+            prefix.text = format!("No prior history.\n\n---\n\n**Turn Context (split turn):**\n\n{}", prefix.text);
+            prefix
+        }
+        (Some(history), None) => history,
+        (None, None) => {
+            return Err(rejected(SummaryCallErrorKind::InvalidInput(SummaryInputError::EmptySources), None));
+        }
+    };
+    accepted.window_source_entry_ids =
+        sources[..cut.first_kept_index].iter().map(|source| source.entry_id.to_owned()).collect();
+    accepted.usage = aggregate_summary_usage(&receipts);
+    accepted.invocations = receipts;
+    if cancel.is_cancelled() || Instant::now() >= deadline {
+        let mut failure = rejected(
+            if cancel.is_cancelled() { SummaryCallErrorKind::Cancelled } else { SummaryCallErrorKind::Deadline },
+            Some(accepted.usage),
+        );
+        failure.invocations = accepted.invocations;
+        return Err(failure);
+    }
+    Ok(accepted)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn summarize_window_with_retry(
+    prompt: SummaryPrompt,
+    model: &Model,
+    provider: &dyn ModelProvider,
+    max_output_tokens: u64,
+    options: SummaryOptions,
+    native_acceptance: bool,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<AcceptedSummary, SummaryCallError> {
+    let mut invocations = Vec::new();
+    let mut attempt = 1usize;
+    loop {
+        match summarize_window(prompt.clone(), model, provider, max_output_tokens, native_acceptance, deadline, cancel)
+            .await
+        {
+            Ok(mut accepted) => {
+                accepted.invocations = invocations;
+                return Ok(accepted);
+            }
+            Err(mut failure) => {
+                let receipt = failure.invocations.last();
+                let policy = options.oneshot_retry.filter(|policy| attempt < policy.max_attempts.max(1));
+                let eligible = receipt.is_some_and(|receipt| receipt.oneshot_retry_eligible)
+                    && matches!(
+                        failure.kind,
+                        SummaryCallErrorKind::ProviderError | SummaryCallErrorKind::IncompleteResponse
+                    )
+                    && !cancel.is_cancelled()
+                    && Instant::now() < deadline;
+                let wait = receipt.and_then(|receipt| receipt.oneshot_retry_wait_ms);
+                invocations.append(&mut failure.invocations);
+                let Some(policy) = policy.filter(|_| eligible) else {
+                    failure.invocations = invocations;
+                    return Err(failure);
+                };
+                if wait.is_some_and(|wait| wait > policy.max_delay_ms as f64) {
+                    failure.invocations = invocations;
+                    return Err(failure);
+                }
+                // RandomState is already independently seeded by std; no new
+                // RNG dependency or synchronized timestamp jitter is needed.
+                let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+                hasher.write_usize(attempt);
+                let fraction = (hasher.finish() as u32) as f64 / u32::MAX as f64;
+                let growth = (policy.base_delay_ms as f64 * 2f64.powi((attempt - 1).min(32) as i32)).min(8_000.0);
+                let backoff = (growth * (0.75 + fraction * 0.25)).round();
+                let delay_ms = wait.unwrap_or(0.0).max(backoff).min(policy.max_delay_ms as f64);
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        let mut cancelled = rejected(SummaryCallErrorKind::Cancelled, None);
+                        cancelled.invocations = invocations;
+                        return Err(cancelled);
+                    }
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                        let mut expired = rejected(SummaryCallErrorKind::Deadline, None);
+                        expired.invocations = invocations;
+                        return Err(expired);
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs_f64(delay_ms / 1000.0)) => {}
+                }
+                attempt = attempt.saturating_add(1);
+            }
+        }
+    }
+}
+
 async fn summarize_window(
     prompt: SummaryPrompt,
     model: &Model,
     provider: &dyn ModelProvider,
     max_output_tokens: u64,
+    native_acceptance: bool,
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<AcceptedSummary, SummaryCallError> {
@@ -1056,13 +1609,44 @@ async fn summarize_window(
             Some(AssistantMessageEvent::Done { reason, message }) => {
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &message));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &message, &model.api));
                 }
                 if Instant::now() >= deadline.into_std() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal_event(SummaryCallErrorKind::Deadline, reason, &message));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Deadline, reason, &message, &model.api));
                 }
-                let accepted = accept_summary_response(Vec::new(), model, reason, message, saw_tool_call_event)?;
+                if native_acceptance
+                    && (matches!(
+                        message.terminal_context_recovery,
+                        Some(ContextRecoveryEvidence::NativeOutput | ContextRecoveryEvidence::NativeValidation)
+                    ) || message.failure_evidence.as_ref().is_some_and(|evidence| {
+                        matches!(
+                            evidence.context_recovery,
+                            Some(ContextRecoveryEvidence::NativeOutput | ContextRecoveryEvidence::NativeValidation)
+                        )
+                    }))
+                {
+                    return Err(rejected_terminal_event(
+                        SummaryCallErrorKind::IncompleteResponse,
+                        reason,
+                        &message,
+                        &model.api,
+                    ));
+                }
+                let mut result = accept_summary_response(Vec::new(), model, reason, message, saw_tool_call_event);
+                if saw_tool_call_event && let Err(failure) = &mut result {
+                    for receipt in &mut failure.invocations {
+                        receipt.oneshot_retry_eligible = false;
+                    }
+                }
+                let accepted = result?;
+                if native_acceptance
+                    && model.api == "openai-codex-responses"
+                    && (accepted.usage.output.is_some_and(|output| output > max_output_tokens)
+                        || count_text(&accepted.text, EstimateMode::Approximate) as u64 > max_output_tokens)
+                {
+                    return Err(rejected_after_accept(SummaryCallErrorKind::OutputBudgetExceeded, accepted));
+                }
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
                     return Err(rejected_after_accept(SummaryCallErrorKind::Cancelled, accepted));
@@ -1076,9 +1660,16 @@ async fn summarize_window(
             Some(AssistantMessageEvent::Error { error, reason }) => {
                 if cancel.is_cancelled() {
                     provider_cancel.cancel();
-                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &error));
+                    return Err(rejected_terminal_event(SummaryCallErrorKind::Cancelled, reason, &error, &model.api));
                 }
-                return Err(rejected_terminal_event(SummaryCallErrorKind::ProviderError, reason, &error));
+                let mut failure =
+                    rejected_terminal_event(SummaryCallErrorKind::ProviderError, reason, &error, &model.api);
+                if saw_tool_call_event {
+                    for receipt in &mut failure.invocations {
+                        receipt.oneshot_retry_eligible = false;
+                    }
+                }
+                return Err(failure);
             }
             Some(
                 AssistantMessageEvent::ToolcallStart { .. }

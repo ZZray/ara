@@ -13,6 +13,38 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 const MAIN_CONFIG_FILENAMES: [&str; 2] = ["config.yml", "config.yaml"];
 const DEFAULT_METHOD_ORDER: [&str; 5] = ["remote", "snapcompact", "handoff", "shake", "soft"];
 
+/// Fixed features.unexpectedStopDetection defaults to mechanical. Smart's
+/// classifier route is a separate native tiny/smol or local-runtime dependency.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum UnexpectedStopMode {
+    None,
+    #[default]
+    Mechanical,
+    Smart,
+}
+
+impl UnexpectedStopMode {
+    pub(super) fn load(agent_dir: &Path) -> Result<Self> {
+        for filename in MAIN_CONFIG_FILENAMES {
+            if let Some((document, _)) = read_document(&agent_dir.join(filename))? {
+                let root = document.as_hash().context("native settings root must be a mapping")?;
+                let group = match root.get(&Yaml::String("features".into())) {
+                    None | Some(Yaml::Null) => return Ok(Self::default()),
+                    Some(group) => group.as_hash().context("features settings must be a mapping")?,
+                };
+                return match group.get(&Yaml::String("unexpectedStopDetection".into())) {
+                    None => Ok(Self::default()),
+                    Some(Yaml::String(value)) if value == "none" => Ok(Self::None),
+                    Some(Yaml::String(value)) if value == "mechanical" => Ok(Self::Mechanical),
+                    Some(Yaml::String(value)) if value == "smart" => Ok(Self::Smart),
+                    Some(_) => bail!("features.unexpectedStopDetection must be none, mechanical, or smart"),
+                };
+            }
+        }
+        Ok(Self::default())
+    }
+}
+
 /// Fixed settings-schema contextPromotion.enabled defaults to false.
 pub(super) fn context_promotion_enabled(agent_dir: &Path) -> Result<bool> {
     for filename in MAIN_CONFIG_FILENAMES {

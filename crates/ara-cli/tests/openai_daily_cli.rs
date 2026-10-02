@@ -284,13 +284,19 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let token = format!("e30.{payload}.synthetic");
     let mut oversized_summary = response_text("Oversized hidden reasoning summary.");
     oversized_summary["events"][1]["data"]["response"]["usage"] = json!({"output_tokens":14_000});
+    // Both parallel requests must reach the fixture before either branch fails.
+    oversized_summary["delay_ms"] = json!(200);
     let up = upstream(json!([
         {"body":json!({"device_auth_id":"device-fixture","user_code":"CLI-FIXTURE","interval":1}).to_string()},
         {"status":404,"body":"{}"},
         {"body":json!({"authorization_code":"synthetic-code","code_verifier":"synthetic-verifier"}).to_string()},
         {"body":json!({"access_token":token,"refresh_token":"synthetic-refresh","expires_in":3600}).to_string()},
         response_write(), response_text("Written."), response_text("Continued."),
-        oversized_summary, response_text("Summary preserves daily.txt."), response_text("Fresh Session."),
+        // Native split cuts issue history/prefix summaries concurrently. Equal
+        // branch responses keep the script independent of request arrival order.
+        oversized_summary.clone(), oversized_summary,
+        response_text("Summary preserves daily.txt."), response_text("Summary preserves daily.txt."),
+        response_text("Fresh Session."),
         {"events":[],"end":"hang"}
     ]))
     .await;
@@ -331,8 +337,8 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert!(String::from_utf8_lossy(&resumed.stderr).contains("local adoption budget"));
     assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
     let requests = up.requests.lock().await;
-    assert_eq!(requests.len(), 10);
-    for request in &requests[4..9] {
+    assert_eq!(requests.len(), 12);
+    for request in &requests[4..11] {
         assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
         assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
         assert_eq!(request["headers"]["session_id"], original["id"]);
@@ -346,9 +352,9 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         .find(|value| value["type"] == "session" && value["id"] != original["id"])
         .unwrap();
     for name in ["session_id", "conversation_id", "x-client-request-id"] {
-        assert_eq!(requests[9]["headers"][name], fresh["id"]);
+        assert_eq!(requests[11]["headers"][name], fresh["id"]);
     }
-    assert_eq!(requests[9]["body"]["prompt_cache_key"], fresh["id"]);
+    assert_eq!(requests[11]["body"]["prompt_cache_key"], fresh["id"]);
     drop(requests);
     let journal = std::fs::read_to_string(session).unwrap();
     assert!(journal.contains("openai-codex-responses"));
@@ -366,7 +372,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let denied = output(denied).await;
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
-    assert_eq!(up.served(), 10);
+    assert_eq!(up.served(), 12);
 
     // A deadline during refresh must settle before normal process exit. A new
     // process must not automatically replay that unknown refresh grant.
@@ -385,11 +391,11 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
     cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(cancelled).await.status.code(), Some(1));
-    assert_eq!(up.served(), 11);
+    assert_eq!(up.served(), 13);
     let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
     assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
     restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(restarted).await.status.code(), Some(1));
-    assert_eq!(up.served(), 11);
+    assert_eq!(up.served(), 13);
 }

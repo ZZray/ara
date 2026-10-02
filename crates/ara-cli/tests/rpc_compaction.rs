@@ -60,8 +60,12 @@ impl Env {
             .arg(self.work.path())
             .arg("--session-dir")
             .arg(&self.sessions)
-            .args(["--compact-keep-tokens", "1"])
             .args(args);
+        if !args.contains(&"--compact-keep-tokens") {
+            // Keep the existing short-fixture whole-turn boundary. Native
+            // Assistant cuts are exercised explicitly with a one-token target.
+            command.args(["--compact-keep-tokens", "6"]);
+        }
         if !args.contains(&"--compact-threshold") {
             command.args(["--compact-threshold", "0"]);
         }
@@ -265,6 +269,10 @@ async fn upstream(responses: Vec<Value>) -> FakeUpstream {
 
 fn answer(message: &str) -> Value {
     json!({"events":[text(message),finish("stop"),done()]})
+}
+
+fn signed_thinking_terminal(reason: &str, thinking: &str) -> Value {
+    json!({"events":[{"data":{"choices":[{"delta":{"reasoning_content":thinking}}]}},finish(reason),done()]})
 }
 
 fn held_command(name: &str) -> String {
@@ -796,7 +804,10 @@ async fn rpc_native_terminal_length_empty_stop_and_wire_veto_module() {
                 );
                 let requests = up.requests.lock().await;
                 if length {
-                    assert_eq!(summary_entries(&entries)[0]["summary"], "accepted length summary");
+                    assert_eq!(
+                        summary_entries(&entries)[0]["summary"],
+                        "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\naccepted length summary"
+                    );
                     assert!(requests[2]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
                     assert!(!requests[3]["body"]["input"].to_string().contains("truncated deliverable"));
                 } else {
@@ -846,6 +857,238 @@ async fn rpc_native_empty_stop_cap_is_durable_and_new_prompt_resets_module() {
         SessionJournal::open(&file).unwrap().model_context().last().unwrap().as_assistant().unwrap().text(),
         "new prompt recovered"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_orphan_tool_use_preserves_effect_receipts_and_resets_cap_module() {
+    let env = Env::new();
+    let orphan = signed_thinking_terminal("tool_calls", "Signed thinking cannot anchor a tool result.");
+    let up = upstream(vec![
+        json!({"events":[tool_call(0,"owned-write","write","{\"path\":\"orphan-effect.txt\",\"content\":\"done once\"}"),finish("tool_calls"),done()]}),
+        orphan.clone(), orphan.clone(), orphan.clone(), orphan.clone(), orphan,
+        answer("fresh task recovered from orphan"),
+    ]).await;
+    let mut child = RpcChild::spawn(&env, &up, &["--tools", "write"]);
+    child.ready();
+    child.prompt("orphan", "perform one write then deliver the answer");
+    child.until(|frame| frame["type"] == "notice" && frame["source"] == "empty-stop");
+    let state = child.state("orphan-cap");
+    assert_eq!(up.served(), 5);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("orphan-effect.txt")).unwrap(), "done once");
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    let loaded = SessionJournal::open(&file).unwrap();
+    loaded.projected_compaction_snapshot().unwrap();
+    assert_eq!(
+        loaded.model_context().iter().filter(|message| matches!(message, ara_ai::Message::ToolResult(_))).count(),
+        1
+    );
+    assert!(
+        loaded
+            .entries()
+            .iter()
+            .filter_map(|entry| entry.message())
+            .filter_map(|message| message.as_assistant().cloned())
+            .all(|message| message.stop_reason != ara_ai::StopReason::ToolUse || message.tool_calls().next().is_some())
+    );
+    child.prompt("fresh-orphan", "new explicit input owns a new empty budget");
+    child.until(|frame| {
+        frame["type"] == "message_end" && message_text(&frame["message"]) == "fresh task recovered from orphan"
+    });
+    child.until(|frame| frame["type"] == "agent_end");
+    child.finish();
+    assert_eq!(up.served(), 7);
+    let requests = up.requests.lock().await;
+    let recovered = requests[6]["body"]["messages"].to_string();
+    assert!(recovered.contains("Attempt #1/3"));
+    assert!(!recovered.contains("Signed thinking cannot anchor"));
+    assert!(!journal(&file).iter().any(|entry| entry["message"]["role"] == "developer"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_mechanical_unexpected_stop_retains_signed_history_and_normal_tools_module() {
+    for case in ["default-tool", "none", "visible", "blank-signed", "cap-reset"] {
+        let env = Env::new();
+        if case == "none" {
+            let directory = env.home.path().join("agent");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("config.yml"), "features:\n  unexpectedStopDetection: none\n").unwrap();
+        }
+        let signed = signed_thinking_terminal("stop", "I am still deciding the next concrete action.");
+        let responses = match case {
+            "default-tool" => vec![
+                signed.clone(),
+                json!({"events":[tool_call(0,"mechanical-write","write","{\"path\":\"mechanical-effect.txt\",\"content\":\"continued with ordinary tool authority\"}"),finish("tool_calls"),done()]}),
+                answer("mechanical completion after actual tool"),
+            ],
+            "cap-reset" => vec![
+                signed.clone(),
+                signed.clone(),
+                signed.clone(),
+                signed.clone(),
+                signed,
+                answer("new prompt mechanical completion"),
+            ],
+            "visible" => vec![answer("I will take the next concrete action now.")],
+            "blank-signed" => vec![signed_thinking_terminal("stop", " \n")],
+            _ => vec![signed],
+        };
+        let up = upstream(responses).await;
+        let mut child = RpcChild::spawn(&env, &up, &["--tools", "write"]);
+        child.ready();
+        child.prompt("mechanical", "complete this task");
+        if case == "default-tool" {
+            child.until(|frame| {
+                frame["type"] == "message_end"
+                    && message_text(&frame["message"]) == "mechanical completion after actual tool"
+            });
+            child.until(|frame| frame["type"] == "agent_end");
+            assert_eq!(
+                std::fs::read_to_string(env.work.path().join("mechanical-effect.txt")).unwrap(),
+                "continued with ordinary tool authority"
+            );
+        } else if case == "cap-reset" {
+            // Four terminals close the mechanical cap without deleting them.
+            for _ in 0..4 {
+                child.until(|frame| frame["type"] == "agent_end");
+            }
+        } else {
+            child.until(|frame| frame["type"] == "agent_end");
+        }
+        let state = child.state("mechanical-settled");
+        let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+        let loaded = SessionJournal::open(&file).unwrap();
+        loaded.projected_compaction_snapshot().unwrap();
+        let signed_count = loaded.model_context().iter().filter(|message| message.as_assistant().is_some_and(|assistant|
+            assistant.content.iter().any(|block| matches!(block, ara_ai::AssistantBlock::Thinking(thinking) if thinking.thinking_signature.is_some())))).count();
+        assert_eq!(signed_count, if case == "cap-reset" { 4 } else { usize::from(case != "visible") });
+        assert!(!journal(&file).iter().any(|entry| entry["message"]["role"] == "developer"));
+        if case == "cap-reset" {
+            child.prompt("fresh-mechanical", "new user input resets the mechanical cap");
+            child.until(|frame| {
+                frame["type"] == "message_end" && message_text(&frame["message"]) == "new prompt mechanical completion"
+            });
+            child.until(|frame| frame["type"] == "agent_end");
+        }
+        child.finish();
+        assert_eq!(
+            up.served(),
+            match case {
+                "default-tool" => 3,
+                "cap-reset" => 6,
+                _ => 1,
+            }
+        );
+        let requests = up.requests.lock().await;
+        if matches!(case, "default-tool" | "cap-reset") {
+            let continuation = &requests[1]["body"];
+            assert!(continuation["messages"].to_string().contains("You said you would continue"));
+            assert!(!continuation["tools"].as_array().unwrap().is_empty());
+            assert_ne!(continuation["tool_choice"], "none");
+        }
+        if case == "cap-reset" {
+            assert!(requests[5]["body"]["messages"].to_string().contains("Attempt #1/3"));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_split_cut_commits_both_branches_and_keeps_partial_failure_atomic_module() {
+    for success in [true, false] {
+        let env = Env::new();
+        overflow_config(&env, 200_000, Some(500));
+        let mut responses =
+            vec![answer("old completed answer"), answer("retained suffix answer"), answer("split branch piece")];
+        responses.push(if success {
+            answer("split branch piece")
+        } else {
+            json!({"events":[{"data":{"error":{"code":400,"message":"split summary rejected"}}}]})
+        });
+        if success {
+            responses.extend([
+                answer("new answer after split"),
+                answer("second split branch piece"),
+                answer("second split branch piece"),
+                answer("final answer after repeated split"),
+            ]);
+        } else {
+            responses.push(answer("fresh answer after atomic failure"));
+        }
+        let up = upstream(responses).await;
+        let mut child = RpcChild::spawn(
+            &env,
+            &up,
+            &["--provider", "overflow-fixture", "--compact-keep-tokens", "1", "--max-tokens", "384"],
+        );
+        child.ready();
+        child.run("split-seed", "old completed input");
+        child.run("split-retained", "request whose prefix is summarized separately");
+        let file = PathBuf::from(child.state("split-file")["sessionFile"].as_str().unwrap());
+        let original = std::fs::read(&file).unwrap();
+        let original_entries = journal(&file);
+        let retained_id = original_entries.last().unwrap()["id"].clone();
+        child.send(json!({"id":"split-compact","type":"compact","customInstructions":"retain exact request facts"}));
+        let result = child.response("split-compact");
+        assert_eq!(result["success"], success, "{result}");
+        if success {
+            let first = &result["data"];
+            assert_eq!(first["firstKeptEntryId"], retained_id);
+            assert!(first["summary"].as_str().unwrap().contains("**Turn Context (split turn):**"));
+            let entries = journal(&file);
+            assert_eq!(&entries[..original_entries.len()], original_entries.as_slice());
+            assert_summary_sources(&entries, summary_entries(&entries)[0]);
+            let loaded = SessionJournal::open(&file).unwrap();
+            assert_eq!(
+                loaded.projected_compaction_snapshot().unwrap().messages[0].entry_id,
+                retained_id.as_str().unwrap()
+            );
+            assert!(matches!(
+                loaded.projected_compaction_snapshot().unwrap().messages[0].message,
+                ara_ai::Message::Assistant(_)
+            ));
+            child.send(json!({"id":"split-noop","type":"compact"}));
+            assert_eq!(child.response("split-noop")["success"], false);
+            assert_eq!(up.served(), 4, "unchanged Assistant-only suffix cannot bill another cut");
+            child.run("after-split", "new request following the retained Assistant suffix");
+            let second = compact(&mut child, "split-again", None);
+            assert!(second["summary"].as_str().unwrap().contains("second split branch piece"));
+            let entries = journal(&file);
+            assert_eq!(summary_entries(&entries).len(), 2);
+            assert_summary_sources(&entries, summary_entries(&entries)[1]);
+            child.run("final-split", "continue after repeated Assistant-leading cut");
+            let public = child.messages("split-public");
+            child.finish();
+            let mut reopened =
+                RpcChild::spawn(&env, &up, &["--provider", "overflow-fixture", "--resume", file.to_str().unwrap()]);
+            reopened.ready();
+            assert_eq!(reopened.messages("split-reopened"), public);
+            reopened.finish();
+            assert_eq!(up.served(), 8);
+        } else {
+            assert_eq!(std::fs::read(&file).unwrap(), original);
+            assert!(summary_entries(&journal(&file)).is_empty());
+            child.run("after-failed-split", "retain original branch after summary failure");
+            child.finish();
+            assert_eq!(up.served(), 5);
+        }
+        let requests = up.requests.lock().await;
+        let mut budgets =
+            requests[2..4].iter().map(|request| request["body"]["max_tokens"].as_u64().unwrap()).collect::<Vec<_>>();
+        budgets.sort();
+        assert_eq!(budgets, vec![250, 384]);
+        assert!(requests[2..4].iter().all(|request| request["body"]["tools"].as_array().is_none_or(Vec::is_empty)));
+        let prompts = requests[2..4].iter().map(|request| request["body"]["messages"].to_string()).collect::<Vec<_>>();
+        assert!(prompts.iter().any(|prompt| prompt.contains("Additional focus: retain exact request facts")));
+        assert!(prompts.iter().any(|prompt| prompt.contains("MUST summarize prefix for retained suffix")));
+        if success {
+            assert!(
+                requests[5..7]
+                    .iter()
+                    .any(|request| request["body"]["messages"].to_string().contains("previous-summary"))
+            );
+        } else {
+            assert!(!requests[4]["body"]["messages"].to_string().contains("split branch piece"));
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

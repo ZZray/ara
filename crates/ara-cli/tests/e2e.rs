@@ -289,6 +289,7 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
         {"events":[text("First."),finish("stop"),done()]},
         {"events":[text("Second."),finish("stop"),done()]},
         {"events":[text("First Skill task finished."),finish("stop"),done()]},
+        {"events":[text("First Skill task finished."),finish("stop"),done()]},
         {"events":[text("Third."),finish("stop"),done()]}
     ]}))
     .await;
@@ -306,8 +307,9 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
     let compactions = compaction_entries(&entries);
     assert_eq!(compactions.len(), 1, "{entries:?}");
     let compaction = compactions[0];
-    assert_eq!(compaction["firstKeptEntryId"], skills[1]["id"]);
-    let before_kept = entries.iter().position(|entry| entry["id"] == skills[1]["id"]).unwrap();
+    let before_kept = entries.iter().position(|entry| entry["id"] == compaction["firstKeptEntryId"]).unwrap();
+    assert_eq!(entries[before_kept]["message"]["role"], "assistant");
+    assert_eq!(entries[before_kept]["message"]["content"][0]["text"], "Second.");
     let expected: Vec<_> = entries[..before_kept]
         .iter()
         .filter(|entry| entry["type"] == "message" || entry["type"] == "custom_message")
@@ -315,14 +317,23 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
         .collect();
     assert_eq!(compaction["sourceEntryIds"], json!(expected));
     assert!(expected.contains(&skills[0]["id"]));
+    assert!(expected.contains(&skills[1]["id"]));
     assert_eq!(skills[0]["details"]["originalText"], "/skill:proof first-args\n");
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 4);
-    assert!(tools_absent_or_empty(&reqs[2]["body"]));
-    assert!(request_text(reqs[2]["body"]["messages"].as_array().unwrap()).contains("User: first-args"));
-    let last = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
-    assert!(last.contains("First Skill task finished.") && last.contains("User: kept-args"));
+    assert_eq!(reqs.len(), 5);
+    let summaries: Vec<_> = reqs[2..4]
+        .iter()
+        .map(|request| {
+            assert!(tools_absent_or_empty(&request["body"]));
+            request_text(request["body"]["messages"].as_array().unwrap())
+        })
+        .collect();
+    assert!(summaries.iter().any(|text| text.contains("User: first-args")));
+    assert!(summaries.iter().any(|text| text.contains("User: kept-args")));
+    let last = request_text(reqs[4]["body"]["messages"].as_array().unwrap());
+    assert!(last.contains("First Skill task finished.") && last.contains("Second."));
     assert!(!last.contains("User: first-args"));
+    assert!(!last.contains("User: kept-args"));
     drop(reqs);
     std::fs::remove_file(path).unwrap();
     let resumed = upstream(json!({"responses":[{"events":[text("Restored."),finish("stop"),done()]}]})).await;
@@ -334,8 +345,9 @@ async fn repl_skill_compaction_keeps_real_custom_ids_and_restarts() {
     assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
     let reqs = resumed.requests.lock().await;
     let last = request_text(reqs[0]["body"]["messages"].as_array().unwrap());
-    assert!(last.contains("First Skill task finished.") && last.contains("User: kept-args"));
+    assert!(last.contains("First Skill task finished.") && last.contains("Second."));
     assert!(!last.contains("User: first-args"));
+    assert!(!last.contains("User: kept-args"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3412,12 +3424,15 @@ fn tools_absent_or_empty(body: &Value) -> bool {
 }
 
 /// A compaction's `sourceEntryIds` are exactly the message entries before
-/// `firstKeptEntryId`, which is a user message, and `tokensBefore` is a
+/// `firstKeptEntryId`, which is a user or assistant message, and `tokensBefore` is a
 /// positive estimate.
 fn assert_compaction_provenance(entries: &[Value], compaction: &Value) {
     let first_kept = compaction["firstKeptEntryId"].as_str().unwrap();
     let kept_index = entries.iter().position(|e| e["id"] == first_kept).expect("firstKeptEntryId exists");
-    assert_eq!(entries[kept_index]["message"]["role"], json!("user"), "firstKeptEntryId is a user entry");
+    assert!(
+        matches!(entries[kept_index]["message"]["role"].as_str(), Some("user" | "assistant")),
+        "native cut boundary"
+    );
     let expected: Vec<&str> =
         entries[..kept_index].iter().filter(|e| e["type"] == "message").map(|e| e["id"].as_str().unwrap()).collect();
     let sources: Vec<&str> =
@@ -3426,13 +3441,14 @@ fn assert_compaction_provenance(entries: &[Value], compaction: &Value) {
     assert!(compaction["tokensBefore"].as_u64().is_some_and(|t| t > 0), "{compaction}");
 }
 
-/// V1-COMPACT: manual `/compact` then keep working.
+/// Native manual `/compact` splits the last turn, then keeps working.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_manual_compact_then_keep_working() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary of earlier work."), finish("stop"), done()]},
         {"events": [text("Fake summary of earlier work."), finish("stop"), done()]},
         {"events": [text("Third answer."), finish("stop"), done()]}
     ]}))
@@ -3458,7 +3474,7 @@ async fn repl_manual_compact_then_keep_working() {
     let first_kept = compaction["firstKeptEntryId"].as_str().unwrap();
     let kept = entries.iter().find(|e| e["id"] == first_kept).expect("firstKeptEntryId exists");
     assert_eq!(kept["type"], json!("message"));
-    assert_eq!(kept["message"]["role"], json!("user"), "firstKeptEntryId is a user entry");
+    assert_eq!(kept["message"]["role"], json!("assistant"), "native cut keeps the last assistant");
     let sources = compaction["sourceEntryIds"].as_array().unwrap();
     assert!(!sources.is_empty());
     let compaction_index = entries.iter().position(|e| e["id"] == compaction["id"]).unwrap();
@@ -3470,41 +3486,52 @@ async fn repl_manual_compact_then_keep_working() {
     assert_compaction_provenance(&entries, compaction);
 
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 4, "two turns + summary + third turn");
-    let summary = &reqs[2]["body"];
-    assert!(tools_absent_or_empty(summary), "summary request has no tools: {summary}");
-    assert!(request_text(summary["messages"].as_array().unwrap()).contains("first prompt"), "{summary}");
-    let third = reqs[3]["body"]["messages"].as_array().unwrap();
+    assert_eq!(reqs.len(), 5, "two turns + history/prefix summaries + third turn");
+    let summaries: Vec<_> = reqs[2..4]
+        .iter()
+        .map(|request| {
+            assert!(tools_absent_or_empty(&request["body"]), "summary request has no tools: {request}");
+            request_text(request["body"]["messages"].as_array().unwrap())
+        })
+        .collect();
+    assert!(summaries.iter().any(|text| text.contains("first prompt") && text.contains("First answer.")));
+    assert!(summaries.iter().any(|text| text.contains("second prompt") && !text.contains("First answer.")));
+    let third = reqs[4]["body"]["messages"].as_array().unwrap();
     let third_text = request_text(third);
     assert!(third_text.contains("[Compacted summary of earlier turns"), "{third_text}");
     assert!(third_text.contains("Fake summary of earlier work."), "{third_text}");
     assert!(!third_text.contains("first prompt"), "summarized raw user text is gone: {third_text}");
     assert!(!third_text.contains("First answer."), "summarized raw answer is gone: {third_text}");
-    assert!(third_text.contains("second prompt"), "kept turn remains: {third_text}");
+    assert!(third_text.contains("**Turn Context (split turn):**"), "{third_text}");
+    assert!(!third_text.contains("second prompt"), "raw turn prefix is summarized: {third_text}");
     assert!(third_text.contains("Second answer."), "kept answer remains: {third_text}");
 }
 
-/// V1-COMPACT: auto threshold fires after a completed turn; a disabled
+/// Native auto threshold fires after a completed turn; a disabled
 /// threshold makes no summary call.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_auto_compact_threshold_and_disabled_companion() {
     // Auto: threshold exceeded after the second turn.
     let env = Env::new();
+    let second_answer = (0..64)
+        .map(|index| format!("Second answer item {index}: recorded value {}.\n", index * 17))
+        .collect::<String>();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
-        {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text(&second_answer), finish("stop"), done()]},
+        {"events": [text("Auto summary."), finish("stop"), done()]},
         {"events": [text("Auto summary."), finish("stop"), done()]}
     ]}))
     .await;
     let out = repl_output(
-        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "1", "--compact-keep-tokens", "1"]),
+        env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "128", "--compact-keep-tokens", "1"]),
         "first prompt\nsecond prompt\n",
     )
     .await;
     let (_stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("ara: compacted"), "{stderr}");
-    assert_eq!(up.served(), 3, "two turns plus one summary call");
+    assert_eq!(up.served(), 4, "two turns plus history/prefix summary calls");
     let entries = journal(&env.session_files()[0]);
     let compactions = compaction_entries(&entries);
     assert_eq!(compactions.len(), 1, "{entries:?}");
@@ -3530,13 +3557,14 @@ async fn repl_auto_compact_threshold_and_disabled_companion() {
     assert!(compaction_entries(&journal(&env.session_files()[0])).is_empty());
 }
 
-/// V1-COMPACT: restart from the persisted summary.
+/// Native split-turn compaction restores its kept assistant on restart.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_continue_uses_the_persisted_summary() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary of earlier work."), finish("stop"), done()]},
         {"events": [text("Fake summary of earlier work."), finish("stop"), done()]}
     ]}))
     .await;
@@ -3566,10 +3594,11 @@ async fn repl_continue_uses_the_persisted_summary() {
     assert!(first.contains("[Compacted summary of earlier turns"), "{first}");
     assert!(first.contains("Fake summary of earlier work."), "{first}");
     assert!(!first.contains("first prompt"), "summarized raw text is not resent: {first}");
-    assert!(first.contains("second prompt"), "kept turn remains: {first}");
+    assert!(!first.contains("second prompt"), "raw turn prefix is summarized: {first}");
+    assert!(first.contains("Second answer."), "kept assistant remains: {first}");
 }
 
-/// V1-COMPACT after V1-CANCEL: an interrupted turn does not block a later
+/// Native compaction after cancellation: an interrupted turn does not block a later
 /// `/compact` (fixed OMP summarizes aborted turns). The summary covers the
 /// aborted turn, and a resumed process sends the same context the compacting
 /// process built in memory.
@@ -3580,6 +3609,7 @@ async fn repl_compact_summarizes_past_an_interrupted_turn() {
         {"events": [tool_call(0, "call_s", "bash", "{\"command\":\"echo started; sleep 30\"}"), finish("tool_calls"), done()]},
         {"events": [text("After the abort."), finish("stop"), done()]},
         {"events": [text("Third answer."), finish("stop"), done()]},
+        {"events": [text("Summary past the abort."), finish("stop"), done()]},
         {"events": [text("Summary past the abort."), finish("stop"), done()]},
         {"events": [text("Fourth answer."), finish("stop"), done()]}
     ]}))
@@ -3616,7 +3646,8 @@ async fn repl_compact_summarizes_past_an_interrupted_turn() {
     assert_compaction_provenance(&entries, compactions[0]);
     let first_kept = compactions[0]["firstKeptEntryId"].as_str().unwrap();
     let kept = entries.iter().find(|e| e["id"] == first_kept).unwrap();
-    assert_eq!(user_texts([&kept["message"]]), vec!["third prompt"], "the cut is past the aborted turn");
+    assert_eq!(kept["message"]["role"], "assistant", "the native cut is past the aborted turn");
+    assert_eq!(kept["message"]["content"][0]["text"], "Third answer.");
     let summarized: Vec<&Value> = compactions[0]["sourceEntryIds"]
         .as_array()
         .unwrap()
@@ -3629,17 +3660,21 @@ async fn repl_compact_summarizes_past_an_interrupted_turn() {
     );
 
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 5, "three turns, one summary, one turn after it");
-    let summary_text = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    assert_eq!(reqs.len(), 6, "three turns, history/prefix summaries, one turn after them");
+    let summary_text = reqs[3..5]
+        .iter()
+        .map(|request| request_text(request["body"]["messages"].as_array().unwrap()))
+        .find(|text| text.contains("run something slow"))
+        .expect("history summary");
     assert!(summary_text.contains("run something slow"), "{summary_text}");
     assert!(summary_text.contains("aborted"), "the summarizer sees the abort: {summary_text}");
     assert!(summary_text.contains("After the abort."), "{summary_text}");
-    let fourth: Vec<Value> = reqs[4]["body"]["messages"].as_array().unwrap().clone();
+    let fourth: Vec<Value> = reqs[5]["body"]["messages"].as_array().unwrap().clone();
     drop(reqs);
     let fourth_text = request_text(&fourth);
     assert!(fourth_text.contains("Summary past the abort."), "{fourth_text}");
     assert!(!fourth_text.contains("run something slow"), "{fourth_text}");
-    assert!(fourth_text.contains("third prompt") && fourth_text.contains("Third answer."), "{fourth_text}");
+    assert!(!fourth_text.contains("third prompt") && fourth_text.contains("Third answer."), "{fourth_text}");
 
     // A resumed process rebuilds the same context from the journal.
     let up2 = upstream(json!({"responses": [{"events": [text("Fifth answer."), finish("stop"), done()]}]})).await;
@@ -3663,6 +3698,7 @@ async fn repl_compact_summarizes_past_a_timed_out_tool() {
         {"events": [tool_call(0, "call_t", "bash", "{\"command\":\"echo started; sleep 30\",\"timeout\":1}"), finish("tool_calls"), done()]},
         {"events": [text("After the timeout."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Summary past the timeout."), finish("stop"), done()]},
         {"events": [text("Summary past the timeout."), finish("stop"), done()]}
     ]}))
     .await;
@@ -3682,39 +3718,69 @@ async fn repl_compact_summarizes_past_a_timed_out_tool() {
     assert_eq!(compactions.len(), 1, "{entries:?}");
     let first_kept = compactions[0]["firstKeptEntryId"].as_str().unwrap();
     let kept = entries.iter().find(|e| e["id"] == first_kept).unwrap();
-    assert_eq!(user_texts([&kept["message"]]), vec!["second prompt"], "the cut is past the timed-out turn");
+    assert_eq!(kept["message"]["role"], "assistant", "the native cut is past the timed-out turn");
+    assert_eq!(kept["message"]["content"][0]["text"], "Second answer.");
 
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 4, "two turns (three calls) and one summary");
-    let summary_text = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    assert_eq!(reqs.len(), 5, "two turns (three calls) and history/prefix summaries");
+    let summary_text = reqs[3..5]
+        .iter()
+        .map(|request| request_text(request["body"]["messages"].as_array().unwrap()))
+        .find(|text| text.contains("build it"))
+        .expect("history summary");
     assert!(summary_text.contains("[Command timed out after 1 seconds]"), "{summary_text}");
     assert!(summary_text.contains("\"unknown_effect\":false"), "{summary_text}");
 }
 
-/// V1-COMPACT failure paths: second /compact, failed summary, --no-session,
-/// and a history too small to cut. Each leaves the session usable.
+/// Native compaction can repeat after new work; failed/cancelled summaries,
+/// missing Sessions and histories too small to cut leave the Session usable.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_compact_failure_paths_leave_the_session_usable() {
-    // A second /compact is refused; no second summary call; one compaction entry.
+    // A second /compact carries the prior summary and the assistant-leading
+    // projected window once a new turn makes a later cut available.
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
         {"events": [text("Fake summary."), finish("stop"), done()]},
-        {"events": [text("After refuse."), finish("stop"), done()]}
+        {"events": [text("Fake summary."), finish("stop"), done()]},
+        {"events": [text("Third answer."), finish("stop"), done()]},
+        {"events": [text("Updated summary."), finish("stop"), done()]},
+        {"events": [text("Updated summary."), finish("stop"), done()]},
+        {"events": [text("After repeated compact."), finish("stop"), done()]}
     ]}))
     .await;
     let out = repl_output(
         env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
-        "first prompt\nsecond prompt\n/compact\n/compact\nafter refuse\n",
+        "first prompt\nsecond prompt\n/compact\nthird prompt\n/compact\nafter repeated compact\n",
     )
     .await;
     let (stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert_eq!(stdout, "First answer.\nSecond answer.\nAfter refuse.\n");
-    assert!(stderr.contains("V1 keeps a single level per session"), "{stderr}");
-    assert_eq!(up.served(), 4, "two turns, one summary, one follow-up; no second summary");
-    assert_eq!(compaction_entries(&journal(&env.session_files()[0])).len(), 1);
+    assert_eq!(stdout, "First answer.\nSecond answer.\nThird answer.\nAfter repeated compact.\n");
+    assert_eq!(stderr.matches("ara: compacted").count(), 2, "{stderr}");
+    assert_eq!(up.served(), 8, "four turns and two pairs of summary calls");
+    let entries = journal(&env.session_files()[0]);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 2);
+    for compaction in &compactions {
+        assert_compaction_provenance(&entries, compaction);
+    }
+    let earlier = compactions[0]["sourceEntryIds"].as_array().unwrap();
+    let later = compactions[1]["sourceEntryIds"].as_array().unwrap();
+    assert!(later.starts_with(earlier), "cumulative raw provenance survives repeated compaction");
+    let reqs = up.requests.lock().await;
+    let summaries: Vec<_> =
+        reqs[5..7].iter().map(|request| request_text(request["body"]["messages"].as_array().unwrap())).collect();
+    assert!(
+        summaries.iter().any(|text| text.contains("Fake summary.") && text.contains("Second answer.")),
+        "{summaries:?}"
+    );
+    assert!(summaries.iter().any(|text| text.contains("third prompt")), "{summaries:?}");
+    let follow_up = request_text(reqs[7]["body"]["messages"].as_array().unwrap());
+    assert!(follow_up.contains("Updated summary.") && follow_up.contains("Third answer."), "{follow_up}");
+    assert!(!follow_up.contains("third prompt") && !follow_up.contains("Second answer."), "{follow_up}");
+    drop(reqs);
 
     // Failed summary call: session bytes unchanged by /compact; the next turn
     // is answered on a later resume.
@@ -3733,7 +3799,8 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     let session = env.session_files()[0].clone();
     let before = std::fs::read(&session).unwrap();
     let up2 = upstream(json!({"responses": [
-        {"status": 400, "body": "{\"error\":{\"message\":\"summary backend down\"}}"}
+        {"status": 400, "delay_ms": 200, "body": "{\"error\":{\"message\":\"summary backend down\"}}"},
+        {"events": [text("Unadopted sibling summary."), finish("stop"), done()]}
     ]}))
     .await;
     let out = repl_output(
@@ -3774,7 +3841,8 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     let session = env.session_files()[0].clone();
     let before = std::fs::read(&session).unwrap();
     let up2 = upstream(json!({"responses": [
-        {"status": 400, "body": "{\"error\":{\"message\":\"summary backend down\"}}"},
+        {"status": 400, "delay_ms": 200, "body": "{\"error\":{\"message\":\"summary backend down\"}}"},
+        {"events": [text("Unadopted sibling summary."), finish("stop"), done()]},
         {"events": [text("Next answer."), finish("stop"), done()]}
     ]}))
     .await;
@@ -3787,14 +3855,14 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("session untouched"), "{stderr}");
     assert_eq!(stdout, "Next answer.\n");
-    assert_eq!(up2.served(), 2, "one failed summary call, one follow-up turn");
+    assert_eq!(up2.served(), 3, "failed/sibling summary calls and one follow-up turn");
     let after = std::fs::read(&session).unwrap();
     assert!(after.starts_with(&before), "failed summary rewrote earlier journal bytes");
     let entries = journal(&session);
     assert!(compaction_entries(&entries).is_empty(), "{entries:?}");
     assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt", "next turn"]);
     let reqs = up2.requests.lock().await;
-    let follow_up = request_text(reqs[1]["body"]["messages"].as_array().unwrap());
+    let follow_up = request_text(reqs[2]["body"]["messages"].as_array().unwrap());
     for kept in ["first prompt", "First answer.", "second prompt", "Second answer."] {
         assert!(follow_up.contains(kept), "{kept} survives the failed summary: {follow_up}");
     }
@@ -3814,9 +3882,14 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert!(stderr.contains("compaction skipped: it needs a session"), "{stderr}");
     assert_eq!(up.served(), 1, "no summary call under --no-session");
 
-    // One turn only: no earlier turn to summarize, no model call.
+    // One turn can split before its assistant: only the turn-prefix branch
+    // calls the model, and native's explicit no-history marker is persisted.
     let env = Env::new();
-    let up = upstream(json!({"responses": [{"events": [text("Only answer."), finish("stop"), done()]}]})).await;
+    let up = upstream(json!({"responses": [
+        {"events": [text("Only answer."), finish("stop"), done()]},
+        {"events": [text("Only prompt context."), finish("stop"), done()]}
+    ]}))
+    .await;
     let out = repl_output(
         env.cmd(&up.base_url(), &["--repl", "--compact-threshold", "0", "--compact-keep-tokens", "1"]),
         "only prompt\n/compact\n",
@@ -3824,12 +3897,18 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     .await;
     let (_stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert!(stderr.contains("compaction skipped: there is no earlier turn to summarize"), "{stderr}");
-    assert!(!stderr.contains("already small"), "{stderr}");
-    assert_eq!(up.served(), 1, "no summary call when there is no cut");
-    assert!(compaction_entries(&journal(&env.session_files()[0])).is_empty());
+    assert!(stderr.contains("ara: compacted"), "{stderr}");
+    assert_eq!(up.served(), 2, "one turn and one prefix-only summary call");
+    let entries = journal(&env.session_files()[0]);
+    let compactions = compaction_entries(&entries);
+    assert_eq!(compactions.len(), 1);
+    assert_compaction_provenance(&entries, compactions[0]);
+    assert_eq!(
+        compactions[0]["summary"],
+        "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\nOnly prompt context."
+    );
 
-    // History within the keep target: "already small", no model call.
+    // History within the keep target: no earlier prefix, no model call.
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("One."), finish("stop"), done()]},
@@ -3843,7 +3922,7 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     .await;
     let (_stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert!(stderr.contains("history is already small; nothing to compact"), "{stderr}");
+    assert!(stderr.contains("no earlier message prefix can be summarized at this retention target"), "{stderr}");
     assert_eq!(up.served(), 2, "no summary call within the target");
 
     // Auto-compaction explains a refusal once per process; /compact always does.
@@ -3867,16 +3946,18 @@ async fn repl_compact_failure_paths_leave_the_session_usable() {
     assert_eq!(up.served(), 3, "no summary call under --no-session");
 }
 
-/// The summary call gets OMP's default output budget, floor(0.8 * 16384),
-/// capped by `--max-tokens`. Native nonempty Length summaries are accepted;
-/// V1's single-level host still refuses a redundant second compaction.
+/// History/prefix calls get OMP's distinct default output budgets,
+/// floor(0.8 * 16384) and floor(0.5 * 16384), capped by `--max-tokens`.
+/// Nonempty Length summaries are accepted; an unchanged projected window
+/// with only the kept assistant has no later cut to summarize.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_compact_uses_the_omp_summary_budget_and_accepts_nonempty_length() {
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
-        {"events": [text("Cut off sum"), finish("length"), usage(900, 13107), done()]}
+        {"events": [text("Cut off sum"), finish("length"), usage(900, 1000), done()]},
+        {"events": [text("Cut off sum"), finish("length"), usage(900, 1000), done()]}
     ]}))
     .await;
     let out = repl_output(
@@ -3888,21 +3969,25 @@ async fn repl_compact_uses_the_omp_summary_budget_and_accepts_nonempty_length() 
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert_eq!(stdout, "First answer.\nSecond answer.\n");
     assert!(stderr.contains("ara: compacted"), "the first Length summary succeeds: {stderr}");
-    assert!(stderr.contains("this session is already compacted"), "{stderr}");
-    assert_eq!(up.served(), 3);
+    assert!(stderr.contains("no earlier message prefix can be summarized at this retention target"), "{stderr}");
+    assert_eq!(up.served(), 4);
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs[2]["body"]["max_tokens"], 13107);
+    let mut budgets: Vec<_> =
+        reqs[2..4].iter().map(|request| request["body"]["max_tokens"].as_u64().unwrap()).collect();
+    budgets.sort_unstable();
+    assert_eq!(budgets, [8192, 13107]);
     drop(reqs);
     let rows = journal(&env.session_files()[0]);
     let summaries = compaction_entries(&rows);
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0]["summary"], "Cut off sum");
+    assert_eq!(summaries[0]["summary"], "Cut off sum\n\n---\n\n**Turn Context (split turn):**\n\nCut off sum");
 
     // --max-tokens caps the summary budget.
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]},
         {"events": [text("Fake summary."), finish("stop"), done()]}
     ]}))
     .await;
@@ -3918,14 +4003,17 @@ async fn repl_compact_uses_the_omp_summary_budget_and_accepts_nonempty_length() 
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("ara: compacted"), "{stderr}");
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 3);
-    assert_eq!(reqs[2]["body"]["max_tokens"], 700, "{}", reqs[2]);
+    assert_eq!(reqs.len(), 4);
+    for request in &reqs[2..4] {
+        assert_eq!(request["body"]["max_tokens"], 700, "{request}");
+    }
 
     // A --max-tokens above the default does not raise the summary budget.
     let env = Env::new();
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [text("Fake summary."), finish("stop"), done()]},
         {"events": [text("Fake summary."), finish("stop"), done()]}
     ]}))
     .await;
@@ -3941,8 +4029,11 @@ async fn repl_compact_uses_the_omp_summary_budget_and_accepts_nonempty_length() 
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("ara: compacted"), "{stderr}");
     let reqs = up.requests.lock().await;
-    assert_eq!(reqs.len(), 3);
-    assert_eq!(reqs[2]["body"]["max_tokens"], 13107, "{}", reqs[2]);
+    assert_eq!(reqs.len(), 4);
+    let mut budgets: Vec<_> =
+        reqs[2..4].iter().map(|request| request["body"]["max_tokens"].as_u64().unwrap()).collect();
+    budgets.sort_unstable();
+    assert_eq!(budgets, [8192, 13107]);
 }
 
 /// A prompt line that is not UTF-8 ends the REPL with exit 1 and a message;
@@ -3969,7 +4060,7 @@ async fn repl_unreadable_prompt_exits_1_and_keeps_the_session() {
     assert_eq!(journal_user_texts(&entries), vec!["first prompt"]);
 }
 
-/// V1-COMPACT: interrupt during the summary call returns to the prompt, leaves
+/// Native compaction: interrupt during parallel summary calls returns to the prompt, leaves
 /// no compaction entry, and the next line is answered.
 #[tokio::test(flavor = "multi_thread")]
 async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
@@ -3977,6 +4068,7 @@ async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
     let up = upstream(json!({"responses": [
         {"events": [text("First answer."), finish("stop"), done()]},
         {"events": [text("Second answer."), finish("stop"), done()]},
+        {"events": [{"data": {"choices": [{"delta": {"content": "partial"}}]}}, {"sleep_ms": 30000}], "end": "hang"},
         {"events": [{"data": {"choices": [{"delta": {"content": "partial"}}]}}, {"sleep_ms": 30000}], "end": "hang"},
         {"events": [text("After compact."), finish("stop"), done()]}
     ]}))
@@ -3992,12 +4084,12 @@ async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
         writeln!(stdin, "first prompt").unwrap();
         writeln!(stdin, "second prompt").unwrap();
         writeln!(stdin, "/compact").unwrap();
-        // Wait until both turns finished and the summary request is in flight.
+        // Wait until both turns finished and both summary requests are in flight.
         let t0 = Instant::now();
-        while up.served() < 3 && t0.elapsed() < Duration::from_secs(10) {
+        while up.served() < 4 && t0.elapsed() < Duration::from_secs(10) {
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert_eq!(up.served(), 3, "summary request started");
+        assert_eq!(up.served(), 4, "history and prefix summary requests started");
         interrupt(&child);
         assert!(log.wait_for("session untouched", Duration::from_secs(8)), "summary cancel reported");
         writeln!(stdin, "after compact").unwrap();
@@ -4010,14 +4102,14 @@ async fn repl_interrupt_during_compact_leaves_no_compaction_entry() {
     assert_eq!(code, Some(0), "{stderr}");
     assert!(stderr.contains("ara: interrupt received, aborting"), "{stderr}");
     assert!(stderr.contains("session untouched"), "{stderr}");
-    assert_eq!(up.served(), 4, "the follow-up turn is answered; no second summary");
+    assert_eq!(up.served(), 5, "the follow-up turn is answered; cancelled summaries are not replayed");
     let entries = journal(&env.session_files()[0]);
     assert!(compaction_entries(&entries).is_empty(), "{entries:?}");
     // The follow-up turn is in the journal.
     assert_eq!(journal_user_texts(&entries), vec!["first prompt", "second prompt", "after compact"]);
     // The follow-up request still carries the whole in-process history.
     let reqs = up.requests.lock().await;
-    let follow_up = request_text(reqs[3]["body"]["messages"].as_array().unwrap());
+    let follow_up = request_text(reqs[4]["body"]["messages"].as_array().unwrap());
     for kept in ["first prompt", "First answer.", "second prompt", "Second answer."] {
         assert!(follow_up.contains(kept), "{kept} survives the cancelled summary: {follow_up}");
     }

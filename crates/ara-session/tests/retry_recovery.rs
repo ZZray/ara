@@ -4,7 +4,8 @@ use ara_ai::{
 };
 use ara_session::{
     ACCEPTED_TERMINAL_EMPTY_STOP_MARKER, BashExecutionMessage, DISCARDED_ENTRY_BRANCH_MARKER,
-    FailedAssistantRecoveryOutcome, SessionJournal, UserSkillPrompt, is_empty_assistant_stop,
+    FailedAssistantRecoveryOutcome, SessionJournal, UserSkillPrompt, assistant_turn_produced_output,
+    is_empty_assistant_stop, is_empty_assistant_terminal,
 };
 use serde_json::{Value, json};
 
@@ -349,6 +350,44 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     assert_eq!(reopened.model_context(), vec![request_message.clone()]);
     assert_eq!(reopened.compaction_source_snapshot().unwrap().messages[0].entry_id, request);
     assert!(reopened.compacted_context_projection().is_ok());
+
+    // Native ToolUse needs an actual tool or visible text anchor. A signed
+    // thinking-only receipt is still orphaned and must stay discarded on reopen.
+    let mut orphan = empty_stop.clone();
+    orphan.stop_reason = StopReason::ToolUse;
+    orphan.content = vec![AssistantBlock::Thinking(ThinkingContent {
+        thinking: "provider authenticated reasoning".into(),
+        thinking_signature: Some("signed".into()),
+    })];
+    assert!(!is_empty_assistant_stop(&orphan));
+    assert!(is_empty_assistant_terminal(&orphan));
+    assert!(!assistant_turn_produced_output(&orphan));
+    let orphan_id = stops.append_message(&Message::Assistant(orphan.clone())).unwrap();
+    let orphan_bytes = std::fs::read(stops.path()).unwrap();
+    assert!(stops.discard_empty_stop_durably(Some(&orphan_id), &orphan_id, &orphan).is_err());
+    assert!(stops.discard_accepted_terminal_empty_stop(Some(&orphan_id), &orphan_id, &orphan).is_err());
+    for block in [
+        AssistantBlock::text("visible answer"),
+        AssistantBlock::ToolCall(ToolCall {
+            id: "real-effect".into(),
+            name: "write".into(),
+            arguments: JsonObject::new(),
+            thought_signature: None,
+        }),
+    ] {
+        let mut anchored = orphan.clone();
+        anchored.content.push(block);
+        assert!(!is_empty_assistant_terminal(&anchored));
+        assert!(assistant_turn_produced_output(&anchored));
+        assert!(stops.discard_empty_assistant_terminal_durably(Some(&orphan_id), &orphan_id, &anchored).is_err());
+    }
+    assert_eq!(std::fs::read(stops.path()).unwrap(), orphan_bytes);
+    let dropped =
+        stops.discard_empty_assistant_terminal_durably(Some(&orphan_id), &orphan_id, &orphan).unwrap().unwrap();
+    let reopened = SessionJournal::open(stops.path()).unwrap();
+    assert_eq!(reopened.leaf_id(), Some(dropped.as_str()));
+    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.entries(), stops.entries());
     assert!(!reopened.entries().iter().any(|entry| entry.id == stopped));
 
     // Accepted empty Stop preserves raw history and ordinary user context.

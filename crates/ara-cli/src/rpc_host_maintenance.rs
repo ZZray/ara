@@ -2,7 +2,7 @@
 //! Other compaction methods and dead-end rescue remain required parity work.
 use super::*;
 use ara_agent::compaction::{
-    AcceptedSummary, SummarySource, select_whole_turn_cut, summarize_sources_with_instructions,
+    AcceptedSummary, SummaryOptions, SummarySource, select_native_compaction_cut, summarize_compaction_cut,
     summary_output_budget_tokens,
 };
 use ara_agent::tokenizer::{MessageCountOptions, count_messages};
@@ -44,6 +44,7 @@ pub(super) struct PendingMaintenanceContinue {
 pub(super) struct TerminalRecoveryState {
     pub incomplete_attempts: usize,
     pub empty_attempts: usize,
+    pub unexpected_attempts: usize,
 }
 
 fn safe_success_terminal(message: &AssistantMessage, api: &str) -> bool {
@@ -52,12 +53,7 @@ fn safe_success_terminal(message: &AssistantMessage, api: &str) -> bool {
 }
 
 fn produced_output(message: &AssistantMessage) -> bool {
-    if matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Aborted) {
-        return false;
-    }
-    let mut content = message.clone();
-    content.stop_reason = ara_ai::StopReason::Stop;
-    !ara_session::is_empty_assistant_stop(&content)
+    ara_session::assistant_turn_produced_output(message)
 }
 
 fn stored_tokens(messages: &[Message]) -> usize {
@@ -219,7 +215,7 @@ impl Host {
                 matches!(block, ara_ai::AssistantBlock::Thinking(_))
                     || matches!(block, ara_ai::AssistantBlock::Text(text) if text.text.trim().is_empty())
             });
-        if !ara_session::is_empty_assistant_stop(message) && !provider_empty {
+        if !ara_session::is_empty_assistant_terminal(message) && !provider_empty {
             self.terminal_recovery.empty_attempts = 0;
             return Ok(none);
         }
@@ -247,7 +243,7 @@ impl Host {
         if provider_empty {
             journal.discard_entry_durably(leaf.as_deref(), &entry_id, message)?;
         } else {
-            journal.discard_empty_stop_durably(leaf.as_deref(), &entry_id, message)?;
+            journal.discard_empty_assistant_terminal_durably(leaf.as_deref(), &entry_id, message)?;
         }
         self.maintenance_bash_transition(parent);
         messages.pop();
@@ -271,6 +267,68 @@ impl Host {
         self.agent.replace_idle_messages(messages.clone())?;
         self.queue_terminal_continue(active, messages);
         Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none })
+    }
+
+    pub(super) async fn begin_unexpected_stop_recovery(
+        &mut self,
+        active: &ActiveRun,
+        message: &AssistantMessage,
+    ) -> Result<MaintenanceOutcome> {
+        let none = MaintenanceOutcome::default();
+        if self.unexpected_stop_mode == UnexpectedStopMode::None {
+            return Ok(none);
+        }
+        let has_text = message.content.iter().any(
+            |block| matches!(block, ara_ai::AssistantBlock::Text(text) if !ara_prompt::js::trim(&text.text).is_empty()),
+        );
+        let has_signed_thinking = message.content.iter().any(|block| {
+            matches!(block, ara_ai::AssistantBlock::Thinking(thinking)
+                if !ara_prompt::js::trim(&thinking.thinking).is_empty()
+                    && thinking.thinking_signature.as_deref().is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty()))
+        });
+        if message.stop_reason != ara_ai::StopReason::Stop
+            || message.tool_calls().next().is_some()
+            || !has_text && !has_signed_thinking
+        {
+            self.terminal_recovery.unexpected_attempts = 0;
+            return Ok(none);
+        }
+        if has_text {
+            // Mechanical never classifies delivered text. Smart requires the
+            // native tiny/smol auth route or local tiny worker, still open;
+            // absent a real classifier its result is unknown, never true.
+            self.terminal_recovery.unexpected_attempts = 0;
+            return Ok(none);
+        }
+        if self.input_closed
+            || active.cancel.is_cancelled()
+            || self.connection.is_cancelled()
+            || !Arc::ptr_eq(&active.sink.session, &self.session)
+            || message.provider != self.config.model.provider
+            || message.model != self.config.model.id
+            || !safe_success_terminal(message, &self.config.model.api)
+            || ara_ai::retry_classification::classify_retry(message, &self.config.model.api).context_recovery_blocked
+        {
+            return Ok(none);
+        }
+        let mut messages = self.agent.messages().await;
+        if messages.last().and_then(Message::as_assistant) != Some(message) {
+            return Ok(none);
+        }
+        self.terminal_recovery.unexpected_attempts += 1;
+        if self.terminal_recovery.unexpected_attempts > 3 {
+            self.terminal_recovery.unexpected_attempts = 0;
+            return Ok(none);
+        }
+        // Keep the exact signed assistant in native and model history. Only
+        // the recovery guidance is runtime-only, matching unexpected-stop-retry.md.
+        messages.push(Message::Developer(ara_ai::DeveloperMessage {
+            content: UserContent::Text(format!("<system-injection>\nYou said you would continue with a tool call or action but stopped. Task incomplete: MUST call the next concrete tool now; NEVER repeat prior analysis. No tool needed? Give the final answer now.\nAttempt #{}/3\n</system-injection>\n", self.terminal_recovery.unexpected_attempts)),
+            timestamp: ara_ai::now_ms(),
+        }));
+        self.agent.replace_idle_messages(messages.clone())?;
+        self.queue_terminal_continue(active, messages);
+        Ok(MaintenanceOutcome { continuation_scheduled: true, ..none })
     }
     // Caller holds the journal across the synchronous branch transition.
     // Existing jobs keep their original raw branch; later jobs get a fresh owner.
@@ -390,8 +448,7 @@ impl Host {
             self.terminal_recovery.incomplete_attempts += 1;
         }
         // Validate the native output budget before changing the failed turn.
-        let summary_budget = summary_output_budget_tokens(settings.reserve_tokens)?;
-        let max_tokens = self.config.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
+        summary_output_budget_tokens(settings.reserve_tokens)?;
         // Explicit takeover closes the previous saga exactly once.
         if self.retry.is_some() {
             self.finish_retry(None, Some("Retry transferred to context overflow recovery".into()), false).await;
@@ -430,9 +487,9 @@ impl Host {
                 .map(|m| SummarySource { entry_id: &m.entry_id, message: &m.message })
                 .collect::<Vec<_>>();
             let previous = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
-            let cut = select_whole_turn_cut(&sources, self.sessions.args.compact_keep_tokens, previous)?
-                .context("No earlier completed turn can be compacted with the current keep-token budget")?;
-            Ok((snapshot, cut.candidate))
+            let cut = select_native_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)?
+                .context("No native message prefix can be compacted with the current keep-token budget")?;
+            Ok((snapshot, cut))
         })();
         let (snapshot, cut) = match prepared {
             Ok(prepared) => prepared,
@@ -449,20 +506,24 @@ impl Host {
         let model = self.config.model.clone();
         let provider = self.config.provider.clone();
         let deadline = Instant::now() + Duration::from_secs_f64(self.max_time.unwrap_or(120.0).clamp(0.0, 120.0));
-        let first_kept_index = cut.first_kept_index;
+        let first_kept = cut.first_kept_entry_id.clone();
+        let reserve_tokens = settings.reserve_tokens;
+        let host_cap = self.config.max_tokens;
         let task = tokio::spawn(async move {
             let sources = task_snapshot
                 .messages
                 .iter()
                 .map(|m| SummarySource { entry_id: &m.entry_id, message: &m.message })
                 .collect::<Vec<_>>();
-            summarize_sources_with_instructions(
-                &sources[..first_kept_index],
+            summarize_compaction_cut(
+                &sources,
+                &cut,
                 task_snapshot.previous_summary.as_ref().map(|s| s.summary.as_str()),
                 None,
                 &model,
                 provider.as_ref(),
-                max_tokens,
+                reserve_tokens,
+                SummaryOptions { oneshot_retry: None, max_tokens: host_cap },
                 deadline,
                 &task_cancel,
             )
@@ -480,7 +541,7 @@ impl Host {
                 frame: active.command.frame.clone(),
             },
             snapshot,
-            first_kept: cut.first_kept_entry_id,
+            first_kept,
             tokens_before: stored_tokens(&clean) as u64,
             expected_messages: clean,
             recovery,
@@ -535,7 +596,7 @@ impl Host {
                 bail!("Context changed during overflow recovery");
             }
             let mut journal = active.session.journal.lock().await;
-            if let Err(error) = journal.commit_projected_compaction(
+            if let Err(error) = journal.commit_native_projected_compaction(
                 &active.snapshot,
                 &accepted.text,
                 &active.first_kept,

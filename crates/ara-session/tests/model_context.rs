@@ -139,19 +139,33 @@ fn missing_first_kept_id_falls_back_to_build_context() {
 }
 
 #[test]
-fn non_user_first_kept_falls_back_to_build_context() {
+fn assistant_first_kept_without_source_ids_falls_back_to_build_context() {
     let dir = tempfile::tempdir().unwrap();
     let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
     journal.append_model_change("fake/m").unwrap();
     let q1 = journal.append_message(&user("question one")).unwrap();
     let a1 = journal.append_message(&assistant("answer one")).unwrap();
-    // firstKeptEntryId is the assistant message, not a user message.
+    // Native Assistant cuts require exact source IDs; an imported cut without
+    // those IDs must still fall back to the untouched raw history.
     journal.append_compaction("Earlier work completed.", &a1, std::slice::from_ref(&q1), 2).unwrap();
     let path = journal.path().to_path_buf();
     drop(journal);
+    let entries = fs::read_to_string(&path).unwrap();
+    let entries = entries
+        .lines()
+        .map(|line| {
+            let mut entry: Value = serde_json::from_str(line).unwrap();
+            if entry["type"] == "compaction" {
+                entry.as_object_mut().unwrap().remove("sourceEntryIds");
+            }
+            serde_json::to_string(&entry).unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, entries + "\n").unwrap();
     let journal = SessionJournal::open(&path).unwrap();
     let model = journal.model_context();
     let raw = journal.build_context();
-    assert_eq!(model, raw, "non-user firstKeptEntryId is rejected and falls back");
+    assert_eq!(model, raw, "Assistant cut without source IDs is rejected and falls back");
     assert_eq!(raw.len(), 2);
 }

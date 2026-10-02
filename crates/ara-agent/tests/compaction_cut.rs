@@ -1,7 +1,8 @@
 use ara_agent::compaction::{
     SummaryInputError, SummarySource, WholeTurnCutCandidate, WholeTurnCutSelection, explain_no_whole_turn_cut,
-    select_whole_turn_cut, serialize_sources_for_summary, whole_turn_cut_candidates,
+    select_native_compaction_cut, select_whole_turn_cut, serialize_sources_for_summary, whole_turn_cut_candidates,
 };
+use ara_agent::tokenizer::{MessageCountOptions, count_message};
 use ara_ai::{
     AssistantBlock, AssistantMessage, DeveloperMessage, ImageContent, JsonObject, Message, StopReason, ToolCall,
     ToolResultMessage, UserBlock, UserContent, UserMessage,
@@ -469,4 +470,122 @@ fn falls_back_to_an_earlier_boundary_to_keep_unsupported_content_raw() {
     let selection = selected(&ids, &messages, 0).unwrap().unwrap();
     assert_eq!(selection.candidate, at(2, "e3"));
     assert!(selection.estimated_retained_exceeds_target);
+}
+
+// Native findCutPoint families: partial turn, intact kept tool cycles, and
+// continuation after an earlier split. The old whole-turn helper stays separate.
+#[test]
+fn native_cut_keeps_message_boundaries_and_supports_carried_turns() {
+    for case in ["user-prefix", "kept-tools", "completed-prefix-tools", "carried", "carried-only", "no-successor"] {
+        let messages = match case {
+            "user-prefix" => vec![user("large original request"), assistant(StopReason::Stop, None)],
+            "kept-tools" | "no-successor" => {
+                vec![user("large request"), assistant(StopReason::ToolUse, Some("c1")), tool_result("c1", false)]
+            }
+            "completed-prefix-tools" => vec![
+                user("old"),
+                assistant(StopReason::Stop, None),
+                user("current"),
+                assistant(StopReason::ToolUse, Some("c1")),
+                tool_result("c1", false),
+                assistant(StopReason::Stop, None),
+            ],
+            "carried" => vec![assistant(StopReason::Stop, None), user("current"), assistant(StopReason::Stop, None)],
+            "carried-only" => vec![assistant(StopReason::Stop, None), assistant(StopReason::Stop, None)],
+            _ => unreachable!(),
+        };
+        let ids = (0..messages.len()).map(|index| format!("e-{index}")).collect::<Vec<_>>();
+        let sources = ids
+            .iter()
+            .zip(&messages)
+            .map(|(entry_id, message)| SummarySource { entry_id, message })
+            .collect::<Vec<_>>();
+        let target = if case == "kept-tools" {
+            // Threshold is exactly at the assistant; its tool result stays raw.
+            messages[1..].iter().map(|message| count_message(message, MessageCountOptions::default())).sum()
+        } else {
+            0
+        };
+        let previous = case.starts_with("carried").then_some("original user context retained by earlier compaction");
+        let result = select_native_compaction_cut(&sources, target, previous).unwrap();
+        if case == "no-successor" {
+            assert!(result.is_none(), "no valid cut after the trailing tool result retains native first boundary");
+            continue;
+        }
+        let cut = result.unwrap();
+        let index = if case == "kept-tools" { 1 } else { messages.len() - 1 };
+        assert_eq!(cut.first_kept_index, index, "{case}");
+        assert_eq!(cut.first_kept_entry_id, ids[index]);
+        assert!(matches!(messages[index], Message::Assistant(_)));
+        let turn_start = if case == "completed-prefix-tools" {
+            2
+        } else if case == "carried" {
+            1
+        } else {
+            0
+        };
+        assert_eq!(cut.turn_start_index, Some(turn_start));
+        assert_eq!(cut.history_end_index, turn_start);
+        if case == "kept-tools" {
+            assert_eq!(cut.estimated_retained_raw_tokens, target);
+            assert!(!cut.estimated_retained_exceeds_target);
+            assert_eq!(sources[cut.first_kept_index + 1].entry_id, "e-2");
+        }
+        if case == "user-prefix" {
+            assert!(whole_turn_cut_candidates(&sources).is_empty());
+        }
+    }
+}
+
+#[test]
+fn native_cut_preserves_summary_safety_and_exact_snapshot_ids() {
+    for case in ["missing-carry", "pending-tool", "unknown-effect", "developer", "duplicate-id", "image"] {
+        let mut messages = match case {
+            "missing-carry" => vec![assistant(StopReason::Stop, None), assistant(StopReason::Stop, None)],
+            "pending-tool" => {
+                vec![user("request"), assistant(StopReason::ToolUse, Some("c1")), assistant(StopReason::Stop, None)]
+            }
+            "unknown-effect" => vec![
+                user("request"),
+                assistant(StopReason::ToolUse, Some("c1")),
+                tool_result("c1", true),
+                assistant(StopReason::Stop, None),
+            ],
+            "developer" => vec![user("request"), developer("high priority"), assistant(StopReason::Stop, None)],
+            _ => vec![user("request"), assistant(StopReason::Stop, None)],
+        };
+        if case == "image" {
+            messages[0] = Message::User(UserMessage {
+                content: UserContent::Blocks(vec![UserBlock::Image(ImageContent {
+                    data: "AA==".into(),
+                    mime_type: "image/png".into(),
+                })]),
+                synthetic: None,
+                timestamp: 0,
+            });
+        }
+        let mut ids = (0..messages.len()).map(|index| format!("e-{index}")).collect::<Vec<_>>();
+        if case == "duplicate-id" {
+            ids[1] = ids[0].clone();
+        }
+        let sources = ids
+            .iter()
+            .zip(&messages)
+            .map(|(entry_id, message)| SummarySource { entry_id, message })
+            .collect::<Vec<_>>();
+        let error = select_native_compaction_cut(&sources, 0, None).unwrap_err();
+        assert_eq!(
+            error,
+            match case {
+                "missing-carry" => SummaryInputError::NoLeadingPrompt,
+                "pending-tool" => SummaryInputError::UnfinishedTurn,
+                "unknown-effect" => SummaryInputError::UnknownToolEffect,
+                "developer" => SummaryInputError::DeveloperInSummary,
+                "duplicate-id" => SummaryInputError::DuplicateSourceId,
+                "image" => SummaryInputError::UnsupportedImage,
+                _ => unreachable!(),
+            },
+            "{case}"
+        );
+    }
 }

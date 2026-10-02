@@ -5,7 +5,9 @@
 //! A Run keeps its original journal even if the caller stops waiting. Live
 //! queries use completed event messages, never the Agent transcript lock.
 
-use super::rpc_host_settings::{AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings};
+use super::rpc_host_settings::{
+    AutoCompactionPolicy, LoopGuardSettings, RetryPolicy, ToolLoopGuardSettings, UnexpectedStopMode,
+};
 #[path = "rpc_host_loop_guard.rs"]
 mod loop_guard;
 #[path = "rpc_host_maintenance.rs"]
@@ -697,6 +699,7 @@ struct Host {
     retry: Option<RetrySaga>,
     prompt_generation: u64,
     loop_guard_settings: LoopGuardSettings,
+    unexpected_stop_mode: UnexpectedStopMode,
     header_continue: Option<PendingHeaderContinue>,
     input_closed: bool,
     tool_loop: Arc<Mutex<ToolLoopState>>,
@@ -1119,8 +1122,22 @@ impl Host {
     }
 
     async fn compact(&mut self, focus: Option<&str>) -> Result<Value> {
+        // Native split/fold summaries keep large async state. Do not embed it
+        // in the shared RPC command future, including Session join/abort paths.
+        Box::pin(self.compact_with_options(
+            focus,
+            ara_agent::compaction::SummaryOptions { max_tokens: self.config.max_tokens, ..Default::default() },
+        ))
+        .await
+    }
+
+    async fn compact_with_options(
+        &mut self,
+        focus: Option<&str>,
+        options: ara_agent::compaction::SummaryOptions,
+    ) -> Result<Value> {
         use ara_agent::compaction::{
-            SummarySource, select_whole_turn_cut, summarize_sources_with_instructions, summary_output_budget_tokens,
+            SummarySource, select_native_compaction_cut, summarize_compaction_cut, summary_output_budget_tokens,
         };
         use ara_agent::tokenizer::{MessageCountOptions, count_messages};
         if self.session.persistence_error.lock().unwrap().is_some() {
@@ -1148,22 +1165,23 @@ impl Host {
                 .iter()
                 .map(|message| SummarySource { entry_id: message.entry_id.as_str(), message: &message.message })
                 .collect::<Vec<_>>();
-            let cut = select_whole_turn_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
+            let cut = select_native_compaction_cut(&sources, self.sessions.args.compact_keep_tokens, previous)
                 .map_err(|error| anyhow::anyhow!("{error}"))?
-                .context("No earlier completed turn can be compacted with the current keep-token budget")?;
+                .context("No native message prefix can be compacted with the current keep-token budget")?;
             let tokens_before = count_messages(&current, MessageCountOptions::default()) as u64;
             let seconds = self.max_time.unwrap_or(120.0).clamp(0.0, 120.0);
             let deadline = Instant::now() + Duration::from_secs_f64(seconds);
             let settings = self.compaction_policy.recovery_settings()?;
-            let summary_budget = summary_output_budget_tokens(settings.reserve_tokens)?;
-            let max_tokens = self.config.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
-            let accepted = summarize_sources_with_instructions(
-                &sources[..cut.candidate.first_kept_index],
+            summary_output_budget_tokens(settings.reserve_tokens)?;
+            let accepted = summarize_compaction_cut(
+                &sources,
+                &cut,
                 previous,
                 focus,
                 &self.config.model,
                 self.config.provider.as_ref(),
-                max_tokens,
+                settings.reserve_tokens,
+                options,
                 deadline,
                 &self.connection,
             )
@@ -1171,10 +1189,10 @@ impl Host {
             .map_err(|error| anyhow::anyhow!("Compaction summary failed: {error}"))?;
             let mut journal = self.session.journal.lock().await;
             let old_leaf = journal.leaf_id().map(str::to_owned);
-            if let Err(error) = journal.commit_projected_compaction(
+            if let Err(error) = journal.commit_native_projected_compaction(
                 &snapshot,
                 &accepted.text,
-                &cut.candidate.first_kept_entry_id,
+                &cut.first_kept_entry_id,
                 &accepted.window_source_entry_ids,
                 tokens_before,
             ) {
@@ -1210,7 +1228,7 @@ impl Host {
             self.bash_target = target;
             // The rewritten context invalidates stateful provider replay.
             self.config.provider = self.sessions.provider.build();
-            Ok(json!({"summary":accepted.text,"firstKeptEntryId":cut.candidate.first_kept_entry_id,
+            Ok(json!({"summary":accepted.text,"firstKeptEntryId":cut.first_kept_entry_id,
                 "tokensBefore":tokens_before}))
         }
         .await;
@@ -1274,7 +1292,11 @@ impl Host {
         }
         self.auto_compaction_checked = Some(key);
         self.output.frame(json!({"type":"auto_compaction_start","reason":"threshold","action":"context-full"}));
-        let result = self.compact(None).await;
+        let result = Box::pin(self.compact_with_options(
+            None,
+            ara_agent::compaction::SummaryOptions { oneshot_retry: None, max_tokens: self.config.max_tokens },
+        ))
+        .await;
         let mut event = json!({"type":"auto_compaction_end","action":"context-full",
             "aborted":self.connection.is_cancelled(),"willRetry":false});
         match result {
@@ -1670,6 +1692,10 @@ impl Host {
             Some(directory) => ToolLoopGuardSettings::load(directory)?,
             None => ToolLoopGuardSettings::default(),
         };
+        self.unexpected_stop_mode = match &self.tool_loop_settings_dir {
+            Some(directory) => UnexpectedStopMode::load(directory)?,
+            None => UnexpectedStopMode::default(),
+        };
         config.hooks = Arc::new(ToolLoopHooks {
             base: config.hooks,
             state: self.tool_loop.clone(),
@@ -1752,6 +1778,18 @@ impl Host {
                         );
                         return;
                     }
+                    Ok(_) => {}
+                    Err(error) => {
+                        active.sink.persistence_failed(error);
+                        return;
+                    }
+                }
+            }
+            if matches!(report.end, RunEnd::Error | RunEnd::Completed)
+                && let Some(message) = assistant
+            {
+                match Box::pin(self.begin_unexpected_stop_recovery(&active, message)).await {
+                    Ok(outcome) if outcome.continuation_scheduled => return,
                     Ok(_) => {}
                     Err(error) => {
                         active.sink.persistence_failed(error);
@@ -2349,6 +2387,7 @@ where
     let compaction_policy = AutoCompactionPolicy::load(&super::ara_home().join("agent"))?;
     let retry_policy = RetryPolicy::load(&super::ara_home().join("agent"))?;
     let loop_guard_settings = LoopGuardSettings::load(&super::ara_home().join("agent"))?;
+    let unexpected_stop_mode = UnexpectedStopMode::load(&super::ara_home().join("agent"))?;
     let tool_loop_settings_dir = super::ara_home().join("agent");
     let tool_loop_settings = ToolLoopGuardSettings::load(&tool_loop_settings_dir)?;
     let mut tool_loop_state = ToolLoopState::default();
@@ -2412,6 +2451,7 @@ where
         retry: None,
         prompt_generation: 0,
         loop_guard_settings,
+        unexpected_stop_mode,
         header_continue: None,
         input_closed: false,
         tool_loop: Arc::new(Mutex::new(tool_loop_state)),
@@ -2704,6 +2744,7 @@ mod tests {
             retry: None,
             prompt_generation: 0,
             loop_guard_settings: LoopGuardSettings::default(),
+            unexpected_stop_mode: UnexpectedStopMode::default(),
             header_continue: None,
             input_closed: false,
             tool_loop: Arc::new(Mutex::new(ToolLoopState::default())),

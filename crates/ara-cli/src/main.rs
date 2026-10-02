@@ -741,11 +741,9 @@ fn resolve_startup_route(args: &mut Args) -> Result<Route> {
     Ok(Route { model: selection.model.clone(), stream_options: StreamOptions::default(), daily: Some(selection) })
 }
 
-/// V1-COMPACT: single-level soft compaction from the A3 pieces. The summary
-/// is persisted in the Session with its source entry IDs; raw history stays
-/// in the journal and resume reads the projected context. A second compaction
-/// on an already-compacted session is refused: chained summaries need the
-/// still-open A3 persistence decision, so V1 keeps one level.
+/// Native message cuts retain a complete tool boundary and may split a turn
+/// before its Assistant. Repeated summaries carry their prior summary and
+/// cumulative raw provenance through the checked Session commit.
 #[allow(clippy::too_many_arguments)]
 async fn run_compaction(
     args: &Args,
@@ -757,11 +755,9 @@ async fn run_compaction(
     manual: bool,
 ) -> Result<bool> {
     use ara_agent::compaction::{
-        SummaryInputError, SummarySource, explain_no_whole_turn_cut, select_whole_turn_cut, summarize_sources,
-        summary_output_budget_tokens,
+        SummaryOptions, SummarySource, select_native_compaction_cut, summarize_compaction_cut,
     };
-    use ara_agent::tokenizer::{MessageCountOptions, count_message, count_messages};
-    use ara_session::CompactionSourceError;
+    use ara_agent::tokenizer::{MessageCountOptions, count_messages};
     let tokens = count_messages(context, MessageCountOptions::default());
     if !manual && (args.compact_threshold == 0 || tokens <= args.compact_threshold) {
         return Ok(false);
@@ -779,16 +775,8 @@ async fn run_compaction(
         notice("it needs a session (--no-session is set)".into());
         return Ok(false);
     };
-    let snapshot = match journal.compaction_source_snapshot() {
+    let snapshot = match journal.projected_compaction_snapshot() {
         Ok(s) => s,
-        Err(CompactionSourceError::UnsupportedContextEntry { kind, .. }) if kind == "compaction" => {
-            // An entry the Session cannot project is not a usable compaction.
-            match journal.compacted_context_projection() {
-                Ok(_) => notice("this session is already compacted, and V1 keeps a single level per session".into()),
-                Err(e) => notice(format!("the session has a compaction entry it cannot use ({e})")),
-            }
-            return Ok(false);
-        }
         Err(e) => {
             notice(format!("the session source is unavailable ({e})"));
             return Ok(false);
@@ -799,72 +787,70 @@ async fn run_compaction(
         .iter()
         .map(|m| SummarySource { entry_id: m.entry_id.as_str(), message: &m.message })
         .collect();
-    let Some(cut) =
-        select_whole_turn_cut(&sources, args.compact_keep_tokens, None).map_err(|e| anyhow::anyhow!("{e}"))?
-    else {
-        let raw: usize = sources.iter().map(|s| count_message(s.message, MessageCountOptions::default())).sum();
-        match explain_no_whole_turn_cut(&sources) {
-            _ if raw <= args.compact_keep_tokens => {
-                if manual {
-                    eprintln!("ara: history is already small; nothing to compact");
-                }
-            }
-            // Not expected: a cut exists but none was selected above the target.
-            None => notice("no cut was selected".into()),
-            Some(SummaryInputError::EmptySources) => notice("there is no earlier turn to summarize".into()),
-            Some(e) => notice(format!("no earlier turn can be summarized ({e})")),
+    let previous_summary = snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str());
+    let cut = match select_native_compaction_cut(&sources, args.compact_keep_tokens, previous_summary) {
+        Ok(Some(cut)) => cut,
+        Ok(None) => {
+            notice("no earlier message prefix can be summarized at this retention target".into());
+            return Ok(false);
         }
-        return Ok(false);
+        Err(error) => {
+            notice(format!("no earlier message prefix can be summarized ({error})"));
+            return Ok(false);
+        }
     };
-    let span = &sources[..cut.candidate.first_kept_index];
+    if cut.first_kept_index == 0 {
+        notice("no earlier message prefix can be summarized at this retention target".into());
+        return Ok(false);
+    }
     let deadline = Instant::now() + Duration::from_secs(120);
-    // This legacy REPL entry uses the native default reserve; RPC also reads
-    // the configured raw reserve. The request cap remains an explicit bound.
-    let summary_budget = summary_output_budget_tokens(None)?;
-    let max_tokens = args.max_tokens.map_or(summary_budget, |cap| cap.min(summary_budget));
     // The subscription endpoint rejects output caps. Omit the internal cap
     // from its wire call and check the observed summary before adoption below.
     let uncapped = CodexSummaryProvider(provider.as_ref());
     let summary_provider: &dyn ModelProvider =
         if model.api == "openai-codex-responses" { &uncapped } else { provider.as_ref() };
-    let accepted = match summarize_sources(span, None, model, summary_provider, max_tokens, deadline, cancel).await {
+    let options = SummaryOptions {
+        oneshot_retry: if manual { SummaryOptions::default().oneshot_retry } else { None },
+        max_tokens: args.max_tokens,
+    };
+    let accepted = match summarize_compaction_cut(
+        &sources,
+        &cut,
+        previous_summary,
+        None,
+        model,
+        summary_provider,
+        None,
+        options,
+        deadline,
+        cancel,
+    )
+    .await
+    {
         Ok(a) => a,
         Err(e) => {
+            if e.kind == ara_agent::compaction::SummaryCallErrorKind::OutputBudgetExceeded {
+                eprintln!("ara: Codex summary exceeds the local adoption budget; session untouched");
+                return Ok(false);
+            }
             // Show the stop reason, output tokens and the provider's status and
             // message so the cause is visible.
             let stop = e.stop_reason.map(|r| format!(", stop reason {}", r.as_str())).unwrap_or_default();
-            let output = e
-                .usage
-                .as_ref()
-                .and_then(|u| u.output)
-                .map(|n| format!(", {n} of {max_tokens} output tokens"))
-                .unwrap_or_default();
+            let output =
+                e.usage.as_ref().and_then(|u| u.output).map(|n| format!(", {n} output tokens")).unwrap_or_default();
             let status = e.provider_status.map(|s| format!(", HTTP {s}")).unwrap_or_default();
             let detail = e.provider_message.as_deref().map(|m| format!(": {}", sanitize_text(m))).unwrap_or_default();
             eprintln!("ara: summary call failed ({e}{stop}{output}{status}{detail}); session untouched");
             return Ok(false);
         }
     };
-    if model.api == "openai-codex-responses" {
-        let estimated =
-            ara_agent::tokenizer::count_text(&accepted.text, ara_agent::tokenizer::EstimateMode::Approximate) as u64;
-        if accepted.usage.output.is_some_and(|tokens| tokens > max_tokens) || estimated > max_tokens {
-            eprintln!("ara: Codex summary exceeds the local adoption budget; session untouched");
-            return Ok(false);
-        }
-    }
-    journal.append_compaction(
+    journal.commit_native_projected_compaction(
+        &snapshot,
         &accepted.text,
-        &cut.candidate.first_kept_entry_id,
+        &cut.first_kept_entry_id,
         &accepted.window_source_entry_ids,
         tokens as u64,
     )?;
-    // `model_context` falls back to the raw history when the Session cannot
-    // project the summary, so check it rather than claim a compaction.
-    if let Err(e) = journal.compacted_context_projection() {
-        eprintln!("ara: compaction entry written, but the session cannot use it ({e}); context unchanged");
-        return Ok(false);
-    }
     *context = journal.model_context();
     let kept = count_messages(context, MessageCountOptions::default());
     eprintln!("ara: compacted {tokens} estimated tokens down to {kept}; summary persisted with source IDs");

@@ -80,6 +80,68 @@ fn consecutive_soft_summaries_preserve_cumulative_raw_sources_and_reopen_project
     assert_eq!(fs::read(&path).unwrap(), bytes);
 }
 
+/// Fixed native cuts can summarize a user prompt before its answer, then
+/// summarize that retained Assistant on the next cut without losing raw IDs.
+#[test]
+fn native_split_cuts_reopen_and_accumulate_exact_sources_without_split_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+    let first = turn(&mut journal, "first");
+    let second = turn(&mut journal, "second");
+    let snapshot = journal.projected_compaction_snapshot().unwrap();
+    let first_window = prefix_ids(&snapshot, 3);
+    let bytes = fs::read(journal.path()).unwrap();
+    assert!(matches!(
+        journal.commit_projected_compaction(&snapshot, "split", &second[1], &first_window, 100),
+        Err(CompactionCommitError::InvalidWindow)
+    ));
+    assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    journal
+        .commit_native_projected_compaction(&snapshot, "first done; second pending", &second[1], &first_window, 100)
+        .unwrap();
+    let mut reopened = SessionJournal::open(journal.path()).unwrap();
+    assert_eq!(reopened.entries(), journal.entries());
+    let carried = reopened.projected_compaction_snapshot().unwrap();
+    assert_eq!(carried.messages.len(), 1);
+    assert_eq!(carried.messages[0].entry_id, second[1]);
+    assert!(matches!(carried.messages[0].message, Message::Assistant(_)));
+    assert_eq!(carried.previous_summary.unwrap().source_entry_ids.unwrap(), first_window);
+    let third = turn(&mut reopened, "third");
+    let snapshot = reopened.projected_compaction_snapshot().unwrap();
+    let window = prefix_ids(&snapshot, 2);
+    assert_eq!(window, [second[1].clone(), third[0].clone()]);
+    reopened
+        .commit_native_projected_compaction(&snapshot, "first and second done; third pending", &third[1], &window, 80)
+        .unwrap();
+    let reloaded = SessionJournal::open(reopened.path()).unwrap();
+    assert_eq!(reloaded.compacted_context_projection().unwrap(), reopened.compacted_context_projection().unwrap());
+    let snapshot = reloaded.projected_compaction_snapshot().unwrap();
+    assert_eq!(snapshot.messages.len(), 1);
+    assert_eq!(snapshot.messages[0].entry_id, third[1]);
+    assert_eq!(
+        snapshot.previous_summary.unwrap().source_entry_ids.unwrap(),
+        first.into_iter().chain(second).chain([third[0].clone()]).collect::<Vec<_>>()
+    );
+    assert!(
+        reloaded
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind == "compaction")
+            .all(|entry| entry.raw.get("splitTurn").is_none())
+    );
+    // The new Assistant replay boundary always needs exact raw provenance;
+    // imported User-boundary summaries retain their existing unknown-ID API.
+    let last_id = reloaded.entries().last().unwrap().id.clone();
+    let mut lines: Vec<Value> =
+        fs::read_to_string(reloaded.path()).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    lines.iter_mut().find(|line| line["id"] == last_id).unwrap().as_object_mut().unwrap().remove("sourceEntryIds");
+    fs::write(reloaded.path(), lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+    assert_eq!(
+        SessionJournal::open(reloaded.path()).unwrap().compacted_context_projection(),
+        Err(CompactionProjectionError::SourceIdsMismatch { id: last_id })
+    );
+}
+
 #[test]
 fn native_memory_journal_supports_two_soft_summaries_without_file_materialization() {
     let mut journal = SessionJournal::in_memory(
@@ -240,6 +302,11 @@ fn commit_cannot_hide_images_unpaired_calls_or_unknown_effect_receipts() {
         let bytes = fs::read(journal.path()).unwrap();
         assert!(matches!(
             journal.commit_projected_compaction(&snapshot, "unsafe summary", &kept[0], &window, 100),
+            Err(CompactionCommitError::UnsafeSummaryBoundary)
+        ));
+        let split_window = prefix_ids(&snapshot, window.len() + 1);
+        assert!(matches!(
+            journal.commit_native_projected_compaction(&snapshot, "unsafe split", &kept[1], &split_window, 100),
             Err(CompactionCommitError::UnsafeSummaryBoundary)
         ));
         assert_eq!(journal.entries(), entries);

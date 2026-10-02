@@ -481,7 +481,9 @@ impl Entry {
 /// not end with an unanswered prompt, and no unknown-effect result is hidden.
 /// Turns that ended aborted, errored or length-stopped are summarized, as in
 /// fixed OMP. The raw prefix stays available for audit.
-fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
+/// A native Assistant cut may summarize the current user prompt before its
+/// answer. Tool ownership and unknown effects still require complete pairs.
+fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
     let mut saw_message = false;
     let mut pending: HashMap<String, String> = HashMap::new();
     let mut ends_with_user = false;
@@ -533,7 +535,7 @@ fn safe_soft_summary_prefix(branch: &[&Entry]) -> bool {
             }
         }
     }
-    saw_message && pending.is_empty() && !ends_with_user
+    saw_message && pending.is_empty() && (allow_unanswered_user || !ends_with_user)
 }
 
 /// One decoded message tied to its actual journal entry ID. This is an
@@ -646,7 +648,7 @@ pub enum CompactionCommitError {
     StaleSnapshot,
     #[error("compaction summary is empty or exceeds the supported input size")]
     InvalidSummary,
-    #[error("compaction window IDs must be the nonempty source prefix before the kept user message")]
+    #[error("compaction window IDs must be the nonempty source prefix before the supported kept message")]
     InvalidWindow,
     #[error("previous compaction has no verifiable raw source IDs")]
     MissingPreviousSources,
@@ -716,15 +718,39 @@ fn is_empty_error_turn(message: &AssistantMessage) -> bool {
 /// Fixed OMP's actionable-content test, narrowed to tool-free `Stop` turns.
 /// Unsigned thinking is not final output; signed or redacted thinking is.
 pub fn is_empty_assistant_stop(message: &AssistantMessage) -> bool {
-    message.stop_reason == StopReason::Stop
-        && !message.content.iter().any(|block| match block {
+    message.stop_reason == StopReason::Stop && !message.content.iter().any(is_actionable_assistant_content)
+}
+
+fn is_actionable_assistant_content(block: &AssistantBlock) -> bool {
+    match block {
+        AssistantBlock::Text(text) => !ara_prompt::js::trim(&text.text).is_empty(),
+        AssistantBlock::Thinking(thinking) => {
+            thinking.thinking_signature.as_deref().is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty())
+        }
+        _ => true,
+    }
+}
+
+/// Fixed OMP messages.ts:543-560. Thinking or images cannot anchor an orphan
+/// ToolUse terminal. This leaves the older Stop-only discard contract intact.
+pub fn is_empty_assistant_terminal(message: &AssistantMessage) -> bool {
+    match message.stop_reason {
+        StopReason::Stop => is_empty_assistant_stop(message),
+        StopReason::ToolUse => !message.content.iter().any(|block| match block {
+            AssistantBlock::ToolCall(_) => true,
             AssistantBlock::Text(text) => !ara_prompt::js::trim(&text.text).is_empty(),
-            AssistantBlock::Thinking(thinking) => thinking
-                .thinking_signature
-                .as_deref()
-                .is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty()),
-            _ => true,
-        })
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// Fixed OMP messages.ts:573-576. Partial failed output and an orphan ToolUse
+/// do not prove that this model served a completed assistant turn.
+pub fn assistant_turn_produced_output(message: &AssistantMessage) -> bool {
+    !matches!(message.stop_reason, StopReason::Error | StopReason::Aborted)
+        && !is_empty_assistant_terminal(message)
+        && message.content.iter().any(is_actionable_assistant_content)
 }
 
 fn failed_recovery_error(message: impl Into<String>) -> SessionError {
@@ -1266,6 +1292,20 @@ impl SessionJournal {
         self.discard_assistant_durably(expected_leaf, entry_id, assistant, None)
     }
 
+    /// Discard the exact native empty Stop or orphan ToolUse receipt before
+    /// continuation. Existing failure and accepted-empty APIs remain narrow.
+    pub fn discard_empty_assistant_terminal_durably(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        assistant: &AssistantMessage,
+    ) -> Result<Option<String>> {
+        if !is_empty_assistant_terminal(assistant) {
+            return Err(failed_recovery_error("durable terminal discard requires an empty Stop or orphan ToolUse"));
+        }
+        self.discard_assistant_durably(expected_leaf, entry_id, assistant, None)
+    }
+
     /// Commit failed-turn discard and a prepared host model promotion together.
     /// There is no durable intermediate branch without its model-change receipt.
     pub fn discard_failed_assistant_for_promotion(
@@ -1712,6 +1752,47 @@ impl SessionJournal {
         window_source_entry_ids: &[String],
         tokens_before: u64,
     ) -> std::result::Result<String, CompactionCommitError> {
+        self.commit_projected_compaction_boundary(
+            snapshot,
+            summary,
+            first_kept_entry_id,
+            window_source_entry_ids,
+            tokens_before,
+            false,
+        )
+    }
+
+    /// Commit a fixed OMP message cut, including a split turn before an
+    /// Assistant. The persisted native entry needs no invented split flag:
+    /// the actual kept message role determines the checked replay boundary.
+    pub fn commit_native_projected_compaction(
+        &mut self,
+        snapshot: &ProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+        tokens_before: u64,
+    ) -> std::result::Result<String, CompactionCommitError> {
+        self.commit_projected_compaction_boundary(
+            snapshot,
+            summary,
+            first_kept_entry_id,
+            window_source_entry_ids,
+            tokens_before,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_projected_compaction_boundary(
+        &mut self,
+        snapshot: &ProjectedCompactionSnapshot,
+        summary: &str,
+        first_kept_entry_id: &str,
+        window_source_entry_ids: &[String],
+        tokens_before: u64,
+        allow_assistant: bool,
+    ) -> std::result::Result<String, CompactionCommitError> {
         let current = self.projected_compaction_snapshot()?;
         if snapshot != &current {
             return Err(CompactionCommitError::StaleSnapshot);
@@ -1723,7 +1804,14 @@ impl SessionJournal {
             .messages
             .iter()
             .position(|message| message.entry_id == first_kept_entry_id)
-            .filter(|index| *index > 0 && matches!(&current.messages[*index].message, Message::User(_)))
+            .filter(|index| {
+                *index > 0
+                    && match &current.messages[*index].message {
+                        Message::User(_) => true,
+                        Message::Assistant(_) => allow_assistant,
+                        _ => false,
+                    }
+            })
             .ok_or(CompactionCommitError::InvalidWindow)?;
         let expected_window: Vec<String> =
             current.messages[..kept_index].iter().map(|message| message.entry_id.clone()).collect();
@@ -1750,7 +1838,8 @@ impl SessionJournal {
         if cumulative_sources != raw_sources {
             return Err(CompactionCommitError::InvalidWindow);
         }
-        if !safe_soft_summary_prefix(&branch[..raw_kept_index]) {
+        let split = matches!(&current.messages[kept_index].message, Message::Assistant(_));
+        if !safe_summary_prefix(&branch[..raw_kept_index], split) {
             return Err(CompactionCommitError::UnsafeSummaryBoundary);
         }
         Ok(self.append_compaction(summary, first_kept_entry_id, &cumulative_sources, tokens_before)?)
@@ -1796,9 +1885,12 @@ impl SessionJournal {
                                 && matches!(candidate.kind.as_str(), "message" | "custom_message")
                         })
                         .ok_or_else(|| CompactionProjectionError::MissingKeptMessage { id: entry.id.clone() })?;
-                    if !matches!(branch[kept_index].message(), Some(Message::User(_)))
-                        || !safe_soft_summary_prefix(&branch[..kept_index])
-                    {
+                    let allow_unanswered_user = match branch[kept_index].message() {
+                        Some(Message::User(_)) => false,
+                        Some(Message::Assistant(_)) => true,
+                        _ => return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() }),
+                    };
+                    if !safe_summary_prefix(&branch[..kept_index], allow_unanswered_user) {
                         return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
                     }
                     let tokens_before =
@@ -1829,6 +1921,9 @@ impl SessionJournal {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
                     let source_entry_ids = match entry.raw.get("sourceEntryIds") {
+                        None if allow_unanswered_user => {
+                            return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
+                        }
                         None => None,
                         Some(Value::Array(ids)) => {
                             let ids: Vec<String> = ids
@@ -1907,7 +2002,7 @@ impl SessionJournal {
     /// Append a soft-compaction summary. The summarized prefix stays raw in
     /// the journal; readers must use [`model_context`](Self::model_context)
     /// so the prefix is replaced by this summary. `first_kept_entry_id` must
-    /// be the user message where raw context resumes, and `source_entry_ids`
+    /// be the supported message where raw context resumes, and `source_entry_ids`
     /// the summarized entry IDs for provenance.
     pub fn append_compaction(
         &mut self,

@@ -168,8 +168,10 @@ fn malformed_compactions_and_off_branch_kept_ids_fail_without_writes() {
             CompactionProjectionError::MissingKeptMessage { id: "c1".into() },
         ),
         (
-            compaction("c1", json!("a2"), "a1", json!(["q1"])),
-            CompactionProjectionError::UnsafeSummaryBoundary { id: "c1".into() },
+            // Native Assistant cuts are valid with exact IDs; an imported
+            // split summary without those IDs cannot prove its provenance.
+            compaction("c1", json!("a2"), "a1", Value::Null),
+            CompactionProjectionError::SourceIdsMismatch { id: "c1".into() },
         ),
         (
             compaction("c1", json!("a2"), "q2", json!(["a1", "q1"])),

@@ -1,18 +1,19 @@
 # ARA execution plan
 
-**Latest checkpoint, 2026-10-01:** [terminal recovery and configured promotion](evidence/terminal-recovery-promotion.md)
-is tested/audited bounded WIP: safe Length summary acceptance, empty-Stop
-continuation, same-Agent prepared target adoption and atomic durable discard.
-Modules 68/0/0; final Windows backend 1,519/0/20, source unchanged; one shared
-gate 137.539s. Preferred CAS file task and tool-disabled original-Session reopen
-take 11.573s after one controlled empty terminal, with five actual CAS requests.
-The existing default-stack Host regression is fixed and independently reviewed.
-Next group: native split-turn summary selection, manual-summary retry defaults,
-orphan-tool/unexpected-stop and accepted-terminal Host callers. Other methods,
-rescue, pre-prompt promotion, registry execution and full span/tokenizer/settings/
-receipt contracts remain required; actual OpenAI account authorization stays open.
-Use existing native input families, module checks while editing and one final
-shared gate. P1–P6 and complete parent surfaces remain open; no scope is dropped.
+**Latest checkpoint, 2026-10-02:** [native message compaction and terminal recovery](evidence/native-compaction-terminal.md)
+is bounded tested/audited WIP: User/Assistant cuts, parallel history/prefix
+summary, manual one-shot retry, exact Session replay, orphan ToolUse discard
+and default mechanical unexpected-stop continuation. Nine existing modules
+pass 171/0/0 in 21.463s; final Windows backend 1,528/0/20 and inventory/deny/build
+pass one stable 130.283s command, with unchanged source. Preferred actual CAS
+file task, two summaries and original-Session tool-disabled reopen pass in
+19.193s across two processes/eight requests. Independent review and Root audit
+bind the final source, binary and artifacts. P0/V1 accepted, P1–P6 open, RPC
+27/42 and full marker null stay unchanged.
+Next coherent group: raw metadata/custom/Bash/reset cut adaptation and remaining
+compaction methods/reducers/rescue; registry/auth execution supplies smart
+online/local and accepted-empty custom Host callers. Full input/token/settings/
+receipt contracts, actual OpenAI account tasks and Linux remain required.
 
 **Draft v1, 2026-09-25.** This will be revised after the user's reference documents (`ara-doc-ref`) are added to the repository. It is a plan, not an implementation claim. Status lives in the [feature ledger](upstream/feature-ledger.md) and in `docs/evidence/`. Gates follow the [roadmap](roadmap.md) and [acceptance rules](acceptance.md).
 
@@ -67,6 +68,16 @@ independent audit on the same delivered snapshot; its included points stay WIP
 until those gates pass. Reuse unchanged source and artifact evidence, and rerun
 checks to resolve an actual remaining risk or a required gate. Existing reviewed
 plans need a new design review only when their scope or architecture changes.
+
+**Testing clarification, user decision 2026-10-02:** fixed OMP already contains
+native tests. Reuse their input families and expectations; verify by module while
+editing and run one final shared command for a stable batch. Ordinary low-impact
+details do not need additional micro-tests or mutation runs. Preserve meaningful
+protocol/state/tool-effect/persistence failure coverage. Retry a failed check only
+for its concrete cause; do not repeat unchanged passed gates or real tasks.
+The current runner supports `--module <name>` and `--full`; real API trials privately
+read local Manager `ry_switch` and prefer CAS `deepseek-v4.1-flash`. Report module
+time, compile/shared-gate time and actual live-task time separately.
 
 Report module coverage and actual remaining differences separately from formal
 acceptance, together with measured implementation/gate time and the next batch.

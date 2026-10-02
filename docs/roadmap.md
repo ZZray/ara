@@ -1,5 +1,16 @@
 # Delivery roadmap
 
+The [native message compaction/terminal checkpoint](evidence/native-compaction-terminal.md)
+adds split-turn selection, parallel native summaries/manual retry, exact replay,
+orphan ToolUse discard and mechanical continuation. Nine modules 171/0/0 and
+Windows backend 1,528/0/20 pass one 130.283s gate; actual preferred CAS artifact,
+two summaries and original-Session reopen pass in 19.193s. Independent and Root
+audits bind the final snapshot. Raw metadata/cut adapters, other methods/rescue,
+smart/local/custom callers, registry/auth and recorded contracts remain open.
+P0/V1 accepted, P1–P6 open, RPC 27/42, full marker null remain unchanged.
+Use existing OMP input families, module checks and a shared stable-batch gate;
+ordinary details do not receive additional micro-tests.
+
 The [terminal recovery and configured promotion checkpoint](evidence/terminal-recovery-promotion.md)
 adds safe nonempty Length summaries, native empty-terminal continuation and
 same-Agent configured route preparation with atomic journal metadata. Modules
