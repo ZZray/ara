@@ -8,7 +8,9 @@ Two isolated preferred CAS image tasks fail artifact/ordering acceptance after
 seven settled calls; dependency audit fails on an upstream unmaintained font
 parser. No policy exception is added. Both gates remain required open work.
 This adds one implementing point, not a completed parent surface. The full
-inventory remains 111 surfaces, 17 implementing and 94 open. P0/V1 accepted;
+inventory has 111 surfaces: 25 implementing, one tested and 85 open after
+refreshing the stale generated summary and correcting three compaction map
+entries to match the recorded work. No full surface is accepted. P0/V1 accepted;
 P1–P6 open; RPC 27/42 and null full marker remain. These coarse statuses and
 bounded point counts are not a weighted total completion percentage, and no
 reliable full-project ETA exists. Next: remaining registry/auth callers and

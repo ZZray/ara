@@ -9,7 +9,9 @@ the dependency audit fails on the upstream unmaintained font parser. Neither
 gate is waived. CTX-SNAP-01 remains implementing. Remaining registry/auth
 callers and Core/Host contracts follow; actual image-task/account/Linux and
 dependency acceptance stays open. The 111-surface inventory remains
-17 implementing/94 open, P0/V1 accepted, P1–P6 open, RPC 27/42 and marker null.
+25 implementing/one tested/85 open after refreshing the stale summary and
+correcting three compaction map entries; no full surface is accepted.
+P0/V1 accepted, P1–P6 open, RPC 27/42 and marker null.
 
 The [remote checkpoint](evidence/remote-compaction.md) adds native V1/V2 and
 generic remote wire, strict route-aware Session replay/readable fallback,

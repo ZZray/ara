@@ -38,7 +38,9 @@ Receipts/source snapshots: `C:\Temp\ara-snap-batch`.
 
 ## Required next work and progress
 
-The 111 full surfaces remain 17 implementing/94 open; none is fully closed.
+The 111 full surfaces have 25 implementing/one tested/85 open after the stale
+generated summary and three compaction map entries are corrected; none is
+fully accepted.
 The ledger now has 57 bounded points after adding CTX-SNAP-01. Prior accepted
 subsets remain valid in their scope; their count does not measure complete
 OMP parity. P0/V1 accepted; P1–P6 open; full marker null.

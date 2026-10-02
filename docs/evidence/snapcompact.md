@@ -218,6 +218,21 @@ ASCII/CJK follows the source. Existing regular blob contents are not rehashed
 on reuse. These gaps remain required, not accepted intentional omissions.
 
 P0/V1 accepted, P1–P6 open, RPC 27/42 and full parity marker null remain.
+After the source checkpoint, AGT-COMPACTION, CA-COMPACTION-HOST and
+PKG-SNAPCOMPACT are corrected from stale open entries to implementing, with
+their current Rust owners. Regenerated inventory also synchronizes six earlier
+map status changes missing from the stale summary. It has 111 full surfaces:
+25 implementing, one tested, 85 open, none fully accepted. This is bookkeeping
+grounded in recorded work, not newly accepted surfaces.
+The full generator refuses the intentionally dirty upstream checkout before
+writing. The existing generator's summary function is instead run with the
+unchanged fixed-baseline files/behaviors TSVs; only the surface map's owners
+and statuses change. `progress-summary-receipt.json` binds the unchanged
+7,038-file/27,404-case denominator and regenerated summary. No upstream reset,
+inventory pattern change or new source/behavior claim occurs.
+Independent progress-document review approves this six-file synchronization:
+`progress-review.json`, SHA256
+`5e5fb9ccb73b65016dd27d3206da96cb8408b38e6982a5d7d050dff1aac5111c`.
 Per-point test counts and this checkpoint do not provide a total parity
 percentage. Provider ordering remains custom OpenAI, OpenAI account, then
 other explicitly deferred families. The next engineering work is the

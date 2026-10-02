@@ -20,9 +20,9 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
 | REPO-PKG-META | Package manifests, changelogs, READMEs, licenses, tsconfig | repo | - | none | 93 (0/0) | 0 | 0 | open |
 | AGT-LOOP | Agent loop: turns, streaming assistant messages, tool execution, abort | core | P1 | ara-agent::agent_loop | 15 (4/11) | 3291 | 139 | implementing |
-| AGT-AGENT | Stateful Agent: prompt/continue, subscriptions, queues, pause gate | core | P1 | ara-agent::agent | 6 (4/2) | 2827 | 51 | open |
+| AGT-AGENT | Stateful Agent: prompt/continue, subscriptions, queues, pause gate | core | P1 | ara-agent::agent | 6 (4/2) | 2827 | 51 | implementing |
 | AGT-APPEND-CTX | Append-only context mode | core | P1 | ara-agent::context | 2 (1/1) | 374 | 59 | open |
-| AGT-COMPACTION | Compaction, branch summaries, pruning, handoff, shake | core | P1 | ara-agent::compaction | 50 (15/20) | 6133 | 199 | open |
+| AGT-COMPACTION | Compaction, branch summaries, pruning, handoff, shake | core | P1 | ara-agent::compaction | 50 (15/20) | 6133 | 199 | implementing |
 | AGT-PROXY | Proxy stream function (remote agent transport) | core | P2 | tbd | 3 (1/2) | 391 | 13 | open |
 | AGT-TELEMETRY | Agent telemetry and run collector | core | P2 | tbd | 5 (2/3) | 2744 | 63 | open |
 | AGT-TOKENIZER | Token estimation | core | P1 | tbd | 3 (1/2) | 307 | 13 | open |
@@ -57,16 +57,16 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-SESSION-FOREIGN | Foreign session import (Claude Code, Codex) | service | P3 | tbd | 6 (5/1) | 1207 | 6 | open |
 | CA-AGENT-SESSION | AgentSession orchestration over Agent + Session | core | P1 | ara-cli::run (slice 1), later ara-runtime | 109 (8/101) | 15542 | 929 | implementing |
 | CA-TURN-RECOVERY | Turn persistence, recovery, unexpected-stop and retry fallback | core | P1 | tbd | 26 (10/16) | 6390 | 250 | implementing |
-| CA-QUEUE | Queued, steering, yield and tool-choice queues | core | P1 | tbd | 9 (5/4) | 852 | 37 | open |
+| CA-QUEUE | Queued, steering, yield and tool-choice queues | core | P1 | tbd | 9 (5/4) | 852 | 37 | implementing |
 | CA-MODEL-CONTROLS | Model controls, roles, credential pinning | core | P2 | tbd | 25 (6/19) | 1453 | 93 | open |
-| CA-COMPACTION-HOST | Session-level compaction methods, snapcompact, handoff | core | P1 | tbd | 19 (6/13) | 1207 | 144 | open |
+| CA-COMPACTION-HOST | Session-level compaction methods, snapcompact, handoff | core | P1 | ara-cli native compaction / Session adapters | 19 (6/13) | 1207 | 144 | implementing |
 | CA-SESSION-EXTRAS | Session reminders, stats, advisors, todos, workspace and bridges | service | P3 | tbd | 26 (18/8) | 5673 | 82 | open |
 | CA-TOOL-FRAMEWORK | Tool registry, results, errors, approval, rendering contract | core | P1 | ara-tools::registry | 58 (21/37) | 7314 | 473 | implementing |
 | CA-TOOL-READ | read tool | core | P1 | ara-tools::read | 33 (10/23) | 5252 | 152 | implementing |
 | CA-TOOL-WRITE | write tool | core | P1 | ara-tools::write | 18 (6/12) | 3159 | 204 | implementing |
 | CA-TOOL-BASH | bash tool and execution | core | P1 | ara-tools::bash | 31 (12/19) | 4408 | 240 | implementing |
-| CA-TOOL-EDIT | edit/patch tools | core | P1 | tbd (pi-edit vendoring candidate) | 24 (9/14) | 3114 | 92 | open |
-| CA-TOOL-SEARCH | grep, glob, ast-grep tools | core | P1 | tbd (pi-walker vendoring candidate) | 17 (5/12) | 3459 | 133 | open |
+| CA-TOOL-EDIT | edit/patch tools | core | P1 | tbd (pi-edit vendoring candidate) | 24 (9/14) | 3114 | 92 | implementing |
+| CA-TOOL-SEARCH | grep, glob, ast-grep tools | core | P1 | tbd (pi-walker vendoring candidate) | 17 (5/12) | 3459 | 133 | implementing |
 | CA-TOOL-INTERACT | ask, think, todo, yield, checkpoint tools | core | P2 | tbd | 15 (6/9) | 3777 | 250 | open |
 | CA-TOOL-GH | GitHub tools | service | P3 | tbd | 21 (12/9) | 5804 | 164 | open |
 | CA-TOOL-BROWSER | Browser and computer-use tools | service | P3 | tbd | 88 (29/38) | 12275 | 206 | open |
@@ -117,15 +117,15 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | PKG-WIRE | Shared wire protocol types | host | P2 | tbd | 2 (1/1) | 444 | 1 | open |
 | PKG-TUI | Terminal UI library | host-ui | P3 | host | 151 (59/92) | 30173 | 1390 | open |
 | PKG-NATIVES | N-API native bindings package | native | P3 | not needed in Rust | 34 (19/14) | 5965 | 120 | open |
-| PKG-SNAPCOMPACT | Snapcompact bitmap context compression | service | P3 | tbd | 112 (82/1) | 31757 | 94 | open |
+| PKG-SNAPCOMPACT | Snapcompact bitmap context compression | service | P3 | ara-snapcompact | 112 (82/1) | 31757 | 94 | implementing |
 | PKG-MNEMOPI | mnemopi memory engine | service | P3 | tbd | 144 (67/76) | 19944 | 464 | open |
 | PKG-STATS | Stats dashboard | host-ui | P3 | host | 100 (72/26) | 16119 | 119 | open |
 | PKG-COLLAB-WEB | Collab web client | host-ui | P3 | host | 96 (67/10) | 9459 | 94 | open |
 | PKG-BROWSER-RELAY | Browser relay extension | service | P3 | tbd | 7 (5/0) | 588 | 0 | open |
 | REPO-BENCH | Benchmarks and harnesses | repo | - | none | 189 (96/43) | 36855 | 726 | open |
 | CRATE-PI-SHELL | pi-shell embedded shell | native | P2 | vendoring candidate | 415 (266/52) | 154621 | 2104 | open |
-| CRATE-PI-EDIT | pi-edit | native | P1 | vendoring candidate for CA-TOOL-EDIT | 169 (37/120) | 22185 | 286 | open |
-| CRATE-PI-WALKER | pi-walker | native | P1 | vendoring candidate for CA-TOOL-SEARCH | 7 (2/2) | 5596 | 38 | open |
+| CRATE-PI-EDIT | pi-edit | native | P1 | vendoring candidate for CA-TOOL-EDIT | 169 (37/120) | 22185 | 286 | tested |
+| CRATE-PI-WALKER | pi-walker | native | P1 | vendoring candidate for CA-TOOL-SEARCH | 7 (2/2) | 5596 | 38 | implementing |
 | CRATE-PI-OTHER | pi-ast, pi-vcs, pi-iso, pi-voice, pi-natives | native | P3 | vendoring candidate | 200 (139/6) | 65040 | 425 | open |
 | REPO-DOCS | Upstream documentation | repo | - | none | 140 (3/0) | 62 | 0 | open |
 | REPO-BUILD | Build, CI, packaging, scripts and assets | repo | - | none | 204 (51/14) | 23593 | 97 | open |
