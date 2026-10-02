@@ -484,6 +484,7 @@ impl Entry {
 /// A native Assistant cut may summarize the current user prompt before its
 /// answer. Tool ownership and unknown effects still require complete pairs.
 fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
+    let branch = &branch[active_context_start(branch)..];
     let mut saw_message = false;
     let mut pending: HashMap<String, String> = HashMap::new();
     let mut ends_with_user = false;
@@ -536,6 +537,13 @@ fn safe_summary_prefix(branch: &[&Entry], allow_unanswered_user: bool) -> bool {
         }
     }
     saw_message && pending.is_empty() && (allow_unanswered_user || !ends_with_user)
+}
+
+/// Fixed OMP `prepareCompaction` / `buildSessionContext`: `/clear` only
+/// replaces the active conversation. Keep the full raw parent chain for
+/// history and provenance checks before selecting this model-visible suffix.
+fn active_context_start(branch: &[&Entry]) -> usize {
+    branch.iter().rposition(|entry| entry.kind == "reset_boundary").map_or(0, |index| index + 1)
 }
 
 /// One decoded message tied to its actual journal entry ID. This is an
@@ -1168,6 +1176,13 @@ impl SessionJournal {
         self.append_raw("message", f)
     }
 
+    /// Fixed OMP `appendResetBoundary`: retain Session identity, settings and
+    /// raw history while starting model context after this durable marker.
+    /// The host owns idle admission and resetting its live Agent state.
+    pub fn append_reset_boundary(&mut self) -> Result<String> {
+        self.append_raw("reset_boundary", serde_json::Map::new())
+    }
+
     /// Select the exact failed assistant's parent only in memory. The original
     /// receipt and any off-branch children remain unchanged until real recovery.
     /// This first recovery surface is deliberately limited to tool-free errors
@@ -1195,8 +1210,12 @@ impl SessionJournal {
             return Err(failed_recovery_error("failed assistant entry or metadata tail changed"));
         }
         let parent_branch = branch[..index].iter().map(|entry| (**entry).clone()).collect::<Vec<_>>();
-        let previous_compaction_id =
-            parent_branch.iter().rev().find(|entry| entry.kind == "compaction").map(|entry| entry.id.clone());
+        let parent_context = &branch[..index];
+        let previous_compaction_id = parent_context[active_context_start(parent_context)..]
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == "compaction")
+            .map(|entry| entry.id.clone());
         let token = FailedAssistantRecovery {
             session_id: self.session_id().to_owned(),
             parent_branch,
@@ -1234,7 +1253,11 @@ impl SessionJournal {
         {
             return Err(failed_recovery_error("failed assistant recovery owner branch changed"));
         }
-        let latest_compaction = branch.iter().rev().find(|entry| entry.kind == "compaction").map(|entry| &entry.id);
+        let latest_compaction = branch[active_context_start(&branch)..]
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == "compaction")
+            .map(|entry| &entry.id);
         if latest_compaction.map(String::as_str) != token.previous_compaction_id.as_deref() {
             self.compacted_context_projection().map_err(|error| failed_recovery_error(error.to_string()))?;
             return Ok(FailedAssistantRecoveryOutcome::Committed);
@@ -1682,8 +1705,9 @@ impl SessionJournal {
         if !self.materialized {
             return Err(CompactionSourceError::NotDurable);
         }
+        let branch = self.strict_compaction_branch()?;
         let mut messages = Vec::new();
-        for entry in self.strict_compaction_branch()? {
+        for entry in &branch[active_context_start(&branch)..] {
             match entry.kind.as_str() {
                 "message" if entry.is_excluded_bash_execution() => {}
                 "message" => messages.push(SourcedMessage {
@@ -1719,7 +1743,8 @@ impl SessionJournal {
     }
 
     /// Strict projected sources for a further soft summary. The projection
-    /// validates the complete raw branch and every prior compaction first.
+    /// validates the complete raw parent chain and every active compaction.
+    /// Summaries cleared by the latest reset remain raw but are not reused.
     /// Native in-memory journals need no file materialization.
     pub fn projected_compaction_snapshot(
         &self,
@@ -1823,7 +1848,8 @@ impl SessionJournal {
             None => Vec::new(),
         };
         cumulative_sources.extend(expected_window);
-        let branch = self.strict_compaction_branch().map_err(CompactionProjectionError::from)?;
+        let raw_branch = self.strict_compaction_branch().map_err(CompactionProjectionError::from)?;
+        let branch = &raw_branch[active_context_start(&raw_branch)..];
         let raw_kept_index = branch
             .iter()
             .position(|entry| entry.id == first_kept_entry_id)
@@ -1852,7 +1878,8 @@ impl SessionJournal {
     pub fn compacted_context_projection(
         &self,
     ) -> std::result::Result<CompactedContextProjection, CompactionProjectionError> {
-        let branch = self.strict_compaction_branch()?;
+        let raw_branch = self.strict_compaction_branch()?;
+        let branch = &raw_branch[active_context_start(&raw_branch)..];
         let mut latest: Option<(usize, CompactionSummaryView)> = None;
         for (index, entry) in branch.iter().enumerate() {
             match entry.kind.as_str() {
@@ -1996,7 +2023,8 @@ impl SessionJournal {
     /// `buildSessionContext`). Messages ARA cannot decode are skipped and
     /// counted by [`undecodable_messages`](Self::undecodable_messages).
     pub fn build_context(&self) -> Vec<Message> {
-        self.branch().into_iter().filter_map(Entry::message).collect()
+        let branch = self.branch();
+        branch[active_context_start(&branch)..].iter().filter_map(|entry| entry.message()).collect()
     }
 
     /// Append a soft-compaction summary. The summarized prefix stays raw in
@@ -2077,7 +2105,9 @@ impl SessionJournal {
     /// receipts excluded from model context can be paired
     /// adjacently; earlier gaps are reported, never replayed.
     pub fn recover_interrupted_tool_calls(&mut self) -> Result<Recovery> {
-        let branch: Vec<Entry> = self.branch().into_iter().cloned().collect();
+        let raw_branch = self.branch();
+        let branch: Vec<Entry> =
+            raw_branch[active_context_start(&raw_branch)..].iter().map(|entry| (**entry).clone()).collect();
         let mut recovery = Recovery::default();
         let mut answered: HashSet<String> = HashSet::new();
         let mut last_assistant: Option<usize> = None;

@@ -414,3 +414,243 @@ fn failed_storage_append_rolls_back_entries_and_leaf_before_a_later_valid_commit
         journal.compacted_context_projection().unwrap()
     );
 }
+
+/// The three fixed OMP compact-reset-boundary.test.ts input families, using
+/// native Session IDs and checked commits rather than invented kept IDs for
+/// the active summary. Cleared malformed summaries remain available raw.
+#[test]
+fn native_reset_boundaries_follow_fixed_compaction_input_families() {
+    for family in ["raw-before-reset", "summary-before-reset", "summary-after-reset"] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+        journal.append_model_change("fixture/retained-model").unwrap();
+        let old = turn(&mut journal, "PRECLEAR");
+        if family == "summary-before-reset" {
+            // Fixed native family deliberately has an unresolvable old kept
+            // ID. It must not poison the fresh post-clear context.
+            journal.append_compaction("OLD SUMMARY", "kept-old", &old, 0).unwrap();
+            turn(&mut journal, "MIDCLEAR");
+            assert!(matches!(
+                journal.compacted_context_projection(),
+                Err(CompactionProjectionError::MissingKeptMessage { .. })
+            ));
+        }
+        let raw_before = journal.entries().to_vec();
+        let parent = journal.leaf_id().unwrap().to_owned();
+        let reset = journal.append_reset_boundary().unwrap();
+        let marker = journal.entries().last().unwrap();
+        assert_eq!(marker.parent_id.as_deref(), Some(parent.as_str()));
+        assert_eq!(marker.kind, "reset_boundary");
+        let mut fields = marker.raw.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>();
+        fields.sort_unstable();
+        assert_eq!(fields, ["id", "parentId", "timestamp", "type"]);
+        let first = turn(&mut journal, "POST first");
+        let second = turn(&mut journal, "POST second");
+        let mut expected_sources = Vec::new();
+        if family == "summary-after-reset" {
+            let snapshot = journal.projected_compaction_snapshot().unwrap();
+            journal.commit_projected_compaction(&snapshot, "KEEP SUMMARY", &second[0], &first, 100).unwrap();
+            expected_sources.extend(first.clone());
+            turn(&mut journal, "POST third");
+        }
+        let snapshot = journal.projected_compaction_snapshot().unwrap();
+        assert_eq!(
+            snapshot.previous_summary.as_ref().map(|summary| summary.summary.as_str()),
+            (family == "summary-after-reset").then_some("KEEP SUMMARY")
+        );
+        let projected =
+            serde_json::to_string(&snapshot.messages.iter().map(|source| &source.message).collect::<Vec<_>>()).unwrap();
+        assert!(
+            !projected.contains("PRECLEAR") && !projected.contains("MIDCLEAR") && !projected.contains("OLD SUMMARY")
+        );
+        if family == "summary-after-reset" {
+            assert!(!projected.contains("POST first"));
+        } else {
+            assert!(projected.contains("POST first"));
+            assert_eq!(journal.compaction_source_snapshot().unwrap().messages, snapshot.messages);
+        }
+        let split = snapshot.messages.last().unwrap().entry_id.clone();
+        let window = prefix_ids(&snapshot, snapshot.messages.len() - 1);
+        expected_sources.extend(window.clone());
+        journal.commit_native_projected_compaction(&snapshot, "POST SUMMARY", &split, &window, 100).unwrap();
+        let next = turn(&mut journal, "NEXT");
+        let snapshot = journal.projected_compaction_snapshot().unwrap();
+        let window = prefix_ids(&snapshot, 2);
+        assert_eq!(window, [split, next[0].clone()]);
+        expected_sources.extend(window.clone());
+        journal.commit_native_projected_compaction(&snapshot, "UPDATED POST SUMMARY", &next[1], &window, 80).unwrap();
+        let path = journal.path().to_path_buf();
+        let bytes = fs::read(&path).unwrap();
+        let reopened = SessionJournal::open(&path).unwrap();
+        let snapshot = reopened.projected_compaction_snapshot().unwrap();
+        assert_eq!(snapshot.messages.len(), 1);
+        assert_eq!(snapshot.messages[0].entry_id, next[1]);
+        assert_eq!(snapshot.previous_summary.unwrap().source_entry_ids.unwrap(), expected_sources);
+        assert!(!expected_sources.contains(&reset));
+        assert!(old.iter().all(|id| !expected_sources.contains(id)));
+        assert_eq!(&reopened.entries()[..raw_before.len()], raw_before);
+        assert_eq!(reopened.entries(), journal.entries());
+        assert_eq!(reopened.branch().len(), reopened.entries().len(), "full transcript keeps pre-clear entries");
+        assert_eq!(reopened.header(), journal.header());
+        assert_eq!(reopened.title(), journal.title());
+        assert_eq!(reopened.current_model().as_deref(), Some("fixture/retained-model"));
+        assert_eq!(reopened.model_context().len(), 2);
+        assert_eq!(reopened.model_context()[1], assistant("NEXT"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn reset_boundaries_handle_empty_context_stale_summaries_and_failed_storage() {
+    let mut memory =
+        SessionJournal::in_memory(json!({"type":"session","version":3,"id":"memory-reset","timestamp":"t","cwd":"/"}))
+            .unwrap();
+    memory.append_reset_boundary().unwrap();
+    memory.append_reset_boundary().unwrap();
+    assert!(memory.build_context().is_empty());
+    assert!(memory.model_context().is_empty());
+    assert!(memory.projected_compaction_snapshot().unwrap().messages.is_empty());
+    assert!(!memory.is_on_disk());
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+    let first = turn(&mut journal, "first");
+    let second = turn(&mut journal, "second");
+    let stale = journal.projected_compaction_snapshot().unwrap();
+    let path = journal.path().to_path_buf();
+    let bytes = fs::read(&path).unwrap();
+    let entries = journal.entries().to_vec();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(journal.append_reset_boundary().is_err());
+    assert_eq!(journal.entries(), entries);
+    assert_eq!(journal.leaf_id(), Some(stale.leaf_id.as_str()));
+    assert_eq!(journal.build_context().len(), 4, "failed clear preserves the active conversation");
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    journal.materialize().unwrap();
+    journal.append_reset_boundary().unwrap();
+    let cleared = journal.projected_compaction_snapshot().unwrap();
+    assert!(cleared.previous_summary.is_none() && cleared.messages.is_empty());
+    assert!(journal.compaction_source_snapshot().unwrap().messages.is_empty());
+    let bytes = fs::read(&path).unwrap();
+    assert!(matches!(
+        journal.commit_native_projected_compaction(&stale, "stale summary", &second[1], &prefix_ids(&stale, 3), 100),
+        Err(CompactionCommitError::StaleSnapshot)
+    ));
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    journal.append_message(&user("discarded between two clears")).unwrap();
+    journal.append_reset_boundary().unwrap();
+    let kept = turn(&mut journal, "only active turn");
+    let active = journal.projected_compaction_snapshot().unwrap();
+    assert_eq!(prefix_ids(&active, 2), kept);
+    assert!(first.iter().all(|id| !prefix_ids(&active, 2).contains(id)));
+    let bytes = fs::read(&path).unwrap();
+    let reopened = SessionJournal::open(&path).unwrap();
+    assert_eq!(reopened.model_context(), [user("only active turn"), assistant("only active turn")]);
+    assert_eq!(reopened.projected_compaction_snapshot().unwrap(), active);
+    assert_eq!(reopened.entries(), journal.entries());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let invalid = journal.append_compaction("active summary with cleared sources", &kept[1], &first, 100).unwrap();
+    assert_eq!(
+        journal.compacted_context_projection(),
+        Err(CompactionProjectionError::SourceIdsMismatch { id: invalid })
+    );
+    assert_eq!(
+        journal.model_context(),
+        [user("only active turn"), assistant("only active turn")],
+        "invalid active compaction falls back only to the post-reset suffix"
+    );
+}
+
+#[test]
+fn reset_boundaries_preserve_raw_unknown_effects_without_recovering_cleared_calls() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+    journal.append_message(&user("old tool effects")).unwrap();
+    journal.append_message(&call()).unwrap();
+    let unknown = receipt(
+        "call-1",
+        Some(json!({
+            "__synthetic":true,"source":"interrupted_unknown_effect","executed":"unknown"
+        })),
+    );
+    let unknown_id = journal.append_message(&unknown).unwrap();
+    let mut pending = call();
+    let Message::Assistant(message) = &mut pending else { unreachable!() };
+    let AssistantBlock::ToolCall(tool) = &mut message.content[0] else { unreachable!() };
+    tool.id = "cleared-pending".into();
+    let pending_id = journal.append_message(&pending).unwrap();
+    journal.append_reset_boundary().unwrap();
+    let bytes = fs::read(journal.path()).unwrap();
+    let recovery = journal.recover_interrupted_tool_calls().unwrap();
+    assert!(recovery.paired.is_empty() && recovery.unpaired_earlier.is_empty());
+    assert_eq!(fs::read(journal.path()).unwrap(), bytes);
+    journal.append_message(&user("active tool")).unwrap();
+    journal.append_message(&call()).unwrap();
+    // A cleared result with this same call ID cannot answer the active call.
+    let mut reopened = SessionJournal::open(journal.path()).unwrap();
+    let recovery = reopened.recover_interrupted_tool_calls().unwrap();
+    assert_eq!(recovery.paired, ["call-1"]);
+    assert!(recovery.unpaired_earlier.is_empty());
+    assert_eq!(reopened.entries().iter().find(|entry| entry.id == unknown_id).unwrap().message(), Some(unknown));
+    assert_eq!(reopened.entries().iter().find(|entry| entry.id == pending_id).unwrap().message(), Some(pending));
+    assert_eq!(
+        reopened
+            .entries()
+            .iter()
+            .filter(|entry| entry.raw.pointer("/message/toolCallId").and_then(Value::as_str) == Some("cleared-pending"))
+            .count(),
+        0
+    );
+    let kept = turn(&mut reopened, "kept");
+    let snapshot = reopened.projected_compaction_snapshot().unwrap();
+    let window = prefix_ids(&snapshot, 3);
+    let bytes = fs::read(reopened.path()).unwrap();
+    assert!(matches!(
+        reopened.commit_projected_compaction(&snapshot, "cannot hide active unknown effects", &kept[0], &window, 100),
+        Err(CompactionCommitError::UnsafeSummaryBoundary)
+    ));
+    assert_eq!(fs::read(reopened.path()).unwrap(), bytes);
+    reopened.append_reset_boundary().unwrap();
+    let first = turn(&mut reopened, "fresh after unknown effects were cleared");
+    let kept = turn(&mut reopened, "fresh kept");
+    let snapshot = reopened.projected_compaction_snapshot().unwrap();
+    reopened.commit_projected_compaction(&snapshot, "fresh summary", &kept[0], &first, 100).unwrap();
+    assert_eq!(
+        reopened.projected_compaction_snapshot().unwrap().previous_summary.unwrap().source_entry_ids.unwrap(),
+        first
+    );
+    assert!(reopened.entries().iter().any(|entry| entry.id == unknown_id));
+}
+
+#[test]
+fn reset_boundaries_do_not_bypass_full_raw_parent_and_id_validation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(directory.path(), directory.path()).unwrap();
+    let old = turn(&mut journal, "old");
+    journal.append_reset_boundary().unwrap();
+    turn(&mut journal, "active");
+    let path = journal.path().to_path_buf();
+    let lines: Vec<Value> =
+        fs::read_to_string(&path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    for fault in ["duplicate-id", "missing-parent"] {
+        let mut damaged = lines.clone();
+        let index = damaged.iter().position(|line| line["id"] == old[0]).unwrap();
+        if fault == "duplicate-id" {
+            damaged[index]["id"] = json!(old[1]);
+        } else {
+            damaged[index]["parentId"] = json!("missing-before-reset");
+        }
+        fs::write(&path, damaged.iter().map(Value::to_string).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let reopened = SessionJournal::open(&path).unwrap();
+        let expected = if fault == "duplicate-id" {
+            CompactionSourceError::DuplicateEntryId { id: old[1].clone() }
+        } else {
+            CompactionSourceError::MissingEntry { id: "missing-before-reset".into() }
+        };
+        assert_eq!(reopened.compaction_source_snapshot(), Err(expected.clone()));
+        assert_eq!(reopened.compacted_context_projection(), Err(CompactionProjectionError::Source(expected)));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}

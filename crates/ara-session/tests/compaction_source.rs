@@ -122,17 +122,38 @@ fn rejects_invalid_raw_parent_ids_and_empty_ids() {
 }
 
 #[test]
-fn rejects_undecodable_and_unported_context_entries() {
+fn rejects_undecodable_and_unported_active_context_entries() {
     assert_rejected_unchanged(
         &[entry("message", "bad", Value::Null, json!({"message":{"role":"user"}}))],
         CompactionSourceError::UndecodableMessage { id: "bad".into() },
     );
-    for kind in ["compaction", "reset_boundary", "custom_message", "branch_summary", "future_kind"] {
+    for kind in ["compaction", "custom_message", "branch_summary", "future_kind"] {
         assert_rejected_unchanged(
             &[entry(kind, "special", Value::Null, json!({}))],
             CompactionSourceError::UnsupportedContextEntry { id: "special".into(), kind: kind.into() },
         );
     }
+    // reset_boundary is now native: sources begin after it, while the raw
+    // journal remains intact. The unported active-entry rejections above stay.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    let active = user("active");
+    write_journal(
+        &path,
+        &[
+            entry("message", "before", Value::Null, json!({"message":user("cleared")})),
+            entry("reset_boundary", "reset", json!("before"), json!({})),
+            entry("message", "active", json!("reset"), json!({"message":&active})),
+        ],
+    );
+    let before = fs::read(&path).unwrap();
+    let journal = SessionJournal::open(&path).unwrap();
+    let snapshot = journal.compaction_source_snapshot().unwrap();
+    assert_eq!(snapshot.messages.len(), 1);
+    assert_eq!(snapshot.messages[0].entry_id, "active");
+    assert_eq!(snapshot.messages[0].message, active);
+    assert_eq!(journal.branch().len(), 3);
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 #[test]

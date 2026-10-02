@@ -2240,7 +2240,7 @@ async fn repl_help_and_exit_run_no_turn() {
     let (stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert_eq!(stdout, "");
-    assert!(stderr.contains("commands: /help, /new, /compact, /exit"), "{stderr}");
+    assert!(stderr.contains("commands: /help, /new, /clear, /compact, /exit"), "{stderr}");
     assert_eq!(up.served(), 0);
     assert!(env.session_files().is_empty(), "no turn, so the lazy Session was never written");
 }
@@ -2272,6 +2272,134 @@ async fn repl_new_starts_a_fresh_session_file() {
     let reqs = up.requests.lock().await;
     let texts = user_texts(reqs[1]["body"]["messages"].as_array().unwrap());
     assert!(texts.iter().all(|t| !t.contains("alpha-turn")), "{texts:?}");
+}
+
+/// Fixed OMP reset families through the actual CLI: rules refresh, active
+/// summary provenance, raw transcript retention and original-Session reopen.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_clear_compact_and_reopen_keep_only_the_active_suffix() {
+    let env = Env::new();
+    let rules = env.work.path().join("AGENTS.md");
+    std::fs::write(&rules, "RESET_RULE_BEFORE\n").unwrap();
+    let up = upstream(json!({"responses":[
+        {"events":[text("PRECLEAR answer."),finish("stop"),done()]},
+        {"events":[text("POST first answer."),finish("stop"),done()]},
+        {"events":[text("POST second answer."),finish("stop"),done()]},
+        {"events":[text("POST summary."),finish("stop"),done()]},
+        {"events":[text("POST summary."),finish("stop"),done()]},
+        {"events":[text("After summary."),finish("stop"),done()]},
+        {"events":[text("Reopened."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut command = env
+        .cmd(&up.base_url(), &["--repl", "--mode", "json", "--compact-threshold", "0", "--compact-keep-tokens", "1"]);
+    let mut child = spawn_repl(&mut command);
+    let mut stdin = child.stdin.take().unwrap();
+    let errors = StderrLog::start(&mut child);
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let events = tokio::task::block_in_place(|| {
+        writeln!(stdin, "PRECLEAR request").unwrap();
+        let mut events = read_until(&mut reader, |event| event["type"] == "agent_end", Duration::from_secs(10));
+        std::fs::write(&rules, "RESET_RULE_AFTER\n").unwrap();
+        stdin.write_all(b"/clear\nPOST first request\nPOST second request\n/compact\nafter summary\n/exit\n").unwrap();
+        drop(stdin);
+        events.extend(reader.lines().map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap()));
+        assert_eq!(wait_exit(&mut child, Duration::from_secs(15)), Some(0));
+        events
+    });
+    let errors = errors.finish();
+    assert!(errors.contains("context cleared"), "{errors}");
+    assert!(errors.contains("summary persisted"), "{errors}");
+    assert_eq!(events.iter().filter(|event| event["type"] == "session").count(), 1);
+    let files = env.session_files();
+    assert_eq!(files.len(), 1);
+    let before = std::fs::read(&files[0]).unwrap();
+    let entries = journal(&files[0]);
+    let reset = entries.iter().position(|entry| entry["type"] == "reset_boundary").unwrap();
+    assert_eq!(
+        journal_user_texts(&entries),
+        ["PRECLEAR request", "POST first request", "POST second request", "after summary"]
+    );
+    let compact = compaction_entries(&entries);
+    assert_eq!(compact.len(), 1);
+    let kept = entries.iter().position(|entry| entry["id"] == compact[0]["firstKeptEntryId"]).unwrap();
+    assert!(kept > reset);
+    let sources: Vec<_> = entries[reset + 1..kept]
+        .iter()
+        .filter(|entry| entry["type"] == "message")
+        .map(|entry| entry["id"].clone())
+        .collect();
+    assert_eq!(compact[0]["sourceEntryIds"], json!(sources));
+    let reopened = output(
+        env.cmd(&up.base_url(), &["--resume", files[0].to_str().unwrap(), "--compact-threshold", "0", "recall"]),
+    )
+    .await;
+    assert_eq!(reopened.status.code(), Some(0), "{}", text_of(&reopened).1);
+    assert!(std::fs::read(&files[0]).unwrap().starts_with(&before));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 7);
+    assert!(requests[0]["body"].to_string().contains("RESET_RULE_BEFORE"));
+    for request in &requests[1..] {
+        assert!(!request["body"].to_string().contains("PRECLEAR"), "{request}");
+    }
+    for index in [1, 2, 5, 6] {
+        let body = requests[index]["body"].to_string();
+        assert!(body.contains("RESET_RULE_AFTER") && !body.contains("RESET_RULE_BEFORE"), "{body}");
+    }
+    for request in &requests[3..5] {
+        assert!(tools_absent_or_empty(&request["body"]));
+    }
+    assert!(requests[6]["body"].to_string().contains("POST summary."));
+}
+
+/// Failed journal reset must retain the live binding; a later successful
+/// reset must drop Responses' server continuation as well as local messages.
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_clear_storage_failure_retains_stateful_responses_until_success() {
+    let env = Env::new();
+    let responses: Vec<_> = ["before", "preserved", "cleared"].into_iter().map(|id| json!({"events":[
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":format!("msg_{id}"),"content":[{"type":"output_text","text":format!("REPLY_{id}")}]}}},
+        {"data":{"type":"response.completed","response":{"id":format!("resp_{id}"),"status":"completed"}}}
+    ]})).collect();
+    let up = upstream(json!({"responses":responses})).await;
+    let mut command = env.cmd(
+        &up.base_url(),
+        &["--repl", "--api", "openai-responses", "--responses-stateful", "--compact-threshold", "0"],
+    );
+    let mut child = spawn_repl(&mut command);
+    let mut stdin = child.stdin.take().unwrap();
+    let errors = StderrLog::start(&mut child);
+    let answers = StderrLog::reading(child.stdout.take().unwrap());
+    tokio::task::block_in_place(|| {
+        writeln!(stdin, "PRECLEAR request").unwrap();
+        assert!(answers.wait_for("REPLY_before", Duration::from_secs(10)));
+        assert!(errors.wait_for("Working... (turn 1)", Duration::from_secs(5)));
+        let path = env.session_files().remove(0);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        writeln!(stdin, "/clear").unwrap();
+        assert!(errors.wait_for("could not clear context", Duration::from_secs(5)));
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        writeln!(stdin, "preserve context").unwrap();
+        assert!(answers.wait_for("REPLY_preserved", Duration::from_secs(10)));
+        stdin.write_all(b"/clear\nPOSTCLEAR request\n/exit\n").unwrap();
+        drop(stdin);
+        assert_eq!(wait_exit(&mut child, Duration::from_secs(15)), Some(0));
+    });
+    let errors = errors.finish();
+    let answers = answers.finish();
+    assert!(errors.contains("context cleared") && answers.contains("REPLY_cleared"), "{errors}\n{answers}");
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["body"]["previous_response_id"], "resp_before");
+    assert!(requests[2]["body"].get("previous_response_id").is_none());
+    assert!(!requests[2]["body"].to_string().contains("PRECLEAR"));
+    assert!(!requests[2]["body"].to_string().contains("preserve context"));
+    let entries = journal(&env.session_files()[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["type"] == "reset_boundary").count(), 1);
+    assert_eq!(journal_user_texts(&entries), ["PRECLEAR request", "preserve context", "POSTCLEAR request"]);
 }
 
 #[tokio::test]

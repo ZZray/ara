@@ -1,19 +1,29 @@
 # ARA execution plan
 
-**Latest checkpoint, 2026-10-02:** [native message compaction and terminal recovery](evidence/native-compaction-terminal.md)
-is bounded tested/audited WIP: User/Assistant cuts, parallel history/prefix
-summary, manual one-shot retry, exact Session replay, orphan ToolUse discard
-and default mechanical unexpected-stop continuation. Nine existing modules
-pass 171/0/0 in 21.463s; final Windows backend 1,528/0/20 and inventory/deny/build
-pass one stable 130.283s command, with unchanged source. Preferred actual CAS
-file task, two summaries and original-Session tool-disabled reopen pass in
-19.193s across two processes/eight requests. Independent review and Root audit
-bind the final source, binary and artifacts. P0/V1 accepted, P1–P6 open, RPC
-27/42 and full marker null stay unchanged.
-Next coherent group: raw metadata/custom/Bash/reset cut adaptation and remaining
+**Latest checkpoint, 2026-10-02:** [same-Session context reset](evidence/context-reset.md)
+adds native reset boundaries and checked reference REPL `/clear`, active
+context/summary/source/recovery suffixes, refreshed rules with retained tools/
+Skills and fresh bindings for every protocol. Seven modules pass 137/0/0;
+final Windows backend 1,534/0/20 and inventory/deny/build pass one stable
+107.813s command. Actual preferred CAS fallback task, clear, two summaries and
+original-Session tool-disabled reopen pass in 15.817s/nine requests/two processes.
+The local Manager gateway was unavailable; direct CAS from its private config
+was verified. Independent and Root audits bind source, binary and artifacts.
+P0/V1 accepted, P1–P6 open, RPC 27/42 and full marker null stay unchanged.
+Next coherent group: raw metadata/custom/branch/Bash cut adaptation and remaining
 compaction methods/reducers/rescue; registry/auth execution supplies smart
 online/local and accepted-empty custom Host callers. Full input/token/settings/
 receipt contracts, actual OpenAI account tasks and Linux remain required.
+
+**Next module plan and timing:** port a grouped raw-entry seam (zero/one/many
+model projections per real ID), native metadata-owned cuts/turn spans, and
+origin-aware custom Developer summaries across Session → Core → REPL/RPC.
+Reuse the independently reviewed source plan and three grouped native input
+families; run module checks while editing, then one final shared gate/live task.
+Planning estimate: **45–90 minutes**, updated after implementation/compile.
+This is a module estimate, not a full P1–P6 completion promise. Full-project ETA
+needs remaining fixed-inventory rows mapped to module owners and execution cost;
+do not turn completed checkpoints or test counts into total parity percentages.
 
 **Draft v1, 2026-09-25.** This will be revised after the user's reference documents (`ara-doc-ref`) are added to the repository. It is a plan, not an implementation claim. Status lives in the [feature ledger](upstream/feature-ledger.md) and in `docs/evidence/`. Gates follow the [roadmap](roadmap.md) and [acceptance rules](acceptance.md).
 

@@ -924,14 +924,15 @@ async fn interruptible<F: Future>(step: F, token: &CancellationToken, interrupts
     }
 }
 
-/// Where the REPL keeps its Session, for `/new`.
+/// Session ownership and route settings for REPL conversation boundaries.
 struct ReplSession<'a> {
     /// `None` under `--no-session`.
     dir: Option<PathBuf>,
     cwd: &'a Path,
     model_ref: &'a str,
     skills: &'a [ara_discovery::LoadedSkill],
-    codex_factory: Option<&'a ProviderFactory>,
+    provider_factory: &'a ProviderFactory,
+    mcp_config: &'a Option<McpServerConfig>,
 }
 
 /// V1-REPL + V1-CANCEL: line-based session, one turn per input line in the
@@ -955,6 +956,8 @@ async fn run_repl_loop(
     mut interrupts: Interrupts,
 ) -> Result<i32> {
     let mut provider = provider.clone();
+    let mut system_prompt = system_prompt.to_vec();
+    let mut hooks = hooks.clone();
     eprintln!("ara: interactive session ({}). /help for commands.", model.id);
     let current_path = || async { sink.journal.lock().await.as_ref().map(|j| j.path().to_path_buf()) };
     if let Some(path) = current_path().await
@@ -1001,7 +1004,7 @@ async fn run_repl_loop(
         match input.as_str() {
             "/exit" | "/quit" => break 0,
             "/help" => {
-                eprintln!("commands: /help, /new, /compact, /exit, /skill:<name> [arguments]");
+                eprintln!("commands: /help, /new, /clear, /compact, /exit, /skill:<name> [arguments]");
                 for skill in session.skills {
                     eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
                 }
@@ -1014,6 +1017,45 @@ async fn run_repl_loop(
                 if let Err(e) = interruptible(step, &token, &mut interrupts).await {
                     eprintln!("ara: compaction failed ({e:#}); session kept");
                 }
+                continue;
+            }
+            "/clear" => {
+                // REPL commands run only between turns. Prepare the next base
+                // prompt with retained tools, then publish the reset only after
+                // its journal boundary is accepted. MCP stays connected.
+                let setup = match prepare_cli_setup_with_retained_skills(
+                    args,
+                    session.cwd,
+                    model,
+                    session.mcp_config,
+                    Some(tools.to_vec()),
+                    ToolOverlay::default(),
+                    Some(session.skills.to_vec()),
+                )
+                .await
+                {
+                    Ok(setup) => setup,
+                    Err(error) => {
+                        eprintln!("ara: could not clear context ({error:#}); session kept");
+                        continue;
+                    }
+                };
+                let factory = session.provider_factory;
+                let fresh_provider =
+                    factory.route.bind_codex_session(factory.client.clone(), uuid::Uuid::now_v7().to_string());
+                let mut guard = sink.journal.lock().await;
+                if let Some(journal) = guard.as_mut()
+                    && let Err(error) = journal.append_reset_boundary()
+                {
+                    eprintln!("ara: could not clear context ({error:#}); session kept");
+                    continue;
+                }
+                context.clear();
+                provider = fresh_provider;
+                system_prompt = setup.system_prompt;
+                hooks = setup.hooks;
+                turn = 0;
+                eprintln!("ara: context cleared; original Session history kept");
                 continue;
             }
             "/new" => {
@@ -1047,7 +1089,8 @@ async fn run_repl_loop(
                     }
                     _ => eprintln!("ara: new conversation (not persisted)"),
                 }
-                if let Some(factory) = session.codex_factory {
+                let factory = session.provider_factory;
+                if model.api == "openai-codex-responses" {
                     let header = guard
                         .as_ref()
                         .map(|j| j.header().clone())
@@ -1199,6 +1242,18 @@ async fn prepare_cli_setup(
     retained_tools: Option<Vec<Arc<dyn ara_agent::AgentTool>>>,
     overlay: ToolOverlay,
 ) -> Result<CliSetup> {
+    prepare_cli_setup_with_retained_skills(args, cwd, model, mcp_config, retained_tools, overlay, None).await
+}
+
+async fn prepare_cli_setup_with_retained_skills(
+    args: &Args,
+    cwd: &Path,
+    model: &Model,
+    mcp_config: &Option<McpServerConfig>,
+    retained_tools: Option<Vec<Arc<dyn ara_agent::AgentTool>>>,
+    overlay: ToolOverlay,
+    retained_skills: Option<Vec<ara_discovery::LoadedSkill>>,
+) -> Result<CliSetup> {
     // Context files, skills, SYSTEM.md and APPEND_SYSTEM.md from the host's
     // locations: native `$ARA_HOME/agent` and `.ara/`, foreign tools per
     // upstream defaults.
@@ -1216,7 +1271,11 @@ async fn prepare_cli_setup(
             .unwrap_or_default(),
         ..SkillsSettings::default()
     };
-    let (skills, skill_warnings) = discovery.load_skills(cwd, &skills_settings);
+    // Context reset refreshes rules and base prompt files, while slash command
+    // dispatch, advertised skills and retained tools keep one Skill snapshot.
+    let (skills, skill_warnings) = retained_skills
+        .map(|skills| (skills, Vec::new()))
+        .unwrap_or_else(|| discovery.load_skills(cwd, &skills_settings));
     for warning in &skill_warnings {
         let at = if warning.skill_path.is_empty() { String::new() } else { format!(" ({})", warning.skill_path) };
         eprintln!("ara: skill warning{at}: {}", warning.message);
@@ -1679,7 +1738,8 @@ async fn run_inner(
             cwd: &cwd,
             model_ref: &model_ref,
             skills: &skills,
-            codex_factory: (selected_api == Api::OpenaiCodexResponses).then_some(&provider_factory),
+            provider_factory: &provider_factory,
+            mcp_config: &mcp_config,
         };
         return run_repl_loop(
             &args,

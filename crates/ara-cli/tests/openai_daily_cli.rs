@@ -296,7 +296,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         // branch responses keep the script independent of request arrival order.
         oversized_summary.clone(), oversized_summary,
         response_text("Summary preserves daily.txt."), response_text("Summary preserves daily.txt."),
-        response_text("Fresh Session."),
+        response_text("Cleared context."), response_text("Fresh Session."),
         {"events":[],"end":"hang"}
     ]))
     .await;
@@ -328,7 +328,13 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"continue\n/compact\n/compact\n/new\nfresh turn\n/exit\n").await.unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"continue\n/compact\n/compact\n/clear\ncleared turn\n/new\nfresh turn\n/exit\n")
+        .await
+        .unwrap();
     let resumed = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await.unwrap().unwrap();
     let stdout = success(&resumed);
     let continued: Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
@@ -337,7 +343,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert!(String::from_utf8_lossy(&resumed.stderr).contains("local adoption budget"));
     assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
     let requests = up.requests.lock().await;
-    assert_eq!(requests.len(), 12);
+    assert_eq!(requests.len(), 13);
     for request in &requests[4..11] {
         assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
         assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
@@ -351,14 +357,21 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|value| value["type"] == "session" && value["id"] != original["id"])
         .unwrap();
+    let runtime = requests[11]["headers"]["session_id"].as_str().unwrap();
+    assert_ne!(runtime, original["id"].as_str().unwrap());
+    assert_ne!(runtime, fresh["id"].as_str().unwrap());
     for name in ["session_id", "conversation_id", "x-client-request-id"] {
-        assert_eq!(requests[11]["headers"][name], fresh["id"]);
+        assert_eq!(requests[11]["headers"][name], runtime);
+        assert_eq!(requests[12]["headers"][name], fresh["id"]);
     }
-    assert_eq!(requests[11]["body"]["prompt_cache_key"], fresh["id"]);
+    assert_eq!(requests[11]["body"]["prompt_cache_key"], runtime);
+    assert!(!requests[11]["body"].to_string().contains("daily.txt"));
+    assert_eq!(requests[12]["body"]["prompt_cache_key"], fresh["id"]);
     drop(requests);
     let journal = std::fs::read_to_string(session).unwrap();
     assert!(journal.contains("openai-codex-responses"));
     assert!(journal.contains("\"type\":\"compaction\""));
+    assert!(journal.contains("\"type\":\"reset_boundary\""));
     assert!(!journal.contains("Oversized hidden reasoning summary."));
     assert!(!journal.contains("synthetic-refresh"));
     assert!(!journal.contains(&token));
@@ -372,7 +385,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let denied = output(denied).await;
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
-    assert_eq!(up.served(), 12);
+    assert_eq!(up.served(), 13);
 
     // A deadline during refresh must settle before normal process exit. A new
     // process must not automatically replay that unknown refresh grant.
@@ -391,11 +404,11 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
     cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(cancelled).await.status.code(), Some(1));
-    assert_eq!(up.served(), 13);
+    assert_eq!(up.served(), 14);
     let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
     assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
     restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(restarted).await.status.code(), Some(1));
-    assert_eq!(up.served(), 13);
+    assert_eq!(up.served(), 14);
 }

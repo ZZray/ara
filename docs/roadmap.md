@@ -1,5 +1,16 @@
 # Delivery roadmap
 
+The [same-Session reset checkpoint](evidence/context-reset.md) adds native
+active suffixes and reference REPL `/clear`, preserving raw history/settings,
+refreshing project rules with retained tools/Skills, and rotating all Provider
+bindings. Seven module families total 137/0/0; final Windows backend 1,534/0/20
+and one stable 107.813s command pass. The verified actual CAS fallback task,
+clear/two summaries/original-Session reopen pass in 15.817s/nine requests.
+Independent and Root audits retain all explicit gaps. Next: grouped raw
+metadata/custom/branch/Bash adapters (planning estimate 45–90 minutes), followed
+by remaining methods/reducers/rescue and registry/auth callers. P0/V1 accepted,
+P1–P6 open, RPC 27/42 and full marker null remain unchanged.
+
 The [native message compaction/terminal checkpoint](evidence/native-compaction-terminal.md)
 adds split-turn selection, parallel native summaries/manual retry, exact replay,
 orphan ToolUse discard and mechanical continuation. Nine modules 171/0/0 and
