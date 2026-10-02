@@ -889,6 +889,36 @@ fn fresh_ref(spec: VariantSpec) -> SpecRef {
     Arc::new(spec)
 }
 
+/// Track sidecar ownership independently of model fields. Holding each tracked
+/// output alive prevents its pointer identity from being reused during a pass.
+struct DonorLineage {
+    by_identity: HashMap<usize, (SpecRef, SpecRef)>,
+}
+impl DonorLineage {
+    fn new(specs: &[SpecRef]) -> Self {
+        Self {
+            by_identity: specs
+                .iter()
+                .map(|spec| (Arc::as_ptr(spec) as usize, (Arc::clone(spec), Arc::clone(spec))))
+                .collect(),
+        }
+    }
+    fn donor(&self, spec: &SpecRef) -> Result<SpecRef, CollapseError> {
+        self.by_identity
+            .get(&(Arc::as_ptr(spec) as usize))
+            .map(|(_, donor)| Arc::clone(donor))
+            .ok_or_else(|| CollapseError::new("collapse source has no original donor".into()))
+    }
+    fn inherit(&mut self, output: &SpecRef, source: &SpecRef) -> Result<(), CollapseError> {
+        let donor = self.donor(source)?;
+        self.by_identity.insert(Arc::as_ptr(output) as usize, (Arc::clone(output), donor));
+        Ok(())
+    }
+    fn outputs(&self, specs: Vec<SpecRef>) -> Result<Vec<(SpecRef, SpecRef)>, CollapseError> {
+        specs.into_iter().map(|spec| self.donor(&spec).map(|donor| (spec, donor))).collect()
+    }
+}
+
 fn reconcile_retired_routing(
     spec: &SpecRef,
     family: &EffortVariantFamily,
@@ -1043,7 +1073,11 @@ fn by_id(specs: &[SpecRef]) -> Result<(HashMap<WireString, SpecRef>, Vec<WireStr
     }
     Ok((by_id, ids))
 }
-fn collapse_with_table(specs: &[SpecRef], table: &VariantCollapseTable) -> Result<Vec<SpecRef>, CollapseError> {
+fn collapse_with_table(
+    specs: &[SpecRef],
+    table: &VariantCollapseTable,
+    lineage: &mut DonorLineage,
+) -> Result<Vec<SpecRef>, CollapseError> {
     let (by_id, ids) = by_id(specs)?;
     let instantiated = instantiate_templates(table, &ids)?;
     let mut replacement: HashMap<WireString, SpecRef> = HashMap::new();
@@ -1083,6 +1117,7 @@ fn collapse_with_table(specs: &[SpecRef], table: &VariantCollapseTable) -> Resul
                 && !Arc::ptr_eq(&refreshed, existing)
             {
                 family_by_spec.insert(family_id.clone(), family_id.clone());
+                lineage.inherit(&refreshed, existing)?;
                 replacement.insert(family_id, refreshed);
             }
             continue;
@@ -1095,8 +1130,10 @@ fn collapse_with_table(specs: &[SpecRef], table: &VariantCollapseTable) -> Resul
         }
         let present: HashSet<_> = raw_present.iter().cloned().collect();
         if existing_collapsed {
-            if let Some(reconciled) = reconciled {
-                replacement.insert(family_id, reconcile_default_member(&reconciled, family, Some(&present))?);
+            if let (Some(reconciled), Some(existing)) = (reconciled, existing) {
+                let replacement_spec = reconcile_default_member(&reconciled, family, Some(&present))?;
+                lineage.inherit(&replacement_spec, existing)?;
+                replacement.insert(family_id, replacement_spec);
             }
             continue;
         }
@@ -1170,7 +1207,9 @@ fn collapse_with_table(specs: &[SpecRef], table: &VariantCollapseTable) -> Resul
         } else {
             collapsed.remove("thinking");
         }
-        replacement.insert(family_id, fresh_ref(collapsed));
+        let collapsed = fresh_ref(collapsed);
+        lineage.inherit(&collapsed, first)?;
+        replacement.insert(family_id, collapsed);
     }
     // Recycled aliases retain their own live identity, including when the
     // canonical family row exists alongside them.
@@ -1185,6 +1224,7 @@ fn collapse_with_table(specs: &[SpecRef], table: &VariantCollapseTable) -> Resul
                 let refreshed = refresh_collapsed_thinking(existing, family, &retired)?;
                 if !Arc::ptr_eq(&refreshed, existing) {
                     family_by_spec.insert(alias.clone(), alias.clone());
+                    lineage.inherit(&refreshed, existing)?;
                     replacement.insert(alias, refreshed);
                 }
             }
@@ -1701,7 +1741,11 @@ impl CollapseRuntime {
         }
         Ok(Some(if separator.is_some() { concat(&append(&provider, "/"), &alias) } else { alias }))
     }
-    fn retarget_collapsed_references(&mut self, specs: &mut [SpecRef]) -> Result<(), CollapseError> {
+    fn retarget_collapsed_references(
+        &mut self,
+        specs: &mut [SpecRef],
+        lineage: &mut DonorLineage,
+    ) -> Result<(), CollapseError> {
         let mut live: HashMap<WireString, HashSet<WireString>> = HashMap::new();
         for spec in specs.iter() {
             live.entry(lower(&text(spec, "provider")?)).or_default().insert(lower(&text(spec, "id")?));
@@ -1722,7 +1766,9 @@ impl CollapseRuntime {
                     None => next.set_undefined(key),
                 }
             }
-            *spec = fresh_ref(next);
+            let next = fresh_ref(next);
+            lineage.inherit(&next, spec)?;
+            *spec = next;
         }
         Ok(())
     }
@@ -1731,8 +1777,23 @@ impl CollapseRuntime {
         specs: &[SpecRef],
         table: Option<&Arc<VariantCollapseTable>>,
     ) -> Result<Vec<SpecRef>, CollapseError> {
+        self.collapse_variants_with_donors(specs, table)
+            .map(|outputs| outputs.into_iter().map(|(spec, _)| spec).collect())
+    }
+    /// Collapse metadata and return `(output, original input donor)` for each
+    /// row. Fresh families inherit the first present member in family order;
+    /// reconciled logical/alias rows and retargeted references keep their donor.
+    /// Hosts can use the donor's Arc identity to carry private sidecars without
+    /// adding credentials or provenance tags to `VariantSpec`.
+    pub fn collapse_variants_with_donors(
+        &mut self,
+        specs: &[SpecRef],
+        table: Option<&Arc<VariantCollapseTable>>,
+    ) -> Result<Vec<(SpecRef, SpecRef)>, CollapseError> {
+        let mut lineage = DonorLineage::new(specs);
         if let Some(table) = table {
-            return collapse_with_table(specs, table);
+            let collapsed = collapse_with_table(specs, table, &mut lineage)?;
+            return lineage.outputs(collapsed);
         }
         let mut groups: Vec<(WireString, Vec<SpecRef>)> = Vec::new();
         for spec in specs {
@@ -1753,35 +1814,44 @@ impl CollapseRuntime {
                 }
             })?;
             let mut result = match &table {
-                Some(table) => collapse_with_table(&slice, table)?,
+                Some(table) => collapse_with_table(&slice, table, &mut lineage)?,
                 None => slice,
             };
             if provider.equals_ascii("cursor") {
                 let derived = derive_cursor_effort_families(&result)?;
                 if !derived.is_empty() {
-                    result = collapse_with_table(&result, &VariantCollapseTable::new(derived))?;
+                    result = collapse_with_table(&result, &VariantCollapseTable::new(derived), &mut lineage)?;
                 }
             }
             let derived = self.derive_thinking_pair_families(&result, table.as_ref(), Some(&provider))?;
             if !derived.is_empty() {
-                result = collapse_with_table(&result, &VariantCollapseTable::new(derived))?;
+                result = collapse_with_table(&result, &VariantCollapseTable::new(derived), &mut lineage)?;
             }
             self.register_collapsed_aliases(&provider, &result)?;
             out.extend(result);
         }
-        self.retarget_collapsed_references(&mut out)?;
-        Ok(out)
+        self.retarget_collapsed_references(&mut out, &mut lineage)?;
+        lineage.outputs(out)
     }
     pub fn collapse_built_variants(&mut self, models: &[SpecRef]) -> Result<Vec<SpecRef>, CollapseError> {
-        let collapsed = self.collapse_variants(models, None)?;
+        self.collapse_built_variants_with_donors(models)
+            .map(|outputs| outputs.into_iter().map(|(spec, _)| spec).collect())
+    }
+    /// The built-model counterpart of `collapse_variants_with_donors`. Untouched
+    /// output rows retain their input Arc, and rebuilding retains the same donor.
+    pub fn collapse_built_variants_with_donors(
+        &mut self,
+        models: &[SpecRef],
+    ) -> Result<Vec<(SpecRef, SpecRef)>, CollapseError> {
+        let collapsed = self.collapse_variants_with_donors(models, None)?;
         let input_refs: HashSet<_> = models.iter().map(|model| Arc::as_ptr(model) as usize).collect();
         collapsed
             .into_iter()
-            .map(|model| {
+            .map(|(model, donor)| {
                 if input_refs.contains(&(Arc::as_ptr(&model) as usize)) {
-                    return Ok(model);
+                    return Ok((model, donor));
                 }
-                self.policy.build(&project_model_spec(&model)).map(fresh_ref)
+                self.policy.build(&project_model_spec(&model)).map(|built| (fresh_ref(built), donor))
             })
             .collect()
     }
@@ -1822,6 +1892,22 @@ mod tests {
             ]),
         );
         fresh_ref(spec)
+    }
+    fn runtime_with_table(provider: &str, table: Arc<VariantCollapseTable>) -> CollapseRuntime {
+        let mut runtime = CollapseRuntime::new().unwrap();
+        match runtime.reviewed.iter_mut().find(|(key, _)| key.equals_ascii(provider)) {
+            Some((_, existing)) => *existing = table,
+            None => runtime.reviewed.push((provider.into(), table)),
+        }
+        runtime
+    }
+    fn donor_output<'a>(outputs: &'a [(SpecRef, SpecRef)], provider: &str, id: &str) -> &'a (SpecRef, SpecRef) {
+        outputs
+            .iter()
+            .find(|(spec, _)| {
+                text(spec, "provider").unwrap().equals_ascii(provider) && text(spec, "id").unwrap().equals_ascii(id)
+            })
+            .expect("expected collapsed output")
     }
 
     #[test]
@@ -1910,5 +1996,127 @@ mod tests {
         assert_eq!(built.get("opaque").unwrap().as_string().unwrap().units(), &[0xd800]);
         assert!(built.own_keys().contains(&WireString::from("opaqueUndefined")));
         assert!(built.get("opaqueUndefined").is_none());
+    }
+
+    #[test]
+    fn built_donors_follow_family_priority_and_keep_observer_and_provider_ownership() {
+        let provider = "donor-family-test";
+        let table = Arc::new(VariantCollapseTable::new(vec![VariantSpec::from_json(&json!({
+            "id":"logical","name":"Logical","members":["m","m-thinking"],"defaultMember":"m-thinking",
+            "routing":{"off":"m","high":"m-thinking"},"thinking":{"mode":"budget","efforts":["high"]}
+        }))]));
+        let bare = model(provider, "m");
+        let thinking = model(provider, "m-thinking");
+        let mut observer = (*model(provider, "observer")).clone();
+        observer.set("contextPromotionTarget", ascii_string("m-thinking"));
+        let observer = fresh_ref(observer);
+        let untouched = model(provider, "untouched");
+        let other_provider = model("donor-other-test", "m");
+        let inputs = vec![
+            Arc::clone(&thinking),
+            Arc::clone(&observer),
+            Arc::clone(&other_provider),
+            Arc::clone(&untouched),
+            Arc::clone(&bare),
+        ];
+        let mut runtime = runtime_with_table(provider, Arc::clone(&table));
+        let outputs = runtime.collapse_built_variants_with_donors(&inputs).unwrap();
+        assert_eq!(outputs.len(), 4);
+        let (logical, donor) = donor_output(&outputs, provider, "logical");
+        assert!(Arc::ptr_eq(donor, &bare));
+        assert!(!Arc::ptr_eq(logical, &bare));
+        assert_eq!(request_id(logical), Some("m-thinking".into()));
+        let (retargeted, donor) = donor_output(&outputs, provider, "observer");
+        assert!(Arc::ptr_eq(donor, &observer));
+        assert!(!Arc::ptr_eq(retargeted, &observer));
+        assert_eq!(text(retargeted, "contextPromotionTarget").unwrap(), WireString::from("logical"));
+        for (provider, id, input) in [(provider, "untouched", &untouched), ("donor-other-test", "m", &other_provider)] {
+            let (output, donor) = donor_output(&outputs, provider, id);
+            assert!(Arc::ptr_eq(output, input));
+            assert!(Arc::ptr_eq(donor, input));
+        }
+        let legacy = runtime_with_table(provider, table).collapse_built_variants(&inputs).unwrap();
+        assert!(outputs.iter().zip(legacy).all(|((output, _), legacy)| deep_equal_at(output, &legacy, &[])));
+    }
+
+    #[test]
+    fn reconciled_logical_and_recycled_alias_donors_survive_refresh_and_mixed_members() {
+        let provider = "donor-refresh-test";
+        let table = Arc::new(VariantCollapseTable::new(vec![VariantSpec::from_json(&json!({
+            "id":"logical","name":"Logical","members":["m","m-thinking"],"defaultMember":"m-thinking",
+            "retiredMembers":["retired"],"extraAliases":["recycled"],
+            "routing":{"off":"m","high":"m-thinking"},
+            "thinking":{"mode":"budget","efforts":["high"],"effortBudgets":{"high":30}}
+        }))]));
+        let stale = |id| {
+            let mut spec = (*routed_model(provider, id, "retired")).clone();
+            spec.set("reasoning", WireValue::Bool(true));
+            spec.set("requestModelId", ascii_string("retired"));
+            fresh_ref(spec)
+        };
+        let logical = stale("logical");
+        let alias = stale("recycled");
+        let mut runtime = runtime_with_table(provider, Arc::clone(&table));
+        let outputs = runtime.collapse_built_variants_with_donors(&[Arc::clone(&logical), Arc::clone(&alias)]).unwrap();
+        assert_eq!(outputs.len(), 2);
+        for (id, input, request) in [("logical", &logical, "m-thinking"), ("recycled", &alias, "m")] {
+            let (output, donor) = donor_output(&outputs, provider, id);
+            assert!(Arc::ptr_eq(donor, input));
+            assert!(!Arc::ptr_eq(output, input));
+            assert_eq!(request_id(output), Some(request.into()));
+            assert_eq!(thinking_route(output, "high"), Some("m-thinking".into()));
+        }
+        let mut runtime = runtime_with_table(provider, table);
+        let mixed = runtime
+            .collapse_built_variants_with_donors(&[
+                model(provider, "m"),
+                Arc::clone(&logical),
+                model(provider, "m-thinking"),
+            ])
+            .unwrap();
+        assert_eq!(mixed.len(), 1);
+        assert!(Arc::ptr_eq(&mixed[0].1, &logical));
+        assert_eq!(request_id(&mixed[0].0), Some("m-thinking".into()));
+    }
+
+    #[test]
+    fn declared_cursor_and_derived_passes_keep_original_donors_through_rebuild() {
+        // The declared pass first replaces the low row with a fresh Arc. The
+        // Cursor pass then uses that row as its first member, before rebuilding.
+        let table = Arc::new(VariantCollapseTable::new(vec![VariantSpec::from_json(&json!({
+            "id":"lineage-low","name":"Lineage Low","members":["lineage-low"],"routing":{"off":"lineage-low"}
+        }))]));
+        let low = model("cursor", "lineage-low");
+        let high = model("cursor", "lineage-high");
+        let mut observer = (*model("cursor", "observer")).clone();
+        observer.set("compactionModel", ascii_string("lineage-high"));
+        let observer = fresh_ref(observer);
+        let pair_bare = model("donor-pair-test", "unit");
+        let pair_thinking = routed_model("donor-pair-test", "unit-thinking", "unit-thinking");
+        let unrelated = model("donor-other-test", "lineage-low");
+        let mut runtime = runtime_with_table("cursor", table);
+        let outputs = runtime
+            .collapse_built_variants_with_donors(&[
+                high,
+                pair_thinking,
+                Arc::clone(&observer),
+                Arc::clone(&low),
+                Arc::clone(&pair_bare),
+                Arc::clone(&unrelated),
+            ])
+            .unwrap();
+        assert_eq!(outputs.len(), 4);
+        let (cursor, donor) = donor_output(&outputs, "cursor", "lineage");
+        assert!(Arc::ptr_eq(donor, &low));
+        assert!(!Arc::ptr_eq(cursor, &low));
+        let (pair, donor) = donor_output(&outputs, "donor-pair-test", "unit");
+        assert!(Arc::ptr_eq(donor, &pair_bare));
+        assert!(!Arc::ptr_eq(pair, &pair_bare));
+        let (retargeted, donor) = donor_output(&outputs, "cursor", "observer");
+        assert!(Arc::ptr_eq(donor, &observer));
+        assert_eq!(text(retargeted, "compactionModel").unwrap(), WireString::from("lineage"));
+        let (output, donor) = donor_output(&outputs, "donor-other-test", "lineage-low");
+        assert!(Arc::ptr_eq(output, &unrelated));
+        assert!(Arc::ptr_eq(donor, &unrelated));
     }
 }

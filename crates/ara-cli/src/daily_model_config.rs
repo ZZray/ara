@@ -7,14 +7,16 @@
 //! configuration, provider configuration, and protocol defaults.
 //! This is an explicit CLI subset, not full OMP auth-storage precedence:
 //! `auth:none` suppresses ambient credentials and Codex uses a stored account.
-//! Configured contextWindow reaches the execution Model for host budgeting;
-//! absent capacity stays unknown until the full registry projection is ported.
+//! Native static composition supplies configured/reference/custom-default
+//! capacity before the execution Model is used for host budgeting.
 //! Descriptive name/cost stay metadata. Codex maxTokens remains capacity metadata.
 
 use crate::config_request_auth::ConfigRequestAuthSpec;
 use crate::model_config_file::{ModelConfigLoad, ModelsConfigFile};
+use crate::model_patch::{HeaderSlot, HostModelRef};
 use crate::model_route::{CredentialIdentity, ProtocolOptions, RequestAuthLease, is_credential_header};
 use crate::models_config::ModelsConfig;
+use crate::static_model_registry::StaticModelRegistry;
 use ara_ai::Model;
 use ara_ai::model_tokenizer::{ModelTokenizer, resolve_known_claude_tokenizer};
 use ara_ai::providers::{openai_completions as chat, openai_responses as responses};
@@ -95,6 +97,9 @@ pub enum DailyAuthSource {
 /// private auth source and applies generation settings to all logical calls.
 pub struct DailySelection {
     pub model: Model,
+    /// Complete, credential-free catalog metadata and opaque native headers.
+    /// This remains Host-owned; execution still uses the supported wire adapter.
+    pub catalog_model: Option<HostModelRef>,
     /// Safe selection facts only; catalogue membership is not route authority.
     pub metadata: Value,
     pub api: DailyApi,
@@ -257,13 +262,18 @@ pub fn resolve_daily_selection(
         .filter(|id| !id.is_empty())
         .ok_or_else(|| error("model", "select an explicit model with --model or ARA_MODEL"))?;
     let provider_id = cli.provider.clone().or_else(|| env_first(env, &["ARA_PROVIDER"]).map(|(_, v)| v));
+    let registry = StaticModelRegistry::from_config(config)
+        .map_err(|_| error("model", "cannot compose the native static model catalog"))?;
+    let catalog_model = provider_id
+        .as_ref()
+        .map(|provider| registry.find_exact(&provider.as_str().into(), &model_id.as_str().into()))
+        .transpose()
+        .map_err(|_| error("model", "cannot compose the selected native model"))?
+        .flatten();
     let providers = config.and_then(|c| c.value().get("providers")).and_then(Value::as_object);
     let provider = match (&provider_id, providers) {
         (Some(id), Some(providers)) if id == "openai-codex" && !providers.contains_key(id) => Map::new(),
-        (Some(id), Some(providers)) => object(
-            Some(providers.get(id).ok_or_else(|| error("provider", "selected provider is not configured"))?),
-            "provider",
-        )?,
+        (Some(id), Some(providers)) => object(providers.get(id), "provider")?,
         (None, Some(providers)) if !providers.is_empty() => {
             return Err(error("provider", "select an exact configured provider with --provider"));
         }
@@ -282,22 +292,32 @@ pub fn resolve_daily_selection(
             "models",
             "modelOverrides",
             "remoteCompaction",
+            "disableStrictTools",
         ],
         "provider",
     )?;
+    if provider.get("disableStrictTools").and_then(Value::as_bool) == Some(true) {
+        return Err(error("provider/disableStrictTools", "is not supported by this daily wire adapter"));
+    }
     let mut model = match provider.get("models") {
         Some(Value::Array(models)) if !models.is_empty() => {
             let matches: Vec<_> =
                 models.iter().filter(|m| m.get("id").and_then(Value::as_str) == Some(model_id.as_str())).collect();
-            if matches.len() != 1 {
+            if matches.is_empty() && catalog_model.is_none() {
                 return Err(error("model", "selected model must match exactly one configured model"));
             }
-            object(Some(matches[0]), "model")?
+            object(matches.last().copied(), "model")?
         }
         _ => Map::new(),
     };
-    let mut model_override_headers = None;
-    if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)) {
+    let mut model_override_headers = provider
+        .get("modelOverrides")
+        .and_then(|value| value.get(&model_id))
+        .and_then(|value| value.get("headers"))
+        .cloned();
+    if catalog_model.is_none()
+        && let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id))
+    {
         let mut overrides = object(Some(value), "provider/modelOverrides")?;
         reject_fields(
             &overrides,
@@ -311,6 +331,50 @@ pub fn resolve_daily_selection(
             overrides.insert("remoteCompaction".into(), remote);
         }
         model.extend(overrides);
+    }
+    // Validate authored executable settings separately from the complete safe
+    // catalog. Catalog-generated identity/thinking/compat fields stay attached
+    // to the Host model and are not reinterpreted as unknown user options.
+    let raw_model_headers = model.get("headers").cloned();
+    // The catalog preserves these native options. Their wire transports remain
+    // explicit pending work in this daily adapter, including promotion routes.
+    let authored_override = provider.get("modelOverrides").and_then(|v| v.get(&model_id));
+    let authored_image_input = [model.get("input"), authored_override.and_then(|value| value.get("input"))]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_array)
+        .any(|input| input.iter().any(|value| value.as_str() == Some("image")));
+    for field in ["thinking", "preferWebsockets", "omitMaxOutputTokens", "imageInputDecoder", "compactionModel"] {
+        if model.contains_key(field) || authored_override.is_some_and(|value| value.get(field).is_some()) {
+            return Err(error(&format!("model/{field}"), "is not supported by this daily wire adapter"));
+        }
+    }
+    let mut compat = object(provider.get("compat"), "provider/compat")?;
+    compat.extend(object(model.get("compat"), "model/compat")?);
+    if let Some(value) = provider.get("modelOverrides").and_then(|v| v.get(&model_id)).and_then(|v| v.get("compat")) {
+        compat.extend(object(Some(value), "model override/compat")?);
+    }
+    if let Some(selected) = &catalog_model {
+        let safe: Value = serde_json::from_str(&selected.spec().to_wire_json().stringify())
+            .map_err(|_| error("model", "catalog metadata is not valid JSON"))?;
+        for field in [
+            "name",
+            "api",
+            "baseUrl",
+            "reasoning",
+            "input",
+            "tokenizer",
+            "maxTokens",
+            "cost",
+            "contextWindow",
+            "contextPromotionTarget",
+            "supportsTools",
+            "remoteCompaction",
+        ] {
+            if let Some(value) = safe.get(field) {
+                model.insert(field.into(), value.clone());
+            }
+        }
     }
     reject_fields(
         &model,
@@ -330,6 +394,12 @@ pub fn resolve_daily_selection(
             "headers",
             "compat",
             "remoteCompaction",
+            "thinking",
+            "imageInputDecoder",
+            "omitMaxOutputTokens",
+            "preferWebsockets",
+            "compactionModel",
+            "premiumMultiplier",
         ],
         "model",
     )?;
@@ -392,17 +462,24 @@ pub fn resolve_daily_selection(
     let mut headers = Vec::new();
     let header_sources = vec![
         raw_config_headers(provider.get("headers"))?,
-        raw_config_headers(model.get("headers"))?,
+        raw_config_headers(raw_model_headers.as_ref())?,
         raw_config_headers(model_override_headers.as_ref())?,
     ];
     config_headers(provider.get("headers"), &mut headers, env)?;
-    config_headers(model.get("headers"), &mut headers, env)?;
+    config_headers(raw_model_headers.as_ref(), &mut headers, env)?;
     config_headers(model_override_headers.as_ref(), &mut headers, env)?;
+    if let Some(source) = catalog_model.as_ref().and_then(|model| model.headers().as_source()) {
+        // Check the actual donor/composed tree before any helper starts. Its
+        // values remain private and lazy; names alone establish Host ownership.
+        for name in source.configured_header_names() {
+            if !headers.iter().any(|(old, _)| old.eq_ignore_ascii_case(&name)) {
+                merge_header(&mut headers, name, "pending-config".into())?;
+            }
+        }
+    }
     for (name, value) in &cli.headers {
         merge_header(&mut headers, name.trim().into(), value.trim().into())?;
     }
-    let mut compat = object(provider.get("compat"), "provider/compat")?;
-    compat.extend(object(model.get("compat"), "model/compat")?);
     let authored_loop_guard = compat.remove("thinkingLoopGuard");
     if authored_loop_guard.as_ref().is_some_and(|value| !value.is_boolean()) {
         return Err(error("compat/thinkingLoopGuard", "must be a boolean"));
@@ -412,6 +489,16 @@ pub fn resolve_daily_selection(
         if api == DailyApi::OpenAiCompletions { CHAT_COMPAT } else { &["streamIdleTimeoutMs"] },
         "compat",
     )?;
+    if let Some(selected) = &catalog_model {
+        let materialized = selected.spec().record("compat");
+        for key in if api == DailyApi::OpenAiCompletions { CHAT_COMPAT } else { &["streamIdleTimeoutMs"] } {
+            if let Some(value) = materialized.as_ref().and_then(|v| v.get(key)) {
+                let value = serde_json::from_str(&value.stringify())
+                    .map_err(|_| error("compat", "native wire option is not valid JSON"))?;
+                compat.insert((*key).into(), value);
+            }
+        }
+    }
     let watchdog = cli
         .stream_idle_timeout
         .or_else(|| compat.get("streamIdleTimeoutMs").and_then(Value::as_f64).map(|v| v / 1000.0));
@@ -435,7 +522,11 @@ pub fn resolve_daily_selection(
     let mut auth_source =
         resolve_auth(&provider, cli, env, &provider_id, api, openrouter, credential_headers, &ordinary_headers)?;
     let command_key = text(&provider, "apiKey").filter(|value| value.starts_with('!'));
-    if command_key.is_some() || header_sources.iter().any(|source| !source.is_empty()) {
+    let composed_headers = catalog_model.as_ref().map(|model| model.headers().clone());
+    if command_key.is_some()
+        || header_sources.iter().any(|source| !source.is_empty())
+        || composed_headers.as_ref().is_some_and(|slot| matches!(slot, HeaderSlot::Source(_)))
+    {
         let codex_account = matches!(auth_source, DailyAuthSource::OpenAiCodex);
         let base = match auth_source {
             DailyAuthSource::Fixed(lease) => lease.with_headers(Vec::new()),
@@ -447,8 +538,12 @@ pub fn resolve_daily_selection(
             key_config: (cli.api_key_env.is_none()).then(|| command_key.clone()).flatten(),
             startup_key: text(&provider, "apiKey"),
             header_sources,
+            composed_headers,
             invalidation_values: provider_command_values(&provider),
             cli_headers: cli.headers.clone(),
+            // The daily Host keeps its existing CLI/environment precedence.
+            // Reassert authHeader from the effective lease so its credential
+            // identity and the wire bearer describe the same source.
             auth_header: provider.get("authHeader").and_then(Value::as_bool) == Some(true),
             codex_account,
         });
@@ -516,7 +611,7 @@ pub fn resolve_daily_selection(
             if generation.max_tokens.is_some() || generation.temperature.is_some() {
                 return Err(error("codex generation", "output caps and sampling are not supported by Codex"));
             }
-            if supports_images == Some(true) {
+            if authored_image_input {
                 return Err(error(
                     "model/input",
                     "the daily Codex route currently supports text and function tools only",
@@ -578,7 +673,16 @@ pub fn resolve_daily_selection(
     if let Some(target) = promotion_target {
         metadata["contextPromotionTarget"] = target.clone();
     }
-    Ok(DailySelection { model: execution_model, metadata, api, protocol, generation, auth_source, loop_guard_policy })
+    Ok(DailySelection {
+        model: execution_model,
+        catalog_model,
+        metadata,
+        api,
+        protocol,
+        generation,
+        auth_source,
+        loop_guard_policy,
+    })
 }
 
 fn merge_remote_configuration(

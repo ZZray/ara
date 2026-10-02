@@ -1,10 +1,10 @@
-//! Four native scenario families for fixed OMP model-config-values.ts. Host
+//! Native scenario families for fixed OMP model-config-values.ts. Host
 //! request/401/cancellation integration is exercised by the owning CLI tests.
 
 use ara_cli::model_config_values::{
     COMMAND_FAILURE_RETRY_MS, COMMAND_TIMEOUT, CommandConfigCache, ConfigCommandExecutor, ConfigCommandFailure,
-    ConfigValueClock, ConfigValueContext, ConfigValueEnvironment, ConfigValueResolver, HeaderConfigRecord,
-    HeaderResolutionOptions, HeaderSource, ProcessConfigEnvironment, ResolveConfigValueOptions,
+    ConfigHeaderCancelled, ConfigValueClock, ConfigValueContext, ConfigValueEnvironment, ConfigValueResolver,
+    HeaderConfigRecord, HeaderResolutionOptions, HeaderSource, ProcessConfigEnvironment, ResolveConfigValueOptions,
     create_live_config_headers, is_command_config_value, resolve_config_headers,
 };
 use std::collections::HashMap;
@@ -274,6 +274,117 @@ fn live_header_sources_snapshot_once_and_preserve_mutable_overlays() {
         resolve_config_headers(Some(&source), &resolver, &context).unwrap().get("X-Token"),
         Some("rotated-header")
     );
+}
+
+#[test]
+fn checked_header_snapshots_stop_unstarted_nested_overlay_and_auth_work() {
+    struct CancellingExecutor {
+        can_continue: Arc<AtomicBool>,
+        commands: Mutex<Vec<String>>,
+        settled: AtomicBool,
+    }
+    impl ConfigCommandExecutor for CancellingExecutor {
+        fn directory_is_enterable(&self, _: &Path) -> bool {
+            true
+        }
+        fn execute(&self, command: &str, _: &Path) -> Result<String, ConfigCommandFailure> {
+            self.commands.lock().unwrap().push(command.to_owned());
+            if command == "stop" {
+                self.can_continue.store(false, Ordering::SeqCst);
+                // Complete this already-started synchronous invocation before
+                // the materializer can return cancellation to its Host.
+                self.settled.store(true, Ordering::SeqCst);
+            }
+            Ok(format!("resolved-{command}"))
+        }
+    }
+    let context = ConfigValueContext { project_dir: Path::new("."), environment: &no_env };
+    for (name, stop_in_overlay, later_value) in [
+        ("nested values", false, true),
+        ("nested auth", false, false),
+        ("overlay values", true, true),
+        ("overlay auth", true, false),
+    ] {
+        let can_continue = Arc::new(AtomicBool::new(true));
+        let executor = Arc::new(CancellingExecutor {
+            can_continue: Arc::clone(&can_continue),
+            commands: Mutex::new(Vec::new()),
+            settled: AtomicBool::new(false),
+        });
+        let resolver = ConfigValueResolver::with_ports(
+            Arc::new(CommandConfigCache::default()),
+            Arc::new(Clock(AtomicU64::new(1000))),
+            executor.clone(),
+        );
+        let first_record = HeaderConfigRecord::from_pairs(vec![(
+            "X-First".into(),
+            if stop_in_overlay { "literal-first" } else { "!stop" }.into(),
+        )]);
+        if !stop_in_overlay && later_value {
+            first_record.set("X-Second", "!nested-second");
+        }
+        let first = create_live_config_headers(
+            &[Some(HeaderSource::Config(first_record))],
+            if stop_in_overlay {
+                HeaderResolutionOptions::default()
+            } else {
+                HeaderResolutionOptions { auth_header: true, api_key_config: Some("!nested-auth".into()) }
+            },
+        )
+        .unwrap();
+        let nested =
+            create_live_config_headers(&[Some(HeaderSource::Live(first))], HeaderResolutionOptions::default()).unwrap();
+        let later_source = HeaderConfigRecord::from_pairs(vec![(
+            "X-Later".into(),
+            if stop_in_overlay { "literal-later" } else { "!later-source" }.into(),
+        )]);
+        let headers = create_live_config_headers(
+            &[Some(HeaderSource::Live(nested)), Some(HeaderSource::Config(later_source))],
+            HeaderResolutionOptions { auth_header: true, api_key_config: Some("!outer-auth".into()) },
+        )
+        .unwrap();
+        headers.set("X-Overlay", if stop_in_overlay { "!stop" } else { "!overlay-after-stop" });
+        if stop_in_overlay && later_value {
+            headers.set("X-Overlay-Second", "!overlay-second");
+        }
+        let gate = || can_continue.load(Ordering::SeqCst);
+        assert!(matches!(headers.snapshot_checked(&resolver, &context, &gate), Err(ConfigHeaderCancelled)), "{name}");
+        assert!(executor.settled.load(Ordering::SeqCst), "{name}");
+        assert_eq!(executor.commands.lock().unwrap().as_slice(), ["stop"], "{name}: no later helper starts");
+        // An already-cancelled traversal starts no helper, including a cached
+        // command or an auth-only source.
+        assert!(matches!(headers.snapshot_checked(&resolver, &context, &gate), Err(ConfigHeaderCancelled)));
+        assert_eq!(executor.commands.lock().unwrap().len(), 1);
+    }
+
+    let (resolver, _, _) = ports(Ok("helper-value".into()));
+    let base = create_live_config_headers(
+        &[Some(HeaderSource::Config(HeaderConfigRecord::from_pairs(vec![
+            ("X-First".into(), "!normal-helper".into()),
+            ("X-Shared".into(), "base".into()),
+        ])))],
+        HeaderResolutionOptions::default(),
+    )
+    .unwrap();
+    let headers = create_live_config_headers(
+        &[
+            Some(HeaderSource::Live(base)),
+            Some(HeaderSource::Config(HeaderConfigRecord::from_pairs(vec![
+                ("X-Shared".into(), "source-overlay".into()),
+                ("X-Last".into(), "last".into()),
+            ]))),
+        ],
+        HeaderResolutionOptions { auth_header: true, api_key_config: Some("ordinary-key".into()) },
+    )
+    .unwrap();
+    headers.set("X-Shared", "local-overlay");
+    headers.set("Authorization", "local-auth");
+    let checked = headers.snapshot_checked(&resolver, &context, &|| true).unwrap().unwrap();
+    assert_eq!(checked.get("X-First"), Some("helper-value"));
+    assert_eq!(checked.get("X-Shared"), Some("local-overlay"));
+    assert_eq!(checked.get("Authorization"), Some("Bearer ordinary-key"));
+    assert_eq!(checked.keys(), ["X-First", "X-Shared", "X-Last", "Authorization"]);
+    assert_eq!(checked.into_pairs(), headers.snapshot(&resolver, &context).unwrap().into_pairs());
 }
 
 #[cfg(windows)]

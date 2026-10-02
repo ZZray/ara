@@ -1,5 +1,23 @@
 # Provider delivery plan
 
+**Current checkpoint, 2026-10-02 UTC (tested bounded composition WIP):**
+[Native composition](evidence/model-composition.md) ports model-patch/custom-model
+helpers, actual private header donors and a pure static registry snapshot adapter
+into the supported daily CLI. Eight module families pass 167/0/0; the retained
+native collapse oracle passes 3/0/0 over 1,995 cases. Final Windows backend
+1,643/0/20, format/Clippy/inventory/build PASS; the whole gate retains the existing
+ttf-parser advisory FAIL. One new modelOverrides CAS artifact/original-Session
+task passes in 14.880s/five calls, with explicit --tokenizer none. Full loader/
+async discovery/runtime/auth/selector and native tokenizer execution remain
+required. No complete surface or phase is accepted. The 111-surface inventory
+remains 26 implementing, one tested, 84 open; the ledger now has 59 bounded
+points: 35 limited acceptances, 22 implementing and two tested. P0/V1 accepted,
+P1–P6 open, RPC 27/42, marker null. About 113min for implementation/verification,
+then documentation/Git closure; original named-batch estimate 90–150min.
+Next: full registry loader/cache/discovery/runtime/auth callers. Investigate
+avoiding unused static-catalog initialization; reuse original module families
+and one stable final gate. No reliable full OMP/P0–P6 ETA is available.
+
 **Latest checkpoint, 2026-10-02:** [Synchronous config commands](evidence/model-config-values.md)
 now bind native key/provider/model/override headers into supported daily
 OpenAI private leases. Eager header-before-key order and selected 401 refresh

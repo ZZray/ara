@@ -65,7 +65,7 @@ fn file_loading_distinguishes_absence_validation_and_migration() {
 }
 
 #[test]
-fn configured_context_window_reaches_execution_route_and_absence_stays_unknown() {
+fn configured_context_window_and_native_custom_defaults_reach_execution_route() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("models.json");
     for capacity in [None, Some(32_768.5)] {
@@ -78,16 +78,23 @@ fn configured_context_window_reaches_execution_route_and_absence_stays_unknown()
         std::fs::write(&path, json!({"providers":{"custom":provider}}).to_string()).unwrap();
         let config = load_daily_config(&path, true).unwrap().unwrap();
         let selection = resolve_daily_selection(Some(&config), &selected(), &no_env).unwrap();
-        assert_eq!(selection.model.context_window, capacity);
+        // Fixed custom-models.ts::finalizeCustomModel(useDefaults:true) supplies
+        // 128000 for a custom ID without a bundled reference or authored window.
+        let expected_capacity = capacity.or(Some(128_000.0));
+        assert_eq!(selection.model.context_window, expected_capacity);
         assert_eq!(selection.generation.max_tokens, Some(512));
         let ProtocolOptions::Completions(options) = &selection.protocol else { panic!("Chat protocol") };
         let body = chat::build_params(&selection.model, &context(), options);
-        assert_eq!(body["max_tokens"], 512);
+        // The fixed native builder supplies resolved compat for this unknown
+        // custom route; its default field is max_completion_tokens.
+        assert_eq!(options.compat.max_tokens_field, chat::MaxTokensField::MaxCompletionTokens);
+        assert_eq!(body["max_completion_tokens"], 512);
+        assert!(body.get("max_tokens").is_none());
         assert!(body.get("contextWindow").is_none());
         let DailyAuthSource::Fixed(lease) = selection.auth_source else { panic!("keyless lease") };
         let route =
             PreparedRoute::new(selection.model, selection.protocol, Arc::new(FixedRequestAuth::new(lease)), 0).unwrap();
-        assert_eq!(route.model().context_window, capacity);
+        assert_eq!(route.model().context_window, expected_capacity);
     }
 }
 
@@ -175,7 +182,11 @@ fn context_promotion_uses_target_contract_and_explicit_auth_without_old_route_ov
     );
     value["providers"]["source"]["modelOverrides"]["small"]["reasoning"] = json!(true);
     let cfg = ModelsConfig::validate(value).unwrap();
-    assert!(resolve_daily_selection(Some(&cfg), &cli, &no_env).is_err());
+    // The complete native patch now supports reasoning overrides. Responses
+    // can execute this setting; the earlier narrow projection rejected it.
+    let patched = resolve_daily_selection(Some(&cfg), &cli, &no_env).unwrap();
+    assert_eq!(patched.api, DailyApi::OpenAiResponses);
+    assert!(patched.model.reasoning);
 
     let mut bundle_target = current.metadata.clone();
     bundle_target["contextPromotionTarget"] = json!("openai-codex/gpt-5.4");

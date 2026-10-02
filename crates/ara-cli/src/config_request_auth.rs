@@ -5,8 +5,10 @@
 //! uses the resulting lease. A configured auth refresh invalidates all sources.
 
 use crate::model_config_values::{
-    ConfigValueContext, ConfigValueResolver, HeaderConfigRecord, ProcessConfigEnvironment, ResolveConfigValueOptions,
+    ConfigValueContext, ConfigValueResolver, HeaderConfigRecord, HeaderSource, ProcessConfigEnvironment,
+    ResolveConfigValueOptions,
 };
+use crate::model_patch::HeaderSlot;
 use crate::model_route::{AuthResolveError, RequestAuthLease, RequestAuthResolver};
 use ara_ai::Model;
 use async_trait::async_trait;
@@ -55,6 +57,10 @@ pub struct ConfigRequestAuthSpec {
     pub key_config: Option<String>,
     pub startup_key: Option<String>,
     pub header_sources: Vec<Vec<(String, String)>>,
+    /// The static catalog has already composed the native header source tree.
+    /// Plain records are literals; only a Live source resolves config values.
+    /// None retains the earlier explicit-route projection used by old callers.
+    pub composed_headers: Option<HeaderSlot>,
     pub invalidation_values: Vec<String>,
     pub cli_headers: Vec<(String, String)>,
     pub auth_header: bool,
@@ -156,17 +162,35 @@ impl ConfigRequestAuth {
             } else {
                 base
             };
+            if worker_cancel.is_cancelled() {
+                return Err(AuthResolveError::Cancelled);
+            }
             let mut headers = Vec::new();
-            for source in &spec.header_sources {
-                for (name, config) in HeaderConfigRecord::from_pairs(source.clone()).snapshot() {
-                    if worker_cancel.is_cancelled() {
-                        return Err(AuthResolveError::Cancelled);
-                    }
-                    if let Some(value) = resolver
-                        .resolve_config_value(&config, &context, ResolveConfigValueOptions::default())
-                        .filter(|value| !value.is_empty())
-                    {
-                        merge_header(&mut headers, name, value)?;
+            if let Some(slot) = &spec.composed_headers {
+                let pairs = match slot {
+                    HeaderSlot::Source(HeaderSource::Config(record)) => record.snapshot(),
+                    HeaderSlot::Source(HeaderSource::Live(headers)) => headers
+                        .snapshot_checked(&resolver, &context, &|| !worker_cancel.is_cancelled())
+                        .map_err(|_| AuthResolveError::Cancelled)?
+                        .map(|value| value.into_pairs())
+                        .unwrap_or_default(),
+                    HeaderSlot::Absent | HeaderSlot::Undefined | HeaderSlot::Null => Vec::new(),
+                };
+                for (name, value) in pairs {
+                    merge_header(&mut headers, name, value)?;
+                }
+            } else {
+                for source in &spec.header_sources {
+                    for (name, config) in HeaderConfigRecord::from_pairs(source.clone()).snapshot() {
+                        if worker_cancel.is_cancelled() {
+                            return Err(AuthResolveError::Cancelled);
+                        }
+                        if let Some(value) = resolver
+                            .resolve_config_value(&config, &context, ResolveConfigValueOptions::default())
+                            .filter(|value| !value.is_empty())
+                        {
+                            merge_header(&mut headers, name, value)?;
+                        }
                     }
                 }
             }
@@ -225,6 +249,7 @@ impl RequestAuthResolver for ConfigRequestAuth {
                 .spec
                 .startup_key
                 .iter()
+                .chain(self.spec.invalidation_values.iter())
                 .chain(self.spec.header_sources.iter().flatten().map(|(_, value)| value))
                 .any(|value| value.starts_with('!'))
     }

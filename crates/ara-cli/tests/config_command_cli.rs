@@ -427,6 +427,32 @@ async fn chat_and_responses_commands_preserve_overrides_tools_cwd_and_session_re
             );
         }
 
+        // Native composition retains the configured authHeader source, while
+        // the daily Host's ambient credential must own the final wire bearer.
+        let env_host = Host::new();
+        let env_wire = Wire::new(json!([reply(api, "Ambient key.")])).await;
+        env_host.config(
+            "custom",
+            json!({"api":api,"baseUrl":env_wire.base_url(),
+            "apiKey":"synthetic-config-plain","authHeader":true,
+            "models":[{"id":"command-model","input":["text"]}],
+            "modelOverrides":{"command-model":{"contextWindow":24000,"maxTokens":96,
+                "name":"Override metadata","cost":{"input":0.2},"headers":{"X-Override":"literal-proof"}}}}),
+        );
+        let mut command = env_host.command("custom", &["--mode", "json", "--tools", "", "ambient key"]);
+        command.env("ARA_API_KEY", "synthetic-ambient-bearer");
+        let ambient = output(command).await;
+        assert!(success(&ambient).contains("Ambient key."));
+        assert_eq!(*env_wire.auth.lock().await, vec!["Bearer synthetic-ambient-bearer"]);
+        let requests = env_wire.up.requests.lock().await;
+        assert_eq!(requests[0]["headers"]["x-override"], "literal-proof");
+        assert_eq!(
+            requests[0]["body"]
+                [if api == "openai-completions" { "max_completion_tokens" } else { "max_output_tokens" }],
+            96
+        );
+        env_host.assert_private(&ambient, &["synthetic-config-plain", "synthetic-ambient-bearer"]);
+
         // Native loadCustomModels resolves provider headers before installing
         // apiKey (fixed model-registry.ts:1340,1407). The header helper may
         // generate the file the different key helper needs on its first run.
@@ -711,6 +737,7 @@ async fn deadline_during_active_refresh_waits_for_owned_settlement_without_late_
                 key_config: Some(command.clone()),
                 startup_key: Some(command.clone()),
                 header_sources: Vec::new(),
+                composed_headers: None,
                 invalidation_values: vec![command],
                 cli_headers: Vec::new(),
                 auth_header: false,
@@ -754,10 +781,82 @@ async fn deadline_during_active_refresh_waits_for_owned_settlement_without_late_
     assert!(matches!(pending, Err(AuthResolveError::Cancelled)));
     assert!(settled.exists());
     assert!(!queued.count.exists(), "cancelled queued call executed a helper after acquiring the gate");
+
+    // The static catalog nests model and override Live sources. A deadline
+    // during the first source must settle that helper and stop the next one.
+    let host = Host::new();
+    let active = host.home.path().join("nested.active");
+    let release = host.home.path().join("nested.release");
+    let settled = host.home.path().join("nested.settled");
+    let _release_on_failure = ReleaseOnDrop(release.clone());
+    #[cfg(windows)]
+    let body = format!(
+        "@echo off\r\n>\"{}\" echo active\r\n:wait\r\nif not exist \"{}\" goto wait\r\n>\"{}\" echo settled\r\necho synthetic-nested-header\r\n",
+        active.display(),
+        release.display(),
+        settled.display()
+    );
+    #[cfg(not(windows))]
+    let body = format!(
+        "printf active > {}; while [ ! -e {} ]; do sleep 0.02; done; printf settled > {}; printf %s synthetic-nested-header\n",
+        quote(&active),
+        quote(&release),
+        quote(&settled)
+    );
+    let slow = script(&host, "nested-slow", &body);
+    let next = Helper::new(&host, "nested-must-not-run", "synthetic-next-header");
+    let wire = Wire::new(json!([])).await;
+    host.config(
+        "custom",
+        json!({"api":"openai-completions","baseUrl":wire.base_url(),
+        "auth":"none","models":[{"id":"command-model","headers":{"X-First":slow}}],
+        "modelOverrides":{"command-model":{"headers":{"X-Next":next.command}}}}),
+    );
+    let mut child = spawn(host.command(
+        "custom",
+        &[
+            "--cwd",
+            host.project.path().to_str().unwrap(),
+            "--max-time",
+            "0.3",
+            "--mode",
+            "json",
+            "--tools",
+            "",
+            "cancel nested headers",
+        ],
+    ));
+    wait_for(|| active.exists()).await;
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let still_owned = child.try_wait().unwrap().is_none();
+    std::fs::write(&release, "release").unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await.unwrap().unwrap();
+    assert!(still_owned, "CLI exited before its nested helper settled");
+    assert_eq!(result.status.code(), Some(1));
+    assert!(settled.exists());
+    assert_eq!(next.executions(), 0, "cancelled nested source started the next helper");
+    assert_eq!(wire.up.served(), 0);
+    host.assert_private(&result, &["synthetic-nested-header", "synthetic-next-header", &slow, &next.command]);
 }
 
 #[tokio::test]
 async fn codex_rejects_owned_config_before_helpers_and_preserves_account_with_allowed_headers() {
+    let host = Host::new();
+    let helper = Helper::new(&host, "keyless-must-not-execute", "synthetic-override-credential");
+    let wire = Wire::new(json!([])).await;
+    host.config(
+        "custom",
+        json!({"api":"openai-completions","baseUrl":wire.base_url(),"auth":"none",
+        "models":[{"id":"command-model"}],
+        "modelOverrides":{"command-model":{"headers":{"Authorization":helper.command}}}}),
+    );
+    let result = output(host.command("custom", &["--tools", "", "reject keyless override"])).await;
+    assert_eq!(result.status.code(), Some(2));
+    assert_eq!(helper.executions(), 0);
+    assert_eq!(wire.up.served(), 0);
+    assert!(!host.sessions.exists());
+    host.assert_private(&result, &["synthetic-override-credential", &helper.command]);
+
     // Cover both credential and protocol/session ownership at all config levels.
     for (field, level) in
         [("apiKey", 0), ("Authorization", 0), ("chatgpt-account-id", 1), ("session_id", 2), ("x-client-request-id", 0)]

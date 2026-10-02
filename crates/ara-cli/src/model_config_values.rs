@@ -182,35 +182,56 @@ impl ConfigValueResolver {
         context: &ConfigValueContext<'_>,
         options: ResolveConfigValueOptions,
     ) -> Option<String> {
+        self.resolve_config_value_checked(value_config, context, options, &|| true).ok().flatten()
+    }
+
+    fn resolve_config_value_checked(
+        &self,
+        value_config: &str,
+        context: &ConfigValueContext<'_>,
+        options: ResolveConfigValueOptions,
+        can_continue: &dyn Fn() -> bool,
+    ) -> Result<Option<String>, ConfigHeaderCancelled> {
+        if !can_continue() {
+            return Err(ConfigHeaderCancelled);
+        }
         let Some(command) = value_config.strip_prefix('!') else {
-            return Some(
+            return Ok(Some(
                 context
                     .environment
                     .get(value_config)
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| value_config.to_owned()),
-            );
+            ));
         };
         let command = js_trim(command);
         // OMP's synchronous JavaScript execution serializes all command reads.
         // Keep execution, cache publication and invalidation under one mutex so
         // a completed older command cannot overwrite a forced refresh.
         let mut cache = self.cache.state.lock().unwrap_or_else(|error| error.into_inner());
+        // A different synchronous command may have held the shared cache lock
+        // while this Host was cancelled. Do not start queued work afterwards.
+        if !can_continue() {
+            return Err(ConfigHeaderCancelled);
+        }
         if options.force_command_refresh {
             cache.values.remove(command);
             cache.failure_retry_at.remove(command);
         }
         if let Some(value) = cache.values.get(command) {
-            return Some(value.clone());
+            return Ok(Some(value.clone()));
         }
         if cache.failure_retry_at.get(command).is_some_and(|retry_at| self.clock.now_millis() < *retry_at) {
-            return None;
+            return Ok(None);
         }
         if !self.executor.directory_is_enterable(context.project_dir) {
             cache
                 .failure_retry_at
                 .insert(command.to_owned(), self.clock.now_millis().saturating_add(COMMAND_FAILURE_RETRY_MS));
-            return None;
+            return Ok(None);
+        }
+        if !can_continue() {
+            return Err(ConfigHeaderCancelled);
         }
         match self.executor.execute(command, context.project_dir) {
             Ok(stdout) => {
@@ -218,7 +239,7 @@ impl ConfigValueResolver {
                 if !value.is_empty() {
                     cache.failure_retry_at.remove(command);
                     cache.values.insert(command.to_owned(), value.to_owned());
-                    return Some(value.to_owned());
+                    return Ok(Some(value.to_owned()));
                 }
             }
             Err(failure) => {
@@ -232,7 +253,7 @@ impl ConfigValueResolver {
         cache
             .failure_retry_at
             .insert(command.to_owned(), self.clock.now_millis().saturating_add(COMMAND_FAILURE_RETRY_MS));
-        None
+        Ok(None)
     }
 
     pub fn invalidate_command_config(&self, value_config: Option<&str>) {
@@ -485,6 +506,17 @@ pub enum HeaderSource {
     Live(LiveConfigHeaders),
 }
 
+impl HeaderSource {
+    /// Auth preflight can inspect configured ownership without resolving a
+    /// value, invoking a helper, or exposing private configuration values.
+    pub(crate) fn configured_header_names(&self) -> Vec<String> {
+        match self {
+            Self::Config(record) => record.snapshot().into_iter().map(|(name, _)| name).collect(),
+            Self::Live(headers) => headers.configured_header_names(),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct HeaderResolutionOptions {
     pub auth_header: bool,
@@ -496,6 +528,11 @@ pub struct HeaderResolutionOptions {
 pub struct ResolvedConfigHeaders {
     entries: Vec<(String, String)>,
 }
+
+/// Host cancellation stops unstarted configuration work. No configuration or
+/// command value is carried by this error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfigHeaderCancelled;
 
 impl ResolvedConfigHeaders {
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -555,30 +592,54 @@ fn materialize_sources(
     resolver: &ConfigValueResolver,
     context: &ConfigValueContext<'_>,
 ) -> Option<ResolvedConfigHeaders> {
+    materialize_sources_checked(sources, local, options, resolver, context, &|| true).ok().flatten()
+}
+
+fn materialize_sources_checked(
+    sources: &[HeaderSource],
+    local: Option<&HeaderConfigRecord>,
+    options: &HeaderResolutionOptions,
+    resolver: &ConfigValueResolver,
+    context: &ConfigValueContext<'_>,
+    can_continue: &dyn Fn() -> bool,
+) -> Result<Option<ResolvedConfigHeaders>, ConfigHeaderCancelled> {
+    if !can_continue() {
+        return Err(ConfigHeaderCancelled);
+    }
     let mut resolved = HeaderEntries::default();
     fn resolve_record(
         record: &HeaderConfigRecord,
         resolved: &mut HeaderEntries,
         resolver: &ConfigValueResolver,
         context: &ConfigValueContext<'_>,
-    ) {
+        can_continue: &dyn Fn() -> bool,
+    ) -> Result<(), ConfigHeaderCancelled> {
         // Release the record lock before invoking a command or nested source.
         for (key, config) in record.snapshot() {
+            if !can_continue() {
+                return Err(ConfigHeaderCancelled);
+            }
+            // A started synchronous helper must settle before observing a
+            // cancellation; the next configured value gets its own gate.
             if let Some(value) = resolver
-                .resolve_config_value(&config, context, ResolveConfigValueOptions::default())
+                .resolve_config_value_checked(&config, context, ResolveConfigValueOptions::default(), can_continue)?
                 .filter(|value| !value.is_empty())
             {
                 resolved.set(key, value);
             }
         }
+        Ok(())
     }
     for source in sources {
+        if !can_continue() {
+            return Err(ConfigHeaderCancelled);
+        }
         match source {
-            HeaderSource::Config(record) => resolve_record(record, &mut resolved, resolver, context),
+            HeaderSource::Config(record) => resolve_record(record, &mut resolved, resolver, context, can_continue)?,
             HeaderSource::Live(headers) => {
                 // Hidden OMP LIVE_HEADER_RESOLVER equivalent: one complete
                 // snapshot, never trap/resolve each nested property separately.
-                if let Some(snapshot) = headers.snapshot(resolver, context) {
+                if let Some(snapshot) = headers.snapshot_checked(resolver, context, can_continue)? {
                     for (key, value) in snapshot.into_pairs() {
                         resolved.set(key, value);
                     }
@@ -587,26 +648,71 @@ fn materialize_sources(
         }
     }
     if let Some(local) = local {
-        resolve_record(local, &mut resolved, resolver, context);
+        resolve_record(local, &mut resolved, resolver, context, can_continue)?;
     }
     if options.auth_header
         && let Some(config) = options.api_key_config.as_ref().filter(|key| !key.is_empty())
-        && let Some(key) = resolver
-            .resolve_config_value(config, context, ResolveConfigValueOptions::default())
-            .filter(|key| !key.is_empty())
     {
-        resolved.set("Authorization".into(), format!("Bearer {key}"));
+        if !can_continue() {
+            return Err(ConfigHeaderCancelled);
+        }
+        if let Some(key) = resolver
+            .resolve_config_value_checked(config, context, ResolveConfigValueOptions::default(), can_continue)?
+            .filter(|key| !key.is_empty())
+        {
+            resolved.set("Authorization".into(), format!("Bearer {key}"));
+        }
     }
-    (!resolved.0.is_empty()).then(|| ResolvedConfigHeaders { entries: resolved.ordered() })
+    if !can_continue() {
+        return Err(ConfigHeaderCancelled);
+    }
+    Ok((!resolved.0.is_empty()).then(|| ResolvedConfigHeaders { entries: resolved.ordered() }))
 }
 
 impl LiveConfigHeaders {
+    pub(crate) fn configured_header_names(&self) -> Vec<String> {
+        let mut names = HeaderEntries::default();
+        for source in &self.state.sources {
+            for name in source.configured_header_names() {
+                names.set(name, String::new());
+            }
+        }
+        for (name, _) in self.state.local.snapshot() {
+            names.set(name, String::new());
+        }
+        if self.state.options.auth_header
+            && self.state.options.api_key_config.as_ref().is_some_and(|key| !key.is_empty())
+        {
+            names.set("Authorization".into(), String::new());
+        }
+        names.ordered().into_iter().map(|(name, _)| name).collect()
+    }
+
     pub fn snapshot(
         &self,
         resolver: &ConfigValueResolver,
         context: &ConfigValueContext<'_>,
     ) -> Option<ResolvedConfigHeaders> {
         materialize_sources(&self.state.sources, Some(&self.state.local), &self.state.options, resolver, context)
+    }
+
+    /// Host lifecycle adapter for the synchronous resolver. Check before each
+    /// configured value across nested sources, local overlays and auth headers;
+    /// already-started helpers settle normally before cancellation is returned.
+    pub fn snapshot_checked(
+        &self,
+        resolver: &ConfigValueResolver,
+        context: &ConfigValueContext<'_>,
+        can_continue: &dyn Fn() -> bool,
+    ) -> Result<Option<ResolvedConfigHeaders>, ConfigHeaderCancelled> {
+        materialize_sources_checked(
+            &self.state.sources,
+            Some(&self.state.local),
+            &self.state.options,
+            resolver,
+            context,
+            can_continue,
+        )
     }
 
     pub fn get(&self, key: &str, resolver: &ConfigValueResolver, context: &ConfigValueContext<'_>) -> Option<String> {

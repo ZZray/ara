@@ -201,6 +201,24 @@ Run-owned. Pure catalogue lookup does not resolve authentication, and catalogue
 metadata that execution cannot yet represent is rejected rather than discarded.
 See the [bounded evidence and remaining contracts](../evidence/model-auth-foundation.md).
 
+**Native composition ownership, 2026-10-02 (tested bounded WIP):** safe model
+metadata is separate from opaque Host-owned header/API-key sources. Preserve
+absent/undefined/null/source presence; plain records are literal until a native
+operation wraps them in Live. A collapsed family inherits the original input
+firstMember donor, which can differ from its default/request ID. Never restore
+private headers by looking up the final ID. Materialized bundled rows share
+references and must not be rebuilt merely because they entered the registry.
+
+The static adapter composes explicit snapshots without I/O, discovery or
+credential authority. External availability callbacks run outside its mutex:
+a Host may legitimately reenter lookup during authentication observation.
+Inspect actual composed header names before executing helpers. Cancellation
+must reach every nested Live source and the resolver's actual helper-start
+gate; started synchronous work still settles before normal exit. The daily
+Host reasserts provider authHeader from its effective CLI/environment lease
+so attribution and the actual bearer agree. Full loader/auth/runtime lifecycle
+remains separate required work; see [composition evidence](../evidence/model-composition.md).
+
 **Command-value ownership, 2026-10-02 (tested bounded WIP):** native synchronous
 models configuration is materialized after the reference Host knows the
 effective cwd. Provider headers precede eager key installation because a header

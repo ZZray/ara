@@ -1192,10 +1192,13 @@ async fn rpc_native_split_cut_commits_both_branches_and_keeps_partial_failure_at
             assert_eq!(up.served(), 5);
         }
         let requests = up.requests.lock().await;
-        let mut budgets =
-            requests[2..4].iter().map(|request| request["body"]["max_tokens"].as_u64().unwrap()).collect::<Vec<_>>();
+        let mut budgets = requests[2..4]
+            .iter()
+            .map(|request| request["body"]["max_completion_tokens"].as_u64().unwrap())
+            .collect::<Vec<_>>();
         budgets.sort();
         assert_eq!(budgets, vec![250, 384]);
+        assert!(requests[2..4].iter().all(|request| request["body"].get("max_tokens").is_none()));
         assert!(requests[2..4].iter().all(|request| request["body"]["tools"].as_array().is_none_or(Vec::is_empty)));
         let prompts = requests[2..4].iter().map(|request| request["body"]["messages"].to_string()).collect::<Vec<_>>();
         assert!(prompts.iter().any(|prompt| prompt.contains("Additional focus: retain exact request facts")));
@@ -1382,7 +1385,8 @@ async fn rpc_manual_summary_budget_folding_module() {
     assert_eq!(up.served(), 4);
     let requests = up.requests.lock().await;
     for index in [2, 3] {
-        assert_eq!(requests[index]["body"]["max_tokens"], 16_384);
+        assert_eq!(requests[index]["body"]["max_completion_tokens"], 16_384);
+        assert!(requests[index]["body"].get("max_tokens").is_none());
         assert!(requests[index]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
         assert!(requests[index]["body"]["messages"].to_string().contains("Retain original receipts"));
     }

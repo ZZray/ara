@@ -179,8 +179,11 @@ async fn custom_chat_configuration_and_explicit_overrides_reach_the_wire() {
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[3]["request"], "POST /v1/messages HTTP/1.1");
     assert_eq!(requests[0]["request"], "POST /v1/chat/completions HTTP/1.1");
-    assert_eq!(requests[0]["body"]["max_tokens"], 128);
-    assert_eq!(requests[1]["body"]["max_tokens"], 64);
+    // The fixed native builder now resolves compat for the custom route.
+    assert_eq!(requests[0]["body"]["max_completion_tokens"], 128);
+    assert_eq!(requests[1]["body"]["max_completion_tokens"], 64);
+    assert!(requests[0]["body"].get("max_tokens").is_none());
+    assert!(requests[1]["body"].get("max_tokens").is_none());
     assert_eq!(requests[0]["headers"]["x-daily-route"], "configured");
     assert_eq!(requests[1]["headers"]["x-daily-route"], "cli");
 }
