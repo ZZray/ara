@@ -81,6 +81,8 @@ mod diagnostics;
 mod health;
 #[path = "auth_storage_resets.rs"]
 mod resets;
+#[path = "auth_storage_usage.rs"]
+mod usage;
 
 pub use diagnostics::{
     CheckCredentialsOptions, CredentialBaseUrlResolver, CredentialCompletionCredential, CredentialCompletionProbe,
@@ -91,6 +93,7 @@ pub use resets::{
     ListResetCreditsOptions, RedeemResetCreditOptions, ResetCreditAccountStatus, ResetCreditRedeemOutcome,
     ResetCreditTarget,
 };
+pub use usage::FetchUsageReportsOptions;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthStorageError {
@@ -164,6 +167,11 @@ pub struct EnvironmentKey {
 }
 pub trait Environment: Send + Sync {
     fn api_key(&self, provider: &str) -> Option<EnvironmentKey>;
+    /// Named variables remain Host-owned. SuperGrok usage accepts only its
+    /// dedicated OAuth token, never the paid API-key fallback.
+    fn variable(&self, _name: &str) -> Option<String> {
+        None
+    }
 }
 pub trait Fallback: Send + Sync {
     fn api_key(&self, provider: &str) -> Option<String>;
@@ -264,6 +272,30 @@ pub trait UsageProvider: Send + Sync {
     }
 }
 
+/// Native aggregate override/store seam. The shared fetch deliberately does
+/// not receive a caller's cancellation token; each waiter owns its own cancel.
+#[async_trait]
+pub trait AggregateUsageSource: Send + Sync {
+    async fn fetch_usage_reports(&self) -> Result<Option<Vec<UsageReport>>, AuthStorageError>;
+    async fn wait_for_settlement(&self) {}
+}
+
+/// Optional Host store capabilities. OAuth lookups are authoritative, including
+/// None; API keys continue through the local provider/cache path.
+#[async_trait]
+pub trait UsageStoreHooks: AggregateUsageSource {
+    async fn get_usage_report(
+        &self,
+        request: UsageRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<UsageReport>, AuthStorageError>;
+    fn ingest_usage_report(&self, request: &UsageRequest, report: UsageReport) -> bool;
+    fn invalidate_usage_cache(&self);
+    async fn notify_usage_stale(&self, _cancel: &CancellationToken) -> Result<(), AuthStorageError> {
+        Ok(())
+    }
+}
+
 pub struct AuthStorageOptions {
     pub config_key_resolver: Arc<dyn ConfigKeyResolver>,
     pub environment: Arc<dyn Environment>,
@@ -275,6 +307,8 @@ pub struct AuthStorageOptions {
     /// Host transport for dedicated Codex reset routes. Defaults to the same
     /// canonical, redirect-free Codex HTTP policy as builtin usage.
     pub reset_credit_client: Option<crate::codex_usage::CodexUsageProvider>,
+    pub aggregate_usage_override: Option<Arc<dyn AggregateUsageSource>>,
+    pub usage_store: Option<Arc<dyn UsageStoreHooks>>,
 }
 impl Default for AuthStorageOptions {
     fn default() -> Self {
@@ -286,6 +320,8 @@ impl Default for AuthStorageOptions {
             clock: Arc::new(|| chrono::Utc::now().timestamp_millis() as f64),
             jitter: Arc::new(|| (uuid::Uuid::new_v4().as_u128() >> 75) as f64 / (1_u64 << 53) as f64),
             reset_credit_client: None,
+            aggregate_usage_override: None,
+            usage_store: None,
         }
     }
 }
@@ -347,6 +383,7 @@ pub enum AuthFailureCategory {
 struct HostState {
     assignments: AuthStorageState,
     rows: BTreeMap<String, Vec<StoredAuthCredential>>,
+    stored_provider_order: Vec<String>,
     runtime_keys: BTreeMap<String, String>,
     config_keys: BTreeMap<String, String>,
     resolved_keys: BTreeMap<i64, (String, String)>,
@@ -354,6 +391,7 @@ struct HostState {
     generation_changed: bool,
 }
 type UsageFlight = watch::Receiver<Option<Option<UsageReport>>>;
+type AggregateUsageFlight = watch::Receiver<Option<Result<Option<Vec<UsageReport>>, AuthStorageError>>>;
 struct AuthStorageInner {
     store: Arc<Mutex<SqliteCredentialStore>>,
     codex: Option<Arc<OpenAiCodexAuth>>,
@@ -361,8 +399,12 @@ struct AuthStorageInner {
     state: Mutex<HostState>,
     oauth_providers: Mutex<BTreeMap<String, Arc<dyn OAuthProvider>>>,
     usage_providers: Mutex<BTreeMap<String, Arc<dyn UsageProvider>>>,
+    runtime_usage_provider_order: Mutex<Vec<String>>,
+    builtin_usage_providers: Mutex<BTreeMap<String, Arc<dyn UsageProvider>>>,
     strategies: Mutex<BTreeMap<String, Arc<dyn CredentialRankingStrategy>>>,
     usage_flights: Mutex<BTreeMap<String, UsageFlight>>,
+    aggregate_flights: Mutex<BTreeMap<String, AggregateUsageFlight>>,
+    runtime_usage_keys: Mutex<BTreeMap<String, String>>,
     usage_epoch: AtomicU64,
     generation: AtomicU64,
     changed: Notify,
@@ -445,8 +487,12 @@ impl AuthStorage {
                 state: Mutex::new(HostState::default()),
                 oauth_providers: Mutex::new(BTreeMap::new()),
                 usage_providers: Mutex::new(BTreeMap::new()),
+                runtime_usage_provider_order: Mutex::new(Vec::new()),
+                builtin_usage_providers: Mutex::new(BTreeMap::new()),
                 strategies: Mutex::new(BTreeMap::new()),
                 usage_flights: Mutex::new(BTreeMap::new()),
+                aggregate_flights: Mutex::new(BTreeMap::new()),
+                runtime_usage_keys: Mutex::new(BTreeMap::new()),
                 usage_epoch: AtomicU64::new(0),
                 generation: AtomicU64::new(1),
                 changed: Notify::new(),
@@ -466,7 +512,7 @@ impl AuthStorage {
             let provider =
                 crate::codex_usage::CodexUsageProvider::new().map_err(|_| AuthStorageError::Configuration)?;
             this.inner
-                .usage_providers
+                .builtin_usage_providers
                 .lock()
                 .map_err(|_| AuthStorageError::Storage)?
                 .insert("openai-codex".to_owned(), Arc::new(provider));
@@ -547,6 +593,14 @@ impl AuthStorage {
                 });
             let active_rows: Vec<_> = grouped.values().flatten().cloned().collect();
             state.assignments.reload_state(&active_rows);
+            // Native Map updates preserve an existing provider's position;
+            // removing its oldest credential must not reorder the provider.
+            state.stored_provider_order.retain(|provider| grouped.contains_key(provider));
+            for row in &rows {
+                if grouped.contains_key(&row.provider) && !state.stored_provider_order.contains(&row.provider) {
+                    state.stored_provider_order.push(row.provider.clone());
+                }
+            }
             state.rows = grouped;
             state.generation_changed |= changed;
             Ok(())
@@ -567,7 +621,11 @@ impl AuthStorage {
         }
         if rows.is_empty() {
             state.rows.remove(provider);
+            state.stored_provider_order.retain(|entry| entry != provider);
         } else {
+            if !state.rows.contains_key(provider) {
+                state.stored_provider_order.push(provider.to_owned());
+            }
             state.rows.insert(provider.to_owned(), rows.clone());
         }
         Ok(rows)
@@ -631,11 +689,44 @@ impl AuthStorage {
         provider: &str,
         implementation: Arc<dyn UsageProvider>,
     ) -> Result<(), AuthStorageError> {
-        self.inner
-            .usage_providers
-            .lock()
-            .map_err(|_| AuthStorageError::Storage)?
-            .insert(provider.to_owned(), implementation);
+        self.register_usage_provider_with_key(provider, implementation, None)
+    }
+    /// Extension-owned usage key configuration is independent of the request
+    /// key configuration and is resolved only when the stored pool is empty.
+    pub fn register_usage_provider_with_key(
+        &self,
+        provider: &str,
+        implementation: Arc<dyn UsageProvider>,
+        api_key: Option<String>,
+    ) -> Result<(), AuthStorageError> {
+        {
+            let mut providers = self.inner.usage_providers.lock().map_err(|_| AuthStorageError::Storage)?;
+            let mut order = self.inner.runtime_usage_provider_order.lock().map_err(|_| AuthStorageError::Storage)?;
+            let mut keys = self.inner.runtime_usage_keys.lock().map_err(|_| AuthStorageError::Storage)?;
+            if let Some(key) = api_key {
+                keys.insert(provider.to_owned(), key);
+            } else {
+                keys.remove(provider);
+            }
+            if !providers.contains_key(provider) {
+                order.push(provider.to_owned());
+            }
+            providers.insert(provider.to_owned(), implementation);
+        }
+        self.clear_usage_report_cache(Some(provider))?;
+        self.bump_generation();
+        Ok(())
+    }
+    pub fn unregister_usage_provider(&self, provider: &str) -> Result<(), AuthStorageError> {
+        {
+            let mut providers = self.inner.usage_providers.lock().map_err(|_| AuthStorageError::Storage)?;
+            let mut order = self.inner.runtime_usage_provider_order.lock().map_err(|_| AuthStorageError::Storage)?;
+            if providers.remove(provider).is_none() {
+                return Ok(());
+            }
+            order.retain(|entry| entry != provider);
+            self.inner.runtime_usage_keys.lock().map_err(|_| AuthStorageError::Storage)?.remove(provider);
+        }
         self.clear_usage_report_cache(Some(provider))?;
         self.bump_generation();
         Ok(())
@@ -658,7 +749,52 @@ impl AuthStorage {
         self.inner.oauth_providers.lock().ok()?.get(provider).cloned()
     }
     fn usage_hook(&self, provider: &str) -> Option<Arc<dyn UsageProvider>> {
-        self.inner.usage_providers.lock().ok()?.get(provider).cloned()
+        self.inner
+            .usage_providers
+            .lock()
+            .ok()?
+            .get(provider)
+            .cloned()
+            .or_else(|| self.inner.builtin_usage_providers.lock().ok()?.get(provider).cloned())
+    }
+    pub fn usage_provider_for(&self, provider: &str) -> Option<Arc<dyn UsageProvider>> {
+        self.usage_hook(provider)
+    }
+    /// Native quantitative model mapping (auth-storage.ts:4026-4062).
+    /// Label-only tier reports do not prove that a model has quota data.
+    pub fn get_usage_reporting_model_ids(
+        &self,
+        provider: &str,
+        model_ids: &[String],
+        reports: &[UsageReport],
+    ) -> Vec<String> {
+        let strategy = self.strategy(provider);
+        let mut seen = BTreeSet::new();
+        model_ids
+            .iter()
+            .filter(|model| seen.insert((*model).clone()))
+            .filter(|model| {
+                let context = CredentialRankingContext { model_id: Some((*model).clone()) };
+                reports.iter().filter(|report| report.provider == provider).any(|report| {
+                    let limits = if let Some(strategy) = &strategy {
+                        strategy.scope_limits(report, Some(&context))
+                    } else {
+                        report
+                            .limits
+                            .iter()
+                            .filter(|limit| {
+                                limit.scope.shared == Some(true)
+                                    || limit.scope.model_id.as_deref() == Some(model.as_str())
+                            })
+                            .collect()
+                    };
+                    limits.into_iter().any(|limit| {
+                        policy::is_usage_limit_exhausted(limit) || policy::resolve_used_fraction(limit).is_some()
+                    })
+                })
+            })
+            .cloned()
+            .collect()
     }
     fn supports_oauth(&self, provider: &str) -> bool {
         self.oauth_hook(provider).is_some() || (provider == "openai-codex" && self.inner.codex.is_some())
@@ -1747,6 +1883,14 @@ impl AuthStorage {
             // Native 6271-6286 clears and marks force in the same synchronous
             // turn; keep another cache publisher outside this local boundary.
             store.delete_cache_prefix(&prefix).map_err(|_| AuthStorageError::Storage)?;
+            // Broker invalidation does not create a local force-refresh marker.
+            if let Some(hook) = &self.inner.options.usage_store {
+                hook.invalidate_usage_cache();
+                return Ok(());
+            }
+            if self.inner.options.aggregate_usage_override.is_some() {
+                return Ok(());
+            }
             write_usage_cache(
                 store,
                 &key,
@@ -1756,6 +1900,20 @@ impl AuthStorage {
             .map_err(|_| AuthStorageError::Storage)
         })
     }
+    /// Await the optional broker notification after synchronous invalidation.
+    /// Native notifications are best effort; a failed notification never
+    /// restores the invalidated local cache.
+    pub async fn invalidate_usage_cache_and_notify(
+        &self,
+        provider: Option<&str>,
+        cancel: &CancellationToken,
+    ) -> Result<(), AuthStorageError> {
+        self.invalidate_usage_cache(provider)?;
+        if let Some(hook) = &self.inner.options.usage_store {
+            let _ = hook.notify_usage_stale(cancel).await;
+        }
+        Ok(())
+    }
     fn force_usage_marked(&self, provider: Option<&str>) -> bool {
         self.store_operation(|store, _state| {
             Ok(read_usage_cache::<Value>(store, &force_cache_key(provider), false)
@@ -1764,9 +1922,8 @@ impl AuthStorage {
         .unwrap_or(false)
     }
 
-    /// Fixed OMP AuthStorage.ingestUsageHeaders local-cache branch (3631-3711).
-    /// Attribution follows the active Session account at callback time. Native
-    /// delegated-store ingestion and aggregate fetch overrides remain unported.
+    /// Fixed OMP AuthStorage.ingestUsageHeaders (3631-3730).
+    /// Attribution follows the active Session account at callback time.
     /// This does not record history, heal blocks, refresh auth or select an account.
     pub fn ingest_usage_headers(
         &self,
@@ -1775,6 +1932,9 @@ impl AuthStorage {
         session_id: Option<&str>,
         base_url: Option<&str>,
     ) -> Result<bool, AuthStorageError> {
+        if self.inner.options.aggregate_usage_override.is_some() {
+            return Ok(false);
+        }
         let Some(hook) = self.usage_hook(provider) else { return Ok(false) };
         let Some(parser) = hook.rate_limit_header_parser() else { return Ok(false) };
         let lower_key_present =
@@ -1814,6 +1974,13 @@ impl AuthStorage {
                     // JSON null is a defined native metadata property.
                     metadata.entry(field).or_insert_with(|| Value::String(value));
                 }
+            }
+            if let Some(hook) = &self.inner.options.usage_store {
+                let ingested = hook.ingest_usage_report(&request, report);
+                if ingested {
+                    state.usage_header_ingest_at.insert(cache_key, now);
+                }
+                return Ok(ingested);
             }
             // A malformed payload is a cold cache. A real store read failure
             // must not overwrite the entry or consume a successful-ingest slot.
@@ -1868,7 +2035,6 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<UsageReport>, AuthStorageError> {
         check_cancel(cancel)?;
-        let Some(hook) = self.usage_hook(provider) else { return Ok(None) };
         let resolved_key = if let AuthCredential::ApiKey { key, .. } = &row.credential {
             self.inner.options.config_key_resolver.resolve(key, cancel).await?
         } else {
@@ -1887,10 +2053,30 @@ impl AuthStorage {
             credential_id: Some(row.id),
             base_url: context.base_url.clone(),
         };
+        self.usage_request_report(request, force_refresh, cancel).await
+    }
+
+    async fn usage_request_report(
+        &self,
+        request: UsageRequest,
+        force_refresh: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Option<UsageReport>, AuthStorageError> {
+        check_cancel(cancel)?;
+        if request.credential.credential_type == UsageCredentialType::Oauth
+            && let Some(store) = &self.inner.options.usage_store
+        {
+            let report = store.get_usage_report(request.clone(), cancel).await?;
+            if let Some(report) = &report {
+                self.reconcile_usage_request(&request, report).await?;
+            }
+            return Ok(report);
+        }
+        let Some(hook) = self.usage_hook(&request.provider) else { return Ok(None) };
         if !hook.supports(&request) {
             return Ok(None);
         }
-        if hook.authoritative_oauth() && matches!(row.credential, AuthCredential::OAuth { .. }) {
+        if hook.authoritative_oauth() && request.credential.credential_type == UsageCredentialType::Oauth {
             let report = tokio::select! {
                 _ = cancel.cancelled() => return Err(AuthStorageError::Cancelled),
                 result = tokio::time::timeout(self.inner.options.usage_request_timeout, hook.fetch_usage(request.clone(), cancel)) =>
@@ -2064,67 +2250,6 @@ impl AuthStorage {
         request.credential.access_token = None;
         request.credential.refresh_token = None;
         cached_report
-    }
-
-    pub async fn fetch_usage_reports(
-        &self,
-        provider: Option<&str>,
-        context: &AuthRequestContext,
-        cancel: &CancellationToken,
-    ) -> Result<Vec<UsageReport>, AuthStorageError> {
-        check_cancel(cancel)?;
-        let provider = provider.map(str::to_owned);
-        let rows = self
-            .database(move |store, state| {
-                store.list_auth_credentials(provider.as_deref()).map_err(|error| {
-                    state.assignments.observe_store_error(&error);
-                    AuthStorageError::Storage
-                })
-            })
-            .await?;
-        let mut groups = BTreeMap::<String, Vec<StoredAuthCredential>>::new();
-        for row in rows {
-            groups.entry(row.provider.clone()).or_default().push(row);
-        }
-        let epoch = self.inner.usage_epoch.load(Ordering::Acquire);
-        let all_forced = self.force_usage_marked(None);
-        let results = join_all(groups.into_iter().map(|(provider, rows)| async move {
-            let force = all_forced || self.force_usage_marked(Some(&provider));
-            let reports = if force {
-                let mut reports = Vec::new();
-                for row in &rows {
-                    if let Some(report) = self.usage_report(&provider, row, context, true, cancel).await? {
-                        reports.push(report);
-                    }
-                }
-                reports
-            } else {
-                join_all(rows.iter().map(|row| self.usage_report(&provider, row, context, false, cancel)))
-                    .await
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            };
-            if force && epoch == self.inner.usage_epoch.load(Ordering::Acquire) {
-                self.store_operation(|store, _state| {
-                    store
-                        .set_cache(&format!("{USAGE_CACHE_PREFIX}{}", force_cache_key(Some(&provider))), "", 0)
-                        .map_err(|_| AuthStorageError::Storage)
-                })?;
-            }
-            Ok::<_, AuthStorageError>(reports)
-        }))
-        .await;
-        if all_forced && epoch == self.inner.usage_epoch.load(Ordering::Acquire) {
-            self.store_operation(|store, _state| {
-                store
-                    .set_cache(&format!("{USAGE_CACHE_PREFIX}{}", force_cache_key(None)), "", 0)
-                    .map_err(|_| AuthStorageError::Storage)
-            })?;
-        }
-        Ok(results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect())
     }
 
     async fn reconcile_usage_request(
@@ -2517,6 +2642,12 @@ impl AuthStorage {
             .unwrap_or_default();
         for provider in providers {
             provider.wait_for_settlement().await;
+        }
+        if let Some(source) = &self.inner.options.aggregate_usage_override {
+            source.wait_for_settlement().await;
+        }
+        if let Some(store) = &self.inner.options.usage_store {
+            store.wait_for_settlement().await;
         }
     }
     pub fn session_resolver(&self, session_id: Option<String>, base_url: Option<String>) -> Arc<SessionAuthResolver> {
@@ -3233,6 +3364,7 @@ mod tests {
             environment: if lower_keys { Arc::new(FixtureEnvironment) } else { Arc::new(EmptyEnvironment) },
             fallback: if lower_keys { Arc::new(FixtureFallback) } else { Arc::new(EmptyFallback) },
             reset_credit_client,
+            ..Default::default()
         };
         let storage = AuthStorage::new(store.clone(), None, options).unwrap();
         let oauth = Arc::new(FixtureOAuth::new(store.clone()));
@@ -3444,6 +3576,84 @@ mod tests {
                 assert_eq!(blocked.is_none(), expected_ok);
             }
         }
+
+        // Confirmed reset tail: dropping the consumer while the broker's
+        // notification is pending must not abandon local unblock settlement.
+        struct NotifyGate {
+            started: Semaphore,
+            release: Semaphore,
+            invalidated: AtomicUsize,
+        }
+        #[async_trait]
+        impl AggregateUsageSource for NotifyGate {
+            async fn fetch_usage_reports(&self) -> Result<Option<Vec<UsageReport>>, AuthStorageError> {
+                Ok(None)
+            }
+        }
+        #[async_trait]
+        impl UsageStoreHooks for NotifyGate {
+            async fn get_usage_report(
+                &self,
+                _: UsageRequest,
+                _: &CancellationToken,
+            ) -> Result<Option<UsageReport>, AuthStorageError> {
+                Ok(None)
+            }
+            fn ingest_usage_report(&self, _: &UsageRequest, _: UsageReport) -> bool {
+                false
+            }
+            fn invalidate_usage_cache(&self) {
+                self.invalidated.fetch_add(1, Ordering::AcqRel);
+            }
+            async fn notify_usage_stale(&self, _: &CancellationToken) -> Result<(), AuthStorageError> {
+                self.started.add_permits(1);
+                self.release.acquire().await.unwrap().forget();
+                Ok(())
+            }
+        }
+        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let mut http = fixture(vec![HttpReply::json(200, serde_json::json!({"code":"reset"}))]).await;
+        let transport = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+        let (mut storage, store, _, _) = setup_with_reset_client(
+            provider,
+            &[oauth("settle@fixture", now, false)],
+            Arc::new(AtomicU64::new(now as u64)),
+            false,
+            Some(transport),
+        );
+        let gate = Arc::new(NotifyGate {
+            started: Semaphore::new(0),
+            release: Semaphore::new(0),
+            invalidated: AtomicUsize::new(0),
+        });
+        Arc::get_mut(&mut storage.inner).unwrap().options.usage_store = Some(gate.clone());
+        let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+        storage.mark_block(provider, row.id, CredentialKind::OAuth, now + 60_000.0, None).await.unwrap();
+        let before = storage.generation();
+        let owner = storage.clone();
+        let consumer = tokio::spawn(async move {
+            owner
+                .redeem_reset_credit(
+                    &RedeemResetCreditOptions {
+                        target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                        credit_id: Some("settlement-credit".into()),
+                        ..Default::default()
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), gate.started.acquire()).await.unwrap().unwrap().forget();
+        assert_eq!(gate.invalidated.load(Ordering::Acquire), 1);
+        assert!(!storage.list_credential_blocks(&[row.id]).unwrap().is_empty(), "native notification precedes unblock");
+        consumer.abort();
+        let _ = consumer.await;
+        gate.release.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(2), storage.wait_for_settlement()).await.unwrap();
+        assert!(storage.list_credential_blocks(&[row.id]).unwrap().is_empty());
+        assert!(storage.generation() > before);
+        assert_eq!(http.requests.recv().await.unwrap().body.unwrap()["credit_id"], "settlement-credit");
+        assert!(http.requests.try_recv().is_err(), "confirmed POST must not be replayed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -4424,7 +4634,7 @@ mod tests {
                 );
                 first_gate.add_permits(1);
                 assert!(
-                    refresh.await.unwrap().unwrap().is_empty(),
+                    refresh.await.unwrap().unwrap().unwrap().is_empty(),
                     "manual failure cannot return a cleared last-good value"
                 );
                 cache_storage.wait_for_settlement().await;

@@ -1,17 +1,22 @@
 # Delivery roadmap
 
-**Current checkpoint, 2026-10-03 (account operations tested WIP):**
-[Account operations](evidence/auth-callers.md) add native reserve health/sticky release,
-sequential uncached credential diagnostics and dedicated saved-reset facades.
-Final Windows backend1740/0/20, fmt/Clippy/doc/inventory/build PASS;
-the existing ttf-parser advisory keeps the whole gate FAIL. The final backend
-takes457.097s with one build job after a retained pagefile/link failure.
-Independent POST/Root audit closes refreshed-identity cache invalidation.
-New public facade callers remain grouped tests; production controllers/broker,
-actual account/platform and deferred Providers remain required. No new point
-or complete surface is accepted: 28/111 started (25.2%), 35/60 limited points
-(58.3%), P0/V1 accepted, P1-P6 open, RPC27/42, full marker null. Next: complete
-usage/store hooks, broker and production health/check/reset/reserve callers.
+**Current checkpoint, 2026-10-03 (usage aggregate/store tested WIP):**
+[Usage aggregate and store evidence](evidence/usage-aggregate.md) adds native nullable source
+precedence, provider insertion/lifecycle order, local forced fanout, authoritative
+store hooks and the real HTTP broker usage adapter. The actual REPL uses its shared
+account owner for `/usage` and `/usage refresh`. Five module groups total204/0/0;
+final Windows backend1750/0/20 in745.856s; fmt/Clippy/doc/inventory/build PASS.
+The backend runner retained exit124 after its600s limit; an already-retained OS
+handle observed the all-target Cargo exit0, and only missing checks were
+supplemented. No full runtime suite was restarted.
+The existing ttf-parser advisory keeps the whole dependency gate FAIL. Independent
+Codex POST approves this bounded tested WIP only. No new point or complete surface
+is accepted:111 surfaces27 implementing/one tested/83 open/zero complete
+acceptances;60 points35 limited accepted/23 implementing/two tested. Started
+28/111=25.2%; limited35/60=58.3%; P0/V1 accepted, P1-P6 open, RPC27/42,
+full marker null. Next: complete broker snapshot/SSE/pool lifecycle and writes,
+refresher/readiness plus production reserve/check/reset/auto-reset controllers.
+Actual account/platform and deferred Provider acceptance remain required.
 
 **Current checkpoint, 2026-10-03 (builtin usage refresh tested WIP):**
 [Usage refresh evidence](evidence/usage-refresh.md) adds the shared exact-account

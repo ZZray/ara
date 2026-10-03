@@ -303,6 +303,28 @@ replayed; a known reset survives local settlement failure. The Host owns
 permission and production controller wiring. [Account-operation evidence](../evidence/auth-callers.md)
 retains the complete caller, date, account and platform gaps.
 
+Aggregate usage distinguishes unavailable (`None`) from an installed empty
+result (`Some([])`). Explicit caller source wins over the store, which wins over
+local fanout; store OAuth None is authoritative and does not fall back to a local
+provider. Only store aggregate reports reconcile blocks. Source/store callers
+cancel their individual wait; native local aggregate waits for its shared owner.
+Provider source enumeration retains stored Map lifecycle and runtime insertion
+order. Replacement keeps position; removal/re-add appends; unregistering a
+missing runtime hook is a no-op. Force refresh serializes accounts within a
+provider while independent providers may run concurrently.
+
+The HTTP broker usage adapter has a15s positive/null cache and shared
+aggregate/account flight. Epoch invalidation makes old waiters join the current
+flight; cleanup is fenced by owner identity. GET deadlines use the Host-supplied
+raw durable-ID snapshot's maximum provider account count, before pool filtering.
+Host owns URL, authentication, clock, snapshots and pool; this adapter does not
+implement snapshot/SSE lifecycle, writes or refresher/controllers. Broker-private
+wire projection preserves Native-accepted raw extension/array shapes without
+relaxing the shared typed local report contract. Confirmed reset settlement owns
+its notification/clear-block tail independently of the waiting caller's lifetime.
+See [tested usage/store evidence](../evidence/usage-aggregate.md) for scope and
+unexecuted account/platform boundaries.
+
 These are bounded implemented boundaries, not full AuthStorage parity. The
 [AuthStorage evidence](../evidence/auth-storage.md) and
 [usage refresh evidence](../evidence/usage-refresh.md) retain complete callers,

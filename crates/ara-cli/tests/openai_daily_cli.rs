@@ -962,6 +962,10 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         oversized_summary.clone(), oversized_summary,
         response_text("Summary preserves daily.txt."), response_text("Summary preserves daily.txt."),
         response_text("Cleared context."), response_text("Fresh Session."),
+        {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
+            "primary_window":{"used_percent":11,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
+        {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
+            "primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
         {"events":[],"end":"hang"}
     ]))
     .await;
@@ -1022,7 +1026,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         .stdin
         .take()
         .unwrap()
-        .write_all(b"continue\n/compact\n/compact\n/clear\ncleared turn\n/new\nfresh turn\n/exit\n")
+        .write_all(b"continue\n/compact\n/compact\n/clear\ncleared turn\n/new\nfresh turn\n/usage\n/usage\n/usage refresh\n/usage\n/exit\n")
         .await
         .unwrap();
     let resumed = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await.unwrap().unwrap();
@@ -1031,9 +1035,15 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert_eq!(continued["id"], original["id"]);
     assert!(String::from_utf8_lossy(&resumed.stderr).contains("summary persisted"));
     assert!(String::from_utf8_lossy(&resumed.stderr).contains("local adoption budget"));
+    assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("11.00% used (89.0% left)").count(), 2);
+    assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("12.00% used (88.0% left)").count(), 2);
     assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
     let requests = up.requests.lock().await;
-    assert_eq!(requests.len(), 13);
+    assert_eq!(requests.len(), 15, "warm /usage reuses the full report; explicit refresh starts one new GET");
+    for request in &requests[13..15] {
+        assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
+        assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
+    }
     for request in &requests[4..11] {
         assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
         assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
@@ -1075,7 +1085,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let denied = output(denied).await;
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
-    assert_eq!(up.served(), 13);
+    assert_eq!(up.served(), 15, "logout and rejected post-logout turn add no request after the two usage GETs");
 
     // Expired account preflight runs before the turn's --max-time deadline.
     // Its own OAuth transport timeout must settle before normal process exit;
@@ -1095,11 +1105,11 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
     cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(cancelled).await.status.code(), Some(1));
-    assert_eq!(up.served(), 14);
+    assert_eq!(up.served(), 16);
     let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
     assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
     restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(restarted).await.status.code(), Some(1));
-    assert_eq!(up.served(), 14);
+    assert_eq!(up.served(), 16, "restart must not replay the unknown refresh after the usage GETs");
 }

@@ -3,7 +3,7 @@
 #![cfg(feature = "test-fixture")]
 
 use ara_ai::{CallOptions, Context, Message, Model, StopReason, UserMessage};
-use ara_cli::auth_storage::{AuthRequestContext, AuthStorage, AuthStorageError, AuthStorageOptions};
+use ara_cli::auth_storage::{AuthRequestContext, AuthStorage, AuthStorageOptions};
 use ara_cli::auth_storage_policy::UsageReport;
 use ara_cli::codex_usage::CodexUsageProvider;
 use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
@@ -184,6 +184,7 @@ async fn usage_reports(storage: &AuthStorage) -> Vec<UsageReport> {
         .fetch_usage_reports(Some("openai-codex"), &AuthRequestContext::default(), &CancellationToken::new())
         .await
         .unwrap()
+        .expect("installed Codex usage provider")
 }
 
 fn cached_usage(path: &Path, key: &str) -> Value {
@@ -1314,7 +1315,14 @@ async fn builtin_usage_peer_unknown_deadline_and_shared_refresh_flights() {
         tokio::time::sleep(Duration::from_millis(25)).await;
         if usage_first {
             usage_cancel.cancel();
-            assert!(matches!(usage.await.unwrap(), Err(AuthStorageError::Cancelled)));
+            assert_eq!(
+                usage.await.unwrap().unwrap().expect("local aggregate returns the shared report")[0]
+                    .raw
+                    .as_ref()
+                    .unwrap()["fixtureTag"],
+                "shared",
+                "native local aggregate does not race its caller cancellation"
+            );
             let lease = request.await.unwrap().unwrap();
             assert!(matches!(lease.identity(), CredentialIdentity::Stored { id: actual, .. } if *actual == id));
             tokio::time::timeout(Duration::from_secs(3), storage.wait_for_settlement()).await.unwrap();
@@ -1322,7 +1330,7 @@ async fn builtin_usage_peer_unknown_deadline_and_shared_refresh_flights() {
         } else {
             request_cancel.cancel();
             assert!(matches!(request.await.unwrap(), Err(AuthResolveError::Cancelled)));
-            assert_eq!(usage.await.unwrap().unwrap()[0].raw.as_ref().unwrap()["fixtureTag"], "shared");
+            assert_eq!(usage.await.unwrap().unwrap().unwrap()[0].raw.as_ref().unwrap()["fixtureTag"], "shared");
         }
         assert_eq!(fields(&path, id)["access"], token);
         assert_eq!(fields(&path, id)["refresh"], "shared-rotated");

@@ -21,6 +21,9 @@ use tokio_util::sync::CancellationToken;
 
 pub struct CatalogAuthEnvironment(pub Arc<dyn ProviderEnvironment>);
 impl Environment for CatalogAuthEnvironment {
+    fn variable(&self, name: &str) -> Option<String> {
+        self.0.get(name)?.to_utf8().ok()
+    }
     fn api_key(&self, provider: &str) -> Option<EnvironmentKey> {
         get_catalog_provider_entry(&provider.into())?.env_vars.as_ref()?.iter().find_map(|name| {
             let name = name.to_utf8().ok()?;

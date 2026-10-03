@@ -62,7 +62,10 @@ def main() -> int:
     def run(name: str, command: list[str]) -> tuple[int, bytes]:
         start = time.monotonic()
         try:
-            result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, timeout=600)
+            # The Windows one-job all-target gate includes native debug links;
+            # a measured final suite took 12m22s. Keep its outer wait bounded.
+            result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+                                    timeout=900 if name == "backend" else 600)
             code, stdout, stderr = result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired as error:
             code, stdout, stderr = 124, error.stdout or b"", error.stderr or b""

@@ -283,13 +283,22 @@ impl AuthStorage {
         outcome.code = result.code;
         outcome.credit_id = Some(credit_id);
         if outcome.ok {
-            // Caller cancellation after confirmation must not prevent local
-            // settlement. Both effects are attempted, retaining upstream ok.
-            let stale = self.expire_oauth_usage_cache(provider, base_url.as_deref());
-            let clear = self
-                .database({
-                    let provider = provider.to_owned();
-                    move |store, state| {
+            // Native Promises retain this confirmed tail after a caller stops
+            // awaiting. Keep store notification followed by local unblock in
+            // an owned task, including when the Rust caller future is dropped.
+            self.inner.usage_pending.fetch_add(1, Ordering::AcqRel);
+            let owner = self.clone();
+            let provider = provider.to_owned();
+            let cancel = cancel.clone();
+            let settlement = tokio::spawn(async move {
+                let _settlement = UsageSettlement(owner.clone());
+                let stale = owner.expire_oauth_usage_cache(&provider, base_url.as_deref());
+                if let Some(hook) = &owner.inner.options.usage_store {
+                    hook.invalidate_usage_cache();
+                    let _ = hook.notify_usage_stale(&cancel).await;
+                }
+                let clear = owner
+                    .database(move |store, state| {
                         let rows = Self::load_provider(store, state, &provider)?;
                         state.assignments.clear_credential_blocks(store, &provider, matched.row.id, &rows);
                         if state.assignments.persisted_block_store_damaged() {
@@ -297,11 +306,12 @@ impl AuthStorage {
                         } else {
                             Ok(())
                         }
-                    }
-                })
-                .await;
-            self.bump_generation();
-            if stale.is_err() || clear.is_err() {
+                    })
+                    .await;
+                owner.bump_generation();
+                stale.is_err() || clear.is_err()
+            });
+            if settlement.await.unwrap_or(true) {
                 outcome.settlement_error = Some(AuthStorageError::Storage.to_string());
             }
         }

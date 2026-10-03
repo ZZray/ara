@@ -5,6 +5,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod auth_broker_usage;
 pub mod auth_storage;
 pub mod auth_storage_policy;
 pub mod auth_storage_registry;

@@ -1318,6 +1318,83 @@ async fn interruptible<F: Future>(step: F, token: &CancellationToken, interrupts
     }
 }
 
+/// Reference-host consumer of the same account owner used by the Registry and
+/// request route. Plain line output is not the native TUI/ACP usage renderer.
+/// Amount formatting follows fixed OMP slash-commands/helpers/usage-report.ts
+/// (MIT; Copyright 2025 Mario Zechner, 2025-2026 Can Bölük, 2026 Stencil Labs).
+async fn run_repl_usage(
+    factory: &ProviderFactory,
+    session_id: Option<String>,
+    refresh: bool,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    use ara_cli::auth_storage::{AuthRequestContext, FetchUsageReportsOptions};
+    use ara_cli::auth_storage_policy::UsageUnit;
+    let Some(storage) = factory.shared_account.as_ref().or(factory.account_auth.as_ref()) else {
+        eprintln!("ara: provider quota reporting is unavailable for this route");
+        return Ok(());
+    };
+    if refresh {
+        storage.invalidate_usage_cache_and_notify(None, cancel).await?;
+    }
+    let selected = factory.route.model().clone();
+    let registry = factory.registry.clone();
+    let selected_provider = selected.provider.clone();
+    let selected_url = selected.base_url.clone();
+    let options = FetchUsageReportsOptions {
+        context: AuthRequestContext { session_id, model_id: Some(selected.id.clone()), ..Default::default() },
+        base_url_resolver: Some(Arc::new(move |provider| {
+            if provider == selected_provider {
+                Some(selected_url.clone())
+            } else {
+                registry.as_ref()?.get_provider_base_url(&provider.into()).ok()??.to_utf8().ok()
+            }
+        })),
+        ..Default::default()
+    };
+    let Some(reports) = storage.fetch_usage_reports_with_options(&options, cancel).await? else {
+        eprintln!("ara: provider quota reporting is unavailable");
+        return Ok(());
+    };
+    if reports.is_empty() {
+        eprintln!("ara: no provider quota reports available; remaining quota is unknown");
+        return Ok(());
+    }
+    eprintln!("Usage");
+    for report in reports {
+        let account = report
+            .metadata
+            .as_ref()
+            .and_then(|metadata| {
+                ["email", "accountId", "projectId"].into_iter().find_map(|field| {
+                    metadata.get(field)?.as_str().filter(|value| !value.is_empty()).map(str::to_owned)
+                })
+            })
+            .unwrap_or_else(|| "account".into());
+        eprintln!("  {} — {}", sanitize_text(&report.provider), sanitize_text(&account));
+        if report.limits.is_empty() {
+            eprintln!("    no limits reported");
+        }
+        for limit in report.limits {
+            let amount = &limit.amount;
+            let used = amount.used.or_else(|| amount.used_fraction.map(|fraction| fraction * 100.0));
+            let unit = if amount.unit == UsageUnit::Percent {
+                "%".to_owned()
+            } else {
+                format!(" {}", serde_json::to_value(amount.unit)?.as_str().unwrap_or("unknown"))
+            };
+            let used = used.map(|used| format!("{used:.2}{unit} used")).unwrap_or_else(|| "unknown used".into());
+            let remaining = amount
+                .remaining_fraction
+                .or_else(|| amount.used_fraction.map(|used| (1.0 - used).max(0.0)))
+                .map(|left| format!(" ({:.1}% left)", left * 100.0))
+                .unwrap_or_default();
+            eprintln!("    {}: {used}{remaining}", sanitize_text(&limit.label));
+        }
+    }
+    Ok(())
+}
+
 /// Session ownership and route settings for REPL conversation boundaries.
 struct ReplSession<'a> {
     /// `None` under `--no-session`.
@@ -1542,12 +1619,21 @@ async fn run_repl_loop(
             "/exit" | "/quit" => break 0,
             "/help" => {
                 eprintln!(
-                    "commands: /help, /new, /clear, /compact, /exit, /shake [elide|images|thinking], /handoff [focus], /skill:<name> [arguments]"
+                    "commands: /help, /new, /clear, /compact, /exit, /usage [refresh], /shake [elide|images|thinking], /handoff [focus], /skill:<name> [arguments]"
                 );
                 for skill in session.skills {
                     eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
                 }
                 eprintln!("Ctrl+C during a turn cancels it; Ctrl+C at the prompt exits.");
+                continue;
+            }
+            "/usage" | "/usage refresh" => {
+                let token = cancel.child_token();
+                let id = sink.journal.lock().await.as_ref().map(|journal| journal.session_id().to_owned());
+                let step = run_repl_usage(session.provider_factory, id, input == "/usage refresh", &token);
+                if let Err(error) = interruptible(step, &token, &mut interrupts).await {
+                    eprintln!("ara: usage query failed ({error:#})");
+                }
                 continue;
             }
             command if command == "/compact" || command.starts_with("/compact ") => {

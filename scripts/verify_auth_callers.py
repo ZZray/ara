@@ -1,4 +1,5 @@
-"""Run native AuthStorage health/check/reset groups; --full adds one backend gate.
+"""Run native AuthStorage usage/health/check/reset groups and the reference Host;
+--full adds one backend gate.
 
 Controlled SQLite/loopback evidence does not consume a live saved reset or
 establish complete native Host controllers, Broker or account acceptance.
