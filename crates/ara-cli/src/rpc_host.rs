@@ -1784,7 +1784,7 @@ impl Host {
         journal: Option<SessionJournal>,
         header: Value,
         messages: Vec<Message>,
-        config: AgentConfig,
+        mut config: AgentConfig,
         skills: Vec<LoadedSkill>,
     ) -> Result<()> {
         // Preparation is complete and the old owned Run is joined. Commit the
@@ -1837,6 +1837,12 @@ impl Host {
         self.bash_targets.push(Arc::downgrade(&bash_target));
         *self.bash_dispatcher.current.lock().unwrap() = bash_target.clone();
         self.bash_target = bash_target;
+        let id = session.header["id"].as_str().context("Session identity is missing")?.to_owned();
+        self.sessions.provider.admit_reset_session(&config.model, Some(id.clone()), Some(id.clone()));
+        if config.model.provider == "openai-codex" {
+            config.provider =
+                self.sessions.provider.route.bind_codex_session(self.sessions.provider.client.clone(), id);
+        }
         let agent = Agent::new(config.clone(), messages);
         agent.set_steering_mode(self.agent.steering_mode());
         agent.set_follow_up_mode(self.agent.follow_up_mode());
@@ -2307,7 +2313,12 @@ impl Host {
                 }
                 self.output.response(command, Some(json!({"protocolVersion":2})), None);
             }
-            "get_state" => self.output.response(command, Some(self.state()), None),
+            "get_state" => {
+                self.sessions
+                    .provider
+                    .refresh_usage_if_stale(&self.config.model, self.session.header["id"].as_str().map(str::to_owned));
+                self.output.response(command, Some(self.state()), None);
+            }
             "get_messages" => {
                 self.output.response(command, Some(json!({"messages":*self.session.messages.lock().unwrap()})), None)
             }
@@ -2683,6 +2694,13 @@ where
     let handoff_control = Arc::new(Mutex::new(handoff::HandoffControl::default()));
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
+    if let Some(controller) = &sessions.provider.reset_controller {
+        let notices = output.clone();
+        controller.set_notice_sink(Arc::new(move |level, message| {
+            notices.frame(json!({"type":"notice","level":level,"source":"codex-auto-reset",
+                "message":super::sanitize_text(message)}));
+        }));
+    }
     let output_task = tokio::spawn(write_output(writer, output_rx, connection.clone()));
     let emitter_output = output.clone();
     let emitter: Arc<dyn Fn(WireValue) + Send + Sync> =
@@ -2760,6 +2778,9 @@ where
     output.frame(json!({"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],
         "maxFrameBytes":MAX_RPC_FRAME_BYTES,"maxReassembledFrameBytes":MAX_RPC_REASSEMBLED_BYTES}));
     host.emit_available_commands();
+    host.sessions
+        .provider
+        .refresh_usage_if_stale(&host.config.model, host.session.header["id"].as_str().map(str::to_owned));
     let (input_tx, mut input_rx) = mpsc::unbounded_channel();
     let reader_output = output.clone();
     let reader_cancel = connection.clone();
@@ -2832,6 +2853,7 @@ where
         tokio::select! {
             biased;
             _ = connection.cancelled() => {
+                if let Some(reset_host) = &host.sessions.provider.reset_host { reset_host.close(); }
                 host.abort().await;
                 host.bash_dispatcher.abort();
                 while !host.bash_dispatcher.is_empty() {
@@ -2855,6 +2877,8 @@ where
             }, if host.active.is_some() => {
                 let active = host.active.take().expect("selected active Run");
                 Box::pin(host.completed(active, result)).await;
+                host.sessions.provider.refresh_usage_if_stale(&host.config.model,
+                    host.session.header["id"].as_str().map(str::to_owned));
             }
             result = async {
                 match &mut host.maintenance {
@@ -2895,6 +2919,7 @@ where
                     None => {
                         eof = true;
                         host.input_closed = true;
+                        if let Some(reset_host) = &host.sessions.provider.reset_host { reset_host.close(); }
                         host.abort_maintenance().await;
                         if host.header_continue.take().is_some() {
                             host.finish_retry(None, Some("Gemini continuation cancelled by EOF".into()), false).await;
@@ -2909,6 +2934,12 @@ where
         }
     }
     let input_result = reader_task.await.context("RPC input task");
+    if let Some(host) = &host.sessions.provider.reset_host {
+        host.close();
+    }
+    if let Some(controller) = &host.sessions.provider.reset_controller {
+        controller.close().await;
+    }
     output.frame(json!({"type":"session_shutdown"}));
     let failed = host.bash_error.clone().or_else(|| host.session.persistence_error.lock().unwrap().clone());
     drop(host);

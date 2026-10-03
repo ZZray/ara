@@ -747,11 +747,6 @@ async fn resolve_startup_route(
     let config = load_daily_config(&path, args.models_config.is_some())?;
     let configured_provider =
         args.provider.as_deref().map(str::to_owned).or_else(|| std::env::var("ARA_PROVIDER").ok());
-    if args.mode == Mode::Rpc
-        && (args.api() == Api::OpenaiCodexResponses || configured_provider.as_deref() == Some("openai-codex"))
-    {
-        bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
-    }
     if config.is_none()
         && broker_config.is_none()
         && args.api() != Api::OpenaiCodexResponses
@@ -818,6 +813,16 @@ async fn resolve_startup_route(
     } else if configured_provider.as_deref() == Some("openai-codex") || ara_home().join("agent/auth.db").exists() {
         let codex =
             open_codex_auth(reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?).await?;
+        #[cfg(feature = "test-fixture")]
+        let reset_credit_client = std::env::var("ARA_TEST_CODEX_AUTH_BASE_URL")
+            .ok()
+            .map(|base| {
+                ara_cli::codex_usage::CodexUsageProvider::with_fixture_endpoint_resolver(Arc::new(move |canonical| {
+                    let path = reqwest::Url::parse(canonical).map(|url| url.path().to_owned()).unwrap_or_default();
+                    format!("{}{path}", base.trim_end_matches('/'))
+                }))
+            })
+            .transpose()?;
         let account = Arc::new(ara_cli::auth_storage::AuthStorage::for_codex(
             codex,
             ara_cli::auth_storage::AuthStorageOptions {
@@ -829,6 +834,8 @@ async fn resolve_startup_route(
                 environment: Arc::new(ara_cli::auth_storage_registry::CatalogAuthEnvironment(
                     host.factory.environment.clone(),
                 )),
+                #[cfg(feature = "test-fixture")]
+                reset_credit_client,
                 ..Default::default()
             },
         )?);
@@ -878,9 +885,6 @@ async fn resolve_startup_route(
     args.max_tokens = selection.generation.max_tokens;
     args.temperature = selection.generation.temperature;
     validate_route_args(args)?;
-    if args.api() == Api::OpenaiCodexResponses && args.mode == Mode::Rpc {
-        bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
-    }
     Ok(Route {
         model: selection.model.clone(),
         stream_options: StreamOptions::default(),
@@ -1398,7 +1402,11 @@ async fn run_repl_usage(
     let selected_provider = selected.provider.clone();
     let selected_url = selected.base_url.clone();
     let options = FetchUsageReportsOptions {
-        context: AuthRequestContext { session_id, model_id: Some(selected.id.clone()), ..Default::default() },
+        context: AuthRequestContext {
+            session_id: session_id.clone(),
+            model_id: Some(selected.id.clone()),
+            ..Default::default()
+        },
         base_url_resolver: Some(Arc::new(move |provider| {
             if provider == selected_provider {
                 Some(selected_url.clone())
@@ -1408,7 +1416,14 @@ async fn run_repl_usage(
         })),
         ..Default::default()
     };
-    let Some(reports) = storage.fetch_usage_reports_with_options(&options, cancel).await? else {
+    let reports = if let Some(controller) = &factory.reset_controller {
+        let mut context = factory.reset_context(&selected, session_id);
+        context.usage = options;
+        controller.fetch_usage_reports(&context, cancel).await?
+    } else {
+        storage.fetch_usage_reports_with_options(&options, cancel).await?
+    };
+    let Some(reports) = reports else {
         eprintln!("ara: provider quota reporting is unavailable");
         return Ok(());
     };
@@ -1446,6 +1461,66 @@ async fn run_repl_usage(
                 .map(|left| format!(" ({:.1}% left)", left * 100.0))
                 .unwrap_or_default();
             eprintln!("    {}: {used}{remaining}", sanitize_text(&limit.label));
+        }
+    }
+    Ok(())
+}
+
+async fn run_repl_usage_reset(
+    factory: &ProviderFactory,
+    session_id: Option<String>,
+    selector: &str,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    use ara_cli::codex_reset_controller::label;
+    let Some(controller) = &factory.reset_controller else {
+        eprintln!("ara: saved Codex resets are unavailable for this route");
+        return Ok(());
+    };
+    let context = factory.reset_context(factory.route.model(), session_id);
+    if selector.is_empty() {
+        let statuses = controller.list(&context, cancel).await?;
+        if statuses.is_empty() {
+            eprintln!("ara: no stored Codex accounts available");
+        }
+        for status in statuses {
+            let detail = if status.error.is_some() {
+                "unreachable; remaining resets unknown".to_owned()
+            } else {
+                format!("{} saved resets", status.available_count)
+            };
+            eprintln!(
+                "  {}{}: {}",
+                sanitize_text(label(&status)),
+                if status.active { " (active)" } else { "" },
+                detail
+            );
+        }
+        return Ok(());
+    }
+    let Some(result) = controller.manual(context, selector, cancel).await? else {
+        eprintln!("ara: no stored Codex account matches {}", sanitize_text(selector));
+        return Ok(());
+    };
+    let account = result.outcome.email.as_deref().or(result.outcome.account_id.as_deref()).unwrap_or("account");
+    let message = match result.outcome.code.as_str() {
+        "reset" if result.outcome.ok => "saved reset redeemed",
+        "already_redeemed" => "saved reset was already redeemed elsewhere",
+        "no_credit" => "no saved resets available",
+        "nothing_to_reset" => "nothing to reset",
+        "no_account" => "account is unavailable",
+        "account_unavailable" | "credit_list_failed" => "account or live reset list is unreachable",
+        "outcome_unknown" => "reset outcome unknown; account fenced, consume will not be replayed",
+        _ => "saved reset request was declined",
+    };
+    eprintln!("ara: {}: {message}", sanitize_text(account));
+    if result.outcome.settlement_error.is_some() {
+        if result.outcome.ok && result.outcome.code == "reset" {
+            eprintln!(
+                "ara: upstream reset is confirmed, but receipt or local quota settlement failed; automatic replay remains blocked"
+            );
+        } else {
+            eprintln!("ara: receipt or local quota settlement failed; no automatic replay is authorized");
         }
     }
     Ok(())
@@ -1637,6 +1712,8 @@ async fn run_repl_loop(
     }
     let mut turn: usize = 0;
     let code = loop {
+        let id = sink.journal.lock().await.as_ref().map(|journal| journal.session_id().to_owned());
+        session.provider_factory.refresh_usage_if_stale(model, id);
         eprint!("> ");
         let _ = std::io::stderr().flush();
         let read = tokio::task::spawn_blocking(|| {
@@ -1675,7 +1752,7 @@ async fn run_repl_loop(
             "/exit" | "/quit" => break 0,
             "/help" => {
                 eprintln!(
-                    "commands: /help, /new, /clear, /compact, /exit, /usage [refresh], /shake [elide|images|thinking], /handoff [focus], /skill:<name> [arguments]"
+                    "commands: /help, /new, /clear, /compact, /exit, /usage [refresh|reset [active|email|account]], /shake [elide|images|thinking], /handoff [focus], /skill:<name> [arguments]"
                 );
                 for skill in session.skills {
                     eprintln!("  /skill:{} — {}", sanitize_text(&skill.name), sanitize_text(&skill.description));
@@ -1689,6 +1766,16 @@ async fn run_repl_loop(
                 let step = run_repl_usage(session.provider_factory, id, input == "/usage refresh", &token);
                 if let Err(error) = interruptible(step, &token, &mut interrupts).await {
                     eprintln!("ara: usage query failed ({error:#})");
+                }
+                continue;
+            }
+            command if command == "/usage reset" || command.starts_with("/usage reset ") => {
+                let token = cancel.child_token();
+                let id = sink.journal.lock().await.as_ref().map(|journal| journal.session_id().to_owned());
+                let selector = ara_prompt::js::trim(command.trim_start_matches("/usage reset"));
+                let step = run_repl_usage_reset(session.provider_factory, id, selector, &token);
+                if let Err(error) = interruptible(step, &token, &mut interrupts).await {
+                    eprintln!("ara: saved reset query failed ({error:#}); no confirmed reset receipt returned");
                 }
                 continue;
             }
@@ -1727,10 +1814,7 @@ async fn run_repl_loop(
                     Ok(true) => {
                         let id =
                             sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
-                        provider = session
-                            .provider_factory
-                            .route
-                            .bind_codex_session(session.provider_factory.client.clone(), id);
+                        provider = session.provider_factory.bind_codex_session(id, None);
                     }
                     Ok(false) => {}
                     Err(e) => eprintln!("ara: compaction failed ({e:#}); inspect the Session receipt"),
@@ -1762,8 +1846,7 @@ async fn run_repl_loop(
                     }
                 };
                 let factory = session.provider_factory;
-                let fresh_provider =
-                    factory.route.bind_codex_session(factory.client.clone(), uuid::Uuid::now_v7().to_string());
+                let fresh_session = uuid::Uuid::now_v7().to_string();
                 let mut guard = sink.journal.lock().await;
                 if let Some(journal) = guard.as_mut()
                     && let Err(error) = journal.append_reset_boundary()
@@ -1771,6 +1854,8 @@ async fn run_repl_loop(
                     eprintln!("ara: could not clear context ({error:#}); session kept");
                     continue;
                 }
+                let logical_session = guard.as_ref().map(|journal| journal.session_id().to_owned());
+                let fresh_provider = factory.bind_codex_session(fresh_session, logical_session);
                 context.clear();
                 provider = fresh_provider;
                 system_prompt = setup.system_prompt;
@@ -1829,7 +1914,13 @@ async fn run_repl_loop(
                         .map(|j| j.header().clone())
                         .unwrap_or_else(|| ephemeral_header(session.cwd, None));
                     let id = header["id"].as_str().context("new Session has no ID")?;
-                    provider = factory.route.bind_codex_session(factory.client.clone(), id.to_owned());
+                    provider = factory.bind_codex_session(id.to_owned(), None);
+                } else {
+                    factory.admit_reset_session(
+                        model,
+                        guard.as_ref().map(|journal| journal.session_id().to_owned()),
+                        None,
+                    );
                 }
                 context.clear();
                 turn = 0;
@@ -1882,8 +1973,7 @@ async fn run_repl_loop(
             match interruptible(step, &token, &mut interrupts).await {
                 Ok(true) => {
                     let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
-                    provider =
-                        session.provider_factory.route.bind_codex_session(session.provider_factory.client.clone(), id);
+                    provider = session.provider_factory.bind_codex_session(id, None);
                 }
                 Ok(false) => {}
                 Err(error) => eprintln!("ara: handoff failed ({error:#}); inspect the Session receipt"),
@@ -1978,8 +2068,7 @@ async fn run_repl_loop(
             match interruptible(step, &token, &mut interrupts).await {
                 Ok(true) => {
                     let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
-                    provider =
-                        session.provider_factory.route.bind_codex_session(session.provider_factory.client.clone(), id);
+                    provider = session.provider_factory.bind_codex_session(id, None);
                 }
                 Ok(false) => {}
                 Err(e) => eprintln!("ara: auto-compaction failed ({e:#}); inspect the Session receipt"),
@@ -2172,11 +2261,47 @@ struct ProviderFactory {
     route: ara_cli::model_route::PreparedRoute,
     account_auth: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     shared_account: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
+    reset_controller: Option<Arc<ara_cli::codex_reset_controller::CodexResetController>>,
+    reset_host: Option<Arc<ReferenceResetHost>>,
     registry: Option<ara_cli::model_registry::ModelRegistry>,
     metadata: Option<serde_json::Value>,
 }
 
 impl ProviderFactory {
+    fn reset_context(
+        &self,
+        model: &Model,
+        session_id: Option<String>,
+    ) -> ara_cli::codex_reset_controller::CodexResetContext {
+        let mut context = ara_cli::codex_reset_controller::CodexResetContext::for_model(
+            model,
+            session_id,
+            Some(usage_base_urls(model, self.registry.clone())),
+        );
+        context.host_epoch = self.reset_host.as_ref().map(|host| host.current.lock().unwrap().epoch);
+        context
+    }
+
+    fn admit_reset_session(&self, model: &Model, logical_session: Option<String>, bound_session: Option<String>) {
+        if let Some(host) = &self.reset_host {
+            host.admit(model, logical_session, bound_session);
+        }
+    }
+
+    fn bind_codex_session(&self, session_id: String, logical_session: Option<String>) -> Arc<dyn ModelProvider> {
+        self.admit_reset_session(
+            self.route.model(),
+            logical_session.or_else(|| Some(session_id.clone())),
+            Some(session_id.clone()),
+        );
+        self.route.bind_codex_session(self.client.clone(), session_id)
+    }
+
+    fn refresh_usage_if_stale(&self, model: &Model, session_id: Option<String>) {
+        if let Some(controller) = &self.reset_controller {
+            controller.refresh_if_stale(self.reset_context(model, session_id));
+        }
+    }
     fn context_for(&self, journal: &SessionJournal) -> Result<Vec<Message>> {
         let settings = rpc_host_settings::AutoCompactionPolicy::load(&ara_home().join("agent"))?.recovery_settings()?;
         ara_cli::remote_compaction::route_context(
@@ -2225,6 +2350,23 @@ impl ProviderFactory {
             if let Some(registry) = registry.clone() { observer.with_registry(registry) } else { observer }
         });
         let usage_account = shared_account.clone();
+        let reset_host = shared_account
+            .as_ref()
+            .map(|_| Arc::new(ReferenceResetHost::new(ara_home().join("agent"), &selection.model, session_id.clone())));
+        let reset_controller = shared_account
+            .as_ref()
+            .map(|account| -> Result<_> {
+                let receipts = Arc::new(ara_cli::codex_reset_receipts::SqliteResetReceiptStore::open(
+                    ara_home().join("agent/codex-reset-operations.db"),
+                )?);
+                Ok(ara_cli::codex_reset_controller::CodexResetController::new(
+                    account.clone(),
+                    receipts,
+                    reset_host.as_ref().expect("reset Host owner").clone(),
+                    ara_cli::codex_reset_controller::CodexResetCoordinator::process_shared(),
+                ))
+            })
+            .transpose()?;
         if let ProtocolOptions::CodexResponses(options) = &mut selection.protocol {
             options.session_id = session_id.clone();
         }
@@ -2273,6 +2415,11 @@ impl ProviderFactory {
                 (Arc::new(auth), account)
             }
         };
+        let auth = if let Some(controller) = &reset_controller {
+            controller.decorate(auth, session_id, Some(usage_base_urls(&selection.model, registry.clone())))
+        } else {
+            auth
+        };
         let loop_guard_policy = configured_loop_guard_policy(selection.loop_guard_policy)?;
         let mut route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
             .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?
@@ -2285,6 +2432,8 @@ impl ProviderFactory {
             route,
             account_auth,
             shared_account: usage_account,
+            reset_controller,
+            reset_host,
             registry,
             metadata: Some(selection.metadata),
         })
@@ -2333,11 +2482,112 @@ impl ProviderFactory {
             .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
         let loop_guard_policy = configured_loop_guard_policy(route.loop_guard_policy())?;
         let route = route.with_loop_guard_policy(loop_guard_policy);
-        Ok(Self { client, route, account_auth: None, shared_account: None, registry: None, metadata: None })
+        Ok(Self {
+            client,
+            route,
+            account_auth: None,
+            shared_account: None,
+            reset_controller: None,
+            reset_host: None,
+            registry: None,
+            metadata: None,
+        })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {
         self.route.bind(self.client.clone(), None)
+    }
+}
+
+fn usage_base_urls(
+    model: &Model,
+    registry: Option<ara_cli::model_registry::ModelRegistry>,
+) -> ara_cli::auth_storage::CredentialBaseUrlResolver {
+    let (provider, url) = (model.provider.clone(), model.base_url.clone());
+    Arc::new(move |candidate| {
+        if candidate == provider {
+            Some(url.clone())
+        } else {
+            registry.as_ref()?.get_provider_base_url(&candidate.into()).ok()??.to_utf8().ok()
+        }
+    })
+}
+
+struct ReferenceResetState {
+    epoch: u64,
+    provider: String,
+    model_id: String,
+    session_ids: Vec<Option<String>>,
+    closed: bool,
+}
+
+struct ReferenceResetHost {
+    agent_dir: PathBuf,
+    current: std::sync::Mutex<ReferenceResetState>,
+}
+
+impl ReferenceResetHost {
+    fn new(agent_dir: PathBuf, model: &Model, session: Option<String>) -> Self {
+        Self {
+            agent_dir,
+            current: std::sync::Mutex::new(ReferenceResetState {
+                epoch: 1,
+                provider: model.provider.clone(),
+                model_id: model.id.clone(),
+                session_ids: vec![session],
+                closed: false,
+            }),
+        }
+    }
+
+    fn admit(&self, model: &Model, logical_session: Option<String>, bound_session: Option<String>) {
+        let mut state = self.current.lock().unwrap();
+        if state.closed {
+            return;
+        }
+        state.epoch = state.epoch.wrapping_add(1);
+        state.provider = model.provider.clone();
+        state.model_id = model.id.clone();
+        state.session_ids = vec![logical_session, bound_session];
+    }
+
+    fn close(&self) {
+        self.current.lock().unwrap().closed = true;
+    }
+}
+
+impl Drop for ProviderFactory {
+    fn drop(&mut self) {
+        if let Some(host) = &self.reset_host {
+            host.close();
+        }
+    }
+}
+#[async_trait]
+impl ara_cli::codex_reset_controller::CodexResetHost for ReferenceResetHost {
+    fn settings(&self) -> std::result::Result<ara_cli::codex_auto_reset::CodexResetSettings, String> {
+        rpc_host_settings::CodexResetPolicy::load(&self.agent_dir)
+            .map(|policy| policy.settings())
+            .map_err(|error| error.to_string())
+    }
+    fn persist_mode(&self, mode: ara_cli::codex_auto_reset::CodexAutoRedeemMode) -> std::result::Result<(), String> {
+        rpc_host_settings::CodexResetPolicy::load(&self.agent_dir)
+            .and_then(|mut policy| policy.set_mode(mode))
+            .map_err(|error| error.to_string())
+    }
+    fn notice(&self, level: &str, message: &str) {
+        eprintln!("ara: {level}: {}", sanitize_text(message));
+    }
+    fn epoch(&self) -> Option<u64> {
+        Some(self.current.lock().unwrap().epoch)
+    }
+    fn is_current(&self, context: &ara_cli::codex_reset_controller::CodexResetContext) -> bool {
+        let state = self.current.lock().unwrap();
+        !state.closed
+            && context.host_epoch == Some(state.epoch)
+            && context.provider == state.provider
+            && context.model_id == state.model_id
+            && state.session_ids.contains(&context.usage.context.session_id)
     }
 }
 
@@ -2471,6 +2721,7 @@ async fn run(args: Args) -> Result<i32> {
     let mut account_auth = None;
     let registry_cancel = CancellationToken::new();
     let result = run_inner(args, &mut account_auth, &registry_cancel).await;
+    ara_cli::codex_reset_controller::CodexResetCoordinator::process_shared().close().await;
     registry_cancel.cancel();
     // Normal error/deadline/first-interrupt exits must finish any dispatched
     // refresh settlement before main shuts down the runtime. Hard process
@@ -2804,7 +3055,7 @@ async fn run_inner(
         match run_compaction(&args, &config, &provider_factory, &mut context, &sink, &cancel, false).await {
             Ok(true) => {
                 let id = sink.journal.lock().await.as_ref().context("Session unavailable")?.session_id().to_owned();
-                provider = provider_factory.route.bind_codex_session(provider_factory.client.clone(), id);
+                provider = provider_factory.bind_codex_session(id, None);
             }
             Ok(false) => {}
             Err(e) => eprintln!("ara: auto-compaction failed ({e:#}); inspect the Session receipt"),

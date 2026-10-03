@@ -140,6 +140,12 @@ pub struct RemoteAuthCredentialStore {
     inner: Arc<RemoteInner>,
 }
 
+impl RemoteAuthCredentialStore {
+    pub(crate) fn reset_receipt_authority(&self) -> String {
+        self.inner.client.reset_receipt_authority()
+    }
+}
+
 struct RemoteInner {
     client: AuthBrokerClient,
     usage: AuthBrokerUsageStore,

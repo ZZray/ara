@@ -971,7 +971,7 @@ async fn discovered_registry_model_cold_tools_hot_cache_and_config_replacement_k
 }
 
 #[tokio::test]
-async fn unsupported_selected_configuration_fails_before_journal_or_model_request() {
+async fn unsupported_configuration_and_supported_codex_rpc_startup_keep_their_actual_contracts() {
     let host = Host::new();
     let up = upstream(json!([])).await;
     host.config("openai-completions", &up.base_url(), "none");
@@ -988,14 +988,11 @@ async fn unsupported_selected_configuration_fails_before_journal_or_model_reques
     assert_eq!(up.served(), 0);
     host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
     let rpc = output(host.command("openai-codex", &["--mode", "rpc"])).await;
-    assert_eq!(rpc.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&rpc.stderr).contains("supports print and REPL"),
-        "{}",
-        String::from_utf8_lossy(&rpc.stderr)
-    );
-    assert!(!host.sessions.exists());
-    assert!(!host.home.path().join("agent/auth.db").exists());
+    let frames = success(&rpc).lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+    assert!(frames.iter().any(|frame| frame["type"] == "ready"));
+    assert_eq!(frames.iter().filter(|frame| frame["type"] == "session_shutdown").count(), 1);
+    let store = ara_cli::credential_store::SqliteCredentialStore::open(host.home.path().join("agent/auth.db")).unwrap();
+    assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     assert_eq!(up.served(), 0);
 }
 
@@ -1069,11 +1066,17 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         oversized_summary.clone(), oversized_summary,
         response_text("Summary preserves daily.txt."), response_text("Summary preserves daily.txt."),
         response_text("Cleared context."), response_text("Fresh Session."),
+        {"events":[],"end":"hang"}
+    ]))
+    .await;
+    // A valid stored grant lets usage and Responses use independent fixture
+    // routes. Background usage may interleave with model/summary calls without
+    // consuming an ordered model response. Login/expired refresh still use up.
+    let usage = upstream(json!([
         {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
             "primary_window":{"used_percent":11,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
         {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
             "primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
-        {"events":[],"end":"hang"}
     ]))
     .await;
     // Login/logout must succeed independently of broken model configuration.
@@ -1113,7 +1116,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     // Native remote endpoints have their own grouped Host fixture.
     std::fs::write(host.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
     let mut first = host.command("openai-codex", &["--mode", "json", "--tools", "write", "write daily.txt"]);
-    first.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+    first.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
     let first = success(&output(first).await);
     let original: Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
     let session = host.session();
@@ -1121,7 +1124,7 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
         "openai-codex",
         &["--mode", "json", "--resume", session.to_str().unwrap(), "--repl", "--compact-keep-tokens", "0"],
     );
-    resumed.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+    resumed.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
     let mut child = tokio::process::Command::from(resumed)
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -1146,11 +1149,18 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("12.00% used (88.0% left)").count(), 2);
     assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
     let requests = up.requests.lock().await;
-    assert_eq!(requests.len(), 15, "warm /usage reuses the full report; explicit refresh starts one new GET");
-    for request in &requests[13..15] {
+    assert_eq!(requests.len(), 13, "background usage never consumes an auth/model/summary fixture response");
+    let usage_requests = usage.requests.lock().await;
+    assert_eq!(
+        usage_requests.len(),
+        2,
+        "warm /usage reuses the background full report; explicit refresh starts one new GET"
+    );
+    for request in usage_requests.iter() {
         assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
         assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
     }
+    drop(usage_requests);
     for request in &requests[4..11] {
         assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
         assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
@@ -1192,7 +1202,8 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let denied = output(denied).await;
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
-    assert_eq!(up.served(), 15, "logout and rejected post-logout turn add no request after the two usage GETs");
+    assert_eq!(up.served(), 13, "logout and rejected post-logout turn add no auth/model request");
+    assert_eq!(usage.served(), 2, "logout and rejection add no usage GET");
 
     // Expired account preflight runs before the turn's --max-time deadline.
     // Its own OAuth transport timeout must settle before normal process exit;
@@ -1212,11 +1223,12 @@ async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_wo
     let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
     cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(cancelled).await.status.code(), Some(1));
-    assert_eq!(up.served(), 16);
+    assert_eq!(up.served(), 14);
     let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
     assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
     restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
     assert_eq!(output(restarted).await.status.code(), Some(1));
-    assert_eq!(up.served(), 16, "restart must not replay the unknown refresh after the usage GETs");
+    assert_eq!(up.served(), 14, "restart must not replay the unknown refresh");
+    assert_eq!(usage.served(), 2);
 }

@@ -396,3 +396,40 @@ Local header ingestion preserves prior reports and logical expiry rather than
 claiming a fresh full probe. Store override/delegate/aggregate hooks and the
 existing report-invalidation stale-retention difference remain required work.
 See [bounded source and executed header evidence](../evidence/usage-headers.md).
+
+### Saved-reset operation and Host admission ownership
+
+**Decision, 2026-10-03 (bounded WIP; full Native callers remain required):**
+saved-reset plans are suggestions; the Host owns consent, current Session/model
+identity, settings, receipt location and process coordination. Default unset
+remains unset in a headless Host. The Core's request-auth port exposes only a
+confirmed-receipt retry capability and owns no product state or permanent timer.
+
+An observed consume first persists Pending with its exact UUID, credit and actual
+credential row. Scope is a digest of the actual credential authority, Provider
+and canonical consume endpoint. An SQLite Immediate transaction atomically
+fences unresolved logical accounts across independent connections. Same-scope
+row aliases preserve fences when refresh fills accountId; same-scope email
+aliases survive row replacement only if at least one accountId is absent.
+Unknown/Pending survive restart and fresh balance data cannot authorize replay.
+No bearer or raw upstream body is stored in these separate Host receipts.
+
+Positive upstream observation and durable/local settlement are different facts.
+The observed facade confirms a reset only from 2xx with the original parsed
+reset code. A failed journal finish leaves Pending, reports confirmed upstream
+observation separately, and grants no retry. AuthStorage owns admitted consume
+and settlement after caller cancellation. The old facade retains its original
+Native-compatible projection.
+
+Automatic admission rechecks settings and current Host epoch after preparation
+and before POST. Reference Session adoption/rebinding advances the epoch; close
+revokes it. A quota caller rechecks current identity before and after lease
+resolution even when its shared consume has already settled. Cancellation or
+revocation prevents model retry and does not cancel the owned external operation.
+Blocked/sweep synchronization is scoped; an already active sweep is settled
+before a blocked pass can spend again.
+
+These are explicit no-replay adaptations and bounded pre-output consumers,
+not full Native reset parity. Post-visible-output recovery, full Settings/UI,
+TUI/ACP and other callers remain required; see the
+[source, differences and execution evidence](../evidence/codex-reset-controllers.md).

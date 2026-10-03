@@ -11,4 +11,9 @@ This index is the entry point for durable decisions in the new Rust repository. 
 - [Product integration](integrations.md): AI HandWave, Lantern/Paseo, Lumen, and future hosts.
 - [Verification boundary](verification.md): deterministic tests, real tasks, CAS/OpenRouter trials, audit, and acceptance.
 
+Saved-reset consent, durable operation identity, scoped Unknown fences and
+current-Host retry admission are documented in
+[Core ownership and host boundary](architecture.md#saved-reset-operation-and-host-admission-ownership),
+with [bounded source and execution evidence](../evidence/codex-reset-controllers.md).
+
 Use [the roadmap](../roadmap.md) for planned work, [the feature ledger](../upstream/feature-ledger.md) for per-item implementation state, and `docs/evidence/` for actual test receipts. Do not copy transient progress or machine-specific secrets into this knowledge base.

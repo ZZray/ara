@@ -961,6 +961,414 @@ async fn native_auth_refresh_rotation_cycles_quota_and_wire_retry_family() {
     }
 }
 
+// Actual HTTP adapter requests through the trusted Host reset hook. These
+// manually authored receipts prove request admission only; saved-credit
+// selection, consume transport and durable fences have their own Host tests.
+#[tokio::test]
+async fn quota_reset_receipt_sibling_cycle_budget_cancellation_and_replay_veto_family() {
+    use ara_cli::codex_reset_receipts::{ResetOperationReceipt, ResetReceiptCode, ResetReceiptState};
+    use std::collections::VecDeque;
+    use tokio::sync::Semaphore;
+
+    struct Auth {
+        initial: RequestAuthLease,
+        siblings: Mutex<VecDeque<Option<RequestAuthLease>>>,
+        retries: Mutex<Vec<(CredentialIdentity, AuthRetryAction, RequestAuthFailureKind)>>,
+        reset_calls: AtomicUsize,
+        resolutions: AtomicUsize,
+        restored: RequestAuthLease,
+        receipt: Option<ResetOperationReceipt>,
+        hook_error: bool,
+        gate: Option<(Arc<Semaphore>, Arc<Semaphore>)>,
+    }
+    #[async_trait]
+    impl RequestAuthResolver for Auth {
+        async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+            self.resolutions.fetch_add(1, Ordering::SeqCst);
+            Ok(self.initial.clone())
+        }
+        fn supports_auth_retry(&self) -> bool {
+            true
+        }
+        async fn retry(
+            &self,
+            _: &Model,
+            failed: &RequestAuthLease,
+            failure: &RequestAuthFailure,
+            action: AuthRetryAction,
+            _: &CancellationToken,
+        ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+            self.retries.lock().unwrap().push((failed.identity().clone(), action, failure.kind));
+            Ok(self.siblings.lock().unwrap().pop_front().flatten())
+        }
+        async fn quota_reset(
+            &self,
+            _: &Model,
+            _: &RequestAuthLease,
+            failure: &RequestAuthFailure,
+            _: &CancellationToken,
+        ) -> Result<Option<QuotaResetReplay>, AuthResolveError> {
+            assert_eq!(failure.kind, RequestAuthFailureKind::Quota);
+            self.reset_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some((entered, release)) = &self.gate {
+                entered.add_permits(1);
+                release.acquire().await.unwrap().forget();
+            }
+            if self.hook_error {
+                return Err(AuthResolveError::Refresh);
+            }
+            Ok(self
+                .receipt
+                .as_ref()
+                .and_then(|receipt| QuotaResetReplay::from_confirmed(self.restored.clone(), receipt)))
+        }
+    }
+    let lease = |id, key: &str| RequestAuthLease::new(CredentialIdentity::Stored { id, revision: 0 }, Some(key.into()));
+    let receipt = |state, code| ResetOperationReceipt {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        account_key: "fixture-account".into(),
+        credential_id: 1,
+        account_id: Some("fixture-account".into()),
+        email: Some("fixture@example.com".into()),
+        credit_id: "fixture-credit".into(),
+        endpoint_fingerprint: "fixture-endpoint-fingerprint".into(),
+        created_at: 1_700_000_040_000.0,
+        updated_at: 1_700_000_040_001.0,
+        state,
+        code,
+    };
+    let quota = || json!({"status":400,"body":json!({"error":{"code":"insufficient_quota","message":"insufficient_quota: quota exceeded"}}).to_string()});
+    let confirmed = || Some(receipt(ResetReceiptState::Known, ResetReceiptCode::Reset));
+    struct Case {
+        name: &'static str,
+        responses: Vec<Value>,
+        siblings: Vec<Option<RequestAuthLease>>,
+        receipt: Option<ResetOperationReceipt>,
+        restored_row: i64,
+        hook_error: bool,
+        rows: Vec<i64>,
+        hooks: usize,
+        end: StopReason,
+    }
+    let mut cases = vec![
+        Case {
+            name: "usable sibling precedes reset",
+            responses: vec![quota(), chat("sibling")],
+            siblings: vec![Some(lease(2, "BB"))],
+            receipt: confirmed(),
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1, 2],
+            hooks: 0,
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "confirmed reset admits the exact restored row with a seen bearer",
+            responses: vec![quota(), chat("restored")],
+            siblings: vec![],
+            receipt: confirmed(),
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1, 1],
+            hooks: 1,
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "confirmed same-bearer exception is used once",
+            responses: vec![quota(), quota(), chat("unreachable")],
+            siblings: vec![],
+            receipt: confirmed(),
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1, 1],
+            hooks: 1,
+            end: StopReason::Error,
+        },
+        Case {
+            name: "reset preserves earlier seen sibling bearers",
+            responses: vec![quota(), quota(), quota(), chat("unreachable")],
+            siblings: vec![Some(lease(2, "BB")), None, Some(lease(2, "BB"))],
+            receipt: confirmed(),
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1, 2, 1],
+            hooks: 1,
+            end: StopReason::Error,
+        },
+        Case {
+            name: "ordinary repeated bearer is not a reset acknowledgement",
+            responses: vec![quota(), chat("unreachable")],
+            siblings: vec![Some(lease(1, "A"))],
+            receipt: None,
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1],
+            hooks: 1,
+            end: StopReason::Error,
+        },
+        Case {
+            name: "hook error retains the original provider quota rejection",
+            responses: vec![quota(), chat("unreachable")],
+            siblings: vec![],
+            receipt: confirmed(),
+            restored_row: 1,
+            hook_error: true,
+            rows: vec![1],
+            hooks: 1,
+            end: StopReason::Error,
+        },
+        Case {
+            name: "wrong returned row cannot use a seen bearer",
+            responses: vec![quota(), chat("unreachable")],
+            siblings: vec![],
+            receipt: confirmed(),
+            restored_row: 2,
+            hook_error: false,
+            rows: vec![1],
+            hooks: 1,
+            end: StopReason::Error,
+        },
+    ];
+    for (name, state, code) in [
+        ("already_redeemed is not a confirmed reset", ResetReceiptState::Known, ResetReceiptCode::AlreadyRedeemed),
+        ("no_credit is not a confirmed reset", ResetReceiptState::Known, ResetReceiptCode::NoCredit),
+        ("nothing_to_reset is not a confirmed reset", ResetReceiptState::Known, ResetReceiptCode::NothingToReset),
+        ("Unknown cannot admit a replay", ResetReceiptState::Unknown, ResetReceiptCode::Unknown),
+        ("Pending cannot admit a replay", ResetReceiptState::Pending, ResetReceiptCode::Pending),
+    ] {
+        cases.push(Case {
+            name,
+            responses: vec![quota(), chat("unreachable")],
+            siblings: vec![],
+            receipt: Some(receipt(state, code)),
+            restored_row: 1,
+            hook_error: false,
+            rows: vec![1],
+            hooks: 1,
+            end: StopReason::Error,
+        });
+    }
+    let mut wrong_receipt = receipt(ResetReceiptState::Known, ResetReceiptCode::Reset);
+    wrong_receipt.credential_id = 2;
+    cases.push(Case {
+        name: "wrong confirmed receipt row cannot use a seen bearer",
+        responses: vec![quota(), chat("unreachable")],
+        siblings: vec![],
+        receipt: Some(wrong_receipt),
+        restored_row: 1,
+        hook_error: false,
+        rows: vec![1],
+        hooks: 1,
+        end: StopReason::Error,
+    });
+    let mut invalid_uuid = receipt(ResetReceiptState::Known, ResetReceiptCode::Reset);
+    invalid_uuid.request_id = "not-a-request-uuid".into();
+    cases.push(Case {
+        name: "missing request identity is not confirmation",
+        responses: vec![quota(), chat("unreachable")],
+        siblings: vec![],
+        receipt: Some(invalid_uuid),
+        restored_row: 1,
+        hook_error: false,
+        rows: vec![1],
+        hooks: 1,
+        end: StopReason::Error,
+    });
+    let mut capped = (0..64).map(|_| quota()).collect::<Vec<_>>();
+    capped.push(chat("unreachable"));
+    cases.push(Case {
+        name: "MAX64 exhaustion never calls reset",
+        responses: capped.clone(),
+        siblings: (2..=65).map(|id| Some(lease(id, &format!("synthetic-key-{id}")))).collect(),
+        receipt: confirmed(),
+        restored_row: 1,
+        hook_error: false,
+        rows: (1..=64).collect(),
+        hooks: 0,
+        end: StopReason::Error,
+    });
+    let reset_then_siblings =
+        std::iter::once(None).chain((2..=64).map(|id| Some(lease(id, &format!("synthetic-key-{id}"))))).collect();
+    let reset_budget_rows = [1, 1].into_iter().chain(2..=63).collect();
+    cases.push(Case {
+        name: "confirmed reset consumes the existing MAX64 budget",
+        responses: capped,
+        siblings: reset_then_siblings,
+        receipt: confirmed(),
+        restored_row: 1,
+        hook_error: false,
+        rows: reset_budget_rows,
+        hooks: 1,
+        end: StopReason::Error,
+    });
+    for case in cases {
+        let wire = server(case.responses).await;
+        let model = model("openai-completions", "openai-codex", wire.base_url());
+        let auth = Arc::new(Auth {
+            initial: lease(1, "A"),
+            siblings: Mutex::new(case.siblings.into()),
+            retries: Mutex::new(Vec::new()),
+            reset_calls: AtomicUsize::new(0),
+            resolutions: AtomicUsize::new(0),
+            restored: lease(case.restored_row, "A"),
+            receipt: case.receipt,
+            hook_error: case.hook_error,
+            gate: None,
+        });
+        let observer = Arc::new(Observer::default());
+        let provider = PreparedRoute::new(model.clone(), protocol(&model.api), auth.clone(), 43)
+            .unwrap()
+            .bind(reqwest::Client::new(), Some(observer.clone()));
+        let result = collect(provider.stream(&model, &context(), CallOptions::default())).await;
+        assert_eq!(result.stop_reason, case.end, "{}", case.name);
+        assert_eq!(wire.served(), case.rows.len(), "{}", case.name);
+        assert_eq!(auth.resolutions.load(Ordering::SeqCst), 1, "{}", case.name);
+        assert_eq!(auth.reset_calls.load(Ordering::SeqCst), case.hooks, "{}", case.name);
+        let started = observer.started.lock().unwrap().clone();
+        let rows = started
+            .iter()
+            .map(|request| match request.credential {
+                CredentialIdentity::Stored { id, .. } => id,
+                _ => panic!("stored Host row"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows, case.rows, "{}", case.name);
+        assert_eq!(started.len(), observer.settled.lock().unwrap().len(), "{}", case.name);
+        assert!(
+            auth.retries
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, action, kind)| *action == AuthRetryAction::RotateSibling
+                    && *kind == RequestAuthFailureKind::Quota),
+            "{}",
+            case.name
+        );
+        let requests = wire.requests.lock().await;
+        for request in requests.iter() {
+            assert_eq!(request["body"], requests[0]["body"], "{}", case.name);
+        }
+        if case.name == "confirmed reset admits the exact restored row with a seen bearer" {
+            assert_eq!(requests[0]["headers"]["authorization"], requests[1]["headers"]["authorization"]);
+            assert_ne!(started[0].call_id, started[1].call_id);
+        }
+        if result.stop_reason == StopReason::Error {
+            assert_eq!(result.error_status, Some(400), "{}", case.name);
+            assert!(result.error_message.as_deref().unwrap().contains("quota exceeded"), "{}", case.name);
+            let evidence = result.failure_evidence.as_ref().unwrap();
+            assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Http);
+            assert!(
+                evidence.replay_blocked && evidence.same_route_blocked,
+                "real Completions UsageAdmission facts remain intact"
+            );
+            assert_eq!(evidence.context_recovery, Some(ara_ai::ContextRecoveryEvidence::UsageAdmission));
+        }
+    }
+
+    // A Host consume already started during cancellation must settle, then the
+    // caller receives Aborted. Even a confirmed receipt cannot dispatch again.
+    let wire = server(vec![quota(), chat("must not dispatch after cancellation")]).await;
+    let prepared_model = model("openai-completions", "openai-codex", wire.base_url());
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let auth = Arc::new(Auth {
+        initial: lease(1, "A"),
+        siblings: Mutex::new(VecDeque::new()),
+        retries: Mutex::new(Vec::new()),
+        reset_calls: AtomicUsize::new(0),
+        resolutions: AtomicUsize::new(0),
+        restored: lease(1, "A"),
+        receipt: confirmed(),
+        hook_error: false,
+        gate: Some((entered.clone(), release.clone())),
+    });
+    let observer = Arc::new(Observer::default());
+    let provider = PreparedRoute::new(prepared_model.clone(), protocol(&prepared_model.api), auth.clone(), 43)
+        .unwrap()
+        .bind(reqwest::Client::new(), Some(observer.clone()));
+    let caller = CancellationToken::new();
+    let stream =
+        provider.stream(&prepared_model, &context(), CallOptions { cancel: caller.clone(), ..Default::default() });
+    tokio::time::timeout(Duration::from_secs(2), entered.acquire()).await.unwrap().unwrap().forget();
+    caller.cancel();
+    release.add_permits(1);
+    assert_eq!(collect(stream).await.stop_reason, StopReason::Aborted);
+    assert_eq!(auth.reset_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(wire.served(), 1);
+    assert_eq!(observer.started.lock().unwrap().len(), 1);
+
+    // Visible text/tool fragments, an untyped stream failure and a failed
+    // post-success callback each veto the hook before any confirmation matters.
+    for (name, scripted, transport_callback, fail_settle) in [
+        (
+            "visible text then quota",
+            json!({"events":[{"data":{"choices":[{"delta":{"content":"partial retained"}}]}},{"data":{"error":{"code":400,"message":"insufficient_quota: quota exceeded"}}}]}),
+            false,
+            false,
+        ),
+        (
+            "partial tool then quota",
+            json!({"events":[{"data":{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_partial","type":"function","function":{"name":"write_fixture","arguments":"{"}}]}}]}},{"data":{"error":{"code":400,"message":"insufficient_quota: quota exceeded"}}}]}),
+            false,
+            false,
+        ),
+        (
+            "statusless quota text does not prove a rejected POST",
+            json!({"events":[{"data":{"error":"usage limit exceeded; effect unknown"}}]}),
+            false,
+            false,
+        ),
+        ("unknown successful-POST callback effect", chat("unused"), true, false),
+        ("failed local settlement veto", quota(), false, true),
+    ] {
+        let wire = server(vec![scripted, chat("unreachable replay")]).await;
+        let model = model("openai-completions", "openai-codex", wire.base_url());
+        let auth = Arc::new(Auth {
+            initial: lease(1, "A"),
+            siblings: Mutex::new(VecDeque::new()),
+            retries: Mutex::new(Vec::new()),
+            reset_calls: AtomicUsize::new(0),
+            resolutions: AtomicUsize::new(0),
+            restored: lease(1, "A"),
+            receipt: confirmed(),
+            hook_error: false,
+            gate: None,
+        });
+        let observer = Arc::new(Observer { fail_settle, ..Default::default() });
+        let provider = PreparedRoute::new(model.clone(), protocol(&model.api), auth.clone(), 43)
+            .unwrap()
+            .bind(reqwest::Client::new(), Some(observer.clone()));
+        let callback = transport_callback.then(|| {
+            ara_ai::ProviderResponseCallback::new(|_, _| {
+                Box::pin(async {
+                    Err(ara_ai::ProviderError::Transport("usage limit text; successful POST outcome unknown".into()))
+                })
+            })
+        });
+        let result =
+            collect(provider.stream(&model, &context(), CallOptions { on_response: callback, ..Default::default() }))
+                .await;
+        assert_eq!(result.stop_reason, StopReason::Error, "{name}");
+        assert_eq!(wire.served(), 1, "{name}");
+        assert_eq!(auth.reset_calls.load(Ordering::SeqCst), 0, "{name}");
+        assert!(auth.retries.lock().unwrap().is_empty(), "{name}");
+        assert_eq!(observer.started.lock().unwrap().len(), 1, "{name}");
+        if name == "visible text then quota" {
+            assert_eq!(result.text(), "partial retained");
+        }
+        if name == "partial tool then quota" {
+            assert!(!result.content.is_empty());
+        }
+        if transport_callback {
+            // notify_provider_response turns any callback failure following a
+            // successful POST into Config; callback text is not wire evidence.
+            let evidence = result.failure_evidence.unwrap();
+            assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Config);
+            assert!(evidence.replay_blocked && evidence.same_route_blocked);
+        }
+    }
+}
+
 #[tokio::test]
 async fn configured_key_suppresses_oauth_selection_and_account_identity() {
     use ara_cli::config_request_auth::{ConfigRequestAuth, ConfigRequestAuthSpec};

@@ -475,6 +475,17 @@ impl SqliteCredentialStore {
         self.conn.as_ref().context("credential store is closed")
     }
 
+    /// Internal reset-receipt namespace only; callers hash it before storage.
+    /// Disk owners remain stable across restart. An in-memory owner has no
+    /// durable credential authority and is isolated for its process lifetime.
+    pub(crate) fn reset_receipt_authority(&self) -> Result<String> {
+        let path = self.db()?.path().filter(|path| !path.is_empty());
+        match path {
+            Some(path) => Ok(format!("local:{}", std::fs::canonicalize(path)?.to_string_lossy())),
+            None => Ok(format!("memory:{self:p}")),
+        }
+    }
+
     pub fn revision(&self) -> Result<i64> {
         Ok(self.db()?.query_row("SELECT revision FROM auth_change_revision WHERE id=1", [], |r| r.get(0))?)
     }

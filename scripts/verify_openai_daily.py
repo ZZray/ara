@@ -94,6 +94,8 @@ def main() -> int:
     for target in sorted({target for _, target in selected.values()}):
         if target == "@lib":
             compile_command.append("--lib")
+        elif target.startswith("@bin:"):
+            compile_command.extend(("--bin", target.removeprefix("@bin:")))
         else:
             compile_command.extend(("--test", target))
     compile_command.extend(("--all-features", "--locked", "--no-run", "--message-format=json"))
@@ -107,7 +109,8 @@ def main() -> int:
             message = json.loads(line)
             if message.get("reason") == "compiler-artifact" and message.get("executable") and message.get("profile", {}).get("test"):
                 kind = message["target"]["kind"]
-                target = "@lib" if "lib" in kind else message["target"]["name"]
+                target = "@lib" if "lib" in kind else (
+                    "@bin:" + message["target"]["name"] if "bin" in kind else message["target"]["name"])
                 binaries[(package_names[message["package_id"]], target)] = message["executable"]
         for module, (package, target) in selected.items():
             if (package, target) not in binaries:

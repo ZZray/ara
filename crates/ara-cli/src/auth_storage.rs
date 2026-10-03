@@ -94,7 +94,7 @@ pub use diagnostics::{
 pub use health::{ModelUsageAccountHealth, ModelUsageHealth, ModelUsageHealthOptions, ModelUsageHealthState};
 pub use resets::{
     ListResetCreditsOptions, RedeemResetCreditOptions, ResetCreditAccountStatus, ResetCreditRedeemOutcome,
-    ResetCreditTarget,
+    ResetCreditTarget, ResetRedemption,
 };
 pub use usage::FetchUsageReportsOptions;
 
@@ -3714,6 +3714,378 @@ mod tests {
             CredentialIdentity::Stored { id, .. } => *id,
             _ => panic!("expected stored identity"),
         }
+    }
+
+    #[tokio::test]
+    async fn saved_reset_observed_wire_classification_and_persistent_fence_family() {
+        use crate::codex_reset_receipts::{ResetReceiptState, ResetReceiptStore, SqliteResetReceiptStore};
+        use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+        let provider = "openai-codex";
+        let cases = [
+            (HttpReply::json(200, serde_json::json!({"code":"reset"})), true, "reset"),
+            (HttpReply::json(202, serde_json::json!({"code":"reset"})), true, "reset"),
+            (HttpReply::json(200, serde_json::json!({"code":"already_redeemed"})), false, "already_redeemed"),
+            (HttpReply::json(404, serde_json::json!({"code":"no_credit"})), false, "no_credit"),
+            (HttpReply::json(200, serde_json::json!({"code":"nothing_to_reset"})), false, "nothing_to_reset"),
+            (HttpReply::json(400, serde_json::json!({"code":"reset"})), false, "outcome_unknown"),
+            (HttpReply::json(401, serde_json::json!({"code":"reset"})), false, "outcome_unknown"),
+            (HttpReply::json(403, serde_json::json!({"code":"reset"})), false, "outcome_unknown"),
+            (HttpReply::json(429, serde_json::json!({"code":"reset"})), false, "outcome_unknown"),
+            (HttpReply::json(500, serde_json::json!({"code":"reset"})), false, "outcome_unknown"),
+            (
+                HttpReply::json(200, serde_json::json!({"unrecognized":"private-response-marker"})),
+                false,
+                "outcome_unknown",
+            ),
+            (HttpReply::json(200, serde_json::json!({"code":"future_business_code"})), false, "outcome_unknown"),
+            (
+                HttpReply { status: 200, body: "not JSON".into(), location: None, delay: Duration::ZERO },
+                false,
+                "outcome_unknown",
+            ),
+        ];
+        for (reply, expected_ok, expected_code) in cases {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let clock = Arc::new(AtomicU64::new(now as u64));
+            let mut http = fixture(vec![reply]).await;
+            let (storage, store, _, _) = setup_with_reset_client(
+                provider,
+                &[oauth("observed@fixture", now, false)],
+                clock.clone(),
+                false,
+                Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))),
+            );
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            storage.mark_block(provider, row.id, CredentialKind::OAuth, now + 7_200_000.0, None).await.unwrap();
+            let temporary = tempfile::tempdir().unwrap();
+            let path = temporary.path().join("operations.db");
+            let journal = Arc::new(SqliteResetReceiptStore::open(&path).unwrap());
+            let mut options = RedeemResetCreditOptions {
+                target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                credit_id: Some("exact-credit".into()),
+                ..Default::default()
+            };
+            let result = storage
+                .redeem_reset_credit_observed(&options, journal.clone(), &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!((result.outcome.ok, result.outcome.code.as_str()), (expected_ok, expected_code));
+            let receipt = result.operation.unwrap();
+            let wire = http.requests.recv().await.unwrap();
+            assert_eq!(wire.method, "POST");
+            assert_eq!(wire.headers["chatgpt-account-id"], "observed@fixture");
+            assert_eq!(wire.body.as_ref().unwrap()["credit_id"], receipt.credit_id);
+            assert_eq!(wire.body.as_ref().unwrap()["redeem_request_id"], receipt.request_id);
+            assert_eq!(receipt.credential_id, row.id);
+            assert_eq!(receipt.is_confirmed_reset(), expected_ok);
+            assert_eq!(storage.list_credential_blocks(&[row.id]).unwrap().is_empty(), expected_ok);
+            assert_eq!(journal.receipts().unwrap(), vec![receipt.clone()]);
+            let serialized = serde_json::to_string(&receipt).unwrap();
+            assert!(!serialized.contains("private-response-marker") && !serialized.contains("access-observed@fixture"));
+            if expected_code == "outcome_unknown" {
+                assert_eq!(receipt.state, ResetReceiptState::Unknown);
+                drop(journal);
+                let restarted = Arc::new(SqliteResetReceiptStore::open(&path).unwrap());
+                clock.fetch_add(31 * 60_000, Ordering::AcqRel);
+                options.credit_id = Some("different-credit".into());
+                let replay =
+                    storage.redeem_reset_credit_observed(&options, restarted, &CancellationToken::new()).await.unwrap();
+                assert_eq!(replay.operation.unwrap(), receipt, "restart and new credit cannot erase an unknown UUID");
+                assert_eq!(replay.outcome.code, "outcome_unknown");
+            }
+            assert!(http.requests.try_recv().is_err(), "consume was replayed");
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_reset_observed_journal_failure_and_owned_drop_family() {
+        use crate::codex_reset_receipts::*;
+        use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+        struct Faults {
+            journal: Arc<SqliteResetReceiptStore>,
+            begin: bool,
+            finish: bool,
+        }
+        impl ResetReceiptStore for Faults {
+            fn begin(&self, receipt: &ResetOperationReceipt) -> Result<ResetReceiptBegin, ResetReceiptError> {
+                if self.begin { Err(ResetReceiptError) } else { self.journal.begin(receipt) }
+            }
+            fn finish(&self, receipt: &ResetOperationReceipt) -> Result<(), ResetReceiptError> {
+                if self.finish { Err(ResetReceiptError) } else { self.journal.finish(receipt) }
+            }
+            fn receipts(&self) -> Result<Vec<ResetOperationReceipt>, ResetReceiptError> {
+                self.journal.receipts()
+            }
+        }
+        let provider = "openai-codex";
+        for fail_begin in [true, false] {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let mut http = fixture(vec![HttpReply::json(200, serde_json::json!({"code":"reset"}))]).await;
+            let (storage, store, _, _) = setup_with_reset_client(
+                provider,
+                &[oauth("journal@fixture", now, false)],
+                Arc::new(AtomicU64::new(now as u64)),
+                false,
+                Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))),
+            );
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            storage.mark_block(provider, row.id, CredentialKind::OAuth, now + 60_000.0, None).await.unwrap();
+            let journal = Arc::new(SqliteResetReceiptStore::memory().unwrap());
+            let faults = Arc::new(Faults { journal: journal.clone(), begin: fail_begin, finish: !fail_begin });
+            let options = RedeemResetCreditOptions {
+                target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                credit_id: Some("receipt-credit".into()),
+                ..Default::default()
+            };
+            let result =
+                storage.redeem_reset_credit_observed(&options, faults.clone(), &CancellationToken::new()).await;
+            if fail_begin {
+                assert!(matches!(result, Err(AuthStorageError::Storage)));
+                assert!(journal.receipts().unwrap().is_empty());
+                assert!(!storage.list_credential_blocks(&[row.id]).unwrap().is_empty());
+            } else {
+                let result = result.unwrap();
+                assert!(result.outcome.ok && result.outcome.settlement_error.is_some());
+                assert_eq!(result.outcome.code, "reset", "retain the positive upstream observation");
+                let receipt = result.operation.unwrap();
+                assert_eq!(receipt.state, ResetReceiptState::Pending, "no durable terminal authority");
+                assert_eq!(journal.receipts().unwrap(), vec![receipt.clone()]);
+                let lease = RequestAuthLease::new(
+                    CredentialIdentity::Stored { id: row.id, revision: row.revision },
+                    Some("fixture".into()),
+                );
+                assert!(crate::model_route::QuotaResetReplay::from_confirmed(lease, &receipt).is_none());
+                assert!(
+                    storage.list_credential_blocks(&[row.id]).unwrap().is_empty(),
+                    "owned confirmed local settlement still completes"
+                );
+                assert_eq!(http.requests.recv().await.unwrap().method, "POST");
+                let second =
+                    storage.redeem_reset_credit_observed(&options, faults, &CancellationToken::new()).await.unwrap();
+                assert_eq!(second.outcome.code, "outcome_unknown");
+            }
+            assert!(http.requests.try_recv().is_err());
+        }
+        for cancel_after_dispatch in [false, true] {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let mut reply = HttpReply::json(200, serde_json::json!({"code":"reset"}));
+            reply.delay = Duration::from_millis(300);
+            let mut http = fixture(vec![reply]).await;
+            let (storage, store, _, _) = setup_with_reset_client(
+                provider,
+                &[oauth("owned@fixture", now, false)],
+                Arc::new(AtomicU64::new(now as u64)),
+                false,
+                Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))),
+            );
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            let journal = Arc::new(SqliteResetReceiptStore::memory().unwrap());
+            let owner = storage.clone();
+            let receipts = journal.clone();
+            let cancel = CancellationToken::new();
+            let token = cancel.clone();
+            let awaiting = tokio::spawn(async move {
+                owner
+                    .redeem_reset_credit_observed(
+                        &RedeemResetCreditOptions {
+                            target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                            credit_id: Some("owned-credit".into()),
+                            ..Default::default()
+                        },
+                        receipts,
+                        &token,
+                    )
+                    .await
+            });
+            let wire = tokio::time::timeout(Duration::from_secs(2), http.requests.recv()).await.unwrap().unwrap();
+            let pending = journal.receipts().unwrap().remove(0);
+            assert_eq!(pending.state, ResetReceiptState::Pending, "durable admission exists before wire completion");
+            assert_eq!(wire.body.unwrap()["redeem_request_id"], pending.request_id);
+            if cancel_after_dispatch {
+                cancel.cancel();
+            }
+            awaiting.abort();
+            let _ = awaiting.await;
+            tokio::time::timeout(Duration::from_secs(2), storage.wait_for_settlement()).await.unwrap();
+            let terminal = journal.receipts().unwrap().remove(0);
+            assert_eq!(terminal.request_id, pending.request_id);
+            assert_eq!(
+                terminal.state,
+                if cancel_after_dispatch { ResetReceiptState::Unknown } else { ResetReceiptState::Known }
+            );
+            assert!(http.requests.try_recv().is_err(), "dropping a caller cannot create a second consume");
+        }
+        // Auto consent can be revoked while a live credit list is loading.
+        // Preparation remains read-only; the Host recheck precedes Pending/POST.
+        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let mut reply = HttpReply::json(200, serde_json::json!({"credits":[{"id":"revoked-credit"}]}));
+        reply.delay = Duration::from_millis(100);
+        let mut http = fixture(vec![reply]).await;
+        let (storage, store, _, _) = setup_with_reset_client(
+            provider,
+            &[oauth("revoked@fixture", now, false)],
+            Arc::new(AtomicU64::new(now as u64)),
+            false,
+            Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))),
+        );
+        let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+        let journal = Arc::new(SqliteResetReceiptStore::memory().unwrap());
+        let permission = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let admission = permission.clone();
+        let owner = storage.clone();
+        let receipts = journal.clone();
+        let task = tokio::spawn(async move {
+            owner
+                .redeem_reset_credit_observed(
+                    &RedeemResetCreditOptions {
+                        target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                        admit_consume: Some(Arc::new(move || admission.load(Ordering::Acquire))),
+                        ..Default::default()
+                    },
+                    receipts,
+                    &CancellationToken::new(),
+                )
+                .await
+        });
+        assert_eq!(http.requests.recv().await.unwrap().method, "GET");
+        permission.store(false, Ordering::Release);
+        assert!(matches!(task.await.unwrap(), Err(AuthStorageError::Cancelled)));
+        assert!(journal.receipts().unwrap().is_empty());
+        assert!(http.requests.try_recv().is_err(), "revoked auto consent cannot dispatch a consume");
+    }
+
+    #[test]
+    fn saved_reset_authority_provider_and_endpoint_isolation_family() {
+        let temporary = tempfile::tempdir().unwrap();
+        let open = |name: &str| {
+            AuthStorage::new(
+                Arc::new(Mutex::new(SqliteCredentialStore::open(temporary.path().join(name)).unwrap())),
+                None,
+                AuthStorageOptions::default(),
+            )
+            .unwrap()
+        };
+        let first = open("one.db");
+        let restarted = open("one.db");
+        let second = open("two.db");
+        let scope = first.reset_operation_scope("openai-codex", None).unwrap();
+        assert_eq!(scope, restarted.reset_operation_scope("openai-codex", None).unwrap());
+        assert_ne!(scope, second.reset_operation_scope("openai-codex", None).unwrap());
+        assert_ne!(scope, first.reset_operation_scope("other-provider", None).unwrap());
+        assert_ne!(scope, first.reset_operation_scope("openai-codex", Some("https://chat.openai.com/proxy")).unwrap());
+        assert_eq!(
+            scope,
+            first.reset_operation_scope("openai-codex", Some("https://untrusted-proxy.test")).unwrap(),
+            "canonical upstream still owns reset endpoints"
+        );
+        assert_eq!(scope.len(), 64);
+        assert!(!scope.contains("one.db"));
+        let a = first.reset_operation_account_key("openai-codex", None, 1, Some("Account"), None).unwrap();
+        let same_account_new_row =
+            first.reset_operation_account_key("openai-codex", None, 8, Some("account"), None).unwrap();
+        assert_eq!(a, same_account_new_row, "row replacement cannot erase the logical account's fence");
+        let broker =
+            |base: &str| crate::auth_broker_client::AuthBrokerClient::new(base, "fixture", Default::default()).unwrap();
+        assert_eq!(
+            broker("http://BROKER.invalid:80/root/").reset_receipt_authority(),
+            broker("http://broker.invalid/root").reset_receipt_authority(),
+            "canonical aliases must retain the original remote fence"
+        );
+        assert_ne!(
+            broker("http://broker.invalid/root").reset_receipt_authority(),
+            broker("http://broker.invalid/other").reset_receipt_authority()
+        );
+
+        // Token refresh can fill accountId after an email-only operation. The
+        // durable transaction fences both the same row and replacement rows;
+        // unrelated owners or fully identified accounts remain isolated.
+        use crate::codex_reset_receipts::{
+            ResetOperationReceipt, ResetReceiptBegin, ResetReceiptCode, ResetReceiptState, ResetReceiptStore,
+            SqliteResetReceiptStore,
+        };
+        let journal_path = temporary.path().join("identity-operations.db");
+        let journal = SqliteResetReceiptStore::open(&journal_path).unwrap();
+        let mut original = ResetOperationReceipt {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            account_key: first
+                .reset_operation_account_key("openai-codex", None, 1, None, Some("USER@fixture"))
+                .unwrap(),
+            credential_id: 1,
+            account_id: None,
+            email: Some("USER@fixture".into()),
+            credit_id: "one".into(),
+            endpoint_fingerprint: "fixture".into(),
+            created_at: 1.0,
+            updated_at: 1.0,
+            state: ResetReceiptState::Pending,
+            code: ResetReceiptCode::Pending,
+        };
+        assert!(matches!(journal.begin(&original).unwrap(), ResetReceiptBegin::Started));
+        original.state = ResetReceiptState::Unknown;
+        original.code = ResetReceiptCode::Unknown;
+        journal.finish(&original).unwrap();
+        drop(journal);
+        let journal = SqliteResetReceiptStore::open(&journal_path).unwrap();
+        let mut candidate = original.clone();
+        candidate.request_id = uuid::Uuid::new_v4().to_string();
+        candidate.state = ResetReceiptState::Pending;
+        candidate.code = ResetReceiptCode::Pending;
+        candidate.account_id = Some("newly-filled-account".into());
+        candidate.account_key = first
+            .reset_operation_account_key(
+                "openai-codex",
+                None,
+                1,
+                candidate.account_id.as_deref(),
+                candidate.email.as_deref(),
+            )
+            .unwrap();
+        candidate.email = Some("changed@fixture".into());
+        assert!(
+            matches!(journal.begin(&candidate).unwrap(), ResetReceiptBegin::Fenced(fence) if fence == original),
+            "same scoped row must retain an unknown operation when metadata changes"
+        );
+        candidate.credential_id = 8;
+        candidate.email = Some(" user@fixture ".into());
+        assert!(
+            matches!(journal.begin(&candidate).unwrap(), ResetReceiptBegin::Fenced(fence) if fence == original),
+            "email-only identity remains fenced when the row is replaced and accountId filled"
+        );
+        candidate.account_key = second
+            .reset_operation_account_key(
+                "openai-codex",
+                None,
+                8,
+                candidate.account_id.as_deref(),
+                candidate.email.as_deref(),
+            )
+            .unwrap();
+        assert!(
+            matches!(journal.begin(&candidate).unwrap(), ResetReceiptBegin::Started),
+            "another credential authority cannot inherit a numeric row/email fence"
+        );
+        let identified = SqliteResetReceiptStore::memory().unwrap();
+        candidate.account_key = a;
+        candidate.account_id = Some("Account".into());
+        candidate.credential_id = 11;
+        candidate.request_id = uuid::Uuid::new_v4().to_string();
+        assert!(matches!(identified.begin(&candidate).unwrap(), ResetReceiptBegin::Started));
+        candidate.request_id = uuid::Uuid::new_v4().to_string();
+        candidate.credential_id = 12;
+        candidate.account_id = Some("different-account".into());
+        candidate.account_key = first
+            .reset_operation_account_key(
+                "openai-codex",
+                None,
+                12,
+                candidate.account_id.as_deref(),
+                candidate.email.as_deref(),
+            )
+            .unwrap();
+        assert!(
+            matches!(identified.begin(&candidate).unwrap(), ResetReceiptBegin::Started),
+            "two known account IDs sharing email do not alias"
+        );
     }
 
     #[tokio::test]

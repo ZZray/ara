@@ -80,6 +80,15 @@ pub(crate) fn classify(model: &Model, message: &AssistantMessage) -> Option<Requ
             _ => return None,
         }
     };
+    // A real admission rejection blocks the adapter's ordinary replay but may
+    // enter the Host's correlated reset path. Other blocked evidence (including
+    // callback/receipt faults) must never acquire that exception from text.
+    if kind == Kind::Quota
+        && (evidence.replay_blocked || evidence.same_route_blocked)
+        && evidence.context_recovery != Some(ara_ai::ContextRecoveryEvidence::UsageAdmission)
+    {
+        return None;
+    }
     Some(RequestAuthFailure { kind, retry_after_ms: classification.wait_ms })
 }
 
@@ -94,6 +103,7 @@ pub(crate) struct AuthRetryState {
     refreshed_current: bool,
     legacy_switch_used: bool,
     token_refresh_replay_used: bool,
+    quota_reset_attempted: bool,
 }
 impl AuthRetryState {
     pub(crate) fn new(initial: &RequestAuthLease) -> Self {
@@ -103,6 +113,7 @@ impl AuthRetryState {
             refreshed_current: false,
             legacy_switch_used: false,
             token_refresh_replay_used: false,
+            quota_reset_attempted: false,
         }
     }
     fn accept(
@@ -172,6 +183,32 @@ impl AuthRetryState {
         let next = next.and_then(|next| self.accept(failed, next, AuthRetryAction::RotateSibling, !direct));
         if next.is_some() && !direct {
             self.legacy_switch_used = true
+        }
+        if next.is_none() && failure.kind == Kind::Quota && !self.quota_reset_attempted && self.attempts < MAX_ATTEMPTS
+        {
+            self.quota_reset_attempted = true;
+            let reset = resolver.quota_reset(model, failed, failure, cancel).await;
+            if cancel.is_cancelled() || matches!(reset, Err(AuthResolveError::Cancelled)) {
+                return Err(AuthResolveError::Cancelled);
+            }
+            if let Ok(Some(reset)) = reset {
+                // This exception does not clear the seen-key set or replenish
+                // MAX_ATTEMPTS. A reused bearer must name the actual row whose
+                // saved reset was positively acknowledged by this receipt.
+                if !reset.request_id.is_empty()
+                    && let Some(key) = reset.lease.api_key()
+                {
+                    if self.keys.contains(key) {
+                        if stored_id(&reset.lease) == Some(reset.confirmed_credential_id) {
+                            self.attempts += 1;
+                            self.refreshed_current = false;
+                            return Ok(Some(reset.lease));
+                        }
+                    } else {
+                        return Ok(self.accept(failed, reset.lease, AuthRetryAction::RotateSibling, false));
+                    }
+                }
+            }
         }
         Ok(next)
     }

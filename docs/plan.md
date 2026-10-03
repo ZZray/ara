@@ -1,5 +1,23 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-03 (saved-reset controllers tested WIP):**
+[Saved-reset controller evidence](evidence/codex-reset-controllers.md) connects native planning/settings, manual/blocked/sweep and
+supported pre-output quota recovery to the shared account owner and actual
+CLI/REPL/RPC. Scoped durable UUID fences and current-Host epoch admission prevent
+unknown or stale replay. Seven grouped modules total 305/0/0; one stable
+Windows runtime/backend gate 1815/0/20 in 803.858s; fmt/Clippy/doc/inventory/
+build PASS. Existing unmaintained ttf-parser keeps the complete dependency gate
+FAIL. Failed module/preflight receipts remain; only affected groups were rerun.
+Final source pins and 57 vendor/EOL hashes are unchanged. No new point or complete
+surface is accepted: 111 surfaces 27 implementing/1 tested/83 open/0 complete;
+60 points 35 limited accepted/23 implementing/2 tested. Started 28/111=25.2%;
+limited 35/60=58.3%, not overall completion. P0/V1 accepted, P1-P6 open,
+RPC 27/42 and full marker null. Post-visible-output Session reset callers,
+reserve/fallback/check/diagnostic controllers, Broker server/management,
+full Settings/TUI/ACP, body-only quota-hint/other recorded Provider differences,
+actual account/platform and deferred Providers remain required. No reliable
+full-project ETA.
+
 **Current checkpoint, 2026-10-03 (CLI auth/RPC observed tested WIP):**
 [Credential-consumer evidence](evidence/broker-consumers.md) connects no-DB
 OpenAI device issuance to configured Local/Remote CLI auth ownership and captures

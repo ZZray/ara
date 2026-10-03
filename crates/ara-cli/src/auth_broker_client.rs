@@ -126,6 +126,12 @@ struct FetchOptions {
 }
 
 impl AuthBrokerClient {
+    /// Internal authority namespace, never emitted as a receipt or diagnostic.
+    pub(crate) fn reset_receipt_authority(&self) -> String {
+        let canonical = reqwest::Url::parse(&self.inner.base_url).expect("validated broker endpoint");
+        format!("remote:{}", canonical.as_str().trim_end_matches('/'))
+    }
+
     pub fn new(
         base_url: impl Into<String>,
         bearer: impl Into<String>,

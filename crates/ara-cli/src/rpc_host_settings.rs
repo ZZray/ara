@@ -443,6 +443,273 @@ fn read_retry_number(group: Option<&Hash>, key: &str, default: f64) -> Result<f6
     Ok(value)
 }
 
+/// Saved-reset consent and knobs from fixed settings-schema.ts and
+/// settings.ts:2231-2241. Only the nested disk group is effective: native
+/// getByPath does not resolve quoted dotted disk keys. Its flat boolean
+/// migration changes the raw legacy value but does not authorize auto-spend.
+pub(super) struct CodexResetPolicy {
+    path: Option<PathBuf>,
+    settings: ara_cli::codex_auto_reset::CodexResetSettings,
+}
+
+impl CodexResetPolicy {
+    pub(super) fn load(agent_dir: &Path) -> Result<Self> {
+        for filename in MAIN_CONFIG_FILENAMES {
+            let path = agent_dir.join(filename);
+            if let Some((document, _)) = read_document(&path)? {
+                return Self::from_document(Some(path), &document);
+            }
+        }
+        Self::from_document(Some(agent_dir.join(MAIN_CONFIG_FILENAMES[0])), &empty_mapping())
+    }
+
+    fn from_document(path: Option<PathBuf>, document: &Yaml) -> Result<Self> {
+        use ara_cli::codex_auto_reset::{CodexAutoRedeemMode, CodexResetSettings};
+        let root = document.as_hash().context("native settings root must be a mapping")?;
+        let group = match root.get(&Yaml::String("codexResets".into())) {
+            None | Some(Yaml::Null) => None,
+            Some(group) => Some(group.as_hash().context("codexResets settings must be a mapping")?),
+        };
+        let auto_redeem = match group.and_then(|group| group.get(&Yaml::String("autoRedeem".into()))) {
+            None => CodexAutoRedeemMode::Unset,
+            Some(Yaml::Boolean(true)) => CodexAutoRedeemMode::Yes,
+            Some(Yaml::Boolean(false)) => CodexAutoRedeemMode::No,
+            Some(Yaml::String(value)) if value == "unset" => CodexAutoRedeemMode::Unset,
+            Some(Yaml::String(value)) if value == "yes" => CodexAutoRedeemMode::Yes,
+            Some(Yaml::String(value)) if value == "no" => CodexAutoRedeemMode::No,
+            Some(_) => bail!("codexResets.autoRedeem must be unset, yes, or no"),
+        };
+        Ok(Self {
+            path,
+            settings: CodexResetSettings {
+                auto_redeem,
+                min_blocked_minutes: read_codex_reset_number(group, "minBlockedMinutes", 60.0)?,
+                keep_credits: read_codex_reset_number(group, "keepCredits", 0.0)?,
+                salvage_horizon_hours: read_codex_reset_number(group, "salvageHorizonHours", 12.0)?,
+            },
+        })
+    }
+
+    pub(super) fn settings(&self) -> ara_cli::codex_auto_reset::CodexResetSettings {
+        self.settings
+    }
+
+    pub(super) fn set_mode(&mut self, mode: ara_cli::codex_auto_reset::CodexAutoRedeemMode) -> Result<()> {
+        let Some(path) = &self.path else {
+            self.settings.auto_redeem = mode;
+            return Ok(());
+        };
+        let loaded = read_document(path)?;
+        let mut document = loaded.as_ref().map(|(document, _)| document.clone()).unwrap_or_else(empty_mapping);
+        Self::from_document(Some(path.clone()), &document)?;
+        let root = document.as_mut_hash().expect("read_document validates mapping");
+        let group = root.entry(Yaml::String("codexResets".into())).or_insert_with(empty_mapping);
+        if matches!(group, Yaml::Null) {
+            *group = empty_mapping();
+        }
+        group
+            .as_mut_hash()
+            .context("codexResets settings must be a mapping")?
+            .insert(Yaml::String("autoRedeem".into()), Yaml::String(mode.as_str().into()));
+        let updated = Self::from_document(Some(path.clone()), &document)?;
+        let mut encoded = String::new();
+        YamlEmitter::new(&mut encoded).dump(&document).context("serializing native codexResets settings")?;
+        encoded.push('\n');
+        write_atomically(path, &encoded, loaded.as_ref().map(|(_, source)| source.as_str()), "codex-resets")?;
+        *self = updated;
+        Ok(())
+    }
+}
+
+fn read_codex_reset_number(group: Option<&Hash>, key: &str, default: f64) -> Result<f64> {
+    match group.and_then(|group| group.get(&Yaml::String(key.into()))) {
+        None => Ok(default),
+        Some(value) => codex_reset_number(value).with_context(|| format!("coercing codexResets.{key}")),
+    }
+}
+
+// Native Settings preserves authored values; AgentSession's Math.max/trunc
+// perform Number coercion. Keep that behavior confined to these three knobs.
+// The prompt helper uses Null for undefined, so authored YAML null needs zero.
+fn codex_reset_number(value: &Yaml) -> Result<f64> {
+    match value {
+        Yaml::Integer(value) => Ok(*value as f64),
+        Yaml::Real(value) => match value.as_str() {
+            ".nan" | ".NaN" | ".NAN" => Ok(f64::NAN),
+            ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => Ok(f64::INFINITY),
+            "-.inf" | "-.Inf" | "-.INF" => Ok(f64::NEG_INFINITY),
+            _ => value.parse::<f64>().context("native YAML real must be numeric"),
+        },
+        Yaml::Null => Ok(0.0),
+        Yaml::Boolean(value) => Ok(if *value { 1.0 } else { 0.0 }),
+        Yaml::String(value) => Ok(codex_reset_string_number(value)),
+        Yaml::Array(_) => Ok(codex_reset_string_number(&codex_reset_array_string(value)?)),
+        Yaml::Hash(values) if values.contains_key(&Yaml::String("toString".into())) => {
+            // A YAML property cannot be callable. It shadows Object.toString,
+            // leaving both ordinary primitive-conversion attempts nonprimitive.
+            bail!("native numeric coercion cannot convert an object with an authored toString property")
+        }
+        Yaml::Hash(_) | Yaml::Alias(_) | Yaml::BadValue => Ok(f64::NAN),
+    }
+}
+
+fn codex_reset_string_number(value: &str) -> f64 {
+    let json = serde_json::Value::String(value.into());
+    // Reuse the catalog's precisely rounded finite radix conversion and the
+    // prompt's full decimal grammar, empty-string and nonfinite semantics.
+    ara_cli::model_policy::to_number(&json).unwrap_or_else(|| ara_prompt::js::to_number(&json))
+}
+
+fn codex_reset_array_string(value: &Yaml) -> Result<String> {
+    match value {
+        Yaml::Array(values) => {
+            values.iter().map(codex_reset_array_string).collect::<Result<Vec<_>>>().map(|values| values.join(","))
+        }
+        Yaml::Null => Ok(String::new()),
+        Yaml::String(value) => Ok(value.clone()),
+        Yaml::Boolean(value) => Ok(value.to_string()),
+        Yaml::Integer(_) | Yaml::Real(_) => Ok(ara_prompt::js::f64_to_string(codex_reset_number(value)?)),
+        Yaml::Hash(values) if values.contains_key(&Yaml::String("toString".into())) => {
+            bail!("native array conversion cannot stringify an object with an authored toString property")
+        }
+        Yaml::Hash(_) => Ok("[object Object]".into()),
+        Yaml::Alias(_) | Yaml::BadValue => Ok("undefined".into()),
+    }
+}
+
+#[cfg(test)]
+mod codex_reset_policy_tests {
+    use super::*;
+    use ara_cli::codex_auto_reset::{CodexAutoRedeemMode, CodexResetSettings};
+
+    #[test]
+    fn saved_reset_defaults_nested_boolean_migration_and_native_filename_precedence() {
+        let directory = tempfile::tempdir().unwrap();
+        let primary = directory.path().join("config.yml");
+        let alternate = directory.path().join("config.yaml");
+        assert_eq!(CodexResetPolicy::load(directory.path()).unwrap().settings(), CodexResetSettings::default());
+        assert!(!primary.exists(), "loading defaults must not create a config file");
+        for (mode, expected) in [
+            ("true", CodexAutoRedeemMode::Yes),
+            ("false", CodexAutoRedeemMode::No),
+            ("unset", CodexAutoRedeemMode::Unset),
+            ("'yes'", CodexAutoRedeemMode::Yes),
+            ("'no'", CodexAutoRedeemMode::No),
+        ] {
+            std::fs::write(&alternate, format!("codexResets:\n  autoRedeem: {mode}\n  minBlockedMinutes: -1.5\n  keepCredits: 2.9\n  salvageHorizonHours: 0\n")).unwrap();
+            let settings = CodexResetPolicy::load(directory.path()).unwrap().settings();
+            assert_eq!(settings.auto_redeem, expected, "{mode}");
+            assert_eq!(
+                (settings.min_blocked_minutes, settings.keep_credits, settings.salvage_horizon_hours),
+                (-1.5, 2.9, 0.0)
+            );
+        }
+        // Fixed native migration does not make a quoted dotted disk key a
+        // effective nested value. In particular, legacy true cannot opt in.
+        std::fs::write(&primary, "'codexResets.autoRedeem': true\n").unwrap();
+        assert_eq!(
+            CodexResetPolicy::load(directory.path()).unwrap().settings().auto_redeem,
+            CodexAutoRedeemMode::Unset
+        );
+        std::fs::write(&primary, "codexResets:\n  autoRedeem: false\n'codexResets.autoRedeem': true\n").unwrap();
+        assert_eq!(CodexResetPolicy::load(directory.path()).unwrap().settings().auto_redeem, CodexAutoRedeemMode::No);
+        std::fs::write(
+            &primary,
+            "codexResets:\n  minBlockedMinutes: .nan\n  keepCredits: .inf\n  salvageHorizonHours: -.inf\n",
+        )
+        .unwrap();
+        let settings = CodexResetPolicy::load(directory.path()).unwrap().settings();
+        assert!(settings.min_blocked_minutes.is_nan());
+        assert_eq!((settings.keep_credits, settings.salvage_horizon_hours), (f64::INFINITY, f64::NEG_INFINITY));
+        for (raw, expected) in [
+            ("null", 0.0),
+            ("true", 1.0),
+            ("false", 0.0),
+            ("''", 0.0),
+            ("'  1.5  '", 1.5),
+            ("'0x10'", 16.0),
+            ("'Infinity'", f64::INFINITY),
+            ("'-Infinity'", f64::NEG_INFINITY),
+            ("[]", 0.0),
+            ("[null]", 0.0),
+            ("[6]", 6.0),
+            ("[['7']]", 7.0),
+            ("[.inf]", f64::INFINITY),
+            ("[true]", f64::NAN),
+            ("[1, 2]", f64::NAN),
+            ("{}", f64::NAN),
+            ("'inf'", f64::NAN),
+            ("'not a number'", f64::NAN),
+        ] {
+            std::fs::write(&primary, format!("codexResets:\n  keepCredits: {raw}\n")).unwrap();
+            let actual = CodexResetPolicy::load(directory.path()).unwrap().settings().keep_credits;
+            assert!(actual == expected || actual.is_nan() && expected.is_nan(), "{raw}: {actual}");
+        }
+        for invalid in [
+            "codexResets: []\n",
+            "codexResets:\n  autoRedeem: always\n",
+            "codexResets:\n  keepCredits: {toString: 1}\n",
+            "codexResets:\n  autoRedeem: null\n",
+            "[invalid\n",
+        ] {
+            std::fs::write(&primary, invalid).unwrap();
+            assert!(CodexResetPolicy::load(directory.path()).is_err(), "{invalid}");
+            assert_eq!(
+                std::fs::read_to_string(&primary).unwrap(),
+                invalid,
+                "invalid primary is never silently overwritten or bypassed"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_reset_consent_writes_reload_disjoint_edits_and_publish_only_after_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.yml");
+        let mut policy = CodexResetPolicy::load(directory.path()).unwrap();
+        std::fs::write(&path, "codexResets:\n  keepCredits: 3.5\n  minBlockedMinutes: 120\n  salvageHorizonHours: 6\n  futureKnob: retained\n'codexResets.autoRedeem': true\ncustom:\n  keep: old\n").unwrap();
+        policy.set_mode(CodexAutoRedeemMode::Yes).unwrap();
+        assert_eq!(
+            policy.settings(),
+            CodexResetSettings {
+                auto_redeem: CodexAutoRedeemMode::Yes,
+                min_blocked_minutes: 120.0,
+                keep_credits: 3.5,
+                salvage_horizon_hours: 6.0
+            }
+        );
+        let document = read_document(&path).unwrap().unwrap().0;
+        assert_eq!(document["codexResets"]["autoRedeem"].as_str(), Some("yes"));
+        assert_eq!(document["codexResets"]["futureKnob"].as_str(), Some("retained"));
+        assert_eq!(document["codexResets.autoRedeem"].as_bool(), Some(true));
+        assert_eq!(document["custom"]["keep"].as_str(), Some("old"));
+        assert_eq!(CodexResetPolicy::load(directory.path()).unwrap().settings(), policy.settings());
+        std::fs::write(&path, "codexResets:\n  autoRedeem: 'yes'\n  keepCredits: 8\ncustom: newer\n").unwrap();
+        policy.set_mode(CodexAutoRedeemMode::No).unwrap();
+        assert_eq!(policy.settings().keep_credits, 8.0);
+        assert_eq!(read_document(&path).unwrap().unwrap().0["custom"].as_str(), Some("newer"));
+        let before = policy.settings();
+        std::fs::write(&path, "codexResets: [malformed]\ncustom: survive\n").unwrap();
+        assert!(policy.set_mode(CodexAutoRedeemMode::Yes).is_err());
+        assert_eq!(policy.settings(), before);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "codexResets: [malformed]\ncustom: survive\n");
+        let blocked = tempfile::tempdir().unwrap();
+        let blocked_parent = blocked.path().join("file-as-parent");
+        std::fs::write(&blocked_parent, "occupied").unwrap();
+        let mut unwritable = CodexResetPolicy { path: Some(blocked_parent.join("config.yml")), settings: before };
+        assert!(unwritable.set_mode(CodexAutoRedeemMode::Yes).is_err());
+        assert_eq!(unwritable.settings(), before);
+        assert_eq!(std::fs::read_to_string(blocked_parent).unwrap(), "occupied");
+        assert!(
+            directory.path().read_dir().unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ara-codex-resets-"))
+        );
+    }
+}
+
 fn empty_mapping() -> Yaml {
     Yaml::Hash(Hash::new())
 }

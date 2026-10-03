@@ -92,6 +92,28 @@ pub struct RequestAuthFailure {
     pub retry_after_ms: Option<f64>,
 }
 
+/// A Host-confirmed saved-reset receipt may authorize a bounded quota retry.
+/// The lease belongs to this caller's Session; a shared reset pass must never
+/// publish another Session's lease. Fields are private to prevent an ordinary
+/// same-bearer resolver response from acting as a reset acknowledgement.
+pub struct QuotaResetReplay {
+    pub(crate) lease: RequestAuthLease,
+    pub(crate) request_id: String,
+    pub(crate) confirmed_credential_id: i64,
+}
+
+impl QuotaResetReplay {
+    pub fn from_confirmed(
+        lease: RequestAuthLease,
+        receipt: &crate::codex_reset_receipts::ResetOperationReceipt,
+    ) -> Option<Self> {
+        if !receipt.is_confirmed_reset() || uuid::Uuid::parse_str(&receipt.request_id).is_err() {
+            return None;
+        }
+        Some(Self { lease, request_id: receipt.request_id.clone(), confirmed_credential_id: receipt.credential_id })
+    }
+}
+
 #[async_trait]
 pub trait RequestAuthResolver: Send + Sync {
     /// Called for each logical model call, never for ordinary availability queries.
@@ -132,6 +154,18 @@ pub trait RequestAuthResolver: Send + Sync {
             AuthRetryAction::RefreshSame => self.refresh(model, cancel).await,
             AuthRetryAction::RotateSibling => Ok(None),
         }
+    }
+
+    /// Only an observed pre-output quota rejection with no usable sibling
+    /// reaches this hook. No reset behavior is installed by default.
+    async fn quota_reset(
+        &self,
+        _model: &Model,
+        _failed: &RequestAuthLease,
+        _failure: &RequestAuthFailure,
+        _cancel: &CancellationToken,
+    ) -> Result<Option<QuotaResetReplay>, AuthResolveError> {
+        Ok(None)
     }
 
     /// Rebind only the Host auth assignment; side transports keep the original
