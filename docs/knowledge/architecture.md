@@ -293,6 +293,16 @@ Automatic OAuth block invalidation keeps current default-URL report values
 stale; provider implementation replacement and manual force refresh discard
 them. A shared helper cannot substitute one lifecycle for all three.
 
+Account diagnostics use exact expiry and uncached, sequential usage/completion
+probes; ordinary request readiness and its 60s skew keep their separate owner.
+Reserve health advertises the MIN future exhausted reset; hard blocking uses
+MAX. Saved-reset confirmation reloads current durable identities before
+staling the caller's base-URL keys, since a refresh hook may have changed the
+account/email before HostState reload. Consume loss is never implicitly
+replayed; a known reset survives local settlement failure. The Host owns
+permission and production controller wiring. [Account-operation evidence](../evidence/auth-callers.md)
+retains the complete caller, date, account and platform gaps.
+
 These are bounded implemented boundaries, not full AuthStorage parity. The
 [AuthStorage evidence](../evidence/auth-storage.md) and
 [usage refresh evidence](../evidence/usage-refresh.md) retain complete callers,

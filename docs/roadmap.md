@@ -1,5 +1,18 @@
 # Delivery roadmap
 
+**Current checkpoint, 2026-10-03 (account operations tested WIP):**
+[Account operations](evidence/auth-callers.md) add native reserve health/sticky release,
+sequential uncached credential diagnostics and dedicated saved-reset facades.
+Final Windows backend1740/0/20, fmt/Clippy/doc/inventory/build PASS;
+the existing ttf-parser advisory keeps the whole gate FAIL. The final backend
+takes457.097s with one build job after a retained pagefile/link failure.
+Independent POST/Root audit closes refreshed-identity cache invalidation.
+New public facade callers remain grouped tests; production controllers/broker,
+actual account/platform and deferred Providers remain required. No new point
+or complete surface is accepted: 28/111 started (25.2%), 35/60 limited points
+(58.3%), P0/V1 accepted, P1-P6 open, RPC27/42, full marker null. Next: complete
+usage/store hooks, broker and production health/check/reset/reserve callers.
+
 **Current checkpoint, 2026-10-03 (builtin usage refresh tested WIP):**
 [Usage refresh evidence](evidence/usage-refresh.md) adds the shared exact-account
 Codex refresh owner, one usage deadline, persistent unknown-grant fencing and

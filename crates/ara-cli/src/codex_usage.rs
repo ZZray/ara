@@ -2,8 +2,8 @@
 //! `596f2da7101178214aa27a753529d15e6b7ad91d`,
 //! `packages/ai/src/usage/{openai-codex,openai-codex-base-url,openai-codex-reset}.ts`.
 //!
-//! Implements usage/header parsing and the GET reset-credit detail enrichment.
-//! The reset-credit POST consume/redeem route is deliberately not bound here.
+//! Implements usage/header parsing, GET reset-credit detail enrichment and the
+//! native reset-credit consume wire. The Host owns permission to redeem.
 //! Reports preserve provider raw data; neither credentials nor transport errors
 //! are logged. The host owns refresh, usage cache/history, identity attribution,
 //! ranking, persisted blocks and permission to fetch. The Codex ranking strategy
@@ -57,6 +57,7 @@ pub const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub const CODEX_USAGE_USER_AGENT: &str = "omp/18.1.8";
 const USAGE_PATH: &str = "wham/usage";
 const RESET_CREDITS_PATH: &str = "wham/rate-limit-reset-credits";
+const RESET_CREDITS_CONSUME_PATH: &str = "wham/rate-limit-reset-credits/consume";
 const JWT_AUTH_CLAIM: &str = "https://api.openai.com/auth";
 const JWT_PROFILE_CLAIM: &str = "https://api.openai.com/profile";
 
@@ -573,6 +574,75 @@ pub struct CodexResetCreditList {
     pub available_count: f64,
 }
 
+/// Native body codes take precedence over HTTP status, including future codes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexResetConsumeResult {
+    pub ok: bool,
+    pub code: String,
+    pub status: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Value>,
+}
+
+/// Private wire bytes are deliberately neither serializable nor debuggable.
+pub struct CodexResetConsumeRequest<'a> {
+    pub access_token: &'a str,
+    pub account_id: Option<&'a str>,
+    pub base_url: Option<&'a str>,
+    pub credit_id: &'a str,
+    pub redeem_request_id: Option<&'a str>,
+}
+
+/// Native expiry ordering for ISO/RFC dates, with stable ties and first-row
+/// fallback. Bun's wider Date.parse inputs remain a platform parity boundary.
+pub fn pick_soonest_expiring_credit(credits: &[CodexResetCredit]) -> Option<&CodexResetCredit> {
+    let mut dated: Option<(&CodexResetCredit, i64)> = None;
+    let mut undated = None;
+    for credit in credits {
+        if credit.status.as_deref().unwrap_or("available") != "available" {
+            continue;
+        }
+        let expiry = credit.expires_at.as_deref().and_then(|text| {
+            chrono::DateTime::parse_from_rfc3339(text)
+                .or_else(|_| chrono::DateTime::parse_from_rfc2822(text))
+                .map(|date| date.timestamp_millis())
+                .ok()
+                .or_else(|| {
+                    chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                        .ok()
+                        .and_then(|date| date.and_hms_opt(0, 0, 0))
+                        .map(|date| date.and_utc().timestamp_millis())
+                })
+        });
+        match expiry {
+            Some(expiry) if dated.is_none_or(|(_, best)| expiry < best) => dated = Some((credit, expiry)),
+            None if undated.is_none() => undated = Some(credit),
+            _ => {}
+        }
+    }
+    dated.map(|(credit, _)| credit).or(undated).or_else(|| credits.first())
+}
+
+/// Preserve the safe request identity when an externally visible POST may
+/// already have occurred. No automatic retry creates another request identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodexResetConsumeError {
+    Cancelled,
+    InvalidEndpoint,
+    OutcomeUnknown { redeem_request_id: String },
+}
+impl std::fmt::Display for CodexResetConsumeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Cancelled => "saved reset cancelled before dispatch",
+            Self::InvalidEndpoint => "saved reset endpoint is invalid",
+            Self::OutcomeUnknown { .. } => "saved reset outcome unknown",
+        })
+    }
+}
+impl std::error::Error for CodexResetConsumeError {}
+
 fn parse_credit(payload: &Value) -> Option<CodexResetCredit> {
     let record = payload.as_object()?;
     let id = record.get("id")?.as_str()?.to_owned();
@@ -810,10 +880,66 @@ impl CodexUsageProvider {
                 result.ok().flatten().as_ref().and_then(parse_codex_reset_credit_list),
         }
     }
+
+    /// Fixed openai-codex-reset.ts consume contract. Only the lower-level
+    /// caller may supply a retained idempotency UUID; never retry this POST
+    /// implicitly. AuthStorage's native facade selects its own account/credit.
+    pub async fn consume_reset_credit(
+        &self,
+        input: CodexResetConsumeRequest<'_>,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<CodexResetConsumeResult, CodexResetConsumeError> {
+        if cancel.is_cancelled() {
+            return Err(CodexResetConsumeError::Cancelled);
+        }
+        let CodexResetConsumeRequest { access_token, account_id, base_url, credit_id, redeem_request_id } = input;
+        let canonical =
+            format!("{}/{}", normalize_codex_base_url(base_url).trim_end_matches('/'), RESET_CREDITS_CONSUME_PATH);
+        let endpoint = self.endpoint(&canonical).ok_or(CodexResetConsumeError::InvalidEndpoint)?;
+        let request_id = redeem_request_id.map(str::to_owned).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let mut body = Map::new();
+        body.insert("credit_id".into(), Value::String(credit_id.to_owned()));
+        body.insert("redeem_request_id".into(), Value::String(request_id.clone()));
+        if let Some(account_id) = account_id {
+            body.insert("account_id".into(), Value::String(account_id.to_owned()));
+        }
+        let mut request = self
+            .client
+            .post(endpoint)
+            .bearer_auth(access_token)
+            .header(reqwest::header::USER_AGENT, CODEX_USAGE_USER_AGENT)
+            .json(&body);
+        if let Some(account_id) = account_id.filter(|id| !id.is_empty()) {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+        let operation = async {
+            let response = request.send().await.map_err(|_| ())?;
+            let status = response.status();
+            let raw = response.json::<Value>().await.ok();
+            let code = raw
+                .as_ref()
+                .and_then(|body| body.get("code"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(
+                    || if status.is_success() { "reset".into() } else { format!("http_{}", status.as_u16()) },
+                );
+            Ok::<_, ()>(CodexResetConsumeResult { ok: code == "reset", code, status: status.as_u16(), raw })
+        };
+        tokio::select! {
+            biased;
+            result = tokio::time::timeout(timeout, operation) => match result {
+                Ok(Ok(result)) => Ok(result),
+                _ => Err(CodexResetConsumeError::OutcomeUnknown { redeem_request_id: request_id.clone() }),
+            },
+            _ = cancel.cancelled() => Err(CodexResetConsumeError::OutcomeUnknown { redeem_request_id: request_id }),
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::auth_storage_policy::{
         CODEX_RANKING_STRATEGY, CredentialRankingContext, CredentialRankingStrategy, is_usage_limit_exhausted,
@@ -852,27 +978,29 @@ mod tests {
         })
     }
 
-    struct HttpReply {
-        status: u16,
-        body: String,
-        location: Option<String>,
-        delay: Duration,
+    pub(crate) struct HttpReply {
+        pub(crate) status: u16,
+        pub(crate) body: String,
+        pub(crate) location: Option<String>,
+        pub(crate) delay: Duration,
     }
 
     impl HttpReply {
-        fn json(status: u16, body: Value) -> Self {
+        pub(crate) fn json(status: u16, body: Value) -> Self {
             Self { status, body: body.to_string(), location: None, delay: Duration::ZERO }
         }
     }
 
-    struct HttpRequest {
-        target: String,
-        headers: BTreeMap<String, String>,
+    pub(crate) struct HttpRequest {
+        pub(crate) method: String,
+        pub(crate) target: String,
+        pub(crate) headers: BTreeMap<String, String>,
+        pub(crate) body: Option<Value>,
     }
 
-    struct HttpFixture {
-        base: String,
-        requests: mpsc::UnboundedReceiver<HttpRequest>,
+    pub(crate) struct HttpFixture {
+        pub(crate) base: String,
+        pub(crate) requests: mpsc::UnboundedReceiver<HttpRequest>,
         worker: tokio::task::JoinHandle<()>,
     }
 
@@ -882,7 +1010,7 @@ mod tests {
         }
     }
 
-    async fn fixture(replies: Vec<HttpReply>) -> HttpFixture {
+    pub(crate) async fn fixture(replies: Vec<HttpReply>) -> HttpFixture {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let (sender, requests) = mpsc::unbounded_channel();
@@ -903,14 +1031,27 @@ mod tests {
                     }
                     bytes.extend_from_slice(&buffer[..length]);
                 }
-                let text = String::from_utf8(bytes).unwrap();
+                let header_end = bytes.windows(4).position(|window| window == b"\r\n\r\n").unwrap() + 4;
+                let text = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
                 let mut lines = text.split("\r\n");
-                let target = lines.next().unwrap().split_whitespace().nth(1).unwrap().to_owned();
-                let headers = lines
+                let first = lines.next().unwrap();
+                let method = first.split_whitespace().next().unwrap().to_owned();
+                let target = first.split_whitespace().nth(1).unwrap().to_owned();
+                let headers: BTreeMap<String, String> = lines
                     .filter_map(|line| line.split_once(':'))
                     .map(|(key, value)| (key.to_lowercase(), value.trim().into()))
                     .collect();
-                if sender.send(HttpRequest { target, headers }).is_err() {
+                let length = headers.get("content-length").and_then(|length| length.parse::<usize>().ok()).unwrap_or(0);
+                while bytes.len() < header_end + length {
+                    let mut buffer = [0u8; 4096];
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buffer[..read]);
+                }
+                let body = serde_json::from_slice(&bytes[header_end..]).ok();
+                if sender.send(HttpRequest { method, target, headers, body }).is_err() {
                     break;
                 }
                 let reply = replies.pop_front().unwrap_or_else(|| HttpReply::json(500, json!({})));
@@ -931,7 +1072,7 @@ mod tests {
         HttpFixture { base, requests, worker }
     }
 
-    fn fixture_provider(base: &str, canonical_calls: Arc<Mutex<Vec<String>>>) -> CodexUsageProvider {
+    pub(crate) fn fixture_provider(base: &str, canonical_calls: Arc<Mutex<Vec<String>>>) -> CodexUsageProvider {
         let base = base.to_owned();
         CodexUsageProvider::with_fixture_endpoint_resolver(Arc::new(move |canonical| {
             canonical_calls.lock().unwrap().push(canonical.to_owned());
@@ -939,6 +1080,141 @@ mod tests {
             format!("{base}{path}")
         }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_reset_consume_wire_and_picker_case_corpus() {
+        let credits = parse_codex_reset_credit_list(&json!({"credits":[
+            {"id":"spent","status":"redeemed","expires_at":"2026-01-01T00:00:00Z"},
+            {"id":"undated","expires_at":"invalid"},
+            {"id":"late","expires_at":"2026-12-01T00:00:00Z"},
+            {"id":"soon","expires_at":"2026-11-01T00:00:00Z"},
+            {"id":"tie","expires_at":"2026-11-01T00:00:00Z"}
+        ]}))
+        .unwrap()
+        .credits;
+        assert_eq!(pick_soonest_expiring_credit(&credits).unwrap().id, "soon");
+        assert_eq!(pick_soonest_expiring_credit(&credits[..2]).unwrap().id, "undated");
+        assert_eq!(pick_soonest_expiring_credit(&credits[..1]).unwrap().id, "spent");
+        assert!(pick_soonest_expiring_credit(&[]).is_none());
+        for (status, body, expected_code, expected_ok) in [
+            (200, "{\"code\":\"reset\"}", "reset", true),
+            (500, "{\"code\":\"reset\"}", "reset", true),
+            (200, "{\"code\":\"nothing_to_reset\"}", "nothing_to_reset", false),
+            (200, "broken", "reset", true),
+            (403, "broken", "http_403", false),
+            (200, "{\"code\":7}", "reset", true),
+            (200, "{\"code\":\"future_business_code\"}", "future_business_code", false),
+        ] {
+            let mut http =
+                fixture(vec![HttpReply { status, body: body.into(), location: None, delay: Duration::ZERO }]).await;
+            let client = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+            let result = client
+                .consume_reset_credit(
+                    CodexResetConsumeRequest {
+                        access_token: "private-fixture",
+                        account_id: Some("account-fixture"),
+                        base_url: None,
+                        credit_id: "credit-fixture",
+                        redeem_request_id: Some("retained-uuid"),
+                    },
+                    Duration::from_secs(2),
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            assert_eq!((result.ok, result.code.as_str(), result.status), (expected_ok, expected_code, status));
+            let request = http.requests.recv().await.unwrap();
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.target, "/backend-api/wham/rate-limit-reset-credits/consume");
+            assert_eq!(request.headers["user-agent"], CODEX_USAGE_USER_AGENT);
+            assert_eq!(request.headers["authorization"], "Bearer private-fixture");
+            assert_eq!(request.headers["chatgpt-account-id"], "account-fixture");
+            assert_eq!(
+                request.body.unwrap(),
+                json!({"credit_id":"credit-fixture","redeem_request_id":"retained-uuid","account_id":"account-fixture"})
+            );
+            assert!(http.requests.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn native_reset_consume_cancel_timeout_and_new_uuid_case_corpus() {
+        let mut http = fixture(vec![HttpReply::json(200, json!({})), HttpReply::json(200, json!({}))]).await;
+        let client = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        let input = CodexResetConsumeRequest {
+            access_token: "fixture",
+            account_id: None,
+            base_url: None,
+            credit_id: "credit",
+            redeem_request_id: None,
+        };
+        assert!(matches!(
+            client.consume_reset_credit(input, Duration::from_secs(1), &cancelled).await,
+            Err(CodexResetConsumeError::Cancelled)
+        ));
+        assert!(http.requests.try_recv().is_err());
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            client
+                .consume_reset_credit(
+                    CodexResetConsumeRequest {
+                        access_token: "fixture",
+                        account_id: None,
+                        base_url: None,
+                        credit_id: "credit",
+                        redeem_request_id: None,
+                    },
+                    Duration::from_secs(1),
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            let request = http.requests.recv().await.unwrap();
+            let body = request.body.unwrap();
+            assert!(body.get("account_id").is_none());
+            let id = body["redeem_request_id"].as_str().unwrap().to_owned();
+            assert!(uuid::Uuid::parse_str(&id).is_ok());
+            ids.push(id);
+        }
+        assert_ne!(ids[0], ids[1]);
+        for cancel_after_dispatch in [false, true] {
+            let mut http = fixture(vec![HttpReply {
+                status: 200,
+                body: "{}".into(),
+                location: None,
+                delay: Duration::from_secs(2),
+            }])
+            .await;
+            let client = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+            let cancel = CancellationToken::new();
+            let worker_cancel = cancel.clone();
+            let worker = tokio::spawn(async move {
+                client
+                    .consume_reset_credit(
+                        CodexResetConsumeRequest {
+                            access_token: "fixture",
+                            account_id: None,
+                            base_url: None,
+                            credit_id: "credit",
+                            redeem_request_id: Some("known-uuid"),
+                        },
+                        Duration::from_millis(150),
+                        &worker_cancel,
+                    )
+                    .await
+            });
+            assert_eq!(http.requests.recv().await.unwrap().method, "POST");
+            if cancel_after_dispatch {
+                cancel.cancel();
+            }
+            assert!(
+                matches!(worker.await.unwrap(), Err(CodexResetConsumeError::OutcomeUnknown { redeem_request_id }) if redeem_request_id == "known-uuid")
+            );
+            assert!(http.requests.try_recv().is_err());
+        }
     }
 
     // One family translates fixed native openai-codex-usage.test.ts,

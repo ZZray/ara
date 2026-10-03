@@ -75,6 +75,23 @@ const USAGE_HEADER_INGEST_INTERVAL_MS: f64 = 60_000.0;
 const LAST_GOOD_RETENTION_MS: f64 = 86_400_000.0;
 const USAGE_CACHE_PREFIX: &str = "usage_cache:";
 
+#[path = "auth_storage_diagnostics.rs"]
+mod diagnostics;
+#[path = "auth_storage_health.rs"]
+mod health;
+#[path = "auth_storage_resets.rs"]
+mod resets;
+
+pub use diagnostics::{
+    CheckCredentialsOptions, CredentialBaseUrlResolver, CredentialCompletionCredential, CredentialCompletionProbe,
+    CredentialCompletionRequest, CredentialCompletionResult, CredentialHealthResult,
+};
+pub use health::{ModelUsageAccountHealth, ModelUsageHealth, ModelUsageHealthOptions, ModelUsageHealthState};
+pub use resets::{
+    ListResetCreditsOptions, RedeemResetCreditOptions, ResetCreditAccountStatus, ResetCreditRedeemOutcome,
+    ResetCreditTarget,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthStorageError {
     Cancelled,
@@ -232,6 +249,11 @@ pub trait UsageProvider: Send + Sync {
     fn supports(&self, _request: &UsageRequest) -> bool {
         true
     }
+    /// Informational endpoints may expose quota without validating a secret.
+    /// Credential diagnostics preserve that distinction from a failed probe.
+    fn validates_credentials(&self) -> bool {
+        true
+    }
     fn retain_last_good_on_failure(&self) -> bool {
         true
     }
@@ -250,6 +272,9 @@ pub struct AuthStorageOptions {
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
     /// Math.random-style sample in [0,1); injected for deterministic fixtures.
     pub jitter: Arc<dyn Fn() -> f64 + Send + Sync>,
+    /// Host transport for dedicated Codex reset routes. Defaults to the same
+    /// canonical, redirect-free Codex HTTP policy as builtin usage.
+    pub reset_credit_client: Option<crate::codex_usage::CodexUsageProvider>,
 }
 impl Default for AuthStorageOptions {
     fn default() -> Self {
@@ -260,6 +285,7 @@ impl Default for AuthStorageOptions {
             usage_request_timeout: Duration::from_secs(10),
             clock: Arc::new(|| chrono::Utc::now().timestamp_millis() as f64),
             jitter: Arc::new(|| (uuid::Uuid::new_v4().as_u128() >> 75) as f64 / (1_u64 << 53) as f64),
+            reset_credit_client: None,
         }
     }
 }
@@ -1115,6 +1141,49 @@ impl AuthStorage {
         Err(AuthStorageError::Unsupported)
     }
 
+    /// Diagnostic refresh starts only after the snapshot's exact expiry. It
+    /// does not run ordinary request readiness hooks or request failure policy.
+    async fn prepare_diagnostic_oauth(
+        &self,
+        provider: &str,
+        row: StoredAuthCredential,
+        cancel: &CancellationToken,
+    ) -> Result<UsageCredential, AuthStorageError> {
+        check_cancel(cancel)?;
+        let latest = self
+            .provider_rows(provider)
+            .await?
+            .into_iter()
+            .find(|latest| latest.id == row.id && matches!(latest.credential, AuthCredential::OAuth { .. }))
+            .ok_or(AuthStorageError::Unavailable)?;
+        if latest.serialized_data != row.serialized_data && access_fresh(&latest, self.now(), 0.0) {
+            return Ok(usage_credential(&latest, None));
+        }
+        if let Some(hook) = self.oauth_hook(provider) {
+            let result = hook.resolve(latest, true, cancel).await?;
+            if result.row.id != row.id
+                || result.row.provider != provider
+                || result.row.disabled_cause.is_some()
+                || !matches!(result.row.credential, AuthCredential::OAuth { .. })
+                || !matches!(result.lease.identity(), CredentialIdentity::Stored { id, .. } if *id == row.id)
+            {
+                return Err(AuthStorageError::Configuration);
+            }
+            return Ok(usage_credential(&result.row, None));
+        }
+        // Remote refresh belongs to the remote hook, never the local endpoint.
+        if text_field(&latest, "refresh").as_deref() == Some("__remote__") {
+            return Err(AuthStorageError::Unsupported);
+        }
+        if provider == "openai-codex"
+            && let Some(codex) = &self.inner.codex
+        {
+            let resolved = codex.prepare_usage_account_credential(row.id, cancel).await.map_err(map_codex_error)?;
+            return Ok(usage_credential(&resolved, None));
+        }
+        Err(AuthStorageError::Unsupported)
+    }
+
     async fn handle_oauth_failure(
         &self,
         provider: &str,
@@ -1625,12 +1694,16 @@ impl AuthStorage {
 
     fn expire_usage_cache(&self, provider: Option<&str>) -> Result<(), AuthStorageError> {
         let Some(provider) = provider else { return self.clear_usage_report_cache(None) };
+        self.expire_oauth_usage_cache(provider, None)
+    }
+    fn expire_oauth_usage_cache(&self, provider: &str, base_url: Option<&str>) -> Result<(), AuthStorageError> {
         // Fixed source 6228-6240 invalidates only current OAuth/default-URL
         // keys. Non-null last-good values remain durable for failed probes.
         self.inner.usage_epoch.fetch_add(1, Ordering::AcqRel);
         let now = self.now();
         self.store_operation(|store, state| {
-            for row in state.rows.get(provider).into_iter().flatten() {
+            let rows = Self::load_provider(store, state, provider)?;
+            for row in &rows {
                 if !matches!(row.credential, AuthCredential::OAuth { .. }) {
                     continue;
                 }
@@ -1640,7 +1713,7 @@ impl AuthStorage {
                     account_key: usage_identity(&credential),
                     credential,
                     credential_id: Some(row.id),
-                    base_url: None,
+                    base_url: base_url.map(str::to_owned),
                 });
                 let value = store
                     .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
@@ -2954,6 +3027,7 @@ mod tests {
         refreshes: Mutex<Vec<i64>>,
         preparing: AtomicUsize,
         max_parallel: AtomicUsize,
+        replacements: Mutex<BTreeMap<i64, String>>,
     }
     impl FixtureOAuth {
         fn new(store: Arc<Mutex<SqliteCredentialStore>>) -> Self {
@@ -2963,6 +3037,7 @@ mod tests {
                 refreshes: Mutex::new(Vec::new()),
                 preparing: AtomicUsize::new(0),
                 max_parallel: AtomicUsize::new(0),
+                replacements: Mutex::new(BTreeMap::new()),
             }
         }
     }
@@ -3002,6 +3077,10 @@ mod tests {
             if let AuthCredential::OAuth { fields } = &mut credential {
                 fields.insert("access".into(), Value::String(format!("refreshed-{}", row.id)));
                 fields.insert("expires".into(), Value::from(chrono::Utc::now().timestamp_millis() + 7_200_000));
+                if let Some(identity) = self.replacements.lock().unwrap().get(&row.id) {
+                    fields.insert("accountId".into(), Value::String(identity.clone()));
+                    fields.insert("email".into(), Value::String(identity.clone()));
+                }
             }
             let store = self.store.lock().unwrap();
             assert!(
@@ -3127,6 +3206,15 @@ mod tests {
         now: Arc<AtomicU64>,
         lower_keys: bool,
     ) -> (AuthStorage, Arc<Mutex<SqliteCredentialStore>>, Arc<FixtureConfig>, Arc<FixtureOAuth>) {
+        setup_with_reset_client(provider, credentials, now, lower_keys, None)
+    }
+    fn setup_with_reset_client(
+        provider: &str,
+        credentials: &[AuthCredential],
+        now: Arc<AtomicU64>,
+        lower_keys: bool,
+        reset_credit_client: Option<crate::codex_usage::CodexUsageProvider>,
+    ) -> (AuthStorage, Arc<Mutex<SqliteCredentialStore>>, Arc<FixtureConfig>, Arc<FixtureOAuth>) {
         let store = Arc::new(Mutex::new(
             SqliteCredentialStore::from_connection(
                 rusqlite::Connection::open_in_memory().unwrap(),
@@ -3144,6 +3232,7 @@ mod tests {
             usage_request_timeout: Duration::from_secs(2),
             environment: if lower_keys { Arc::new(FixtureEnvironment) } else { Arc::new(EmptyEnvironment) },
             fallback: if lower_keys { Arc::new(FixtureFallback) } else { Arc::new(EmptyFallback) },
+            reset_credit_client,
         };
         let storage = AuthStorage::new(store.clone(), None, options).unwrap();
         let oauth = Arc::new(FixtureOAuth::new(store.clone()));
@@ -3162,6 +3251,198 @@ mod tests {
         match lease.identity() {
             CredentialIdentity::Stored { id, .. } => *id,
             _ => panic!("expected stored identity"),
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_reset_native_accounts_and_business_case_corpus() {
+        use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+        let provider = "openai-codex";
+        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let clock = Arc::new(AtomicU64::new(now as u64));
+        let mut http = fixture(vec![HttpReply::json(200, serde_json::json!({"credits":[{"id":"live-credit"}]}))]).await;
+        let transport = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+        let (storage, store, _, hook) = setup_with_reset_client(
+            provider,
+            &[oauth("failed@fixture", now, true), oauth("fresh@fixture", now, false)],
+            clock,
+            false,
+            Some(transport),
+        );
+        let rows = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+        hook.failures.lock().unwrap().insert(rows[0].id, AuthStorageError::Transient);
+        assert!(storage.pin_session_oauth_account(provider, "reset-session", rows[1].id, None).unwrap());
+        let status = storage
+            .list_reset_credits(
+                &ListResetCreditsOptions { session_id: Some("reset-session".into()), ..Default::default() },
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.len(), 2);
+        assert_eq!(status[0].credential_id, rows[0].id);
+        assert_eq!(status[0].email.as_deref(), Some("failed@fixture"));
+        assert!(status[0].error.is_some());
+        assert!(status[1].active);
+        assert_eq!(status[1].available_count, 1.0);
+        assert_eq!(http.requests.recv().await.unwrap().method, "GET");
+        assert!(http.requests.try_recv().is_err());
+        for (target, expected) in [
+            (ResetCreditTarget { credential_id: Some(-1), ..Default::default() }, "no_account"),
+            (ResetCreditTarget { credential_id: Some(rows[0].id), ..Default::default() }, "account_unavailable"),
+            (
+                ResetCreditTarget {
+                    credential_id: Some(-1),
+                    email: Some("fresh@fixture".into()),
+                    ..Default::default()
+                },
+                "credit_list_failed",
+            ),
+        ] {
+            let outcome = storage
+                .redeem_reset_credit(
+                    &RedeemResetCreditOptions { target, ..Default::default() },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(outcome.code, expected);
+        }
+        assert_eq!(http.requests.recv().await.unwrap().method, "GET");
+        assert!(http.requests.try_recv().is_err());
+        storage.set_runtime_api_key(provider, "fixture-override".into()).unwrap();
+        assert!(
+            storage
+                .list_reset_credits(&ListResetCreditsOptions::default(), &CancellationToken::new())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_reset_native_settlement_and_unknown_case_corpus() {
+        use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+        let provider = "openai-codex";
+        for (reply, expected_ok, expected_code, refresh_identity) in [
+            (HttpReply::json(500, serde_json::json!({"code":"reset"})), true, "reset", false),
+            (HttpReply::json(200, serde_json::json!({"code":"already_redeemed"})), false, "already_redeemed", false),
+            (HttpReply::json(200, serde_json::json!({"code":"reset"})), true, "reset", true),
+        ] {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let clock = Arc::new(AtomicU64::new(now as u64));
+            let mut http = fixture(vec![reply]).await;
+            let transport = fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())));
+            let (storage, store, _, hook) = setup_with_reset_client(
+                provider,
+                &[oauth("a@fixture", now, refresh_identity), oauth("b@fixture", now, false)],
+                clock,
+                false,
+                Some(transport),
+            );
+            let rows = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+            let identity = if refresh_identity { "current@fixture" } else { "a@fixture" };
+            let mut current = rows[0].clone();
+            if refresh_identity {
+                hook.replacements.lock().unwrap().insert(current.id, identity.into());
+                if let AuthCredential::OAuth { fields } = &mut current.credential {
+                    fields.insert("accountId".into(), Value::String(identity.into()));
+                    fields.insert("email".into(), Value::String(identity.into()));
+                }
+            }
+            let context =
+                AuthRequestContext { base_url: Some("https://chat.openai.com/proxy".into()), ..Default::default() };
+            let key = header_cache_key(&current, context.base_url.as_deref());
+            let default_key = header_cache_key(&current, None);
+            let value = report(provider, now, 1.0, "plus", identity);
+            storage
+                .store_operation(|store, _state| {
+                    for key in [&key, &default_key] {
+                        write_usage_cache(
+                            store,
+                            key,
+                            &UsageCacheEntry { value: Some(value.clone()), expires_at: now + 60_000.0 },
+                            now,
+                        )
+                        .map_err(|_| AuthStorageError::Storage)?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            for row in &rows {
+                for scope in [None, Some("chat"), Some("spark")] {
+                    storage
+                        .mark_block(provider, row.id, CredentialKind::OAuth, now + 7_200_000.0, scope)
+                        .await
+                        .unwrap();
+                }
+            }
+            // mark_block stales default keys; seed them again to distinguish
+            // the reset's base URL scope from automatic default invalidation.
+            storage
+                .store_operation(|store, _state| {
+                    write_usage_cache(
+                        store,
+                        &default_key,
+                        &UsageCacheEntry { value: Some(value.clone()), expires_at: now + 60_000.0 },
+                        now,
+                    )
+                    .map_err(|_| AuthStorageError::Storage)
+                })
+                .unwrap();
+            let epoch = storage.inner.usage_epoch.load(Ordering::Acquire);
+            let outcome = storage
+                .redeem_reset_credit(
+                    &RedeemResetCreditOptions {
+                        target: ResetCreditTarget {
+                            credential_id: Some(-1),
+                            account_id: Some(identity.into()),
+                            ..Default::default()
+                        },
+                        credit_id: Some("explicit-credit".into()),
+                        base_url_resolver: Some(Arc::new(|_| Some("https://chat.openai.com/proxy".into()))),
+                        ..Default::default()
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            assert_eq!((outcome.ok, outcome.code.as_str()), (expected_ok, expected_code));
+            assert!(outcome.settlement_error.is_none());
+            let request = http.requests.recv().await.unwrap();
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.headers["chatgpt-account-id"], identity);
+            assert_eq!(request.body.as_ref().unwrap()["credit_id"], "explicit-credit");
+            assert!(http.requests.try_recv().is_err());
+            assert_eq!(storage.list_credential_blocks(&[rows[0].id]).unwrap().is_empty(), expected_ok);
+            assert!(!storage.list_credential_blocks(&[rows[1].id]).unwrap().is_empty());
+            let cached = storage
+                .store_operation(|store, _state| Ok(read_usage_cache::<UsageReport>(store, &key, true).unwrap()))
+                .unwrap();
+            assert_eq!(cached.value, Some(value));
+            assert_eq!(cached.expires_at < now, expected_ok);
+            let default_cached = storage
+                .store_operation(
+                    |store, _state| Ok(read_usage_cache::<UsageReport>(store, &default_key, true).unwrap()),
+                )
+                .unwrap();
+            assert!(default_cached.expires_at > now);
+            assert_eq!(storage.inner.usage_epoch.load(Ordering::Acquire), epoch + u64::from(expected_ok));
+            for scope in [None, Some("chat"), Some("spark")] {
+                let blocked = storage
+                    .store_operation(|store, state| {
+                        Ok(state.assignments.blocked_until(
+                            store,
+                            &provider_type_key(provider, CredentialKind::OAuth),
+                            0,
+                            &scope.into_iter().collect::<Vec<_>>(),
+                            &rows,
+                            now,
+                        ))
+                    })
+                    .unwrap();
+                assert_eq!(blocked.is_none(), expected_ok);
+            }
         }
     }
 
