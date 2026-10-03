@@ -121,6 +121,7 @@ struct BrokerUsageInner {
     state: Mutex<BrokerUsageState>,
     pending: AtomicUsize,
     settled: Notify,
+    closed: CancellationToken,
 }
 
 #[derive(Default)]
@@ -195,6 +196,7 @@ impl AuthBrokerUsageStore {
                 }),
                 pending: AtomicUsize::new(0),
                 settled: Notify::new(),
+                closed: CancellationToken::new(),
             }),
         })
     }
@@ -202,7 +204,21 @@ impl AuthBrokerUsageStore {
     /// Host snapshot updates replace only the identity/count view. The Host
     /// invokes invalidate_usage_cache separately for its native stale events.
     pub fn replace_snapshot(&self, raw_snapshot: Vec<AuthBrokerUsageSnapshotEntry>) {
-        self.inner.state.lock().unwrap().snapshot = raw_snapshot;
+        let mut state = self.inner.state.lock().unwrap();
+        if !self.inner.closed.is_cancelled() {
+            state.snapshot = raw_snapshot;
+        }
+    }
+
+    /// Closing the owning remote store drops its ephemeral values while
+    /// already-dispatched request owners retain their settlement obligation.
+    pub(crate) fn clear_ephemeral_state(&self) {
+        let mut state = self.inner.state.lock().unwrap();
+        self.inner.closed.cancel();
+        state.cache = None;
+        state.flight = None;
+        state.epoch = state.epoch.wrapping_add(1);
+        state.overlays.clear();
     }
 
     /// Direct callers can cancel their wait without cancelling a shared GET.
@@ -229,6 +245,9 @@ impl AuthBrokerUsageStore {
 
     fn usage_load(&self) -> UsageLoad {
         let mut state = self.inner.state.lock().unwrap();
+        if self.inner.closed.is_cancelled() {
+            return UsageLoad::Cached(None);
+        }
         let now = (self.inner.clock)();
         if let Some(cache) = &state.cache
             && now - cache.fetched_at < USAGE_CACHE_TTL_MS
@@ -251,7 +270,7 @@ impl AuthBrokerUsageStore {
             let reports = owner.fetch_broker_reports(timeout).await.ok();
             let mut state = owner.inner.state.lock().unwrap();
             let current = state.flight.as_ref().is_some_and(|flight| flight.id == id && flight.epoch == epoch);
-            if state.epoch == epoch && current {
+            if !owner.inner.closed.is_cancelled() && state.epoch == epoch && current {
                 // Every failure caches null for 15s; there is no last-good fallback.
                 state.cache = Some(UsageCache { reports: reports.clone(), fetched_at: (owner.inner.clock)() });
                 let _ = sender.send(FlightOutcome::Ready { epoch, reports });
@@ -271,6 +290,9 @@ impl AuthBrokerUsageStore {
         cancel: Option<&CancellationToken>,
     ) -> Result<Option<Vec<UsageReport>>, AuthStorageError> {
         loop {
+            if self.inner.closed.is_cancelled() {
+                return Ok(None);
+            }
             let mut receiver = match self.usage_load() {
                 UsageLoad::Cached(reports) => {
                     if cancel.is_some_and(CancellationToken::is_cancelled) {
@@ -299,10 +321,15 @@ impl AuthBrokerUsageStore {
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled() => return Err(AuthStorageError::Cancelled),
+                        _ = self.inner.closed.cancelled() => return Ok(None),
                         result = receiver.changed() => result,
                     }
                 } else {
-                    receiver.changed().await
+                    tokio::select! {
+                        biased;
+                        _ = self.inner.closed.cancelled() => return Ok(None),
+                        result = receiver.changed() => result,
+                    }
                 };
                 if changed.is_err() {
                     return Err(AuthStorageError::Unavailable);
@@ -419,6 +446,9 @@ impl UsageStoreHooks for AuthBrokerUsageStore {
         let identity = AuthBrokerUsageIdentity::from(&request.credential);
         let Some(key) = overlay_key(&request.provider, &identity) else { return false };
         let mut state = self.inner.state.lock().unwrap();
+        if self.inner.closed.is_cancelled() {
+            return false;
+        }
         let active = active_overlay(&mut state.overlays, &request.provider, &identity, (self.inner.clock)());
         let report = match active {
             Some(base) => merge_reports(base, report),
@@ -440,6 +470,9 @@ impl UsageStoreHooks for AuthBrokerUsageStore {
     }
 
     async fn notify_usage_stale(&self, cancel: &CancellationToken) -> Result<(), AuthStorageError> {
+        if self.inner.closed.is_cancelled() {
+            return Err(AuthStorageError::Unavailable);
+        }
         // Native POST shares the transport retry loop. This route is a stale
         // notification, not the separate reset-credit no-retry contract.
         let response = self.fetch_raw(Method::POST, "/v1/usage/stale", self.inner.request_timeout, cancel).await?;

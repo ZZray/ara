@@ -33,10 +33,12 @@
 //! OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //! SOFTWARE.
 
+#[cfg(test)]
+use crate::credential_store::SqliteCredentialStore;
 use crate::credential_store::{
-    AuthCredential, SqliteCredentialStore, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS,
-    is_sqlite_corruption_error,
+    AuthCredential, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS, is_sqlite_corruption_error,
 };
+use crate::credential_store_port::AuthCredentialStore;
 use anyhow::{Result, anyhow};
 use ara_rpc::WireString;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -235,7 +237,7 @@ impl AuthStorageState {
     #[allow(clippy::too_many_arguments)]
     pub fn record_session_credential(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: Option<&str>,
         kind: CredentialKind,
@@ -264,7 +266,7 @@ impl AuthStorageState {
 
     pub fn read_session_credential(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: Option<&str>,
         rows: &[StoredAuthCredential],
@@ -311,7 +313,7 @@ impl AuthStorageState {
 
     pub fn clear_session_credential(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: Option<&str>,
     ) {
@@ -322,7 +324,7 @@ impl AuthStorageState {
 
     pub fn list_oauth_accounts(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: Option<&str>,
         rows: &[StoredAuthCredential],
@@ -358,7 +360,7 @@ impl AuthStorageState {
     #[allow(clippy::too_many_arguments)]
     pub fn pin_session_oauth_account(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: &str,
         credential_id: i64,
@@ -395,7 +397,7 @@ impl AuthStorageState {
     #[allow(clippy::too_many_arguments)]
     pub fn resolve_credential_target(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         session_id: Option<&str>,
         rows: &[StoredAuthCredential],
@@ -491,7 +493,7 @@ impl AuthStorageState {
         }
     }
 
-    pub fn reset_provider_assignments(&mut self, store: &SqliteCredentialStore, provider: &str) {
+    pub fn reset_provider_assignments(&mut self, store: &dyn AuthCredentialStore, provider: &str) {
         let prefix = format!("{provider}:");
         self.round_robin.retain(|key, _| !key.starts_with(&prefix));
         self.sessions.remove(provider);
@@ -542,7 +544,13 @@ impl AuthStorageState {
         Some(until)
     }
 
-    fn read_persisted_block(&mut self, store: &SqliteCredentialStore, id: i64, key: &str, scope: &str) -> Option<f64> {
+    fn read_persisted_block(
+        &mut self,
+        store: &dyn AuthCredentialStore,
+        id: i64,
+        key: &str,
+        scope: &str,
+    ) -> Option<f64> {
         if self.persisted_block_store_damaged {
             return None;
         }
@@ -555,7 +563,7 @@ impl AuthStorageState {
         }
     }
 
-    fn read_reconcile_after(&mut self, store: &SqliteCredentialStore, id: i64, key: &str, scope: &str) -> f64 {
+    fn read_reconcile_after(&mut self, store: &dyn AuthCredentialStore, id: i64, key: &str, scope: &str) -> f64 {
         if self.persisted_block_store_damaged {
             return 0.0;
         }
@@ -570,7 +578,7 @@ impl AuthStorageState {
 
     pub fn blocked_until(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider_key: &str,
         index: usize,
         scopes: &[&str],
@@ -596,7 +604,7 @@ impl AuthStorageState {
     #[allow(clippy::too_many_arguments)]
     pub fn mark_credential_blocked(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider_key: &str,
         index: usize,
         until_ms: f64,
@@ -628,7 +636,7 @@ impl AuthStorageState {
 
     pub fn list_credential_blocks(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         ids: &[i64],
     ) -> Result<Vec<StoredCredentialBlock>> {
         if self.persisted_block_store_damaged {
@@ -643,7 +651,7 @@ impl AuthStorageState {
 
     pub fn upsert_credential_block(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         block: &StoredCredentialBlock,
     ) -> Result<()> {
         self.assert_block_store_writable()?;
@@ -658,7 +666,7 @@ impl AuthStorageState {
 
     pub fn delete_credential_block(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         id: i64,
         key: &str,
         scope: &str,
@@ -673,7 +681,7 @@ impl AuthStorageState {
         Ok(())
     }
 
-    pub fn delete_credential_blocks(&mut self, store: &SqliteCredentialStore, id: i64) -> Result<()> {
+    pub fn delete_credential_blocks(&mut self, store: &dyn AuthCredentialStore, id: i64) -> Result<()> {
         self.assert_block_store_writable()?;
         if let Err(error) = store.delete_credential_blocks(id) {
             if self.observe_store_error(&error) {
@@ -686,7 +694,7 @@ impl AuthStorageState {
 
     pub fn clear_credential_block_scope(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         id: i64,
         index: usize,
         provider_key: &str,
@@ -701,7 +709,7 @@ impl AuthStorageState {
     /// Used after OAuth refresh; clears every scope for only this row/index.
     pub fn clear_credential_blocks(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider: &str,
         id: i64,
         rows: &[StoredAuthCredential],
@@ -727,7 +735,7 @@ impl AuthStorageState {
     #[allow(clippy::too_many_arguments)]
     pub fn clear_healed_block_scope(
         &mut self,
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         provider_key: &str,
         id: i64,
         index: usize,

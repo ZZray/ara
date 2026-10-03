@@ -708,6 +708,7 @@ mod tests {
             storage
                 .inner
                 .store
+                .local_for_test()
                 .lock()
                 .unwrap()
                 .get_cache("session:sticky:anthropic:session-1", false)

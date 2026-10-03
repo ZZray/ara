@@ -325,6 +325,30 @@ its notification/clear-block tail independently of the waiting caller's lifetime
 See [tested usage/store evidence](../evidence/usage-aggregate.md) for scope and
 unexecuted account/platform boundaries.
 
+The [remote-owner WIP](../evidence/broker-store.md) composes that same usage
+adapter with one remote credential snapshot/SSE/pool and mutation owner.
+`CredentialStoreOwner::Local` retains the exact SQLite Arc checked by Codex;
+`Remote` retains one Arc shared by AuthStorage, Registry and request resolution.
+The synchronous facade borrows only short projection operations. Network
+capabilities clone the same owner after guards are released; remote credentials
+are not mirrored into SQLite. Explicit refresh callbacks publish through that
+same owner even for Local, independently of a waiting caller's cancellation.
+Builtin lease projection remains separate from the callback's generic lease.
+
+Broker wire generation and the Host's monotonic change counter are different
+contracts: a separate projection revision/watch drives Host notifications.
+Usage close permanently fences old flights and later cache publication while
+dispatched finite mutations retain settlement and unknown-effect receipts.
+Broker HTTP status alone cannot prove a revoked provider OAuth grant or
+authorize credential disable. For uncertain dispatched writes, the fixed
+native transport retry differs from Rust's retained OutcomeUnknown behavior;
+the source-parity obligation remains open. Host discovery, encrypted cache and
+identity are outside Core; normal exit drains their already-started work.
+Actual accounts, the Broker server, full CLI/RPC/controller consumers and the
+recorded cache/number/unknown-usage differences are not accepted by this owner
+batch. The evidence page distinguishes executed module fixtures from these
+remaining contracts.
+
 These are bounded implemented boundaries, not full AuthStorage parity. The
 [AuthStorage evidence](../evidence/auth-storage.md) and
 [usage refresh evidence](../evidence/usage-refresh.md) retain complete callers,

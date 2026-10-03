@@ -1117,22 +1117,38 @@ mod tests {
         ordered
             .inner
             .store
+            .local_for_test()
             .lock()
             .unwrap()
             .upsert_auth_credential_for_provider("stored-z", &AuthCredential::api_key("stored-z-new-wire"))
             .unwrap();
         ordered.reload().unwrap();
-        ordered.inner.store.lock().unwrap().delete_auth_credential(oldest_z, "order fixture account removed").unwrap();
+        ordered
+            .inner
+            .store
+            .local_for_test()
+            .lock()
+            .unwrap()
+            .delete_auth_credential(oldest_z, "order fixture account removed")
+            .unwrap();
         ordered.reload().unwrap();
         assert_eq!(
             report_provider_order(&ordered).await,
             ["stored-z", "stored-a", "runtime-a", "runtime-z", "openai-codex"]
         );
-        ordered.inner.store.lock().unwrap().replace_auth_credentials_for_provider("stored-z", &[]).unwrap();
+        ordered
+            .inner
+            .store
+            .local_for_test()
+            .lock()
+            .unwrap()
+            .replace_auth_credentials_for_provider("stored-z", &[])
+            .unwrap();
         ordered.reload().unwrap();
         ordered
             .inner
             .store
+            .local_for_test()
             .lock()
             .unwrap()
             .upsert_auth_credential_for_provider("stored-z", &AuthCredential::api_key("stored-z-returned-wire"))
@@ -1439,6 +1455,7 @@ mod tests {
             storage
                 .inner
                 .store
+                .local_for_test()
                 .lock()
                 .unwrap()
                 .replace_auth_credentials_for_provider("api-local", &[AuthCredential::api_key("actual")])

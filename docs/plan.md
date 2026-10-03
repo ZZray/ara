@@ -1,5 +1,22 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-03 (Broker owner/Host tested WIP):**
+[Broker evidence](evidence/broker-store.md) connects the native remote credential
+owner/client, live SSE/pool/blocks, owned refresh/writes, observed usage/close,
+Host discovery and encrypted cache to shared AuthStorage/Registry/request paths.
+Composite modules233/0/0; one Windows backend1779/0/20 in672.079s;
+fmt/Clippy/doc/inventory/build PASS. The existing ttf-parser advisory keeps the
+whole dependency gate FAIL. Source/test hashes remain frozen and57 vendor/EOL
+changes remain preserved. No new point, complete surface or P1-P6 gate is accepted.
+Counts remain111 surfaces27 implementing/one tested/83 open/zero complete
+acceptances;60 points35 limited accepted/23 implementing/two tested.
+Started28/111=25.2%; limited35/60=58.3%, not total completion. P0/V1 accepted;
+P1-P6 open; RPC27/42; full marker null. Next: Broker server and CLI auth/RPC
+observed consumers, production reserve/check/reset/auto-reset/watchdog controllers,
+recorded retry/numeric/cache/unknown-usage differences, actual account/platform
+and deferred Provider acceptance. Batch work/test gate about127min before final
+review/documentation/Git closure; full-project ETA remains unreliable.
+
 **Current checkpoint, 2026-10-03 (usage aggregate/store tested WIP):**
 [Usage aggregate and store evidence](evidence/usage-aggregate.md) adds native nullable source
 precedence, provider insertion/lifecycle order, local forced fanout, authoritative

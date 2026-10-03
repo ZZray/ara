@@ -407,6 +407,7 @@ struct HostSink {
     cancel: CancellationToken,
     /// How `edit` payloads are written, to name their target files in progress lines.
     edit_mode: ara_edit::EditMode,
+    observed_usage: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
 }
 
 impl HostSink {
@@ -435,7 +436,13 @@ impl HostSink {
             compaction_notice_shown: AtomicBool::new(false),
             cancel,
             edit_mode,
+            observed_usage: None,
         }
+    }
+
+    fn with_observed_usage(mut self, owner: Option<Arc<ara_cli::auth_storage::AuthStorage>>) -> Self {
+        self.observed_usage = owner;
+        self
     }
 
     fn write_line(&self, line: &str) {
@@ -544,6 +551,36 @@ impl AgentEventSink for HostSink {
         {
             self.persistence_failure(&e);
         }
+        if let AgentEvent::MessageEnd { message: Message::Assistant(message) } = &event
+            && let Some(owner) = &self.observed_usage
+            && let (Some(input), Some(output), Some(cache_read), Some(cache_write), Some(cost)) = (
+                message.usage.input,
+                message.usage.output,
+                message.usage.cache_read,
+                message.usage.cache_write,
+                message.usage.cost.as_ref(),
+            )
+            && cost.total.is_finite()
+            && let (Ok(input_tokens), Ok(output_tokens), Ok(cache_read_tokens), Ok(cache_write_tokens)) =
+                (i64::try_from(input), i64::try_from(output), i64::try_from(cache_read), i64::try_from(cache_write))
+        {
+            owner.record_observed_usage(
+                &[ara_cli::credential_store::ClientUsageEntry {
+                    at: message.timestamp,
+                    provider: message.provider.clone(),
+                    model: message.model.clone(),
+                    requests: 1,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                    cost_usd: cost.total,
+                }],
+                None,
+            );
+        }
+        // Incomplete usage remains unknown in the journal; the fixed numeric
+        // broker report cannot represent missing buckets or unknown cost.
         if self.stream {
             self.stream_progress(&event);
         }
@@ -708,7 +745,25 @@ async fn resolve_startup_route(
         DailyOverrides, load_daily_config, resolve_daily_selection_with_registry, validate_daily_auth_ownership,
     };
     use ara_cli::model_config_values::{ConfigValueEnvironment, ProcessConfigEnvironment};
-    if args.models_config.is_none() && matches!(args.api(), Api::AnthropicMessages | Api::ProxyAuto) {
+    let mut host = ara_cli::model_registry::ModelRegistryHost::for_process(
+        project_dir.to_path_buf(),
+        &ara_home().join("agent/model-cache.db"),
+    )?;
+    host.cancel = registry_cancel.clone();
+    let key_resolver = Arc::new(ara_cli::config_request_auth::ConfigStorageKeyResolver::new(
+        project_dir.to_path_buf(),
+        host.config_values.clone(),
+        host.config_environment.clone(),
+    ));
+    let discovery_host =
+        ara_cli::auth_broker_discover::BrokerDiscoveryHost::for_process(ara_home(), Some(key_resolver.clone()));
+    let broker_config = ara_cli::auth_broker_discover::BrokerConfigResolver::new(discovery_host.clone())
+        .resolve(registry_cancel)
+        .await?;
+    if broker_config.is_none()
+        && args.models_config.is_none()
+        && matches!(args.api(), Api::AnthropicMessages | Api::ProxyAuto)
+    {
         return resolve_route(args);
     }
     let path = args.models_config.clone().unwrap_or_else(|| ara_home().join("agent/models.yml"));
@@ -721,6 +776,7 @@ async fn resolve_startup_route(
         bail!("OpenAI account mode currently supports print and REPL; use --mode text or json");
     }
     if config.is_none()
+        && broker_config.is_none()
         && args.api() != Api::OpenaiCodexResponses
         && configured_provider.as_deref() != Some("openai-codex")
         && !ara_home().join("agent/auth.db").exists()
@@ -752,14 +808,37 @@ async fn resolve_startup_route(
         stream_idle_timeout: args.stream_idle_timeout,
     };
     validate_daily_auth_ownership(config.as_ref(), &overrides, &|name: &str| ProcessConfigEnvironment.get(name))?;
-    let mut host = ara_cli::model_registry::ModelRegistryHost::for_process(
-        project_dir.to_path_buf(),
-        &ara_home().join("agent/model-cache.db"),
-    )?;
-    host.cancel = registry_cancel.clone();
     // Ordinary routes without stored accounts use environment credentials and
     // do not create an unrelated account database during catalog startup.
-    if configured_provider.as_deref() == Some("openai-codex") || ara_home().join("agent/auth.db").exists() {
+    if let Some(config) = broker_config {
+        let identity = ara_cli::auth_broker_discover::client_identity(&discovery_host);
+        let account = Arc::new(
+            ara_cli::auth_broker_discover::discover_remote_auth_storage(
+                config,
+                ara_cli::auth_broker_discover::DiscoverRemoteOptions {
+                    host: discovery_host,
+                    client_options: Default::default(),
+                    cache_path: None,
+                    account_pool: None,
+                    identity,
+                },
+                ara_cli::auth_storage::AuthStorageOptions {
+                    config_key_resolver: key_resolver,
+                    environment: Arc::new(ara_cli::auth_storage_registry::CatalogAuthEnvironment(
+                        host.factory.environment.clone(),
+                    )),
+                    ..Default::default()
+                },
+                registry_cancel,
+            )
+            .await?,
+        );
+        *account_auth = Some(account.clone());
+        host.credentials = Arc::new(ara_cli::auth_storage_registry::AuthStorageRegistryCredentials::new(
+            account.as_ref().clone(),
+            registry_cancel.clone(),
+        ));
+    } else if configured_provider.as_deref() == Some("openai-codex") || ara_home().join("agent/auth.db").exists() {
         let codex =
             open_codex_auth(reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?).await?;
         let account = Arc::new(ara_cli::auth_storage::AuthStorage::for_codex(
@@ -2367,9 +2446,10 @@ async fn run(args: Args) -> Result<i32> {
     // refresh settlement before main shuts down the runtime. Hard process
     // termination still cannot prove a remote grant's outcome.
     if let Some(account) = account_auth {
-        account.wait_for_settlement().await;
+        account.close_and_wait().await;
     }
     ara_cli::config_request_auth::wait_for_config_settlement().await;
+    ara_cli::auth_broker_snapshot_cache::wait_for_cache_writes().await;
     result
 }
 
@@ -2615,7 +2695,8 @@ async fn run_inner(
         cancel.clone(),
         args.edit_mode,
         artifact_router.clone(),
-    );
+    )
+    .with_observed_usage(provider_factory.shared_account.clone());
     if args.mode == Mode::Json {
         sink.write_line(&header.to_string());
     }

@@ -117,7 +117,7 @@ pub struct DisabledCredentialSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub org_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub disabled_at_ms: Option<i64>,
+    pub disabled_at_ms: Option<f64>,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -543,7 +543,7 @@ impl SqliteCredentialStore {
                     account_id: field("accountId"),
                     org_id: field("orgId"),
                     org_name: field("orgName"),
-                    disabled_at_ms: row.updated_at.map(|v| v * 1000),
+                    disabled_at_ms: row.updated_at.map(|v| v as f64 * 1000.0),
                 }
             })
             .collect())

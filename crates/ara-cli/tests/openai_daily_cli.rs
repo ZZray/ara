@@ -697,6 +697,113 @@ async fn configured_responses_stream_tool_artifact_and_restart_use_the_original_
     assert!(journal.contains("openai-responses"));
 }
 
+/// Real Rust CLI -> configured broker -> shared Registry/AuthStorage ->
+/// request lease -> tool artifact/journal/resume, including cold broker failure.
+#[tokio::test]
+async fn broker_discovery_cache_shared_request_owner_and_restart_family() {
+    let host = Host::new();
+    let model = upstream(json!([
+        response_write(),
+        response_text("Broker task complete."),
+        response_text("Broker resume complete.")
+    ]))
+    .await;
+    host.config("openai-responses", &model.base_url(), "none");
+    let path = host.home.path().join("agent/models.yml");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["providers"]["custom"].as_object_mut().unwrap().remove("auth");
+    // Native custom-model declarations require authored credentials. This
+    // route uses an explicit CLI model with provider transport overrides and
+    // lets the shared Broker owner supply authentication instead.
+    config["providers"]["custom"]["models"] = json!([]);
+    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    const KEY: &str = "synthetic-remote-broker-api-key-only";
+    let now = chrono::Utc::now().timestamp_millis();
+    let snapshot = json!({"generation":3,"generatedAt":now,"serverNowMs":now,
+        "refresher":{"enabled":false,"intervalMs":0,"skewMs":0,"nextSweepInMs":9007199254740991_u64},
+        "credentials":[{"id":41,"provider":"custom","credential":{"type":"api_key","key":KEY},
+            "identityKey":null,"rotatesInMs":null}]});
+    let mut event = snapshot.clone();
+    event["type"] = json!("snapshot");
+    let broker = upstream(json!([
+        {"body":snapshot.to_string()},
+        {"events":[{"raw":format!("data: {event}\n\n")}],"end":"hang"},
+        {"events":[{"raw":format!("data: {event}\n\n")}],"end":"hang"}
+    ]))
+    .await;
+    let url = format!("http://{}", broker.addr);
+    let command = |arguments: &[&str]| {
+        let mut command = host.command("custom", arguments);
+        command.env_clear();
+        for name in ["PATH", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATHEXT"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command
+            .env("HOME", host.home.path())
+            .env("USERPROFILE", host.home.path())
+            .env("ARA_HOME", host.home.path())
+            .env("TEMP", host.home.path())
+            .env("TMP", host.home.path())
+            .env("ARA_AUTH_BROKER_URL", &url)
+            .env("ARA_AUTH_BROKER_TOKEN", "synthetic-broker-token");
+        command
+    };
+    let first = output(command(&["--mode", "json", "--tools", "write", "write daily.txt"])).await;
+    let stdout = success(&first);
+    assert!(stdout.contains("Broker task complete."));
+    assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
+    let original: Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    let cache = host.home.path().join("cache/auth-broker-snapshot.enc");
+    assert!(cache.exists());
+    assert!(!host.home.path().join("agent/auth.db").exists());
+    assert!(!stdout.contains(KEY));
+    assert!(!String::from_utf8_lossy(&first.stderr).contains(KEY));
+    let requests = broker.requests.lock().await;
+    assert_eq!(requests.iter().filter(|request| request["request"] == "GET /v1/snapshot HTTP/1.1").count(), 1);
+    // Missing cost/buckets remain unknown in the Session, so no fabricated
+    // numeric observed usage report is sent for this controlled model.
+    assert!(!requests.iter().any(|request| request["request"] == "POST /v1/usage/observed HTTP/1.1"));
+    drop(requests);
+    drop(broker);
+    let journal = host.session();
+    let resumed = success(
+        &output(command(&["--mode", "json", "--tools", "", "--resume", journal.to_str().unwrap(), "continue"])).await,
+    );
+    assert!(resumed.contains("Broker resume complete."));
+    let resumed_header: Value = serde_json::from_str(resumed.lines().next().unwrap()).unwrap();
+    assert_eq!(resumed_header["id"], original["id"]);
+    let requests = model.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request["request"], "POST /v1/responses HTTP/1.1");
+        assert_eq!(request["headers"]["authorization"], format!("<redacted {} chars>", KEY.len() + 7));
+    }
+    assert!(requests[2]["body"]["input"].to_string().contains("daily.txt"));
+    drop(requests);
+    // A reachable local key must not replace an explicitly configured cold,
+    // unreachable broker when the encrypted cache has been disabled.
+    let local = ara_cli::credential_store::SqliteCredentialStore::open(host.home.path().join("agent/auth.db")).unwrap();
+    local
+        .replace_auth_credentials_for_provider(
+            "custom",
+            &[ara_cli::credential_store::AuthCredential::api_key("synthetic-local-fallback")],
+        )
+        .unwrap();
+    let mut cold = command(&["--mode", "json", "--tools", "", "cold broker"]);
+    cold.env("ARA_AUTH_BROKER_SNAPSHOT_TTL_MS", "0");
+    let failed = output(cold).await;
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("Auth broker startup failed"));
+    let mut missing = command(&["--mode", "json", "--tools", "", "missing bearer"]);
+    missing.env_remove("ARA_AUTH_BROKER_TOKEN");
+    let failed = output(missing).await;
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("no bearer token"));
+    assert_eq!(model.requests.lock().await.len(), 3);
+}
+
 /// This exercises the production startup/Registry/cache/Session path using
 /// controlled JSON and SSE upstreams. It is not a real-model acceptance trial.
 #[tokio::test]

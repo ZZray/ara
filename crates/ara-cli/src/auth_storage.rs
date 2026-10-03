@@ -46,6 +46,7 @@ use crate::{
     credential_store::{
         AuthCredential, SqliteCredentialStore, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS,
     },
+    credential_store_port::{AuthCredentialStore, CredentialStoreOwner},
     model_route::{
         AuthResolveError, AuthRetryAction, CredentialIdentity, RequestAuthFailure, RequestAuthFailureKind,
         RequestAuthLease, RequestAuthResolver,
@@ -75,6 +76,8 @@ const USAGE_HEADER_INGEST_INTERVAL_MS: f64 = 60_000.0;
 const LAST_GOOD_RETENTION_MS: f64 = 86_400_000.0;
 const USAGE_CACHE_PREFIX: &str = "usage_cache:";
 
+#[path = "auth_storage_broker.rs"]
+mod broker;
 #[path = "auth_storage_diagnostics.rs"]
 mod diagnostics;
 #[path = "auth_storage_health.rs"]
@@ -297,6 +300,9 @@ pub trait UsageStoreHooks: AggregateUsageSource {
 }
 
 pub struct AuthStorageOptions {
+    /// Explicit Host refresh callback, ahead of the store hook. Registered
+    /// custom providers remain below remote refresh and still project leases.
+    pub oauth_refresh_override: Option<Arc<dyn OAuthProvider>>,
     pub config_key_resolver: Arc<dyn ConfigKeyResolver>,
     pub environment: Arc<dyn Environment>,
     pub fallback: Arc<dyn Fallback>,
@@ -313,6 +319,7 @@ pub struct AuthStorageOptions {
 impl Default for AuthStorageOptions {
     fn default() -> Self {
         Self {
+            oauth_refresh_override: None,
             config_key_resolver: Arc::new(LiteralConfigKeyResolver),
             environment: Arc::new(EmptyEnvironment),
             fallback: Arc::new(EmptyFallback),
@@ -392,8 +399,9 @@ struct HostState {
 }
 type UsageFlight = watch::Receiver<Option<Option<UsageReport>>>;
 type AggregateUsageFlight = watch::Receiver<Option<Result<Option<Vec<UsageReport>>, AuthStorageError>>>;
+type RemoteRefreshFlight = watch::Receiver<Option<Result<StoredAuthCredential, AuthStorageError>>>;
 struct AuthStorageInner {
-    store: Arc<Mutex<SqliteCredentialStore>>,
+    store: CredentialStoreOwner,
     codex: Option<Arc<OpenAiCodexAuth>>,
     options: AuthStorageOptions,
     state: Mutex<HostState>,
@@ -404,9 +412,13 @@ struct AuthStorageInner {
     strategies: Mutex<BTreeMap<String, Arc<dyn CredentialRankingStrategy>>>,
     usage_flights: Mutex<BTreeMap<String, UsageFlight>>,
     aggregate_flights: Mutex<BTreeMap<String, AggregateUsageFlight>>,
+    remote_refresh_flights: Mutex<BTreeMap<i64, RemoteRefreshFlight>>,
     runtime_usage_keys: Mutex<BTreeMap<String, String>>,
     usage_epoch: AtomicU64,
     generation: AtomicU64,
+    remote_projection_seen: AtomicU64,
+    remote_observer_cancel: CancellationToken,
+    remote_observer: Mutex<Option<tokio::task::JoinHandle<()>>>,
     changed: Notify,
     usage_pending: AtomicUsize,
     usage_settled: Notify,
@@ -414,6 +426,40 @@ struct AuthStorageInner {
 #[derive(Clone)]
 pub struct AuthStorage {
     inner: Arc<AuthStorageInner>,
+}
+
+struct RemoteRefreshSettlement {
+    inner: Arc<AuthStorageInner>,
+    id: i64,
+}
+
+impl Drop for AuthStorageInner {
+    fn drop(&mut self) {
+        self.remote_observer_cancel.cancel();
+    }
+}
+
+fn observe_remote_projection(inner: &AuthStorageInner, revision: u64) {
+    let mut previous = inner.remote_projection_seen.load(Ordering::Acquire);
+    while previous < revision {
+        match inner.remote_projection_seen.compare_exchange(previous, revision, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => {
+                inner.generation.fetch_add(1, Ordering::AcqRel);
+                inner.changed.notify_waiters();
+                return;
+            }
+            Err(latest) => previous = latest,
+        }
+    }
+}
+impl Drop for RemoteRefreshSettlement {
+    fn drop(&mut self) {
+        if let Ok(mut flights) = self.inner.remote_refresh_flights.lock() {
+            flights.remove(&self.id);
+        }
+        self.inner.usage_pending.fetch_sub(1, Ordering::AcqRel);
+        self.inner.usage_settled.notify_waiters();
+    }
 }
 
 fn check_cancel(cancel: &CancellationToken) -> Result<(), AuthStorageError> {
@@ -479,6 +525,23 @@ impl AuthStorage {
         {
             return Err(AuthStorageError::Configuration);
         }
+        Self::new_with_owner(CredentialStoreOwner::Local(store), codex, options)
+    }
+    /// Remote credentials, refresh and quota hooks share this one broker owner.
+    /// No local Codex grant owner or SQLite credential mirror is created.
+    pub fn for_remote(
+        store: Arc<crate::auth_broker_store::RemoteAuthCredentialStore>,
+        mut options: AuthStorageOptions,
+    ) -> Result<Self, AuthStorageError> {
+        options.usage_store = Some(store.clone());
+        Self::new_with_owner(CredentialStoreOwner::Remote(store), None, options)
+    }
+    fn new_with_owner(
+        store: CredentialStoreOwner,
+        codex: Option<Arc<OpenAiCodexAuth>>,
+        options: AuthStorageOptions,
+    ) -> Result<Self, AuthStorageError> {
+        let remote = store.remote();
         let this = Self {
             inner: Arc::new(AuthStorageInner {
                 store,
@@ -492,9 +555,13 @@ impl AuthStorage {
                 strategies: Mutex::new(BTreeMap::new()),
                 usage_flights: Mutex::new(BTreeMap::new()),
                 aggregate_flights: Mutex::new(BTreeMap::new()),
+                remote_refresh_flights: Mutex::new(BTreeMap::new()),
                 runtime_usage_keys: Mutex::new(BTreeMap::new()),
                 usage_epoch: AtomicU64::new(0),
                 generation: AtomicU64::new(1),
+                remote_projection_seen: AtomicU64::new(remote.as_ref().map_or(0, |store| store.projection_revision())),
+                remote_observer_cancel: CancellationToken::new(),
+                remote_observer: Mutex::new(None),
                 changed: Notify::new(),
                 usage_pending: AtomicUsize::new(0),
                 usage_settled: Notify::new(),
@@ -508,7 +575,10 @@ impl AuthStorage {
             Ok(())
         })?;
         this.reload()?;
-        if this.inner.codex.is_some() {
+        if this.inner.codex.is_some()
+            || this.inner.store.remote().is_some()
+            || this.inner.options.oauth_refresh_override.is_some()
+        {
             let provider =
                 crate::codex_usage::CodexUsageProvider::new().map_err(|_| AuthStorageError::Configuration)?;
             this.inner
@@ -516,6 +586,26 @@ impl AuthStorage {
                 .lock()
                 .map_err(|_| AuthStorageError::Storage)?
                 .insert("openai-codex".to_owned(), Arc::new(provider));
+        }
+        if let Some(remote) = remote {
+            let mut changes = remote.subscribe_projection_changes();
+            let weak = Arc::downgrade(&this.inner);
+            let cancel = this.inner.remote_observer_cancel.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => break,
+                        changed = changes.changed() => if changed.is_err() { break; },
+                    }
+                    let revision = *changes.borrow_and_update();
+                    let Some(inner) = weak.upgrade() else {
+                        break;
+                    };
+                    observe_remote_projection(&inner, revision);
+                }
+            });
+            *this.inner.remote_observer.lock().map_err(|_| AuthStorageError::Storage)? = Some(handle);
         }
         Ok(this)
     }
@@ -527,20 +617,23 @@ impl AuthStorage {
         self.inner.changed.notify_waiters();
     }
     pub fn generation(&self) -> u64 {
+        if let Some(remote) = self.inner.store.remote() {
+            observe_remote_projection(&self.inner, remote.projection_revision());
+        }
         self.inner.generation.load(Ordering::Acquire)
     }
     fn store_operation<T>(
         &self,
-        operation: impl FnOnce(&SqliteCredentialStore, &mut HostState) -> Result<T, AuthStorageError>,
+        operation: impl FnOnce(&dyn AuthCredentialStore, &mut HostState) -> Result<T, AuthStorageError>,
     ) -> Result<T, AuthStorageError> {
-        // All code uses the same store -> state lock order; guards never leave
-        // this synchronous closure or cross an await.
-        let store = self.inner.store.lock().map_err(|_| AuthStorageError::Storage)?;
-        let mut state = self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?;
-        let result = operation(&store, &mut state);
-        let changed = std::mem::take(&mut state.generation_changed);
-        drop(state);
-        drop(store);
+        // Local keeps its original store -> HostState lock order. Remote
+        // projection methods acquire only short owner locks; callbacks run
+        // outside those locks. No borrowed store/state guard crosses an await.
+        let (result, changed) = self.inner.store.with_store(|store| {
+            let mut state = self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?;
+            let result = operation(store, &mut state);
+            Ok((result, std::mem::take(&mut state.generation_changed)))
+        })?;
         if changed {
             self.bump_generation();
         }
@@ -548,7 +641,7 @@ impl AuthStorage {
     }
     async fn database<T: Send + 'static>(
         &self,
-        operation: impl FnOnce(&SqliteCredentialStore, &mut HostState) -> Result<T, AuthStorageError> + Send + 'static,
+        operation: impl FnOnce(&dyn AuthCredentialStore, &mut HostState) -> Result<T, AuthStorageError> + Send + 'static,
     ) -> Result<T, AuthStorageError> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.store_operation(operation))
@@ -607,7 +700,7 @@ impl AuthStorage {
         })
     }
     fn load_provider(
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         state: &mut HostState,
         provider: &str,
     ) -> Result<Vec<StoredAuthCredential>, AuthStorageError> {
@@ -797,7 +890,18 @@ impl AuthStorage {
             .collect()
     }
     fn supports_oauth(&self, provider: &str) -> bool {
-        self.oauth_hook(provider).is_some() || (provider == "openai-codex" && self.inner.codex.is_some())
+        self.inner.store.remote().is_some()
+            || self.inner.options.oauth_refresh_override.is_some()
+            || self.oauth_hook(provider).is_some()
+            || (provider == "openai-codex" && self.inner.codex.is_some())
+    }
+
+    fn oauth_refresh_hook(&self, provider: &str) -> Option<Arc<dyn OAuthProvider>> {
+        self.inner
+            .options
+            .oauth_refresh_override
+            .clone()
+            .or_else(|| if self.inner.store.remote().is_none() { self.oauth_hook(provider) } else { None })
     }
 
     pub async fn resolve(
@@ -903,7 +1007,7 @@ impl AuthStorage {
         })
     }
     fn active_oauth_row_in_store(
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         state: &mut HostState,
         provider: &str,
         session_id: Option<&str>,
@@ -1010,7 +1114,7 @@ impl AuthStorage {
     // Native selection keeps store/state, identity, rows, clock and predicate independent.
     #[allow(clippy::too_many_arguments)]
     fn select_snapshot_credential(
-        store: &SqliteCredentialStore,
+        store: &dyn AuthCredentialStore,
         state: &mut HostState,
         provider: &str,
         kind: CredentialKind,
@@ -1222,7 +1326,30 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<ResolvedOAuth, AuthStorageError> {
         check_cancel(cancel)?;
-        if let Some(hook) = self.oauth_hook(provider) {
+        let remote = self.inner.store.remote();
+        if let Some(store) = &remote {
+            store.prepare_for_request(row.id, cancel).await?;
+            check_cancel(cancel)?;
+        }
+        if self.inner.options.oauth_refresh_override.is_some() {
+            let latest = self
+                .provider_rows(provider)
+                .await?
+                .into_iter()
+                .find(|latest| latest.id == row.id && matches!(latest.credential, AuthCredential::OAuth { .. }))
+                .ok_or(AuthStorageError::Unavailable)?;
+            let force = force && latest.serialized_data == row.serialized_data;
+            let resolved = if force || !access_fresh(&latest, self.now(), REFRESH_SKEW_MS) {
+                self.refresh_remote_oauth(provider, latest.id, cancel).await?
+            } else {
+                latest
+            };
+            if !access_fresh(&resolved, self.now(), 0.0) {
+                return Err(AuthStorageError::Unavailable);
+            }
+            return Ok(ResolvedOAuth { lease: self.project_oauth_lease(provider, &resolved)?, row: resolved });
+        }
+        if let Some(hook) = self.oauth_refresh_hook(provider) {
             hook.prepare_for_request(&row, cancel).await?;
             check_cancel(cancel)?;
             let latest = self
@@ -1252,6 +1379,29 @@ impl AuthStorage {
             }
             return Ok(resolved);
         }
+        if remote.is_some() {
+            let latest = self
+                .provider_rows(provider)
+                .await?
+                .into_iter()
+                .find(|latest| latest.id == row.id && matches!(latest.credential, AuthCredential::OAuth { .. }))
+                .ok_or(AuthStorageError::Unavailable)?;
+            let force = force && latest.serialized_data == row.serialized_data;
+            let resolved = if force || !access_fresh(&latest, self.now(), REFRESH_SKEW_MS) {
+                self.refresh_remote_oauth(provider, latest.id, cancel).await?
+            } else {
+                latest
+            };
+            if resolved.provider != provider
+                || resolved.id != row.id
+                || resolved.disabled_cause.is_some()
+                || !access_fresh(&resolved, self.now(), 0.0)
+            {
+                return Err(AuthStorageError::Unavailable);
+            }
+            let lease = self.project_oauth_lease(provider, &resolved)?;
+            return Ok(ResolvedOAuth { row: resolved, lease });
+        }
         if provider == "openai-codex"
             && let Some(codex) = &self.inner.codex
         {
@@ -1277,6 +1427,94 @@ impl AuthStorage {
         Err(AuthStorageError::Unsupported)
     }
 
+    /// AuthStorage, rather than a caller, owns the native per-ID refresh flight.
+    /// Cancelling/dropping a waiter never cancels a dispatched broker mutation.
+    async fn refresh_remote_oauth(
+        &self,
+        provider: &str,
+        id: i64,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, AuthStorageError> {
+        check_cancel(cancel)?;
+        let remote = self.inner.store.remote();
+        let refresh_override = self.inner.options.oauth_refresh_override.clone();
+        if remote.is_none() && refresh_override.is_none() {
+            return Err(AuthStorageError::Unsupported);
+        }
+        let mut receiver = {
+            let mut flights = self.inner.remote_refresh_flights.lock().map_err(|_| AuthStorageError::Storage)?;
+            if let Some(receiver) = flights.get(&id) {
+                receiver.clone()
+            } else {
+                let (sender, receiver) = watch::channel(None);
+                flights.insert(id, receiver.clone());
+                self.inner.usage_pending.fetch_add(1, Ordering::AcqRel);
+                let settlement = RemoteRefreshSettlement { inner: self.inner.clone(), id };
+                let this = self.clone();
+                let provider = provider.to_owned();
+                tokio::spawn(async move {
+                    let _settlement = settlement;
+                    let result = async {
+                        if let Some(refresh) = refresh_override {
+                            let current = this.provider_rows(&provider).await?.into_iter()
+                                .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
+                                .ok_or(AuthStorageError::Unavailable)?;
+                            let result = refresh.resolve(current, true, &CancellationToken::new()).await?;
+                            if result.row.id != id || result.row.provider != provider
+                                || result.row.disabled_cause.is_some()
+                                || !matches!(result.row.credential, AuthCredential::OAuth { .. })
+                                || !matches!(result.lease.identity(), CredentialIdentity::Stored { id: lease_id, .. } if *lease_id == id) {
+                                return Err(AuthStorageError::Configuration);
+                            }
+                            // Native replaceCredentialById persists the callback
+                            // result through the same owner. Remote only mirrors
+                            // its projection and sends no additional upload.
+                            this.inner.store.with_store(|store| {
+                                let current = store.list_auth_credentials(Some(&provider))
+                                    .map_err(|_| AuthStorageError::Storage)?
+                                    .into_iter().find(|row| row.id == id)
+                                    .ok_or(AuthStorageError::Unavailable)?;
+                                if current.disabled_cause.is_some()
+                                    || !matches!(current.credential, AuthCredential::OAuth { .. }) {
+                                    return Err(AuthStorageError::Unavailable);
+                                }
+                                store.update_auth_credential(id, &result.row.credential)
+                                    .map_err(|_| AuthStorageError::Storage)?;
+                                store.list_auth_credentials(Some(&provider))
+                                    .map_err(|_| AuthStorageError::Storage)?
+                                    .into_iter().find(|row| row.id == id)
+                                    .ok_or(AuthStorageError::Unavailable)
+                            })
+                        } else {
+                            remote.ok_or(AuthStorageError::Unsupported)?
+                                .refresh_oauth_credential(id, &CancellationToken::new()).await
+                        }
+                    }.await;
+                    let _ = sender.send(Some(result));
+                    // Publish before dropping the map's receiver. The owner remains
+                    // alive even when every consumer has abandoned its wait.
+                });
+                receiver
+            }
+        };
+        loop {
+            check_cancel(cancel)?;
+            if let Some(result) = receiver.borrow_and_update().clone() {
+                let row = result?;
+                return if row.id == id && row.provider == provider {
+                    Ok(row)
+                } else {
+                    Err(AuthStorageError::Configuration)
+                };
+            }
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(AuthStorageError::Cancelled),
+                changed = receiver.changed() => if changed.is_err() { return Err(AuthStorageError::Transient); },
+            }
+        }
+    }
+
     /// Diagnostic refresh starts only after the snapshot's exact expiry. It
     /// does not run ordinary request readiness hooks or request failure policy.
     async fn prepare_diagnostic_oauth(
@@ -1295,7 +1533,11 @@ impl AuthStorage {
         if latest.serialized_data != row.serialized_data && access_fresh(&latest, self.now(), 0.0) {
             return Ok(usage_credential(&latest, None));
         }
-        if let Some(hook) = self.oauth_hook(provider) {
+        if self.inner.options.oauth_refresh_override.is_some() {
+            let refreshed = self.refresh_remote_oauth(provider, row.id, cancel).await?;
+            return Ok(usage_credential(&refreshed, None));
+        }
+        if let Some(hook) = self.oauth_refresh_hook(provider) {
             let result = hook.resolve(latest, true, cancel).await?;
             if result.row.id != row.id
                 || result.row.provider != provider
@@ -1306,6 +1548,10 @@ impl AuthStorage {
                 return Err(AuthStorageError::Configuration);
             }
             return Ok(usage_credential(&result.row, None));
+        }
+        if self.inner.store.remote().is_some() {
+            let refreshed = self.refresh_remote_oauth(provider, row.id, cancel).await?;
+            return Ok(usage_credential(&refreshed, None));
         }
         // Remote refresh belongs to the remote hook, never the local endpoint.
         if text_field(&latest, "refresh").as_deref() == Some("__remote__") {
@@ -1635,6 +1881,43 @@ impl AuthStorage {
     ) -> Result<RequestAuthLease, AuthStorageError> {
         if let Some(hook) = self.oauth_hook(provider) {
             return hook.lease(row);
+        }
+        if self.inner.store.remote().is_some() || self.inner.options.oauth_refresh_override.is_some() {
+            if provider == "openai-codex" {
+                return lease_from_row(row.clone()).map_err(map_codex_error);
+            }
+            let access =
+                text_field(row, "access").filter(|access| !access.is_empty()).ok_or(AuthStorageError::Unavailable)?;
+            let key = if crate::catalog_behavior::auth_policy_for(provider)
+                .and_then(|policy| policy.get("apiKeyFormat"))
+                .and_then(Value::as_str)
+                == Some("structured")
+            {
+                let mut fields = Map::new();
+                fields.insert("token".into(), Value::String(access));
+                for (source, target) in [
+                    ("apiEndpoint", "apiEndpoint"),
+                    ("enterpriseUrl", "enterpriseUrl"),
+                    ("projectId", "projectId"),
+                    ("refresh", "refreshToken"),
+                    ("expires", "expiresAt"),
+                    ("email", "email"),
+                    ("accountId", "accountId"),
+                ] {
+                    if let AuthCredential::OAuth { fields: credential } = &row.credential
+                        && let Some(value) = credential.get(source)
+                    {
+                        fields.insert(target.into(), value.clone());
+                    }
+                }
+                Value::Object(fields).to_string()
+            } else {
+                access
+            };
+            return Ok(RequestAuthLease::new(
+                CredentialIdentity::Stored { id: row.id, revision: row.revision },
+                Some(key),
+            ));
         }
         if provider == "openai-codex" && self.inner.codex.is_some() {
             return lease_from_row(row.clone()).map_err(map_codex_error);
@@ -2153,7 +2436,11 @@ impl AuthStorage {
             && let Some(id) = request.credential_id
         {
             let preparation = async {
-                if let Some(provider) = self.oauth_hook(&request.provider) {
+                if self.inner.options.oauth_refresh_override.is_some() {
+                    self.refresh_remote_oauth(&request.provider, id, &fetch_cancel)
+                        .await
+                        .map(|row| Some(usage_credential(&row, None)))
+                } else if let Some(provider) = self.oauth_refresh_hook(&request.provider) {
                     let row = self
                         .provider_rows(&request.provider)
                         .await?
@@ -2161,6 +2448,10 @@ impl AuthStorage {
                         .find(|row| row.id == id)
                         .ok_or(AuthStorageError::Unavailable)?;
                     provider.prepare_usage_credential(&row, &fetch_cancel).await
+                } else if self.inner.store.remote().is_some() {
+                    self.refresh_remote_oauth(&request.provider, id, &fetch_cancel)
+                        .await
+                        .map(|row| Some(usage_credential(&row, None)))
                 } else if request.provider == "openai-codex"
                     && let Some(codex) = &self.inner.codex
                 {
@@ -2554,6 +2845,42 @@ impl AuthStorage {
         let siblings =
             self.sibling_availability(provider, row.id, target.kind, &[], &context.excluded_credential_ids).await?;
         self.mark_block(provider, row.id, target.kind, self.now() + policy::DEFAULT_BACKOFF_MS, None).await?;
+        if let Some(remote) = self.inner.store.remote() {
+            let provider_owned = provider.to_owned();
+            let session = context.session_id.clone();
+            let id = row.id;
+            self.database(move |store, state| {
+                let rows = Self::load_provider(store, state, &provider_owned)?;
+                let sticky =
+                    state.assignments.read_session_credential(store, &provider_owned, session.as_deref(), &rows);
+                if !target.explicit
+                    || sticky.is_some_and(|sticky| rows.get(sticky.index).is_some_and(|selected| selected.id == id))
+                {
+                    state.assignments.clear_session_credential(store, &provider_owned, session.as_deref());
+                }
+                Ok(())
+            })
+            .await?;
+            let changed = if disable {
+                remote.delete_auth_credential_remote(row.id, "upstream invalidated OAuth token", cancel).await?
+            } else {
+                remote.mark_credential_suspect(row.id, cancel).await?;
+                false
+            };
+            let provider_owned = provider.to_owned();
+            self.database(move |store, state| {
+                Self::load_provider(store, state, &provider_owned)?;
+                if changed {
+                    state.assignments.reset_provider_assignments(store, &provider_owned);
+                }
+                Ok(())
+            })
+            .await?;
+            if changed {
+                self.bump_generation();
+            }
+            return Ok(siblings.switched && (!disable || changed));
+        }
         let provider = provider.to_owned();
         let session = context.session_id.clone();
         let changed = self
@@ -2642,6 +2969,9 @@ impl AuthStorage {
             .unwrap_or_default();
         for provider in providers {
             provider.wait_for_settlement().await;
+        }
+        if let Some(refresh) = &self.inner.options.oauth_refresh_override {
+            refresh.wait_for_settlement().await;
         }
         if let Some(source) = &self.inner.options.aggregate_usage_override {
             source.wait_for_settlement().await;
@@ -3008,7 +3338,7 @@ struct UsageCacheEntry<T> {
     expires_at: f64,
 }
 fn read_usage_cache<T: for<'de> Deserialize<'de>>(
-    store: &SqliteCredentialStore,
+    store: &dyn AuthCredentialStore,
     key: &str,
     stale: bool,
 ) -> Option<UsageCacheEntry<T>> {
@@ -3016,7 +3346,7 @@ fn read_usage_cache<T: for<'de> Deserialize<'de>>(
     serde_json::from_str(&raw).ok()
 }
 fn write_usage_cache<T: Serialize>(
-    store: &SqliteCredentialStore,
+    store: &dyn AuthCredentialStore,
     key: &str,
     entry: &UsageCacheEntry<T>,
     now: f64,
@@ -3094,7 +3424,7 @@ fn report_matches_credential(report: &UsageReport, row: &StoredAuthCredential, r
     }
     comparable || !require_comparable
 }
-fn record_usage_history(store: &SqliteCredentialStore, request: &UsageRequest, report: &UsageReport) {
+fn record_usage_history(store: &dyn AuthCredentialStore, request: &UsageRequest, report: &UsageReport) {
     let entries: Vec<_> = report
         .limits
         .iter()

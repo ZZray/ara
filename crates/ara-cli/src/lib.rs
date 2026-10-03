@@ -5,7 +5,12 @@
 
 #![recursion_limit = "256"]
 
+pub mod auth_broker_client;
+pub mod auth_broker_discover;
+pub mod auth_broker_snapshot_cache;
+pub mod auth_broker_store;
 pub mod auth_broker_usage;
+pub mod auth_broker_wire;
 pub mod auth_storage;
 pub mod auth_storage_policy;
 pub mod auth_storage_registry;
@@ -22,6 +27,7 @@ pub mod codex_usage;
 pub mod config_request_auth;
 pub mod context_budget;
 pub mod credential_store;
+pub mod credential_store_port;
 pub mod custom_models;
 pub mod daily_model_config;
 pub mod handoff;
