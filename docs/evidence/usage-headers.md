@@ -1,5 +1,10 @@
 # Provider response and local usage-header ingestion — tested WIP
 
+**Later checkpoint:** [Builtin usage refresh](usage-refresh.md) adds the bounded
+usage-only exact-account preparation and native stale-value invalidation
+recorded as backlog below. This document preserves the earlier header source,
+binary and receipts; the later checkpoint does not accept full AuthStorage.
+
 ## Requirement and scope
 
 Fixed OMP is `596f2da7101178214aa27a753529d15e6b7ad91d`; ARA base is

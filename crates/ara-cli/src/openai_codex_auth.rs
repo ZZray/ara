@@ -3,9 +3,10 @@
 //! `packages/ai/src/registry/oauth/openai-codex.ts`, `auth/auth-storage.ts`,
 //! and `packages/catalog/src/wire/codex.ts`. No existing installation is read.
 //!
-//! Unknown refresh outcomes disable the unchanged credential and require a new
-//! interactive login. A detached worker settles refresh even if its caller drops
-//! the resolver future. SQLite locks never span a network operation.
+//! Authorizing unknown refresh outcomes disable the unchanged credential.
+//! Advisory usage preserves it while a durable grant fingerprint prevents
+//! replay. A detached worker settles shared refresh even if a consumer drops.
+//! SQLite locks never span a network operation.
 //
 // MIT License
 // Copyright (c) 2025 Mario Zechner
@@ -35,10 +36,12 @@ use ara_ai::Model;
 use async_trait::async_trait;
 use base64::Engine as _;
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 const PROVIDER: &str = "openai-codex";
@@ -79,6 +82,10 @@ pub enum CodexAuthError {
     InvalidResponse,
     TimedOut,
     LoginRequired,
+    OutcomeUnknown,
+    /// Internal zero-dispatch signal: join the current grant's flight instead
+    /// of executing a changed grant under an older activity identity.
+    CredentialChanged,
     InvalidEndpoint,
 }
 
@@ -93,6 +100,8 @@ impl std::fmt::Display for CodexAuthError {
             Self::InvalidResponse => f.write_str("OpenAI Codex authentication response is invalid"),
             Self::TimedOut => f.write_str("OpenAI Codex authentication timed out"),
             Self::LoginRequired => f.write_str("OpenAI Codex login required"),
+            Self::OutcomeUnknown => f.write_str("OpenAI Codex refresh outcome unknown"),
+            Self::CredentialChanged => f.write_str("OpenAI Codex credential changed before refresh"),
             Self::InvalidEndpoint => f.write_str("OpenAI Codex authentication endpoint is not permitted"),
         }
     }
@@ -108,6 +117,53 @@ pub struct OpenAiCodexAuth {
     auth_base_url: String,
     fixture: bool,
     pending: Arc<PendingSettlements>,
+    refresh_flights: Arc<Mutex<HashMap<String, RefreshFlight>>>,
+}
+
+type RefreshResult = Result<StoredAuthCredential, CodexAuthError>;
+struct RefreshFlight {
+    identity: uuid::Uuid,
+    receiver: watch::Receiver<Option<RefreshResult>>,
+    cancel: CancellationToken,
+    consumers: usize,
+    usage: bool,
+    policy: Arc<RefreshPolicy>,
+}
+#[derive(Default)]
+struct RefreshPolicy {
+    authorizing: AtomicBool,
+    dispatch_data: Mutex<Option<String>>,
+}
+struct RefreshConsumer {
+    flights: Arc<Mutex<HashMap<String, RefreshFlight>>>,
+    key: String,
+    identity: uuid::Uuid,
+    registered: bool,
+}
+impl RefreshConsumer {
+    fn release(&mut self) -> bool {
+        if !self.registered {
+            return false;
+        }
+        self.registered = false;
+        let Ok(mut flights) = self.flights.lock() else { return false };
+        let Some(flight) = flights.get_mut(&self.key).filter(|flight| flight.identity == self.identity) else {
+            return false;
+        };
+        flight.consumers -= 1;
+        if flight.consumers == 0 && !flight.usage {
+            // Registration and this decision share the same lock. A caller
+            // already sharing the grant cannot lose its owner to cancellation.
+            flight.cancel.cancel();
+            return true;
+        }
+        false
+    }
+}
+impl Drop for RefreshConsumer {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 #[derive(Default)]
@@ -127,13 +183,6 @@ impl Drop for PendingSettlement {
     fn drop(&mut self) {
         self.0.count.fetch_sub(1, Ordering::AcqRel);
         self.0.changed.notify_waiters();
-    }
-}
-
-struct CancelOnDrop(CancellationToken);
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        self.0.cancel();
     }
 }
 
@@ -189,6 +238,7 @@ impl OpenAiCodexAuth {
             auth_base_url,
             fixture,
             pending: Arc::new(PendingSettlements::default()),
+            refresh_flights: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -402,19 +452,179 @@ impl OpenAiCodexAuth {
         force_refresh: bool,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
-        let settlement = PendingSettlement::register(self.pending.clone());
+        self.resolve_shared(selection, force_refresh, false, cancel).await
+    }
+
+    /// Usage polling refreshes the same exact account and grant as requests.
+    /// Durable definitive removal becomes the native wrapper's non-definitive
+    /// missing-row error; this advisory wrapper adds no credential disable.
+    pub async fn prepare_usage_account_credential(
+        &self,
+        id: i64,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        self.resolve_shared(CredentialSelection::ExactRow(id), false, true, cancel).await.map_err(|error| match error {
+            CodexAuthError::RefreshRejected { definitive: true, .. } => CodexAuthError::LoginRequired,
+            other => other,
+        })
+    }
+
+    async fn resolve_shared(
+        &self,
+        selection: CredentialSelection,
+        force_refresh: bool,
+        usage: bool,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
         if cancel.is_cancelled() {
             return Err(CodexAuthError::Cancelled);
         }
-        let child = cancel.child_token();
-        let _cleanup = CancelOnDrop(child.clone());
-        let service = self.clone();
-        tokio::spawn(async move {
-            let _settlement = settlement;
-            service.resolve_credential(selection, force_refresh, &child).await
-        })
-        .await
-        .map_err(|_| CodexAuthError::Storage)?
+        let started = Instant::now();
+        let mut force_observed = None;
+        'acquire: loop {
+            if started.elapsed() >= Duration::from_secs(30) {
+                return Err(CodexAuthError::TimedOut);
+            }
+            if cancel.is_cancelled() {
+                return Err(CodexAuthError::Cancelled);
+            }
+            let observed = self.selected(selection).await?;
+            if force_refresh && force_observed.is_none() {
+                force_observed = Some(observed.serialized_data.clone());
+            }
+            if fresh(&observed) && force_observed.as_ref() != Some(&observed.serialized_data) {
+                return Ok(observed);
+            }
+            let refresh = required(&oauth_value(&observed)?, "refresh")?.to_owned();
+            let key = refresh_dispatch_key(observed.id, &refresh);
+            let expected_data = observed.serialized_data.clone();
+            let (mut receiver, mut consumer) = {
+                let mut flights = self.refresh_flights.lock().map_err(|_| CodexAuthError::Storage)?;
+                if !flights.contains_key(&key) {
+                    let identity = uuid::Uuid::new_v4();
+                    let child = CancellationToken::new();
+                    let policy = Arc::new(RefreshPolicy {
+                        authorizing: AtomicBool::new(!usage),
+                        dispatch_data: Mutex::new(None),
+                    });
+                    let (sender, receiver) = watch::channel(None);
+                    flights.insert(
+                        key.clone(),
+                        RefreshFlight {
+                            identity,
+                            receiver,
+                            cancel: child.clone(),
+                            consumers: 0,
+                            usage,
+                            policy: policy.clone(),
+                        },
+                    );
+                    let settlement = PendingSettlement::register(self.pending.clone());
+                    let service = self.clone();
+                    let flight_key = key.clone();
+                    let expected = force_observed.clone();
+                    let exact_selection = CredentialSelection::ExactRow(observed.id);
+                    tokio::spawn(async move {
+                        let _settlement = settlement;
+                        let mut result =
+                            service.resolve_credential(exact_selection, expected, &child, &policy, &flight_key).await;
+                        // Close admission under the registration lock before
+                        // final Unknown disposition. A late request/drop is now
+                        // either included in this policy or starts a fenced new
+                        // flight; neither timing can lose authorizing settlement.
+                        if let Ok(mut flights) = service.refresh_flights.lock()
+                            && flights.get(&flight_key).is_some_and(|flight| flight.identity == identity)
+                        {
+                            flights.remove(&flight_key);
+                        }
+                        if matches!(result, Err(CodexAuthError::OutcomeUnknown))
+                            && policy.authorizing.load(Ordering::Acquire)
+                        {
+                            let expected = policy.dispatch_data.lock().ok().and_then(|value| value.clone());
+                            if let Some(expected) = expected {
+                                let key = flight_key.clone();
+                                let id = observed.id;
+                                if let Err(error) = service
+                                    .db(move |store| {
+                                        if store.get_cache(&key, true)?.is_some() {
+                                            store.try_disable_auth_credential_if_matches(
+                                                id,
+                                                &expected,
+                                                UNKNOWN_CAUSE,
+                                                None,
+                                            )?;
+                                        }
+                                        Ok(())
+                                    })
+                                    .await
+                                {
+                                    result = Err(error);
+                                }
+                            } else {
+                                result = Err(CodexAuthError::Storage);
+                            }
+                        }
+                        sender.send_replace(Some(result));
+                    });
+                }
+                let flight = flights.get_mut(&key).ok_or(CodexAuthError::Storage)?;
+                flight.consumers += 1;
+                flight.usage |= usage;
+                if !usage {
+                    flight.policy.authorizing.store(true, Ordering::Release);
+                }
+                (
+                    flight.receiver.clone(),
+                    RefreshConsumer {
+                        flights: self.refresh_flights.clone(),
+                        key,
+                        identity: flight.identity,
+                        registered: true,
+                    },
+                )
+            };
+            loop {
+                if cancel.is_cancelled() {
+                    let cancelled_owner = consumer.release();
+                    if cancelled_owner {
+                        // Preserve the existing sole authorizing caller's settled
+                        // cancellation contract. Advisory/shared owners keep running.
+                        while receiver.borrow().is_none() {
+                            if receiver.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    return Err(CodexAuthError::Cancelled);
+                }
+                let result = receiver.borrow().clone();
+                if let Some(result) = result {
+                    if matches!(result, Err(CodexAuthError::CredentialChanged)) {
+                        continue 'acquire;
+                    }
+                    if !usage && matches!(result, Err(CodexAuthError::OutcomeUnknown)) {
+                        // A request may join after an advisory-only worker chose its
+                        // Unknown disposition but before the receipt was published.
+                        // Its exact-row authorizing settlement still applies.
+                        let id = observed.id;
+                        let expected = expected_data.clone();
+                        let key = consumer.key.clone();
+                        self.db(move |store| {
+                            if store.get_cache(&key, true)?.is_some() {
+                                store.try_disable_auth_credential_if_matches(id, &expected, UNKNOWN_CAUSE, None)?;
+                            }
+                            Ok(())
+                        })
+                        .await?;
+                    }
+                    return result;
+                }
+                tokio::select! {
+                    _ = cancel.cancelled() => {},
+                    changed = receiver.changed() => if changed.is_err() { return Err(CodexAuthError::Storage) },
+                }
+            }
+        }
     }
 
     fn permitted_model(&self, model: &Model) -> bool {
@@ -440,16 +650,20 @@ impl OpenAiCodexAuth {
     async fn resolve_credential(
         &self,
         selection: CredentialSelection,
-        force_refresh: bool,
+        force_expected: Option<String>,
         cancel: &CancellationToken,
+        policy: &RefreshPolicy,
+        flight_key: &str,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
         let wait_started = Instant::now();
-        let force_expected = if force_refresh { Some(self.selected(selection).await?.serialized_data) } else { None };
         loop {
             if cancel.is_cancelled() {
                 return Err(CodexAuthError::Cancelled);
             }
             let selected = self.selected(selection).await?;
+            if refresh_dispatch_key(selected.id, required(&oauth_value(&selected)?, "refresh")?) != flight_key {
+                return Err(CodexAuthError::CredentialChanged);
+            }
             if fresh(&selected) && force_expected.as_ref() != Some(&selected.serialized_data) {
                 return Ok(selected);
             }
@@ -471,21 +685,12 @@ impl OpenAiCodexAuth {
                 cancellable_sleep(Duration::from_millis(50), cancel).await?;
                 continue;
             }
-            let result = self.refresh_owned(id, &owner, selection, force_expected.as_deref(), cancel).await;
+            let result = self.refresh_owned(id, &owner, force_expected.as_deref(), cancel, policy, flight_key).await;
             let release_owner = owner.clone();
             self.db(move |store| store.release_credential_refresh_lease(id, &release_owner)).await?;
             match result {
                 Ok(Some(row)) => return Ok(row),
-                Ok(None) => {
-                    // CAS/fence loss: only a persisted, currently selected fresh
-                    // credential may be returned. Never use the uncommitted token.
-                    let current = self.selected(selection).await?;
-                    return if fresh(&current) && force_expected.as_ref() != Some(&current.serialized_data) {
-                        Ok(current)
-                    } else {
-                        Err(CodexAuthError::LoginRequired)
-                    };
-                }
+                Ok(None) => return Err(CodexAuthError::LoginRequired),
                 Err(error) => return Err(error),
             }
         }
@@ -495,13 +700,18 @@ impl OpenAiCodexAuth {
         &self,
         id: i64,
         owner: &str,
-        selection: CredentialSelection,
         force_expected: Option<&str>,
         cancel: &CancellationToken,
+        policy: &RefreshPolicy,
+        flight_key: &str,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
         // Re-read after acquiring the durable lease, never refresh the pre-lease
         // snapshot. Login/logout from another connection may already have won.
+        let selection = CredentialSelection::ExactRow(id);
         let current = self.selected(selection).await?;
+        if refresh_dispatch_key(current.id, required(&oauth_value(&current)?, "refresh")?) != flight_key {
+            return Err(CodexAuthError::CredentialChanged);
+        }
         if current.id != id {
             return Ok(if fresh(&current) { Some(current) } else { None });
         }
@@ -517,6 +727,40 @@ impl OpenAiCodexAuth {
             .to_owned();
         if cancel.is_cancelled() {
             return Err(CodexAuthError::Cancelled);
+        }
+        let dispatch_key = refresh_dispatch_key(id, &refresh);
+        *policy.dispatch_data.lock().map_err(|_| CodexAuthError::Storage)? = Some(current.serialized_data.clone());
+        let begin_expected = current.serialized_data.clone();
+        let begin_key = dispatch_key.clone();
+        let begin_owner = owner.to_owned();
+        let began = self
+            .db(move |store| {
+                store.try_begin_oauth_refresh(
+                    id,
+                    &begin_expected,
+                    &begin_key,
+                    &CredentialRefreshLeaseFence { owner: begin_owner, now_ms: now_ms() },
+                )
+            })
+            .await?;
+        if !began {
+            let prior_key = dispatch_key.clone();
+            if self.db(move |store| store.get_cache(&prior_key, true)).await?.is_some() {
+                let peer =
+                    self.adopt_or_disable_after_fence_loss(id, current.serialized_data, selection, policy).await?;
+                return peer.map(Some).ok_or(CodexAuthError::OutcomeUnknown);
+            }
+            // No grant was dispatched. A row/lease change in the small gap
+            // before marker acquisition is a reload, never an unknown effect.
+            let peer = self.selected(selection).await?;
+            if refresh_dispatch_key(peer.id, required(&oauth_value(&peer)?, "refresh")?) != flight_key {
+                return Err(CodexAuthError::CredentialChanged);
+            }
+            return Ok(if peer.id == id && refreshed_token_changed(&current.serialized_data, &peer) && fresh(&peer) {
+                Some(peer)
+            } else {
+                None
+            });
         }
         let observation = RefreshObservation::default();
         let form = [("grant_type", "refresh_token"), ("client_id", CLIENT_ID), ("refresh_token", &refresh)];
@@ -546,7 +790,15 @@ impl OpenAiCodexAuth {
             other => other,
         });
         if result.is_err() && !observation.dispatched.load(Ordering::SeqCst) {
+            let key = dispatch_key;
+            let owner = owner.to_owned();
+            self.db(move |store| store.clear_oauth_refresh_dispatch(&key, &owner)).await?;
             return result.map(|_| None);
+        }
+        if observation.rejected.load(Ordering::SeqCst) {
+            let key = dispatch_key.clone();
+            let owner = owner.to_owned();
+            self.db(move |store| store.clear_oauth_refresh_dispatch(&key, &owner)).await?;
         }
         if result.is_err()
             && observation.rejected.load(Ordering::SeqCst)
@@ -563,15 +815,18 @@ impl OpenAiCodexAuth {
         let owner = owner.to_owned();
         match updated {
             Ok(credential) => {
+                let submitted = credential.clone();
                 let commit_expected = expected.clone();
                 let commit_owner = owner.clone();
+                let commit_key = dispatch_key.clone();
                 let committed = self
                     .db(move |store| {
-                        store.try_update_auth_credential_if_matches(
+                        store.try_commit_oauth_refresh(
                             id,
                             &commit_expected,
                             &credential,
-                            Some(&CredentialRefreshLeaseFence { owner: commit_owner, now_ms: now_ms() }),
+                            &commit_key,
+                            &CredentialRefreshLeaseFence { owner: commit_owner, now_ms: now_ms() },
                         )
                     })
                     .await;
@@ -581,7 +836,16 @@ impl OpenAiCodexAuth {
                         // A storage error can occur after SQL committed. First
                         // consult the durable row; otherwise fence the unchanged
                         // grant so a later request cannot replay it automatically.
-                        let recovered = self.adopt_or_disable_after_fence_loss(id, expected, selection).await?;
+                        let persisted = self.selected(selection).await?;
+                        let recovery_key = dispatch_key.clone();
+                        if persisted.id == id
+                            && persisted.credential == submitted
+                            && valid_now(&persisted)
+                            && self.db(move |store| store.get_cache(&recovery_key, true)).await?.is_none()
+                        {
+                            return Ok(Some(persisted));
+                        }
+                        let recovered = self.adopt_or_disable_after_fence_loss(id, expected, selection, policy).await?;
                         if recovered.is_some() {
                             return Ok(recovered);
                         }
@@ -589,19 +853,25 @@ impl OpenAiCodexAuth {
                     }
                 };
                 if !committed {
-                    return self.adopt_or_disable_after_fence_loss(id, expected, selection).await;
+                    return self.adopt_or_disable_after_fence_loss(id, expected, selection, policy).await;
                 }
                 let persisted = self.selected(selection).await?;
-                Ok(if fresh(&persisted) { Some(persisted) } else { None })
+                Ok(if persisted.id == id && persisted.credential == submitted {
+                    valid_now(&persisted).then_some(persisted)
+                } else {
+                    fresh(&persisted).then_some(persisted)
+                })
             }
             Err(error) => {
                 // No code or refresh grant is retried automatically. Even a
                 // malformed successful response can have rotated the grant.
-                let cause = if matches!(error, CodexAuthError::RefreshRejected { .. }) {
-                    "refresh rejected; login required"
-                } else {
-                    UNKNOWN_CAUSE
-                };
+                let definitive = matches!(error, CodexAuthError::RefreshRejected { definitive: true, .. });
+                if !definitive && !policy.authorizing.load(Ordering::Acquire) {
+                    // Advisory polling preserves the native row lifecycle. Its
+                    // persistent dispatch record still forbids grant replay.
+                    return Err(CodexAuthError::OutcomeUnknown);
+                }
+                let cause = if definitive { "refresh rejected; login required" } else { UNKNOWN_CAUSE };
                 let disabled = self
                     .db(move |store| {
                         store.try_disable_auth_credential_if_matches(
@@ -615,7 +885,7 @@ impl OpenAiCodexAuth {
                 if disabled {
                     Err(error)
                 } else {
-                    self.adopt_or_disable_after_fence_loss(id, current.serialized_data, selection).await
+                    self.adopt_or_disable_after_fence_loss(id, current.serialized_data, selection, policy).await
                 }
             }
         }
@@ -626,16 +896,17 @@ impl OpenAiCodexAuth {
         id: i64,
         expected: String,
         selection: CredentialSelection,
+        policy: &RefreshPolicy,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
         let current = self.selected(selection).await?;
-        if current.id == id && current.serialized_data == expected {
+        if current.id == id && current.serialized_data == expected && policy.authorizing.load(Ordering::Acquire) {
             // A lost lease is not permission to overwrite a peer's data. An
             // unchanged old grant with an unknown outcome must nevertheless be
             // fenced from automatic replay, including a peer pending on that
             // same grant. Exact raw-data CAS cannot disable any fresh new row.
             self.db(move |store| store.try_disable_auth_credential_if_matches(id, &expected, UNKNOWN_CAUSE, None))
                 .await?;
-        } else if fresh(&current) {
+        } else if current.id == id && refreshed_token_changed(&expected, &current) && fresh(&current) {
             return Ok(Some(current));
         }
         Ok(None)
@@ -750,6 +1021,27 @@ fn fresh(row: &StoredAuthCredential) -> bool {
         .and_then(|fields| fields.get("expires"))
         .and_then(Value::as_i64)
         .is_some_and(|expires| expires > now_ms().saturating_add(REFRESH_SKEW_MS))
+}
+
+fn valid_now(row: &StoredAuthCredential) -> bool {
+    oauth_fields(&row.credential)
+        .and_then(|fields| fields.get("expires"))
+        .and_then(Value::as_f64)
+        .is_some_and(|expires| expires > now_ms() as f64)
+}
+
+fn refresh_dispatch_key(id: i64, refresh: &str) -> String {
+    let hash = ring::digest::digest(&ring::digest::SHA256, refresh.as_bytes());
+    let fingerprint: String = hash.as_ref().iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("oauth-refresh-pending:{PROVIDER}:{id}:{fingerprint}")
+}
+
+fn refreshed_token_changed(expected: &str, current: &StoredAuthCredential) -> bool {
+    let Ok(original) = serde_json::from_str::<Value>(expected) else { return false };
+    let Some(fields) = oauth_fields(&current.credential) else { return false };
+    ["access", "refresh"]
+        .into_iter()
+        .any(|key| original.get(key).and_then(Value::as_str) != fields.get(key).and_then(Value::as_str))
 }
 
 fn interval_seconds(value: Option<&Value>) -> f64 {

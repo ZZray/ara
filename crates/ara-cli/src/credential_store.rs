@@ -711,6 +711,23 @@ impl SqliteCredentialStore {
         item: &AuthCredential,
         lease: Option<&CredentialRefreshLeaseFence>,
     ) -> Result<bool> {
+        let updated = self.try_update_auth_credential_data(id, expected_data, item, lease)?;
+        if updated {
+            let provider = self.provider_for_id(id)?;
+            if !provider.is_empty() {
+                self.purge_superseded_disabled_rows(&provider, &self.list_auth_credentials(Some(&provider))?)?;
+            }
+        }
+        Ok(updated)
+    }
+
+    fn try_update_auth_credential_data(
+        &self,
+        id: i64,
+        expected_data: &str,
+        item: &AuthCredential,
+        lease: Option<&CredentialRefreshLeaseFence>,
+    ) -> Result<bool> {
         let provider = self.provider_for_id(id)?;
         let value = serialize_credential(&provider, item)?;
         let sql = format!(
@@ -739,13 +756,60 @@ impl SqliteCredentialStore {
             self.db()?
                 .execute(&sql, params![value.credential_type, value.data, value.identity_key, id, expected_data])?
         };
-        if count == 0 {
-            return Ok(false);
-        }
-        if !provider.is_empty() {
-            self.purge_superseded_disabled_rows(&provider, &self.list_auth_credentials(Some(&provider))?)?;
-        }
-        Ok(true)
+        Ok(count > 0)
+    }
+
+    /// Persist dispatch ownership before sending a rotating OAuth grant. The
+    /// opaque key includes the exact row and refresh fingerprint, never tokens.
+    /// A surviving record fences an unknown attempt even after lease expiry.
+    pub(crate) fn try_begin_oauth_refresh(
+        &self,
+        id: i64,
+        expected_data: &str,
+        key: &str,
+        lease: &CredentialRefreshLeaseFence,
+    ) -> Result<bool> {
+        Ok(self.db()?.execute(
+            "INSERT INTO cache(key,value,expires_at)
+             SELECT ?1,?2,?3 FROM auth_credentials c
+             WHERE c.id=?4 AND c.data=?5 AND c.provider='openai-codex'
+               AND c.credential_type='oauth' AND c.disabled_cause IS NULL
+               AND EXISTS(SELECT 1 FROM auth_credential_refresh_leases l
+                          WHERE l.credential_id=c.id AND l.owner=?2 AND l.expires_at_ms>?6)
+             ON CONFLICT(key) DO NOTHING",
+            params![key, lease.owner, i64::MAX, id, expected_data, lease.now_ms],
+        )? == 1)
+    }
+
+    /// The submitted grant is settled only when its durable token replacement
+    /// and dispatch record removal commit together under the same lease fence.
+    pub(crate) fn try_commit_oauth_refresh(
+        &self,
+        id: i64,
+        expected_data: &str,
+        item: &AuthCredential,
+        key: &str,
+        lease: &CredentialRefreshLeaseFence,
+    ) -> Result<bool> {
+        self.transaction(TransactionBehavior::Immediate, |_| {
+            if self.get_cache(key, true)?.as_deref() != Some(lease.owner.as_str()) {
+                return Ok(false);
+            }
+            if !self.try_update_auth_credential_data(id, expected_data, item, Some(lease))? {
+                return Ok(false);
+            }
+            self.clear_oauth_refresh_dispatch(key, &lease.owner)?;
+            let provider = self.provider_for_id(id)?;
+            self.purge_superseded_disabled_rows(&provider, &self.stored_rows(Some(&provider))?)?;
+            Ok(true)
+        })
+    }
+
+    /// Only a proven pre-dispatch cancellation, confirmed HTTP rejection, or
+    /// successful transaction can release a dispatch record, and only its owner.
+    pub(crate) fn clear_oauth_refresh_dispatch(&self, key: &str, owner: &str) -> Result<()> {
+        self.db()?.execute("DELETE FROM cache WHERE key=?1 AND value=?2", params![key, owner])?;
+        Ok(())
     }
 
     pub fn delete_auth_credential(&self, id: i64, cause: &str) -> Result<()> {

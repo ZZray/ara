@@ -1,5 +1,22 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-03 (builtin usage refresh tested WIP):**
+[Usage refresh evidence](evidence/usage-refresh.md) adds the shared exact-account
+Codex refresh owner, one usage deadline, persistent unknown-grant fencing and
+native stale/forced/replacement cache behavior. Three module groups pass
+163/0/0; final Windows backend 1,729/0/20, fmt/Clippy/inventory/build PASS in
+439.353s. The existing ttf-parser advisory leaves the whole gate FAIL.
+Independent POST closed the account A/B and late authorizing settlement defects;
+only bounded tested WIP is eligible for review, not full parity acceptance.
+No new paid CAS, actual OpenAI authorization, Bun or Linux trial.
+Counts stay 111 surfaces: 27 implementing/one tested/83 open/zero complete
+acceptances (28/111 started, 25.2%); 60 bounded points: 35 limited acceptances/
+23 implementing/two tested (58.3%, not overall completion). P0/V1 accepted,
+P1-P6 open, RPC 27/42, full marker null. Next: reserve/health/reset/broker and
+complete AuthStorage/Registry/usage callers, with remaining header store hooks,
+watchdog lifecycle, account/platform and deferred Provider contracts recorded.
+Use grouped checks and one stable batch gate; no reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 01:57 UTC (local usage headers tested WIP):**
 [Header evidence](evidence/usage-headers.md) connects the native local cache
 merge and transient response callback to shared Host storage, logical Session

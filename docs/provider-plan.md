@@ -1,5 +1,19 @@
 # Provider delivery plan
 
+**Current checkpoint, 2026-10-03 (builtin usage refresh tested WIP):**
+[Usage refresh evidence](evidence/usage-refresh.md) connects exact-account builtin
+Codex preparation to shared request refresh, native last-good/stale behavior and
+persistent unknown-grant fencing. Modules 163/0/0; final Windows backend
+1,729/0/20, fmt/Clippy/inventory/build PASS; whole gate FAIL on the existing
+ttf-parser advisory, 439.353s. Actual OpenAI authorization/account usage, Bun
+and Linux remain unverified; this batch makes no new paid model call.
+Daily priority stays custom OpenAI-compatible configuration, then OpenAI account
+login. Reserve/health/reset/broker and complete shared callers follow; all
+deferred Provider contracts stay recorded required work. Counts remain 111
+surfaces (28 started, 25.2%, zero complete acceptances) and 60 bounded points
+(35 limited acceptances, 58.3%, not total replication completion). P0/V1
+accepted, P1-P6 open, RPC 27/42, full marker null; no reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 00:19 UTC (shared AuthStorage tested WIP):**
 [AuthStorage evidence](evidence/auth-storage.md) connects source-mapped account
 selection, usage/ranking/sticky/blocks, exact-row refresh, ordinary stored

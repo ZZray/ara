@@ -275,10 +275,29 @@ without storing that text in diagnostics or disabled causes. A missing refresh
 field detected before dispatch is transient in the shared Codex adapter; it
 must not erase post-dispatch InvalidResponse/unknown-outcome evidence.
 
+Builtin Codex usage preparation uses the same exact-row/grant owner. Own
+committed access only needs to remain valid; a reloaded peer needs strictly
+more than the native 60-second skew. Durable definitive removal becomes the
+native usage wrapper's nondefinitive missing-row result, so that flight may
+retain last-good although the next public poll excludes the disabled row.
+Builtin failed main GET is null, distinct from custom typed auth failures.
+
+An opaque grant dispatch record survives lease expiry, usage invalidation and
+restart. Success settles row CAS and record removal atomically; advisory-only
+unknown preserves the row while authorizing participation retains its unknown
+disable contract. Activity admission closes before final disposition so a
+late request/drop cannot escape settlement. This durable no-replay record is
+an explicit ARA adaptation, not an identical native persistence claim.
+
+Automatic OAuth block invalidation keeps current default-URL report values
+stale; provider implementation replacement and manual force refresh discard
+them. A shared helper cannot substitute one lifecycle for all three.
+
 These are bounded implemented boundaries, not full AuthStorage parity. The
-[source and executed AuthStorage evidence](../evidence/auth-storage.md) retains
-usage-only refresh, full callers, actual account and platform
-requirements. Root/independent review is required before durable acceptance.
+[AuthStorage evidence](../evidence/auth-storage.md) and
+[usage refresh evidence](../evidence/usage-refresh.md) retain complete callers,
+actual account and platform requirements. Root/independent review is required
+before durable acceptance.
 
 ### Transient response notification and usage ingestion
 

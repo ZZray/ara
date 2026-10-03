@@ -387,10 +387,12 @@ fn map_codex_error(error: CodexAuthError) -> AuthStorageError {
         CodexAuthError::RefreshRejected { definitive: true, .. } => AuthStorageError::Definitive,
         CodexAuthError::RefreshRejected { definitive: false, .. }
         | CodexAuthError::HttpStatus(_)
+        | CodexAuthError::CredentialChanged
         | CodexAuthError::LoginRequired => AuthStorageError::Transient,
-        CodexAuthError::Transport | CodexAuthError::TimedOut | CodexAuthError::InvalidResponse => {
-            AuthStorageError::OutcomeUnknown
-        }
+        CodexAuthError::Transport
+        | CodexAuthError::TimedOut
+        | CodexAuthError::InvalidResponse
+        | CodexAuthError::OutcomeUnknown => AuthStorageError::OutcomeUnknown,
         CodexAuthError::InvalidEndpoint => AuthStorageError::Configuration,
     }
 }
@@ -608,7 +610,7 @@ impl AuthStorage {
             .lock()
             .map_err(|_| AuthStorageError::Storage)?
             .insert(provider.to_owned(), implementation);
-        self.expire_usage_cache(Some(provider))?;
+        self.clear_usage_report_cache(Some(provider))?;
         self.bump_generation();
         Ok(())
     }
@@ -1622,6 +1624,39 @@ impl AuthStorage {
     }
 
     fn expire_usage_cache(&self, provider: Option<&str>) -> Result<(), AuthStorageError> {
+        let Some(provider) = provider else { return self.clear_usage_report_cache(None) };
+        // Fixed source 6228-6240 invalidates only current OAuth/default-URL
+        // keys. Non-null last-good values remain durable for failed probes.
+        self.inner.usage_epoch.fetch_add(1, Ordering::AcqRel);
+        let now = self.now();
+        self.store_operation(|store, state| {
+            for row in state.rows.get(provider).into_iter().flatten() {
+                if !matches!(row.credential, AuthCredential::OAuth { .. }) {
+                    continue;
+                }
+                let credential = usage_credential(row, None);
+                let key = usage_report_key(&UsageRequest {
+                    provider: provider.to_owned(),
+                    account_key: usage_identity(&credential),
+                    credential,
+                    credential_id: Some(row.id),
+                    base_url: None,
+                });
+                let value = store
+                    .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                    .map_err(|_| AuthStorageError::Storage)?
+                    .and_then(|raw| serde_json::from_str::<UsageCacheEntry<Value>>(&raw).ok())
+                    .filter(|entry| entry.expires_at != 0.0 && entry.expires_at.is_finite())
+                    .and_then(|entry| entry.value);
+                write_usage_cache(store, &key, &UsageCacheEntry { value, expires_at: now - 1.0 }, now)
+                    .map_err(|_| AuthStorageError::Storage)?;
+            }
+            Ok(())
+        })
+    }
+    fn clear_usage_report_cache(&self, provider: Option<&str>) -> Result<(), AuthStorageError> {
+        // Fixed source 6248-6252 / 6271-6286: implementation replacement and
+        // manual refresh discard report values instead of retaining last-good.
         self.inner.usage_epoch.fetch_add(1, Ordering::AcqRel);
         let prefix = provider
             .map(|provider| format!("{USAGE_CACHE_PREFIX}report:{}:", usage_provider_key(provider)))
@@ -1629,10 +1664,16 @@ impl AuthStorage {
         self.store_operation(|store, _state| store.delete_cache_prefix(&prefix).map_err(|_| AuthStorageError::Storage))
     }
     pub fn invalidate_usage_cache(&self, provider: Option<&str>) -> Result<(), AuthStorageError> {
-        self.expire_usage_cache(provider)?;
+        self.inner.usage_epoch.fetch_add(1, Ordering::AcqRel);
+        let prefix = provider
+            .map(|provider| format!("{USAGE_CACHE_PREFIX}report:{}:", usage_provider_key(provider)))
+            .unwrap_or_else(|| format!("{USAGE_CACHE_PREFIX}report:"));
         let key = force_cache_key(provider);
         let now = self.now();
         self.store_operation(|store, _state| {
+            // Native 6271-6286 clears and marks force in the same synchronous
+            // turn; keep another cache publisher outside this local boundary.
+            store.delete_cache_prefix(&prefix).map_err(|_| AuthStorageError::Storage)?;
             write_usage_cache(
                 store,
                 &key,
@@ -1841,30 +1882,63 @@ impl AuthStorage {
         force_refresh: bool,
     ) -> Option<UsageReport> {
         let fetch_cancel = CancellationToken::new();
+        // One native timeout signal covers refresh preparation and both usage
+        // GETs. A detached OAuth owner settles independently of this consumer.
+        let deadline = tokio::time::Instant::now() + self.inner.options.usage_request_timeout;
+        let mut refresh_auth_failure = false;
+        let mut exhausted = false;
         if request.credential.credential_type == UsageCredentialType::Oauth
             && request.credential.expires_at.is_some_and(|expires| self.now() + REFRESH_SKEW_MS >= expires)
-            && let (Some(provider), Some(id)) = (self.oauth_hook(&request.provider), request.credential_id)
-            && let Ok(rows) = self.provider_rows(&request.provider).await
-            && let Some(row) = rows.into_iter().find(|row| row.id == id)
-            && let Ok(Ok(Some(credential))) = tokio::time::timeout(
-                self.inner.options.usage_request_timeout,
-                provider.prepare_usage_credential(&row, &fetch_cancel),
-            )
-            .await
+            && request.credential.access_token.as_deref().is_some_and(|value| !value.is_empty())
+            && request.credential.refresh_token.as_deref().is_some_and(|value| !value.is_empty())
+            && let Some(id) = request.credential_id
         {
-            request.credential = credential;
-            request.account_key = usage_identity(&request.credential);
+            let preparation = async {
+                if let Some(provider) = self.oauth_hook(&request.provider) {
+                    let row = self
+                        .provider_rows(&request.provider)
+                        .await?
+                        .into_iter()
+                        .find(|row| row.id == id)
+                        .ok_or(AuthStorageError::Unavailable)?;
+                    provider.prepare_usage_credential(&row, &fetch_cancel).await
+                } else if request.provider == "openai-codex"
+                    && let Some(codex) = &self.inner.codex
+                {
+                    codex
+                        .prepare_usage_account_credential(id, &fetch_cancel)
+                        .await
+                        .map(|row| Some(usage_credential(&row, None)))
+                        .map_err(map_codex_error)
+                } else {
+                    Ok(None)
+                }
+            };
+            match tokio::time::timeout_at(deadline, preparation).await {
+                Ok(Ok(Some(credential))) => {
+                    request.credential = credential;
+                    request.account_key = usage_identity(&request.credential);
+                }
+                Ok(Err(AuthStorageError::Definitive)) => {
+                    refresh_auth_failure = request.credential.expires_at.is_some_and(|expires| expires <= self.now());
+                }
+                Err(_) => {
+                    exhausted = true;
+                    fetch_cancel.cancel();
+                }
+                _ => {}
+            }
         }
-        let result = tokio::time::timeout(
-            self.inner.options.usage_request_timeout,
-            hook.fetch_usage(request.clone(), &fetch_cancel),
-        )
-        .await;
-        let result = match result {
-            Ok(result) => result,
-            Err(_) => {
-                fetch_cancel.cancel();
-                Err(UsageFetchError::Transient)
+        let result = if exhausted || tokio::time::Instant::now() >= deadline {
+            fetch_cancel.cancel();
+            Err(UsageFetchError::Transient)
+        } else {
+            match tokio::time::timeout_at(deadline, hook.fetch_usage(request.clone(), &fetch_cancel)).await {
+                Ok(result) => result,
+                Err(_) => {
+                    fetch_cancel.cancel();
+                    Err(UsageFetchError::Transient)
+                }
             }
         };
         if epoch != self.inner.usage_epoch.load(Ordering::Acquire) {
@@ -1877,7 +1951,8 @@ impl AuthStorage {
         }
         let ttl = if report.is_some() { USAGE_REPORT_TTL_MS as f64 } else { USAGE_FAILURE_BACKOFF_MS };
         let expiry = now + ttl + ttl * ((self.inner.options.jitter)() * 0.5 - 0.25);
-        let auth_failure = matches!(result, Err(UsageFetchError::Unauthorized | UsageFetchError::Forbidden));
+        let auth_failure =
+            refresh_auth_failure || matches!(result, Err(UsageFetchError::Unauthorized | UsageFetchError::Forbidden));
         let cached_report = if report.is_some() {
             report.clone()
         } else if !force_refresh && !auth_failure && hook.retain_last_good_on_failure() {
@@ -2383,7 +2458,7 @@ impl AuthStorage {
         self.store_operation(|store, state| {
             state.assignments.upsert_credential_block(store, block).map_err(|_| AuthStorageError::Storage)
         })?;
-        if let Some((provider, _)) = block.provider_key.rsplit_once(':') {
+        if let Some(provider) = block.provider_key.strip_suffix(":oauth") {
             self.expire_usage_cache(Some(provider))?;
         }
         self.bump_generation();
@@ -2396,7 +2471,7 @@ impl AuthStorage {
                 .delete_credential_block(store, id, provider_key, scope)
                 .map_err(|_| AuthStorageError::Storage)
         })?;
-        if let Some((provider, _)) = provider_key.rsplit_once(':') {
+        if let Some(provider) = provider_key.strip_suffix(":oauth") {
             self.expire_usage_cache(Some(provider))?;
         }
         self.bump_generation();
@@ -2581,7 +2656,7 @@ impl UsageProvider for crate::codex_usage::CodexUsageProvider {
         request: UsageRequest,
         cancel: &CancellationToken,
     ) -> Result<Option<UsageReport>, UsageFetchError> {
-        crate::codex_usage::CodexUsageProvider::fetch_usage_result(
+        Ok(crate::codex_usage::CodexUsageProvider::fetch_usage(
             self,
             &request.provider,
             &request.credential,
@@ -2589,14 +2664,7 @@ impl UsageProvider for crate::codex_usage::CodexUsageProvider {
             Duration::from_secs(10),
             cancel,
         )
-        .await
-        .map_err(|error| match error {
-            crate::codex_usage::CodexUsageError::Cancelled => UsageFetchError::Cancelled,
-            crate::codex_usage::CodexUsageError::Unauthorized => UsageFetchError::Unauthorized,
-            crate::codex_usage::CodexUsageError::Forbidden => UsageFetchError::Forbidden,
-            crate::codex_usage::CodexUsageError::Transient => UsageFetchError::Transient,
-            crate::codex_usage::CodexUsageError::InvalidResponse => UsageFetchError::InvalidResponse,
-        })
+        .await)
     }
     fn supports(&self, request: &UsageRequest) -> bool {
         crate::codex_usage::CodexUsageProvider::supports(self, &request.provider, &request.credential)
@@ -3492,6 +3560,7 @@ mod tests {
             .unwrap();
         let peer = rusqlite::Connection::open(&path).unwrap();
         peer.execute_batch("ALTER TABLE cache RENAME TO unavailable_cache").unwrap();
+        assert_eq!(storage.expire_usage_cache(Some(provider)), Err(AuthStorageError::Storage));
         assert_eq!(
             storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None),
             Err(AuthStorageError::Storage)
@@ -3503,6 +3572,7 @@ mod tests {
         assert_eq!(retained, "prior payload");
         peer.execute_batch("ALTER TABLE unavailable_cache RENAME TO cache;
             CREATE TRIGGER reject_header_write BEFORE INSERT ON cache BEGIN SELECT RAISE(FAIL, 'fixture write failure'); END;").unwrap();
+        assert_eq!(storage.expire_usage_cache(Some(provider)), Err(AuthStorageError::Storage));
         assert_eq!(
             storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None),
             Err(AuthStorageError::Storage)
@@ -3772,6 +3842,345 @@ mod tests {
         let clock = Arc::new(AtomicU64::new(at as u64));
         let context = AuthRequestContext::default();
         let cancel = CancellationToken::new();
+        {
+            // Fixed 6228-6240 preserves current OAuth/default-key values;
+            // replacement 6248-6252 and manual refresh 6271-6286 clear them.
+            let cases = [
+                "rich",
+                "null",
+                "invalid",
+                "absent",
+                "false",
+                "zero-value",
+                "opaque",
+                "zero-expiry",
+                "physical-expired",
+            ];
+            let mut credentials = vec![AuthCredential::api_key("cache-static")];
+            credentials.extend(cases.iter().map(|name| oauth(&format!("{name}@cache-fixture"), at, false)));
+            let (cache_storage, cache_store, _, _) = setup(provider, &credentials, clock.clone(), false);
+            let cache_usage = Arc::new(FixtureUsage::new());
+            cache_storage
+                .register_usage_provider(
+                    provider,
+                    Arc::new(FixtureHeaderUsage {
+                        usage: cache_usage.clone(),
+                        parser: crate::codex_usage::parse_codex_rate_limit_headers,
+                    }),
+                )
+                .unwrap();
+            let other_provider = "fixture-cache-other";
+            cache_store
+                .lock()
+                .unwrap()
+                .replace_auth_credentials_for_provider(other_provider, &[oauth("other@cache-fixture", at, false)])
+                .unwrap();
+            cache_storage.reload().unwrap();
+            let rows = cache_store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+            let other = cache_store.lock().unwrap().list_auth_credentials(Some(other_provider)).unwrap().remove(0);
+            let rich_row = &rows[1];
+            let rich_key = header_cache_key(rich_row, None);
+            let mut rich = report(provider, at, 0.2, "plus", "rich@cache-fixture");
+            rich.metadata.as_mut().unwrap().insert("source".into(), Value::String("full-endpoint".into()));
+            rich.raw = Some(serde_json::json!({"extra_usage":{"used":12.34}}));
+            rich.unknown_fields.insert("retainedReportField".into(), Value::String("opaque".into()));
+            let rich_value = serde_json::to_value(&rich).unwrap();
+            let seed = |key: &str, value: Option<Value>| {
+                cache_storage
+                    .store_operation(|store, _state| {
+                        write_usage_cache(store, key, &UsageCacheEntry { value, expires_at: at + 300_000.0 }, at)
+                            .map_err(|_| AuthStorageError::Storage)
+                    })
+                    .unwrap();
+            };
+            let read = |key: &str| -> UsageCacheEntry<Value> {
+                serde_json::from_str(
+                    &cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+            for (index, case) in cases.iter().enumerate() {
+                let key = header_cache_key(&rows[index + 1], None);
+                let (raw, durable_expiry) = match *case {
+                    "absent" => continue,
+                    "invalid" => ("invalid JSON".to_owned(), i64::MAX),
+                    "null" => (serde_json::json!({"value":null,"expiresAt":at + 300_000.0}).to_string(), i64::MAX),
+                    "false" => (serde_json::json!({"value":false,"expiresAt":at + 300_000.0}).to_string(), i64::MAX),
+                    "zero-value" => (serde_json::json!({"value":0,"expiresAt":at + 300_000.0}).to_string(), i64::MAX),
+                    "opaque" => (
+                        serde_json::json!({"value":{"future":[null,"opaque",false]},"expiresAt":at + 300_000.0})
+                            .to_string(),
+                        i64::MAX,
+                    ),
+                    "zero-expiry" => (serde_json::json!({"value":rich_value,"expiresAt":0}).to_string(), i64::MAX),
+                    "physical-expired" => {
+                        (serde_json::json!({"value":rich_value,"expiresAt":at - 1_000.0}).to_string(), 0)
+                    }
+                    _ => (serde_json::json!({"value":rich_value,"expiresAt":at + 300_000.0}).to_string(), i64::MAX),
+                };
+                cache_store
+                    .lock()
+                    .unwrap()
+                    .set_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), &raw, durable_expiry)
+                    .unwrap();
+            }
+            let static_credential = usage_credential(&rows[0], Some("cache-static".into()));
+            let static_key = usage_report_key(&UsageRequest {
+                provider: provider.into(),
+                account_key: usage_identity(&static_credential),
+                credential: static_credential,
+                credential_id: Some(rows[0].id),
+                base_url: None,
+            });
+            let custom_key = header_cache_key(rich_row, Some("https://cache.fixture/custom"));
+            let removed_key = format!("report:{}:default:oauth|account:removed", usage_provider_key(provider));
+            let other_key = header_cache_key(&other, None);
+            let nonreport_key = "reports:aggregate-fixture";
+            let protected_keys = [&static_key[..], &custom_key, &removed_key, &other_key, nonreport_key];
+            for key in protected_keys {
+                seed(key, Some(rich_value.clone()));
+            }
+            let protected_raw: Vec<_> = protected_keys
+                .iter()
+                .map(|key| {
+                    cache_store.lock().unwrap().get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true).unwrap().unwrap()
+                })
+                .collect();
+
+            let epoch = cache_storage.inner.usage_epoch.load(Ordering::Acquire);
+            let static_block = StoredCredentialBlock {
+                credential_id: rows[0].id,
+                provider_key: provider_type_key(provider, CredentialKind::ApiKey),
+                block_scope: "fixture".into(),
+                blocked_until_ms: at as i64 + 7_200_000,
+                updated_at_ms: at as i64,
+            };
+            cache_storage.upsert_credential_block(&static_block).unwrap();
+            cache_storage.delete_credential_block(rows[0].id, &static_block.provider_key, "fixture").unwrap();
+            assert_eq!(
+                cache_storage.inner.usage_epoch.load(Ordering::Acquire),
+                epoch,
+                "native broker API-key blocks do not invalidate OAuth usage"
+            );
+            assert_eq!(read(&rich_key).expires_at, at + 300_000.0);
+            cache_storage
+                .upsert_credential_block(&StoredCredentialBlock {
+                    credential_id: rich_row.id,
+                    provider_key: provider_type_key(provider, CredentialKind::OAuth),
+                    block_scope: "spark".into(),
+                    blocked_until_ms: at as i64 + 7_200_000,
+                    updated_at_ms: at as i64,
+                })
+                .unwrap();
+            assert_eq!(cache_storage.inner.usage_epoch.load(Ordering::Acquire), epoch + 1);
+            for (index, case) in cases.iter().enumerate() {
+                let key = header_cache_key(&rows[index + 1], None);
+                let stale = read(&key);
+                assert_eq!(stale.expires_at, at - 1.0, "{case} logical expiry");
+                let expected = match *case {
+                    "rich" | "physical-expired" => Some(rich_value.clone()),
+                    "false" => Some(Value::Bool(false)),
+                    "zero-value" => Some(Value::from(0)),
+                    "opaque" => Some(serde_json::json!({"future":[null,"opaque",false]})),
+                    _ => None,
+                };
+                assert_eq!(stale.value, expected, "{case} preserves native value/null semantics");
+                assert_eq!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), false)
+                        .unwrap()
+                        .is_some(),
+                    expected.is_some(),
+                    "{case} durable retention differs from logical expiry"
+                );
+            }
+            cache_store.lock().unwrap().clean_expired_cache().unwrap();
+            for index in [0, 4, 5, 6, 8] {
+                assert!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{}", header_cache_key(&rows[index + 1], None)), false)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+            for (index, key) in protected_keys.iter().enumerate() {
+                assert_eq!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                        .unwrap()
+                        .as_ref(),
+                    Some(&protected_raw[index]),
+                    "automatic isolation for {key}"
+                );
+            }
+            assert!(!cache_storage.force_usage_marked(Some(provider)));
+            assert!(!cache_storage.force_usage_marked(None));
+            cache_storage.pin_session_oauth_account(provider, "cache-headers", rich_row.id, None).unwrap();
+            assert!(
+                cache_storage
+                    .ingest_usage_headers(provider, &codex_headers(at, "40", "30"), Some("cache-headers"), None)
+                    .unwrap()
+            );
+            let merged = header_cache(&cache_storage, &rich_key);
+            assert_eq!(merged.expires_at, at - 1.0);
+            let merged = merged.value.unwrap();
+            assert_eq!(merged.metadata.as_ref().unwrap()["source"], "full-endpoint");
+            assert_eq!(merged.raw, rich.raw);
+            assert_eq!(merged.unknown_fields, rich.unknown_fields);
+            cache_usage.push(None, Err(UsageFetchError::Transient));
+            assert_eq!(
+                cache_storage.usage_report(provider, rich_row, &context, false, &cancel).await.unwrap(),
+                Some(merged)
+            );
+            cache_storage.wait_for_settlement().await;
+            cache_storage
+                .register_usage_provider(
+                    provider,
+                    Arc::new(FixtureHeaderUsage {
+                        usage: cache_usage.clone(),
+                        parser: crate::codex_usage::parse_codex_rate_limit_headers,
+                    }),
+                )
+                .unwrap();
+            for key in [&rich_key[..], &static_key, &custom_key, &removed_key] {
+                assert!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                        .unwrap()
+                        .is_none(),
+                    "replacement discards every old implementation report: {key}"
+                );
+            }
+            for (key, raw) in [(&other_key[..], &protected_raw[3]), (nonreport_key, &protected_raw[4])] {
+                assert_eq!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                        .unwrap()
+                        .as_ref(),
+                    Some(raw),
+                    "replacement isolates {key}"
+                );
+            }
+            assert!(
+                !cache_storage.force_usage_marked(Some(provider)),
+                "replacement never creates a manual force marker"
+            );
+            cache_usage.push(None, Err(UsageFetchError::Transient));
+            assert!(
+                cache_storage.usage_report(provider, rich_row, &context, false, &cancel).await.unwrap().is_none(),
+                "replacement failure must not replay the old implementation report"
+            );
+            cache_storage.wait_for_settlement().await;
+
+            for target in [Some(provider), None] {
+                for key in [&rich_key[..], &static_key, &custom_key, &removed_key, &other_key, nonreport_key] {
+                    seed(key, Some(rich_value.clone()));
+                }
+                let epoch = cache_storage.inner.usage_epoch.load(Ordering::Acquire);
+                cache_storage.invalidate_usage_cache(target).unwrap();
+                assert_eq!(cache_storage.inner.usage_epoch.load(Ordering::Acquire), epoch + 1);
+                for key in [&rich_key[..], &static_key, &custom_key, &removed_key] {
+                    assert!(
+                        cache_store
+                            .lock()
+                            .unwrap()
+                            .get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true)
+                            .unwrap()
+                            .is_none(),
+                        "manual {target:?} clears every selected-provider report: {key}"
+                    );
+                }
+                assert_eq!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{other_key}"), true)
+                        .unwrap()
+                        .is_some(),
+                    target.is_some(),
+                    "manual provider isolation"
+                );
+                assert!(
+                    cache_store
+                        .lock()
+                        .unwrap()
+                        .get_cache(&format!("{USAGE_CACHE_PREFIX}{nonreport_key}"), true)
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(cache_storage.force_usage_marked(target));
+                let started = cache_usage.started.available_permits();
+                if started > 0 {
+                    cache_usage.started.try_acquire_many(started as u32).unwrap().forget();
+                }
+                let first_gate = Arc::new(Semaphore::new(0));
+                cache_usage.push(Some(first_gate.clone()), Err(UsageFetchError::Transient));
+                let calls = cache_usage.calls.load(Ordering::Acquire);
+                let owner = cache_storage.clone();
+                let refresh = tokio::spawn(async move {
+                    owner.fetch_usage_reports(target, &AuthRequestContext::default(), &CancellationToken::new()).await
+                });
+                cache_usage.wait_started().await;
+                assert_eq!(
+                    cache_usage.calls.load(Ordering::Acquire),
+                    calls + 1,
+                    "forced refresh is serial within the provider"
+                );
+                first_gate.add_permits(1);
+                assert!(
+                    refresh.await.unwrap().unwrap().is_empty(),
+                    "manual failure cannot return a cleared last-good value"
+                );
+                cache_storage.wait_for_settlement().await;
+                assert_eq!(cache_usage.calls.load(Ordering::Acquire), calls + rows.len());
+                assert!(!cache_storage.force_usage_marked(target), "same-epoch refresh clears its force marker");
+            }
+
+            // An old automatic-invalidation epoch can satisfy its consumer but
+            // cannot overwrite the retained stale report or append history.
+            seed(&rich_key, Some(rich_value.clone()));
+            let history = cache_store.lock().unwrap().list_usage_history(None).unwrap().len();
+            let started = cache_usage.started.available_permits();
+            if started > 0 {
+                cache_usage.started.try_acquire_many(started as u32).unwrap().forget();
+            }
+            let old_gate = Arc::new(Semaphore::new(0));
+            let mut late = rich.clone();
+            late.limits[0].amount.used_fraction = Some(0.9);
+            cache_usage.push(Some(old_gate.clone()), Ok(Some(late)));
+            let owner = cache_storage.clone();
+            let old_row = rich_row.clone();
+            let old = tokio::spawn(async move {
+                owner
+                    .usage_report(provider, &old_row, &AuthRequestContext::default(), true, &CancellationToken::new())
+                    .await
+            });
+            cache_usage.wait_started().await;
+            cache_storage.expire_usage_cache(Some(provider)).unwrap();
+            old_gate.add_permits(1);
+            assert!(old.await.unwrap().unwrap().is_some());
+            cache_storage.wait_for_settlement().await;
+            assert_eq!(read(&rich_key).value, Some(rich_value));
+            assert_eq!(read(&rich_key).expires_at, at - 1.0);
+            assert_eq!(cache_store.lock().unwrap().list_usage_history(None).unwrap().len(), history);
+            assert!(!cache_storage.force_usage_marked(Some(provider)));
+            assert!(!cache_storage.force_usage_marked(None));
+        }
         let (storage, store, _, _) = setup(provider, &[oauth("one@fixture", at, false)], clock.clone(), false);
         let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
         let usage = Arc::new(FixtureUsage::new());

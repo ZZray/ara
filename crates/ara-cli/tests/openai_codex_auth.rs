@@ -3,6 +3,9 @@
 #![cfg(feature = "test-fixture")]
 
 use ara_ai::{CallOptions, Context, Message, Model, StopReason, UserMessage};
+use ara_cli::auth_storage::{AuthRequestContext, AuthStorage, AuthStorageError, AuthStorageOptions};
+use ara_cli::auth_storage_policy::UsageReport;
+use ara_cli::codex_usage::CodexUsageProvider;
 use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
 use ara_cli::model_route::{AuthResolveError, CredentialIdentity, PreparedRoute, ProtocolOptions, RequestAuthResolver};
 use ara_cli::openai_codex_auth::{CodexAuthError, OpenAiCodexAuth};
@@ -116,6 +119,76 @@ async fn wait_requests(fake: &FakeUpstream, count: usize) {
     })
     .await
     .expect("controlled request reached upstream");
+}
+
+fn usage_payload(tag: &str) -> Value {
+    json!({"fixtureTag":tag,"plan_type":"pro","rate_limit":{
+        "allowed":true,"limit_reached":false,
+        "primary_window":{"used_percent":11,"limit_window_seconds":18000,"reset_after_seconds":600}
+    }})
+}
+
+fn usage_storage(service: Arc<OpenAiCodexAuth>, fake: &FakeUpstream, timeout: Duration) -> AuthStorage {
+    let storage = AuthStorage::for_codex(
+        service,
+        AuthStorageOptions { usage_request_timeout: timeout, jitter: Arc::new(|| 0.5), ..Default::default() },
+    )
+    .unwrap();
+    let origin = format!("http://{}", fake.addr);
+    let builtin = CodexUsageProvider::with_fixture_endpoint_resolver(Arc::new(move |canonical| {
+        let path = reqwest::Url::parse(canonical).unwrap().path().to_owned();
+        format!("{origin}{path}")
+    }))
+    .unwrap();
+    storage.register_usage_provider("openai-codex", Arc::new(builtin)).unwrap();
+    storage
+}
+
+fn replace_expiry(path: &Path, id: i64, expires: i64) {
+    let store = SqliteCredentialStore::open(path).unwrap();
+    let row = store.list_auth_credentials(Some("openai-codex")).unwrap().into_iter().find(|row| row.id == id).unwrap();
+    let mut replacement = fields(path, id).as_object().unwrap().clone();
+    replacement.insert("expires".into(), expires.into());
+    assert!(
+        store
+            .try_update_auth_credential_if_matches(id, &row.serialized_data, &AuthCredential::oauth(replacement), None)
+            .unwrap()
+    );
+}
+
+fn stale_warmed_usage(path: &Path, account: &str, report: &UsageReport) -> String {
+    // Source: auth_storage::{USAGE_CACHE_PREFIX, usage_identity, usage_report_key}.
+    // Warm through the builtin GET before changing only payload expiresAt.
+    let key = format!(
+        "usage_cache:report:openai-codex:default:oauth|account:{account}|email:{account}@example.invalid|org:original-org"
+    );
+    let db = rusqlite::Connection::open(path).unwrap();
+    let (raw, durable_expiry): (String, i64) = db
+        .query_row("SELECT value,expires_at FROM cache WHERE key=?1", [&key], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap();
+    let mut cached: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(cached["value"], serde_json::to_value(report).unwrap());
+    assert!(durable_expiry > now_ms() / 1000);
+    cached["expiresAt"] = (now_ms() - 1).into();
+    assert_eq!(
+        db.execute("UPDATE cache SET value=?1 WHERE key=?2", rusqlite::params![cached.to_string(), key]).unwrap(),
+        1
+    );
+    let after: i64 = db.query_row("SELECT expires_at FROM cache WHERE key=?1", [&key], |row| row.get(0)).unwrap();
+    assert_eq!(after, durable_expiry, "last-good retention and epoch were not invalidated");
+    key
+}
+
+async fn usage_reports(storage: &AuthStorage) -> Vec<UsageReport> {
+    storage
+        .fetch_usage_reports(Some("openai-codex"), &AuthRequestContext::default(), &CancellationToken::new())
+        .await
+        .unwrap()
+}
+
+fn cached_usage(path: &Path, key: &str) -> Value {
+    let store = SqliteCredentialStore::open(path).unwrap();
+    serde_json::from_str(&store.get_cache(key, true).unwrap().unwrap()).unwrap()
 }
 
 #[tokio::test]
@@ -833,5 +906,439 @@ async fn exact_discovery_accounts_keep_row_affinity_refresh_fences_and_unknown_o
         }
         assert_eq!(fields(&path, sibling_id), sibling_before);
         assert_eq!(fake.served(), 1);
+    }
+}
+
+// Fixed OMP auth-storage.ts usage refresh/cache families and the actual builtin
+// openai-codex.ts GET/null/detail behavior, at HTTP + temporary SQLite seams.
+#[tokio::test]
+async fn builtin_usage_refresh_cache_and_durable_row_outcomes() {
+    // Fresh credentials and a fresh report do not spend a refresh grant.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let before = fields(&path, id);
+        let fake = upstream(vec![response(usage_payload("fresh"))]).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let reports = usage_reports(&storage).await;
+        assert_eq!(reports.len(), 1);
+        assert_eq!(usage_reports(&storage).await, reports);
+        assert_eq!(fields(&path, id), before);
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["request"], "GET /backend-api/wham/usage HTTP/1.1");
+        assert_eq!(requests[0]["headers"]["chatgpt-account-id"], "selected");
+    }
+
+    // Owned commits use now < expires, including a minted 30-second token.
+    // A zero-lifetime token is committed but cannot authorize a usage GET.
+    for lifetime in [3600, 30, 0] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let token = access("minted-account-with-longer-name", "minted-region");
+        let mut script =
+            vec![response(usage_payload("last-good")), response(json!({"access_token":token,"expires_in":lifetime}))];
+        if lifetime > 0 {
+            script.push(response(usage_payload("minted")));
+        }
+        let fake = upstream(script).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        let key = stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() + if lifetime == 0 { -1 } else { 30_000 });
+        let reports = usage_reports(&storage).await;
+        let stored = fields(&path, id);
+        assert_eq!(stored["access"], token);
+        assert_eq!(stored["accountId"], "minted-account-with-longer-name");
+        assert_eq!(stored["email"], "new@example.com");
+        for (field, expected) in [
+            ("refresh", json!("fixture-refresh-original")),
+            ("authorizedAt", json!(42)),
+            ("orgId", json!("original-org")),
+            ("orgName", json!("original-plan")),
+        ] {
+            assert_eq!(stored[field], expected);
+        }
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        assert_eq!(
+            store.list_auth_credentials(Some("openai-codex")).unwrap().iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![id]
+        );
+        assert!(store.list_disabled_credentials(Some("openai-codex")).unwrap().is_empty());
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests[1]["request"], "POST /oauth/token HTTP/1.1");
+        assert!(requests[1]["body"].as_str().unwrap().contains("refresh_token=fixture-refresh-original"));
+        if lifetime == 0 {
+            assert_eq!(reports, vec![old]);
+            assert_eq!(requests.len(), 2, "zero lifetime cannot send a GET or repeat refresh");
+            assert!(stored["expires"].as_i64().unwrap() <= now_ms());
+        } else {
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].raw.as_ref().unwrap()["fixtureTag"], "minted");
+            assert_eq!(requests.len(), 3);
+            assert_eq!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", token.len() + 7));
+            assert_ne!(requests[2]["headers"]["authorization"], requests[0]["headers"]["authorization"]);
+            assert_eq!(requests[2]["headers"]["chatgpt-account-id"], "minted-account-with-longer-name");
+        }
+        assert_eq!(cached_usage(&path, &key)["value"], serde_json::to_value(&reports[0]).unwrap());
+    }
+
+    // Durable definitive removal wraps the original error: this flight may
+    // retain SG. The next public poll excludes the disabled account entirely.
+    // Transient refresh failures retain the active row and its original grant.
+    for (offset, status, message, definitive) in [
+        (-1, 400, "invalid_grant", true),
+        (30_000, 400, "invalid_grant", true),
+        (-1, 503, "temporarily_unavailable", false),
+        (30_000, 429, "rate_limit", false),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let mut script = vec![
+            response(usage_payload("last-good")),
+            json!({"status":status,"body":json!({"error":message}).to_string()}),
+        ];
+        if offset > 0 {
+            script.push(json!({"status":503}));
+        }
+        let fake = upstream(script).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        let key = stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() + offset);
+        let original = fields(&path, id);
+        assert_eq!(usage_reports(&storage).await, vec![old.clone()]);
+        assert_eq!(cached_usage(&path, &key)["value"], serde_json::to_value(&old).unwrap());
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        if definitive {
+            assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
+            assert_eq!(
+                store
+                    .list_disabled_credentials(Some("openai-codex"))
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.id)
+                    .collect::<Vec<_>>(),
+                vec![id]
+            );
+            assert!(usage_reports(&storage).await.is_empty());
+        } else {
+            assert_eq!(fields(&path, id), original);
+            assert!(store.list_disabled_credentials(Some("openai-codex")).unwrap().is_empty());
+            assert_eq!(usage_reports(&storage).await, vec![old]);
+        }
+        assert_eq!(fake.served(), if offset > 0 { 3 } else { 2 });
+    }
+
+    // The native builtin returns null for a failed main GET, including 401 and
+    // 403. This is distinct from a custom UsageProvider's typed auth error.
+    for status in [401, 403, 503] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let original = fields(&path, id);
+        let fake = upstream(vec![response(usage_payload("last-good")), json!({"status":status})]).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        let key = stale_warmed_usage(&path, "selected", &old);
+        assert_eq!(usage_reports(&storage).await, vec![old.clone()]);
+        assert_eq!(cached_usage(&path, &key)["value"], serde_json::to_value(old).unwrap());
+        assert_eq!(fields(&path, id), original);
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|request| request["request"].as_str().unwrap().starts_with("GET ")));
+    }
+
+    // Ancillary detail failure preserves the newly fetched main report/count.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let mut payload = usage_payload("main-with-credits");
+        payload["rate_limit_reset_credits"] = json!({"available_count":3});
+        let fake = upstream(vec![response(payload), json!({"status":403})]).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let reports = usage_reports(&storage).await;
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].raw.as_ref().unwrap()["fixtureTag"], "main-with-credits");
+        assert_eq!(reports[0].reset_credits.as_ref().unwrap().available_count, 3.0);
+        assert!(reports[0].reset_credits.as_ref().unwrap().credits.is_none());
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests[1]["request"], "GET /backend-api/wham/rate-limit-reset-credits HTTP/1.1");
+        assert_eq!(requests[1]["headers"]["authorization"], requests[0]["headers"]["authorization"]);
+    }
+}
+
+#[tokio::test]
+async fn builtin_usage_peer_unknown_deadline_and_shared_refresh_flights() {
+    // A request has already dispatched A's grant before a peer logs into B.
+    // The shared worker is pinned to A; exact usage cannot inherit B's receipt.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let token = access_with_email("selected", "pinned-account-refresh", "selected@example.invalid");
+        let mut refresh = response(json!({"access_token":token,"refresh_token":"pinned-rotated","expires_in":3600}));
+        refresh["delay_ms"] = 300.into();
+        let fake =
+            upstream(vec![response(usage_payload("last-good")), refresh, response(usage_payload("pinned-A"))]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let storage = usage_storage(service.clone(), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() - 1);
+        let row =
+            SqliteCredentialStore::open(&path).unwrap().list_auth_credentials(Some("openai-codex")).unwrap().remove(0);
+        let worker = service.clone();
+        let target = model(format!("http://{}/backend-api", fake.addr));
+        let target2 = target.clone();
+        let request = tokio::spawn(async move { worker.resolve(&target2, &CancellationToken::new()).await });
+        wait_requests(&fake, 2).await;
+        let sibling = seed(&path, "new-latest-B", Some(99), now_ms() + 3_600_000);
+        let sibling_before = fields(&path, sibling);
+        let report = storage
+            .usage_report("openai-codex", &row, &AuthRequestContext::default(), false, &CancellationToken::new())
+            .await
+            .unwrap()
+            .unwrap();
+        let lease = request.await.unwrap().unwrap();
+        assert!(matches!(lease.identity(), CredentialIdentity::Stored { id: actual, .. } if *actual == id));
+        assert_eq!(report.raw.as_ref().unwrap()["fixtureTag"], "pinned-A");
+        assert_eq!(report.metadata.as_ref().unwrap()["accountId"], "selected");
+        assert_eq!(fields(&path, id)["access"], token);
+        assert_eq!(fields(&path, id)["refresh"], "pinned-rotated");
+        assert_eq!(fields(&path, sibling), sibling_before);
+        let next = service.resolve(&target, &CancellationToken::new()).await.unwrap();
+        assert!(matches!(next.identity(), CredentialIdentity::Stored { id: actual, .. } if *actual == sibling));
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1]["request"], "POST /oauth/token HTTP/1.1");
+        assert_eq!(requests[2]["headers"]["chatgpt-account-id"], "selected");
+        assert_eq!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", token.len() + 7));
+    }
+
+    // After losing the data+lease CAS, only the persisted exact row is usable.
+    // A peer's 30-second grant fails the skew test; its 120-second grant passes.
+    for peer_lifetime in [30_000, 120_000] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let uncommitted = access("uncommitted-account", "network-result-must-not-be-sent");
+        let peer = access_with_email("selected", "persisted-peer", "selected@example.invalid");
+        let mut refresh =
+            response(json!({"access_token":uncommitted,"refresh_token":"uncommitted-refresh","expires_in":3600}));
+        refresh["delay_ms"] = 150.into();
+        let mut script = vec![response(usage_payload("last-good")), refresh];
+        if peer_lifetime > 60_000 {
+            script.push(response(usage_payload("peer")));
+        }
+        let fake = upstream(script).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        let key = stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() - 1);
+        let worker = storage.clone();
+        let fetching = tokio::spawn(async move { usage_reports(&worker).await });
+        wait_requests(&fake, 2).await;
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        let row = store.list_auth_credentials(Some("openai-codex")).unwrap().remove(0);
+        let mut replacement = fields(&path, id).as_object().unwrap().clone();
+        replacement.insert("access".into(), peer.clone().into());
+        replacement.insert("refresh".into(), "persisted-peer-refresh".into());
+        replacement.insert("expires".into(), (now_ms() + peer_lifetime).into());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            db.execute(
+                "UPDATE auth_credential_refresh_leases SET owner='usage-fixture-peer' WHERE credential_id=?1",
+                [id]
+            )
+            .unwrap(),
+            1
+        );
+        assert!(
+            store
+                .try_update_auth_credential_if_matches(
+                    id,
+                    &row.serialized_data,
+                    &AuthCredential::oauth(replacement),
+                    None
+                )
+                .unwrap()
+        );
+        let reports = fetching.await.unwrap();
+        assert_eq!(fields(&path, id)["access"], peer);
+        assert_eq!(fields(&path, id)["refresh"], "persisted-peer-refresh");
+        assert!(store.list_disabled_credentials(Some("openai-codex")).unwrap().is_empty());
+        let requests = fake.requests.lock().await;
+        if peer_lifetime > 60_000 {
+            assert_eq!(reports[0].raw.as_ref().unwrap()["fixtureTag"], "peer");
+            assert_eq!(requests.len(), 3);
+            assert_eq!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", peer.len() + 7));
+            assert_ne!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", uncommitted.len() + 7));
+            assert_eq!(requests[2]["headers"]["chatgpt-account-id"], "selected");
+        } else {
+            assert_eq!(reports, vec![old]);
+            assert_eq!(requests.len(), 2, "short peer and uncommitted network token cannot authorize a GET");
+        }
+        assert_eq!(cached_usage(&path, &key)["value"], serde_json::to_value(&reports[0]).unwrap());
+    }
+
+    // Advisory unknown preserves the row but durably fences that exact grant.
+    // Neither a usage epoch reset nor process-style reopening may replay it.
+    {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let fake = upstream(vec![response(usage_payload("last-good")), json!({"events":[],"end":"drop"})]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let storage = usage_storage(service.clone(), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        let key = stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() - 1);
+        let before = fields(&path, id);
+        assert_eq!(usage_reports(&storage).await, vec![old.clone()]);
+        tokio::time::timeout(Duration::from_secs(3), service.wait_for_settlement()).await.unwrap();
+        assert_eq!(fields(&path, id), before);
+        let marker = || {
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let mut query = db.prepare("SELECT key,value,expires_at FROM cache WHERE key LIKE 'oauth-refresh-pending:openai-codex:%' ORDER BY key").unwrap();
+            query
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let pending = marker();
+        assert_eq!(pending.len(), 1);
+        assert!(!pending[0].1.is_empty());
+        assert!(pending[0].2 > now_ms() / 1000);
+        assert_eq!(cached_usage(&path, &key)["value"], serde_json::to_value(old).unwrap());
+        storage.invalidate_usage_cache(Some("openai-codex")).unwrap();
+        assert!(usage_reports(&storage).await.is_empty());
+        assert_eq!(fields(&path, id), before);
+        assert_eq!(marker(), pending);
+        drop(storage);
+        drop(service);
+        let reopened = Arc::new(auth(&path, &fake).await);
+        let restarted = usage_storage(reopened, &fake, Duration::from_secs(2));
+        assert!(usage_reports(&restarted).await.is_empty());
+        assert_eq!(fields(&path, id), before);
+        assert_eq!(marker(), pending);
+        assert!(
+            SqliteCredentialStore::open(&path)
+                .unwrap()
+                .list_disabled_credentials(Some("openai-codex"))
+                .unwrap()
+                .is_empty()
+        );
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1]["request"], "POST /oauth/token HTTP/1.1");
+    }
+
+    // Each stage is shorter than the budget, but their sum exceeds it. The
+    // public operation must retain SG within one refresh+GET/detail deadline.
+    for detail_stage in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let token = access("selected", "deadline-refreshed");
+        let mut refresh = response(json!({"access_token":token,"expires_in":3600}));
+        refresh["delay_ms"] = 200.into();
+        let mut payload = usage_payload("too-late");
+        if detail_stage {
+            payload["rate_limit_reset_credits"] = json!({"available_count":1});
+        }
+        let mut main = response(payload);
+        if !detail_stage {
+            main["delay_ms"] = 200.into();
+        }
+        let mut script = vec![response(usage_payload("last-good")), refresh, main];
+        if detail_stage {
+            script.push(json!({"delay_ms":200,"body":json!({"credits":[],"available_count":0}).to_string()}));
+        }
+        let fake = upstream(script).await;
+        let storage = usage_storage(Arc::new(auth(&path, &fake).await), &fake, Duration::from_millis(300));
+        let old = usage_reports(&storage).await.remove(0);
+        stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() - 1);
+        assert_eq!(tokio::time::timeout(Duration::from_secs(2), usage_reports(&storage)).await.unwrap(), vec![old]);
+        assert_eq!(fields(&path, id)["access"], token, "completed refresh committed before the total deadline");
+        assert_eq!(fake.served(), if detail_stage { 4 } else { 3 });
+    }
+
+    // One usage and one request consumer share the same OAuth worker in both
+    // arrival orders. Cancelling either consumer cannot abort the other.
+    for usage_first in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let id = seed(&path, "selected", Some(42), now_ms() + 3_600_000);
+        let token = access_with_email("selected", "shared-refresh", "selected@example.invalid");
+        let mut refresh = response(json!({"access_token":token,"refresh_token":"shared-rotated","expires_in":3600}));
+        refresh["delay_ms"] = 250.into();
+        let fake =
+            upstream(vec![response(usage_payload("last-good")), refresh, response(usage_payload("shared"))]).await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let storage = usage_storage(service.clone(), &fake, Duration::from_secs(2));
+        let old = usage_reports(&storage).await.remove(0);
+        stale_warmed_usage(&path, "selected", &old);
+        replace_expiry(&path, id, now_ms() - 1);
+        let usage_cancel = CancellationToken::new();
+        let request_cancel = CancellationToken::new();
+        let start_usage = || {
+            let storage = storage.clone();
+            let cancel = usage_cancel.clone();
+            tokio::spawn(async move {
+                storage.fetch_usage_reports(Some("openai-codex"), &AuthRequestContext::default(), &cancel).await
+            })
+        };
+        let start_request = || {
+            let service = service.clone();
+            let cancel = request_cancel.clone();
+            let target = model(format!("http://{}/backend-api", fake.addr));
+            tokio::spawn(async move { service.resolve(&target, &cancel).await })
+        };
+        let (usage, request) = if usage_first {
+            let usage = start_usage();
+            wait_requests(&fake, 2).await;
+            (usage, start_request())
+        } else {
+            let request = start_request();
+            wait_requests(&fake, 2).await;
+            (start_usage(), request)
+        };
+        // Both public consumers enter while the controlled POST stays pending.
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        if usage_first {
+            usage_cancel.cancel();
+            assert!(matches!(usage.await.unwrap(), Err(AuthStorageError::Cancelled)));
+            let lease = request.await.unwrap().unwrap();
+            assert!(matches!(lease.identity(), CredentialIdentity::Stored { id: actual, .. } if *actual == id));
+            tokio::time::timeout(Duration::from_secs(3), storage.wait_for_settlement()).await.unwrap();
+            assert_eq!(usage_reports(&storage).await[0].raw.as_ref().unwrap()["fixtureTag"], "shared");
+        } else {
+            request_cancel.cancel();
+            assert!(matches!(request.await.unwrap(), Err(AuthResolveError::Cancelled)));
+            assert_eq!(usage.await.unwrap().unwrap()[0].raw.as_ref().unwrap()["fixtureTag"], "shared");
+        }
+        assert_eq!(fields(&path, id)["access"], token);
+        assert_eq!(fields(&path, id)["refresh"], "shared-rotated");
+        assert!(
+            SqliteCredentialStore::open(&path)
+                .unwrap()
+                .list_disabled_credentials(Some("openai-codex"))
+                .unwrap()
+                .is_empty()
+        );
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests.iter().filter(|request| request["request"].as_str().unwrap().starts_with("POST ")).count(),
+            1
+        );
+        assert_eq!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", token.len() + 7));
     }
 }

@@ -780,8 +780,7 @@ impl CodexUsageProvider {
             return Ok(None);
         }
         let now_ms =
-            SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| CodexUsageError::Transient)?.as_secs_f64()
-                * 1000.0;
+            SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| CodexUsageError::Transient)?.as_millis() as f64;
         if credential.expires_at.is_some_and(|expires| expires <= now_ms) {
             return Ok(None);
         }
