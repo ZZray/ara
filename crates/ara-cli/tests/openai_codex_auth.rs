@@ -226,6 +226,173 @@ async fn latest_interactive_identity_and_cross_connection_refresh_have_one_winne
     assert_eq!(stored["email"], "new@example.com");
 }
 
+// Fixed AuthStorage force-refresh/rotation and OAuth refresh-race families,
+// grouped at the actual HTTP + durable-store seam. Real OpenAI login is separate.
+#[tokio::test]
+async fn native_exact_force_refresh_rejections_and_future_grant_fences() {
+    let cancel = CancellationToken::new();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("force.db");
+    let selected_id = seed(&path, "force-target", None, now_ms() + 3_600_000);
+    let sibling_id = seed(&path, "latest-sibling", Some(99), now_ms() + 3_600_000);
+    let sibling_before = fields(&path, sibling_id);
+    let new_access = access("force-target", "us");
+    let mut refresh = response(json!({"access_token":new_access,"expires_in":3600}));
+    refresh["delay_ms"] = 100.into();
+    let fake = upstream(vec![refresh]).await;
+    let first = auth(&path, &fake).await;
+    let second = auth(&path, &fake).await;
+    first.resolve_account_credential(selected_id, false, &cancel).await.unwrap();
+    assert_eq!(fake.served(), 0, "normal native resolution keeps a fresh bearer");
+    let (left, right) = tokio::join!(
+        first.resolve_account_credential(selected_id, true, &cancel),
+        second.resolve_account_credential(selected_id, true, &cancel),
+    );
+    for row in [left.unwrap(), right.unwrap()] {
+        assert_eq!(row.id, selected_id);
+        let AuthCredential::OAuth { fields } = row.credential else { panic!("OAuth row") };
+        assert_eq!(fields["access"], new_access);
+    }
+    assert_eq!(fake.served(), 1, "simultaneous forced refreshes coalesce through the exact row fence");
+    assert_eq!(fields(&path, sibling_id), sibling_before);
+    drop(fake);
+
+    for (case, (status, body, definitive)) in [
+        (400, json!({"error":"invalid_grant"}).to_string(), true),
+        (400, json!({"error":"invalid_request"}).to_string(), false),
+        (401, json!({"error":"invalid_token"}).to_string(), true),
+        (403, json!({"error":"forbidden"}).to_string(), false),
+        (429, json!({"error":"rate_limit","message":"too many requests"}).to_string(), false),
+        (503, json!({"error":"temporarily_unavailable"}).to_string(), false),
+        (401, "temporarily unavailable".to_owned(), false),
+        (401, "<html>Cloudflare forbidden</html>".to_owned(), false),
+        (400, "invalid_grant".to_owned(), true),
+        (400, format!("{}invalid_grant", "x".repeat(500)), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = temp.path().join(format!("reject-{case}.db"));
+        let id = seed(&path, "reject-target", None, now_ms() + 3_600_000);
+        let before = fields(&path, id);
+        let fake = upstream(vec![json!({"status":status,"body":body})]).await;
+        let service = auth(&path, &fake).await;
+        assert!(matches!(
+            service.resolve_account_credential(id, true, &cancel).await,
+            Err(CodexAuthError::RefreshRejected { status:actual, definitive:category }) if actual == status && category == definitive
+        ));
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        assert_eq!(store.list_disabled_credentials(Some("openai-codex")).unwrap().len(), usize::from(definitive));
+        if !definitive {
+            assert_eq!(fields(&path, id), before, "a confirmed transient rejection preserves the grant");
+        }
+        assert_eq!(fake.served(), 1);
+        drop(fake);
+
+        // The classifier must survive the actual shared Host layer as well.
+        // Otherwise a retained transient row can be disabled again upstream.
+        let host_path = temp.path().join(format!("host-reject-{case}.db"));
+        let host_id = seed(&host_path, "host-reject", None, now_ms() + 3_600_000);
+        let before = fields(&host_path, host_id);
+        let fake = upstream(vec![json!({"status":status,"body":body})]).await;
+        let service = Arc::new(auth(&host_path, &fake).await);
+        let storage = ara_cli::auth_storage::AuthStorage::for_codex(service, Default::default()).unwrap();
+        let failed = ara_cli::model_route::RequestAuthLease::new(
+            CredentialIdentity::Stored { id: host_id, revision: 0 },
+            Some(before["access"].as_str().unwrap().to_owned()),
+        );
+        assert!(
+            storage
+                .refresh_failed_lease(
+                    "openai-codex",
+                    &ara_cli::auth_storage::AuthRequestContext::default(),
+                    &failed,
+                    &cancel
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+        storage.wait_for_settlement().await;
+        let store = SqliteCredentialStore::open(&host_path).unwrap();
+        assert_eq!(
+            store.list_disabled_credentials(Some("openai-codex")).unwrap().len(),
+            usize::from(definitive),
+            "Host classification for HTTP {status}"
+        );
+        if !definitive {
+            assert_eq!(fields(&host_path, host_id), before);
+            let blocks = storage.list_credential_blocks(&[host_id]).unwrap();
+            assert!(
+                blocks.iter().any(|block| block.blocked_until_ms > now_ms() + 290_000),
+                "transient rejection applies native five-minute block"
+            );
+        }
+        assert_eq!(fake.served(), 1);
+        drop(fake);
+    }
+
+    // A missing required refresh field is a native configuration failure,
+    // without any rejected grant or request. The shared coordinator blocks
+    // it temporarily rather than disabling the durable account.
+    let path = temp.path().join("host-missing-refresh.db");
+    let id = seed(&path, "missing-refresh", None, now_ms() - 1);
+    let store = SqliteCredentialStore::open(&path).unwrap();
+    let row = store.list_auth_credentials(Some("openai-codex")).unwrap().remove(0);
+    let AuthCredential::OAuth { fields: mut payload } = row.credential else { panic!("OAuth row") };
+    payload.remove("refresh");
+    assert!(
+        store
+            .try_update_auth_credential_if_matches(id, &row.serialized_data, &AuthCredential::oauth(payload), None)
+            .unwrap()
+    );
+    let before = fields(&path, id);
+    let fake = upstream(vec![]).await;
+    let service = Arc::new(auth(&path, &fake).await);
+    let storage = ara_cli::auth_storage::AuthStorage::for_codex(service, Default::default()).unwrap();
+    let failed = ara_cli::model_route::RequestAuthLease::new(
+        CredentialIdentity::Stored { id, revision: 0 },
+        Some(before["access"].as_str().unwrap().to_owned()),
+    );
+    assert!(
+        storage.refresh_failed_lease("openai-codex", &Default::default(), &failed, &cancel).await.unwrap().is_none()
+    );
+    storage.wait_for_settlement().await;
+    assert_eq!(fields(&path, id), before);
+    assert!(store.list_disabled_credentials(Some("openai-codex")).unwrap().is_empty());
+    assert!(
+        storage.list_credential_blocks(&[id]).unwrap().iter().any(|block| block.blocked_until_ms > now_ms() + 290_000)
+    );
+    assert_eq!(fake.served(), 0);
+    drop(fake);
+
+    let path = temp.path().join("forced-future-fence.db");
+    let id = seed(&path, "fence-target", None, now_ms() + 3_600_000);
+    let sibling_id = seed(&path, "fence-sibling", Some(100), now_ms() + 3_600_000);
+    let sibling_before = fields(&path, sibling_id);
+    let mut refresh = response(json!({"access_token":access("fence-target","us"),"expires_in":3600}));
+    refresh["delay_ms"] = 120.into();
+    let fake = upstream(vec![refresh]).await;
+    let service = auth(&path, &fake).await;
+    let pending = {
+        let service = service.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move { service.resolve_account_credential(id, true, &cancel).await })
+    };
+    wait_requests(&fake, 1).await;
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE auth_credential_refresh_leases SET owner='fixture-peer' WHERE credential_id=?1", [id])
+        .unwrap();
+    assert!(matches!(pending.await.unwrap(), Err(CodexAuthError::LoginRequired)));
+    service.wait_for_settlement().await;
+    let store = SqliteCredentialStore::open(&path).unwrap();
+    assert_eq!(store.list_disabled_credentials(Some("openai-codex")).unwrap()[0].id, id);
+    assert_eq!(fields(&path, sibling_id), sibling_before);
+    assert_eq!(fake.served(), 1, "a lost future-dated force grant cannot be replayed or returned");
+    drop(fake);
+}
+
 #[tokio::test]
 async fn logout_during_refresh_cannot_resurrect_credentials() {
     let temp = tempfile::tempdir().unwrap();

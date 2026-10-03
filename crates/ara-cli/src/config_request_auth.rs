@@ -5,11 +5,13 @@
 //! uses the resulting lease. A configured auth refresh invalidates all sources.
 
 use crate::model_config_values::{
-    ConfigValueContext, ConfigValueResolver, HeaderConfigRecord, HeaderSource, ProcessConfigEnvironment,
-    ResolveConfigValueOptions,
+    ConfigValueContext, ConfigValueEnvironment, ConfigValueResolver, HeaderConfigRecord, HeaderSource,
+    ProcessConfigEnvironment, ResolveConfigValueOptions,
 };
 use crate::model_patch::HeaderSlot;
-use crate::model_route::{AuthResolveError, RequestAuthLease, RequestAuthResolver};
+use crate::model_route::{
+    AuthResolveError, AuthRetryAction, CredentialIdentity, RequestAuthFailure, RequestAuthLease, RequestAuthResolver,
+};
 use ara_ai::Model;
 use async_trait::async_trait;
 use std::{path::PathBuf, sync::Arc};
@@ -124,13 +126,30 @@ impl ConfigRequestAuth {
         cancel: &CancellationToken,
         refresh: bool,
     ) -> Result<RequestAuthLease, AuthResolveError> {
+        self.lease_with_base(model, cancel, refresh, None).await
+    }
+
+    async fn lease_with_base(
+        &self,
+        model: &Model,
+        cancel: &CancellationToken,
+        refresh: bool,
+        selected: Option<RequestAuthLease>,
+    ) -> Result<RequestAuthLease, AuthResolveError> {
         if cancel.is_cancelled() {
             return Err(AuthResolveError::Cancelled);
         }
-        let base = match &self.account {
-            Some(account) => account.resolve(model, cancel).await?,
-            None => self.spec.base.clone(),
+        // A configured key owns this request before OAuth selection. No account
+        // refresh, usage fetch or account identity may leak into its wire lease.
+        let base = match selected {
+            Some(base) => base,
+            None if self.spec.key_config.is_some() => self.spec.base.clone(),
+            None => match &self.account {
+                Some(account) => account.resolve(model, cancel).await?,
+                None => self.spec.base.clone(),
+            },
         };
+        let provider = model.provider.clone();
         let spec = self.spec.clone();
         let cwd = self.cwd.clone();
         let resolver = self.resolver.clone();
@@ -158,7 +177,7 @@ impl ConfigRequestAuth {
                 let key = resolver
                     .resolve_config_value(key_config, &context, ResolveConfigValueOptions::default())
                     .ok_or(AuthResolveError::Command)?;
-                RequestAuthLease::new(base.identity().clone(), Some(key))
+                RequestAuthLease::new(CredentialIdentity::Config { provider }, Some(key))
             } else {
                 base
             };
@@ -227,6 +246,54 @@ impl Drop for ConfigWarningDrain {
     }
 }
 
+/// Stored login/static keys share the Registry's existing command-value cache
+/// and Host settlement gate rather than executing a second command resolver.
+pub struct ConfigStorageKeyResolver {
+    cwd: PathBuf,
+    resolver: Arc<ConfigValueResolver>,
+    environment: Arc<dyn ConfigValueEnvironment + Send + Sync>,
+}
+impl ConfigStorageKeyResolver {
+    pub fn new(
+        cwd: PathBuf,
+        resolver: Arc<ConfigValueResolver>,
+        environment: Arc<dyn ConfigValueEnvironment + Send + Sync>,
+    ) -> Self {
+        Self { cwd, resolver, environment }
+    }
+}
+#[async_trait]
+impl crate::auth_storage::ConfigKeyResolver for ConfigStorageKeyResolver {
+    async fn resolve(
+        &self,
+        configuration: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, crate::auth_storage::AuthStorageError> {
+        let cwd = self.cwd.clone();
+        let resolver = self.resolver.clone();
+        let environment = self.environment.clone();
+        let configuration = configuration.to_owned();
+        let cancel = cancel.clone();
+        let settlement = ConfigSettlement::register();
+        tokio::task::spawn_blocking(move || {
+            let _settlement = settlement;
+            let _operation = CONFIG_AUTH_OPERATION.lock().unwrap_or_else(|error| error.into_inner());
+            let _warnings = ConfigWarningDrain(resolver.as_ref().clone());
+            let context = ConfigValueContext { project_dir: &cwd, environment: environment.as_ref() };
+            resolver
+                .resolve_config_value_checked(&configuration, &context, ResolveConfigValueOptions::default(), &|| {
+                    !cancel.is_cancelled()
+                })
+                .map_err(|_| crate::auth_storage::AuthStorageError::Cancelled)
+        })
+        .await
+        .map_err(|_| crate::auth_storage::AuthStorageError::Configuration)?
+    }
+    async fn wait_for_settlement(&self) {
+        wait_for_config_settlement().await;
+    }
+}
+
 fn merge_header(headers: &mut Vec<(String, String)>, name: String, value: String) -> Result<(), AuthResolveError> {
     let name = http::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| AuthResolveError::Command)?;
     http::header::HeaderValue::from_str(&value).map_err(|_| AuthResolveError::Command)?;
@@ -244,14 +311,14 @@ impl RequestAuthResolver for ConfigRequestAuth {
         true
     }
     fn supports_auth_refresh(&self) -> bool {
-        !self.spec.codex_account
-            && self
-                .spec
-                .startup_key
-                .iter()
-                .chain(self.spec.invalidation_values.iter())
-                .chain(self.spec.header_sources.iter().flatten().map(|(_, value)| value))
-                .any(|value| value.starts_with('!'))
+        self.spec
+            .startup_key
+            .iter()
+            .chain(self.spec.invalidation_values.iter())
+            .chain(self.spec.header_sources.iter().flatten().map(|(_, value)| value))
+            .any(|value| value.starts_with('!'))
+            || self.spec.key_config.is_none()
+                && self.account.as_ref().is_some_and(|account| account.supports_auth_refresh())
     }
     async fn refresh(
         &self,
@@ -259,5 +326,46 @@ impl RequestAuthResolver for ConfigRequestAuth {
         cancel: &CancellationToken,
     ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
         self.lease(model, cancel, true).await.map(Some)
+    }
+
+    fn supports_auth_retry(&self) -> bool {
+        self.supports_auth_refresh()
+            || self.spec.key_config.is_none()
+                && self.account.as_ref().is_some_and(|account| account.supports_auth_retry())
+    }
+
+    async fn retry(
+        &self,
+        model: &Model,
+        failed: &RequestAuthLease,
+        failure: &RequestAuthFailure,
+        action: AuthRetryAction,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        if self.spec.key_config.is_none()
+            && matches!(failed.identity(), CredentialIdentity::Stored { .. })
+            && let Some(account) = &self.account
+        {
+            let next = account.retry(model, failed, failure, action, cancel).await?;
+            return match next {
+                Some(base) => self.lease_with_base(model, cancel, false, Some(base)).await.map(Some),
+                None => Ok(None),
+            };
+        }
+        match action {
+            AuthRetryAction::RefreshSame => self.lease(model, cancel, true).await.map(Some),
+            AuthRetryAction::RotateSibling => Ok(None),
+        }
+    }
+
+    fn for_session(&self, session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        let account = self.account.as_ref()?;
+        let rebound = account.for_session(session_id)?;
+        Some(Arc::new(Self {
+            spec: self.spec.clone(),
+            cwd: self.cwd.clone(),
+            resolver: self.resolver.clone(),
+            account: Some(rebound),
+        }))
     }
 }

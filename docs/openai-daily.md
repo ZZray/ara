@@ -36,8 +36,12 @@ and `MODEL_ID` with values supported by that service, then run:
 Use `"api": "openai-responses"` for a service implementing Responses. CLI
 options override selected configuration. Unsupported execution fields fail
 explicitly rather than being silently discarded. The daily authentication
-subset supports private environment/config keys and explicitly keyless routes;
-it does not yet implement the complete OMP AuthStorage precedence or commands.
+subset supports private environment/config keys and explicitly keyless routes.
+With an existing private auth.db, supported ordinary routes share stored login,
+environment then static-key selection with the Registry, including original
+Session resume. Explicit CLI/config/keyless/credential-header ownership keeps
+its priority. See [AuthStorage evidence](evidence/auth-storage.md); full native
+commands and contracts remain open.
 Custom configuration can coexist with the legacy Anthropic/proxy flag route.
 
 ## OpenAI account
@@ -66,7 +70,10 @@ summary `/compact` path. Codex `/new` rebinds request identity to the new Host
 Session. Summary output is checked against a local adoption budget; the endpoint
 does not receive an output-token cap, so this is not a server cost limit.
 Codex RPC, browser callback login, WebSocket/Lite/native provider compaction and
-full multi-account selection are recorded later work. Actual OpenAI account
+complete multi-account caller contracts are recorded later work. Bounded
+account selection/ranking/sticky/block/refresh paths now share one AuthStorage;
+usage-only refresh, response-header ingestion and reset/broker remain required.
+Actual OpenAI account
 authorization and a subscription-model task require separate live evidence.
 
 ## Module verification

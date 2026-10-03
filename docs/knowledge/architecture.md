@@ -257,3 +257,25 @@ byte shortcut cannot prove a strict budget fit. Fresh counts avoid stale mutable
 message caches until an identity/version contract exists. See the [source,
 executed evidence and required gaps](../evidence/native-tokenizer.md); full
 tokenizer/cache/platform and unknown-accurate Core summary parity stay open.
+
+### Shared authentication leases and exact refresh
+
+Registry discovery and supported reference-Host requests share one Host
+AuthStorage. Ordinary request environment defaults live in a private Session
+resolver context after stored login and before static keys; installing them as
+global config overrides would suppress login and leak one route's policy into
+another. Explicit authored authentication retains priority.
+
+Refresh and feedback use the failed private bearer and durable row identity.
+A peer's newer bearer on the same row can be adopted; a row ID alone is not a
+bearer replay cycle. Pre-output definite rejection is required for request
+replay, and post-dispatch unknown refresh outcomes stay fenced. Classify native
+OAuth failures using the first 500 UTF-16 units of private raw response text,
+without storing that text in diagnostics or disabled causes. A missing refresh
+field detected before dispatch is transient in the shared Codex adapter; it
+must not erase post-dispatch InvalidResponse/unknown-outcome evidence.
+
+These are bounded implemented boundaries, not full AuthStorage parity. The
+[source and executed AuthStorage evidence](../evidence/auth-storage.md) retains
+usage-only refresh/header ingestion, full callers, actual account and platform
+requirements. Root/independent review is required before durable acceptance.

@@ -54,6 +54,7 @@ icu_locale_core = "=2.3.0"
 num-bigint = "0.4"
 num-traits = "0.2"
 reqwest.workspace = true
+ring.workspace = true
 rustls-native-certs = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 regex.workspace = true
@@ -66,11 +67,11 @@ tokio-util.workspace = true
 sys-locale = "=0.3.2"
 uuid.workspace = true
 yaml-rust2.workspace = true
+xxhash-rust.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
 ara-testkit.workspace = true
-ring.workspace = true
 libc = "0.2"
 serde_json.workspace = true
 tempfile.workspace = true

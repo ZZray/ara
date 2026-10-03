@@ -360,8 +360,8 @@ id = "AI-AUTH"
 title = "Credential storage, OAuth/API-key login, auth broker"
 scope = "host"
 gate = "P3"
-owner = "tbd"
-status = "open"
+owner = "ara-cli AuthStorage / shared Registry and request Host (bounded WIP)"
+status = "implementing"
 match = [
   '^packages/ai/test/issue-(2424|4085|8328|957|1417)-[^/]*\.test\.ts$',
   '^packages/ai/test/(remote-auth-store|[a-z-]*-oauth[^/]*)\.test\.ts$',

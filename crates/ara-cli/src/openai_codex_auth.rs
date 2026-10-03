@@ -70,6 +70,12 @@ pub enum CodexAuthError {
     Storage,
     Transport,
     HttpStatus(u16),
+    /// Confirmed refresh rejection. The private body classifier's decision
+    /// survives Host coordination; a bare HTTP status cannot reconstruct it.
+    RefreshRejected {
+        status: u16,
+        definitive: bool,
+    },
     InvalidResponse,
     TimedOut,
     LoginRequired,
@@ -83,6 +89,7 @@ impl std::fmt::Display for CodexAuthError {
             Self::Storage => f.write_str("OpenAI Codex authentication storage failed"),
             Self::Transport => f.write_str("OpenAI Codex authentication transport failed"),
             Self::HttpStatus(status) => write!(f, "OpenAI Codex authentication HTTP {status}"),
+            Self::RefreshRejected { status, .. } => write!(f, "OpenAI Codex refresh HTTP {status}"),
             Self::InvalidResponse => f.write_str("OpenAI Codex authentication response is invalid"),
             Self::TimedOut => f.write_str("OpenAI Codex authentication timed out"),
             Self::LoginRequired => f.write_str("OpenAI Codex login required"),
@@ -128,6 +135,13 @@ impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.0.cancel();
     }
+}
+
+#[derive(Default)]
+struct RefreshObservation {
+    dispatched: AtomicBool,
+    rejected: AtomicBool,
+    definitive: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -189,6 +203,13 @@ impl OpenAiCodexAuth {
         })
         .await
         .map_err(|_| CodexAuthError::Storage)?
+    }
+
+    /// The native Host auth owner uses the same database and refresh settlement
+    /// service as account discovery. A second independently cached store would
+    /// lose the row ownership established by the request's acquired lease.
+    pub(crate) fn store_handle(&self) -> Arc<Mutex<SqliteCredentialStore>> {
+        self.store.clone()
     }
 
     pub async fn login_device(
@@ -355,9 +376,30 @@ impl OpenAiCodexAuth {
         self.resolve_owned(CredentialSelection::ExactRow(id), cancel).await
     }
 
+    /// Native auth step (b): refresh this exact durable row even when its access
+    /// token has not expired. Peers that rotate it while the lease is acquired
+    /// win; this operation never adopts a sibling or replays a lost grant.
+    pub async fn resolve_account_credential(
+        &self,
+        id: i64,
+        force_refresh: bool,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        self.resolve_owned_with_refresh(CredentialSelection::ExactRow(id), force_refresh, cancel).await
+    }
+
     async fn resolve_owned(
         &self,
         selection: CredentialSelection,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        self.resolve_owned_with_refresh(selection, false, cancel).await
+    }
+
+    async fn resolve_owned_with_refresh(
+        &self,
+        selection: CredentialSelection,
+        force_refresh: bool,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
         let settlement = PendingSettlement::register(self.pending.clone());
@@ -369,7 +411,7 @@ impl OpenAiCodexAuth {
         let service = self.clone();
         tokio::spawn(async move {
             let _settlement = settlement;
-            service.resolve_credential(selection, &child).await
+            service.resolve_credential(selection, force_refresh, &child).await
         })
         .await
         .map_err(|_| CodexAuthError::Storage)?
@@ -398,15 +440,17 @@ impl OpenAiCodexAuth {
     async fn resolve_credential(
         &self,
         selection: CredentialSelection,
+        force_refresh: bool,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
         let wait_started = Instant::now();
+        let force_expected = if force_refresh { Some(self.selected(selection).await?.serialized_data) } else { None };
         loop {
             if cancel.is_cancelled() {
                 return Err(CodexAuthError::Cancelled);
             }
             let selected = self.selected(selection).await?;
-            if fresh(&selected) {
+            if fresh(&selected) && force_expected.as_ref() != Some(&selected.serialized_data) {
                 return Ok(selected);
             }
             // Validate the selected account before taking a lease; do not rotate
@@ -427,7 +471,7 @@ impl OpenAiCodexAuth {
                 cancellable_sleep(Duration::from_millis(50), cancel).await?;
                 continue;
             }
-            let result = self.refresh_owned(id, &owner, selection, cancel).await;
+            let result = self.refresh_owned(id, &owner, selection, force_expected.as_deref(), cancel).await;
             let release_owner = owner.clone();
             self.db(move |store| store.release_credential_refresh_lease(id, &release_owner)).await?;
             match result {
@@ -436,7 +480,11 @@ impl OpenAiCodexAuth {
                     // CAS/fence loss: only a persisted, currently selected fresh
                     // credential may be returned. Never use the uncommitted token.
                     let current = self.selected(selection).await?;
-                    return if fresh(&current) { Ok(current) } else { Err(CodexAuthError::LoginRequired) };
+                    return if fresh(&current) && force_expected.as_ref() != Some(&current.serialized_data) {
+                        Ok(current)
+                    } else {
+                        Err(CodexAuthError::LoginRequired)
+                    };
                 }
                 Err(error) => return Err(error),
             }
@@ -448,6 +496,7 @@ impl OpenAiCodexAuth {
         id: i64,
         owner: &str,
         selection: CredentialSelection,
+        force_expected: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
         // Re-read after acquiring the durable lease, never refresh the pre-lease
@@ -456,7 +505,7 @@ impl OpenAiCodexAuth {
         if current.id != id {
             return Ok(if fresh(&current) { Some(current) } else { None });
         }
-        if fresh(&current) {
+        if fresh(&current) && force_expected != Some(current.serialized_data.as_str()) {
             return Ok(Some(current));
         }
         let fields = oauth_fields(&current.credential).ok_or(CodexAuthError::LoginRequired)?;
@@ -469,14 +518,14 @@ impl OpenAiCodexAuth {
         if cancel.is_cancelled() {
             return Err(CodexAuthError::Cancelled);
         }
-        let dispatched = AtomicBool::new(false);
+        let observation = RefreshObservation::default();
         let form = [("grant_type", "refresh_token"), ("client_id", CLIENT_ID), ("refresh_token", &refresh)];
         let request = self
             .client
             .post(format!("{}/oauth/token", self.auth_base_url))
             .timeout(Duration::from_secs(10))
             .form(&form);
-        let network = response_json_tracked(request, cancel, Some(&dispatched));
+        let network = response_json_tracked(request, cancel, Some(&observation));
         tokio::pin!(network);
         let result = loop {
             tokio::select! {
@@ -490,7 +539,23 @@ impl OpenAiCodexAuth {
                 }
             }
         };
-        if result.is_err() && !dispatched.load(Ordering::SeqCst) {
+        let result = result.map_err(|error| match error {
+            CodexAuthError::HttpStatus(status) if observation.rejected.load(Ordering::SeqCst) => {
+                CodexAuthError::RefreshRejected { status, definitive: observation.definitive.load(Ordering::SeqCst) }
+            }
+            other => other,
+        });
+        if result.is_err() && !observation.dispatched.load(Ordering::SeqCst) {
+            return result.map(|_| None);
+        }
+        if result.is_err()
+            && observation.rejected.load(Ordering::SeqCst)
+            && !observation.definitive.load(Ordering::SeqCst)
+        {
+            // A received transient HTTP rejection confirms that this attempt
+            // did not return a rotated grant. Preserve the row; AuthStorage owns
+            // its request-scoped five-minute refresh-failure backoff. Transport
+            // loss/cancellation after dispatch remains an unknown outcome below.
             return result.map(|_| None);
         }
         let updated = result.and_then(|token| refreshed_credential(&current.credential, &token));
@@ -532,7 +597,7 @@ impl OpenAiCodexAuth {
             Err(error) => {
                 // No code or refresh grant is retried automatically. Even a
                 // malformed successful response can have rotated the grant.
-                let cause = if matches!(error, CodexAuthError::HttpStatus(_)) {
+                let cause = if matches!(error, CodexAuthError::RefreshRejected { .. }) {
                     "refresh rejected; login required"
                 } else {
                     UNKNOWN_CAUSE
@@ -563,9 +628,6 @@ impl OpenAiCodexAuth {
         selection: CredentialSelection,
     ) -> Result<Option<StoredAuthCredential>, CodexAuthError> {
         let current = self.selected(selection).await?;
-        if fresh(&current) {
-            return Ok(Some(current));
-        }
         if current.id == id && current.serialized_data == expected {
             // A lost lease is not permission to overwrite a peer's data. An
             // unchanged old grant with an unknown outcome must nevertheless be
@@ -573,6 +635,8 @@ impl OpenAiCodexAuth {
             // same grant. Exact raw-data CAS cannot disable any fresh new row.
             self.db(move |store| store.try_disable_auth_credential_if_matches(id, &expected, UNKNOWN_CAUSE, None))
                 .await?;
+        } else if fresh(&current) {
+            return Ok(Some(current));
         }
         Ok(None)
     }
@@ -602,19 +666,50 @@ async fn response_json(request: reqwest::RequestBuilder, cancel: &CancellationTo
 async fn response_json_tracked(
     request: reqwest::RequestBuilder,
     cancel: &CancellationToken,
-    dispatched: Option<&AtomicBool>,
+    observation: Option<&RefreshObservation>,
 ) -> Result<Value, CodexAuthError> {
     let operation = async {
-        if let Some(dispatched) = dispatched {
-            dispatched.store(true, Ordering::SeqCst);
+        if let Some(observation) = observation {
+            observation.dispatched.store(true, Ordering::SeqCst);
         }
         let response = request.send().await.map_err(|_| CodexAuthError::Transport)?;
         if !response.status().is_success() {
-            return Err(CodexAuthError::HttpStatus(response.status().as_u16()));
+            let status = response.status().as_u16();
+            if let Some(observation) = observation {
+                observation.rejected.store(true, Ordering::SeqCst);
+                // Fixed registry/engine/common.ts uses raw text, including
+                // non-JSON errors, and slices the first 500 UTF-16 units.
+                let Ok(private_body) = response.text().await else {
+                    return Err(CodexAuthError::HttpStatus(status));
+                };
+                let excerpt = String::from_utf16_lossy(&private_body.encode_utf16().take(500).collect::<Vec<_>>());
+                let text = format!("HTTP {status}: {excerpt}");
+                observation.definitive.store(definitive_oauth_failure(&text), Ordering::SeqCst);
+            }
+            return Err(CodexAuthError::HttpStatus(status));
         }
         response.json().await.map_err(|_| CodexAuthError::InvalidResponse)
     };
     tokio::select! { biased; _ = cancel.cancelled() => Err(CodexAuthError::Cancelled), result = operation => result }
+}
+
+fn definitive_oauth_failure(text: &str) -> bool {
+    use std::sync::LazyLock;
+    // Fixed error/flags.ts:245-249. Error payloads are classification input
+    // only; no provider body or bearer enters diagnostics or a durable cause.
+    static DEFINITIVE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)invalid_grant|invalid_token|unauthorized_client|\brevoked\b|refresh[\s_]?token.*expired",
+        )
+        .expect("fixed OAuth classifier")
+    });
+    static TRANSIENT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)timeout|network|fetch failed|ECONN(?:REFUSED|RESET)|ETIMEDOUT|EAI_AGAIN|socket hang up|\b(?:408|425|429|5\d{2})\b|rate.?limit|too many requests|temporar|unavailable|forbidden|permission_denied|cloudflare|captcha")
+            .expect("fixed OAuth transient classifier")
+    });
+    static HTTP_AUTH: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\b401\b").expect("fixed OAuth status classifier"));
+    DEFINITIVE.is_match(text) || (HTTP_AUTH.is_match(text) && !TRANSIENT.is_match(text))
 }
 
 async fn cancellable_sleep(delay: Duration, cancel: &CancellationToken) -> Result<(), CodexAuthError> {
@@ -755,7 +850,7 @@ fn refreshed_credential(stored: &AuthCredential, token: &Value) -> Result<AuthCr
     Ok(AuthCredential::OAuth { fields })
 }
 
-fn lease_from_row(row: StoredAuthCredential) -> Result<RequestAuthLease, CodexAuthError> {
+pub(crate) fn lease_from_row(row: StoredAuthCredential) -> Result<RequestAuthLease, CodexAuthError> {
     let fields = oauth_fields(&row.credential).ok_or(CodexAuthError::LoginRequired)?;
     let access =
         fields.get("access").and_then(Value::as_str).filter(|v| !v.is_empty()).ok_or(CodexAuthError::LoginRequired)?;

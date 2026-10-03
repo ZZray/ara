@@ -255,6 +255,7 @@ dependencies = [
  "tokio-util",
  "uuid",
  "windows-sys 0.61.2",
+ "xxhash-rust",
  "yaml-rust2",
  "zstd",
 ]

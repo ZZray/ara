@@ -67,6 +67,13 @@ pub trait RegistryCredentials: Send + Sync {
     async fn refresh_key(&self, _provider: &WireString) -> RegistryRuntimeResult<Option<WireString>> {
         Ok(None)
     }
+    async fn refresh_rejected_key(
+        &self,
+        provider: &WireString,
+        _rejected: &WireString,
+    ) -> RegistryRuntimeResult<Option<WireString>> {
+        self.refresh_key(provider).await
+    }
     fn has_oauth_credentials(&self, _provider: &WireString) -> bool {
         false
     }
@@ -1214,7 +1221,7 @@ impl RegistryDiscoveryFetch for AuthenticatedDiscoveryFetch {
             .await
             .map_err(|_| error("discovery credential refresh did not settle"))??
         } else {
-            self.host.credentials.refresh_key(provider).await?
+            self.host.credentials.refresh_rejected_key(provider, key.as_ref().expect("rejected bearer checked")).await?
         };
         if refreshed.is_none() || refreshed == key {
             return Ok(reply);

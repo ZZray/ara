@@ -701,7 +701,7 @@ fn resolve_route(args: &Args) -> Result<Route> {
 async fn resolve_startup_route(
     args: &mut Args,
     project_dir: &Path,
-    account_auth: &mut Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    account_auth: &mut Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     registry_cancel: &CancellationToken,
 ) -> Result<Route> {
     use ara_cli::daily_model_config::{
@@ -723,6 +723,7 @@ async fn resolve_startup_route(
     if config.is_none()
         && args.api() != Api::OpenaiCodexResponses
         && configured_provider.as_deref() != Some("openai-codex")
+        && !ara_home().join("agent/auth.db").exists()
     {
         return resolve_route(args);
     }
@@ -759,14 +760,36 @@ async fn resolve_startup_route(
     // Ordinary routes without stored accounts use environment credentials and
     // do not create an unrelated account database during catalog startup.
     if configured_provider.as_deref() == Some("openai-codex") || ara_home().join("agent/auth.db").exists() {
-        let account =
+        let codex =
             open_codex_auth(reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?).await?;
+        let account = Arc::new(ara_cli::auth_storage::AuthStorage::for_codex(
+            codex,
+            ara_cli::auth_storage::AuthStorageOptions {
+                config_key_resolver: Arc::new(ara_cli::config_request_auth::ConfigStorageKeyResolver::new(
+                    project_dir.to_path_buf(),
+                    host.config_values.clone(),
+                    host.config_environment.clone(),
+                )),
+                environment: Arc::new(ara_cli::auth_storage_registry::CatalogAuthEnvironment(
+                    host.factory.environment.clone(),
+                )),
+                ..Default::default()
+            },
+        )?);
+        #[cfg(feature = "test-fixture")]
+        if let Ok(base) = std::env::var("ARA_TEST_CODEX_AUTH_BASE_URL") {
+            let usage =
+                ara_cli::codex_usage::CodexUsageProvider::with_fixture_endpoint_resolver(Arc::new(move |canonical| {
+                    let path = reqwest::Url::parse(canonical).map(|url| url.path().to_owned()).unwrap_or_default();
+                    format!("{}{path}", base.trim_end_matches('/'))
+                }))?;
+            account.register_usage_provider("openai-codex", Arc::new(usage))?;
+        }
         // Install the owner before any Registry preflight can refresh a grant,
         // including failures before the request factory is built.
         *account_auth = Some(account.clone());
-        host.credentials = Arc::new(ara_cli::model_registry::OpenAiCodexRegistryCredentials::new(
-            host.factory.environment.clone(),
-            account,
+        host.credentials = Arc::new(ara_cli::auth_storage_registry::AuthStorageRegistryCredentials::new(
+            account.as_ref().clone(),
             registry_cancel.clone(),
         ));
     }
@@ -2005,7 +2028,7 @@ async fn prepare_cli_setup_with_retained_skills(
 struct ProviderFactory {
     client: reqwest::Client,
     route: ara_cli::model_route::PreparedRoute,
-    account_auth: Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    account_auth: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     metadata: Option<serde_json::Value>,
 }
 
@@ -2040,26 +2063,53 @@ impl ProviderFactory {
         session_id: Option<String>,
         cwd: &Path,
         cancel: &CancellationToken,
-        shared_account: Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+        shared_account: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     ) -> Result<Self> {
         use ara_cli::daily_model_config::DailyAuthSource;
-        use ara_cli::model_route::{FixedRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver};
+        use ara_cli::model_route::{
+            FixedRequestAuth, HostDefaultRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver,
+        };
         if let ProtocolOptions::CodexResponses(options) = &mut selection.protocol {
-            options.session_id = session_id;
+            options.session_id = session_id.clone();
         }
         let (auth, account_auth): (Arc<dyn RequestAuthResolver>, _) = match selection.auth_source {
-            DailyAuthSource::Fixed(lease) => (Arc::new(FixedRequestAuth::new(lease)), None),
+            DailyAuthSource::Fixed(lease) => {
+                if selection.host_default_auth
+                    && let Some(account) = shared_account.clone()
+                {
+                    let auth = HostDefaultRequestAuth::new(
+                        account
+                            .session_resolver(session_id.clone(), Some(selection.model.base_url.clone()))
+                            .with_environment_lease(&lease),
+                        lease,
+                    );
+                    (Arc::new(auth), Some(account))
+                } else {
+                    (Arc::new(FixedRequestAuth::new(lease)), None)
+                }
+            }
             DailyAuthSource::OpenAiCodex => {
                 let account = shared_account.clone().context("OpenAI account owner is unavailable")?;
-                (account.clone(), Some(account))
+                (account.session_resolver(session_id.clone(), Some(selection.model.base_url.clone())), Some(account))
             }
             DailyAuthSource::Configured(spec) => {
                 let account = if spec.codex_account {
                     Some(shared_account.context("OpenAI account owner is unavailable")?)
+                } else if selection.host_default_auth {
+                    shared_account
                 } else {
                     None
                 };
-                let inner = account.clone().map(|account| account as Arc<dyn RequestAuthResolver>);
+                let inner = account.as_ref().map(|account| {
+                    let primary: Arc<dyn RequestAuthResolver> = account
+                        .session_resolver(session_id.clone(), Some(selection.model.base_url.clone()))
+                        .with_environment_lease(&spec.base);
+                    if spec.codex_account {
+                        primary
+                    } else {
+                        Arc::new(HostDefaultRequestAuth::new(primary, spec.base.clone()))
+                    }
+                });
                 let auth = ara_cli::config_request_auth::ConfigRequestAuth::new(spec, cwd.to_path_buf(), inner);
                 auth.prepare(cancel)
                     .await
@@ -2215,7 +2265,7 @@ async fn run(args: Args) -> Result<i32> {
 
 async fn run_inner(
     mut args: Args,
-    account_auth: &mut Option<Arc<ara_cli::openai_codex_auth::OpenAiCodexAuth>>,
+    account_auth: &mut Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     registry_cancel: &CancellationToken,
 ) -> Result<i32> {
     if let Some(command) = args.command.take() {

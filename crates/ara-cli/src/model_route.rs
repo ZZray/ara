@@ -66,6 +66,32 @@ pub enum AuthResolveError {
     Refresh,
 }
 
+/// Fixed auth-retry.ts a/b/c action, separate from transport backoff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthRetryAction {
+    RefreshSame,
+    RotateSibling,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestAuthFailureKind {
+    Auth,
+    Forbidden,
+    Quota,
+    AccountPolicy,
+    ModelAccountPolicy,
+    InvalidatedOAuth,
+    TokenRefresh,
+}
+
+/// Credential feedback facts only. The failed private lease is passed separately
+/// so parallel selection cannot change which row or bearer owns this rejection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RequestAuthFailure {
+    pub kind: RequestAuthFailureKind,
+    pub retry_after_ms: Option<f64>,
+}
+
 #[async_trait]
 pub trait RequestAuthResolver: Send + Sync {
     /// Called for each logical model call, never for ordinary availability queries.
@@ -88,6 +114,31 @@ pub trait RequestAuthResolver: Send + Sync {
     ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
         Ok(None)
     }
+
+    fn supports_auth_retry(&self) -> bool {
+        self.supports_auth_refresh()
+    }
+
+    /// Backward-compatible default for existing configured-command resolvers.
+    async fn retry(
+        &self,
+        model: &Model,
+        _failed: &RequestAuthLease,
+        _failure: &RequestAuthFailure,
+        action: AuthRetryAction,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        match action {
+            AuthRetryAction::RefreshSame => self.refresh(model, cancel).await,
+            AuthRetryAction::RotateSibling => Ok(None),
+        }
+    }
+
+    /// Rebind only the Host auth assignment; side transports keep the original
+    /// Session resolver while new logical Sessions allocate another assignment.
+    fn for_session(&self, _session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        None
+    }
 }
 
 /// An already authorized host override; this does not claim native auth precedence.
@@ -105,6 +156,53 @@ impl FixedRequestAuth {
 impl RequestAuthResolver for FixedRequestAuth {
     async fn resolve(&self, _: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
         if cancel.is_cancelled() { Err(AuthResolveError::Cancelled) } else { Ok(self.lease.clone()) }
+    }
+}
+
+/// The reference Host's keyless default remains available when shared storage
+/// has no credential. Environment defaults enter the native cascade through
+/// the Session resolver. Explicit overrides bypass this wrapper entirely.
+pub struct HostDefaultRequestAuth {
+    primary: Arc<dyn RequestAuthResolver>,
+    fallback: RequestAuthLease,
+}
+impl HostDefaultRequestAuth {
+    pub fn new(primary: Arc<dyn RequestAuthResolver>, fallback: RequestAuthLease) -> Self {
+        Self { primary, fallback }
+    }
+}
+#[async_trait]
+impl RequestAuthResolver for HostDefaultRequestAuth {
+    async fn resolve(&self, model: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+        match self.primary.resolve(model, cancel).await {
+            Err(AuthResolveError::Unavailable) if !cancel.is_cancelled() => Ok(self.fallback.clone()),
+            result => result,
+        }
+    }
+    fn requires_settlement(&self) -> bool {
+        self.primary.requires_settlement()
+    }
+    fn supports_auth_retry(&self) -> bool {
+        self.primary.supports_auth_retry()
+    }
+    async fn retry(
+        &self,
+        model: &Model,
+        failed: &RequestAuthLease,
+        failure: &RequestAuthFailure,
+        action: AuthRetryAction,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        if matches!(failed.identity(), CredentialIdentity::Stored { .. }) {
+            self.primary.retry(model, failed, failure, action, cancel).await
+        } else {
+            Ok(None)
+        }
+    }
+    fn for_session(&self, session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        self.primary
+            .for_session(session_id)
+            .map(|primary| Arc::new(Self::new(primary, self.fallback.clone())) as Arc<dyn RequestAuthResolver>)
     }
 }
 
@@ -330,6 +428,9 @@ impl PreparedRoute {
     /// private account resolver and its outstanding refresh settlement.
     pub fn bind_codex_session(&self, client: reqwest::Client, session_id: String) -> Arc<dyn ModelProvider> {
         let mut route = self.clone();
+        if let Some(auth) = route.auth.for_session(&session_id) {
+            route.auth = auth;
+        }
         if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
             options.session_id = Some(session_id);
         }
@@ -546,8 +647,9 @@ impl ModelProvider for AuthenticatedRouteProvider {
                 let _ = tx.send(error_event(&model, StopReason::Error, "request attribution persistence failed")).await;
                 return;
             }
-            let rejected_key = lease.api_key.clone();
-            let provider = route.protocol.provider(client.clone(), lease);
+            let mut auth_retry = crate::request_auth_retry::AuthRetryState::new(&lease);
+            let mut acquired_lease = lease;
+            let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
             let mut options = options;
             options.cancel = cancel.clone();
             let mut inner = ara_ai::thinking_loop::with_thinking_loop_guard(
@@ -556,7 +658,6 @@ impl ModelProvider for AuthenticatedRouteProvider {
                 route.loop_guard_policy,
                 |options| provider.stream(&model, &context, options),
             );
-            let mut refreshed = false;
             let mut emitted = false;
             loop {
                 let event = tokio::select! {
@@ -603,20 +704,15 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     let _ = tx.send(AssistantMessageEvent::Error { reason: StopReason::Error, error }).await;
                     return;
                 }
-                // A typed HTTP rejection before any stream output can safely
-                // re-mint configured commands once. Transport retries above
-                // retain the old lease; this is the separate native auth path.
-                let rejected_auth = terminal
-                    && event.partial().stop_reason == StopReason::Error
-                    && event.partial().failure_evidence.as_ref().is_some_and(|failure| {
-                        failure.kind == ara_ai::retry_classification::ProviderErrorKind::Http
-                            && failure.status == Some(401)
-                            && !failure.replay_blocked
-                    })
-                    && event.partial().content.is_empty();
-                if !refreshed && !emitted && rejected_auth && route.auth.supports_auth_refresh() {
-                    refreshed = true;
-                    let refreshing = route.auth.refresh(&model, &cancel);
+                // AuthStorage receives the rejected private lease. Ordinary
+                // adapter backoff never resolves auth again or changes it.
+                if terminal
+                    && !emitted
+                    && route.auth.supports_auth_retry()
+                    && let Some(failure) = crate::request_auth_retry::classify(&model, event.partial())
+                {
+                    let rejected_lease = acquired_lease.clone();
+                    let refreshing = auth_retry.next(route.auth.as_ref(), &model, &rejected_lease, &failure, &cancel);
                     tokio::pin!(refreshing);
                     let next = tokio::select! {
                         biased;
@@ -632,7 +728,7 @@ impl ModelProvider for AuthenticatedRouteProvider {
                         result = &mut refreshing => result,
                     };
                     match next {
-                        Ok(Some(lease)) if !cancel.is_cancelled() && lease.api_key != rejected_key => {
+                        Ok(Some(lease)) if !cancel.is_cancelled() => {
                             identity = RequestIdentity {
                                 call_id: uuid::Uuid::now_v7(),
                                 route_generation: route.generation,
@@ -650,7 +746,8 @@ impl ModelProvider for AuthenticatedRouteProvider {
                                     .await;
                                 return;
                             }
-                            let provider = route.protocol.provider(client.clone(), lease);
+                            acquired_lease = lease;
+                            let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
                             inner = ara_ai::thinking_loop::with_thinking_loop_guard(
                                 &model,
                                 options.clone(),

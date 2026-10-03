@@ -43,7 +43,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | AI-TRANSFORM | Cross-provider message transform and vision guard | core | P1 | ara-ai::transform | 13 (2/11) | 1299 | 48 | implementing |
 | AI-REGISTRY | API/provider registry | provider | P2 | tbd | 10 (3/7) | 706 | 33 | open |
 | AI-SERVERS | Wire-protocol servers and auth gateway | host | P3 | tbd | 20 (6/14) | 2342 | 119 | open |
-| AI-AUTH | Credential storage, OAuth/API-key login, auth broker | host | P3 | tbd | 132 (55/76) | 19342 | 613 | open |
+| AI-AUTH | Credential storage, OAuth/API-key login, auth broker | host | P3 | ara-cli AuthStorage / shared Registry and request Host (bounded WIP) | 132 (55/76) | 19342 | 613 | implementing |
 | AI-DIALECT | In-band tool-call dialects | provider | P2 | tbd | 46 (26/8) | 6094 | 76 | open |
 | AI-ERROR | Provider error classification | core | P1 | ara-ai::error | 23 (15/8) | 2146 | 175 | implementing |
 | AI-RETRY | Retry, timeouts, empty completion recovery | core | P1 | tbd | 10 (6/4) | 1194 | 41 | implementing |

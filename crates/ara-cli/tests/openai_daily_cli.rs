@@ -194,6 +194,450 @@ async fn custom_chat_configuration_and_explicit_overrides_reach_the_wire() {
     assert_eq!(requests[1]["headers"]["x-daily-route"], "cli");
 }
 
+/// Ordinary OpenAI requests use the Host's shared SQLite AuthStorage. These
+/// synthetic credentials exercise real CLI processes and sockets, not login
+/// command support or a real OpenAI account/model trial.
+#[tokio::test]
+async fn ordinary_openai_shared_storage_precedence_overrides_and_session_restart_reach_the_wire() {
+    use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
+
+    const LOGIN: &str = "synthetic-login-owner";
+    const ENVIRONMENT: &str = "synthetic-environment-default-key";
+    const STATIC: &str = "synthetic-static-store-fixture-key-material";
+    const UPDATED: &str = "synthetic-updated-login-row-for-original-session";
+    const EXPLICIT: &str = "synthetic-explicit-cli-environment-key-owner";
+    const CONFIGURED: &str = "synthetic-config-api-key-owner-fixture";
+    const CLI_HEADER: &str = "Bearer synthetic-private-cli-header-with-longer-material";
+    const CONFIG_HEADER: &str = "synthetic-configured-header-key-with-even-longer-material";
+
+    fn credential(key: &str, login: bool) -> AuthCredential {
+        AuthCredential::ApiKey { key: key.into(), source: login.then(|| "login".into()) }
+    }
+
+    fn store(host: &Host, credentials: &[AuthCredential]) -> Vec<StoredAuthCredential> {
+        SqliteCredentialStore::open(host.home.path().join("agent/auth.db"))
+            .unwrap()
+            .replace_auth_credentials_for_provider("openai", credentials)
+            .unwrap()
+    }
+
+    fn config(host: &Host, endpoint: &str, options: Value) {
+        let path = host.home.path().join("agent/models.yml");
+        // New custom models require an authored key or auth none/oauth.
+        // This is a provider override; the explicit CLI model/API/base URL own
+        // the synthetic route while its default auth remains available to store.
+        let mut provider = json!({"api":"openai-completions","baseUrl":endpoint,"models":[]});
+        provider.as_object_mut().unwrap().extend(options.as_object().unwrap().clone());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_vec_pretty(&json!({"providers":{"openai":provider}})).unwrap()).unwrap();
+    }
+
+    fn command(host: &Host, endpoint: &str, arguments: &[&str]) -> Command {
+        let mut command = host.command(
+            "openai",
+            &[
+                "--mode",
+                "json",
+                "--tools",
+                "",
+                "--api",
+                "openai-completions",
+                "--base-url",
+                endpoint,
+                "--max-tokens",
+                "128",
+                "--tokenizer",
+                "none",
+            ],
+        );
+        command.env_clear();
+        for name in ["PATH", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATHEXT"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command
+            .env("HOME", host.home.path())
+            .env("ARA_HOME", host.home.path())
+            .env("USERPROFILE", host.home.path())
+            .env("TMP", host.home.path())
+            .env("TEMP", host.home.path())
+            .args(arguments);
+        command
+    }
+
+    fn redacted(value: &[u8]) -> String {
+        let mut value = String::from_utf8_lossy(value).into_owned();
+        for private in [LOGIN, ENVIRONMENT, STATIC, UPDATED, EXPLICIT, CONFIGURED, CLI_HEADER, CONFIG_HEADER] {
+            value = value.replace(private.strip_prefix("Bearer ").unwrap_or(private), "<synthetic-credential>");
+        }
+        value
+    }
+
+    async fn case_success(label: &str, output: &Output, up: &FakeUpstream, expected: &str) -> String {
+        let stdout = redacted(&output.stdout);
+        let stderr = redacted(&output.stderr);
+        let requests = up.requests.lock().await;
+        let routes = requests
+            .iter()
+            .map(|request| {
+                let route = request["request"]
+                    .as_str()
+                    .unwrap_or("missing request line")
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                redacted(route.as_bytes())
+            })
+            .collect::<Vec<_>>();
+        let diagnostic = format!(
+            "shared-storage CLI scenario {label}; request count {}; method/path {routes:?}; stdout {stdout}; stderr {stderr}",
+            requests.len()
+        );
+        assert_eq!(output.status.code(), Some(0), "{diagnostic}");
+        assert!(stdout.contains(expected), "expected scenario reply missing; {diagnostic}");
+        stdout
+    }
+
+    fn session_header(stdout: &str) -> Value {
+        serde_json::from_str(stdout.lines().next().expect("JSON mode Session header")).unwrap()
+    }
+
+    fn text_content(content: &Value) -> Option<String> {
+        match content {
+            Value::String(text) => Some(text.clone()),
+            Value::Array(parts) => parts
+                .iter()
+                .map(|part| (part["type"] == "text").then(|| part["text"].as_str()).flatten())
+                .collect::<Option<Vec<_>>>()
+                .map(|parts| parts.concat()),
+            _ => None,
+        }
+    }
+
+    fn history_shapes(messages: &[Value]) -> String {
+        let shapes = messages.iter().filter(|message| matches!(message["role"].as_str(), Some("user" | "assistant")))
+            .map(|message| {
+                let shape = match &message["content"] {
+                    Value::String(text) => json!({"kind":"string","textBytes":text.len()}),
+                    Value::Array(parts) => json!({"kind":"array","parts":parts.iter().map(|part|
+                        json!({"type":part["type"],"textBytes":part["text"].as_str().map(str::len)})).collect::<Vec<_>>()}),
+                    Value::Null => json!({"kind":"null"}),
+                    _ => json!({"kind":"other"}),
+                };
+                json!({"role":message["role"],"contentShape":shape})
+            }).collect::<Vec<_>>();
+        redacted(json!(shapes).to_string().as_bytes())
+    }
+
+    enum ExpectedAuth {
+        Bearer(&'static str),
+        Header(&'static str, &'static str),
+        None,
+    }
+    fn assert_auth(request: &Value, expected: &ExpectedAuth) {
+        let headers = request["headers"].as_object().unwrap();
+        match expected {
+            ExpectedAuth::Bearer(key) => {
+                assert_eq!(headers["authorization"], format!("<redacted {} chars>", "Bearer ".len() + key.len()));
+                assert!(!headers.contains_key("x-api-key"));
+            }
+            ExpectedAuth::Header(name, value) => {
+                assert_eq!(headers[*name], format!("<redacted {} chars>", value.len()));
+                if *name != "authorization" {
+                    assert!(!headers.contains_key("authorization"));
+                }
+            }
+            ExpectedAuth::None => {
+                assert!(!headers.contains_key("authorization"));
+                assert!(!headers.contains_key("x-api-key"));
+            }
+        }
+    }
+
+    struct Case {
+        label: &'static str,
+        stored_key: &'static str,
+        login: bool,
+        environment: Option<&'static str>,
+        config: Option<Value>,
+        arguments: &'static [&'static str],
+        expected: ExpectedAuth,
+    }
+    let cases = [
+        Case {
+            label: "environment precedes static store",
+            stored_key: STATIC,
+            login: false,
+            environment: Some(ENVIRONMENT),
+            config: Some(json!({})),
+            arguments: &[],
+            expected: ExpectedAuth::Bearer(ENVIRONMENT),
+        },
+        Case {
+            label: "static store without environment",
+            stored_key: STATIC,
+            login: false,
+            environment: None,
+            config: Some(json!({"headers":{"X-Daily-Route":"stored-static"}})),
+            arguments: &[],
+            expected: ExpectedAuth::Bearer(STATIC),
+        },
+        Case {
+            label: "shared store without models config",
+            stored_key: LOGIN,
+            login: true,
+            environment: Some(ENVIRONMENT),
+            config: None,
+            arguments: &[],
+            expected: ExpectedAuth::Bearer(LOGIN),
+        },
+        Case {
+            label: "explicit CLI environment owns auth",
+            stored_key: LOGIN,
+            login: true,
+            environment: Some(ENVIRONMENT),
+            config: Some(json!({})),
+            arguments: &["--api-key-env", "DAILY_EXPLICIT_SHARED_KEY"],
+            expected: ExpectedAuth::Bearer(EXPLICIT),
+        },
+        Case {
+            label: "configured API key owns auth",
+            stored_key: LOGIN,
+            login: true,
+            environment: None,
+            config: Some(json!({"apiKey":CONFIGURED})),
+            arguments: &[],
+            expected: ExpectedAuth::Bearer(CONFIGURED),
+        },
+        Case {
+            label: "auth none remains keyless",
+            stored_key: LOGIN,
+            login: true,
+            environment: Some(ENVIRONMENT),
+            config: Some(json!({"auth":"none"})),
+            arguments: &[],
+            expected: ExpectedAuth::None,
+        },
+        Case {
+            label: "CLI credential header owns auth",
+            stored_key: LOGIN,
+            login: true,
+            environment: None,
+            config: Some(json!({})),
+            arguments: &["--header", "Authorization: Bearer synthetic-private-cli-header-with-longer-material"],
+            expected: ExpectedAuth::Header("authorization", CLI_HEADER),
+        },
+        Case {
+            label: "configured credential header owns auth",
+            stored_key: LOGIN,
+            login: true,
+            environment: None,
+            config: Some(json!({"headers":{"X-Api-Key":CONFIG_HEADER}})),
+            arguments: &[],
+            expected: ExpectedAuth::Header("x-api-key", CONFIG_HEADER),
+        },
+    ];
+    fn catalog_response() -> Value {
+        // Native OpenAI discovery filters to known Responses-capable IDs.
+        // The explicit CLI model remains the synthetic daily-model route.
+        json!({"body":json!({"data":[{"id":"gpt-5.4"}]}).to_string()})
+    }
+    fn native_cache_entry(host: &Host) -> ara_cli::model_cache::WireCacheEntry {
+        ara_cli::model_cache::SqliteModelCache::for_path(host.home.path().join("agent/model-cache.db"))
+            .read_model_cache_wire(&"openai".into(), ara_cli::model_manager::DEFAULT_CACHE_TTL_MS, || {
+                chrono::Utc::now().timestamp_millis() as f64
+            })
+            .unwrap()
+            .expect("native OpenAI cache uses its provider-only key")
+    }
+    let mut responses = vec![
+        catalog_response(),
+        json!({"events":[text("Login store accepted."),finish("stop"),done()]}),
+        json!({"events":[text("Updated row accepted."),finish("stop"),done()]}),
+    ];
+    for case in &cases {
+        if case.config.is_some() {
+            responses.push(catalog_response());
+        }
+        responses.push(json!({"events":[text(&format!("Accepted scenario: {}.", case.label)),finish("stop"),done()]}));
+    }
+    let up = upstream(json!(responses)).await;
+    let endpoint = up.base_url();
+
+    let host = Host::new();
+    let rows = store(&host, &[credential(STATIC, false), credential(LOGIN, true)]);
+    config(&host, &endpoint, json!({"headers":{"X-Daily-Route":"shared-login"}}));
+    let mut first = command(&host, &endpoint, &["first shared auth turn"]);
+    first.env("ARA_API_KEY", ENVIRONMENT);
+    let first = output(first).await;
+    let first_stdout = case_success("stored login precedes environment", &first, &up, "Login store accepted.").await;
+    let original = session_header(&first_stdout);
+    let session = host.session();
+    {
+        let database = SqliteCredentialStore::open(host.home.path().join("agent/auth.db")).unwrap();
+        assert!(
+            database
+                .try_update_auth_credential_if_matches(
+                    rows[1].id,
+                    &rows[1].serialized_data,
+                    &credential(UPDATED, true),
+                    None,
+                )
+                .unwrap()
+        );
+        let updated = database.list_auth_credentials(Some("openai")).unwrap();
+        assert_eq!(
+            updated.iter().map(|row| row.id).collect::<Vec<_>>(),
+            rows.iter().map(|row| row.id).collect::<Vec<_>>()
+        );
+        assert!(updated[0].credential == credential(STATIC, false));
+    }
+    let mut resumed =
+        command(&host, &endpoint, &["--resume", session.to_str().unwrap(), "continue after exact stored row update"]);
+    resumed.env("ARA_API_KEY", ENVIRONMENT);
+    let resumed = output(resumed).await;
+    let resumed_stdout =
+        case_success("same Session after exact stored row update", &resumed, &up, "Updated row accepted.").await;
+    assert_eq!(session_header(&resumed_stdout)["id"], original["id"]);
+    {
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests.iter().filter(|request| request["request"] == "GET /v1/models HTTP/1.1").count(),
+            1,
+            "native cache must keep the original Session restart from fetching another catalog"
+        );
+        let models = requests
+            .iter()
+            .filter(|request| request["request"] == "POST /v1/chat/completions HTTP/1.1")
+            .collect::<Vec<_>>();
+        assert_eq!(models.len(), 2);
+        assert_auth(models[0], &ExpectedAuth::Bearer(LOGIN));
+        assert_auth(models[1], &ExpectedAuth::Bearer(UPDATED));
+        assert_eq!(models[0]["headers"]["x-daily-route"], "shared-login");
+        let messages = models[1]["body"]["messages"].as_array().unwrap();
+        // CliHooks injects the date/cwd reminder into provider context only.
+        // Native Completions preserves Text as a string and Blocks as arrays;
+        // check the original bytes in both source-supported representations.
+        let reminder = ara_context::render_date_cwd_reminder(
+            &chrono::Local::now().format("%Y-%m-%d").to_string(),
+            &host.work.path().to_string_lossy().replace('\\', "/"),
+        );
+        assert!(
+            messages.iter().any(|message| message["role"] == "user"
+                && text_content(&message["content"]).is_some_and(|text| text == "first shared auth turn"
+                    || text == format!("{reminder}\n\nfirst shared auth turn")
+                    || text == format!("{reminder}first shared auth turn"))),
+            "resumed original user text missing; safe content shapes {}",
+            history_shapes(messages)
+        );
+        assert!(
+            messages.iter().any(|message| message["role"] == "assistant"
+                && text_content(&message["content"]).as_deref() == Some("Login store accepted.")),
+            "resumed original assistant text missing; safe content shapes {}",
+            history_shapes(messages)
+        );
+    }
+    let journal = std::fs::read_to_string(&session).unwrap();
+    for private in [LOGIN, ENVIRONMENT, STATIC, UPDATED] {
+        assert!(!journal.contains(private), "credential material must not enter the Session journal");
+    }
+    assert_eq!(
+        std::fs::read_dir(&host.sessions)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "jsonl"))
+            .count(),
+        1
+    );
+
+    let native_cache = host.home.path().join("agent/model-cache.db");
+    assert!(native_cache.is_file(), "cold native JSON discovery must write its real SQLite cache");
+    let cached = native_cache_entry(&host);
+    let native_fingerprint = ara_cli::model_manager::fingerprint_static_models(
+        &ara_cli::model_manager::ModelArray::new(ara_cli::model_identity_wire::bundled_provider_models(
+            &"openai".into(),
+        )),
+        false,
+    );
+    assert_eq!(cached.static_fingerprint, native_fingerprint);
+    let mut catalog_count = 1;
+    for (index, case) in cases.into_iter().enumerate() {
+        let host = Host::new();
+        let rows = store(&host, &[credential(case.stored_key, case.login)]);
+        if let Some(options) = case.config {
+            config(&host, &endpoint, options);
+            catalog_count += 1;
+        } else {
+            assert!(!host.home.path().join("agent/models.yml").exists());
+            // Without provider configuration, native catalog discovery owns
+            // its official endpoint independently of --base-url. Reuse the
+            // actual first process's warm native cache to keep synthetic keys
+            // local while still exercising the no-models.yml request path.
+            std::fs::copy(&native_cache, host.home.path().join("agent/model-cache.db")).unwrap();
+            let copied = native_cache_entry(&host);
+            assert!(
+                copied.fresh
+                    && copied.header_omitted_model_ids.is_empty()
+                    && copied.unrestorable_header_model_ids.is_empty()
+            );
+            assert_eq!(copied.static_fingerprint, native_fingerprint);
+            assert_eq!(copied.updated_at, cached.updated_at);
+            assert!(
+                chrono::Utc::now().timestamp_millis() as f64 - copied.updated_at
+                    < ara_cli::model_manager::NON_AUTHORITATIVE_RETRY_MS,
+                "abort before CLI if the native non-authoritative cache could trigger a remote discovery"
+            );
+        }
+        let mut arguments = case.arguments.to_vec();
+        arguments.push(case.label);
+        let mut invocation = command(&host, &endpoint, &arguments);
+        if let Some(key) = case.environment {
+            invocation.env("ARA_API_KEY", key);
+        }
+        invocation.env("DAILY_EXPLICIT_SHARED_KEY", EXPLICIT);
+        let result = output(invocation).await;
+        case_success(case.label, &result, &up, &format!("Accepted scenario: {}.", case.label)).await;
+        let requests = up.requests.lock().await;
+        assert_eq!(
+            requests.iter().filter(|request| request["request"] == "GET /v1/models HTTP/1.1").count(),
+            catalog_count,
+            "catalog count for scenario {}",
+            case.label
+        );
+        let models = requests
+            .iter()
+            .filter(|request| request["request"] == "POST /v1/chat/completions HTTP/1.1")
+            .collect::<Vec<_>>();
+        assert_eq!(models.len(), index + 3, "each scenario must dispatch exactly one model request");
+        assert_auth(models[index + 2], &case.expected);
+        drop(requests);
+        let stored = SqliteCredentialStore::open(host.home.path().join("agent/auth.db"))
+            .unwrap()
+            .list_auth_credentials(Some("openai"))
+            .unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, rows[0].id, "explicit auth must preserve the stored credential row");
+        assert!(stored[0].credential == credential(case.stored_key, case.login));
+        let journal = std::fs::read_to_string(host.session()).unwrap();
+        for private in [LOGIN, ENVIRONMENT, STATIC, UPDATED, EXPLICIT, CONFIGURED, CLI_HEADER, CONFIG_HEADER] {
+            assert!(!journal.contains(private), "credential material must not enter the Session journal");
+        }
+    }
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 18);
+    assert_eq!(requests.iter().filter(|request| request["request"] == "GET /v1/models HTTP/1.1").count(), 8);
+    let models = requests
+        .iter()
+        .filter(|request| request["request"] == "POST /v1/chat/completions HTTP/1.1")
+        .collect::<Vec<_>>();
+    assert_eq!(models.len(), 10);
+    assert!(models.iter().all(|request| request["request"] == "POST /v1/chat/completions HTTP/1.1"
+        && request["body"]["model"] == "daily-model"));
+}
+
 #[tokio::test]
 async fn configured_responses_stream_tool_artifact_and_restart_use_the_original_session() {
     let host = Host::new();

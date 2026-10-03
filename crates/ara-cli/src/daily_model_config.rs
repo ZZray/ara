@@ -106,6 +106,9 @@ pub struct DailySelection {
     pub protocol: ProtocolOptions,
     pub generation: DailyGeneration,
     pub auth_source: DailyAuthSource,
+    /// Ordinary defaults use stored login, environment, then static selection.
+    /// Explicit CLI/config/header authentication keeps its authored precedence.
+    pub host_default_auth: bool,
     pub loop_guard_policy: ara_ai::thinking_loop::LoopGuardPolicy,
 }
 
@@ -608,6 +611,11 @@ fn resolve_daily_selection_with_lookup(
         model.get("input").and_then(Value::as_array).map(|v| v.iter().any(|v| v.as_str() == Some("image")));
     let (credential_headers, mut ordinary_headers): (Vec<_>, Vec<_>) =
         headers.into_iter().partition(|(name, _)| is_credential_header(name));
+    let host_default_auth = cli.api_key_env.is_none()
+        && !provider.contains_key("apiKey")
+        && provider.get("auth").and_then(Value::as_str) != Some("none")
+        && credential_headers.is_empty()
+        && api != DailyApi::OpenAiCodexResponses;
     let mut auth_source =
         resolve_auth(&provider, cli, env, &provider_id, api, openrouter, credential_headers, &ordinary_headers)?;
     let command_key = text(&provider, "apiKey").filter(|value| value.starts_with('!'));
@@ -778,6 +786,7 @@ fn resolve_daily_selection_with_lookup(
         protocol,
         generation,
         auth_source,
+        host_default_auth,
         loop_guard_policy,
     })
 }

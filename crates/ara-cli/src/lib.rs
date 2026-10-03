@@ -5,6 +5,10 @@
 
 #![recursion_limit = "256"]
 
+pub mod auth_storage;
+pub mod auth_storage_policy;
+pub mod auth_storage_registry;
+pub mod auth_storage_state;
 pub mod bun_hash;
 pub mod catalog_behavior;
 pub mod catalog_discovery;
@@ -13,6 +17,7 @@ pub mod catalog_proto_schemas;
 pub mod catalog_protobuf;
 pub mod catalog_rules;
 mod catalog_tls;
+pub mod codex_usage;
 pub mod config_request_auth;
 pub mod context_budget;
 pub mod credential_store;
@@ -44,6 +49,7 @@ pub mod openai_codex_auth;
 pub mod provider_model_reference;
 pub mod provider_models;
 pub mod remote_compaction;
+mod request_auth_retry;
 pub mod retry_fallback;
 pub mod session_artifacts;
 pub mod snapcompact;

@@ -1,5 +1,22 @@
 # Provider delivery plan
 
+**Current checkpoint, 2026-10-03 00:19 UTC (shared AuthStorage tested WIP):**
+[AuthStorage evidence](evidence/auth-storage.md) connects source-mapped account
+selection, usage/ranking/sticky/blocks, exact-row refresh, ordinary stored
+login/environment/static-key precedence and supported pre-output request
+refresh/rotation to the same Registry and reference Host owner. Final Windows
+backend 1,721/0/20, fmt/Clippy/inventory/build PASS; the existing ttf-parser
+advisory keeps the whole gate FAIL. A current CAS artifact/original-Session
+task passes in 14.869s/5 calls on the frozen binary.
+AI-AUTH is corrected from stale open to implementing: 111 surfaces now have
+27 implementing/one tested/83 open/zero complete acceptances; started coverage
+28/111 (25.2%). The existing 60 bounded points stay 35 limited acceptances,
+23 implementing/two tested (58.3%, not overall completion). P0/V1 accepted,
+P1–P6 open, RPC 27/42 and null parity marker remain. Next: recorded usage-only
+refresh and header ingestion, reserve/health/reset/broker and complete caller
+contracts; actual OpenAI authorization, platform and deferred Providers remain
+required. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-02 21:13 UTC (production Registry WIP):**
 [Production Registry](evidence/model-registry.md) now connects private daily
 OpenAI projection to loader/cache/discovery and the shared Codex account owner.

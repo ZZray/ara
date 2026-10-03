@@ -348,6 +348,204 @@ async fn changing_only_the_model_is_rejected_before_resolving_or_sending_credent
     assert_eq!(server.served(), 0);
 }
 
+// Original auth-retry.ts families grouped through actual Rust adapters. The
+// receipt observer and private lease together identify every outbound attempt.
+#[tokio::test]
+async fn native_auth_refresh_rotation_cycles_quota_and_wire_retry_family() {
+    use std::collections::VecDeque;
+    struct Auth {
+        initial: RequestAuthLease,
+        replies: Mutex<VecDeque<RequestAuthLease>>,
+        calls: Mutex<Vec<(CredentialIdentity, AuthRetryAction, RequestAuthFailureKind)>>,
+        resolutions: AtomicUsize,
+    }
+    #[async_trait]
+    impl RequestAuthResolver for Auth {
+        async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+            self.resolutions.fetch_add(1, Ordering::SeqCst);
+            Ok(self.initial.clone())
+        }
+        fn supports_auth_retry(&self) -> bool {
+            true
+        }
+        async fn retry(
+            &self,
+            _: &Model,
+            failed: &RequestAuthLease,
+            failure: &RequestAuthFailure,
+            action: AuthRetryAction,
+            _: &CancellationToken,
+        ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+            self.calls.lock().unwrap().push((failed.identity().clone(), action, failure.kind));
+            Ok(self.replies.lock().unwrap().pop_front())
+        }
+    }
+    let lease =
+        |id, revision, key: &str| RequestAuthLease::new(CredentialIdentity::Stored { id, revision }, Some(key.into()));
+    let reject = |status, text: &str| json!({"status":status,"body":json!({"error":{"message":text}}).to_string()});
+    struct Case {
+        name: &'static str,
+        responses: Vec<Value>,
+        next: Vec<RequestAuthLease>,
+        attempts: usize,
+        actions: Vec<(i64, AuthRetryAction, RequestAuthFailureKind)>,
+        end: StopReason,
+    }
+    use AuthRetryAction::{RefreshSame, RotateSibling};
+    use RequestAuthFailureKind::{Auth as HardAuth, Forbidden, Quota};
+    let mut cap_responses = vec![reject(403, "Forbidden"); 64];
+    cap_responses.push(chat("must not be reached"));
+    let cap_next = (2..=65).map(|id| lease(id, 0, &format!("synthetic-key-{id}"))).collect();
+    let cap_actions = (1..64).map(|id| (id, RotateSibling, Forbidden)).collect();
+    for case in [
+        Case {
+            name: "401 refresh then one sibling",
+            responses: vec![
+                reject(401, "Unauthorized"),
+                reject(401, "Unauthorized"),
+                reject(401, "Unauthorized"),
+                chat("unreachable"),
+            ],
+            next: vec![lease(1, 1, "BB"), lease(2, 0, "CCC"), lease(3, 0, "DDDD")],
+            attempts: 3,
+            actions: vec![(1, RefreshSame, HardAuth), (1, RotateSibling, HardAuth)],
+            end: StopReason::Error,
+        },
+        Case {
+            name: "403 traverses siblings",
+            responses: vec![reject(403, "Forbidden"), reject(403, "Forbidden"), chat("done")],
+            next: vec![lease(2, 0, "BB"), lease(3, 0, "CCC")],
+            attempts: 3,
+            actions: vec![(1, RotateSibling, Forbidden), (2, RotateSibling, Forbidden)],
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "bearer cycle",
+            responses: vec![reject(403, "Forbidden"), reject(403, "Forbidden"), chat("unreachable")],
+            next: vec![lease(2, 0, "BB"), lease(1, 1, "A")],
+            attempts: 2,
+            actions: vec![(1, RotateSibling, Forbidden), (2, RotateSibling, Forbidden)],
+            end: StopReason::Error,
+        },
+        Case {
+            name: "peer supplies a new bearer for an earlier row",
+            responses: vec![reject(403, "Forbidden"), reject(403, "Forbidden"), chat("done")],
+            next: vec![lease(2, 0, "BB"), lease(1, 1, "CCC")],
+            attempts: 3,
+            actions: vec![(1, RotateSibling, Forbidden), (2, RotateSibling, Forbidden)],
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "account quota",
+            responses: vec![reject(400, "insufficient_quota: quota exceeded"), chat("done")],
+            next: vec![lease(2, 0, "BB")],
+            attempts: 2,
+            actions: vec![(1, RotateSibling, Quota)],
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "transient wire retry retains acquired lease",
+            responses: vec![reject(429, "Too many requests per minute"), chat("done")],
+            next: vec![],
+            attempts: 2,
+            actions: vec![],
+            end: StopReason::Stop,
+        },
+        Case {
+            name: "concurrency is transient",
+            responses: vec![reject(403, "Too many concurrent requests")],
+            next: vec![],
+            attempts: 1,
+            actions: vec![],
+            end: StopReason::Error,
+        },
+        Case {
+            name: "64 outbound cap",
+            responses: cap_responses,
+            next: cap_next,
+            attempts: 64,
+            actions: cap_actions,
+            end: StopReason::Error,
+        },
+    ] {
+        let wire = server(case.responses).await;
+        let model = model("openai-completions", "fixture", wire.base_url());
+        let auth = Arc::new(Auth {
+            initial: lease(1, 0, "A"),
+            replies: Mutex::new(case.next.into()),
+            calls: Mutex::new(Vec::new()),
+            resolutions: AtomicUsize::new(0),
+        });
+        let observer = Arc::new(Observer::default());
+        let provider = PreparedRoute::new(model.clone(), protocol(&model.api), auth.clone(), 0)
+            .unwrap()
+            .bind(reqwest::Client::new(), Some(observer.clone()));
+        let result = collect(provider.stream(&model, &context(), CallOptions::default())).await;
+        assert_eq!(result.stop_reason, case.end, "{}", case.name);
+        assert_eq!(wire.served(), case.attempts, "{}", case.name);
+        assert_eq!(auth.resolutions.load(Ordering::SeqCst), 1, "{}", case.name);
+        let actual: Vec<_> = auth
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(identity, action, kind)| {
+                let CredentialIdentity::Stored { id, .. } = identity else { panic!("owned row") };
+                (*id, *action, *kind)
+            })
+            .collect();
+        assert_eq!(actual, case.actions, "{}", case.name);
+        assert_eq!(observer.started.lock().unwrap().len(), observer.settled.lock().unwrap().len(), "{}", case.name);
+        if case.actions.is_empty() && case.attempts > 1 {
+            let requests = wire.requests.lock().await;
+            assert_eq!(requests[0]["headers"]["authorization"], requests[1]["headers"]["authorization"]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn configured_key_suppresses_oauth_selection_and_account_identity() {
+    use ara_cli::config_request_auth::{ConfigRequestAuth, ConfigRequestAuthSpec};
+    struct Account(AtomicUsize);
+    #[async_trait]
+    impl RequestAuthResolver for Account {
+        async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(AuthResolveError::Refresh)
+        }
+    }
+    let wire = server(vec![chat("configured")]).await;
+    let model = model("openai-completions", "fixture", wire.base_url());
+    let account = Arc::new(Account(AtomicUsize::new(0)));
+    let auth = Arc::new(ConfigRequestAuth::new(
+        ConfigRequestAuthSpec {
+            base: RequestAuthLease::new(CredentialIdentity::Keyless, None),
+            key_config: Some("synthetic-config-key".into()),
+            startup_key: None,
+            header_sources: Vec::new(),
+            composed_headers: None,
+            invalidation_values: Vec::new(),
+            cli_headers: Vec::new(),
+            auth_header: false,
+            codex_account: true,
+        },
+        std::env::current_dir().unwrap(),
+        Some(account.clone()),
+    ));
+    let observer = Arc::new(Observer::default());
+    let provider = PreparedRoute::new(model.clone(), protocol(&model.api), auth, 0)
+        .unwrap()
+        .bind(reqwest::Client::new(), Some(observer.clone()));
+    assert_eq!(collect(provider.stream(&model, &context(), CallOptions::default())).await.text(), "configured");
+    assert_eq!(account.0.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        observer.started.lock().unwrap()[0].credential,
+        CredentialIdentity::Config { provider: "fixture".into() }
+    );
+    assert_eq!(wire.served(), 1);
+    assert!(wire.requests.lock().await[0]["headers"].get("chatgpt-account-id").is_none());
+}
+
 #[test]
 fn route_preparation_rejects_stale_protocol_or_static_credentials() {
     let model = model("openai-completions", "fixture", "http://localhost/v1".into());
