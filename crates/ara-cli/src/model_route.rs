@@ -276,6 +276,15 @@ impl ProtocolOptions {
         }
     }
 
+    fn response_callback(&self) -> Option<ara_ai::ProviderResponseCallback> {
+        match self {
+            Self::Completions(options) => options.on_response.clone(),
+            Self::Responses(options) => options.on_response.clone(),
+            Self::CodexResponses(options) => options.on_response.clone(),
+            Self::Anthropic(_) => None,
+        }
+    }
+
     fn fresh_session(&self) -> Self {
         let mut options = self.clone();
         match &mut options {
@@ -336,6 +345,7 @@ pub struct PreparedRoute {
     auth: Arc<dyn RequestAuthResolver>,
     generation: u64,
     loop_guard_policy: ara_ai::thinking_loop::LoopGuardPolicy,
+    usage_headers: Option<Arc<crate::session_usage_headers::SessionUsageHeaders>>,
 }
 
 impl PreparedRoute {
@@ -352,7 +362,7 @@ impl PreparedRoute {
             return Err(RoutePrepareError::StaticCredential);
         }
         let loop_guard_policy = resolved_loop_guard_policy(&model)?;
-        Ok(Self { model, protocol, auth, generation, loop_guard_policy })
+        Ok(Self { model, protocol, auth, generation, loop_guard_policy, usage_headers: None })
     }
 
     pub fn model(&self) -> &Model {
@@ -406,6 +416,11 @@ impl PreparedRoute {
         self
     }
 
+    pub fn with_usage_headers(mut self, owner: crate::session_usage_headers::SessionUsageHeaders) -> Self {
+        self.usage_headers = Some(Arc::new(owner));
+        self
+    }
+
     /// Host promotion checks account availability before publishing a route.
     /// The lease stays private; every later logical call still resolves afresh.
     pub async fn check_auth(&self, cancel: &CancellationToken) -> Result<(), AuthResolveError> {
@@ -430,6 +445,9 @@ impl PreparedRoute {
         let mut route = self.clone();
         if let Some(auth) = route.auth.for_session(&session_id) {
             route.auth = auth;
+        }
+        if let Some(owner) = &route.usage_headers {
+            route.usage_headers = Some(Arc::new(owner.for_session(&session_id)));
         }
         if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
             options.session_id = Some(session_id);
@@ -652,6 +670,12 @@ impl ModelProvider for AuthenticatedRouteProvider {
             let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
             let mut options = options;
             options.cancel = cancel.clone();
+            if let Some(owner) = &route.usage_headers {
+                // Preserve the adapter's per-call/default choice before the
+                // native Host interceptor consumes the response first.
+                options.on_response = options.on_response.or_else(|| route.protocol.response_callback());
+                owner.attach(&mut options);
+            }
             let mut inner = ara_ai::thinking_loop::with_thinking_loop_guard(
                 &model,
                 options.clone(),

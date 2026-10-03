@@ -52,5 +52,6 @@ pub mod remote_compaction;
 mod request_auth_retry;
 pub mod retry_fallback;
 pub mod session_artifacts;
+pub mod session_usage_headers;
 pub mod snapcompact;
 pub mod static_model_registry;

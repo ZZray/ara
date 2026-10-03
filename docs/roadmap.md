@@ -1,5 +1,24 @@
 # Delivery roadmap
 
+**Current checkpoint, 2026-10-03 01:57 UTC (local usage headers tested WIP):**
+[Header evidence](evidence/usage-headers.md) connects the native local cache
+merge and transient response callback to shared Host storage, logical Session
+and live Registry URL attribution. Final Windows backend 1,727/0/20,
+fmt/Clippy/inventory/build PASS; the existing ttf-parser advisory keeps the
+whole gate FAIL. Failed fixtures and the earlier PDB link invocation remain
+recorded. Independent POST found and closed the warm-Registry provider filter;
+final independent POST approves only bounded tested WIP. No new paid API
+or actual account trial.
+Counts remain 111 surfaces: 27 implementing/one tested/83 open/zero complete
+acceptances, started coverage 28/111 (25.2%); 60 bounded points: 35 limited
+acceptances/23 implementing/two tested (58.3%, not overall completion).
+P0/V1 accepted, P1-P6 open, RPC 27/42 and null full-parity marker remain.
+Next: built-in usage-only refresh and native stale-value invalidation,
+remaining watchdog lifecycle/store hooks and full AuthStorage callers.
+Actual OpenAI authorization, platform and deferred Providers remain required.
+Use module checks, one stable final batch gate and parallel independent review;
+check disk before memory-heavy Windows linking. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 00:19 UTC (shared AuthStorage tested WIP):**
 [AuthStorage evidence](evidence/auth-storage.md) connects source-mapped account
 selection, usage/ranking/sticky/blocks, exact-row refresh, ordinary stored

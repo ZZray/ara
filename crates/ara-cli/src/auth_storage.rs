@@ -71,6 +71,7 @@ use tokio_util::sync::CancellationToken;
 const REFRESH_SKEW_MS: f64 = 60_000.0;
 const REFRESH_FAILURE_BACKOFF_MS: f64 = 300_000.0;
 const USAGE_FAILURE_BACKOFF_MS: f64 = 10_000.0;
+const USAGE_HEADER_INGEST_INTERVAL_MS: f64 = 60_000.0;
 const LAST_GOOD_RETENTION_MS: f64 = 86_400_000.0;
 const USAGE_CACHE_PREFIX: &str = "usage_cache:";
 
@@ -182,9 +183,10 @@ pub trait OAuthProvider: Send + Sync {
     ) -> Result<(), AuthStorageError> {
         Ok(())
     }
-    /// Advisory refresh for usage only. It must not disable an OAuth row on a
-    /// failed probe. Returning None means use the original token; endpoints and
-    /// native broker adapters may implement their own non-authoritative path.
+    /// Advisory refresh for usage only. The inner refresh retains its native
+    /// definitive-rejection lifecycle; the outer usage probe adds no disable.
+    /// Returning None means use the original token; endpoints and native broker
+    /// adapters may implement their own non-authoritative path.
     async fn prepare_usage_credential(
         &self,
         _row: &StoredAuthCredential,
@@ -216,6 +218,7 @@ pub enum UsageFetchError {
     Forbidden,
     InvalidResponse,
 }
+pub type RateLimitHeaderParser = fn(&BTreeMap<String, String>, f64) -> Option<UsageReport>;
 #[async_trait]
 pub trait UsageProvider: Send + Sync {
     async fn fetch_usage(
@@ -223,6 +226,9 @@ pub trait UsageProvider: Send + Sync {
         request: UsageRequest,
         cancel: &CancellationToken,
     ) -> Result<Option<UsageReport>, UsageFetchError>;
+    fn rate_limit_header_parser(&self) -> Option<RateLimitHeaderParser> {
+        None
+    }
     fn supports(&self, _request: &UsageRequest) -> bool {
         true
     }
@@ -318,6 +324,7 @@ struct HostState {
     runtime_keys: BTreeMap<String, String>,
     config_keys: BTreeMap<String, String>,
     resolved_keys: BTreeMap<i64, (String, String)>,
+    usage_header_ingest_at: BTreeMap<String, f64>,
     generation_changed: bool,
 }
 type UsageFlight = watch::Receiver<Option<Option<UsageReport>>>;
@@ -728,20 +735,29 @@ impl AuthStorage {
             self.inner.options.environment.api_key(provider).is_some_and(|key| !key.value.is_empty())
                 || self.inner.options.fallback.api_key(provider).is_some_and(|key| !key.is_empty());
         self.store_operation(|store, state| {
-            let rows = Self::load_provider(store, state, provider)?;
-            let sticky = state.assignments.read_session_credential(store, provider, session_id, &rows);
-            if sticky.is_some_and(|sticky| sticky.kind != CredentialKind::OAuth) {
-                return Ok(None);
-            }
-            if sticky.is_none() && lower_key_present {
-                return Ok(None);
-            }
-            Ok(sticky
-                .and_then(|sticky| rows.get(sticky.index))
-                .filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }))
-                .or_else(|| rows.iter().find(|row| matches!(row.credential, AuthCredential::OAuth { .. })))
-                .cloned())
+            Self::active_oauth_row_in_store(store, state, provider, session_id, lower_key_present)
         })
+    }
+    fn active_oauth_row_in_store(
+        store: &SqliteCredentialStore,
+        state: &mut HostState,
+        provider: &str,
+        session_id: Option<&str>,
+        lower_key_present: bool,
+    ) -> Result<Option<StoredAuthCredential>, AuthStorageError> {
+        let rows = Self::load_provider(store, state, provider)?;
+        let sticky = state.assignments.read_session_credential(store, provider, session_id, &rows);
+        if sticky.is_some_and(|sticky| sticky.kind != CredentialKind::OAuth) {
+            return Ok(None);
+        }
+        if sticky.is_none() && lower_key_present {
+            return Ok(None);
+        }
+        Ok(sticky
+            .and_then(|sticky| rows.get(sticky.index))
+            .filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }))
+            .or_else(|| rows.iter().find(|row| matches!(row.credential, AuthCredential::OAuth { .. })))
+            .cloned())
     }
     pub fn peek_oauth_access(
         &self,
@@ -1634,6 +1650,101 @@ impl AuthStorage {
         .unwrap_or(false)
     }
 
+    /// Fixed OMP AuthStorage.ingestUsageHeaders local-cache branch (3631-3711).
+    /// Attribution follows the active Session account at callback time. Native
+    /// delegated-store ingestion and aggregate fetch overrides remain unported.
+    /// This does not record history, heal blocks, refresh auth or select an account.
+    pub fn ingest_usage_headers(
+        &self,
+        provider: &str,
+        headers: &BTreeMap<String, String>,
+        session_id: Option<&str>,
+        base_url: Option<&str>,
+    ) -> Result<bool, AuthStorageError> {
+        let Some(hook) = self.usage_hook(provider) else { return Ok(false) };
+        let Some(parser) = hook.rate_limit_header_parser() else { return Ok(false) };
+        let lower_key_present =
+            self.inner.options.environment.api_key(provider).is_some_and(|key| !key.value.is_empty())
+                || self.inner.options.fallback.api_key(provider).is_some_and(|key| !key.is_empty());
+        self.store_operation(|store, state| {
+            if state.runtime_keys.contains_key(provider) || state.config_keys.contains_key(provider) {
+                return Ok(false);
+            }
+            let Some(row) = Self::active_oauth_row_in_store(store, state, provider, session_id, lower_key_present)?
+            else {
+                return Ok(false);
+            };
+            let now = self.now();
+            let Some(mut report) = parser(headers, now) else { return Ok(false) };
+            let credential = usage_credential(&row, None);
+            let request = UsageRequest {
+                provider: provider.to_owned(),
+                account_key: usage_identity(&credential),
+                credential,
+                credential_id: Some(row.id),
+                base_url: base_url.map(str::to_owned),
+            };
+            let cache_key = usage_report_key(&request);
+            let exhausted = report.limits.iter().any(policy::is_usage_limit_exhausted);
+            if !exhausted
+                && state
+                    .usage_header_ingest_at
+                    .get(&cache_key)
+                    .is_some_and(|last| now - last < USAGE_HEADER_INGEST_INTERVAL_MS)
+            {
+                return Ok(false);
+            }
+            let metadata = report.metadata.get_or_insert_with(Map::new);
+            for field in ["accountId", "email", "projectId", "orgId", "orgName"] {
+                if let Some(value) = text_field(&row, field).filter(|value| !value.is_empty()) {
+                    // JSON null is a defined native metadata property.
+                    metadata.entry(field).or_insert_with(|| Value::String(value));
+                }
+            }
+            // A malformed payload is a cold cache. A real store read failure
+            // must not overwrite the entry or consume a successful-ingest slot.
+            let prior_entry = store
+                .get_cache(&format!("{USAGE_CACHE_PREFIX}{cache_key}"), true)
+                .map_err(|_| AuthStorageError::Storage)?
+                .and_then(|raw| serde_json::from_str::<UsageCacheEntry<UsageReport>>(&raw).ok());
+            let expires_at = prior_entry.as_ref().map(|entry| entry.expires_at).unwrap_or(now - 1.0).max(now - 1.0);
+            if let Some(mut prior) = prior_entry.and_then(|entry| entry.value) {
+                let header_ids: Vec<_> = report.limits.iter().map(|limit| limit.id.clone()).collect();
+                let mut replacements: BTreeMap<_, _> =
+                    report.limits.into_iter().map(|limit| (limit.id.clone(), limit)).collect();
+                let mut limits = Vec::with_capacity(prior.limits.len() + header_ids.len());
+                for limit in prior.limits {
+                    limits.push(replacements.remove(&limit.id).unwrap_or(limit));
+                }
+                for id in header_ids {
+                    if let Some(limit) = replacements.remove(&id) {
+                        limits.push(limit);
+                    }
+                }
+                let mut metadata = report.metadata.take().unwrap_or_default();
+                let source = prior.metadata.as_ref().and_then(|metadata| metadata.get("source")).cloned();
+                metadata.extend(prior.metadata.take().unwrap_or_default());
+                match source {
+                    Some(source) => {
+                        metadata.insert("source".into(), source);
+                    }
+                    None => {
+                        metadata.remove("source");
+                    }
+                }
+                metadata.insert("headersUpdatedAt".into(), Value::from(now));
+                prior.fetched_at = now;
+                prior.limits = limits;
+                prior.metadata = Some(metadata);
+                report = prior;
+            }
+            write_usage_cache(store, &cache_key, &UsageCacheEntry { value: Some(report), expires_at }, now)
+                .map_err(|_| AuthStorageError::Storage)?;
+            state.usage_header_ingest_at.insert(cache_key, now);
+            Ok(true)
+        })
+    }
+
     pub async fn usage_report(
         &self,
         provider: &str,
@@ -2462,6 +2573,9 @@ impl RequestAuthResolver for SessionAuthResolver {
 
 #[async_trait]
 impl UsageProvider for crate::codex_usage::CodexUsageProvider {
+    fn rate_limit_header_parser(&self) -> Option<RateLimitHeaderParser> {
+        Some(crate::codex_usage::parse_codex_rate_limit_headers)
+    }
     async fn fetch_usage(
         &self,
         request: UsageRequest,
@@ -2880,6 +2994,56 @@ mod tests {
             Ok(request.credential_id.and_then(|id| self.reports.lock().unwrap().get(&id).cloned()))
         }
     }
+    struct FixtureHeaderUsage {
+        usage: Arc<FixtureUsage>,
+        parser: RateLimitHeaderParser,
+    }
+    #[async_trait]
+    impl UsageProvider for FixtureHeaderUsage {
+        async fn fetch_usage(
+            &self,
+            request: UsageRequest,
+            cancel: &CancellationToken,
+        ) -> Result<Option<UsageReport>, UsageFetchError> {
+            self.usage.fetch_usage(request, cancel).await
+        }
+        fn rate_limit_header_parser(&self) -> Option<RateLimitHeaderParser> {
+            Some(self.parser)
+        }
+    }
+    fn codex_headers_with_null_email(headers: &BTreeMap<String, String>, now_ms: f64) -> Option<UsageReport> {
+        let mut report = crate::codex_usage::parse_codex_rate_limit_headers(headers, now_ms)?;
+        report.metadata.get_or_insert_with(Map::new).insert("email".into(), Value::Null);
+        Some(report)
+    }
+    fn codex_headers(now: f64, primary: &str, secondary: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("x-codex-primary-used-percent".into(), primary.into()),
+            ("x-codex-primary-window-minutes".into(), "300".into()),
+            ("x-codex-primary-reset-at".into(), ((now + 3_600_000.0) / 1000.0).floor().to_string()),
+            ("x-codex-secondary-used-percent".into(), secondary.into()),
+            ("x-codex-secondary-window-minutes".into(), (7 * 24 * 60).to_string()),
+            ("x-codex-secondary-reset-at".into(), ((now + 5.0 * 24.0 * 3_600_000.0) / 1000.0).floor().to_string()),
+        ])
+    }
+    fn header_cache_key(row: &StoredAuthCredential, base_url: Option<&str>) -> String {
+        let credential = usage_credential(row, None);
+        usage_report_key(&UsageRequest {
+            provider: row.provider.clone(),
+            account_key: usage_identity(&credential),
+            credential,
+            credential_id: Some(row.id),
+            base_url: base_url.map(str::to_owned),
+        })
+    }
+    fn header_cache(storage: &AuthStorage, key: &str) -> UsageCacheEntry<UsageReport> {
+        storage
+            .store_operation(|store, _state| {
+                let raw = store.get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), true).unwrap().unwrap();
+                Ok(serde_json::from_str(&raw).unwrap())
+            })
+            .unwrap()
+    }
     fn oauth(email: &str, now: f64, expired: bool) -> AuthCredential {
         AuthCredential::oauth(
             serde_json::json!({"access":format!("access-{email}"),"refresh":format!("refresh-{email}"),
@@ -2931,6 +3095,425 @@ mod tests {
             CredentialIdentity::Stored { id, .. } => *id,
             _ => panic!("expected stored identity"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn host_usage_header_native_selection_and_guard_case_corpus() {
+        // Fixed auth-storage-codex-selection.test.ts:2426-2473, extended with
+        // mixed native indexes, partial windows and the active-account guards.
+        let provider = "openai-codex";
+        let at = chrono::Utc::now().timestamp_millis() as f64;
+        let clock = Arc::new(AtomicU64::new(at as u64));
+        let healthy = codex_headers(at, "20", "30");
+        let builtin = crate::codex_usage::CodexUsageProvider::new().unwrap();
+        assert_eq!(
+            UsageProvider::rate_limit_header_parser(&builtin).unwrap()(&healthy, at),
+            crate::codex_usage::parse_codex_rate_limit_headers(&healthy, at)
+        );
+        let (storage, store, _, _) = setup(
+            provider,
+            &[AuthCredential::api_key("static"), oauth("hdr-a@fixture", at, false), oauth("hdr-b@fixture", at, false)],
+            clock.clone(),
+            false,
+        );
+        let rows = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+        assert!(!storage.ingest_usage_headers(provider, &healthy, Some("headers"), None).unwrap());
+        let usage = Arc::new(FixtureUsage::new());
+        storage.register_usage_provider(provider, usage.clone()).unwrap();
+        assert!(!storage.ingest_usage_headers(provider, &healthy, Some("headers"), None).unwrap());
+        storage
+            .register_usage_provider(
+                provider,
+                Arc::new(FixtureHeaderUsage {
+                    usage: usage.clone(),
+                    parser: crate::codex_usage::parse_codex_rate_limit_headers,
+                }),
+            )
+            .unwrap();
+        for row in &rows[1..] {
+            let email = text_field(row, "email").unwrap();
+            let mut full = report(provider, at, 0.2, "plus", &email);
+            full.limits = crate::codex_usage::parse_codex_rate_limit_headers(&healthy, at).unwrap().limits;
+            let mut spark = full.limits[0].clone();
+            spark.id = "openai-codex:spark:primary".into();
+            spark.scope.model_id = Some("gpt-5.3-codex-spark".into());
+            spark.unknown_fields.insert("nativeExtra".into(), Value::Bool(true));
+            full.limits.push(spark);
+            full.raw = Some(serde_json::json!({"extra_usage":{"used":12.34}}));
+            full.unknown_fields.insert("nativeReportField".into(), Value::String("retained".into()));
+            full.metadata.as_mut().unwrap().insert("source".into(), Value::String("full-endpoint".into()));
+            usage.reports.lock().unwrap().insert(row.id, full);
+        }
+        let context = AuthRequestContext {
+            session_id: Some("headers".into()),
+            model_id: Some("gpt-5.3-codex".into()),
+            ..Default::default()
+        };
+        let cancel = CancellationToken::new();
+        let selected = storage.resolve(provider, &context, &cancel).await.unwrap().unwrap();
+        storage.wait_for_settlement().await;
+        let selected_row = rows.iter().find(|row| row.id == id(&selected.lease)).unwrap();
+        let sibling = rows[1..].iter().find(|row| row.id != selected_row.id).unwrap();
+        let key = header_cache_key(selected_row, None);
+        let original = header_cache(&storage, &key);
+        let history = store.lock().unwrap().list_usage_history(None).unwrap().len();
+        assert!(storage.ingest_usage_headers(provider, &healthy, Some("headers"), None).unwrap());
+        assert!(!storage.ingest_usage_headers(provider, &healthy, Some("headers"), None).unwrap());
+        clock.fetch_add(60_000, Ordering::AcqRel);
+        let mut partial = codex_headers(at, "40", "30");
+        partial.retain(|name, _| !name.starts_with("x-codex-secondary-"));
+        assert!(storage.ingest_usage_headers(provider, &partial, Some("headers"), None).unwrap());
+        let merged = header_cache(&storage, &key);
+        let merged_report = merged.value.unwrap();
+        assert_eq!(merged.expires_at, original.expires_at);
+        assert_eq!(merged_report.fetched_at, at + 60_000.0);
+        assert_eq!(merged_report.limits.len(), 3);
+        assert_eq!(merged_report.limits[0].amount.used_fraction, Some(0.4));
+        assert_eq!(merged_report.limits[1].amount.used_fraction, Some(0.3));
+        assert_eq!(merged_report.limits[2], original.value.as_ref().unwrap().limits[2]);
+        assert_eq!(merged_report.raw, original.value.as_ref().unwrap().raw);
+        assert_eq!(merged_report.unknown_fields, original.value.as_ref().unwrap().unknown_fields);
+        assert_eq!(merged_report.metadata.as_ref().unwrap()["source"], "full-endpoint");
+        assert_eq!(merged_report.metadata.as_ref().unwrap()["headersUpdatedAt"], Value::from(at + 60_000.0));
+        assert_eq!(store.lock().unwrap().list_usage_history(None).unwrap().len(), history);
+        let exhausted = codex_headers(at, "20", "100");
+        assert!(storage.ingest_usage_headers(provider, &exhausted, Some("headers"), None).unwrap());
+        assert_eq!(header_cache(&storage, &key).expires_at, original.expires_at);
+        assert!(
+            storage.list_credential_blocks(&[selected_row.id]).unwrap().is_empty(),
+            "header ingestion leaves exhaustion blocking to the next selector"
+        );
+        let rotated = storage.resolve(provider, &context, &cancel).await.unwrap().unwrap();
+        assert_eq!(id(&rotated.lease), sibling.id);
+        assert!(storage.ingest_usage_headers(provider, &healthy, Some("headers"), None).unwrap());
+        assert_eq!(
+            header_cache(&storage, &header_cache_key(sibling, None)).value.unwrap().metadata.unwrap()["accountId"],
+            text_field(sibling, "accountId").unwrap()
+        );
+        assert!(
+            storage.ingest_usage_headers(provider, &healthy, Some("headers"), Some(" https://fixture.test/ ")).unwrap()
+        );
+        assert!(
+            !storage.ingest_usage_headers(provider, &healthy, Some("headers"), Some("https://fixture.test")).unwrap()
+        );
+        for runtime in [true, false] {
+            if runtime {
+                storage.set_runtime_api_key(provider, "runtime".into()).unwrap();
+            } else {
+                storage.set_config_api_key(provider, "config".into()).unwrap();
+            }
+            assert!(!storage.ingest_usage_headers(provider, &exhausted, Some("headers"), None).unwrap());
+            if runtime {
+                storage.remove_runtime_api_key(provider).unwrap();
+            } else {
+                storage.remove_config_api_key(provider).unwrap();
+            }
+        }
+        storage
+            .store_operation(|store, state| {
+                state.assignments.record_session_credential(
+                    store,
+                    provider,
+                    Some("key-sticky"),
+                    CredentialKind::ApiKey,
+                    0,
+                    &rows,
+                    None,
+                    at,
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert!(!storage.ingest_usage_headers(provider, &exhausted, Some("key-sticky"), None).unwrap());
+        assert!(!storage.ingest_usage_headers(provider, &BTreeMap::new(), Some("headers"), None).unwrap());
+        let (lower, lower_store, _, _) = setup(provider, &[oauth("lower@fixture", at, false)], clock.clone(), true);
+        lower
+            .register_usage_provider(
+                provider,
+                Arc::new(FixtureHeaderUsage {
+                    usage: usage.clone(),
+                    parser: crate::codex_usage::parse_codex_rate_limit_headers,
+                }),
+            )
+            .unwrap();
+        assert!(!lower.ingest_usage_headers(provider, &healthy, Some("lower"), None).unwrap());
+        let lower_row = lower_store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+        assert!(lower.pin_session_oauth_account(provider, "lower", lower_row.id, None).unwrap());
+        // The broker block mutator invalidates usage caches. Keep this cold
+        // no-healing fixture separate from the full-backed rotation above.
+        lower
+            .upsert_credential_block(&StoredCredentialBlock {
+                credential_id: lower_row.id,
+                provider_key: provider_type_key(provider, CredentialKind::OAuth),
+                block_scope: "spark".into(),
+                blocked_until_ms: at as i64 + 7_200_000,
+                updated_at_ms: at as i64,
+            })
+            .unwrap();
+        let usage_calls = usage.calls.load(Ordering::Acquire);
+        assert!(lower.ingest_usage_headers(provider, &healthy, Some("lower"), None).unwrap());
+        assert!(
+            lower.list_credential_blocks(&[lower_row.id]).unwrap().iter().any(|block| block.block_scope == "spark")
+        );
+        assert!(lower.ingest_usage_headers(provider, &exhausted, Some("lower"), None).unwrap());
+        assert!(
+            lower.list_credential_blocks(&[lower_row.id]).unwrap().iter().any(|block| block.block_scope == "spark")
+        );
+        assert_eq!(
+            usage.calls.load(Ordering::Acquire),
+            usage_calls,
+            "header ingestion never starts a full usage probe"
+        );
+        let no_oauth = setup(provider, &[AuthCredential::api_key("only-key")], clock.clone(), false).0;
+        no_oauth
+            .register_usage_provider(
+                provider,
+                Arc::new(FixtureHeaderUsage { usage, parser: crate::codex_usage::parse_codex_rate_limit_headers }),
+            )
+            .unwrap();
+        assert!(!no_oauth.ingest_usage_headers(provider, &healthy, None, None).unwrap());
+        storage.wait_for_settlement().await;
+    }
+
+    #[tokio::test]
+    async fn host_usage_header_expiry_and_metadata_case_corpus() {
+        let provider = "openai-codex";
+        let at = chrono::Utc::now().timestamp_millis() as f64;
+        let clock = Arc::new(AtomicU64::new(at as u64));
+        for (name, expiry, kind, source) in [
+            ("fresh", at + 300_000.0, "report", Some(Value::String("full-endpoint".into()))),
+            ("missing-source", at + 300_000.0, "report", None),
+            ("null-source", at + 300_000.0, "report", Some(Value::Null)),
+            ("expired", at - 1_000.0, "report", None),
+            ("cooldown", at + 10_000.0, "null", None),
+            ("cold", at - 1.0, "absent", None),
+            ("invalid", at - 1.0, "invalid", None),
+        ] {
+            clock.store(at as u64, Ordering::Release);
+            let email = format!("{name}@fixture");
+            let (storage, store, _, _) = setup(provider, &[oauth(&email, at, false)], clock.clone(), false);
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            let key = header_cache_key(&row, None);
+            let usage = Arc::new(FixtureUsage::new());
+            // Installing a usage implementation invalidates older snapshots
+            // (fixed source 1536 / 6248-6264), so seed prior cache afterwards.
+            storage
+                .register_usage_provider(
+                    provider,
+                    Arc::new(FixtureHeaderUsage { usage: usage.clone(), parser: codex_headers_with_null_email }),
+                )
+                .unwrap();
+            let mut full = report(provider, at, 0.1, "plus", &email);
+            if let Some(source) = source.clone() {
+                full.metadata.as_mut().unwrap().insert("source".into(), source);
+            }
+            full.metadata.as_mut().unwrap().insert("accountId".into(), Value::Null);
+            match kind {
+                "report" | "null" => storage
+                    .store_operation(|store, _state| {
+                        write_usage_cache(
+                            store,
+                            &key,
+                            &UsageCacheEntry { value: (kind == "report").then(|| full.clone()), expires_at: expiry },
+                            at,
+                        )
+                        .map_err(|_| AuthStorageError::Storage)
+                    })
+                    .unwrap(),
+                "invalid" => store
+                    .lock()
+                    .unwrap()
+                    .set_cache(
+                        &format!("{USAGE_CACHE_PREFIX}{key}"),
+                        "invalid JSON",
+                        ((at + LAST_GOOD_RETENTION_MS) / 1000.0).floor() as i64,
+                    )
+                    .unwrap(),
+                _ => (),
+            }
+            assert!(
+                storage.ingest_usage_headers(provider, &codex_headers(at, "25", "30"), None, None).unwrap(),
+                "{name}"
+            );
+            let cached = header_cache(&storage, &key);
+            assert_eq!(cached.expires_at, expiry.max(at - 1.0), "{name}");
+            let cached_report = cached.value.unwrap();
+            assert_eq!(
+                cached_report.limits.iter().map(|limit| limit.id.as_str()).collect::<Vec<_>>(),
+                ["openai-codex:primary", "openai-codex:secondary"],
+                "{name} appends new header windows"
+            );
+            let metadata = cached_report.metadata.unwrap();
+            if kind == "report" {
+                assert_eq!(metadata.get("source"), source.as_ref(), "{name}");
+                assert_eq!(metadata["accountId"], Value::Null, "defined prior null must win");
+            } else {
+                assert_eq!(metadata["source"], "ratelimit-headers");
+                assert_eq!(metadata["email"], Value::Null, "defined parser null must survive enrichment");
+            }
+            assert!(
+                store.lock().unwrap().get_cache(&format!("{USAGE_CACHE_PREFIX}{key}"), false).unwrap().is_some(),
+                "stale header reports retain a durable last-good entry"
+            );
+            assert!(store.lock().unwrap().list_usage_history(None).unwrap().is_empty());
+            usage.reports.lock().unwrap().insert(row.id, report(provider, at, 0.1, "plus", &email));
+            if cached.expires_at <= at {
+                assert!(
+                    storage
+                        .usage_report(provider, &row, &AuthRequestContext::default(), false, &CancellationToken::new())
+                        .await
+                        .unwrap()
+                        .is_some()
+                );
+                assert_eq!(usage.calls.load(Ordering::Acquire), 1, "{name} probes a full report");
+            } else {
+                assert!(
+                    storage
+                        .usage_report(provider, &row, &AuthRequestContext::default(), false, &CancellationToken::new())
+                        .await
+                        .unwrap()
+                        .is_some()
+                );
+                assert_eq!(usage.calls.load(Ordering::Acquire), 0, "{name} retains its original deadline");
+                clock.store((expiry + 1.0) as u64, Ordering::Release);
+                assert!(
+                    storage
+                        .usage_report(provider, &row, &AuthRequestContext::default(), false, &CancellationToken::new())
+                        .await
+                        .unwrap()
+                        .is_some()
+                );
+                assert_eq!(usage.calls.load(Ordering::Acquire), 1, "{name} refetches after its original deadline");
+            }
+            storage.wait_for_settlement().await;
+        }
+    }
+
+    #[test]
+    fn host_usage_header_store_failure_case_corpus() {
+        let provider = "openai-codex";
+        let at = chrono::Utc::now().timestamp_millis() as f64;
+        struct HeaderExternalInputs {
+            reads: AtomicUsize,
+        }
+        impl Environment for HeaderExternalInputs {
+            fn api_key(&self, _: &str) -> Option<EnvironmentKey> {
+                self.reads.fetch_add(1, Ordering::AcqRel);
+                None
+            }
+        }
+        impl Fallback for HeaderExternalInputs {
+            fn api_key(&self, _: &str) -> Option<String> {
+                self.reads.fetch_add(1, Ordering::AcqRel);
+                None
+            }
+        }
+        for fault in ["closed", "account-read"] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("no-parser.sqlite");
+            let store = Arc::new(Mutex::new(SqliteCredentialStore::open(&path).unwrap()));
+            store
+                .lock()
+                .unwrap()
+                .replace_auth_credentials_for_provider(provider, &[oauth("no-parser@fixture", at, false)])
+                .unwrap();
+            let inputs = Arc::new(HeaderExternalInputs { reads: AtomicUsize::new(0) });
+            let clock_reads = Arc::new(AtomicUsize::new(0));
+            let clock = clock_reads.clone();
+            let storage = AuthStorage::new(
+                store.clone(),
+                None,
+                AuthStorageOptions {
+                    environment: inputs.clone(),
+                    fallback: inputs.clone(),
+                    clock: Arc::new(move || {
+                        clock.fetch_add(1, Ordering::AcqRel);
+                        at
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            storage.register_usage_provider(provider, Arc::new(FixtureUsage::new())).unwrap();
+            let peer = rusqlite::Connection::open(&path).unwrap();
+            if fault == "closed" {
+                store.lock().unwrap().close().unwrap();
+            } else {
+                peer.execute_batch("ALTER TABLE auth_credentials RENAME TO unavailable_auth_credentials").unwrap();
+            }
+            assert!(
+                store.lock().unwrap().list_auth_credentials(Some(provider)).is_err(),
+                "{fault} fixture must reject an account read"
+            );
+            let prior_clock_reads = clock_reads.load(Ordering::Acquire);
+            for no_parser_provider in ["without-usage-hook", provider] {
+                assert_eq!(
+                    storage.ingest_usage_headers(no_parser_provider, &codex_headers(at, "20", "30"), None, None),
+                    Ok(false),
+                    "{fault}/{no_parser_provider}"
+                );
+            }
+            assert_eq!(inputs.reads.load(Ordering::Acquire), 0, "{fault} must skip environment and fallback");
+            assert_eq!(clock_reads.load(Ordering::Acquire), prior_clock_reads, "{fault} must skip clock");
+            assert!(storage.inner.state.lock().unwrap().usage_header_ingest_at.is_empty());
+            drop(peer);
+            store.lock().unwrap().close().unwrap();
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("headers.sqlite");
+        let store = Arc::new(Mutex::new(SqliteCredentialStore::open(&path).unwrap()));
+        store
+            .lock()
+            .unwrap()
+            .replace_auth_credentials_for_provider(provider, &[oauth("read-error@fixture", at, false)])
+            .unwrap();
+        let storage = AuthStorage::new(
+            store.clone(),
+            None,
+            AuthStorageOptions { clock: Arc::new(move || at), ..Default::default() },
+        )
+        .unwrap();
+        storage
+            .register_usage_provider(
+                provider,
+                Arc::new(FixtureHeaderUsage {
+                    usage: Arc::new(FixtureUsage::new()),
+                    parser: crate::codex_usage::parse_codex_rate_limit_headers,
+                }),
+            )
+            .unwrap();
+        let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+        let key = header_cache_key(&row, None);
+        let durable_key = format!("{USAGE_CACHE_PREFIX}{key}");
+        store
+            .lock()
+            .unwrap()
+            .set_cache(&durable_key, "prior payload", ((at + LAST_GOOD_RETENTION_MS) / 1000.0) as i64)
+            .unwrap();
+        let peer = rusqlite::Connection::open(&path).unwrap();
+        peer.execute_batch("ALTER TABLE cache RENAME TO unavailable_cache").unwrap();
+        assert_eq!(
+            storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None),
+            Err(AuthStorageError::Storage)
+        );
+        assert!(storage.inner.state.lock().unwrap().usage_header_ingest_at.is_empty());
+        let retained: String = peer
+            .query_row("SELECT value FROM unavailable_cache WHERE key=?1", [&durable_key], |row| row.get(0))
+            .unwrap();
+        assert_eq!(retained, "prior payload");
+        peer.execute_batch("ALTER TABLE unavailable_cache RENAME TO cache;
+            CREATE TRIGGER reject_header_write BEFORE INSERT ON cache BEGIN SELECT RAISE(FAIL, 'fixture write failure'); END;").unwrap();
+        assert_eq!(
+            storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None),
+            Err(AuthStorageError::Storage)
+        );
+        assert!(storage.inner.state.lock().unwrap().usage_header_ingest_at.is_empty());
+        assert_eq!(store.lock().unwrap().get_cache(&durable_key, true).unwrap().as_deref(), Some("prior payload"));
+        peer.execute_batch("DROP TRIGGER reject_header_write").unwrap();
+        assert!(storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None).unwrap());
+        assert!(!storage.ingest_usage_headers(provider, &codex_headers(at, "20", "30"), None, None).unwrap());
+        drop(peer);
+        store.lock().unwrap().close().unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

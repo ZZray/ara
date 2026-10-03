@@ -574,6 +574,7 @@ async fn stream_assistant_response(
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             loop_guard: None,
+            on_response: None,
         },
     );
     loop {

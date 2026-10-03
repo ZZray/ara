@@ -2029,6 +2029,8 @@ struct ProviderFactory {
     client: reqwest::Client,
     route: ara_cli::model_route::PreparedRoute,
     account_auth: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
+    shared_account: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
+    registry: Option<ara_cli::model_registry::ModelRegistry>,
     metadata: Option<serde_json::Value>,
 }
 
@@ -2064,11 +2066,23 @@ impl ProviderFactory {
         cwd: &Path,
         cancel: &CancellationToken,
         shared_account: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
+        registry: Option<ara_cli::model_registry::ModelRegistry>,
     ) -> Result<Self> {
         use ara_cli::daily_model_config::DailyAuthSource;
         use ara_cli::model_route::{
             FixedRequestAuth, HostDefaultRequestAuth, PreparedRoute, ProtocolOptions, RequestAuthResolver,
         };
+        // Native SessionStats consumes headers independently of the branch
+        // that supplies credentials or participates in authentication retry.
+        let usage_headers = shared_account.as_ref().map(|owner| {
+            let observer = ara_cli::session_usage_headers::SessionUsageHeaders::new(
+                owner.as_ref().clone(),
+                session_id.clone(),
+                None,
+            );
+            if let Some(registry) = registry.clone() { observer.with_registry(registry) } else { observer }
+        });
+        let usage_account = shared_account.clone();
         if let ProtocolOptions::CodexResponses(options) = &mut selection.protocol {
             options.session_id = session_id.clone();
         }
@@ -2118,10 +2132,20 @@ impl ProviderFactory {
             }
         };
         let loop_guard_policy = configured_loop_guard_policy(selection.loop_guard_policy)?;
-        let route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
+        let mut route = PreparedRoute::new(selection.model, selection.protocol, auth, 0)
             .map_err(|error| anyhow::anyhow!("preparing configured model route: {error:?}"))?
             .with_loop_guard_policy(loop_guard_policy);
-        Ok(Self { client, route, account_auth, metadata: Some(selection.metadata) })
+        if let Some(owner) = usage_headers {
+            route = route.with_usage_headers(owner);
+        }
+        Ok(Self {
+            client,
+            route,
+            account_auth,
+            shared_account: usage_account,
+            registry,
+            metadata: Some(selection.metadata),
+        })
     }
 
     fn startup(
@@ -2167,7 +2191,7 @@ impl ProviderFactory {
             .map_err(|error| anyhow::anyhow!("preparing startup model route: {error:?}"))?;
         let loop_guard_policy = configured_loop_guard_policy(route.loop_guard_policy())?;
         let route = route.with_loop_guard_policy(loop_guard_policy);
-        Ok(Self { client, route, account_auth: None, metadata: None })
+        Ok(Self { client, route, account_auth: None, shared_account: None, registry: None, metadata: None })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {
@@ -2437,6 +2461,7 @@ async fn run_inner(
             &cwd,
             &cancel,
             account_auth.clone(),
+            route.registry.clone(),
         )
         .await?
     } else {

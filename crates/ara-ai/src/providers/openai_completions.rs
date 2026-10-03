@@ -191,6 +191,7 @@ pub struct StreamOptions {
     /// Optional bounded, best-effort diagnostics. Full/closed channels drop
     /// observations without delaying or failing the model request.
     pub request_text_observer: Option<RequestTextObserver>,
+    pub on_response: Option<crate::ProviderResponseCallback>,
 }
 
 impl Default for StreamOptions {
@@ -208,6 +209,7 @@ impl Default for StreamOptions {
             retry: RetryPolicy::default(),
             accept_empty_response: false,
             request_text_observer: None,
+            on_response: None,
         }
     }
 }
@@ -1511,10 +1513,35 @@ async fn run(
         }
         error.cause
     })?;
+    if let Err(error) =
+        crate::provider_response::notify_provider_response(options.on_response.as_ref(), &response, model).await
+    {
+        state.retry_blocked = true;
+        let mut evidence = error.failure_evidence(true);
+        evidence.same_route_blocked = true;
+        state.output.failure_evidence = Some(evidence);
+        return Err(error);
+    }
+    if cancel.is_cancelled() {
+        return Err(ProviderError::Aborted);
+    }
+    // Native Completions keeps the headers watchdog alive while awaiting its
+    // callback. Settle the callback before reporting that local timeout; the
+    // successful POST cannot be replayed on this failure.
+    if first_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        state.retry_blocked = true;
+        let error = ProviderError::Timeout(FIRST_EVENT_TIMEOUT_MESSAGE.into());
+        let mut evidence = error.failure_evidence(true);
+        evidence.same_route_blocked = true;
+        state.output.failure_evidence = Some(evidence);
+        return Err(error);
+    }
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &cancel).await {
         return Err(ProviderError::Aborted);
     }
 
+    // The native body iterator opens a new first-item budget after onResponse.
+    let first_deadline = options.first_event_timeout.map(|duration| Instant::now() + duration);
     let mut body = response.bytes_stream();
     let mut decoder = SseDecoder::new();
     let mut progressed = false;

@@ -2102,6 +2102,7 @@ async fn summarize_window(
             max_tokens: Some(max_output_tokens),
             temperature: None,
             loop_guard: None,
+            on_response: None,
         },
     );
     let deadline = tokio::time::Instant::from_std(deadline);

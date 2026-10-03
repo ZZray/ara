@@ -1087,6 +1087,7 @@ pub struct StreamOptions {
     /// Explicitly allow server-side Responses storage and delta chaining.
     /// The default leaves third-party endpoints on the stateless `store:false` route.
     pub stateful_responses: bool,
+    pub on_response: Option<crate::ProviderResponseCallback>,
 }
 
 impl Default for StreamOptions {
@@ -1101,6 +1102,7 @@ impl Default for StreamOptions {
             retry: RetryPolicy::default(),
             session_state: None,
             stateful_responses: false,
+            on_response: None,
         }
     }
 }
@@ -1302,9 +1304,28 @@ async fn run(
         }
         error.cause
     })?;
+    // Fixed ordinary Codex SSE does not forward the generic onResponse callback.
+    if matches!(protocol, ResponsesProtocol::Compatible)
+        && let Err(error) =
+            crate::provider_response::notify_provider_response(options.on_response.as_ref(), &response, model).await
+    {
+        *retry_blocked = true;
+        let mut evidence = error.failure_evidence(true);
+        evidence.same_route_blocked = true;
+        state.output.failure_evidence = Some(evidence);
+        return Err(error);
+    }
     if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &options.cancel).await {
         return Err(ProviderError::Aborted);
     }
+    // Ordinary Responses disarms its headers watchdog before onResponse and
+    // opens the native iterator's first-item budget after the callback settles.
+    // The shared Codex path retains its existing transport deadline.
+    let first_deadline = if matches!(protocol, ResponsesProtocol::Compatible) {
+        options.first_event_timeout.map(|duration| Instant::now() + duration)
+    } else {
+        first_deadline
+    };
     let mut chunks = response.bytes_stream();
     let mut decoder = ResponsesSseDecoder::new();
     let mut progressed = false;

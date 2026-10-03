@@ -6,6 +6,7 @@ pub mod error;
 pub mod event;
 pub mod json;
 pub mod model_tokenizer;
+pub mod provider_response;
 pub mod providers;
 pub mod remote_compaction;
 pub mod remote_compaction_v2;
@@ -26,6 +27,7 @@ pub mod validation;
 pub use error::ProviderError;
 pub use event::{AssistantMessageEvent, AssistantStream, EventSink};
 pub use model_tokenizer::{ModelTokenizer, resolve_known_claude_tokenizer};
+pub use provider_response::{ProviderResponseCallback, ProviderResponseMetadata};
 pub use types::*;
 
 use tokio_util::sync::CancellationToken;
@@ -38,6 +40,7 @@ pub struct CallOptions {
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub loop_guard: Option<thinking_loop::LoopGuardOptions>,
+    pub on_response: Option<ProviderResponseCallback>,
 }
 
 /// A model transport port. Hosts bind real adapters; tests bind scripted ones.
@@ -60,6 +63,7 @@ impl ModelProvider for OpenAICompletionsProvider {
         opts.tool_choice = options.tool_choice.or(opts.tool_choice);
         opts.max_tokens = options.max_tokens.or(opts.max_tokens);
         opts.temperature = options.temperature.or(opts.temperature);
+        opts.on_response = options.on_response.or(opts.on_response);
         providers::openai_completions::stream(self.client.clone(), model.clone(), context.clone(), opts)
     }
 }
@@ -94,6 +98,7 @@ impl ModelProvider for OpenAIResponsesProvider {
         base.request.tool_choice = options.tool_choice.or(base.request.tool_choice);
         base.request.max_tokens = options.max_tokens.or(base.request.max_tokens);
         base.request.temperature = options.temperature.or(base.request.temperature);
+        base.on_response = options.on_response.or(base.on_response);
         providers::openai_responses::stream(self.client.clone(), model.clone(), context.clone(), base)
     }
 }

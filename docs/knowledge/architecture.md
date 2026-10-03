@@ -277,5 +277,30 @@ must not erase post-dispatch InvalidResponse/unknown-outcome evidence.
 
 These are bounded implemented boundaries, not full AuthStorage parity. The
 [source and executed AuthStorage evidence](../evidence/auth-storage.md) retains
-usage-only refresh/header ingestion, full callers, actual account and platform
+usage-only refresh, full callers, actual account and platform
 requirements. Root/independent review is required before durable acceptance.
+
+### Transient response notification and usage ingestion
+
+The model port exposes transient provider-response facts through an awaited
+callback. Reference Host storage, Registry and logical Session attribution
+remain outside Core. Native SessionStats attributes headers to the current
+Session account at callback time, independently of the request's authentication
+source; it does not capture a credential lease. Resolve the current Registry's
+first truthy provider base URL at that time. Compose internal ingestion before
+the selected external callback, preserving per-call/default precedence.
+
+Fixed ordinary OpenAI Completions and Responses notify only after successful
+POST dispatch. A callback failure is local evidence and cannot authorize
+credential refresh or model replay. Their body first-item budgets start after
+the callback; Responses disarms its request watchdog before notification,
+while Completions still settles callback work before reporting an elapsed
+request deadline. The exact Completions body-disconnect timing and precedence
+of a latched timeout over a callback rejection remain open.
+Fixed ordinary Codex SSE has no generic response-notification producer;
+retaining a callback option must not silently add one.
+
+Local header ingestion preserves prior reports and logical expiry rather than
+claiming a fresh full probe. Store override/delegate/aggregate hooks and the
+existing report-invalidation stale-retention difference remain required work.
+See [bounded source and executed header evidence](../evidence/usage-headers.md).

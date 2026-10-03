@@ -595,6 +595,17 @@ impl ModelRegistry {
         Ok(generation.engine.models_for_provider_lookup(provider)?)
     }
 
+    /// Native model-registry.ts getProviderBaseUrl: first truthy provider URL,
+    /// resolved from the current Registry generation rather than the call model.
+    pub fn get_provider_base_url(&self, provider: &WireString) -> RegistryRuntimeResult<Option<WireString>> {
+        Ok(self
+            .models_for_provider(provider)?
+            .into_iter()
+            // The native warm full-snapshot lookup can return other providers.
+            .filter(|model| text(model.spec(), "provider").as_ref() == Some(provider))
+            .find_map(|model| text(model.spec(), "baseUrl").filter(|url| !url.is_empty())))
+    }
+
     pub fn extension_snapshot(&self) -> ExtensionSnapshot {
         self.backend.extensions.snapshot()
     }

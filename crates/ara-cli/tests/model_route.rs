@@ -13,6 +13,464 @@ use std::sync::{
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+// Fixed provider-response.test.ts inputs, plus real Host and no-replay boundaries.
+#[tokio::test]
+async fn provider_response_notifications_follow_final_success_and_await_callback() {
+    // Headers and the first semantic body item have separate native budgets.
+    for api in ["openai-completions", "openai-responses"] {
+        let mut scripted =
+            if api == "openai-completions" { chat("fresh body budget") } else { responses("fresh body budget") };
+        scripted["delay_ms"] = json!(250);
+        let events = scripted["events"].as_array_mut().unwrap();
+        events.insert(0, json!({"sleep_ms":250}));
+        events.insert(0, json!({"raw":": keepalive\n\n"}));
+        let server = server(vec![scripted]).await;
+        let model = model(api, "openai", server.base_url());
+        let mut protocol = protocol(api);
+        match &mut protocol {
+            ProtocolOptions::Completions(options) => options.first_event_timeout = Some(Duration::from_millis(400)),
+            ProtocolOptions::Responses(options) => options.first_event_timeout = Some(Duration::from_millis(400)),
+            _ => unreachable!(),
+        }
+        let provider = PreparedRoute::new(
+            model.clone(),
+            protocol,
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Runtime,
+                Some("fixture-key".into()),
+            ))),
+            0,
+        )
+        .unwrap()
+        .bind(reqwest::Client::new(), None);
+        assert_eq!(
+            collect(provider.stream(&model, &context(), CallOptions::default())).await.stop_reason,
+            StopReason::Stop
+        );
+        assert_eq!(server.served(), 1);
+    }
+
+    for api in ["openai-completions", "openai-responses"] {
+        let mut success = if api == "openai-completions" { chat("observed") } else { responses("observed") };
+        success["status"] = json!(202);
+        success["headers"] = json!({"X-Request-ID":"req_stream_simple","X-RateLimit-Remaining":"42",
+            "Authorization":"response-private-marker"});
+        let server = server(vec![json!({"status":503,"body":"temporarily unavailable"}), success]).await;
+        let model = model(api, "openai", server.base_url());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let callback = ara_ai::ProviderResponseCallback::new({
+            let seen = seen.clone();
+            let entered = entered.clone();
+            let release = release.clone();
+            move |response, observed_model| {
+                let seen = seen.clone();
+                let entered = entered.clone();
+                let release = release.clone();
+                Box::pin(async move {
+                    seen.lock().unwrap().push((response, observed_model));
+                    entered.add_permits(1);
+                    release.acquire().await.unwrap().forget();
+                    Ok(())
+                })
+            }
+        });
+        let provider = PreparedRoute::new(
+            model.clone(),
+            protocol(api),
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Runtime,
+                Some("fixture-key".into()),
+            ))),
+            0,
+        )
+        .unwrap()
+        .bind(reqwest::Client::new(), None);
+        let mut stream =
+            provider.stream(&model, &context(), CallOptions { on_response: Some(callback), ..Default::default() });
+        tokio::time::timeout(Duration::from_secs(3), entered.acquire()).await.unwrap().unwrap().forget();
+        assert!(matches!(stream.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)));
+        assert_eq!(server.served(), 2, "unsuccessful attempt is not a response notification");
+        {
+            let observed = seen.lock().unwrap();
+            assert_eq!(observed.len(), 1);
+            assert_eq!(observed[0].0.status, 202);
+            assert_eq!(observed[0].0.request_id, Some(Some("req_stream_simple".into())));
+            assert_eq!(observed[0].0.headers["x-ratelimit-remaining"], "42");
+            assert_eq!(observed[0].1.as_ref(), Some(&model));
+        }
+        release.add_permits(1);
+        let terminal = collect(stream).await;
+        assert_eq!(terminal.stop_reason, StopReason::Stop);
+        assert!(!serde_json::to_string(&terminal).unwrap().contains("response-private-marker"));
+    }
+
+    for api in ["openai-completions", "openai-responses"] {
+        let scripted = if api == "openai-completions" { chat("after callback") } else { responses("after callback") };
+        let server = server(vec![scripted]).await;
+        let model = model(api, "openai", server.base_url());
+        let settled = Arc::new(AtomicUsize::new(0));
+        let callback = ara_ai::ProviderResponseCallback::new({
+            let settled = settled.clone();
+            move |_, _| {
+                let settled = settled.clone();
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(350)).await;
+                    settled.fetch_add(1, Ordering::AcqRel);
+                    Ok(())
+                })
+            }
+        });
+        let mut protocol = protocol(api);
+        match &mut protocol {
+            ProtocolOptions::Completions(options) => options.first_event_timeout = Some(Duration::from_millis(200)),
+            ProtocolOptions::Responses(options) => options.first_event_timeout = Some(Duration::from_millis(200)),
+            _ => unreachable!(),
+        }
+        let provider = PreparedRoute::new(
+            model.clone(),
+            protocol,
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Runtime,
+                Some("fixture-key".into()),
+            ))),
+            0,
+        )
+        .unwrap()
+        .bind(reqwest::Client::new(), None);
+        let output = collect(provider.stream(
+            &model,
+            &context(),
+            CallOptions { on_response: Some(callback), ..Default::default() },
+        ))
+        .await;
+        assert_eq!(settled.load(Ordering::Acquire), 1, "timeout does not discard callback work");
+        assert_eq!(server.served(), 1, "a callback deadline cannot replay the successful POST");
+        if api == "openai-completions" {
+            assert_eq!(output.stop_reason, StopReason::Error);
+            let evidence = output.failure_evidence.unwrap();
+            assert!(evidence.replay_blocked && evidence.same_route_blocked);
+        } else {
+            assert_eq!(output.stop_reason, StopReason::Stop);
+        }
+    }
+}
+
+struct CallbackRetryAuth(AtomicUsize);
+#[async_trait]
+impl RequestAuthResolver for CallbackRetryAuth {
+    async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+        Ok(RequestAuthLease::new(CredentialIdentity::Stored { id: 1, revision: 1 }, Some("fixture-key".into())))
+    }
+    fn supports_auth_refresh(&self) -> bool {
+        true
+    }
+    async fn refresh(&self, _: &Model, _: &CancellationToken) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        self.0.fetch_add(1, Ordering::AcqRel);
+        Ok(Some(RequestAuthLease::new(CredentialIdentity::Stored { id: 1, revision: 2 }, Some("changed-key".into()))))
+    }
+}
+
+#[tokio::test]
+async fn provider_response_callback_failures_cannot_authorize_auth_or_model_replay() {
+    for api in ["openai-completions", "openai-responses"] {
+        for status in [401, 429, 503] {
+            let success = if api == "openai-completions" { chat("unused") } else { responses("unused") };
+            let server = server(vec![success.clone(), success]).await;
+            let model = model(api, "openai", server.base_url());
+            let auth = Arc::new(CallbackRetryAuth(AtomicUsize::new(0)));
+            let calls = Arc::new(AtomicUsize::new(0));
+            let callback = ara_ai::ProviderResponseCallback::new({
+                let calls = calls.clone();
+                move |_, _| {
+                    calls.fetch_add(1, Ordering::AcqRel);
+                    Box::pin(async move {
+                        Err(ara_ai::ProviderError::Http {
+                            status,
+                            detail: "invalidated OAuth token; usage limit; retry your request".into(),
+                        })
+                    })
+                }
+            });
+            let provider = PreparedRoute::new(model.clone(), protocol(api), auth.clone(), 0)
+                .unwrap()
+                .bind(reqwest::Client::new(), None);
+            let terminal = collect(provider.stream(
+                &model,
+                &context(),
+                CallOptions { on_response: Some(callback), ..Default::default() },
+            ))
+            .await;
+            assert_eq!(terminal.stop_reason, StopReason::Error);
+            assert_eq!(server.served(), 1);
+            assert_eq!(calls.load(Ordering::Acquire), 1);
+            assert_eq!(auth.0.load(Ordering::Acquire), 0);
+            let evidence = terminal.failure_evidence.unwrap();
+            assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Config);
+            assert!(evidence.replay_blocked && evidence.same_route_blocked);
+        }
+    }
+}
+
+struct HeaderFixtureUsage;
+#[async_trait]
+impl ara_cli::auth_storage::UsageProvider for HeaderFixtureUsage {
+    async fn fetch_usage(
+        &self,
+        _: ara_cli::auth_storage::UsageRequest,
+        _: &CancellationToken,
+    ) -> Result<Option<ara_cli::auth_storage_policy::UsageReport>, ara_cli::auth_storage::UsageFetchError> {
+        Ok(ara_cli::codex_usage::parse_codex_rate_limit_headers(&quota_headers(1), ara_ai::now_ms() as f64))
+    }
+    fn rate_limit_header_parser(&self) -> Option<ara_cli::auth_storage::RateLimitHeaderParser> {
+        Some(ara_cli::codex_usage::parse_codex_rate_limit_headers)
+    }
+}
+fn quota_headers(used: u32) -> std::collections::BTreeMap<String, String> {
+    [
+        ("x-codex-primary-used-percent".into(), used.to_string()),
+        ("x-codex-primary-window-minutes".into(), "300".into()),
+        ("x-codex-primary-reset-at".into(), ((ara_ai::now_ms() / 1000) + 3600).to_string()),
+        ("x-codex-secondary-used-percent".into(), used.to_string()),
+        ("x-codex-secondary-window-minutes".into(), "10080".into()),
+        ("x-codex-secondary-reset-at".into(), ((ara_ai::now_ms() / 1000) + 3600).to_string()),
+    ]
+    .into()
+}
+
+/// Existing custom ModelProvider port, equivalent to native AgentOptions.streamFn.
+struct HeaderExtension;
+impl ara_ai::ModelProvider for HeaderExtension {
+    fn stream(&self, model: &Model, _: &Context, options: CallOptions) -> ara_ai::AssistantStream {
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        let model = model.clone();
+        tokio::spawn(async move {
+            let response = ara_ai::ProviderResponseMetadata {
+                status: 200,
+                headers: quota_headers(100),
+                request_id: Some(None),
+                metadata: None,
+            };
+            let result = options
+                .on_response
+                .expect("Host installs extension callback")
+                .notify(response, Some(model.clone()))
+                .await;
+            let mut output = AssistantMessage::empty(&model.api, &model.provider, &model.id);
+            let event = if let Err(error) = result {
+                output.stop_reason = StopReason::Error;
+                output.error_message = Some(error.to_string());
+                ara_ai::AssistantMessageEvent::Error { reason: StopReason::Error, error: output }
+            } else {
+                output.stop_reason = StopReason::Stop;
+                ara_ai::AssistantMessageEvent::Done { reason: StopReason::Stop, message: output }
+            };
+            let _ = sender.send(event).await;
+        });
+        receiver
+    }
+}
+
+#[tokio::test]
+async fn host_usage_callback_rotates_current_account_and_codex_http_remains_silent() {
+    use ara_cli::{
+        auth_storage::{AuthRequestContext, AuthStorage, AuthStorageOptions},
+        credential_store::{AuthCredential, SqliteCredentialStore},
+        openai_codex_auth::OpenAiCodexAuth,
+        session_usage_headers::SessionUsageHeaders,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let codex = Arc::new(OpenAiCodexAuth::open(dir.path().join("auth.db"), reqwest::Client::new()).await.unwrap());
+    // An independent SQLite connection observes the real durable store without
+    // exposing the account owner's private handle as a new public interface.
+    let store = Arc::new(Mutex::new(SqliteCredentialStore::open(dir.path().join("auth.db")).unwrap()));
+    let rows = store
+        .lock()
+        .unwrap()
+        .replace_auth_credentials_for_provider(
+            "openai-codex",
+            &[
+                AuthCredential::oauth(
+                    json!({"access":"fixture-A","refresh":"refresh-A","expires":ara_ai::now_ms()+3600000,
+            "accountId":"account-A","email":"a@fixture"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+                AuthCredential::oauth(
+                    json!({"access":"fixture-B","refresh":"refresh-B","expires":ara_ai::now_ms()+3600000,
+            "accountId":"account-B","email":"b@fixture"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            ],
+        )
+        .unwrap();
+    let storage =
+        AuthStorage::for_codex(codex.clone(), AuthStorageOptions { jitter: Arc::new(|| 0.5), ..Default::default() })
+            .unwrap();
+    storage.register_usage_provider("openai-codex", Arc::new(HeaderFixtureUsage)).unwrap();
+    let base = "https://chatgpt.com/backend-api";
+    let context = AuthRequestContext {
+        session_id: Some("logical-session".into()),
+        base_url: Some(base.into()),
+        ..Default::default()
+    };
+    let cancel = CancellationToken::new();
+    storage.get_api_key("openai-codex", &context, &cancel).await.unwrap().unwrap();
+    assert_eq!(
+        storage.peek_oauth_access("openai-codex", Some("logical-session")).unwrap().unwrap().credential_id,
+        rows[0].id
+    );
+    let owner = SessionUsageHeaders::new(storage.clone(), context.session_id.clone(), Some(base.into()));
+    let extension = owner.bind(Arc::new(HeaderExtension));
+    let fixture_model = model("openai-codex-responses", "openai-codex", base.into());
+    assert_eq!(
+        collect(extension.stream(&fixture_model, &self::context(), CallOptions::default())).await.stop_reason,
+        StopReason::Stop
+    );
+    storage.get_api_key("openai-codex", &context, &cancel).await.unwrap().unwrap();
+    assert_eq!(
+        storage.peek_oauth_access("openai-codex", Some("logical-session")).unwrap().unwrap().credential_id,
+        rows[1].id
+    );
+
+    // Native attribution follows the active Session row at callback time.
+    storage.pin_session_oauth_account("openai-codex", "new-session", rows[1].id, None).unwrap();
+    owner
+        .for_session("new-session")
+        .ingest_provider_usage_headers(
+            &ara_ai::ProviderResponseMetadata {
+                status: 429,
+                headers: quota_headers(100),
+                request_id: None,
+                metadata: None,
+            },
+            Some(&fixture_model),
+        )
+        .unwrap();
+    owner
+        .ingest_provider_usage_headers(
+            &ara_ai::ProviderResponseMetadata {
+                status: 204,
+                headers: quota_headers(100),
+                request_id: Some(None),
+                metadata: None,
+            },
+            None,
+        )
+        .unwrap();
+
+    // Host interception consumes quota before the chosen configured/per-call
+    // callback; an explicit per-call callback retains the adapter precedence.
+    for (index, (api, per_call)) in [
+        ("openai-completions", false),
+        ("openai-completions", true),
+        ("openai-responses", false),
+        ("openai-responses", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let minutes = 17 + index;
+        let mut headers = quota_headers(100);
+        headers.insert("x-codex-primary-window-minutes".into(), minutes.to_string());
+        let mut scripted =
+            if api == "openai-completions" { chat("callback order") } else { responses("callback order") };
+        scripted["headers"] = serde_json::to_value(headers).unwrap();
+        let server = server(vec![scripted]).await;
+        let model = model(api, "openai-codex", server.base_url());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let make_callback = |label: &'static str| {
+            let store = store.clone();
+            let seen = seen.clone();
+            ara_ai::ProviderResponseCallback::new(move |_, _| {
+                let store = store.clone();
+                let seen = seen.clone();
+                Box::pin(async move {
+                    let cache = store.lock().unwrap().get_cache(
+                        "usage_cache:report:openai-codex:https://chatgpt.com/backend-api:oauth|account:account-B|email:b@fixture",
+                        true,
+                    ).unwrap().unwrap();
+                    let cache: Value = serde_json::from_str(&cache).unwrap();
+                    assert_eq!(
+                        cache["value"]["limits"][0]["window"]["durationMs"].as_f64(),
+                        Some((minutes * 60_000) as f64)
+                    );
+                    seen.lock().unwrap().push(label);
+                    Ok(())
+                })
+            })
+        };
+        let mut configured = protocol(api);
+        match &mut configured {
+            ProtocolOptions::Completions(options) => options.on_response = Some(make_callback("configured")),
+            ProtocolOptions::Responses(options) => options.on_response = Some(make_callback("configured")),
+            _ => unreachable!(),
+        }
+        let provider = PreparedRoute::new(
+            model.clone(),
+            configured,
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Runtime,
+                Some("fixture-key".into()),
+            ))),
+            0,
+        )
+        .unwrap()
+        .with_usage_headers(owner.for_session("new-session"))
+        .bind(reqwest::Client::new(), None);
+        let options = CallOptions { on_response: per_call.then(|| make_callback("per-call")), ..Default::default() };
+        assert_eq!(collect(provider.stream(&model, &self::context(), options)).await.stop_reason, StopReason::Stop);
+        assert_eq!(*seen.lock().unwrap(), vec![if per_call { "per-call" } else { "configured" }]);
+    }
+
+    let mut scripted = responses("ordinary Codex");
+    scripted["headers"] = serde_json::to_value(quota_headers(100)).unwrap();
+    let server = server(vec![scripted]).await;
+    let model = model("openai-codex-responses", "openai-codex", server.base_url());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let callback = ara_ai::ProviderResponseCallback::new({
+        let calls = calls.clone();
+        move |_, _| {
+            calls.fetch_add(1, Ordering::AcqRel);
+            Box::pin(async { Ok(()) })
+        }
+    });
+    let route = PreparedRoute::new(
+        model.clone(),
+        ProtocolOptions::CodexResponses(Default::default()),
+        Arc::new(FixedRequestAuth::new(
+            RequestAuthLease::new(CredentialIdentity::Runtime, Some("fixture-key".into()))
+                .with_headers(vec![("chatgpt-account-id".into(), "fixture-account".into())]),
+        )),
+        0,
+    )
+    .unwrap()
+    .with_usage_headers(owner);
+    let snapshot = store
+        .lock()
+        .unwrap()
+        .get_cache(
+            "usage_cache:report:openai-codex:https://chatgpt.com/backend-api:oauth|account:account-B|email:b@fixture",
+            true,
+        )
+        .unwrap();
+    let terminal = collect(route.bind_codex_session(reqwest::Client::new(), "new-session".into()).stream(
+        &model,
+        &self::context(),
+        CallOptions { on_response: Some(callback), ..Default::default() },
+    ))
+    .await;
+    assert_eq!(terminal.stop_reason, StopReason::Stop, "{terminal:?}");
+    assert_eq!(calls.load(Ordering::Acquire), 0);
+    assert_eq!(server.served(), 1);
+    assert_eq!(snapshot, store.lock().unwrap().get_cache(
+        "usage_cache:report:openai-codex:https://chatgpt.com/backend-api:oauth|account:account-B|email:b@fixture", true).unwrap());
+}
+
 fn model(api: &str, provider: &str, base_url: String) -> Model {
     Model {
         id: format!("{provider}-model"),

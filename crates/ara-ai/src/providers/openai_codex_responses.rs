@@ -37,6 +37,8 @@ pub struct StreamOptions {
     pub retry: RetryPolicy,
     /// Stable logical host Session identity, including after journal resume.
     pub session_id: Option<String>,
+    /// Native capability parameter; ordinary SSE has no notification producer.
+    pub on_response: Option<crate::ProviderResponseCallback>,
 }
 
 impl Default for StreamOptions {
@@ -50,6 +52,7 @@ impl Default for StreamOptions {
             extra_headers: Vec::new(),
             retry: RetryPolicy::default(),
             session_id: None,
+            on_response: None,
         }
     }
 }
@@ -66,6 +69,7 @@ impl ModelProvider for OpenAICodexResponsesProvider {
         base.request.tool_choice = options.tool_choice.or(base.request.tool_choice);
         base.request.max_tokens = options.max_tokens.or(base.request.max_tokens);
         base.request.temperature = options.temperature.or(base.request.temperature);
+        base.on_response = options.on_response.or(base.on_response);
         stream(self.client.clone(), model.clone(), context.clone(), base)
     }
 }
@@ -84,6 +88,7 @@ pub fn stream(client: reqwest::Client, model: Model, context: Context, options: 
         // including the first call on a freshly resumed host Session.
         session_state: None,
         stateful_responses: false,
+        on_response: options.on_response,
     };
     openai_responses::stream_with_protocol(client, model, context, shared, protocol)
 }

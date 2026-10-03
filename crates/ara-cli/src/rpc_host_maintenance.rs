@@ -140,7 +140,8 @@ impl Host {
                 self.session.header["id"].as_str().map(str::to_owned),
                 &self.sessions.cwd,
                 &active.cancel,
-                self.sessions.provider.account_auth.clone(),
+                self.sessions.provider.shared_account.clone(),
+                self.sessions.provider.registry.clone(),
             )
             .await?;
             provider

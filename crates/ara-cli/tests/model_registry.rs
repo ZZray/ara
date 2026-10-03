@@ -136,6 +136,12 @@ async fn production_cache_discovery_identity_reload_and_daily_projection() {
     assert_eq!(selection.model.context_window, Some(64000.0));
     assert_eq!(selection.model.base_url, "http://catalog.test/v3/compat");
     assert_eq!(fetch.calls.lock().unwrap().len(), 1);
+    // Native provider lookup returns the whole catalog after get_all warms it;
+    // header attribution still requires an exact provider match and truthy URL.
+    registry.get_all().unwrap();
+    assert_eq!(registry.get_provider_base_url(&"q".into()).unwrap(), text(q.spec(), "baseUrl"));
+    assert_eq!(registry.get_provider_base_url(&"p".into()).unwrap(), Some("http://catalog.test/v3/compat".into()));
+    assert!(registry.get_provider_base_url(&"missing-provider".into()).unwrap().is_none());
     let hot = ModelRegistry::open(ModelsConfigFile::new(&path).unwrap(), options(), host(temp.path(), fetch.clone()))
         .await
         .unwrap();
