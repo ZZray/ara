@@ -15,5 +15,9 @@ Saved-reset consent, durable operation identity, scoped Unknown fences and
 current-Host retry admission are documented in
 [Core ownership and host boundary](architecture.md#saved-reset-operation-and-host-admission-ownership),
 with [bounded source and execution evidence](../evidence/codex-reset-controllers.md).
+Private actual-request quota feedback, its separate settlement owner and RPC
+Agent-terminal versus recovery-receipt ordering are documented in
+[Session quota ownership](architecture.md#privately-correlated-session-quota-feedback),
+with [HTTP/body and process evidence](../evidence/session-quota-recovery.md).
 
 Use [the roadmap](../roadmap.md) for planned work, [the feature ledger](../upstream/feature-ledger.md) for per-item implementation state, and `docs/evidence/` for actual test receipts. Do not copy transient progress or machine-specific secrets into this knowledge base.

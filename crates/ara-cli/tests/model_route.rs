@@ -1370,6 +1370,134 @@ async fn quota_reset_receipt_sibling_cycle_budget_cancellation_and_replay_veto_f
 }
 
 #[tokio::test]
+async fn post_emitted_quota_publication_settlement_and_handled_terminal_family() {
+    struct Publication {
+        order: Mutex<Vec<&'static str>>,
+        raw: Mutex<Option<AssistantMessage>>,
+        identity: Mutex<Option<RequestIdentity>>,
+        handled: bool,
+        fail_settle: bool,
+        fail_publish: bool,
+    }
+    impl RequestReceiptObserver for Publication {
+        fn started(&self, request: &RequestIdentity) -> Result<(), ReceiptError> {
+            self.order.lock().unwrap().push("started");
+            *self.identity.lock().unwrap() = Some(request.clone());
+            Ok(())
+        }
+        fn settled(&self, _: &RequestIdentity, _: &AssistantMessage) -> Result<(), ReceiptError> {
+            self.order.lock().unwrap().push("settled");
+            if self.fail_settle { Err(ReceiptError) } else { Ok(()) }
+        }
+        fn quota_rejected(
+            &self,
+            request: &RequestIdentity,
+            lease: &RequestAuthLease,
+            message: &AssistantMessage,
+        ) -> Result<bool, ReceiptError> {
+            self.order.lock().unwrap().push("quota");
+            assert_eq!(self.identity.lock().unwrap().as_ref(), Some(request));
+            assert_eq!(&request.credential, lease.identity());
+            *self.raw.lock().unwrap() = Some(message.clone());
+            if self.fail_publish { Err(ReceiptError) } else { Ok(self.handled) }
+        }
+        fn interrupted(&self, _: &RequestIdentity) {
+            panic!("fixture publishes a terminal");
+        }
+    }
+    for (name, handled, fail_settle, fail_publish) in [
+        ("correlated feedback", true, false, false),
+        ("default non-owner", false, false, false),
+        ("settlement veto", true, true, false),
+        ("publication veto", true, false, true),
+    ] {
+        let wire = server(vec![json!({"events":[
+            {"data":{"choices":[{"delta":{"content":"retained provider output"}}]}},
+            {"data":{"error":{"code":400,"message":"insufficient_quota: quota exceeded"}}}
+        ]})])
+        .await;
+        let prepared = model("openai-completions", "quota-fixture", wire.base_url());
+        let publication = Arc::new(Publication {
+            order: Mutex::new(Vec::new()),
+            raw: Mutex::new(None),
+            identity: Mutex::new(None),
+            handled,
+            fail_settle,
+            fail_publish,
+        });
+        let provider = PreparedRoute::new(
+            prepared.clone(),
+            protocol(&prepared.api),
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Stored { id: 19, revision: 2 },
+                Some("private-fixture-lease".into()),
+            ))),
+            79,
+        )
+        .unwrap()
+        .bind(reqwest::Client::new(), Some(publication.clone()));
+        let terminal = collect(provider.stream(&prepared, &context(), CallOptions::default())).await;
+        assert_eq!(terminal.text(), "retained provider output", "{name}");
+        assert_eq!(terminal.stop_reason, StopReason::Error, "{name}");
+        assert_eq!(wire.served(), 1, "{name}");
+        let order = publication.order.lock().unwrap().clone();
+        assert_eq!(
+            order,
+            if fail_settle { vec!["started", "settled"] } else { vec!["started", "settled", "quota"] },
+            "{name}"
+        );
+        if handled && !fail_settle && !fail_publish {
+            assert_eq!(
+                publication.raw.lock().unwrap().as_ref(),
+                Some(&terminal),
+                "published terminal is the private proof"
+            );
+            let evidence = terminal.failure_evidence.as_ref().unwrap();
+            assert!(evidence.replay_blocked && evidence.same_route_blocked);
+        }
+        if fail_publish {
+            let evidence = terminal.failure_evidence.as_ref().unwrap();
+            assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Config);
+            assert_eq!(evidence.context_recovery, Some(ara_ai::ContextRecoveryEvidence::NativeValidation));
+            assert!(evidence.replay_blocked && evidence.same_route_blocked);
+        }
+        let public = serde_json::to_string(&terminal).unwrap();
+        assert!(!public.contains("private-fixture-lease"));
+        assert!(!public.contains(&publication.identity.lock().unwrap().as_ref().unwrap().call_id.to_string()));
+    }
+
+    // The pre-output driver, successful callbacks and default receipt observers
+    // retain their own ownership. No post-output owner may duplicate that work.
+    let wire = server(vec![json!({"status":429,"body":"insufficient_quota"})]).await;
+    let prepared = model("openai-completions", "quota-fixture", wire.base_url());
+    let publication = Arc::new(Publication {
+        order: Mutex::new(Vec::new()),
+        raw: Mutex::new(None),
+        identity: Mutex::new(None),
+        handled: true,
+        fail_settle: false,
+        fail_publish: false,
+    });
+    let provider = PreparedRoute::new(
+        prepared.clone(),
+        protocol(&prepared.api),
+        Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+            CredentialIdentity::Stored { id: 19, revision: 2 },
+            Some("private-fixture-lease".into()),
+        ))),
+        79,
+    )
+    .unwrap()
+    .bind(reqwest::Client::new(), Some(publication.clone()));
+    assert_eq!(
+        collect(provider.stream(&prepared, &context(), CallOptions::default())).await.stop_reason,
+        StopReason::Error
+    );
+    assert_eq!(*publication.order.lock().unwrap(), ["started", "settled"]);
+    assert!(publication.raw.lock().unwrap().is_none());
+}
+
+#[tokio::test]
 async fn configured_key_suppresses_oauth_selection_and_account_identity() {
     use ara_cli::config_request_auth::{ConfigRequestAuth, ConfigRequestAuthSpec};
     struct Account(AtomicUsize);

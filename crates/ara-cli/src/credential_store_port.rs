@@ -36,6 +36,27 @@ use crate::credential_store::{
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
+/// Owned acknowledgement for one block write. Queue admission and a projection
+/// update do not constitute a confirmed remote application.
+pub struct CredentialBlockSettlement {
+    completion: Option<tokio::sync::oneshot::Receiver<bool>>,
+}
+
+impl CredentialBlockSettlement {
+    pub(crate) fn settled() -> Self {
+        Self { completion: None }
+    }
+    pub(crate) fn pending(completion: tokio::sync::oneshot::Receiver<bool>) -> Self {
+        Self { completion: Some(completion) }
+    }
+    pub async fn confirmed(self) -> bool {
+        match self.completion {
+            None => true,
+            Some(completion) => completion.await.unwrap_or(false),
+        }
+    }
+}
+
 /// Short synchronous store operations. Network capabilities are obtained from
 /// the same owner only after these operations and Host locks have finished.
 /// SQLite is Send, not Sync; callers borrow it under its original mutex.
@@ -69,6 +90,10 @@ pub trait AuthCredentialStore: Send {
     fn get_credential_block(&self, id: i64, provider: &str, scope: &str) -> Result<Option<i64>>;
     fn get_credential_block_reconcile_after(&self, id: i64, provider: &str, scope: &str) -> Result<Option<i64>>;
     fn upsert_credential_block(&self, block: &StoredCredentialBlock) -> Result<()>;
+    fn upsert_credential_block_observed(&self, block: &StoredCredentialBlock) -> Result<CredentialBlockSettlement> {
+        self.upsert_credential_block(block)?;
+        Ok(CredentialBlockSettlement::settled())
+    }
     fn delete_credential_block(&self, id: i64, provider: &str, scope: &str) -> Result<()>;
     fn delete_credential_blocks(&self, id: i64) -> Result<()>;
     fn clean_expired_credential_blocks(&self, now: i64) -> Result<()>;

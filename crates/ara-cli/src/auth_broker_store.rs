@@ -36,7 +36,7 @@ use crate::credential_store::{
     AuthCredential, ClientUsageEntry, ClientUsageReport, CredentialRefreshLeaseFence, DisabledCredentialSummary,
     StoredAuthCredential, StoredCredentialBlock, UsageHistoryEntry, UsageHistoryQuery, serialize_credential,
 };
-use crate::credential_store_port::AuthCredentialStore;
+use crate::credential_store_port::{AuthCredentialStore, CredentialBlockSettlement};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1196,6 +1196,62 @@ impl RemoteAuthCredentialStore {
         });
         Ok(())
     }
+
+    fn project_credential_block(&self, block: &StoredCredentialBlock) -> Result<BrokerBlock, AuthStorageError> {
+        self.ensure_open()?;
+        self.note_activity();
+        let now = (self.inner.clock)();
+        let body = BrokerBlock {
+            provider_key: block.provider_key.clone(),
+            block_scope: block.block_scope.clone(),
+            blocked_until_ms: block.blocked_until_ms as f64,
+            updated_at_ms: Some(block.updated_at_ms as f64),
+        };
+        let mut state = self.inner.state.lock().unwrap();
+        let previous = state.snapshot.clone();
+        if let Some(entry) = state.snapshot.credentials.iter_mut().find(|entry| entry.id == block.credential_id) {
+            if let Some(old) = entry
+                .blocks
+                .iter_mut()
+                .find(|old| old.provider_key == body.provider_key && old.block_scope == body.block_scope)
+            {
+                old.blocked_until_ms = old.blocked_until_ms.max(body.blocked_until_ms);
+            } else {
+                entry.blocks.push(body.clone());
+            }
+            entry.blocks.sort_by(compare_blocks);
+        }
+        state.reconcile_after.insert(
+            (block.credential_id, block.provider_key.clone(), block.block_scope.clone()),
+            (block.blocked_until_ms as f64).min(now + BLOCK_RECONCILE_DELAY_MS),
+        );
+        self.inner.usage.invalidate_usage_cache();
+        self.publish_projection(&mut state, &previous);
+        Ok(body)
+    }
+
+    fn spawn_observed_block_write(
+        &self,
+        id: i64,
+        body: BrokerBlock,
+    ) -> Result<CredentialBlockSettlement, AuthStorageError> {
+        let finite = self.finite_owner()?;
+        let receipt = self.begin_receipt(RemoteOperation::UpsertBlock { credential_id: id });
+        let owner = self.clone();
+        let (done, completion) = oneshot::channel();
+        self.inner.handle.spawn(async move {
+            let _finite = finite;
+            let result = owner.inner.client.upsert_credential_block(id, &body, &CancellationToken::new()).await;
+            let confirmed = matches!(result, Ok(true));
+            let succeeded = result.is_ok();
+            receipt.finish(&result);
+            if succeeded {
+                owner.maybe_refresh_snapshot();
+            }
+            let _ = done.send(confirmed);
+        });
+        Ok(CredentialBlockSettlement::pending(completion))
+    }
     fn prune_blocks(&self, now: f64) {
         let mut state = self.inner.state.lock().unwrap();
         let previous = state.snapshot.clone();
@@ -1353,42 +1409,19 @@ impl AuthCredentialStore for RemoteAuthCredentialStore {
             .map(|until| *until as i64))
     }
     fn upsert_credential_block(&self, block: &StoredCredentialBlock) -> anyhow::Result<()> {
-        self.ensure_open()?;
-        self.note_activity();
-        let now = (self.inner.clock)();
-        let body = BrokerBlock {
-            provider_key: block.provider_key.clone(),
-            block_scope: block.block_scope.clone(),
-            blocked_until_ms: block.blocked_until_ms as f64,
-            updated_at_ms: Some(block.updated_at_ms as f64),
-        };
-        {
-            let mut state = self.inner.state.lock().unwrap();
-            let previous = state.snapshot.clone();
-            if let Some(entry) = state.snapshot.credentials.iter_mut().find(|entry| entry.id == block.credential_id) {
-                if let Some(old) = entry
-                    .blocks
-                    .iter_mut()
-                    .find(|old| old.provider_key == body.provider_key && old.block_scope == body.block_scope)
-                {
-                    old.blocked_until_ms = old.blocked_until_ms.max(body.blocked_until_ms);
-                } else {
-                    entry.blocks.push(body.clone());
-                }
-                entry.blocks.sort_by(compare_blocks);
-            }
-            state.reconcile_after.insert(
-                (block.credential_id, block.provider_key.clone(), block.block_scope.clone()),
-                (block.blocked_until_ms as f64).min(now + BLOCK_RECONCILE_DELAY_MS),
-            );
-            self.inner.usage.invalidate_usage_cache();
-            self.publish_projection(&mut state, &previous);
-        }
+        let body = self.project_credential_block(block)?;
         let id = block.credential_id;
         self.spawn_write(RemoteOperation::UpsertBlock { credential_id: id }, true, move |client, token| async move {
             client.upsert_credential_block(id, &body, &token).await
         })?;
         Ok(())
+    }
+    fn upsert_credential_block_observed(
+        &self,
+        block: &StoredCredentialBlock,
+    ) -> anyhow::Result<CredentialBlockSettlement> {
+        let body = self.project_credential_block(block)?;
+        self.spawn_observed_block_write(block.credential_id, body).map_err(Into::into)
     }
     fn delete_credential_block(&self, _id: i64, _provider: &str, _scope: &str) -> anyhow::Result<()> {
         self.ensure_open()?;

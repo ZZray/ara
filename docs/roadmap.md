@@ -1,5 +1,26 @@
 # Delivery roadmap
 
+**Current checkpoint, 2026-10-03 (Session quota recovery module-tested WIP):**
+[HTTP hints and same-Session evidence](evidence/session-quota-recovery.md) connects
+body-only account hints, privately correlated actual failed leases, owned durable
+feedback, sibling/reset/earliest-wait recovery and cancellation to actual CLI/RPC.
+Visible text and actual tool effects retain their replay veto. Grouped modules
+550/0/0; one frozen Windows backend1831/0/20 in984.777s, fmt/Clippy/doc/inventory/
+build PASS. Existing unmaintained ttf-parser keeps dependency acceptance FAIL.
+CAS artifact/read-back/continuation and corrective history pass:six calls/9.183s;
+the first resume prompt supplied answers and proves continuation only.
+Independent Codex final source/execution/document POST approves tested bounded
+WIP. Failed process observations are retained;
+event-order, exact OAuth block-key and startup-Gate fixture corrections preserve
+the original criteria. No new complete surface or point is accepted:111 surfaces
+27 implementing/1 tested/83 open/0 complete;60 points35 limited accepted/
+23 implementing/2 tested. Started28/111=25.2%; limited35/60=58.3% is not total
+completion. P0/V1 accepted, P1-P6 open, RPC27/42, full marker null. Next: native
+reserve/fallback/revert and check/diagnostic controllers, Broker server/management,
+complete Settings/TUI/ACP and recorded Provider/date/watchdog differences.
+Custom OpenAI protocol and account login retain priority; other Providers remain
+recorded required work. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 (saved-reset controllers tested WIP):**
 [Saved-reset controller evidence](evidence/codex-reset-controllers.md) connects native planning/settings, manual/blocked/sweep and
 supported pre-output quota recovery to the shared account owner and actual

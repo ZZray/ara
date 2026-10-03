@@ -25,7 +25,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use codex_reset_host::{Gate, Reply, ResetFixture};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{
@@ -112,11 +112,16 @@ struct WireState {
     consume: Consume,
     post_gate: Option<Arc<Gate>>,
     detail_gate: Option<Arc<Gate>>,
+    usage_gate: Option<Arc<Gate>>,
     detail_gate_after: usize,
+    detail_gate_after_model: bool,
     details: AtomicUsize,
     after_post: Option<Arc<dyn Fn() + Send + Sync>>,
     model_calls: AtomicUsize,
     quota_until_reset: bool,
+    model_replies: Mutex<VecDeque<Reply>>,
+    exhaust_on_model: bool,
+    usage_by_account: Mutex<HashMap<String, (usize, i64)>>,
 }
 
 impl WireState {
@@ -129,11 +134,16 @@ impl WireState {
             consume,
             post_gate: None,
             detail_gate: None,
+            usage_gate: None,
             detail_gate_after: 0,
+            detail_gate_after_model: false,
             details: AtomicUsize::new(0),
             after_post: None,
             model_calls: AtomicUsize::new(0),
             quota_until_reset: false,
+            model_replies: Mutex::new(VecDeque::new()),
+            exhaust_on_model: false,
+            usage_by_account: Mutex::new(HashMap::new()),
         }
     }
 
@@ -143,18 +153,23 @@ impl WireState {
         let fixture = ResetFixture::start(move |request| {
             if request.path.ends_with("/wham/usage") {
                 let count = route.balances.lock().unwrap().get(request.account()).copied().unwrap_or(0);
-                let used = route.used.load(Ordering::Acquire);
-                return Reply::json(200, json!({"plan_type":"pro","rate_limit":{
+                let (used, reset_at) = route.usage_by_account.lock().unwrap().get(request.account()).copied()
+                    .map(|(used, reset)| (if reset <= chrono::Utc::now().timestamp() { 0 } else { used }, reset))
+                    .unwrap_or((route.used.load(Ordering::Acquire), route.reset_at));
+                let reply = Reply::json(200, json!({"plan_type":"pro","rate_limit":{
                     "allowed":used < 100,"limit_reached":used >= 100,
-                    "primary_window":{"used_percent":used,"limit_window_seconds":18000,"reset_at":route.reset_at}},
+                    "primary_window":{"used_percent":used,"limit_window_seconds":18000,"reset_at":reset_at}},
                     "rate_limit_reset_credits":{"available_count":count}}));
+                return if route.model_calls.load(Ordering::Acquire) > 0 && let Some(gate) = &route.usage_gate { reply.held(gate) } else { reply };
             }
             if request.path.ends_with("/wham/rate-limit-reset-credits") {
                 let count = route.balances.lock().unwrap().get(request.account()).copied().unwrap_or(0);
                 let credits: Vec<_> = (0..count).map(|index| json!({"id":format!("credit-{index}"),"status":"available","expires_at":route.expiry})).collect();
                 let reply = Reply::json(200, json!({"available_count":count,"credits":credits}));
                 let index = route.details.fetch_add(1, Ordering::AcqRel);
-                return if index >= route.detail_gate_after && let Some(gate) = &route.detail_gate { reply.held(gate) } else { reply };
+                return if index >= route.detail_gate_after
+                    && (!route.detail_gate_after_model || route.model_calls.load(Ordering::Acquire) > 0)
+                    && let Some(gate) = &route.detail_gate { reply.held(gate) } else { reply };
             }
             if request.method == "POST" && request.path.ends_with("/wham/rate-limit-reset-credits/consume") {
                 assert_eq!(request.body["account_id"], request.account());
@@ -175,7 +190,13 @@ impl WireState {
                 return if let Some(gate) = &route.post_gate { reply.held(gate) } else { reply };
             }
             if request.method == "POST" && request.path.ends_with("/codex/responses") {
-                route.model_calls.fetch_add(1, Ordering::AcqRel);
+                let index = route.model_calls.fetch_add(1, Ordering::AcqRel);
+                if index == 0 && route.exhaust_on_model {
+                    route.used.store(100, Ordering::Release);
+                }
+                if let Some(reply) = route.model_replies.lock().unwrap().pop_front() {
+                    return reply;
+                }
                 if route.quota_until_reset && route.used.load(Ordering::Acquire) >= 100 {
                     // Fixed fetch-retry returns a quota hint beyond its delay
                     // ceiling to the Host instead of doing ordinary backoff.
@@ -711,6 +732,7 @@ struct ProcessHost {
     sessions: PathBuf,
     auth: PathBuf,
     receipts: PathBuf,
+    credential_id: i64,
 }
 
 impl ProcessHost {
@@ -721,7 +743,7 @@ impl ProcessHost {
         let agent = home.path().join("agent");
         std::fs::create_dir(&agent).unwrap();
         let auth = agent.join("auth.db");
-        seed(&auth, account);
+        let credential_id = seed(&auth, account);
         std::fs::write(
             agent.join("models.yml"),
             json!({"providers":{"openai-codex":{
@@ -761,10 +783,14 @@ impl ProcessHost {
             .unwrap();
         let sessions = home.path().join("sessions");
         let receipts = agent.join("codex-reset-operations.db");
-        Self { home, work, sessions, auth, receipts }
+        Self { home, work, sessions, auth, receipts, credential_id }
     }
 
     fn command(&self, fixture: &ResetFixture, args: &[&str]) -> Command {
+        self.command_tools(fixture, args, "")
+    }
+
+    fn command_tools(&self, fixture: &ResetFixture, args: &[&str], tools: &str) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ara"));
         command.env_clear();
         for name in ["PATH", "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATHEXT"] {
@@ -787,7 +813,7 @@ impl ProcessHost {
                 "reset-model",
                 "--no-skills",
                 "--tools",
-                "",
+                tools,
                 "--max-model-calls",
                 "4",
                 "--compact-threshold",
@@ -1027,4 +1053,629 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
     );
     assert!(SqliteResetReceiptStore::open(&host.receipts).unwrap().receipts().unwrap()[0].is_confirmed_reset());
     assert!(host.journal().contains("Saved reset completed this turn."));
+}
+
+// These five coarse families exercise post-emitted Session ownership. The
+// pre-output AuthRetryState families above remain distinct: a provider Start
+// followed by a quota terminal must be attributed even when no text was shown.
+#[derive(Clone, Copy)]
+enum QuotaContent {
+    Thinking,
+    Whitespace,
+    UnfinishedTool,
+    CompletedTool,
+    Visible,
+    MixedVisibleTools,
+}
+
+fn quota_stream(content: QuotaContent, hint: bool) -> Reply {
+    let mut events = vec![json!({"type":"response.created","response":{"id":"resp_quota_actual"}})];
+    match content {
+        QuotaContent::Thinking => events.push(json!({"type":"response.output_item.done","output_index":0,
+            "item":{"type":"reasoning","id":"reasoning_quota","summary":[{"type":"summary_text","text":"bounded reasoning"}]}})),
+        QuotaContent::Whitespace | QuotaContent::Visible | QuotaContent::MixedVisibleTools => {
+            let text = if matches!(content, QuotaContent::Whitespace) { " \t\n" } else { "already delivered visible quota output" };
+            events.push(json!({"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","id":"msg_quota_actual","role":"assistant","content":[{"type":"output_text","text":text}]}}));
+        }
+        _ => {}
+    }
+    if matches!(content, QuotaContent::UnfinishedTool | QuotaContent::MixedVisibleTools) {
+        events.push(json!({"type":"response.output_item.added","output_index":1,
+            "item":{"type":"function_call","id":"fc_unfinished_quota","call_id":"unfinished-quota","name":"write"}}));
+        events.push(json!({"type":"response.function_call_arguments.delta","output_index":1,"item_id":"fc_unfinished_quota","delta":"{\"path\":"}));
+    }
+    if matches!(content, QuotaContent::CompletedTool | QuotaContent::MixedVisibleTools) {
+        events.push(json!({"type":"response.output_item.done","output_index":2,
+            "item":{"type":"function_call","id":"fc_unexecuted_quota","call_id":"unexecuted-quota","name":"write",
+                "arguments":"{\"path\":\"must-not-execute.txt\",\"content\":\"quota tool was never admitted\"}"}}));
+    }
+    events.push(json!({"type":"response.failed","response":{"id":"resp_quota_actual","status":"failed",
+        "error":{"code":"usage_limit_reached","message":if hint { "Usage limit reached; reset in 2 hours" } else { "Usage limit reached" }}}}));
+    Reply::events(events)
+}
+
+fn actual_write_stream() -> Reply {
+    Reply::events([
+        json!({"type":"response.created","response":{"id":"resp_actual_effect"}}),
+        json!({"type":"response.output_item.done","output_index":0,
+            "item":{"type":"function_call","id":"fc_actual_effect","call_id":"actual-effect","name":"write",
+                "arguments":"{\"path\":\"quota-effect.txt\",\"content\":\"one retained actual effect\"}"}}),
+        json!({"type":"response.completed","response":{"id":"resp_actual_effect","status":"completed"}}),
+    ])
+}
+
+fn session_retry(host: &ProcessHost, enabled: bool, max_retries: usize, max_delay: usize) {
+    let path = host.home.path().join("agent/config.yml");
+    let mut config = std::fs::read_to_string(&path).unwrap();
+    config.push_str(&format!("retry:\n  enabled: {enabled}\n  maxRetries: {max_retries}\n  baseDelayMs: 0\n  maxDelayMs: {max_delay}\n  modelFallback: false\n"));
+    std::fs::write(path, config).unwrap();
+}
+
+struct QuotaRpc {
+    child: tokio::process::Child,
+    stdin: Option<tokio::process::ChildStdin>,
+    lines: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    errors: tokio::task::JoinHandle<String>,
+    seen: Vec<Value>,
+    deadline: tokio::time::Instant,
+}
+
+impl QuotaRpc {
+    async fn start(host: &ProcessHost, wire: &ResetFixture, tools: &str) -> Self {
+        let mut child = tokio::process::Command::from(host.command_tools(wire, &["--mode", "rpc"], tools))
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take();
+        let lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut stderr = child.stderr.take().unwrap();
+        let errors = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).await.unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        });
+        let mut host = Self { child, stdin, lines, errors, seen: vec![], deadline: tokio::time::Instant::now() + WAIT };
+        host.until(|frame| frame["type"] == "available_commands_update").await;
+        host
+    }
+
+    async fn send(&mut self, frame: Value) {
+        tokio::time::timeout_at(self.deadline, self.stdin.as_mut().unwrap().write_all(format!("{frame}\n").as_bytes()))
+            .await
+            .expect("quota RPC input deadline")
+            .unwrap();
+    }
+
+    async fn until(&mut self, predicate: impl Fn(&Value) -> bool) -> Value {
+        loop {
+            let line = tokio::time::timeout_at(self.deadline, self.lines.next_line())
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("quota RPC bounded child observation: {error}; seen={}", json!(self.seen))
+                })
+                .unwrap()
+                .expect("quota RPC frame before EOF");
+            let frame: Value = serde_json::from_str(&line).unwrap();
+            self.seen.push(frame.clone());
+            if predicate(&frame) {
+                return frame;
+            }
+        }
+    }
+
+    async fn response(&mut self, id: &str) -> Value {
+        if let Some(frame) = self.seen.iter().find(|frame| frame["type"] == "response" && frame["id"] == id) {
+            return frame.clone();
+        }
+        self.until(|frame| frame["type"] == "response" && frame["id"] == id).await
+    }
+
+    async fn recovered_end(&mut self) -> Value {
+        let end = self.until(|frame| frame["type"] == "auto_retry_end").await;
+        assert_eq!(end["success"], true, "{end}");
+        // The Host emits agent_end before the retry receipt. until() has
+        // already consumed it; verify the completed replay instead of waiting
+        // for a second event that the protocol does not promise.
+        let completed = self.seen.iter().rev().find(|frame| frame["type"] == "agent_end").unwrap();
+        assert_eq!(completed["messages"].as_array().unwrap().last().unwrap()["stopReason"], "stop", "{completed}");
+        end
+    }
+
+    async fn state(&mut self, id: &str) -> Value {
+        self.send(json!({"id":id,"type":"get_state"})).await;
+        let response = self.response(id).await;
+        assert_eq!(response["success"], true, "{response}");
+        response["data"].clone()
+    }
+
+    async fn prompt(&mut self) {
+        self.prompt_as("quota-turn", "exercise the bounded quota Session family").await;
+    }
+
+    async fn prompt_as(&mut self, id: &str, message: &str) {
+        self.send(json!({"id":id,"type":"prompt","message":message})).await;
+        assert_eq!(self.response(id).await["success"], true);
+    }
+
+    async fn finish(mut self) -> Vec<Value> {
+        self.stdin.take();
+        while let Some(line) = tokio::time::timeout_at(self.deadline, self.lines.next_line())
+            .await
+            .expect("quota RPC drain deadline")
+            .unwrap()
+        {
+            self.seen.push(serde_json::from_str(&line).unwrap());
+        }
+        let status =
+            tokio::time::timeout_at(self.deadline, self.child.wait()).await.expect("quota RPC exit deadline").unwrap();
+        let diagnostics =
+            tokio::time::timeout_at(self.deadline, self.errors).await.expect("quota RPC stderr deadline").unwrap();
+        assert_eq!(status.code(), Some(0), "{diagnostics}");
+        assert_eq!(self.seen.iter().filter(|frame| frame["type"] == "session_shutdown").count(), 1);
+        assert!(
+            !self.seen.iter().any(|frame| frame.to_string().contains("synthetic-refresh")),
+            "private credential leaked"
+        );
+        self.seen
+    }
+}
+
+fn quota_journal(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+}
+
+fn quota_error(entries: &[Value]) -> &Value {
+    entries
+        .iter()
+        .find(|entry| {
+            entry["message"]["role"] == "assistant"
+                && entry["message"]["errorMessage"].as_str().is_some_and(|error| error.contains("usage_limit_reached"))
+        })
+        .unwrap()
+}
+
+fn assert_quota_recorded(host: &ProcessHost) {
+    let store = SqliteCredentialStore::open(&host.auth).unwrap();
+    assert!(
+        store.get_credential_block(host.credential_id, "openai-codex:oauth", "chat").unwrap().is_some(),
+        "the actual settled quota must leave a durable block even when replay is vetoed; journal={}",
+        host.journal()
+    );
+}
+
+fn assert_quota_recovered(path: &Path, original: &Value, end: &Value, kind: &str) {
+    assert_quota_recovered_with_users(path, original, end, kind, 1);
+}
+
+fn assert_quota_recovered_with_users(path: &Path, original: &Value, end: &Value, kind: &str, users: usize) {
+    let entries = quota_journal(path);
+    let updated = entries.iter().find(|entry| entry["id"] == original["id"]).unwrap();
+    let receipt =
+        end["retryErrors"].as_array().unwrap().iter().find(|receipt| receipt["entryId"] == original["id"]).unwrap();
+    assert_eq!(receipt["retryRecovery"], updated["message"]["retryRecovery"]);
+    assert_eq!(receipt["retryRecovery"]["status"], "recovered");
+    assert_eq!(receipt["retryRecovery"]["recovery"], kind);
+    assert_eq!(receipt["retryRecovery"]["attempt"], 1);
+    let mut expected = original.clone();
+    expected["message"]["retryRecovery"] = receipt["retryRecovery"].clone();
+    assert_eq!(&expected, updated, "recovery may only annotate the original failed raw entry");
+    assert_eq!(
+        entries.iter().filter(|entry| entry["message"]["role"] == "user").count(),
+        users,
+        "same Session continuation must not append the original prompt twice"
+    );
+}
+
+#[tokio::test]
+async fn session_quota_discardable_or_unexecuted_output_switches_sibling_before_reset_and_keeps_raw_identity() {
+    for content in
+        [QuotaContent::Thinking, QuotaContent::Whitespace, QuotaContent::UnfinishedTool, QuotaContent::CompletedTool]
+    {
+        let replay = Arc::new(Gate::default());
+        let state = WireState::new(&["first", "sibling"], 0, Consume::Reset);
+        *state.model_replies.lock().unwrap() = VecDeque::from([
+            quota_stream(content, true),
+            Reply::text("sibling completed quota recovery").held(&replay),
+        ]);
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "first", "yes");
+        let sibling_id = seed(&host.auth, "sibling");
+        session_retry(&host, true, 2, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "write").await;
+        if matches!(content, QuotaContent::Thinking) {
+            let initial = rpc.state("before-adoption").await;
+            rpc.send(json!({"id":"adopt","type":"new_session"})).await;
+            assert_eq!(rpc.response("adopt").await["success"], true);
+            let adopted = rpc.state("after-adoption").await;
+            assert_ne!(
+                adopted["sessionId"], initial["sessionId"],
+                "the quota observer must belong to the adopted Session"
+            );
+        }
+        let origin = rpc.state("origin").await;
+        let path = PathBuf::from(origin["sessionFile"].as_str().unwrap());
+        rpc.prompt().await;
+        let start = rpc.until(|frame| frame["type"] == "auto_retry_start").await;
+        assert_eq!(start["delayMs"].as_f64(), Some(0.0));
+        wire.wait_count("POST", "/codex/responses", 2).await;
+        assert_eq!(wire.count("POST", "/consume"), 0, "a healthy sibling outranks saved-reset spending");
+        let original = quota_error(&quota_journal(&path)).clone();
+        assert!(original["message"].get("retryRecovery").is_none());
+        assert!(!host.work.path().join("must-not-execute.txt").exists());
+        replay.release();
+        let end = rpc.recovered_end().await;
+        let settled = rpc.state("settled").await;
+        assert_eq!(settled["sessionId"], origin["sessionId"]);
+        assert_eq!(settled["sessionFile"], origin["sessionFile"]);
+        assert_quota_recovered(&path, &original, &end, "credential");
+        rpc.finish().await;
+        let calls = wire
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request.path.ends_with("/codex/responses"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert_ne!(calls[0].account(), calls[1].account());
+        assert_eq!(calls[0].headers["session_id"], calls[1].headers["session_id"]);
+        let failed_id = if calls[0].account() == "first" { host.credential_id } else { sibling_id };
+        assert!(
+            SqliteCredentialStore::open(&host.auth)
+                .unwrap()
+                .get_credential_block(failed_id, "openai-codex:oauth", "chat")
+                .unwrap()
+                .is_some(),
+            "rotation must record the actual first request's rejected row"
+        );
+    }
+}
+
+#[tokio::test]
+async fn session_quota_confirmed_reset_authorizes_same_account_but_unknown_and_malformed_do_not() {
+    for consume in [Consume::Reset, Consume::Unknown500, Consume::Malformed] {
+        let replay = Arc::new(Gate::default());
+        let mut state = WireState::new(&["single"], 0, consume);
+        state.exhaust_on_model = true;
+        *state.model_replies.lock().unwrap() = VecDeque::from([
+            quota_stream(QuotaContent::Thinking, true),
+            Reply::text("confirmed Session reset replay").held(&replay),
+        ]);
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "single", "yes");
+        session_retry(&host, true, 2, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        let origin = rpc.state("origin").await;
+        let path = PathBuf::from(origin["sessionFile"].as_str().unwrap());
+        rpc.prompt().await;
+        if matches!(consume, Consume::Reset) {
+            rpc.until(|frame| frame["type"] == "auto_retry_start").await;
+            wire.wait_count("POST", "/codex/responses", 2).await;
+            let original = quota_error(&quota_journal(&path)).clone();
+            replay.release();
+            let end = rpc.recovered_end().await;
+            assert_quota_recovered(&path, &original, &end, "credential");
+            assert_eq!(rpc.state("same-session").await["sessionId"], origin["sessionId"]);
+        } else {
+            // agent_end precedes Host quota preparation. Closing the input
+            // before this admission would cancel the scenario being checked.
+            wire.wait_count("POST", "/consume", 1).await;
+            rpc.until(|frame| frame["type"] == "agent_end").await;
+            assert!(!rpc.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+            assert!(quota_error(&quota_journal(&path))["message"].get("retryRecovery").is_none());
+        }
+        rpc.finish().await;
+        assert_eq!(wire.count("POST", "/consume"), 1);
+        let receipts = SqliteResetReceiptStore::open(&host.receipts).unwrap().receipts().unwrap();
+        assert_eq!(receipts.len(), 1);
+        if matches!(consume, Consume::Reset) {
+            assert!(receipts[0].is_confirmed_reset());
+            let calls = wire
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.path.ends_with("/codex/responses"))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].headers["authorization"], calls[1].headers["authorization"]);
+            assert_eq!(calls[0].headers["session_id"], calls[1].headers["session_id"]);
+        } else {
+            assert_eq!(receipts[0].state, ResetReceiptState::Unknown);
+            assert_eq!(wire.count("POST", "/codex/responses"), 1);
+            assert_quota_recorded(&host);
+        }
+    }
+}
+
+#[tokio::test]
+async fn session_quota_visible_output_and_prior_actual_effect_remain_recorded_without_reset_or_replay() {
+    for with_tools in [false, true] {
+        let mut state = WireState::new(&["visible"], 0, Consume::Reset);
+        state.exhaust_on_model = true;
+        let mut replies = VecDeque::new();
+        if with_tools {
+            replies.push_back(actual_write_stream());
+        }
+        replies.push_back(quota_stream(
+            if with_tools { QuotaContent::MixedVisibleTools } else { QuotaContent::Visible },
+            true,
+        ));
+        *state.model_replies.lock().unwrap() = replies;
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "visible", "yes");
+        session_retry(&host, true, 2, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "write").await;
+        let path = PathBuf::from(rpc.state("origin").await["sessionFile"].as_str().unwrap());
+        rpc.prompt().await;
+        rpc.until(|frame| frame["type"] == "agent_end").await;
+        assert!(
+            !rpc.seen.iter().any(|frame| matches!(frame["type"].as_str(), Some("auto_retry_start" | "auto_retry_end")))
+        );
+        let frames = rpc.finish().await;
+        assert_eq!(wire.count("POST", "/consume"), 0);
+        assert_eq!(wire.count("POST", "/codex/responses"), if with_tools { 2 } else { 1 });
+        assert_quota_recorded(&host);
+        let entries = quota_journal(&path);
+        let failed = quota_error(&entries);
+        assert!(failed["message"].to_string().contains("already delivered visible quota output"));
+        assert!(failed["message"].get("retryRecovery").is_none());
+        assert!(frames.iter().any(|frame| frame["type"] == "message_end"
+            && frame.to_string().contains("already delivered visible quota output")));
+        assert!(!host.work.path().join("must-not-execute.txt").exists());
+        if with_tools {
+            assert_eq!(
+                std::fs::read_to_string(host.work.path().join("quota-effect.txt")).unwrap(),
+                "one retained actual effect"
+            );
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry["message"]["role"] == "toolResult"
+                        && entry["message"]["toolCallId"].as_str().is_some_and(|id| id.starts_with("actual-effect")))
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn session_quota_disabled_budget_and_wait_windows_preserve_feedback_without_unbounded_calls() {
+    for (enabled, budget, hint) in [(false, 2, true), (true, 0, true), (true, 2, false)] {
+        let mut state = WireState::new(&["bounded"], 0, Consume::Reset);
+        state.exhaust_on_model = hint;
+        *state.model_replies.lock().unwrap() = VecDeque::from([quota_stream(QuotaContent::Thinking, hint)]);
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "bounded", if hint { "yes" } else { "no" });
+        session_retry(&host, enabled, budget, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        let observed_at = chrono::Utc::now().timestamp_millis();
+        rpc.prompt().await;
+        rpc.until(|frame| frame["type"] == "agent_end").await;
+        if !hint {
+            rpc.until(|frame| frame["type"] == "auto_retry_end").await;
+        }
+        let frames = rpc.finish().await;
+        assert!(!frames.iter().any(|frame| frame["type"] == "auto_retry_start"));
+        if !hint {
+            assert!(frames.iter().any(|frame| frame["type"] == "auto_retry_end"
+                && frame["success"] == false
+                && frame["finalError"].as_str().is_some_and(|message| message.contains("exceeds retry.maxDelayMs"))));
+        }
+        assert_eq!(wire.count("POST", "/consume"), 0);
+        assert_eq!(wire.count("POST", "/codex/responses"), 1);
+        assert_quota_recorded(&host);
+        if !hint {
+            let until = SqliteCredentialStore::open(&host.auth)
+                .unwrap()
+                .get_credential_block(host.credential_id, "openai-codex:oauth", "chat")
+                .unwrap()
+                .unwrap();
+            assert!(
+                (1_795_000..=1_805_000).contains(&(until - observed_at)),
+                "native no-hint quota backoff must be thirty minutes: {until} vs {observed_at}"
+            );
+        }
+    }
+
+    let state = WireState::new(&["current", "soon"], 0, Consume::Reset);
+    let sibling_reset = chrono::Utc::now().timestamp() + 6;
+    state.usage_by_account.lock().unwrap().insert("soon".into(), (100, sibling_reset));
+    *state.model_replies.lock().unwrap() =
+        VecDeque::from([quota_stream(QuotaContent::Thinking, true), Reply::text("earliest sibling became available")]);
+    let (_, wire) = state.start().await;
+    let host = ProcessHost::new(&wire, "current", "no");
+    seed(&host.auth, "soon");
+    session_retry(&host, true, 2, 300_000);
+    let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+    rpc.prompt().await;
+    let start = rpc.until(|frame| frame["type"] == "auto_retry_start").await;
+    let delay = start["delayMs"].as_f64().unwrap();
+    assert!(
+        (1_000.0..=7_100.0).contains(&delay),
+        "earliest sibling plus one second bounds the two-hour current-account hint: {start}"
+    );
+    rpc.recovered_end().await;
+    rpc.finish().await;
+    assert_eq!(wire.count("POST", "/consume"), 0);
+    assert_eq!(wire.count("POST", "/codex/responses"), 2);
+    let calls = wire
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request.path.ends_with("/codex/responses"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(calls[0].account(), "current");
+    assert_eq!(calls[1].account(), "soon");
+    assert_eq!(calls[0].headers["session_id"], calls[1].headers["session_id"]);
+}
+
+#[tokio::test]
+async fn session_quota_preparation_controls_revoke_unadmitted_spend_and_admitted_consume_settles_without_replay() {
+    for stop in ["abort", "abort_retry", "set_auto_retry", "new_session", "eof"] {
+        let preparation = Arc::new(Gate::default());
+        let fresh_replay = Arc::new(Gate::default());
+        let mut state = WireState::new(&["preparation"], 0, Consume::Reset);
+        state.exhaust_on_model = true;
+        if matches!(stop, "abort" | "abort_retry" | "set_auto_retry") {
+            state.usage_gate = Some(preparation.clone());
+        } else {
+            state.detail_gate = Some(preparation.clone());
+            // Initial account preparation also lists credits. This family
+            // holds quota recovery after the actual rejected model request.
+            state.detail_gate_after_model = true;
+        }
+        let mut replies = VecDeque::from([quota_stream(QuotaContent::Thinking, true)]);
+        if stop == "abort" {
+            replies.push_back(quota_stream(QuotaContent::Thinking, true));
+            replies.push_back(Reply::text("fresh prompt recovered in the same Session").held(&fresh_replay));
+        }
+        *state.model_replies.lock().unwrap() = replies;
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "preparation", "yes");
+        session_retry(&host, true, 2, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        let origin = rpc.state("before-preparation").await;
+        rpc.prompt().await;
+        preparation.wait_entered().await;
+        assert_eq!(wire.count("POST", "/codex/responses"), 1, "stop={stop}: Gate must follow the actual quota");
+        assert!(rpc.child.try_wait().unwrap().is_none(), "preparation Gate is observed in a live child");
+        if stop == "eof" {
+            rpc.stdin.take();
+            rpc.until(|frame| frame["type"] == "agent_end").await;
+        } else {
+            rpc.send(if stop == "set_auto_retry" {
+                json!({"id":"stop","type":stop,"enabled":false})
+            } else {
+                json!({"id":"stop","type":stop})
+            })
+            .await;
+            let response = rpc.response("stop").await;
+            assert_eq!(
+                response["success"], true,
+                "reader cancellation must be reachable while preparation is held: {response}"
+            );
+            assert_eq!(wire.count("POST", "/consume"), 0, "no new spend was admitted after the stop acknowledgement");
+        }
+        preparation.release();
+        if stop == "abort" {
+            let after_abort = rpc.state("after-abort-before-fresh-prompt").await;
+            assert_eq!(after_abort["sessionId"], origin["sessionId"]);
+            assert_eq!(
+                wire.count("POST", "/consume"),
+                0,
+                "the revoked old job must not spend after its preparation response is released"
+            );
+            rpc.prompt_as("fresh-quota-turn", "continue with a new plain prompt after the prior abort").await;
+            rpc.until(|frame| frame["type"] == "auto_retry_start").await;
+            wire.wait_count("POST", "/codex/responses", 3).await;
+            fresh_replay.wait_entered().await;
+            assert_eq!(
+                wire.count("POST", "/consume"),
+                1,
+                "the newly admitted prompt epoch may spend its own confirmed reset"
+            );
+            let path = PathBuf::from(origin["sessionFile"].as_str().unwrap());
+            let before_recovery = quota_journal(&path);
+            let failed = before_recovery
+                .iter()
+                .rev()
+                .find(|entry| {
+                    entry["message"]["role"] == "assistant"
+                        && entry["message"]["errorMessage"]
+                            .as_str()
+                            .is_some_and(|error| error.contains("usage_limit_reached"))
+                })
+                .unwrap()
+                .clone();
+            fresh_replay.release();
+            let end = rpc.recovered_end().await;
+            let after_recovery = rpc.state("fresh-prompt-settled").await;
+            assert_eq!(after_recovery["sessionId"], origin["sessionId"]);
+            assert_eq!(after_recovery["sessionFile"], origin["sessionFile"]);
+            assert_quota_recovered_with_users(&path, &failed, &end, "credential", 2);
+        }
+        rpc.finish().await;
+        if stop == "abort" {
+            assert_eq!(wire.count("POST", "/consume"), 1);
+            assert_eq!(wire.count("POST", "/codex/responses"), 3);
+            assert!(SqliteResetReceiptStore::open(&host.receipts).unwrap().receipts().unwrap()[0].is_confirmed_reset());
+            let requests = wire.requests.lock().unwrap();
+            let calls = requests
+                .iter()
+                .filter(|request| request.path.ends_with("/codex/responses"))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(calls.iter().all(|call| call.headers["session_id"] == origin["sessionId"].as_str().unwrap()));
+            let fresh_quota = requests
+                .iter()
+                .enumerate()
+                .filter(|(_, request)| request.path.ends_with("/codex/responses"))
+                .nth(1)
+                .unwrap()
+                .0;
+            let consume = requests
+                .iter()
+                .position(|request| request.method == "POST" && request.path.ends_with("/consume"))
+                .unwrap();
+            assert!(consume > fresh_quota, "the one consume must follow the fresh prompt's actual provider rejection");
+        } else {
+            assert_eq!(wire.count("POST", "/consume"), 0);
+            assert_eq!(
+                wire.count("POST", "/codex/responses"),
+                1,
+                "stop={stop}; requests={:?}",
+                wire.requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|request| (&request.method, &request.path))
+                    .collect::<Vec<_>>()
+            );
+            assert_quota_recorded(&host);
+        }
+    }
+
+    for stop in ["abort", "new_session", "eof"] {
+        let admitted = Arc::new(Gate::default());
+        let mut state = WireState::new(&["admitted"], 0, Consume::Reset);
+        state.exhaust_on_model = true;
+        state.post_gate = Some(admitted.clone());
+        *state.model_replies.lock().unwrap() = VecDeque::from([quota_stream(QuotaContent::Thinking, true)]);
+        let (_, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "admitted", "yes");
+        session_retry(&host, true, 2, 300_000);
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        rpc.prompt().await;
+        wire.wait_count("POST", "/consume", 1).await;
+        admitted.wait_entered().await;
+        assert!(rpc.child.try_wait().unwrap().is_none(), "admitted POST Gate is observed in a live child");
+        if stop == "eof" {
+            rpc.stdin.take();
+            rpc.until(|frame| frame["type"] == "agent_end").await;
+        } else {
+            rpc.send(json!({"id":"stop","type":stop})).await;
+            assert_eq!(
+                rpc.response("stop").await["success"],
+                true,
+                "stop acknowledgement must arrive before the admitted response is released"
+            );
+        }
+        admitted.release();
+        rpc.finish().await;
+        assert_eq!(wire.count("POST", "/consume"), 1);
+        assert_eq!(wire.count("POST", "/codex/responses"), 1, "a settled old-Session reset cannot replay after stop");
+        let receipts = SqliteResetReceiptStore::open(&host.receipts).unwrap().receipts().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].is_confirmed_reset(), "already admitted consume must settle its owned durable receipt");
+    }
 }

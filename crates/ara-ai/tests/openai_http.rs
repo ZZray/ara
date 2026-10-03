@@ -430,6 +430,9 @@ async fn replay_safe_retry_classifies_broad_terminal_account_caps() {
         .unwrap();
         let mut options = opts();
         options.retry.max_attempts = 1;
+        // This family isolates account-cap classification. A short 30s reset
+        // fits the native 60s wait cap instead of hitting opts()'s 1s ceiling.
+        options.retry.max_delay = RetryPolicy::default().max_delay;
         let (events, msg) =
             collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), options))
                 .await;

@@ -231,7 +231,7 @@ fn text_wait_ms(text: &str) -> Option<f64> {
     {
         return (seconds * 1000.0).is_finite().then_some((seconds * 1000.0).max(0.0));
     }
-    crate::usage_limit::retry_hint_ms(text)
+    crate::retry_hint::extract_retry_hint(None, Some(text), chrono::Utc::now().timestamp_millis() as f64)
 }
 
 /// Classify using the actual requested API, never an upstream's echoed API.
@@ -463,6 +463,19 @@ mod tests {
         headers.remove("x-ratelimit-reset");
         headers.remove("x-ratelimit-reset-ms");
         assert_eq!(retry_wait_ms(&headers, 1_700_000_000_000.0), None);
+    }
+    #[test]
+    fn textual_wait_uses_shared_body_patterns_after_explicit_retry_after_text() {
+        for (text, expected) in [
+            ("Your limit will reset in 2 hours. Please retry in 5s", 7_200_000.0),
+            (r#"provider busy {"retryDelay":"0.25s"}"#, 250.0),
+            ("try again in ~3 min", 180_000.0),
+            ("retry-after-ms: 25; Your limit will reset in 2 hours", 25.0),
+            ("retry-after=0.1; Your limit will reset in 2 hours", 100.0),
+        ] {
+            let message = failed(ProviderError::Stream(text.into()));
+            assert_eq!(classify_retry(&message, "openai-codex-responses").wait_ms, Some(expected), "{text}");
+        }
     }
     #[test]
     fn replay_blocked_usage_and_abort_remain_explicit_host_inputs() {

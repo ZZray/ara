@@ -31,6 +31,7 @@ impl Request {
 #[derive(Default)]
 pub struct Gate {
     released: AtomicBool,
+    entered: AtomicBool,
     changed: Notify,
 }
 
@@ -41,6 +42,8 @@ impl Gate {
     }
 
     async fn wait(&self) {
+        self.entered.store(true, Ordering::Release);
+        self.changed.notify_waiters();
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
@@ -50,6 +53,22 @@ impl Gate {
             }
             changed.await;
         }
+    }
+
+    pub async fn wait_entered(&self) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let changed = self.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if self.entered.load(Ordering::Acquire) {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect("live controlled response reached its Gate");
     }
 }
 
@@ -82,10 +101,14 @@ impl Reply {
                 "type":"message","id":"msg_reset_fixture","role":"assistant","content":[{"type":"output_text","text":message}]}}),
             serde_json::json!({"type":"response.completed","response":{"status":"completed"}}),
         ];
+        Self::events(events)
+    }
+
+    pub fn events(events: impl IntoIterator<Item = Value>) -> Self {
         Self {
             status: 200,
             content_type: "text/event-stream",
-            body: events.iter().map(|event| format!("data: {event}\n\n")).collect(),
+            body: events.into_iter().map(|event| format!("data: {event}\n\n")).collect(),
             gate: None,
             retry_after_seconds: None,
         }

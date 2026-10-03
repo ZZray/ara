@@ -112,6 +112,14 @@ impl QuotaResetReplay {
         }
         Some(Self { lease, request_id: receipt.request_id.clone(), confirmed_credential_id: receipt.credential_id })
     }
+
+    /// A Host continuation must re-resolve its own Session and still name the
+    /// row acknowledged by this confirmed receipt. No bearer leaves this proof.
+    pub fn matches_resolved_lease(&self, lease: &RequestAuthLease) -> bool {
+        matches!(lease.identity(), CredentialIdentity::Stored { id, .. } if *id == self.confirmed_credential_id)
+            && matches!(self.lease.identity(), CredentialIdentity::Stored { id, .. } if *id == self.confirmed_credential_id)
+            && !self.request_id.is_empty()
+    }
 }
 
 #[async_trait]
@@ -407,6 +415,12 @@ impl PreparedRoute {
         self.generation
     }
 
+    /// Private Host callbacks use the same account owner and Session assignment
+    /// as the binding whose actual failed lease they receive.
+    pub fn auth_for_session(&self, session_id: Option<&str>) -> Arc<dyn RequestAuthResolver> {
+        session_id.and_then(|id| self.auth.for_session(id)).unwrap_or_else(|| self.auth.clone())
+    }
+
     pub fn remote_supports_images(&self) -> bool {
         match &self.protocol {
             ProtocolOptions::Responses(base) => base.request.supports_images,
@@ -476,17 +490,24 @@ impl PreparedRoute {
     /// Rebind Codex attribution to a new Host Session, retaining the same
     /// private account resolver and its outstanding refresh settlement.
     pub fn bind_codex_session(&self, client: reqwest::Client, session_id: String) -> Arc<dyn ModelProvider> {
+        self.bind_codex_session_with_observer(client, session_id, None)
+    }
+
+    pub fn bind_codex_session_with_observer(
+        &self,
+        client: reqwest::Client,
+        session_id: String,
+        observer: Option<Arc<dyn RequestReceiptObserver>>,
+    ) -> Arc<dyn ModelProvider> {
         let mut route = self.clone();
-        if let Some(auth) = route.auth.for_session(&session_id) {
-            route.auth = auth;
-        }
+        route.auth = self.auth_for_session(Some(&session_id));
         if let Some(owner) = &route.usage_headers {
             route.usage_headers = Some(Arc::new(owner.for_session(&session_id)));
         }
         if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
             options.session_id = Some(session_id);
         }
-        route.bind(client, None)
+        route.bind(client, observer)
     }
 
     /// A handoff reads the live cache prefix on independent protocol state.
@@ -603,12 +624,45 @@ pub struct RequestIdentity {
 pub struct ReceiptError;
 
 pub trait RequestReceiptObserver: Send + Sync {
+    /// Freeze live Host auth/context before this logical call resolves a lease.
+    /// Default observers do not change the prepared resolver or protocol state.
+    fn request_auth(&self, _call_id: uuid::Uuid) -> Result<Option<Arc<dyn RequestAuthResolver>>, ReceiptError> {
+        Ok(None)
+    }
     /// A failure here prevents the external request.
     fn started(&self, request: &RequestIdentity) -> Result<(), ReceiptError>;
+    fn retry_started(&self, _previous: &RequestIdentity, request: &RequestIdentity) -> Result<(), ReceiptError> {
+        self.started(request)
+    }
     /// Recorded before publishing a model terminal to the Agent.
     fn settled(&self, request: &RequestIdentity, message: &AssistantMessage) -> Result<(), ReceiptError>;
+    /// Publish a successfully settled, actual provider quota rejection after
+    /// stream output. This is feedback ownership, never replay permission.
+    /// The pre-output auth driver retains its separate recording/retry owner.
+    fn quota_rejected(
+        &self,
+        _request: &RequestIdentity,
+        _lease: &RequestAuthLease,
+        _message: &AssistantMessage,
+    ) -> Result<bool, ReceiptError> {
+        Ok(false)
+    }
     /// The receiver disappeared without a terminal proof. No success is implied.
     fn interrupted(&self, request: &RequestIdentity);
+    /// Clean up the privately prepared scope on every normal/error/cancel exit.
+    fn finished(&self, _call_id: uuid::Uuid) {}
+}
+
+struct RequestReceiptScope {
+    observer: Option<Arc<dyn RequestReceiptObserver>>,
+    call_id: uuid::Uuid,
+}
+impl Drop for RequestReceiptScope {
+    fn drop(&mut self) {
+        if let Some(observer) = &self.observer {
+            observer.finished(self.call_id);
+        }
+    }
 }
 
 struct AuthenticatedRouteProvider {
@@ -642,7 +696,17 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     .await;
                 return;
             }
-            let resolving = route.auth.resolve(&model, &cancel);
+            let call_id = uuid::Uuid::now_v7();
+            let auth = match observer.as_ref().map(|observer| observer.request_auth(call_id)).transpose() {
+                Ok(Some(Some(auth))) => auth,
+                Ok(_) => route.auth.clone(),
+                Err(_) => {
+                    let _ = tx.send(error_event(&model, StopReason::Error, "request scope preparation failed")).await;
+                    return;
+                }
+            };
+            let mut receipt_scope = RequestReceiptScope { observer: observer.clone(), call_id };
+            let resolving = auth.resolve(&model, &cancel);
             tokio::pin!(resolving);
             let lease = tokio::select! {
                 biased;
@@ -650,11 +714,11 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     // An OAuth refresh may already have rotated a grant. Let
                     // this account resolver settle its durable row before the
                     // CLI can finish and shut down its runtime.
-                    if model.api == "openai-codex-responses" || route.auth.requires_settlement() { let _ = resolving.await; }
+                    if model.api == "openai-codex-responses" || auth.requires_settlement() { let _ = resolving.await; }
                     Err(AuthResolveError::Cancelled)
                 },
                 _ = tx.closed() => {
-                    if model.api == "openai-codex-responses" || route.auth.requires_settlement() {
+                    if model.api == "openai-codex-responses" || auth.requires_settlement() {
                         cancel.cancel();
                         let _ = resolving.await;
                     }
@@ -689,7 +753,7 @@ impl ModelProvider for AuthenticatedRouteProvider {
                 return;
             }
             let mut identity = RequestIdentity {
-                call_id: uuid::Uuid::now_v7(),
+                call_id,
                 route_generation: route.generation,
                 provider: model.provider.clone(),
                 model_id: model.id.clone(),
@@ -726,7 +790,7 @@ impl ModelProvider for AuthenticatedRouteProvider {
                         return;
                     }
                 };
-                let Some(event) = event else {
+                let Some(mut event) = event else {
                     if let Some(observer) = &observer {
                         observer.interrupted(&identity);
                     }
@@ -762,15 +826,61 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     let _ = tx.send(AssistantMessageEvent::Error { reason: StopReason::Error, error }).await;
                     return;
                 }
+                // Start/thinking/tool events also cross this boundary. They do
+                // not imply committed visible text or permission to continue.
+                if terminal
+                    && emitted
+                    && let Some(evidence) = event.partial().failure_evidence.as_ref()
+                    && (evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Http
+                        || evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Stream
+                            && evidence.code.is_some())
+                    && event.partial().stop_reason == StopReason::Error
+                    && ara_ai::retry_classification::classify_retry(event.partial(), &model.api).usage_limit
+                {
+                    // Default Session retry requires the private correlated
+                    // feedback proof. Publish exactly the terminal captured by
+                    // the observer, without clearing stronger native vetoes.
+                    let mut error = event.partial().clone();
+                    let failure = error.failure_evidence.as_mut().expect("observed provider quota");
+                    failure.replay_blocked = true;
+                    failure.same_route_blocked = true;
+                    if matches!(failure.context_recovery, None | Some(ara_ai::ContextRecoveryEvidence::ContentOnly)) {
+                        failure.context_recovery = Some(ara_ai::ContextRecoveryEvidence::UsageAdmission);
+                    }
+                    let candidate = AssistantMessageEvent::Error { reason: StopReason::Error, error };
+                    let handled = observer
+                        .as_ref()
+                        .map(|observer| observer.quota_rejected(&identity, &acquired_lease, candidate.partial()))
+                        .unwrap_or(Ok(false));
+                    if handled.is_err() {
+                        // A publication fault retains the provider terminal and
+                        // adds a stronger veto, just like a settlement fault.
+                        let mut error = candidate.partial().clone();
+                        let failure = error.failure_evidence.as_mut().expect("observed provider quota");
+                        failure.kind = ara_ai::retry_classification::ProviderErrorKind::Config;
+                        failure.context_recovery = Some(ara_ai::ContextRecoveryEvidence::NativeValidation);
+                        error.error_message = Some(match error.error_message.take() {
+                            Some(provider_error) => {
+                                format!("quota feedback publication failed; provider error: {provider_error}")
+                            }
+                            None => "quota feedback publication failed".into(),
+                        });
+                        let _ = tx.send(AssistantMessageEvent::Error { reason: StopReason::Error, error }).await;
+                        return;
+                    }
+                    if matches!(handled, Ok(true)) {
+                        event = candidate;
+                    }
+                }
                 // AuthStorage receives the rejected private lease. Ordinary
                 // adapter backoff never resolves auth again or changes it.
                 if terminal
                     && !emitted
-                    && route.auth.supports_auth_retry()
+                    && auth.supports_auth_retry()
                     && let Some(failure) = crate::request_auth_retry::classify(&model, event.partial())
                 {
                     let rejected_lease = acquired_lease.clone();
-                    let refreshing = auth_retry.next(route.auth.as_ref(), &model, &rejected_lease, &failure, &cancel);
+                    let refreshing = auth_retry.next(auth.as_ref(), &model, &rejected_lease, &failure, &cancel);
                     tokio::pin!(refreshing);
                     let next = tokio::select! {
                         biased;
@@ -787,6 +897,7 @@ impl ModelProvider for AuthenticatedRouteProvider {
                     };
                     match next {
                         Ok(Some(lease)) if !cancel.is_cancelled() => {
+                            let previous = identity;
                             identity = RequestIdentity {
                                 call_id: uuid::Uuid::now_v7(),
                                 route_generation: route.generation,
@@ -794,7 +905,10 @@ impl ModelProvider for AuthenticatedRouteProvider {
                                 model_id: model.id.clone(),
                                 credential: lease.identity.clone(),
                             };
-                            if observer.as_ref().is_some_and(|observer| observer.started(&identity).is_err()) {
+                            if observer
+                                .as_ref()
+                                .is_some_and(|observer| observer.retry_started(&previous, &identity).is_err())
+                            {
                                 let _ = tx
                                     .send(error_event(
                                         &model,
@@ -804,6 +918,10 @@ impl ModelProvider for AuthenticatedRouteProvider {
                                     .await;
                                 return;
                             }
+                            if let Some(observer) = &observer {
+                                observer.finished(previous.call_id);
+                            }
+                            receipt_scope.call_id = identity.call_id;
                             acquired_lease = lease;
                             let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
                             inner = ara_ai::thinking_loop::with_thinking_loop_guard(

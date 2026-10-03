@@ -17,6 +17,8 @@ mod local_reduction_tests;
 mod loop_guard;
 #[path = "rpc_host_maintenance.rs"]
 mod maintenance;
+#[path = "rpc_host_quota.rs"]
+mod quota;
 #[path = "rpc_host_reduction.rs"]
 mod reduction;
 #[path = "rpc_host_remote.rs"]
@@ -701,6 +703,7 @@ struct Host {
     connection: CancellationToken,
     active: Option<ActiveRun>,
     handoff_control: Arc<Mutex<handoff::HandoffControl>>,
+    quota_control: Arc<Mutex<quota::QuotaControl>>,
     maintenance: Option<maintenance::ActiveMaintenance>,
     maintenance_continue: Option<maintenance::PendingMaintenanceContinue>,
     terminal_recovery: maintenance::TerminalRecoveryState,
@@ -845,13 +848,30 @@ impl Host {
         }
     }
 
-    async fn begin_retry(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
+    async fn begin_retry(
+        &mut self,
+        active: &ActiveRun,
+        message: &AssistantMessage,
+        quota: Option<&super::session_quota_recovery::SessionQuotaOutcome>,
+    ) -> Result<bool> {
         use super::rpc_host_retry::{RetryDisposition, backoff_ms, disposition, effective_max_retries};
-        let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
+        let mut class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
+        let recorded_quota = quota.filter(|outcome| {
+            outcome.recorded
+                && class.usage_limit
+                && message.failure_evidence.as_ref().is_some_and(|evidence| {
+                    evidence.context_recovery == Some(ara_ai::ContextRecoveryEvidence::UsageAdmission)
+                })
+        });
+        if recorded_quota.is_some() {
+            class.replay_blocked = false;
+        }
         if active.cancel.is_cancelled()
             || self.connection.is_cancelled()
             || !Arc::ptr_eq(&active.sink.session, &self.session)
             || !self.retry_policy.enabled()
+            || quota.is_some_and(|outcome| !outcome.recorded)
+            || quota.is_some() && self.quota_control.lock().unwrap().stop_requested()
         {
             return Ok(false);
         }
@@ -899,8 +919,12 @@ impl Host {
         // Fixed turn-recovery.ts:2171-2174,2303-2306: a same-route hint
         // may raise the backoff but must never shorten it. Stale Responses
         // recovery keeps its independent zero-delay branch.
-        if !class.stale_responses
-            && let Some(wait_ms) = class.wait_ms
+        let switched_credential = recorded_quota.is_some_and(|outcome| outcome.switched);
+        let wait_ms = recorded_quota.and_then(|outcome| outcome.wait_ms).or(class.wait_ms);
+        if switched_credential {
+            delay_ms = 0.0;
+        } else if !class.stale_responses
+            && let Some(wait_ms) = wait_ms
             && wait_ms > delay_ms
         {
             delay_ms = wait_ms;
@@ -966,9 +990,21 @@ impl Host {
         if !Arc::ptr_eq(&saga.session, &self.session) || saga.generation != self.prompt_generation {
             bail!("retry owner no longer matches this Session generation");
         }
-        let recovery = if class.usage_limit && delay_ms > 0.0 { "wait" } else { "plain" };
+        let recovery = if switched_credential {
+            "credential"
+        } else if class.usage_limit && delay_ms > 0.0 {
+            "wait"
+        } else {
+            "plain"
+        };
         let note = if class.usage_limit {
-            if recovery == "wait" { "rate-limited; waited; retried" } else { "rate-limited; retried" }
+            if switched_credential {
+                "rate-limited; switched account; retried"
+            } else if recovery == "wait" {
+                "rate-limited; waited; retried"
+            } else {
+                "rate-limited; retried"
+            }
         } else {
             "error; retried"
         };
@@ -1838,10 +1874,10 @@ impl Host {
         *self.bash_dispatcher.current.lock().unwrap() = bash_target.clone();
         self.bash_target = bash_target;
         let id = session.header["id"].as_str().context("Session identity is missing")?.to_owned();
-        self.sessions.provider.admit_reset_session(&config.model, Some(id.clone()), Some(id.clone()));
-        if config.model.provider == "openai-codex" {
-            config.provider =
-                self.sessions.provider.route.bind_codex_session(self.sessions.provider.client.clone(), id);
+        if config.model.provider == "openai-codex" || self.sessions.provider.account_auth.is_some() {
+            config.provider = self.sessions.provider.bind_codex_session(id, None);
+        } else {
+            self.sessions.provider.admit_reset_session(&config.model, Some(id.clone()), Some(id));
         }
         let agent = Agent::new(config.clone(), messages);
         agent.set_steering_mode(self.agent.steering_mode());
@@ -1961,6 +1997,11 @@ impl Host {
             self.maintenance_continue = None;
             self.prompt_generation = self.prompt_generation.wrapping_add(1);
             self.terminal_recovery = maintenance::TerminalRecoveryState::default();
+            // A new user prompt owns a fresh recovery epoch. Keep the existing
+            // Provider/Responses state; request observers freeze this epoch at
+            // started(), while old owned jobs retain their revoked epoch.
+            let id = self.session.header["id"].as_str().context("Session identity is missing")?.to_owned();
+            self.sessions.provider.admit_reset_session(&self.config.model, Some(id.clone()), Some(id));
         }
         let header_guard_enabled = loop_guard::guard_enabled(self.loop_guard_settings)
             && self.loop_guard_settings.tool_call_reminder
@@ -2029,6 +2070,28 @@ impl Host {
             self.output.frame(terminal);
         }
         let persistence_error = active.sink.session.persistence_error.lock().unwrap().clone();
+        // Request feedback already has its own owner/token. Join its matched
+        // proof before persistence and maintenance early exits, even when the
+        // failed turn is ineligible for reset or replay.
+        let quota_outcome = if let Ok(Ok(Some(report))) = &result
+            && let Some(message) = report.messages.iter().rev().find_map(Message::as_assistant)
+        {
+            match Box::pin(self.session_quota_outcome(&active, message, report.end, persistence_error.is_none())).await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    self.output.frame(json!({"type":"notice","level":"warning","source":"quota-recovery",
+                        "message":super::sanitize_text(&error.to_string())}));
+                    Some(super::session_quota_recovery::SessionQuotaOutcome {
+                        recorded: false,
+                        switched: false,
+                        wait_ms: None,
+                    })
+                }
+            }
+        } else {
+            None
+        };
         if persistence_error.is_none()
             && let Ok(Ok(Some(report))) = &result
         {
@@ -2118,7 +2181,7 @@ impl Host {
                 && !maintenance_blocked
                 && let Some(message) = assistant
             {
-                match self.begin_retry(&active, message).await {
+                match self.begin_retry(&active, message, quota_outcome.as_ref()).await {
                     Ok(true) => return,
                     Ok(false) => {}
                     Err(error) => {
@@ -2251,6 +2314,9 @@ impl Host {
     async fn execute(&mut self, command: &Command) -> Result<()> {
         if handoff::HandoffControl::stops_handoff(command) {
             self.handoff_control.lock().unwrap().consume_stop();
+        }
+        if quota::QuotaControl::stops_quota(command) {
+            self.quota_control.lock().unwrap().consume_stop();
         }
         match command.kind.as_str() {
             "set_auto_retry" => {
@@ -2692,6 +2758,9 @@ where
     tool_loop_state.configure(tool_loop_settings);
     let connection = CancellationToken::new();
     let handoff_control = Arc::new(Mutex::new(handoff::HandoffControl::default()));
+    let quota_control = Arc::new(Mutex::new(quota::QuotaControl::default()));
+    let quota_admission = quota_control.clone();
+    sessions.provider.set_quota_admission(Arc::new(move || !quota_admission.lock().unwrap().stop_requested()));
     let (output_tx, output_rx) = mpsc::unbounded_channel();
     let output = Output(output_tx);
     if let Some(controller) = &sessions.provider.reset_controller {
@@ -2745,6 +2814,7 @@ where
         connection: connection.clone(),
         active: None,
         handoff_control: handoff_control.clone(),
+        quota_control: quota_control.clone(),
         maintenance: None,
         maintenance_continue: None,
         terminal_recovery: maintenance::TerminalRecoveryState::default(),
@@ -2785,6 +2855,7 @@ where
     let reader_output = output.clone();
     let reader_cancel = connection.clone();
     let reader_handoff_control = handoff_control.clone();
+    let reader_quota_control = quota_control.clone();
     let reader_task = tokio::spawn(async move {
         let mut reader = RpcInputReader::new(input);
         loop {
@@ -2807,9 +2878,16 @@ where
                     if stops_handoff {
                         reader_handoff_control.lock().unwrap().queue_stop();
                     }
+                    let stops_quota = quota::QuotaControl::stops_quota(&command);
+                    if stops_quota {
+                        reader_quota_control.lock().unwrap().queue_stop();
+                    }
                     if input_tx.send(command).is_err() {
                         if stops_handoff {
                             reader_handoff_control.lock().unwrap().consume_stop();
+                        }
+                        if stops_quota {
+                            reader_quota_control.lock().unwrap().consume_stop();
                         }
                         break;
                     }
@@ -2820,6 +2898,7 @@ where
                 Ok(None) => break,
                 Err(error) => {
                     reader_handoff_control.lock().unwrap().close_input();
+                    reader_quota_control.lock().unwrap().close_input();
                     tool_bridge.close("RPC input disconnected");
                     uri_bridge.close_connection("RPC input disconnected");
                     reader_cancel.cancel();
@@ -2828,6 +2907,7 @@ where
             }
         }
         reader_handoff_control.lock().unwrap().close_input();
+        reader_quota_control.lock().unwrap().close_input();
         // Unblock accepted work before the serial command owner drains/joins.
         tool_bridge.close("RPC host disconnected");
         uri_bridge.close_connection("RPC host disconnected");
@@ -2934,6 +3014,7 @@ where
         }
     }
     let input_result = reader_task.await.context("RPC input task");
+    host.sessions.provider.settle_quota_feedback().await;
     if let Some(host) = &host.sessions.provider.reset_host {
         host.close();
     }
@@ -3056,6 +3137,7 @@ mod tests {
             connection: connection.clone(),
             active: None,
             handoff_control: Arc::new(Mutex::new(handoff::HandoffControl::default())),
+            quota_control: Arc::new(Mutex::new(quota::QuotaControl::default())),
             maintenance: None,
             maintenance_continue: None,
             terminal_recovery: maintenance::TerminalRecoveryState::default(),

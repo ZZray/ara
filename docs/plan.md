@@ -1,5 +1,21 @@
 # ARA execution plan
 
+**Current checkpoint, 2026-10-03 (Session quota recovery module-tested WIP):**
+[HTTP hints and same-Session evidence](evidence/session-quota-recovery.md):
+actual rejected-lease feedback, sibling/reset/earliest-window recovery and
+reader-reachable cancellation are module-tested,550/0/0. Frozen Windows backend
+1831/0/20 in984.777s; fmt/Clippy/doc/inventory/build PASS; dependency gate FAIL on
+existing unmaintained ttf-parser. CAS artifact/read-back/continuation and corrective
+history pass,six calls/9.183s; first resume supplied answers and proves continuation
+only. Final independent Codex execution/document POST approves tested bounded WIP.
+No point/surface/phase acceptance advances:111 surfaces27 implementing/1 tested/
+83 open/0 complete;60 points35 limited accepted/23 implementing/2 tested.
+Started28/111=25.2%; limited35/60=58.3% is not overall completion. P0/V1 accepted,
+P1-P6 open, RPC27/42 and full marker null. Next: configured reserve/fallback/revert,
+check/diagnostic controllers, Broker server/management and full Settings/TUI/ACP.
+Custom OpenAI protocol and account login remain first; other Providers and all
+recorded differences remain required. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 (saved-reset controllers tested WIP):**
 [Saved-reset controller evidence](evidence/codex-reset-controllers.md) connects native planning/settings, manual/blocked/sweep and
 supported pre-output quota recovery to the shared account owner and actual

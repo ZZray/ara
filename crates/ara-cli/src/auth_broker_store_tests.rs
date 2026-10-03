@@ -543,6 +543,103 @@ async fn blocks_detached_writes_expiry_and_sync_disable_cases() {
 }
 
 #[tokio::test]
+async fn observed_block_ack_scope_false_unknown_and_owned_settlement_family() {
+    for (name, status, body, disconnect, expected) in [
+        ("applied", 200, json!({"ok":true}), false, true),
+        ("not applied", 200, json!({"ok":false}), false, false),
+        ("malformed acknowledgement", 200, json!({"ok":"true"}), false, false),
+        ("denied", 403, json!({}), false, false),
+        ("unknown POST", 200, Value::Null, true, false),
+    ] {
+        let broker = LoopbackBroker::start(move |request| {
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.path, "/v1/credential/17/block");
+            if disconnect { Reply::Disconnect } else { Reply::json(status, body.clone()) }
+        })
+        .await;
+        let store =
+            RemoteAuthCredentialStore::new(broker.client(), options(snapshot(1, vec![oauth(17, "account", "first")])))
+                .unwrap();
+        store.inner.state.lock().unwrap().streaming_active = true;
+        let block = StoredCredentialBlock {
+            credential_id: 17,
+            provider_key: "openai-codex:oauth".into(),
+            block_scope: "spark".into(),
+            blocked_until_ms: (NOW + 1_800_000.0) as i64,
+            updated_at_ms: NOW as i64,
+        };
+        let receipt = AuthCredentialStore::upsert_credential_block_observed(&store, &block).unwrap();
+        assert_eq!(bounded(receipt.confirmed()).await, expected, "{name}");
+        bounded(store.wait_for_settlement()).await;
+        assert_eq!(broker.count("/v1/credential/17/block"), 1, "{name}: no duplicate or unknown replay");
+        let sent = broker.requests.lock().unwrap()[0].body.clone();
+        assert_eq!(sent["providerKey"], "openai-codex:oauth", "{name}");
+        assert_eq!(sent["blockScope"], "spark", "{name}");
+        assert_eq!(sent["blockedUntilMs"].as_f64(), Some(NOW + 1_800_000.0), "{name}");
+        if name == "not applied" {
+            // Generic legacy diagnostics call Ok(false) Succeeded. That fact
+            // must not substitute for this operation's actual applied ack.
+            assert_eq!(store.operation_receipts()[0].outcome, RemoteOperationOutcome::Succeeded);
+        }
+        bounded(store.close_and_wait()).await;
+    }
+
+    // Two writes to the same row must not borrow the other scope's result.
+    let release = Arc::new(Semaphore::new(0));
+    let gate = release.clone();
+    let broker = LoopbackBroker::start(move |request| {
+        if request.body["blockScope"] == "spark" {
+            Reply::gated(200, json!({"ok":true}), gate.clone())
+        } else {
+            Reply::json(200, json!({"ok":false}))
+        }
+    })
+    .await;
+    let store =
+        RemoteAuthCredentialStore::new(broker.client(), options(snapshot(1, vec![oauth(17, "account", "first")])))
+            .unwrap();
+    store.inner.state.lock().unwrap().streaming_active = true;
+    let mut block = StoredCredentialBlock {
+        credential_id: 17,
+        provider_key: "openai-codex:oauth".into(),
+        block_scope: "spark".into(),
+        blocked_until_ms: (NOW + 50_000.0) as i64,
+        updated_at_ms: NOW as i64,
+    };
+    let first = AuthCredentialStore::upsert_credential_block_observed(&store, &block).unwrap();
+    eventually(|| broker.count("/v1/credential/17/block") == 1).await;
+    block.block_scope = "other".into();
+    let second = AuthCredentialStore::upsert_credential_block_observed(&store, &block).unwrap();
+    assert!(!bounded(second.confirmed()).await);
+    let first = tokio::spawn(first.confirmed());
+    assert!(!first.is_finished());
+    release.add_permits(1);
+    assert!(bounded(first).await.unwrap());
+    bounded(store.close_and_wait()).await;
+    assert_eq!(broker.count("/v1/credential/17/block"), 2);
+
+    // Dropping a caller's private completion never cancels an admitted POST.
+    let release = Arc::new(Semaphore::new(0));
+    let gate = release.clone();
+    let broker = LoopbackBroker::start(move |_| Reply::gated(200, json!({"ok":true}), gate.clone())).await;
+    let store =
+        RemoteAuthCredentialStore::new(broker.client(), options(snapshot(1, vec![oauth(17, "account", "first")])))
+            .unwrap();
+    store.inner.state.lock().unwrap().streaming_active = true;
+    let receipt = AuthCredentialStore::upsert_credential_block_observed(&store, &block).unwrap();
+    eventually(|| broker.count("/v1/credential/17/block") == 1).await;
+    drop(receipt);
+    let waiting = store.clone();
+    let close = tokio::spawn(async move { waiting.close_and_wait().await });
+    assert!(!close.is_finished());
+    assert!(store.background_status().pending_operations > 0);
+    release.add_permits(1);
+    bounded(close).await.unwrap();
+    assert_eq!(broker.count("/v1/credential/17/block"), 1);
+    assert_eq!(store.operation_receipts()[0].outcome, RemoteOperationOutcome::Succeeded);
+}
+
+#[tokio::test]
 async fn observed_merge_known_retry_unknown_isolation_and_final_close_cases() {
     let response_index = Arc::new(AtomicUsize::new(0));
     let index = response_index.clone();

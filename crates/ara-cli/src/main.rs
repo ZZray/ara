@@ -55,6 +55,7 @@ mod rpc_host_retry;
 mod rpc_host_settings;
 mod rpc_host_tools;
 mod rpc_host_uris;
+mod session_quota_recovery;
 
 const TOOL_NAMES: [&str; 7] = ["read", "write", "edit", "bash", "grep", "glob", "ast_grep"];
 
@@ -2265,6 +2266,8 @@ struct ProviderFactory {
     reset_host: Option<Arc<ReferenceResetHost>>,
     registry: Option<ara_cli::model_registry::ModelRegistry>,
     metadata: Option<serde_json::Value>,
+    session_id: Option<String>,
+    quota_recovery: Arc<session_quota_recovery::SessionQuotaRecovery>,
 }
 
 impl ProviderFactory {
@@ -2289,12 +2292,63 @@ impl ProviderFactory {
     }
 
     fn bind_codex_session(&self, session_id: String, logical_session: Option<String>) -> Arc<dyn ModelProvider> {
-        self.admit_reset_session(
-            self.route.model(),
-            logical_session.or_else(|| Some(session_id.clone())),
-            Some(session_id.clone()),
-        );
-        self.route.bind_codex_session(self.client.clone(), session_id)
+        let logical_session = logical_session.or_else(|| Some(session_id.clone()));
+        self.admit_reset_session(self.route.model(), logical_session.clone(), Some(session_id.clone()));
+        let observer = self.quota_observer(Some(session_id.clone()), logical_session);
+        self.route.bind_codex_session_with_observer(self.client.clone(), session_id, observer)
+    }
+
+    fn quota_observer(
+        &self,
+        session_id: Option<String>,
+        logical_session: Option<String>,
+    ) -> Option<Arc<dyn ara_cli::model_route::RequestReceiptObserver>> {
+        let account = self.account_auth.as_ref()?.clone();
+        let host = self.reset_host.as_ref()?.clone();
+        let model = self.route.model().clone();
+        Some(self.quota_recovery.observer(session_quota_recovery::QuotaBinding {
+            context: ara_cli::auth_storage::AuthRequestContext {
+                session_id: session_id.clone(),
+                model_id: Some(model.id.clone()),
+                base_url: Some(model.base_url.clone()),
+                ..Default::default()
+            },
+            reset_context: self.reset_context(&model, session_id.clone()),
+            resolver: self.route.auth_for_session(session_id.as_deref()),
+            model,
+            generation: self.route.generation(),
+            logical_session,
+            account,
+            host,
+        }))
+    }
+
+    fn recorded_session_quota(
+        &self,
+        message: &ara_ai::AssistantMessage,
+    ) -> Option<session_quota_recovery::ObservedQuota> {
+        self.quota_recovery.recorded(message)
+    }
+
+    async fn recover_session_quota(
+        &self,
+        observed: session_quota_recovery::ObservedQuota,
+        model: &Model,
+        session_id: &str,
+        allow_recovery: bool,
+        cancel: &CancellationToken,
+    ) -> Result<session_quota_recovery::SessionQuotaOutcome> {
+        session_quota_recovery::recover(observed, model, session_id, allow_recovery, cancel).await
+    }
+
+    fn set_quota_admission(&self, admission: Arc<dyn Fn() -> bool + Send + Sync>) {
+        if let Some(host) = &self.reset_host {
+            *host.admission.lock().unwrap() = Some(admission);
+        }
+    }
+
+    async fn settle_quota_feedback(&self) {
+        self.quota_recovery.settle().await;
     }
 
     fn refresh_usage_if_stale(&self, model: &Model, session_id: Option<String>) {
@@ -2416,7 +2470,7 @@ impl ProviderFactory {
             }
         };
         let auth = if let Some(controller) = &reset_controller {
-            controller.decorate(auth, session_id, Some(usage_base_urls(&selection.model, registry.clone())))
+            controller.decorate(auth, session_id.clone(), Some(usage_base_urls(&selection.model, registry.clone())))
         } else {
             auth
         };
@@ -2436,6 +2490,8 @@ impl ProviderFactory {
             reset_host,
             registry,
             metadata: Some(selection.metadata),
+            session_id,
+            quota_recovery: Arc::new(Default::default()),
         })
     }
 
@@ -2491,11 +2547,13 @@ impl ProviderFactory {
             reset_host: None,
             registry: None,
             metadata: None,
+            session_id: None,
+            quota_recovery: Arc::new(Default::default()),
         })
     }
 
     fn build(&self) -> Arc<dyn ModelProvider> {
-        self.route.bind(self.client.clone(), None)
+        self.route.bind(self.client.clone(), self.quota_observer(self.session_id.clone(), self.session_id.clone()))
     }
 }
 
@@ -2524,6 +2582,8 @@ struct ReferenceResetState {
 struct ReferenceResetHost {
     agent_dir: PathBuf,
     current: std::sync::Mutex<ReferenceResetState>,
+    admission: std::sync::Mutex<Option<Arc<dyn Fn() -> bool + Send + Sync>>>,
+    quota_epoch_cancel: std::sync::Mutex<Option<(u64, CancellationToken)>>,
 }
 
 impl ReferenceResetHost {
@@ -2537,6 +2597,8 @@ impl ReferenceResetHost {
                 session_ids: vec![session],
                 closed: false,
             }),
+            admission: std::sync::Mutex::new(None),
+            quota_epoch_cancel: std::sync::Mutex::new(None),
         }
     }
 
@@ -2553,6 +2615,51 @@ impl ReferenceResetHost {
 
     fn close(&self) {
         self.current.lock().unwrap().closed = true;
+    }
+
+    fn owns_context(&self, context: &ara_cli::codex_reset_controller::CodexResetContext) -> bool {
+        let state = self.current.lock().unwrap();
+        !state.closed
+            && context.host_epoch == Some(state.epoch)
+            && context.provider == state.provider
+            && context.model_id == state.model_id
+            && state.session_ids.contains(&context.usage.context.session_id)
+    }
+
+    fn context_for_request(
+        &self,
+        template: &ara_cli::codex_reset_controller::CodexResetContext,
+    ) -> Option<ara_cli::codex_reset_controller::CodexResetContext> {
+        let state = self.current.lock().unwrap();
+        if state.closed
+            || template.provider != state.provider
+            || template.model_id != state.model_id
+            || !state.session_ids.contains(&template.usage.context.session_id)
+        {
+            return None;
+        }
+        let mut context = template.clone();
+        context.host_epoch = Some(state.epoch);
+        Some(context)
+    }
+
+    fn freeze_quota_cancellation(
+        &self,
+        context: &ara_cli::codex_reset_controller::CodexResetContext,
+        cancel: &CancellationToken,
+    ) -> bool {
+        let state = self.current.lock().unwrap();
+        if state.closed || context.host_epoch != Some(state.epoch) || cancel.is_cancelled() {
+            return false;
+        }
+        let mut frozen = self.quota_epoch_cancel.lock().unwrap();
+        // A queued stop revokes this epoch permanently. Consuming that command
+        // cannot re-enable an old owned job still preparing a reset POST.
+        if frozen.as_ref().is_some_and(|(epoch, token)| *epoch == state.epoch && token.is_cancelled()) {
+            return false;
+        }
+        *frozen = Some((state.epoch, cancel.clone()));
+        true
     }
 }
 
@@ -2582,12 +2689,11 @@ impl ara_cli::codex_reset_controller::CodexResetHost for ReferenceResetHost {
         Some(self.current.lock().unwrap().epoch)
     }
     fn is_current(&self, context: &ara_cli::codex_reset_controller::CodexResetContext) -> bool {
-        let state = self.current.lock().unwrap();
-        !state.closed
-            && context.host_epoch == Some(state.epoch)
-            && context.provider == state.provider
-            && context.model_id == state.model_id
-            && state.session_ids.contains(&context.usage.context.session_id)
+        let admission = self.admission.lock().unwrap().clone();
+        let frozen = self.quota_epoch_cancel.lock().unwrap().clone();
+        self.owns_context(context)
+            && frozen.is_none_or(|(epoch, cancel)| context.host_epoch != Some(epoch) || !cancel.is_cancelled())
+            && admission.is_none_or(|admission| admission())
     }
 }
 
@@ -2721,6 +2827,7 @@ async fn run(args: Args) -> Result<i32> {
     let mut account_auth = None;
     let registry_cancel = CancellationToken::new();
     let result = run_inner(args, &mut account_auth, &registry_cancel).await;
+    session_quota_recovery::settle_orphaned_feedback().await;
     ara_cli::codex_reset_controller::CodexResetCoordinator::process_shared().close().await;
     registry_cancel.cancel();
     // Normal error/deadline/first-interrupt exits must finish any dispatched
@@ -2999,7 +3106,7 @@ async fn run_inner(
             mcp_config: &mcp_config,
             artifact_router,
         };
-        return run_repl_loop(
+        let result = run_repl_loop(
             &args,
             &route.model,
             &provider,
@@ -3013,6 +3120,8 @@ async fn run_inner(
             interrupts,
         )
         .await;
+        provider_factory.settle_quota_feedback().await;
+        return result;
     }
     let c2 = cancel.clone();
     tokio::spawn(async move {
@@ -3064,6 +3173,7 @@ async fn run_inner(
             break;
         }
     }
+    provider_factory.settle_quota_feedback().await;
     drop(provider_factory);
     drop(provider);
     if let Some(task) = request_text_task {

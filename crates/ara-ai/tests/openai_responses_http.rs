@@ -213,6 +213,16 @@ async fn context_recovery_wire_facts_preserve_replay_vetoes_and_unknown_journals
             false,
         ),
         (
+            "codex-usage-admission",
+            vec![
+                message.clone(),
+                json!({"type":"response.failed","response":{"status":"failed",
+            "error":{"code":"usage_limit_reached","message":"maximum context length is 4000 tokens"}}}),
+            ],
+            UsageAdmission,
+            true,
+        ),
+        (
             "codex-validator",
             vec![json!({"type":"response.content_part.added","part":{"type":"output_image"}})],
             NativeValidation,
@@ -255,6 +265,12 @@ async fn context_recovery_wire_facts_preserve_replay_vetoes_and_unknown_journals
         let api = if is_codex { codex::API } else { openai_responses::API };
         let class = classify_retry(&decoded, api);
         assert_eq!(class.context_recovery_blocked, expected != ContentOnly, "{name}");
+        if name.ends_with("usage-admission") {
+            let evidence = decoded.failure_evidence.as_ref().unwrap();
+            assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Stream, "{name}");
+            assert_eq!(evidence.code.as_deref(), Some("usage_limit_reached"), "{name}");
+            assert!(class.usage_limit && class.replay_blocked && evidence.replay_blocked, "{name}");
+        }
         if name == "message" {
             assert!(class.overflow && class.replay_blocked);
             assert!(decoded.failure_evidence.as_ref().unwrap().replay_blocked);

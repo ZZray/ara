@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use super::openai_completions::{PostError, PostRetryState, RetryPolicy, post_with_retry_detailed};
+use super::openai_completions::{PostError, PostRetryPolicy, PostRetryState, RetryPolicy, post_with_retry_policy};
 
 pub const API: &str = "openai-responses";
 const NON_VISION_IMAGE_PLACEHOLDER: &str = "[image omitted: model does not support vision]";
@@ -1205,18 +1205,17 @@ async fn post_until_first_event(
     url: &str,
     headers: &[(String, String)],
     body: &Value,
-    options: &StreamOptions,
+    transport: (&StreamOptions, &PostRetryPolicy),
     first_deadline: Option<Instant>,
     retry_state: &mut PostRetryState<'_>,
 ) -> Result<reqwest::Response, PostError> {
+    let (options, retry) = transport;
     match first_deadline {
         Some(deadline) => tokio::select! {
-            result = post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_state) => result,
+            result = post_with_retry_policy(client, url, headers, body, retry, &options.cancel, retry_state) => result,
             _ = tokio::time::sleep_until(deadline.into()) => Err(ProviderError::Timeout("Responses stream timed out before its first event".into()).into()),
         },
-        None => {
-            post_with_retry_detailed(client, url, headers, body, &options.retry, &options.cancel, retry_state).await
-        }
+        None => post_with_retry_policy(client, url, headers, body, retry, &options.cancel, retry_state).await,
     }
 }
 
@@ -1280,8 +1279,10 @@ async fn run(
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|duration| started + duration);
     let mut retry_state = PostRetryState { retry_blocked, failure_evidence: &mut state.output.failure_evidence };
+    let retry = PostRetryPolicy::for_responses(&options.retry, matches!(protocol, ResponsesProtocol::Codex { .. }));
     let mut posted =
-        post_until_first_event(client, &url, &headers, &body, options, first_deadline, &mut retry_state).await;
+        post_until_first_event(client, &url, &headers, &body, (options, &retry), first_deadline, &mut retry_state)
+            .await;
     if sent_previous
         && !options.cancel.is_cancelled()
         && let Some(zero_data_retention) = posted.as_ref().err().and_then(stale_previous_response)
@@ -1296,7 +1297,9 @@ async fn run(
             body["store"] = json!(false);
         }
         sent_previous = false;
-        posted = post_until_first_event(client, &url, &headers, &body, options, first_deadline, &mut retry_state).await;
+        posted =
+            post_until_first_event(client, &url, &headers, &body, (options, &retry), first_deadline, &mut retry_state)
+                .await;
     }
     let response = posted.map_err(|error| {
         if let Some(evidence) = error.failure_evidence {

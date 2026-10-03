@@ -1,5 +1,11 @@
 # Saved-reset controllers — bounded tested WIP
 
+**Later continuation, 2026-10-03:**
+[HTTP hints and same-Session quota recovery](session-quota-recovery.md) records
+the subsequent body-hint and post-emitted actual CLI/RPC work. That continuation
+updates those previously required items; the results and differences below
+remain the receipts for this earlier candidate.
+
 ## Requirement and source
 
 Base `87ed35abf69c23c79aba108b685633caa0f99ab3`, branch `dev`; fixed OMP

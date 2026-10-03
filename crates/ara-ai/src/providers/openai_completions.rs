@@ -159,7 +159,7 @@ impl Default for OpenAICompat {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetryPolicy {
     /// Total HTTP attempts including the first (upstream default 6).
     pub max_attempts: u32,
@@ -170,6 +170,42 @@ pub struct RetryPolicy {
 impl Default for RetryPolicy {
     fn default() -> Self {
         RetryPolicy { max_attempts: 6, base_delay: Duration::from_millis(500), max_delay: Duration::from_secs(60) }
+    }
+}
+
+/// Internal protocol defaults. A non-default public policy keeps its original
+/// exponential schedule and cap. The same Default value denotes the default
+/// of the selected protocol, including when the caller supplies it explicitly.
+pub(crate) struct PostRetryPolicy {
+    policy: RetryPolicy,
+    linear: bool,
+}
+
+impl PostRetryPolicy {
+    fn configured(policy: &RetryPolicy) -> Self {
+        Self { policy: policy.clone(), linear: false }
+    }
+
+    pub(crate) fn for_responses(policy: &RetryPolicy, codex: bool) -> Self {
+        if codex && policy == &RetryPolicy::default() {
+            // Fixed openai-codex-responses.ts: CODEX_MAX_RETRIES + 1,
+            // CODEX_RETRY_DELAY_MS * (attempt + 1), CODEX_RATE_LIMIT_BUDGET_MS.
+            Self {
+                policy: RetryPolicy {
+                    max_attempts: 6,
+                    base_delay: Duration::from_millis(500),
+                    max_delay: Duration::from_secs(300),
+                },
+                linear: true,
+            }
+        } else {
+            Self::configured(policy)
+        }
+    }
+
+    fn default_delay(&self, attempt: u32) -> Duration {
+        let multiplier = if self.linear { attempt.saturating_add(1) } else { 2u32.saturating_pow(attempt) };
+        self.policy.base_delay.saturating_mul(multiplier).min(self.policy.max_delay)
     }
 }
 
@@ -1245,21 +1281,6 @@ impl ChunkState {
 
 // ----------------------------------------------------------------- transport
 
-fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
-    if let Some(ms) =
-        headers.get("retry-after-ms").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<f64>().ok())
-    {
-        return Some(Duration::from_millis(ms.max(0.0) as u64));
-    }
-    let value = headers.get("retry-after").and_then(|v| v.to_str().ok())?.trim();
-    if let Ok(seconds) = value.parse::<f64>() {
-        return Some(Duration::from_millis((seconds.max(0.0) * 1000.0) as u64));
-    }
-    httpdate::parse_http_date(value)
-        .ok()
-        .map(|when| when.duration_since(std::time::SystemTime::now()).unwrap_or(Duration::ZERO))
-}
-
 async fn sleep_or_cancel(delay: Duration, cancel: &CancellationToken) -> Result<(), ProviderError> {
     tokio::select! {
         _ = tokio::time::sleep(delay) => Ok(()),
@@ -1296,6 +1317,19 @@ pub(crate) async fn post_with_retry_detailed(
     cancel: &CancellationToken,
     state: &mut PostRetryState<'_>,
 ) -> Result<reqwest::Response, PostError> {
+    post_with_retry_policy(client, url, headers, body, &PostRetryPolicy::configured(policy), cancel, state).await
+}
+
+pub(crate) async fn post_with_retry_policy(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(String, String)],
+    body: &Value,
+    retry: &PostRetryPolicy,
+    cancel: &CancellationToken,
+    state: &mut PostRetryState<'_>,
+) -> Result<reqwest::Response, PostError> {
+    let policy = &retry.policy;
     let bytes = serde_json::to_vec(body).map_err(|e| ProviderError::Config(e.to_string()))?;
     let mut attempt: u32 = 0;
     loop {
@@ -1314,7 +1348,7 @@ pub(crate) async fn post_with_retry_detailed(
             _ = cancel.cancelled() => return Err(ProviderError::Aborted.into()),
         };
         let last = attempt + 1 >= policy.max_attempts;
-        let default_delay = policy.base_delay.saturating_mul(2u32.saturating_pow(attempt)).min(policy.max_delay);
+        let default_delay = retry.default_delay(attempt);
         match result {
             Ok(resp) if resp.status().is_success() => {
                 *state.failure_evidence = None;
@@ -1323,7 +1357,12 @@ pub(crate) async fn post_with_retry_detailed(
             }
             Ok(resp) => {
                 let status = resp.status().as_u16();
-                let hint = retry_after(resp.headers());
+                let response_headers = resp.headers().clone();
+                let hint = crate::retry_hint::extract_retry_hint(
+                    Some(&response_headers),
+                    None,
+                    chrono::Utc::now().timestamp_millis() as f64,
+                );
                 let session_wait_ms = crate::retry_classification::retry_wait_ms(
                     resp.headers(),
                     chrono::Utc::now().timestamp_millis() as f64,
@@ -1333,7 +1372,7 @@ pub(crate) async fn post_with_retry_detailed(
                     .get("rate_limit_type")
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|value| value.trim() == "max_parallel_requests");
-                let hint_too_long = hint.is_some_and(|h| h > policy.max_delay);
+                let hint_too_long = hint.is_some_and(|ms| ms > policy.max_delay.as_secs_f64() * 1000.0);
                 // Preserve an explicit no-retry header even if the error body
                 // stalls and the first-event watchdog drops this future.
                 *state.retry_blocked = admission_header || hint_too_long;
@@ -1347,6 +1386,25 @@ pub(crate) async fn post_with_retry_detailed(
                     b = resp.text() => b.unwrap_or_default(),
                     _ = cancel.cancelled() => return Err(ProviderError::Aborted.into()),
                 };
+                // Native extractRetryHint checks headers in order, then the
+                // complete cloned body. Keep the pre-body header evidence
+                // above so cancellation/watchdogs cannot erase those facts.
+                let hint = crate::retry_hint::extract_retry_hint(
+                    Some(&response_headers),
+                    Some(&body),
+                    chrono::Utc::now().timestamp_millis() as f64,
+                );
+                let hint_too_long = hint.is_some_and(|ms| ms > policy.max_delay.as_secs_f64() * 1000.0);
+                let session_wait_ms = session_wait_ms.or_else(|| {
+                    crate::retry_hint::extract_retry_hint(
+                        None,
+                        Some(&body),
+                        chrono::Utc::now().timestamp_millis() as f64,
+                    )
+                });
+                if let Some(evidence) = state.failure_evidence.as_mut() {
+                    evidence.wait_ms = session_wait_ms;
+                }
                 let admission_reject = admission_header
                     || (body.contains("\"rate_limit_type\"") && body.contains("max_parallel_requests"));
                 if !retryable || last || admission_reject || hint_too_long {
@@ -1379,7 +1437,8 @@ pub(crate) async fn post_with_retry_detailed(
                     *state.failure_evidence = Some(evidence.clone());
                     return Err(PostError { cause, code, failure_evidence: Some(evidence) });
                 }
-                sleep_or_cancel(hint.unwrap_or(default_delay), cancel).await?;
+                let delay = hint.map(|ms| Duration::from_secs_f64(ms.max(0.0) / 1000.0)).unwrap_or(default_delay);
+                sleep_or_cancel(delay.min(policy.max_delay), cancel).await?;
             }
             Err(err) => {
                 if err.is_builder() {
@@ -1621,6 +1680,25 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn protocol_default_retry_schedule_keeps_explicit_policy_behavior() {
+        let default = super::RetryPolicy::default();
+        let generic = super::PostRetryPolicy::for_responses(&default, false);
+        let codex = super::PostRetryPolicy::for_responses(&default, true);
+        assert_eq!(generic.default_delay(3), std::time::Duration::from_millis(4000));
+        assert_eq!(generic.policy.max_delay, std::time::Duration::from_secs(60));
+        assert_eq!(codex.policy.max_attempts, 6);
+        assert_eq!(codex.default_delay(3), std::time::Duration::from_millis(2000));
+        assert_eq!(codex.policy.max_delay, std::time::Duration::from_secs(300));
+        let explicit = super::RetryPolicy {
+            max_attempts: 2,
+            base_delay: std::time::Duration::from_millis(7),
+            max_delay: std::time::Duration::from_millis(50),
+        };
+        let configured = super::PostRetryPolicy::for_responses(&explicit, true);
+        assert_eq!(configured.policy, explicit);
+        assert_eq!(configured.default_delay(3), std::time::Duration::from_millis(50));
+    }
     use super::*;
     use crate::types::{ToolResultMessage, UserMessage};
 

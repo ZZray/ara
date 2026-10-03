@@ -429,7 +429,36 @@ revocation prevents model retry and does not cancel the owned external operation
 Blocked/sweep synchronization is scoped; an already active sweep is settled
 before a blocked pass can spend again.
 
-These are explicit no-replay adaptations and bounded pre-output consumers,
-not full Native reset parity. Post-visible-output recovery, full Settings/UI,
+These are explicit no-replay adaptations and bounded consumers. Full Settings/UI,
 TUI/ACP and other callers remain required; see the
 [source, differences and execution evidence](../evidence/codex-reset-controllers.md).
+
+### Privately correlated Session quota feedback
+
+**Implementation, 2026-10-03 (bounded WIP):** a provider Start is already an
+emitted event but does not prove visible text or an admitted tool effect. The
+reference Host captures the actual request call, acquired Stored lease, route,
+logical Session and current epoch before IO. A settled typed quota terminal can
+publish a private recovery capability; string matching or a journal read cannot
+construct one. The Agent may normalize only positively unfinished tools when
+matching the retained terminal. No request/lease identity enters the journal.
+
+Rejected-account feedback owns an independent token and its durable block write.
+It settles even if the Run cannot retry because of visible text, an actual tool,
+disabled retry, budget exhaustion or cancellation. A remote block is confirmed
+only by this write's sole acknowledged POST. The capability must match current
+Session/model/epoch and positive settled feedback before sibling/reset/window
+recovery can be admitted. An already admitted reset remains owned; old canceled
+preparation remains revoked. A new prompt may create a new epoch while retaining
+the Provider conversation state.
+
+The actual RPC Agent terminal precedes Host quota preparation and the retry
+receipt. Closing input after agent_end revokes pending admission; agent_end alone
+does not prove quota preparation or retry completion. Startup usage rendering can
+also list saved credits before any model call. Controlled process tests therefore
+identify the intended request/phase before holding a recovery Gate.
+
+Selected HTTP/body hints and post-emitted CLI/RPC quota families are exercised;
+complete configured reserve/fallback/revert, other Host surfaces and recorded
+Provider/date/watchdog differences remain required. See the
+[source and execution evidence](../evidence/session-quota-recovery.md).

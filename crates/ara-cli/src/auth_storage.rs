@@ -46,7 +46,7 @@ use crate::{
     credential_store::{
         AuthCredential, SqliteCredentialStore, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS,
     },
-    credential_store_port::{AuthCredentialStore, CredentialStoreOwner},
+    credential_store_port::{AuthCredentialStore, CredentialBlockSettlement, CredentialStoreOwner},
     model_route::{
         AuthResolveError, AuthRetryAction, CredentialIdentity, RequestAuthFailure, RequestAuthFailureKind,
         RequestAuthLease, RequestAuthResolver,
@@ -376,6 +376,13 @@ pub struct AuthAccess {
 pub struct UsageLimitMarkResult {
     pub switched: bool,
     pub retry_at_ms: Option<f64>,
+}
+
+/// Actual feedback application, distinct from availability of a sibling.
+#[derive(Clone, Copy)]
+pub struct RecordedUsageLimit {
+    pub availability: UsageLimitMarkResult,
+    pub credential_kind: CredentialKind,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthFailureCategory {
@@ -1293,29 +1300,64 @@ impl AuthStorage {
         until: f64,
         scope: Option<&str>,
     ) -> Result<(), AuthStorageError> {
+        self.mark_block_if_present(provider, id, kind, until, scope, false).await.map(|_| ())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn mark_block_if_present(
+        &self,
+        provider: &str,
+        id: i64,
+        kind: CredentialKind,
+        until: f64,
+        scope: Option<&str>,
+        require_durable: bool,
+    ) -> Result<bool, AuthStorageError> {
         let provider = provider.to_owned();
         let scope = scope.map(str::to_owned);
         let now = self.now();
         let cache_provider = provider.clone();
-        self.database(move |store, state| {
-            let rows = Self::load_provider(store, state, &provider)?;
-            if let Some(index) = rows.iter().position(|row| row.id == id) {
-                state.assignments.mark_credential_blocked(
-                    store,
-                    &provider_type_key(&provider, kind),
-                    index,
-                    until,
-                    scope.as_deref(),
-                    &rows,
-                    now,
-                );
-            }
-            Ok(())
-        })
-        .await?;
+        let completion = self
+            .database(move |store, state| {
+                let rows = Self::load_provider(store, state, &provider)?;
+                if let Some(index) = rows.iter().position(|row| row.id == id) {
+                    if require_durable {
+                        return state
+                            .assignments
+                            .mark_credential_blocked_observed(
+                                store,
+                                &provider_type_key(&provider, kind),
+                                index,
+                                until,
+                                scope.as_deref(),
+                                &rows,
+                                now,
+                            )
+                            .map_err(|_| AuthStorageError::Storage);
+                    }
+                    state.assignments.mark_credential_blocked(
+                        store,
+                        &provider_type_key(&provider, kind),
+                        index,
+                        until,
+                        scope.as_deref(),
+                        &rows,
+                        now,
+                    );
+                    return Ok(Some(CredentialBlockSettlement::settled()));
+                }
+                Ok(None)
+            })
+            .await?;
+        // Remote acknowledgement is owned by this exact write; no Host/store
+        // mutex crosses its wait, and no generic receipt is inferred as success.
+        let applied = match completion {
+            Some(completion) => completion.confirmed().await,
+            None => false,
+        };
         self.expire_usage_cache(Some(&cache_provider))?;
         self.bump_generation();
-        Ok(())
+        Ok(applied)
     }
 
     async fn resolve_exact_oauth(
@@ -2728,9 +2770,38 @@ impl AuthStorage {
         retry_after_ms: Option<f64>,
         cancel: &CancellationToken,
     ) -> Result<UsageLimitMarkResult, AuthStorageError> {
+        self.mark_usage_limit_reached_inner(provider, context, failed, retry_after_ms, None, cancel)
+            .await
+            .map(|recorded| recorded.map(|recorded| recorded.availability).unwrap_or_default())
+    }
+
+    /// Feedback for a privately correlated provider terminal. Some proves that
+    /// the captured durable row was still present and its block write settled;
+    /// None is an absent target, never a successful recorded rejection.
+    /// Freeze the native unblock clock before any usage/account IO.
+    pub async fn mark_usage_limit_reached_observed(
+        &self,
+        provider: &str,
+        context: &AuthRequestContext,
+        failed: &RequestAuthLease,
+        blocked_until_ms: f64,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RecordedUsageLimit>, AuthStorageError> {
+        self.mark_usage_limit_reached_inner(provider, context, failed, None, Some(blocked_until_ms), cancel).await
+    }
+
+    async fn mark_usage_limit_reached_inner(
+        &self,
+        provider: &str,
+        context: &AuthRequestContext,
+        failed: &RequestAuthLease,
+        retry_after_ms: Option<f64>,
+        blocked_until_ms: Option<f64>,
+        cancel: &CancellationToken,
+    ) -> Result<Option<RecordedUsageLimit>, AuthStorageError> {
         check_cancel(cancel)?;
         let Some((row, target)) = self.feedback_target(provider, context, failed, true, cancel).await? else {
-            return Ok(UsageLimitMarkResult::default());
+            return Ok(None);
         };
         let strategy = self.strategy(provider);
         let routing = policy::credential_block_routing(
@@ -2740,7 +2811,8 @@ impl AuthStorage {
             context.model_id.as_deref(),
             None,
         );
-        let mut until = self.now() + retry_after_ms.unwrap_or(policy::DEFAULT_BACKOFF_MS);
+        let mut until =
+            blocked_until_ms.unwrap_or_else(|| self.now() + retry_after_ms.unwrap_or(policy::DEFAULT_BACKOFF_MS));
         if let Some(strategy) = strategy.as_deref()
             && let Some(report) = self.usage_report(provider, &row, context, false, cancel).await?
         {
@@ -2753,7 +2825,19 @@ impl AuthStorage {
         }
         // The usage await may have changed positional indexes. mark_block
         // resolves the captured durable ID again rather than trusting target.
-        self.mark_block(provider, row.id, target.kind, until, routing.block_scope.as_deref()).await?;
+        if !self
+            .mark_block_if_present(
+                provider,
+                row.id,
+                target.kind,
+                until,
+                routing.block_scope.as_deref(),
+                blocked_until_ms.is_some(),
+            )
+            .await?
+        {
+            return Ok(None);
+        }
         self.sibling_availability(
             provider,
             row.id,
@@ -2762,6 +2846,7 @@ impl AuthStorage {
             &context.excluded_credential_ids,
         )
         .await
+        .map(|availability| Some(RecordedUsageLimit { availability, credential_kind: target.kind }))
     }
     pub async fn mark_account_policy_denied(
         &self,
@@ -2986,6 +3071,21 @@ impl AuthStorage {
     pub fn list_credential_blocks(&self, ids: &[i64]) -> Result<Vec<StoredCredentialBlock>, AuthStorageError> {
         self.store_operation(|store, state| {
             state.assignments.list_credential_blocks(store, ids).map_err(|_| AuthStorageError::Storage)
+        })
+    }
+
+    /// Check only row ownership/type; never return stored credential material.
+    pub fn credential_kind_for_lease(
+        &self,
+        provider: &str,
+        lease: &RequestAuthLease,
+    ) -> Result<Option<CredentialKind>, AuthStorageError> {
+        let CredentialIdentity::Stored { id, .. } = lease.identity() else { return Ok(None) };
+        self.store_operation(|store, state| {
+            Ok(Self::load_provider(store, state, provider)?
+                .iter()
+                .find(|row| row.id == *id)
+                .map(|row| CredentialKind::of(&row.credential)))
         })
     }
     pub fn upsert_credential_block(&self, block: &StoredCredentialBlock) -> Result<(), AuthStorageError> {

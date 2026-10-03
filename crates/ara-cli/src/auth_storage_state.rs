@@ -38,7 +38,7 @@ use crate::credential_store::SqliteCredentialStore;
 use crate::credential_store::{
     AuthCredential, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS, is_sqlite_corruption_error,
 };
-use crate::credential_store_port::AuthCredentialStore;
+use crate::credential_store_port::{AuthCredentialStore, CredentialBlockSettlement};
 use anyhow::{Result, anyhow};
 use ara_rpc::WireString;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -612,13 +612,71 @@ impl AuthStorageState {
         rows: &[StoredAuthCredential],
         now_ms: f64,
     ) {
+        let _ = self.mark_credential_blocked_checked(store, provider_key, index, until_ms, scope, rows, now_ms);
+    }
+
+    /// Preserve native memory feedback while exposing durable acknowledgement
+    /// to a correlated terminal owner. The legacy facade still ignores errors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mark_credential_blocked_checked(
+        &mut self,
+        store: &dyn AuthCredentialStore,
+        provider_key: &str,
+        index: usize,
+        until_ms: f64,
+        scope: Option<&str>,
+        rows: &[StoredAuthCredential],
+        now_ms: f64,
+    ) -> Result<bool> {
+        let Some(block) = self.prepare_credential_block(provider_key, index, until_ms, scope, rows, now_ms)? else {
+            return Ok(false);
+        };
+        if let Err(error) = store.upsert_credential_block(&block) {
+            self.observe_store_error(&error);
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mark_credential_blocked_observed(
+        &mut self,
+        store: &dyn AuthCredentialStore,
+        provider_key: &str,
+        index: usize,
+        until_ms: f64,
+        scope: Option<&str>,
+        rows: &[StoredAuthCredential],
+        now_ms: f64,
+    ) -> Result<Option<CredentialBlockSettlement>> {
+        let Some(block) = self.prepare_credential_block(provider_key, index, until_ms, scope, rows, now_ms)? else {
+            return Ok(None);
+        };
+        match store.upsert_credential_block_observed(&block) {
+            Ok(completion) => Ok(Some(completion)),
+            Err(error) => {
+                self.observe_store_error(&error);
+                Err(error)
+            }
+        }
+    }
+
+    fn prepare_credential_block(
+        &mut self,
+        provider_key: &str,
+        index: usize,
+        until_ms: f64,
+        scope: Option<&str>,
+        rows: &[StoredAuthCredential],
+        now_ms: f64,
+    ) -> Result<Option<StoredCredentialBlock>> {
         let key = scoped_key(provider_key, scope);
         let map = self.backoff.entry(key.clone()).or_default();
         let next = js_max(map.get(&index).copied().unwrap_or(0.0), until_ms);
         map.insert(index, next);
         self.probe_after.entry(key).or_default().insert(index, js_min(next, now_ms + USAGE_REPORT_TTL_MS as f64));
         if self.persisted_block_store_damaged {
-            return;
+            return Err(anyhow!("Persistent credential block store is unavailable after SQLite corruption"));
         }
         if let (Some(row), Some(until)) = (rows.get(index), integer_ms(next)) {
             let block = StoredCredentialBlock {
@@ -628,10 +686,9 @@ impl AuthStorageState {
                 blocked_until_ms: until,
                 updated_at_ms: integer_ms(now_ms).unwrap_or(0),
             };
-            if let Err(error) = store.upsert_credential_block(&block) {
-                self.observe_store_error(&error);
-            }
+            return Ok(Some(block));
         }
+        Ok(None)
     }
 
     pub fn list_credential_blocks(
@@ -1039,10 +1096,30 @@ mod tests {
         assert!(crate::credential_store::is_sqlite_busy_error(&error));
         assert!(!state.persisted_block_store_damaged());
         state.mark_credential_blocked(&store, &key, 1, now + 800_000.0, Some("busy"), &rows, now);
+        assert!(
+            state
+                .mark_credential_blocked_observed(&store, &key, 1, now + 800_000.0, Some("observed-busy"), &rows, now,)
+                .is_err(),
+            "owned feedback cannot turn a failed durable write into recorded proof"
+        );
         assert_eq!(state.blocked_until(&store, &key, 1, &["busy"], &rows, now), Some(now + 800_000.0));
         assert!(state.list_credential_blocks(&store, &[rows[1].id]).is_err());
         assert!(!state.take_block_store_damage_notice());
         contender.execute_batch("ROLLBACK").unwrap();
+        assert!(
+            state
+                .mark_credential_blocked_observed(
+                    &store,
+                    &key,
+                    1,
+                    now + 800_000.0,
+                    Some("observed-settled"),
+                    &rows,
+                    now,
+                )
+                .unwrap()
+                .is_some()
+        );
 
         for code in [rusqlite::ffi::SQLITE_CORRUPT, rusqlite::ffi::SQLITE_NOTADB] {
             let error: anyhow::Error = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None).into();
