@@ -449,6 +449,7 @@ impl Session {
 
 struct RunSink {
     session: Arc<Session>,
+    observed_usage: Option<Arc<ara_cli::auth_storage::AuthStorage>>,
     output: Output,
     cancel: CancellationToken,
     connection: CancellationToken,
@@ -521,6 +522,11 @@ impl AgentEventSink for RunSink {
                     }
                 }
                 drop(journal);
+                if let Message::Assistant(message) = message
+                    && let Some(owner) = &self.observed_usage
+                {
+                    owner.record_assistant_usage(message);
+                }
                 self.completed_message(public["message"].clone());
             }
             AgentEvent::MessageStart { message: Message::Assistant(_) } | AgentEvent::MessageUpdate { .. } => {
@@ -1976,6 +1982,7 @@ impl Host {
         });
         let sink = Arc::new(RunSink {
             session: self.session.clone(),
+            observed_usage: self.sessions.provider.shared_account.clone(),
             output: self.output.clone(),
             cancel: cancel.clone(),
             connection: self.connection.clone(),
@@ -3097,6 +3104,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let sink = Arc::new(RunSink {
                 session: host.session.clone(),
+                observed_usage: None,
                 output: host.output.clone(),
                 cancel: cancel.clone(),
                 connection: host.connection.clone(),
@@ -3155,6 +3163,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let sink = Arc::new(RunSink {
             session: host.session.clone(),
+            observed_usage: None,
             output: host.output.clone(),
             cancel: cancel.clone(),
             connection: host.connection.clone(),
@@ -3390,6 +3399,7 @@ mod tests {
         let cancel = connection.child_token();
         let sink = Arc::new(RunSink {
             session,
+            observed_usage: None,
             output,
             cancel: cancel.clone(),
             connection,

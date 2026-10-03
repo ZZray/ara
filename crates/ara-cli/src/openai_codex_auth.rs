@@ -35,7 +35,7 @@ use crate::model_route::{AuthResolveError, CredentialIdentity, RequestAuthLease,
 use ara_ai::Model;
 use async_trait::async_trait;
 use base64::Engine as _;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -43,6 +43,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
+
+#[path = "openai_codex_device_login.rs"]
+mod device_login;
+pub use device_login::OpenAiCodexDeviceLogin;
 
 const PROVIDER: &str = "openai-codex";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -100,7 +104,7 @@ impl std::fmt::Display for CodexAuthError {
             Self::InvalidResponse => f.write_str("OpenAI Codex authentication response is invalid"),
             Self::TimedOut => f.write_str("OpenAI Codex authentication timed out"),
             Self::LoginRequired => f.write_str("OpenAI Codex login required"),
-            Self::OutcomeUnknown => f.write_str("OpenAI Codex refresh outcome unknown"),
+            Self::OutcomeUnknown => f.write_str("OpenAI Codex authentication outcome unknown"),
             Self::CredentialChanged => f.write_str("OpenAI Codex credential changed before refresh"),
             Self::InvalidEndpoint => f.write_str("OpenAI Codex authentication endpoint is not permitted"),
         }
@@ -267,69 +271,30 @@ impl OpenAiCodexAuth {
         cancel: &CancellationToken,
         on_auth: impl Fn(DeviceLoginInfo) + Send + Sync,
     ) -> Result<LoginIdentity, CodexAuthError> {
-        let init = self.post_json("/api/accounts/deviceauth/usercode", json!({"client_id": CLIENT_ID}), cancel).await?;
-        let device_id = required(&init, "device_auth_id")?.to_owned();
-        let user_code = required(&init, "user_code")?.to_owned();
-        let seconds = interval_seconds(init.get("interval"));
-        let interval = if self.fixture { Duration::from_millis(5) } else { Duration::from_secs_f64(seconds + 3.0) };
-        on_auth(DeviceLoginInfo { verification_url: DEVICE_AUTH_URL, user_code: user_code.clone() });
-        for poll in 0..120 {
-            let delay = if poll == 0 { interval.min(Duration::from_secs(5)) } else { interval };
-            cancellable_sleep(delay, cancel).await?;
-            let result = self
-                .post_json(
-                    "/api/accounts/deviceauth/token",
-                    json!({
-                        "device_auth_id": device_id, "user_code": user_code,
-                    }),
-                    cancel,
-                )
-                .await;
-            let authorized = match result {
-                Err(CodexAuthError::HttpStatus(403 | 404)) => continue,
-                result => result?,
-            };
-            let code = required(&authorized, "authorization_code")?;
-            let verifier = required(&authorized, "code_verifier")?;
-            let token = self
-                .post_token(
-                    &[
-                        ("grant_type", "authorization_code"),
-                        ("client_id", CLIENT_ID),
-                        ("code", code),
-                        ("code_verifier", verifier),
-                        ("redirect_uri", REDIRECT_URI),
-                    ],
-                    Duration::from_secs(15),
-                    cancel,
-                )
-                .await?;
-            let credential = login_credential(&token)?;
-            if cancel.is_cancelled() {
-                return Err(CodexAuthError::Cancelled);
-            }
-            return self
-                .db(move |store| {
-                    let rows = store.upsert_auth_credential_for_provider(PROVIDER, &credential)?;
-                    let fields = oauth_fields(&credential).expect("login constructs OAuth");
-                    let account_id = fields["accountId"].as_str().expect("validated account").to_owned();
-                    let access = fields["access"].as_str().expect("validated access");
-                    let row = rows
-                        .iter()
-                        .find(|row| {
-                            oauth_fields(&row.credential).and_then(|f| f.get("access")).and_then(Value::as_str)
-                                == Some(access)
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("login not persisted"))?;
-                    Ok(LoginIdentity {
-                        credential_id: row.id,
-                        account_id,
-                        email: fields.get("email").and_then(Value::as_str).map(str::to_owned),
-                    })
-                })
-                .await;
+        let issuer =
+            OpenAiCodexDeviceLogin::from_transport(self.client.clone(), self.auth_base_url.clone(), self.fixture);
+        let credential = issuer.issue(cancel, on_auth).await?;
+        if cancel.is_cancelled() {
+            return Err(CodexAuthError::Cancelled);
         }
-        Err(CodexAuthError::TimedOut)
+        self.db(move |store| {
+            let rows = store.upsert_auth_credential_for_provider(PROVIDER, &credential)?;
+            let fields = oauth_fields(&credential).expect("login constructs OAuth");
+            let account_id = fields["accountId"].as_str().expect("validated account").to_owned();
+            let access = fields["access"].as_str().expect("validated access");
+            let row = rows
+                .iter()
+                .find(|row| {
+                    oauth_fields(&row.credential).and_then(|f| f.get("access")).and_then(Value::as_str) == Some(access)
+                })
+                .ok_or_else(|| anyhow::anyhow!("login not persisted"))?;
+            Ok(LoginIdentity {
+                credential_id: row.id,
+                account_id,
+                email: fields.get("email").and_then(Value::as_str).map(str::to_owned),
+            })
+        })
+        .await
     }
 
     pub async fn logout(&self) -> Result<(), CodexAuthError> {
@@ -348,28 +313,6 @@ impl OpenAiCodexAuth {
             }
             notified.await;
         }
-    }
-
-    async fn post_json(&self, path: &str, body: Value, cancel: &CancellationToken) -> Result<Value, CodexAuthError> {
-        if cancel.is_cancelled() {
-            return Err(CodexAuthError::Cancelled);
-        }
-        let request =
-            self.client.post(format!("{}{path}", self.auth_base_url)).timeout(Duration::from_secs(15)).json(&body);
-        response_json(request, cancel).await
-    }
-
-    async fn post_token(
-        &self,
-        form: &[(&str, &str)],
-        timeout: Duration,
-        cancel: &CancellationToken,
-    ) -> Result<Value, CodexAuthError> {
-        if cancel.is_cancelled() {
-            return Err(CodexAuthError::Cancelled);
-        }
-        let request = self.client.post(format!("{}/oauth/token", self.auth_base_url)).timeout(timeout).form(form);
-        response_json(request, cancel).await
     }
 
     /// Read-only observation for the synchronous Registry/extension interfaces.

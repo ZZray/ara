@@ -1,5 +1,22 @@
 # Delivery roadmap
 
+**Current checkpoint, 2026-10-03 (CLI auth/RPC observed tested WIP):**
+[Credential-consumer evidence](evidence/broker-consumers.md) connects no-DB
+OpenAI device issuance to configured Local/Remote CLI auth ownership and captures
+the same account owner in each RPC Run. Known numeric usage is reported live and
+on shutdown; unknown values remain unknown. Modules235/0/0; one Windows backend
+1785/0/20 in725.964s; fmt/Clippy/doc/inventory/build PASS. The existing unmaintained
+ttf-parser advisory keeps the whole dependency gate FAIL. Only two new process
+fixture oracles changed after initial compilation; unchanged groups were reused
+and failed receipts preserved. Source/Cargo pins and57 vendor/EOL hashes match.
+No new point or complete surface is accepted:111 surfaces27 implementing/one
+tested/83 open/zero complete acceptances;60 points35 limited accepted/23
+implementing/two tested. Started28/111=25.2%; limited35/60=58.3%, not overall
+completion. P0/V1 accepted, P1-P6 open, RPC27/42 and full marker null. Next complete
+Broker server/management, reserve/check/reset/auto-reset/watchdog controllers,
+remaining Provider consumers and recorded source differences, with actual account
+and platform acceptance still required. No reliable full-project ETA.
+
 **Current checkpoint, 2026-10-03 (Broker owner/Host tested WIP):**
 [Broker evidence](evidence/broker-store.md) connects the native remote credential
 owner/client, live SSE/pool/blocks, owned refresh/writes, observed usage/close,

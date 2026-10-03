@@ -349,6 +349,23 @@ recorded cache/number/unknown-usage differences are not accepted by this owner
 batch. The evidence page distinguishes executed module fixtures from these
 remaining contracts.
 
+The [credential-consumer WIP](../evidence/broker-consumers.md) connects actual
+CLI device login/logout and RPC observed usage to that same owner. Auth commands
+resolve Broker configuration without model/Registry readiness, so a first login
+does not require existing model credentials. The device issuer has no database;
+the Host publishes its result through Local or Remote AuthStorage and retains
+that owner for normal-exit settlement. The original Local wrapper still uses its
+exact SQLite Arc. Configured Broker failure cannot silently select Local.
+
+Each RPC Run captures the ProviderFactory's account Arc and reports settled
+assistant usage outside journal locks, using the same numeric conversion as
+print/REPL. Missing/unknown buckets or cost cannot be encoded as numeric zero;
+the entire report is omitted and the original Session usage remains unknown.
+Post-dispatch token exchange failures/cancellation/invalid2xx/5xx are conservatively
+OutcomeUnknown without replay. Native best-effort logout can return after known
+disable rejections; its UI outcome is not proof of complete remote grant removal.
+These are bounded consumer contracts, not complete account/Provider parity.
+
 These are bounded implemented boundaries, not full AuthStorage parity. The
 [AuthStorage evidence](../evidence/auth-storage.md) and
 [usage refresh evidence](../evidence/usage-refresh.md) retain complete callers,

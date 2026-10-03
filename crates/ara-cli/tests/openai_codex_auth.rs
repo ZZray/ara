@@ -8,7 +8,7 @@ use ara_cli::auth_storage_policy::UsageReport;
 use ara_cli::codex_usage::CodexUsageProvider;
 use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
 use ara_cli::model_route::{AuthResolveError, CredentialIdentity, PreparedRoute, ProtocolOptions, RequestAuthResolver};
-use ara_cli::openai_codex_auth::{CodexAuthError, OpenAiCodexAuth};
+use ara_cli::openai_codex_auth::{CodexAuthError, OpenAiCodexAuth, OpenAiCodexDeviceLogin};
 use ara_testkit::{FakeUpstream, Script};
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -190,6 +190,155 @@ async fn usage_reports(storage: &AuthStorage) -> Vec<UsageReport> {
 fn cached_usage(path: &Path, key: &str) -> Value {
     let store = SqliteCredentialStore::open(path).unwrap();
     serde_json::from_str(&store.get_cache(key, true).unwrap().unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn standalone_device_issuer_native_wire_and_profile_without_a_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("private/auth.db");
+    let token = jwt(json!({"https://api.openai.com/auth":{"chatgpt_data_residency":"eu"}}));
+    let id_token = jwt(json!({
+        "https://api.openai.com/auth":{"chatgpt_account_id":"workspace-remote","chatgpt_plan_type":" TEAM "},
+        "https://api.openai.com/profile":{"email":" Remote@EXAMPLE.com "},
+    }));
+    let fake = upstream(vec![
+        response(json!({"device_auth_id":"device-remote","user_code":"REMOTE-CODE","interval":"1second"})),
+        json!({"status":403}),
+        json!({"status":404}),
+        response(json!({"authorization_code":"remote-code","code_verifier":"remote-verifier"})),
+        response(json!({"access_token":token,"refresh_token":"remote-refresh","id_token":id_token,"expires_in":3600})),
+    ])
+    .await;
+    let issuer = OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr)).unwrap();
+    let shown = Arc::new(Mutex::new(Vec::new()));
+    let output = shown.clone();
+    let credential = issuer
+        .issue(&CancellationToken::new(), move |info| {
+            output.lock().unwrap().push((info.verification_url, info.user_code));
+        })
+        .await
+        .unwrap();
+    let AuthCredential::OAuth { fields } = credential else { panic!("device credential is OAuth") };
+    assert_eq!(fields["accountId"], "workspace-remote");
+    assert_eq!(fields["orgId"], "workspace-remote");
+    assert_eq!(fields["orgName"], "team");
+    assert_eq!(fields["email"], "remote@example.com");
+    assert_eq!(fields["refresh"], "remote-refresh");
+    assert!(fields["authorizedAt"].as_i64().unwrap() > 0);
+    assert!(fields["expires"].as_i64().unwrap() > now_ms());
+    assert_eq!(&*shown.lock().unwrap(), &[("https://auth.openai.com/codex/device", "REMOTE-CODE".into())]);
+    assert!(!path.exists());
+    assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
+    let requests = fake.requests.lock().await;
+    assert_eq!(requests.len(), 5);
+    assert_eq!(requests[0]["body"], json!({"client_id":"app_EMoamEEZ73f0CkXaXp7hrann"}));
+    assert!(requests[0]["request"].as_str().unwrap().starts_with("POST /api/accounts/deviceauth/usercode "));
+    for request in &requests[1..4] {
+        assert!(request["request"].as_str().unwrap().starts_with("POST /api/accounts/deviceauth/token "));
+        assert_eq!(request["body"], json!({"device_auth_id":"device-remote","user_code":"REMOTE-CODE"}));
+    }
+    assert!(requests[4]["request"].as_str().unwrap().starts_with("POST /oauth/token "));
+    assert_eq!(requests[4]["headers"]["content-type"], "application/x-www-form-urlencoded");
+    let form =
+        reqwest::Url::parse(&format!("http://fixture.invalid/?{}", requests[4]["body"].as_str().unwrap())).unwrap();
+    let fields: std::collections::BTreeMap<_, _> = form.query_pairs().into_owned().collect();
+    assert_eq!(fields["grant_type"], "authorization_code");
+    assert_eq!(fields["client_id"], "app_EMoamEEZ73f0CkXaXp7hrann");
+    assert_eq!(fields["code"], "remote-code");
+    assert_eq!(fields["code_verifier"], "remote-verifier");
+    assert_eq!(fields["redirect_uri"], "https://auth.openai.com/deviceauth/callback");
+}
+
+#[tokio::test]
+async fn standalone_device_issuer_failures_and_exchange_cancellation_never_replay() {
+    let init = response(json!({"device_auth_id":"device-fixture","user_code":"CODE","interval":1}));
+    let authorized = response(json!({"authorization_code":"fixture-code","code_verifier":"fixture-verifier"}));
+    for (responses, expected, count) in [
+        (vec![response(json!({"device_auth_id":"device-fixture"}))], CodexAuthError::InvalidResponse, 1),
+        (vec![init.clone(), json!({"status":503})], CodexAuthError::HttpStatus(503), 2),
+        (
+            vec![init.clone(), response(json!({"authorization_code":"fixture-code"}))],
+            CodexAuthError::InvalidResponse,
+            2,
+        ),
+        (
+            vec![init.clone(), authorized.clone(), json!({"status":400,"body":"private rejected code"})],
+            CodexAuthError::HttpStatus(400),
+            3,
+        ),
+        (
+            vec![init.clone(), authorized.clone(), json!({"status":500,"body":"private token exchange failure"})],
+            CodexAuthError::OutcomeUnknown,
+            3,
+        ),
+        (vec![init.clone(), authorized.clone(), json!({"body":"{truncated-token"})], CodexAuthError::OutcomeUnknown, 3),
+        (
+            vec![
+                init.clone(),
+                authorized.clone(),
+                response(
+                    json!({"access_token":"opaque-no-account","refresh_token":"fixture-refresh","expires_in":3600}),
+                ),
+            ],
+            CodexAuthError::OutcomeUnknown,
+            3,
+        ),
+    ] {
+        let fake = upstream(responses).await;
+        let issuer = OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr)).unwrap();
+        let error = issuer.issue(&CancellationToken::new(), |_| {}).await.err().expect("expected safe error");
+        assert_eq!(error, expected);
+        assert_eq!(fake.requests.lock().await.len(), count, "no automatic exchange retry");
+        let printed = format!("{error:?} {error}");
+        assert!(!printed.contains("fixture-refresh"));
+        assert!(!printed.contains("truncated-token"));
+        assert!(!printed.contains("private rejected code"));
+    }
+    let fake = upstream(vec![]).await;
+    let issuer = OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr)).unwrap();
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    assert_eq!(
+        issuer.issue(&cancelled, |_| panic!("pre-cancel cannot show login")).await.err(),
+        Some(CodexAuthError::Cancelled)
+    );
+    assert_eq!(fake.requests.lock().await.len(), 0);
+
+    let fake = upstream(vec![init.clone()]).await;
+    let issuer = OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr)).unwrap();
+    let cancel = CancellationToken::new();
+    let from_auth = cancel.clone();
+    assert_eq!(issuer.issue(&cancel, move |_| from_auth.cancel()).await.err(), Some(CodexAuthError::Cancelled));
+    assert_eq!(fake.requests.lock().await.len(), 1, "code exchange was not dispatched");
+
+    let fake = upstream(vec![init, authorized, json!({"delay_ms":500,"body":"{}"})]).await;
+    let issuer = OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr)).unwrap();
+    let cancel = CancellationToken::new();
+    let caller = cancel.clone();
+    let operation = tokio::spawn(async move { issuer.issue(&caller, |_| {}).await });
+    wait_requests(&fake, 3).await;
+    cancel.cancel();
+    assert_eq!(operation.await.unwrap().err(), Some(CodexAuthError::OutcomeUnknown));
+    assert_eq!(fake.requests.lock().await.len(), 3);
+    assert_eq!(CodexAuthError::OutcomeUnknown.to_string(), "OpenAI Codex authentication outcome unknown");
+}
+
+#[test]
+fn standalone_device_fixture_endpoints_retain_the_local_wrapper_admission_rule() {
+    for endpoint in [
+        "http://example.com",
+        "https://localhost",
+        "http://127.0.0.1/path",
+        "http://u:p@localhost",
+        "http://localhost/?x=1",
+        "http://localhost/#fragment",
+    ] {
+        assert_eq!(
+            OpenAiCodexDeviceLogin::with_endpoints(client(), endpoint).err(),
+            Some(CodexAuthError::InvalidEndpoint)
+        );
+    }
+    assert!(OpenAiCodexDeviceLogin::with_endpoints(client(), "http://127.0.0.1:1234/").is_ok());
 }
 
 #[tokio::test]

@@ -187,6 +187,43 @@ impl AuthStorage {
         }
     }
 
+    /// Report a settled assistant request through the shared store owner.
+    /// The fixed Broker wire requires numeric buckets and cost; incomplete
+    /// usage stays unknown in the Session instead of becoming a zero report.
+    pub fn record_assistant_usage(&self, message: &ara_ai::AssistantMessage) {
+        let (Some(input), Some(output), Some(cache_read), Some(cache_write), Some(cost)) = (
+            message.usage.input,
+            message.usage.output,
+            message.usage.cache_read,
+            message.usage.cache_write,
+            message.usage.cost.as_ref(),
+        ) else {
+            return;
+        };
+        if !cost.total.is_finite() {
+            return;
+        }
+        let (Ok(input_tokens), Ok(output_tokens), Ok(cache_read_tokens), Ok(cache_write_tokens)) =
+            (i64::try_from(input), i64::try_from(output), i64::try_from(cache_read), i64::try_from(cache_write))
+        else {
+            return;
+        };
+        self.record_observed_usage(
+            &[ClientUsageEntry {
+                at: message.timestamp,
+                provider: message.provider.clone(),
+                model: message.model.clone(),
+                requests: 1,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                cost_usd: cost.total,
+            }],
+            None,
+        );
+    }
+
     pub fn close_remote_store(&self) {
         if let Some(remote) = self.inner.store.remote() {
             remote.close();

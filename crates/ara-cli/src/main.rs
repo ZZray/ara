@@ -553,31 +553,8 @@ impl AgentEventSink for HostSink {
         }
         if let AgentEvent::MessageEnd { message: Message::Assistant(message) } = &event
             && let Some(owner) = &self.observed_usage
-            && let (Some(input), Some(output), Some(cache_read), Some(cache_write), Some(cost)) = (
-                message.usage.input,
-                message.usage.output,
-                message.usage.cache_read,
-                message.usage.cache_write,
-                message.usage.cost.as_ref(),
-            )
-            && cost.total.is_finite()
-            && let (Ok(input_tokens), Ok(output_tokens), Ok(cache_read_tokens), Ok(cache_write_tokens)) =
-                (i64::try_from(input), i64::try_from(output), i64::try_from(cache_read), i64::try_from(cache_write))
         {
-            owner.record_observed_usage(
-                &[ara_cli::credential_store::ClientUsageEntry {
-                    at: message.timestamp,
-                    provider: message.provider.clone(),
-                    model: message.model.clone(),
-                    requests: 1,
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cache_write_tokens,
-                    cost_usd: cost.total,
-                }],
-                None,
-            );
+            owner.record_assistant_usage(message);
         }
         // Incomplete usage remains unknown in the journal; the fixed numeric
         // broker report cannot represent missing buckets or unknown cost.
@@ -2388,40 +2365,93 @@ async fn open_codex_auth(client: reqwest::Client) -> Result<Arc<ara_cli::openai_
     Ok(Arc::new(ara_cli::openai_codex_auth::OpenAiCodexAuth::open(ara_home().join("agent/auth.db"), client).await?))
 }
 
-async fn run_auth_command(command: AuthCommand) -> Result<i32> {
+async fn run_auth_command(
+    command: AuthCommand,
+    project_dir: &Path,
+    account_auth: &mut Option<Arc<ara_cli::auth_storage::AuthStorage>>,
+    cancel: &CancellationToken,
+) -> Result<i32> {
     let provider = match &command {
         AuthCommand::Login { provider } | AuthCommand::Logout { provider } => provider,
     };
     if provider != "openai-codex" {
         bail!("account login currently supports openai-codex; other providers are deferred");
     }
-    let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?;
-    let auth = open_codex_auth(client).await?;
-    match command {
-        AuthCommand::Logout { .. } => {
-            auth.logout().await?;
-            eprintln!("ara: signed out of OpenAI");
+    let mut interrupts = listen_for_interrupts()?;
+    let stop = cancel.clone();
+    let listener = tokio::spawn(async move {
+        if interrupts.recv().await.is_some() {
+            stop.cancel();
         }
-        AuthCommand::Login { .. } => {
-            let cancel = CancellationToken::new();
-            let mut interrupts = listen_for_interrupts()?;
-            let stop = cancel.clone();
-            let listener = tokio::spawn(async move {
-                if interrupts.recv().await.is_some() {
-                    stop.cancel();
-                }
-            });
-            let result = auth
-                .login_device(&cancel, |info| {
-                    eprintln!("ara: open {} and enter code {}", info.verification_url, info.user_code);
-                })
-                .await;
-            listener.abort();
-            result?;
-            eprintln!("ara: signed in to OpenAI; use --provider openai-codex --model <model-id>");
+    });
+    let result = async {
+        use ara_cli::auth_broker_discover::{
+            BrokerConfigResolver, BrokerDiscoveryHost, DiscoverRemoteOptions, client_identity,
+            discover_remote_auth_storage,
+        };
+        // Auth commands need credential discovery, independently of model
+        // configuration and Registry preflight (a login may be the first grant).
+        let key_resolver = Arc::new(ara_cli::config_request_auth::ConfigStorageKeyResolver::new(
+            project_dir.to_path_buf(),
+            Arc::new(ara_cli::model_config_values::ConfigValueResolver::new()),
+            Arc::new(ara_cli::model_config_values::ProcessConfigEnvironment),
+        ));
+        let discovery_host = BrokerDiscoveryHost::for_process(ara_home(), Some(key_resolver.clone()));
+        let config = BrokerConfigResolver::new(discovery_host.clone()).resolve(cancel).await?;
+        let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build()?;
+        let options =
+            ara_cli::auth_storage::AuthStorageOptions { config_key_resolver: key_resolver, ..Default::default() };
+        let account = Arc::new(match config {
+            Some(config) => {
+                let identity = client_identity(&discovery_host);
+                discover_remote_auth_storage(
+                    config,
+                    DiscoverRemoteOptions {
+                        host: discovery_host,
+                        client_options: Default::default(),
+                        cache_path: None,
+                        account_pool: None,
+                        identity,
+                    },
+                    options,
+                    cancel,
+                )
+                .await?
+            }
+            None => ara_cli::auth_storage::AuthStorage::for_codex(open_codex_auth(client.clone()).await?, options)?,
+        });
+        // Retain this owner even on a cancelled/uncertain write. run() drains
+        // already dispatched mutations and cache writers before returning.
+        *account_auth = Some(account.clone());
+        match command {
+            AuthCommand::Logout { .. } => {
+                account.remove("openai-codex", cancel).await?;
+                eprintln!("ara: signed out of OpenAI");
+            }
+            AuthCommand::Login { .. } => {
+                #[cfg(feature = "test-fixture")]
+                let fixture = std::env::var("ARA_TEST_CODEX_AUTH_BASE_URL").ok();
+                #[cfg(feature = "test-fixture")]
+                let issuer = match fixture {
+                    Some(base) => ara_cli::openai_codex_auth::OpenAiCodexDeviceLogin::with_endpoints(client, &base)?,
+                    None => ara_cli::openai_codex_auth::OpenAiCodexDeviceLogin::new(client),
+                };
+                #[cfg(not(feature = "test-fixture"))]
+                let issuer = ara_cli::openai_codex_auth::OpenAiCodexDeviceLogin::new(client);
+                let credential = issuer
+                    .issue(cancel, |info| {
+                        eprintln!("ara: open {} and enter code {}", info.verification_url, info.user_code);
+                    })
+                    .await?;
+                account.upsert_oauth_credential("openai-codex", &credential, cancel).await?;
+                eprintln!("ara: signed in to OpenAI; use --provider openai-codex --model <model-id>");
+            }
         }
+        Ok(0)
     }
-    Ok(0)
+    .await;
+    listener.abort();
+    result
 }
 
 fn ephemeral_header(cwd: &Path, parent: Option<&str>) -> serde_json::Value {
@@ -2459,7 +2489,13 @@ async fn run_inner(
     registry_cancel: &CancellationToken,
 ) -> Result<i32> {
     if let Some(command) = args.command.take() {
-        return run_auth_command(command).await;
+        let project_dir = match &args.cwd {
+            Some(path) => {
+                plain_drive_path(std::fs::canonicalize(path).with_context(|| format!("--cwd {}", path.display()))?)
+            }
+            None => std::env::current_dir()?,
+        };
+        return run_auth_command(command, &project_dir, account_auth, registry_cancel).await;
     }
     let _ = args.print;
     let rpc_mode = args.mode == Mode::Rpc;
