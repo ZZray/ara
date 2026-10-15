@@ -166,3 +166,11 @@ Root verify_bootstrap was attempted and failed on generated ignored dist README
 links (documentation omitted from runtime bundles) and unrelated root WIP. It
 is not reported as PASS. Changed source documentation links and scoped diff
 checks are validated separately; no shared Core ledger or unrelated WIP repaired.
+
+Commit preparation normalized only the copied review JSON and the newly added
+verify_version_live.py from CRLF to LF. The published immutable source archive
+retains that fixture's original CRLF bytes; its LF-normalized bytes are identical
+to the committed test, with no code/assertion changes. The22 packaged runtime
+sources still match current Git source bytes exactly. Scoped staged whitespace
+checks passed after this normalization. First delivery commits: Rust`edd10cf`
+and Go`7490e37`; normal push/tag receipts are verified separately.
