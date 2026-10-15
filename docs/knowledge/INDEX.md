@@ -1,5 +1,9 @@
 # ARA project knowledge
 
+- [Compact HandWave Rust node](../../apps/handwave-node/docs/knowledge/INDEX.md):
+  independent rpi-based product Host; separate from full OMP parity and shared
+  ARA Core acceptance.
+
 This index is the entry point for durable decisions in the new Rust repository. Read only the pages relevant to the task. The repository begins with a documented target, not an accepted Agent implementation.
 
 - [Core ownership and host boundary](architecture.md): portable Agent Core, host services, RPC transport ownership, native Session replacement/retry, model routes, opaque header donors and static composition, private request authentication, shared AuthStorage leases and exact-row refresh, builtin usage preparation and stale/forced cache contracts, account health/diagnostic/reset ownership, nullable aggregate/store usage, shared remote credential owner and callback publication, no-DB device issuance and CLI/RPC credential consumers, broker cache/epoch and provider lifecycle order, transient response callbacks and logical-Session usage ingestion, command-helper order and exit settlement, user Bash targets and retained writers, native tokenizer family/policy ownership, tool snapshots and connection URI admission, identity, state, and UI integration.

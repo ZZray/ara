@@ -1,0 +1,12 @@
+{
+  "source_name": "handwave-node-source-3ffb114f7b2e788c.tar.gz",
+  "source_sha256": "3ffb114f7b2e788c4f23a6658b7251861a6e381f79ee63c187d392ee4d5b96a9",
+  "source_bytes": 279197,
+  "script_name": "install-linux-fe4b10bee6a73659.sh",
+  "script_sha256": "fe4b10bee6a73659f6c5db78e624aa794bec0e0b57f91619d8be13c4f694094c",
+  "binary_sha256": "40669969a4b84074674f767b38180901293d9adbeebb8263347ed3c3d4729f73",
+  "binary_bytes": 4518912,
+  "windows_name": "handwave-node-windows-40669969.zip",
+  "windows_sha256": "89aa1c0d27ebac6b147bbddab6c77f54c8d136759333d10f22633db0b423bcee",
+  "windows_bytes": 3430019
+}

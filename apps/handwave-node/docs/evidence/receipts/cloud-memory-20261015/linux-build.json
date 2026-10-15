@@ -1,0 +1,27 @@
+{
+  "source_sha256": "3ffb114f7b2e788c4f23a6658b7251861a6e381f79ee63c187d392ee4d5b96a9",
+  "source_files": 580,
+  "checks": [
+    {
+      "name": "shell-syntax",
+      "exit": 0,
+      "seconds": 0.324
+    },
+    {
+      "name": "installer-fixtures",
+      "exit": 0,
+      "seconds": 1.422
+    },
+    {
+      "name": "release",
+      "exit": 0,
+      "seconds": 61.894
+    }
+  ],
+  "environment": "WSL x86_64 GNU Linux, Rust1.97.1, dependency cache reused; extracted src mtime advanced to force current node rebuild; no Hub connection",
+  "version": "handwave-node 0.1.0",
+  "binary_sha256": "70c8f2fcf3b966a0c1f7dbe319cabf70ad7170741d90651c37554a6d9d2453ab",
+  "binary_bytes": 5289672,
+  "cloud_and_session_markers": true,
+  "files_unchanged": true
+}

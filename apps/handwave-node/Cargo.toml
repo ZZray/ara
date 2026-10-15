@@ -1,0 +1,47 @@
+[package]
+name = "handwave-node"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Standalone Rust computer agent for the HandWave cloud workbench"
+
+# This product host deliberately builds independently of the full OMP port.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive", "env"] }
+data-encoding = "2"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+futures = "0.3"
+fs2 = "0.4"
+getrandom = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "socks"] }
+rpi-ai = { git = "https://github.com/bigfish1913/pi-rust.git", rev = "8ec462672d90e62712d96074638efef89436cebe", features = ["providers"] }
+rpi-agent = { git = "https://github.com/bigfish1913/pi-rust.git", rev = "8ec462672d90e62712d96074638efef89436cebe" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util", "net", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tokio-socks = "0.5"
+url = "2"
+percent-encoding = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+

@@ -1,0 +1,359 @@
+# Investigated cases — 2026-10-14
+
+## HWN-001: native tool history failed after a successful first Run
+
+First controlled-model task wrote/read a real file, but the next task failed
+typed session decoding. The pinned rpi Content enum and its inner structs both
+serialize an identical `type` discriminator. Direct typed roundtrip was not
+equivalent to the JSON shape emitted by that source revision. Canonicalizing
+through serde_json::Value before save/read preserves typed tool/text history,
+including initial files with identical duplicate tags. The actual checkpoint
+and restart test plus real Host continuation provide separate evidence layers.
+No failed resume was replaced with a fresh conversation.
+
+## HWN-002: an error packet could end an unrelated active operation
+
+Wire `out.done` describes an outbound response, not necessarily settlement of
+the active job. A malformed command with the same ID could produce an error out
+while the original process was still running. Host-internal `Packet.settled_id`
+now owns settlement; wire errors do not inherit that authority. The real Host
+test injects same-ID bad frames and observes the original job continuing.
+This is independent of the completed-ID replay fence.
+
+## HWN-003: healthy cloud Hub with an empty model catalog
+
+Legacy local Hub fixtures passed, while the actual deployed HandWave returned
+empty `/api/models` and HTTP503 on `/v1/models`. Current source routes models
+through shared Gateway; legacy `upstreams.conf` is only a migration hint.
+Read-only runtime inspection found neither gateway.json nor CLI overrides nor
+the Gateway token environment. The existing Gateway's catalog was healthy.
+Thus legacy node/Harness success does not prove the current cloud model chain.
+Production configuration/restart and actual public-Hub task acceptance remain
+separate gates. Keep credentials out of source, packaging and diagnostics.
+
+## HWN-004: modern directory and short-grant compatibility
+
+Independent review identified three contract pitfalls: directory reads could
+consume time outside the model deadline, nil/empty protocol arrays needed the
+legacy Chat meaning, and positive directory output bounds must constrain actual
+request tokens. The Host now has one total deadline, normalized protocol lists,
+and min(directory cap, smart cap, 8192). Focused Host evidence must inspect the
+actual HTTP request, rather than only Rust fields or a successful model reply.
+
+## HWN-005: smart restart expectation versus the Hub authorization lifetime
+
+The first smart fixture omitted the modern route decision's profile_hash; the
+Hub correctly refused it. After supplying the complete declared fixture, smart
+tool effects and same-binding follow-up passed, but restart was denied. Source
+counterevidence is modern `model_binding.go:308-326` and `hub.go:928-944`:
+device disconnect intentionally removes both Run grants and Session pins.
+Changing Node persistence cannot restore server authority. The test now proves
+visible rejection, no resolve/model replay and byte-identical saved history
+after disconnect. This clarifies a mistaken test expectation; it does not claim
+smart reconnect acceptance. Default/explicit model restart continuation remains
+separately exercised. Improving smart reauthorization requires an explicit
+server/session contract beyond this compact Host delivery.
+
+## HWN-006: public enrollment worked while granted model requests returned401
+
+After authorized Gateway wiring, the real public node enrolled and paired, but
+its granted directory GET returned401 before any model/tool effect. A public
+health200 was too weak to identify the service. The front forwards non-arena
+paths to OMP Edge; Edge deliberately sends root `/v1`, `/api`, `/assets` and
+`/healthz` to Gateway and sends `/ws` to HandWave. The same URL origin therefore
+split the Node's WS and model HTTP across different authorization systems.
+The investigation preserves those existing shared routes and creates a distinct
+HandWave path only after scoped source/streaming/UI-route review. Prefixing Node
+requests alone does not fix Web assets, API calls or login redirects. Actual
+public and browser evidence remain required; private SSH success is insufficient.
+
+The scoped Edge ingress was independently reviewed and deployed with protected
+other-service/config/auth hashes unchanged. Actual public Node WS/model HTTP
+then passes compile/run/log/native-continuation in25.156s; public-b receipts
+are recorded in delivery evidence. A real browser creates and reloads a
+workspace and pairs the standalone Node through the same prefix.
+
+## HWN-007: local credential helper and Microsoft Store Python redirection
+
+A helper wrote an authorized workbench credential under LocalAppData, then the
+native ACL operation reported file-not-found. Store Python's AppData redirection
+made its apparent path differ from the actual Windows path. The helper removed
+the file it created, preserving no unprotected credential. Native PowerShell/.NET
+created the real private directory with explicit current-user/SYSTEM ACL first,
+then created the file exclusively. Credential values were never tool output,
+source, package contents or model requests. This is a machine-specific helper
+trap, not a new Agent runtime claim; durable environment promotion is deferred.
+
+## HWN-008: successful native task left the Web Agent card running
+
+The actual browser in pressed 本机 mode writes Rust, compiles/runs an EXE and
+shows its verified log. The composer becomes idle, but the Agent dock still
+shows a running 本机 card and a second completed Agent card. Source evidence:
+the deployed web startLocalRun creates agent_id=local; agentIdentity then
+prefers agent_id over task_id. Rust wire events previously supply only task_id,
+so their terminal event updates the second card. The task's real effects do not
+prove correct progress settlement.
+
+Final40 transport source SHA40f6bafd864a396f9a0e05d3d2ff500803c56676ba811ce6fb230b00e6b339e9
+sets only agent-loop events to the existing local identity (`agent_name=本机`,
+`agent_role=operator`), preserving distinct Run task_id values and agent-task identity.
+Idle early rejection emits agent_end before ordinary out with no authority to
+settle another job. Admitted grant denial/selection failure/timeout/pending
+cancel emits one failed/canceled local end before its settling out. Same-ID
+bad packets preserve the original active run and cannot emit its agent_end.
+
+Source review found a related terminal-queue window: a late grant could start
+after timeout had queued out, or duplicate retry/queued steer could reopen the
+local card after its end. A shared ending marker is set before terminal events
+are queued; late grants are ignored and old-run retry/steer progress is
+suppressed. Legitimate new follow-up requests still queue under the existing
+behavior. The actual-process fault fixture delays terminal collection beyond
+the12s grant deadline, then delivers a valid grant, and separately cancels a
+pending grant before delivering it. Both paths retain zero model/tool effects
+and one correctly identified terminal end. This proves those bounded paths,
+not a general concurrency ordering guarantee.
+
+Counterevidence to declaring the UI fixed from final events alone: deployed
+recordAgentEvent assigned every event.status to its Agent card. Once all native
+events use local, tool_end completed/failed would prematurely settle the main
+card while the model continued. The independently reviewed Ray front adapter
+at `ray-front-handwave-adapted-app.js:1023`, SHA
+`d40975e7c2dbd700e6dd60bb858ecf38e693b5f4248d3a9d20636b9d4cf9f3a0`,
+only excludes local tool_start/tool_end/retry/steer from main-card status
+assignment. It keeps the original tool/progress status in events and timeline;
+actual Agent lifecycle events continue to own the main card. Other Agent and
+agent-task identities retain their existing treatment. Sending tool events to
+invented child Agent identities would instead create unwanted extra cards.
+
+Final Windows EXE09a5c339 and Linux binary801810fc each pass25 modern actual-Hub
+checks,4 Smart checks and7 controlled grant/failure checks; final-source unit
+tests are12/12 Windows and11/11 Linux. Source/build pins, raw failures and
+measured timing belong in the delivery evidence. Independent Codex source
+review plus `D:/WorkSpace/tmp/ray-front-independent-native-review.json` (17
+attempts) and `ray-front-independent-fault-review.json` (7 attempts) record
+actual-packet replay through the reviewed adapted reducer, all PASS. DOM
+rendering is stubbed. The candidate receipt marks the adapter tested but not
+deployed at that observation; replay does not prove the live browser has it.
+
+Case status remains **open for real HTTPS/browser acceptance** by the main
+agent: final40 intermediate running and completed/failed/canceled cards,
+actual cancel effects, reload and native continuation still need live evidence.
+Historical f4e8edae HTTP/cloud success cannot accept these changed artifacts.
+Kernel send-buffer saturation and successful-end/duplicate collision timing
+were not deterministically forced; the reviewer additionally records an
+atomic ending check-to-enqueue interleaving as a potential unproven gap.
+Linux rustfmt is unavailable, Linux Clippy/real cloud are NOT RUN, and its
+glibc2.39/WSL2 result does not accept older Linux, musl, macOS or ARM.
+
+## HWN-009: authentication complaint and old root login ingress
+
+User reports invalid token/OTP binding and wants daily OTP-only login. Current
+source already supports30-day trusted-browser proofs (remember checked by
+default), followed by6-digit OTP. Safe live inspection finds valid TOTP storage,
+one current unexpired/unlocked browser proof, matching fingerprint, unchanged
+Hub/root/TOTP hashes, and two successful browser authorizations. Thus no live
+evidence currently justifies resetting the enrolled secret. The old GET/login
+success still redirects to root workbench, where /api goes to Gateway. The
+minimum ingress repair redirects only GET/login to the HandWave namespace,
+preserving query and leaving POST/auth/API contracts intact. First enrollment
+failure consumes its one-time preauth and generates a new QR candidate; the
+new QR must be scanned again. Existing enrolled TOTP verify failures only
+refresh preauth and do not change the enrolled secret. User's exact failing
+step and any required re-enrollment remain separate from route repair.
+
+The user subsequently clarified that the requested reset is one shared Ray
+platform QR for every new browser/user across all hosted Web services, rather
+than only a HandWave login change. The earlier root-login diagnosis remains
+historical evidence; it is not the final product scope. Ray's independent
+browser ingress reuses existing application credentials server-side, while Web
+users supply only the shared authenticator code. Old HandWave TOTP and device
+enrollment credentials remain separate authorities. The user explicitly retains
+all existing ESP32/NUC device contracts. At the 2026-10-14 candidate checkpoint,
+the platform QR is privately provisioned but unbound; actual holder binding and
+all-service browser acceptance are pending. This case must not be closed solely
+from the candidate's 22 test groups.
+
+Actual first-holder acceptance found another boundary: the user initially
+reported scanning/binding, but content-free server metadata still showed
+bound=false and no active sessions. The later form submission appeared to hang;
+server attempts/counter remained zero, and a browser reload returned the explicit
+expired-page error. Thus the observed failure is before OTP validation, not
+evidence that the new QR secret is wrong. The five-minute one-use browser proof
+and authenticator enrollment are separate lifetimes. The returned form has a new
+challenge, so retry with the current code without resetting or rescanning the QR.
+At this checkpoint actual successful holder submission remains unverified.
+
+2026-10-15 follow-up: the narrow Ray login-page script now refreshes a one-use
+proof immediately before a single native submission, preserving OTP, TTL and
+replay/rate limits. Fetch failure restores the form; no POST is silently replayed.
+The holder's actual successful browser submission and safe bound/Session/counter
+metadata now agree. The existing shared QR was retained. All four authenticated
+service entry pages were observed with that browser. This closes the observed
+expired-form/login recovery case within those boundaries, rather than claiming
+all-service business acceptance. Source/build/deployment and independent review
+are linked in [GUI live evidence](../evidence/gui-live-20261015.md).
+
+The final40 GUI gate from HWN-008 also now has actual compile/read-log,
+System-query/analysis, checksum-gated official download, intermediate running,
+canceled card, real child-process exit and no-replay same-chat continuation.
+The sentinel remains absent after the original delayed effect time. These are
+final40 effects; they do not retroactively accept another binary's GUI.
+
+## HWN-010: cloud coordinator versus direct native execution
+
+The unpressed 本机 button uses the existing cloud coordinator. A real readonly
+System-log task succeeds through run_node_task, but a later compile objective
+fails there with "provider returned incomplete or non-object tool arguments"
+before any new Node admission/effect. No root cause for that cloud provider
+failure is claimed. Pressing 本机 sends agent-loop directly to the compact
+Rust Host; the same bounded compile objective succeeds and persists native
+history. This is an execution-mode and acceptance boundary, not a repair or
+acceptance of the entire old cloud coordinator/provider surface.
+
+## HWN-011: small-agent context requires source and projection separation
+
+2026-10-14, current compact Host worktree; final execution evidence is recorded
+in `../evidence/context-memory-20261014.md`. This case is separate from Shared
+Core/OMP acceptance and the still-open Ray browser login.
+
+The original node persisted raw messages but supplied all of them to every
+provider call. Its fixed rpi transform hook changes only the model-facing copy,
+has no Result channel, and default conversion drops Custom messages. Therefore
+a derived summary needs an explicitly labelled provider-facing carrier plus a
+pre-HTTP failure gate. A no-error hook must never turn compaction failure into an
+empty-context request.
+
+Two implementation-review findings changed the first slice. A retention rule
+could retain the sole large old turn and refuse to compact it; allowing a cut
+after that complete old turn preserves the entire current request. An attempted
+generic candidate-text replacement could alter serialized role/tool identifiers
+when a candidate contained a word such as `assistant`; it was removed. The
+product contract is candidate/adopted state separation, not erasing ordinary
+discussion of a candidate from every historical string. Protocol identifiers
+must remain untouched.
+
+Revoking only the independent reference still leaves its text in old assistant
+or tool paraphrases. The first slice therefore invalidates the entire prior
+working view at a complete native boundary. Raw history remains audit data,
+and current active references can be retrieved again. This trades unrelated
+older working context for a simple, inspectable withdrawal boundary. It does
+not replace the Session or replay tools.
+
+Context-maintenance failure is distinct from a failed native checkpoint. Once
+the loop has settled, the raw transcript validates and native persistence has
+not failed, a failed summary can clear the pending-run fence and permit a later
+attempt. Unknown tool effects or failed native persistence retain that fence.
+
+The initial controlled-process scripts also exposed test assumptions: a new
+context sidecar is not a second native checkpoint; project-rule sentinels must
+not also occur in the user prompt; and a deliberately canceled provider handler
+must finish before checking its error receipt. Expected connection-reset errors
+are identified only for that cancellation scenario, not ignored globally.
+
+The suspected oversized tail-row misnumbering was independently excluded:
+the existing loop drains older rows before skipping an oversized row, leaving
+only a continuous suffix. No speculative tool patch was made for that hypothesis.
+
+The first real summary trial exposed a provider compatibility boundary that
+controlled text-only output did not cover. The fixed route returned Thinking
+alongside ordinary Text despite ThinkingOff. A narrow admission fix retains
+strict stop/type checks, ignores Thinking for summary content and bounds both
+streams. A subsequent real result confirmed `stop` and `[thinking,text]` but
+failed strict JSON parsing. Neither old failure preserved summary text, so
+fence versus schema errors cannot be inferred. The selected fix requests JSON
+mode only for a cloned summary model and adds a schema example; it does not
+extract arbitrary JSON or silently retry. Safe parse-shape diagnostics and an
+actual wire assertion distinguish output-format failures from content-type
+failures without storing model reasoning bodies.
+
+A content-free shape probe reproduced numeric source IDs; the prompt now
+shows the entire candidate schema and requires exact string IDs. A subsequent
+trial stopped at the output limit with Thinking only. Pinned rpi's Off omits
+reasoning effort rather than sending DeepSeek's disable switch. The verified
+model receives that switch only for summary requests. Another bounded probe
+returned valid typed candidates plus unused root metadata. Independent review
+accepted ignoring extra root fields while keeping required known fields and
+candidate objects strict. This avoids treating an implementation preference as
+a product requirement: unused metadata is never persisted or given authority.
+Neither numeric IDs nor unknown sources are repaired by inference.
+
+The final release trial also caught an acceptance-prompt mismatch: after
+correctly recalling and writing the marker, the model read back its newly
+written file. The prompt prohibited rereading original inputs, while the test
+forbade all additional tools. The original FAIL and exact correct artifact were
+preserved; the prompt was clarified to forbid output verification too, without
+weakening assertions or changing the binary. A fresh same-release trial passes
+all source, summary, adoption and one-write recall checks. A test mismatch is
+not recorded as a product memory defect.
+
+An accepted-trial follow-up observation remains nonblocking: the model's final
+text incorrectly described a successful proposal as missing fields. Actual
+tool arguments, completed receipt and persisted candidate contradict that
+self-report. The working projection's masked prior proposal arguments are a
+plausible explanation, not an isolated root-cause result. Preserve this distinction
+for a later usability change rather than misclassifying the memory write as
+failed or silently promoting a candidate.
+
+The 256-message/16 MiB native limit and full-checkpoint rewrite cost remain.
+Model input compaction does not solve storage growth. No measured model-speed
+gain, arbitrary-length conversation, personal-account isolation or OS sandbox
+is claimed by this slice.
+
+## HWN-012: complete-task fixture boundaries and external download deadline
+
+2026-10-15, enhanced Windows c9bf. A complete real-cloud task initially failed
+because its PowerShell helper assumed Get-FileHash was discoverable. A read-only
+subprocess comparison found inherited module-path discovery differs between the
+parent and Windows PowerShell child; this is environment evidence, not a product
+memory defect. .NET SHA256 removes this fixture dependency without changing the
+actual environment, binary, expected official hash or hash-before-exec rule.
+Rust source comparison permits only one trailing LF, retaining both hashes.
+
+The independently reviewed fresh attempt then timed out at the overall
+180-second limit after write_file and download_file start. There is no download
+completion receipt or downstream artifact; the helper was never reached.
+No specific network root cause is established. The tool's own 300-second cap
+does not guarantee completion within a shorter Run budget. Cancellation cleanup
+stops the temporary node, revokes approval, stops the tunnel and removes its
+download temporary file. No third blind replay was performed.
+
+Both failures remain failures. They do not erase the separate controlled final
+binary compile/download/proxy matrices, real-cloud context task, or final40 GUI
+compile/log/download/cancel/continuation. Acceptance must name the actual version
+and evidence layer, and cannot combine their names into a fabricated single-Run
+success. [Receipts and exact limits](../evidence/gui-live-20261015.md).
+No comparable manual baseline was measured; no efficiency percentage is claimed.
+
+## HWN-013: reproducible archive timestamps can hide a stale Cargo product
+
+2026-10-15 cloud-memory source acceptance. The archive normalizes mtimes to zero.
+An initial build reused a product target and returned the old a2059 image, without
+the new cloud marker. Exit0 and a version string were insufficient evidence.
+The original receipt remains INVALID_STALE_CACHE. Advancing only the task's
+extracted Rust source mtimes forced recompilation, with source hashes unchanged.
+Final source3ffb builds GNU x64 image70c8 with both cloud and explicit-follow
+markers in 61.894s. Public installer uses a fresh target; ARM/musl remain untested.
+This is an acceptance-cache error, not evidence of a runtime memory defect.
+
+## HWN-014: explicit Web sessions require both native and UI ownership
+
+2026-10-15. Real Run I7W3O7W2AQ failed the existing route fence because multiple
+new Web conversations mapped to the same controller/cwd native history. Do not
+delete history, weaken the fence or silently create a new session after failure.
+An explicit validated workspace/session key now selects its own native path;
+empty requests preserve the exact legacy path. Grant lookup and Run start use
+the same key. Explicit follow rejects a different key and retains its supplied
+ID so the browser can bind subsequent receipts, including duplicate requests.
+
+Independent original-JS-function replay then proved A text/end could POST into
+the currently selected B conversation. Native path isolation alone did not fix
+that distinct defect. The browser now registers actual sent Run IDs with captured
+owner/epoch, rejects late cross-owner text/terminals and does not let old terminal
+frames clear a newer Run. Detached output stays in the node audit. Final EXE
+native4/cloud5, original-function VM and actual recall/revoke pass; see
+[final evidence](../evidence/cloud-memory-20261015.md).
+
+The actual revoked-memory trial answered UNKNOWN with no old marker in raw
+history but additionally called reference_read once against the instruction.
+Memory invalidation and model obedience are separate judgments. Preserve this
+failure rather than claiming a fully passed no-tools task or automatic learning.

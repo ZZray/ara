@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "scope": "Explicit keyed follow ID preservation, cross-session rejection and duplicate protection",
+  "source_sha256": {
+    "apps/handwave-node/src/transport.rs": "a7c9a93938e2c56dc7ce0a98aedadb51ba27c63df9a032475898dbe2b306a339",
+    "apps/handwave-node/tests/verify_native_sessions.py": "6a3f455e87dae004f6de58e642492a8bc7061acfa01d1f1a24e1f099be54d7f5"
+  },
+  "validation": {
+    "fmt": "PASS",
+    "clippy_all_targets_all_features_warnings_denied": "PASS",
+    "unit_tests": 39,
+    "unit_passed": 39,
+    "unit_threads": 1
+  }
+}

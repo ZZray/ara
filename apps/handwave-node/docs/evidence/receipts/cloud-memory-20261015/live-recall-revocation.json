@@ -1,0 +1,41 @@
+{
+  "scope": "actual production Hub and final EXE, authenticated browser, bounded Auto model trials",
+  "binary_sha256": "40669969a4b84074674f767b38180901293d9adbeebb8263347ed3c3d4729f73",
+  "trials": [
+    {
+      "phase": "revoked",
+      "message_count": 4,
+      "native_checkpoint_sha256": "28561296d0266b6878c79c2e17d1d916e0b33eca92100cf1ce7823ce8ccd7fa6",
+      "route": {
+        "model": "auto",
+        "protocol": "openai-completions",
+        "binding": "",
+        "decision": ""
+      },
+      "tool_names": [
+        "reference_read"
+      ],
+      "contains_synthetic_marker": false,
+      "contains_unknown_literal": true
+    },
+    {
+      "phase": "available",
+      "message_count": 2,
+      "native_checkpoint_sha256": "8f1fa54992e671a76a4df17e54bd3e6d6a99b5fd3d87656b824d0019438d1807",
+      "route": {
+        "model": "auto",
+        "protocol": "openai-completions",
+        "binding": "",
+        "decision": ""
+      },
+      "tool_names": [],
+      "contains_synthetic_marker": true,
+      "contains_unknown_literal": true
+    }
+  ],
+  "memory_recall_revocation": "PASS",
+  "no_tools_instruction_in_revocation_trial": "FAIL - one reference_read call",
+  "downstream_model_id": null,
+  "provider_usage": null,
+  "private_checkpoint_bodies_included": false
+}

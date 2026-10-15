@@ -1,0 +1,8 @@
+Package: winapi-i686-pc-windows-gnu 0.4.0
+Source: https://static.crates.io/crates/winapi-i686-pc-windows-gnu/winapi-i686-pc-windows-gnu-0.4.0.crate
+Exact packaged-source revision: crate-sha256:ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6
+Original declared license: MIT/Apache-2.0
+Distribution license elected here: Apache-2.0
+Authors as declared by upstream: ["Peter Atashian <retep998@gmail.com>"]
+
+The exact source package offers the declared license alternatives but does not supply a separate license file in its published crate archive. The supplied Apache-2.0 text is the standard complete license offered by the declaration, not a fabricated upstream notice.

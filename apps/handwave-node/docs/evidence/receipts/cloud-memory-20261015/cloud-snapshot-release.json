@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "scope": "actual Rust node + isolated Hub + controlled provider; no production or real model",
+  "passed": [
+    "current_snapshot_real_wire_ephemeral_body_no_reference_promotion",
+    "epoch_change_filters_accepted_cloud_derivative_and_raw_assistant_preserves_audit",
+    "restart_unavailable_empty_and_missing_carrier_do_not_reuse_old_content",
+    "wrong_device_and_hash_refused_before_provider_legacy_brief_compatible",
+    "active_agent_follow_drops_inherited_snapshot_and_old_assistant"
+  ],
+  "binary_sha256": "40669969a4b84074674f767b38180901293d9adbeebb8263347ed3c3d4729f73",
+  "hub_sha256": "27c9b2657da185fcd42ba4764259f48ab503011fa4e3ebbbf229f5e748cb48f7",
+  "fixture_sha256": "d0b193b45008fd0fb835d032523c207160cb1102df505ba9a4eb35509eaeb266",
+  "elapsed_seconds": 11.586
+}

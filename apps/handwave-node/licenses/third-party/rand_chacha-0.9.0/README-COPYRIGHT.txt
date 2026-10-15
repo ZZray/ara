@@ -1,0 +1,1 @@
+[COPYRIGHT](COPYRIGHT) for details.

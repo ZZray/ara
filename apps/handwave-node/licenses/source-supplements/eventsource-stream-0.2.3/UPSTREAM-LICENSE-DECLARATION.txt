@@ -1,0 +1,8 @@
+Package: eventsource-stream 0.2.3
+Source: https://github.com/jpopesculian/eventsource-stream/blob/3d46f1c758f9ee4681e9da0427556d24c53f9c01/Cargo.toml
+Exact packaged-source revision: 3d46f1c758f9ee4681e9da0427556d24c53f9c01
+Original declared license: MIT OR Apache-2.0
+Distribution license elected here: Apache-2.0
+Authors as declared by upstream: ["Julian Popescu <jpopesculian@gmail.com>"]
+
+The exact source package offers the declared license alternatives but does not supply a separate license file in its published crate archive. The supplied Apache-2.0 text is the standard complete license offered by the declaration, not a fabricated upstream notice.

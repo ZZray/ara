@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "scope": "actual Rust node + isolated real Hub + controlled provider",
+  "passed": [
+    "two_explicit_keys_isolate_native_raw_and_accepted_memory_same_key_resumes",
+    "legacy_missing_key_path_retained_invalid_key_rejected_without_provider",
+    "same_session_route_mismatch_preserves_fence_new_explicit_session_allows_new_route",
+    "explicit_follow_retains_supplied_id_deduplicates_and_rejects_wrong_session"
+  ],
+  "binary_sha256": "40669969a4b84074674f767b38180901293d9adbeebb8263347ed3c3d4729f73",
+  "hub_sha256": "27c9b2657da185fcd42ba4764259f48ab503011fa4e3ebbbf229f5e748cb48f7",
+  "fixture_sha256": "6a3f455e87dae004f6de58e642492a8bc7061acfa01d1f1a24e1f099be54d7f5",
+  "elapsed_seconds": 8.582
+}

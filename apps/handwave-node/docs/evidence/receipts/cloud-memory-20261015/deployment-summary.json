@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "old_binary_sha256": "a0ac0ce367e7b219563cde1009df0e3c20ddbfdd595eea50d1a2883757d4ae4a",
+  "new_binary_sha256": "d54e6d1dce9af4269517aa7e1e7e85f991ca6209369d48d27fd85b50e0073b02",
+  "private_inputs_unchanged": true,
+  "unrelated_backends_unchanged": true,
+  "login_https_status": 200,
+  "nonce_csp": true,
+  "login_refresh_marker": true,
+  "handwave_health_status": 200,
+  "rainflow_health_status": 200
+}
