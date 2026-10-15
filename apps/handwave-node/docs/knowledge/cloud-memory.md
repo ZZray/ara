@@ -199,3 +199,14 @@ grant 不等于记忆写入授权；服务端需验证实际 actor、device、pr
 独立源码审查、受控进程/故障测试与实际线上召回/撤销支持 M1 的已实现边界；
 最终版本、模型额外只读工具调用等限制见 evidence。不能从这些结果推导
 所有模型、Linux 发行版、跨个人身份或自动学习能力均已验收。
+
+
+## Cloud suggestion boundary (2026-10-15)
+
+Ray's subsequent suggestion/settings release derives a transient summary from a
+bounded cloud conversation view and accepted-memory snapshot. It does not read
+or publish this node's native compaction summary, change the per-Run memory
+carrier, auto-adopt facts or require another EXE. The node remains the40669969
+published image. Cloud derivation acceptance is owned by the Ray repository's
+`docs/evidence/ray-smart-suggestions-20261015.md`, separately from this Host's
+memory-recall and native-session evidence above.
