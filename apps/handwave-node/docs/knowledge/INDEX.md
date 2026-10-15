@@ -6,6 +6,7 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Host and upstream boundaries](host-boundaries.md)
 - [Context and sourced memory](context-memory.md)
 - [Per-device cloud knowledge and memory](cloud-memory.md): M1 explicit records and per-Run snapshots deployed; [release and live recall/revocation evidence](../evidence/cloud-memory-20261015.md). Personal identity, outbox and automatic consolidation remain planned.
+- [Agent improvement priorities](agent-improvement-priorities.md): source-backed project knowledge boundaries and UI/function/Agent priorities; new management UI and subsequent retrieval/journal work require their own acceptance.
 - [Investigated defects and verification traps](engineering-cases.md)
 - [Delivery evidence](../evidence/20261014.md)
 - [Code, context and memory slice evidence](../evidence/context-memory-20261014.md)
