@@ -394,6 +394,9 @@ def summary_restart(host, passed):
     require("CONTROLLED_SUMMARY_REASONING_73" not in json.dumps(host.transcript),
             "Summary provider thinking leaked into controller events")
     require(all(not b.get("tools") for b in host.fixture.summary_requests),"Summary advertised effectful tools")
+    compact = [event for event in receipts if event.get("type") == "compact" and event.get("status") == "completed"]
+    require(compact and compact[-1]["covered_prefix"] == summary["prefix_end"] and compact[-1]["index_unit"] == "global_raw_message_indexes",
+            "Successful compaction lacks a post-checkpoint global receipt")
     source_map={r["id"]:r["hash"] for r in host.state_json()["references"]}
     require(all(source_map.get(s["id"])==s["hash"] for s in summary["sources"]),"Summary source hash not bound to original reference")
     require(any(m["text"] == "AUTO_CANDIDATE_73" and m["status"] == "candidate" for m in host.state_json()["memories"]),

@@ -1,0 +1,206 @@
+{
+  "reviewer": "Independent Codex /root/context_modes_audit",
+  "procedure": [
+    "ara-git-review",
+    "ara-rust-core-review",
+    "point-delivery-audit"
+  ],
+  "decision": "ACCEPT_BOUNDED_WINDOWS_SOFTWARE_POINT",
+  "accepted_scope": "Compact HandWave Node0.2.0 Windows standalone Host: dynamicruntimecarrier/staticpolicy split, conservativeusage observations, aftercheckpointglobalcompactionreceipts, ExecuteRunchecklist and canonicalGoaldetailcriteria, packaging and declared regression scope. Not wholeARA/OMP, arbitraryselfevolution or everyplatform/productacceptance.",
+  "versions": {
+    "rust_base": "56fd2abf9d6114d8eba3aa29a08196218f9aeaa9",
+    "go_base": "326b1ba6ea41cef3a5cf18817977517c51e37eae",
+    "final_windows_exe_sha256": "cb676ce827a0a496a23decd05246d0f78d5e24e0f6b5c8f569dc1e7eb5e304b1",
+    "final_windows_exe_bytes": 4922880,
+    "fixture_hub_sha256": "83e922282c577feba768ff88146611d61238ef5f6380cd81b58d9c9d1bbe6cb0",
+    "ray_clean_export_binary_sha256": "0d2a8a3468e3871e1d09d797d17017bb1ba01c5bdd2934e2624aae4ce2a28223",
+    "runtime_sources": {
+      "src/agent.rs": "459a59783272848521a40836f60292d45e0ccb865bc399812c99d49fb8847705",
+      "src/config.rs": "73b6393ecfc956b40d63cbf88a01ce08927220c03ea41dfeb3003607308c8f81",
+      "src/context_memory.rs": "5500c6d7bdb5a353444a72cb6eb010ecc781c3ce98a705753a6245aa4a356e6c",
+      "src/execution.rs": "9b72bb262451181a89eb4c767152b5a3c369c4e78e04b77fc6757d98e2b1477a",
+      "src/experience.rs": "1dd6942fc15643828b21605c55b98194b8cdc43445b1fbfbd9ee6f08e4ba4a45",
+      "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+      "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+      "src/gateway.rs": "39279fad8ff27ae339fed69ab3e7b801e64313dbd74e495c331ad3bf173f026b",
+      "src/goal_runtime.rs": "319be86ea862d5a3e029f423a6908c93b26c3d8579adee47cf37099fb04bc3dd",
+      "src/local_tools.rs": "c396ffeb49a076830a7a28e3803b7997ede327ab402ae439e9e15b059351ef59",
+      "src/main.rs": "75720a4fbc772065cb21fdffc538b5409b511c01ec596f8cfbb10a586851d2e2",
+      "src/managed_jobs.rs": "241bb26c9cf5424fab6a97d95d15ace5e56974f3fab2b570961a63dd0295ee1f",
+      "src/model_caps.rs": "ca53b3d36ecafbec4fdd10db123927265cf5dd8a4de46fbbf42e0913c97abe04",
+      "src/model_telemetry.rs": "762a9b2387a45cd835aa76b94d5c9b20db7787166f8dd1b06f890f89fda5d6da",
+      "src/operations.rs": "b5447bd14390a90bb19bb46228b2adb9d77f039d5c1658f286bcef775c7c8b99",
+      "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+      "src/proxy.rs": "fdcb1c3c0f21e9b2b4b792504afd04253d8848c30c4be77540cec991e3a368c5",
+      "src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+      "src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+      "src/system_capabilities.rs": "26ebfdbbc60637f7408b83549e881451a87238e4d46056eb8539fbcce7484fd8",
+      "src/transport.rs": "e7d6ea51a826a14460da8306c30db6d715b5e967d0ee88d6a468ea95cb3c1ab9",
+      "src/wire.rs": "cd298339f753fabf319fcb769ddbf1614c9e1afe03e055a6a455a90118aa3b58"
+    },
+    "exact_current_runtime_and_packaged_source_files": 22
+  },
+  "scope_control": {
+    "rust": "Only apps/handwave-node declared implementation/test/build/package/docs; unrelatedrootWIP excluded. VersionCargo changesonly0.1.0→0.2.0, fixedrpi rev unchanged.",
+    "go": "CleanHEAD export+declared3UI and publicpackage/sourceinstall overlays; fixed8stablewebassets. Checked cleanhub.go/auth.go/auth_totp.go against HEAD normalizedbytes;12originaldirtyWIP excluded. Export/source_install.go/test reviewed directly, not substituteddirtyworktree.",
+    "reviewed_runtime_changes": [
+      "agent.rs",
+      "model_telemetry.rs",
+      "execution.rs",
+      "main.rs",
+      "handwave_context.js",
+      "handwave_links.js",
+      "links tests",
+      "source_install.go/test export"
+    ],
+    "review_gaps": "Other testsource/effect/layerdetails covered by independenttools/researchagents plus coordinator; thisreviewer verifiedtheir exactpins/receipts and independentlyexecutedGoal/mode/faultpaths. No reviewerCargo/Linuxcompile."
+  },
+  "closed_source_findings": [
+    {
+      "P2": "Compactionlocalindex",
+      "resolution": "checked globalrawbase+cut/count; postsaveemit, nonzero1000unit and actualcontextprefix checks"
+    },
+    {
+      "P2": "GoalMapvisibilityownership",
+      "resolution": "UnnecessaryGoal→localTasks bridge removed; Goalsteps remainauthoritativepersistentowncard, ordinaryExecutechecklist usesnativeproductiontask_update. Savedcriteria/versionrender added."
+    }
+  ],
+  "execution": {
+    "unit_source_checks": "117/117PASS7.41s in sourceunitlog; fmt/clippy-Dwarnings/frozencargo-denyPASS sourcechecks, not a claimunitbinary equals releaseEXE. CachedadvisoryDB, duplicatewarnings retained.",
+    "final_cb_context": {
+      "groups": 15,
+      "status": "PASS",
+      "seconds": 194.0
+    },
+    "final_cb_efficiency": {
+      "groups": 5,
+      "status": "PASS",
+      "seconds": 36.457,
+      "actualcontrolledSSE": "Toolcallonly/finalusage/usageonlychunks,0unknown/costnull,actualtask_update/nativejournal,PlanGoaltoolabsence,stablewireSystem+freshnonpersistentGoalcarrier"
+    },
+    "final_cb_modes": {
+      "groups": 5,
+      "status": "PASS",
+      "executed_by_reviewer": true
+    },
+    "final_cb_long_goals": {
+      "groups": 4,
+      "status": "PASS",
+      "logical_model": "auto",
+      "route_model_calls": 0,
+      "executed_by_reviewer": true
+    },
+    "final_cb_goal_faults": {
+      "cases": 7,
+      "status": "PASS",
+      "seconds": 135.037,
+      "executed_by_reviewer": true
+    },
+    "final_cb_tools_reference_environment_jobs": {
+      "scripts": 6,
+      "status": "PASS",
+      "wall_seconds": 68.882,
+      "source_test_pins_checked": 31,
+      "changed_during_execution": [],
+      "boundary": "Actualtemporaryvenv/selfauthoredlocalwheelpip/import/httpserver/portclose, Host/problemtools/Jobs/cancel/restart/cloudsnapshot/linkedreference. Not arbitrarythirdpartyinstallermatrix."
+    },
+    "final_cb_actual_model_context": {
+      "status": "PASS",
+      "seconds": 68.122,
+      "model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "model_runs": 5,
+      "provider_http_reservations": 12,
+      "bounds": "15calls/240s",
+      "actual_artifact": "Projectguidance marker, actualprovider-generatedsummary/candidate(notadopted), originalhash preserved, explicitadopt, exactrecallfile, revokedreference denied",
+      "capacity_boundary": "Isolatedfixturemetadata narrowsdeclared1M to262144 to forceactualcompaction; actualmodelid/protocol unchanged. Not full1Mcapacity acceptance.",
+      "usage": "Positiveadapter-sourcedcounts inclcache_read observed; absent/zero unknown,costnull. No economic/hitrate/token-saving claim."
+    }
+  },
+  "goal_real_model_boundary": {
+    "final_cb_trial": "FAIL retained:13.125s/1modelcall, fixtureALLOWED_TOOLS rejected reference_read ref-1 before Jobstart. No Job/report. Not finalcb actualGoalJobPASS. No furthermodeltrial attempted.",
+    "previous_5f_trial": "Actualfixed-templateGoalJobPASS29.644s,4HTTPcalls/3freshgrantedSlices,Jobexit0/effectsknown,actualstdout/reportread,1.926snoLLMwait,awaiting_review. Older5f binary hasdynamicCRT andisnotpublished.",
+    "allowed_bridge": "Reviewer source-semantic observation plus finalcb completecontrolledGoal/Job/mode/fault effects and finalcb realprovider/context loop support boundedsoftwarefunctionality. StaticCRTrelocation is packaging/linkage repair, not evidence that cb completed thefailedrealGoaltrial.",
+    "provenance_limit": "No complete archivedold5f runtime-source rawhashmanifest located. Therefore no claim allold5f/rawbytes equalcb or fullybinary-reproduciblesourcebridge; earlierreviewedfunctionbodies/intendedalgorithm unchanged and LFnormalization are scoped source-reviewevidence only.",
+    "remaining_gap": "Exactfinalcb actualmodelGoal→Job→crossSlice→readback fulltask unpassed; mustremain explicitboundary, never relabelold/newFAIL green."
+  },
+  "package_audit": {
+    "source_hash": "26e8d6780498e121042973cd1fc12c668c3ee4999e23c8c7d62ac548fcd53de1",
+    "files": 612,
+    "runtime_count": 22,
+    "runtime_hashes": {
+      "src/agent.rs": "459a59783272848521a40836f60292d45e0ccb865bc399812c99d49fb8847705",
+      "src/config.rs": "73b6393ecfc956b40d63cbf88a01ce08927220c03ea41dfeb3003607308c8f81",
+      "src/context_memory.rs": "5500c6d7bdb5a353444a72cb6eb010ecc781c3ce98a705753a6245aa4a356e6c",
+      "src/execution.rs": "9b72bb262451181a89eb4c767152b5a3c369c4e78e04b77fc6757d98e2b1477a",
+      "src/experience.rs": "1dd6942fc15643828b21605c55b98194b8cdc43445b1fbfbd9ee6f08e4ba4a45",
+      "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+      "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+      "src/gateway.rs": "39279fad8ff27ae339fed69ab3e7b801e64313dbd74e495c331ad3bf173f026b",
+      "src/goal_runtime.rs": "319be86ea862d5a3e029f423a6908c93b26c3d8579adee47cf37099fb04bc3dd",
+      "src/local_tools.rs": "c396ffeb49a076830a7a28e3803b7997ede327ab402ae439e9e15b059351ef59",
+      "src/main.rs": "75720a4fbc772065cb21fdffc538b5409b511c01ec596f8cfbb10a586851d2e2",
+      "src/managed_jobs.rs": "241bb26c9cf5424fab6a97d95d15ace5e56974f3fab2b570961a63dd0295ee1f",
+      "src/model_caps.rs": "ca53b3d36ecafbec4fdd10db123927265cf5dd8a4de46fbbf42e0913c97abe04",
+      "src/model_telemetry.rs": "762a9b2387a45cd835aa76b94d5c9b20db7787166f8dd1b06f890f89fda5d6da",
+      "src/operations.rs": "b5447bd14390a90bb19bb46228b2adb9d77f039d5c1658f286bcef775c7c8b99",
+      "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+      "src/proxy.rs": "fdcb1c3c0f21e9b2b4b792504afd04253d8848c30c4be77540cec991e3a368c5",
+      "src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+      "src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+      "src/system_capabilities.rs": "26ebfdbbc60637f7408b83549e881451a87238e4d46056eb8539fbcce7484fd8",
+      "src/transport.rs": "e7d6ea51a826a14460da8306c30db6d715b5e967d0ee88d6a468ea95cb3c1ab9",
+      "src/wire.rs": "cd298339f753fabf319fcb769ddbf1614c9e1afe03e055a6a455a90118aa3b58"
+    },
+    "zip_sha256": "d82735bb1cae580db5600ed5a61a8a88b86b20aff18ab34e9294ada87e83685a",
+    "zip_bytes": 3617213,
+    "manifest_all_hashes": "PASS",
+    "runtime_source_exact_current": "PASS",
+    "ZIP_finalexe_readme": "PASS"
+  },
+  "pe_independent_audit": {
+    "method": "DirectPE32+ importdescriptorparsing by reviewer",
+    "old5f": "VCRUNTIME140 plusAPI-MS-WIN-CRT importsconfirmed",
+    "finalcb": "8systemDLLsonly, no directdynamicMSVCCRTimports",
+    "not_proven": "Cleanmachine/allWindowsversion compatibility"
+  },
+  "preserved_failures": [
+    "5f incorrectstaticCRT fingerprintdiagnosis explicitlycorrected in versiondoc",
+    "goal_faults-release oldinventorymarkerFAIL; affectedfreshcase and finalcbfull7pass, originalsretained",
+    "cloud_snapshot-release oldhottail/rawprefixcomparisonFAIL; finalcb journalawarefullscriptPASS, originalretained",
+    "realGoalv1str/v2listASTlexicalmismatchesFAIL kept;fixedtemplate actual5fpositive separate",
+    "finalcb realGoal reference_readscopeFAIL kept",
+    "initialcontexttrialextra historysearch hit3callcap;prompt-onlyv2andcbactualsuccess separate",
+    "JobsreaderPermissionError boundedfixture retry, corruptJSON stillfails",
+    "teardownHTTPkeepaliveWin10054 diagnostics retained; fixtureassertions/errors empty onPASS"
+  ],
+  "publication_gate": {
+    "source_build_package": "PASS withinboundedWindows/softwareexportscope",
+    "scoped_commit_push": "NOT_VERIFIED_IN_THIS_AUDIT",
+    "production_deploy_install_browser": "NOT_RUN_IN_THIS_AUDIT",
+    "Linux_source_compile_runtime": "PENDING_SEPARATE_RECEIPT; not implied by Windows/sourcearchive",
+    "documentation": "versiondocnowcb corrects5fmistake; coordinatorappends finalcb table/Goalboundary/remainingreceipts only, packages/runtime fixed"
+  },
+  "deferred": [
+    "GlobalcrossSessionGoalinventory",
+    "DesktopComputerUse/imagebinarytransport",
+    "Vectors/backgroundconsolidation/offlinesync/personalidentityfromsharedQR",
+    "Automaticmemory/Skill/codepromotion",
+    "Powerloss/adversarialUnixorphan/ARM/musl/macOS/allLinuxinstaller guarantees",
+    "Full1Mstress/token-saving/cachebilling/hitratebenchmarks"
+  ],
+  "findings": [],
+  "artifact_sha256": {
+    "standalone-package-offline-audit.json": "c5583f283660e790868d6c21cf099a4ad494d9c08018c7a519300c5a0f191cd6",
+    "standalone-context\\result.json": "11c0018072d129bbb7eb6367ebc5901c836c7c5bf183c21d2dd1e79dc973944f",
+    "standalone-context-live\\result.json": "14a2509be388327eacb16cf3522a9be2ffc2af44a66d70c5966a73a46426ee7c",
+    "standalone-efficiency\\result.json": "43f6488c0f4bc5994ee5254c9af4b0b5f2404f4d55ee23ef64c6d1f087ab3040",
+    "standalone-modes\\result.json": "9d35e2ba6c9269d4555af537d98a40ecdac2274be087ce181dcaf225881e805a",
+    "standalone-long-goals\\result.json": "8d6ca2aa075a27b0ddb693f3712a1a4f8b276067f4bb597594113e93d92ccde7",
+    "standalone-goal-faults\\result.json": "b6fba1f4ca7585b7225e60dd85e17be1e7e16dd1aa1f3aa474ea0544b8d84934",
+    "standalone-goal-live\\result.json": "2d9948ac6cbc7e97b3c15465aa6ed273bf932d5add8e3580b712048fc2e4419c",
+    "standalone-tools-audit\\runner-result.json": "1fc2ba18a27ae24c89da9b052d1321bd6dea85f0935d1a7b79afb5ef8a4a0482",
+    "goal-live-v3-final-task-audit.json": "d5ba2718a584b0a892b7475ab1e0c3628b9e3a3e3f550bafea04a23560bd0cd3",
+    "go-release\\prepare-result.json": "f19c9be0f85e3d1a7438120bc12c0fc4bf3ac4bedc14729762c6df78d9ba87d3"
+  }
+}

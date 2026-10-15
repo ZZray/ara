@@ -20,6 +20,7 @@ import time
 
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out", "lease_expired", "log_limit", "interrupted"}
+RECEIPT_READ_RETRIES = {"PermissionError": 0, "FileNotFoundError": 0}
 
 
 def require(condition, message):
@@ -45,7 +46,18 @@ def atomic_json(path, value):
 
 
 def read_receipt(directory):
-    return json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
+    # Windows may briefly deny opening a filename while the actual worker
+    # replaces its receipt atomically. Poll only these publication errors for
+    # at most one second; corrupt JSON and all behavioral assertions still fail.
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            return json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
+        except (PermissionError, FileNotFoundError) as error:
+            if time.monotonic() >= deadline:
+                raise
+            RECEIPT_READ_RETRIES[type(error).__name__] += 1
+            time.sleep(min(.02, max(0, deadline - time.monotonic())))
 
 
 def until(predicate, seconds=12):
@@ -205,6 +217,7 @@ def main():
     finally:
         jobs.close()
         result.update(passed=passed, elapsed_seconds=round(time.monotonic()-started, 3), binary_sha256=sha(args.binary.read_bytes()), platform=sys.platform,
+                      receipt_read_retries=RECEIPT_READ_RETRIES,
                       not_run=["controller-Hub signed lease and model tool integration", "actual Node process restart (parent-launcher exit covered)", "power-loss durability", "malicious setsid/process escape", "Unix worker SIGKILL descendant cleanup; interrupted effects remain unknown"])
         (root / "worker-receipts.json").write_text(json.dumps(jobs.receipts, ensure_ascii=False, indent=2), encoding="utf-8")
         (root / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

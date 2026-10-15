@@ -9,6 +9,7 @@ mod goal_runtime;
 mod local_tools;
 mod managed_jobs;
 mod model_caps;
+mod model_telemetry;
 mod operations;
 mod project_rules;
 mod proxy;

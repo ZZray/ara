@@ -5,6 +5,8 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
 - [Host and upstream boundaries](host-boundaries.md)
 - [Context and sourced memory](context-memory.md)
+- [0.2.0 version acceptance](../evidence/version-0.2.0-20261016.md): seven requested capability groups, final executable tests and explicit release boundaries.
+- [Context/cache efficiency research](../research-efficiency-20261016.md): primary provider contracts, pinned Pi/Codex/OpenHands sources and conservative usage receipts; no measured cost-savings claim.
 
 - [Model declarations and dynamic text budgets](../evidence/model-capabilities-20261015.md): editable1M/multimodal metadata, complete-request allocation checks and capacity-shrink recovery; image transport remains separate.
 - [Maintained production activation](../evidence/production-activation-20261015.md): installed/public f8935 artifacts, real authenticated session references and Plan/Goal execution, unchanged grants and explicit auth/multimodal limits.

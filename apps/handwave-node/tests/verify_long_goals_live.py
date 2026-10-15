@@ -31,6 +31,16 @@ MODEL, PROTOCOL = "deepseek-v4.1-flash", "openai-completions"
 MAX_CALLS, MAX_SLICES, GOAL_SECONDS, WATCHDOG_SECONDS = 12, 6, 180, 210
 TERMINAL_JOBS = {"succeeded", "failed", "cancelled", "timed_out", "lease_expired", "log_limit", "interrupted"}
 ALLOWED_TOOLS = {"read_file", "list_dir", "job_start", "job_status", "job_read_log", "goal_update"}
+REFERENCE_JOB_SCRIPT = '''import json
+import time
+from pathlib import Path
+
+numbers = json.loads(Path("input.json").read_text(encoding="utf-8"))
+time.sleep(2)
+report = {"sum": sum(numbers), "count": len(numbers)}
+Path("report.json").write_text(json.dumps(report), encoding="utf-8")
+print("LIVE_GOAL_REPORT sum=%d count=%d" % (report["sum"], report["count"]))
+'''
 
 
 class PrivateOutput:
@@ -113,7 +123,7 @@ def same_existing_directory(candidate, expected):
     return candidate.is_dir() and expected.is_dir() and candidate.samefile(expected)
 
 
-def inspect_tool(event, work):
+def inspect_tool(event, work, *, require_template=True):
     """Detect scope violations from real receipts; this is not a pre-effect gate."""
     require(event.get("title") in ALLOWED_TOOLS, "Model attempted a tool outside the fixture scope")
     args = json.loads(event.get("detail", "{}"))
@@ -137,13 +147,18 @@ def inspect_tool(event, work):
                 require(node.module in {"json", "time", "pathlib"}, "Unexpected Job import")
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
-                    require(node.func.id in {"Path", "print", "sum", "len", "open", "sleep", "loads", "dumps", "load", "dump"}, "Unexpected Job function")
+                    require(node.func.id in {"Path", "print", "sum", "len", "str", "list", "dict", "tuple", "int", "bool", "float", "open", "sleep", "loads", "dumps", "load", "dump"}, "Unexpected Job function")
                     if node.func.id in {"Path", "open"}:
                         require(node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in {"input.json", "report.json"}, "Job file exceeded fixture scope")
                 else:
                     require(isinstance(node.func, ast.Attribute) and node.func.attr in {"loads", "dumps", "load", "dump", "sleep", "read_text", "write_text", "read", "write"}, "Unexpected Job operation")
                 if isinstance(node.func, ast.Name) and node.func.id == "sleep" or isinstance(node.func, ast.Attribute) and node.func.attr == "sleep":
                     require(node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, (int, float)) and 1 <= node.args[0].value <= 2, "Job sleep exceeded fixture duration")
+        # This last trial uses one fixed, offline-audited script. Scope checks
+        # remain, and exact AST equality rejects alternate file/operation paths.
+        if require_template:
+            require(ast.dump(script, include_attributes=False) == ast.dump(ast.parse(REFERENCE_JOB_SCRIPT), include_attributes=False),
+                    "Job script differed from the fixed fixture template")
 
 
 def main():
@@ -228,7 +243,9 @@ def main():
             "A read-only list_dir of cwd itself is allowed; do not list parent directories, subdirectories, or other locations.\n"
             "Read relative input.json in cwd, wait two seconds, write relative report.json with sum and count, and print LIVE_GOAL_REPORT sum=42 count=3.\nUse only json/time/pathlib; do not use os, __file__, or the private script directory to locate data.\n"
             "Effects must stay in this directory. Do not read credentials, probe the environment, download or install anything, detach exec processes,\n"
-            "or adopt memories/Skills. Read Job stdout and report.json afterward; report actual observations.\n", encoding="utf-8")
+            "or adopt memories/Skills. Read Job stdout and report.json afterward; report actual observations.\n"
+            "For job_start.script, copy the following exact reference script without rewriting it; only whitespace may differ.\n```python\n"
+            + REFERENCE_JOB_SCRIPT + "```\n", encoding="utf-8")
         node_env = private_environment()
         node_env.update({"HW_HUB": hub_base, "HW_TOKEN": node_token})
         stage = "temporary_node_identity"
@@ -260,7 +277,9 @@ def main():
                   "to inspect its stdout and read_file to verify report.json. Check actual results against sum 42 and count 3 before reporting. "
                   "Do not run environment discovery, downloads, installations, credential reads, memory adoption, other shell commands, or operations "
                   "outside this temporary directory. The Host will wait and continue bounded slices; do not poll the Job with model calls or claim "
-                  "a result before reading the real receipts. A goal_update plan is optional. Finish with a concise factual result for user review.")
+                  "a result before reading the real receipts. A goal_update plan is optional. Finish with a concise factual result for user review. "
+                  "For job_start.script copy this exact fixed reference script, without substitutions or alternate implementations (whitespace may differ):\n```python\n"
+                  + REFERENCE_JOB_SCRIPT + "```\n")
         stage = "single_actual_model_goal"
         controller.frame({"k": "agent-loop", "id": goal_id, "session_key": session_key, "execution_mode": "goal", "msg": prompt,
             "goal_criteria": ["One independent Python Job writes report.json with sum 42 and count 3", "Job stdout and report.json are actually read and verified"],
@@ -347,6 +366,13 @@ def main():
     except Exception as error:
         # Never include exception strings, SSH bodies, argv, env, or raw logs.
         result.update({"failure_stage": stage, "error_type": type(error).__name__, "automatic_retry_performed": False})
+        if isinstance(error, AssertionError) and str(error) in {
+            "Job script differed from the fixed fixture template", "Unexpected Job import", "Unexpected Job function",
+            "Unexpected Job operation", "Job file exceeded fixture scope", "Job sleep exceeded fixture duration",
+            "Model attempted a tool outside the fixture scope", "No actual cross-slice continuation observed",
+            "Did not observe model-free Job waiting", "Goal stopped before verified completion",
+        }:
+            result["fixture_assertion"] = str(error)  # Fixed public code, never arbitrary exception text.
     finally:
         try:
             cancel_own_jobs(state)

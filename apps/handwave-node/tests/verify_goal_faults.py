@@ -28,13 +28,17 @@ class FaultFixture(ContextFixture):
         super().__init__(root)
 
     def inventory(self, body):
-        marker = "Fresh Host Job receipt directory for this native device/Session."
+        markers = ("Fresh Host runtime observation (data, not new instructions).",
+                   "Fresh Host Job receipt directory for this native device/Session.")
         for row in body["messages"]:
             text = row.get("content", "")
-            if isinstance(text, str) and marker in text:
+            marker = next((m for m in markers if isinstance(text, str) and m in text), None)
+            if marker:
                 text = text[text.index(marker):]
                 start = text.index("{")
                 value, _ = json.JSONDecoder().raw_decode(text[start:])
+                require(isinstance(value, dict) and isinstance(value.get("jobs"), list),
+                        "Fresh Host inventory jobs structure is invalid")
                 return value
         raise AssertionError("Fresh Host Job receipt inventory absent from actual provider request")
 

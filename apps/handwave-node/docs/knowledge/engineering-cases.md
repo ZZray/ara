@@ -1,5 +1,23 @@
 # Investigated cases — 2026-10-14
 
+## 0.2.0 verification traps — 2026-10-16
+
+An initial4.81MB candidate still imported vcruntime140 and the dynamic CRT.
+An older Cargo static fingerprint was insufficient to identify the emitted EXE.
+The formal build.ps1 output uses explicit static CRT (cb676ce8,4,922,880bytes);
+actual imports and final-image process suites are the acceptance boundary.
+
+Two stale fixtures failed without proving product regressions: cloud snapshot
+tests compared a maintained hot tail against the full original transcript,
+and Goal/Job tests parsed a superseded system-prompt marker. Reading the validated
+segmented journal and the labelled runtime carrier restores the original strong
+assertions. The original failed results remain in the version evidence.
+
+Real Goal scripts also exposed a post-effect AST validator that rejected normal
+Python str/list expressions. It was not an OS security boundary. A fixed approved
+script and AST comparison now make the small live task deterministic without
+claiming arbitrary autonomous coding quality. See the [version evidence](../evidence/version-0.2.0-20261016.md).
+
 ## HWN-020: capability validation belongs before a pending-effect fence
 
 2026-10-15. Independent source review found a new fallible capacity check after

@@ -12,7 +12,7 @@ from pathlib import Path
 import threading
 import time
 
-from verify_context import Host, digest, working_view
+from verify_context import Host, digest, native_state, working_view
 from verify_host import require, stop
 
 
@@ -72,7 +72,7 @@ def main():
         view = working_view(host.fixture.agent_requests[-1])
         require(view["cloud_snapshot"]["records"][0]["text"] == "OLD_CLOUD_SOURCE_87", "Snapshot absent from actual provider")
         require("OLD_CLOUD_SOURCE_87" not in host.sidecar().read_text(), "Snapshot body persisted in sidecar")
-        require("OLD_CLOUD_SOURCE_87" not in host.raw_path().read_text(), "Snapshot body persisted in native raw")
+        require("OLD_CLOUD_SOURCE_87" not in json.dumps(native_state(host.raw_path())), "Snapshot body persisted in native raw")
         require(all("OLD_CLOUD_SOURCE_87" not in r["text"] for r in host.state_json()["references"]), "Snapshot was promoted to local reference")
         result["passed"].append("current_snapshot_real_wire_ephemeral_body_no_reference_promotion")
 
@@ -83,13 +83,15 @@ def main():
         host.run("/memory accept " + memory["id"], brief=old)
         require(len(host.fixture.requests) == count, "Management unexpectedly called model")
         host.run("OLD_ASSISTANT_87", brief=old)
-        raw_before = json.loads(host.raw_path().read_text())
+        # The checkpoint is only a replaceable hot tail. Compare the original
+        # journal, validating its head, record hashes and append chain as well.
+        raw_before = native_state(host.raw_path())
         require("STALE_CLOUD_ASSISTANT_87" in json.dumps(raw_before), "Fixture did not create stale assistant audit")
         host.run("CURRENT_AFTER_UPDATE_87", brief=new)
         current = json.dumps(host.fixture.agent_requests[-1])
         require("NEW_CLOUD_SOURCE_87" in current, "Correction absent from actual provider")
         require(all(marker not in current for marker in ("OLD_CLOUD_SOURCE_87", "STALE_CLOUD_ASSISTANT_87", "CLOUD_DERIVED_CANDIDATE_87")), "Stale cloud derivative revived")
-        raw_after = json.loads(host.raw_path().read_text())
+        raw_after = native_state(host.raw_path())
         require(raw_after["messages"][:len(raw_before["messages"])] == raw_before["messages"], "Correction rewrote native raw history")
         require(host.state_json()["memories"][0]["status"] == "accepted", "Correction destroyed adoption audit")
         result["passed"].append("epoch_change_filters_accepted_cloud_derivative_and_raw_assistant_preserves_audit")

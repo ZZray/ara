@@ -4,6 +4,22 @@ Implementation follows the [pinned upstream research](long-task-research.md).
 This page describes the Host contracts; executed acceptance and remaining gaps
 belong to the delivery evidence. It does not advance root OMP/Core acceptance.
 
+## 0.2.0 context and checklist additions
+
+Execute has a Run-local `task_update` checklist (at most12 items/32KiB), with
+evidence required for done. Its complete tool result is journaled; frontend
+delivery failure is explicit. Plan remains read-only, and Goal retains its own
+durable steps rather than mirroring them into a second task store.
+
+Static Goal instructions remain system rules. Fresh Goal/Job observations are
+labelled Host data in the projected working view, excluded from original raw
+messages and charged against the projection budget before compaction. Model
+call observations record system hash/UTF-8 bytes, not a token or cache guarantee.
+Positive normalized adapter usage has explicit provenance; missing/zero values
+cannot establish free consumption or cache misses. The completed compaction
+receipt is emitted only after saving, using global raw indexes even after hot
+history eviction. See the [version evidence](../evidence/version-0.2.0-20261016.md).
+
 ## Native Session history
 
 `session_journal.rs` separates original messages from the model working view.
