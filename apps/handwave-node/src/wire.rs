@@ -35,6 +35,15 @@ pub struct Frame {
     pub goal_criteria: Vec<String>,
     #[serde(default)]
     pub goal_id: String,
+    /// An authorization request only. The Node accepts leases only from Hub signals.
+    #[serde(default)]
+    pub goal_policy: Option<Value>,
+    #[serde(default)]
+    pub goal_background: bool,
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+    #[serde(default)]
+    pub reviewed_run_id: String,
     #[serde(default)]
     pub b64: String,
     #[serde(default)]

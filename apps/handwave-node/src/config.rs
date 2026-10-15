@@ -109,7 +109,7 @@ impl Resolved {
         json!({"hostname":std::env::var("COMPUTERNAME").or_else(|_|std::env::var("HOSTNAME")).unwrap_or_else(|_|"rust-node".into()),
             "user":std::env::var("USERNAME").or_else(|_|std::env::var("USER")).unwrap_or_else(|_|"unknown".into()),
             "os":os,"arch":arch,"version":concat!("rust-",env!("CARGO_PKG_VERSION")),
-            "caps":["exec","files","agent-task","agent-loop","cancel","cloud-memory-v1","session-v1","run-modes-v1"]})
+            "caps":["exec","files","agent-task","agent-loop","cancel","cloud-memory-v1","session-v1","run-modes-v1","goal-runner-v1","managed-jobs-v1","history-journal-v1"]})
     }
 
     pub fn websocket_url(&self) -> Url {

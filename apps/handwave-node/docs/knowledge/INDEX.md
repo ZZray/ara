@@ -21,3 +21,6 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Reviewed experience and self-evolution](reviewed-experiences.md): current-Run native evidence, explicit adoption and bounded subsequent recall.
 
 - [Linked context and execution modes](linked-context-modes.md): global/project/device memory boundaries, session narrative references, non-renewing machine selection, read-only plans and reviewed goals.
+- [Long goals, durable execution and context research](long-task-research.md): seven pinned upstream implementations, current Host gaps and reviewed P0/P1/P2 proposals; research only, no new runtime acceptance.
+- [Durable history, bounded Goals and managed Jobs](long-task-runtime.md): implementation contracts, authorization, root accounting, recovery and process limits; delivery acceptance is tracked separately.
+- [Long-task execution evidence](../evidence/long-task-runtime-20261016.md): versioned process tests, retained failures and open publication gates.

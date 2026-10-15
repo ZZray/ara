@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -28,6 +28,7 @@ struct Active {
     grant_until: Instant,
     acks: Option<mpsc::Sender<()>>,
     steering: Arc<Mutex<Vec<String>>>,
+    lease: Option<crate::goal_runtime::Lease>,
 }
 
 // The workbench creates one local card before an agent-loop request is sent.
@@ -65,13 +66,145 @@ async fn stop(active: &mut Option<Active>) -> Result<()> {
             // Tools own cancellation and process-tree cleanup. Do not detach them before a new owner.
             tokio::time::timeout(Duration::from_secs(20), job)
                 .await
-                .context("run cleanup did not settle; refusing to reconnect")??;
+                .context("run cleanup did not settle; refusing to reconnect")?
+                .context("run cleanup task failed; refusing to reconnect")?;
         }
     }
     Ok(())
 }
 
+fn job_manager(settings: &Resolved, lease: &crate::goal_runtime::Lease) -> Result<crate::managed_jobs::Manager> {
+    let state = settings.session_path_for(&lease.controller, &lease.session)?;
+    crate::managed_jobs::Manager::new(
+        &state,
+        &settings.cwd,
+        crate::managed_jobs::Policy {
+            owner: crate::managed_jobs::Owner::new(&state, &settings.fp, &lease.session)?,
+            lease_expires_at: lease.expires_at,
+            max_jobs: 8,
+            max_log_bytes: 8 * 1024 * 1024,
+            max_seconds: 3600,
+        },
+    )
+}
+
+fn cancel_goal_jobs(settings: &Resolved, owner: &str, id: &str, goals: &mut crate::goal_runtime::Runner) -> Result<()> {
+    // Persist the dispatch fence first; cancellation markers request cleanup,
+    // never claim that a worker or its external effects are already gone.
+    let contracts = goals.matching_contracts(owner, id);
+    goals.cancel_matching(owner, id)?;
+    for lease in contracts {
+        if lease.allow_jobs {
+            job_manager(settings, &lease)?.cancel_all()?;
+        }
+        let path = settings.session_path_for(owner, &lease.session)?;
+        let _ = agent::suspend_goal(&path, &settings.cwd, &lease.goal_id, "canceled");
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn finalize_retired(
+    socket: &mut proxy::Socket,
+    retired: &mut HashMap<String, Frame>,
+    settings: &Resolved,
+    owner: &str,
+    receipts: &mut Option<Receipts>,
+    goals: &mut crate::goal_runtime::Runner,
+) -> Result<()> {
+    for (id, frame) in retired.drain() {
+        if frame.k == "agent-loop" {
+            socket
+                .send(Message::Text(json!({"k":"model-grant-end","run":id,"fp":settings.fp}).to_string().into()))
+                .await?;
+        }
+        if let Some(receipts) = receipts.as_mut() {
+            receipts.finish(&id)?;
+        }
+        if frame.k == "agent-loop" {
+            let path = settings.session_path_for(owner, &frame.session_key)?;
+            if let Ok(Some(goal)) = agent::session_goal(&path, &settings.cwd) {
+                goals.observe(&frame.session_key, &goal)?;
+                socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":frame.session_key,"goal":goal}).to_string().into())).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn goal_command(
+    sig: &Value,
+    settings: &Resolved,
+    owner: &str,
+    active: &mut Option<Active>,
+    goals: &mut crate::goal_runtime::Runner,
+    retired: &mut HashMap<String, Frame>,
+) -> Result<crate::execution::GoalState> {
+    let string = |key: &str| sig[key].as_str().unwrap_or_default();
+    let id = string("command_id");
+    anyhow::ensure!(!id.is_empty() && id.len() <= 192, "invalid goal command identity");
+    let goal_id = string("goal_id");
+    let key = string("session_key");
+    let command = string("command");
+    anyhow::ensure!(matches!(command, "pause" | "resume" | "accept" | "stop"), "unsupported goal command");
+    let lease = goals.contract(goal_id, owner, key)?;
+    let path = settings.session_path_for(owner, key)?;
+    let revision = sig["expected_revision"].as_u64().context("goal command requires expected_revision")?;
+    let mut apply_revision = revision;
+    let intent_path = settings.state.join(format!("goal-control-{}.json", crate::context_memory::hash(id.as_bytes())));
+    if intent_path.exists() {
+        let saved: Value = serde_json::from_slice(&std::fs::read(&intent_path)?)?;
+        anyhow::ensure!(saved["request"] == *sig, "goal command ID reused with different content");
+        apply_revision = saved["apply_revision"]
+            .as_u64()
+            .context("goal control interrupted while stopping; inspect effects before reconciliation")?;
+    }
+    if let Some(run) = active.as_ref().filter(|r| r.frame.session_key == key) {
+        anyhow::ensure!(
+            matches!(command, "pause" | "stop"),
+            "goal is running; wait for its settled result before this command"
+        );
+        let before = agent::session_goal(&path, &settings.cwd)?.context("goal unavailable")?;
+        anyhow::ensure!(before.id == goal_id && before.revision == revision, "goal revision changed; refresh the card");
+        crate::session_journal::atomic_write(
+            &intent_path,
+            &serde_json::to_vec(&json!({"request":sig,"apply_revision":null}))?,
+        )?;
+        run.cancel.cancel();
+        let stopped_frame = run.frame.clone();
+        let settlement = stop(active).await;
+        let cleanup =
+            if lease.allow_jobs { job_manager(settings, &lease).and_then(|jobs| jobs.cancel_all()) } else { Ok(()) };
+        settlement?;
+        cleanup?;
+        retired.insert(stopped_frame.id.clone(), stopped_frame);
+        let settled = agent::session_goal(&path, &settings.cwd)?.context("goal unavailable after stopping")?;
+        anyhow::ensure!(settled.id == goal_id, "goal identity changed while stopping");
+        apply_revision = settled.revision;
+        crate::session_journal::atomic_write(
+            &intent_path,
+            &serde_json::to_vec(&json!({"request":sig,"apply_revision":apply_revision}))?,
+        )?;
+    }
+    if matches!(command, "pause" | "stop") && lease.allow_jobs {
+        job_manager(settings, &lease)?.cancel_all()?;
+    }
+    let goal = agent::control_goal(
+        &path,
+        &settings.cwd,
+        goal_id,
+        command,
+        id,
+        Some(apply_revision),
+        string("reviewed_run_id"),
+    )?;
+    goals.observe(key, &goal)?;
+    Ok(goal)
+}
+
 pub async fn run(settings: Resolved) -> Result<()> {
+    let mut goals = crate::goal_runtime::Runner::load(&settings.state)?;
     let quit = CancellationToken::new();
     let signal = quit.clone();
     tokio::spawn(async move {
@@ -81,7 +214,7 @@ pub async fn run(settings: Resolved) -> Result<()> {
     let mut backoff = 1u64;
     while !quit.is_cancelled() {
         let since = Instant::now();
-        match session(&settings, quit.clone()).await {
+        match session(&settings, quit.clone(), &mut goals).await {
             Ok(()) => {}
             Err(error) => {
                 eprintln!("connection ended: {error:#}");
@@ -103,7 +236,7 @@ pub async fn run(settings: Resolved) -> Result<()> {
     Ok(())
 }
 
-async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
+async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate::goal_runtime::Runner) -> Result<()> {
     let mut socket =
         tokio::time::timeout(Duration::from_secs(20), proxy::connect(&settings.websocket_url(), &settings.token))
             .await??;
@@ -114,6 +247,7 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
     let mut epoch = 0u64;
     let mut alive = CancellationToken::new();
     let mut active: Option<Active> = None;
+    let mut retired = HashMap::<String, Frame>::new();
     let mut upload: Option<Upload> = None;
     let mut queued = VecDeque::<Frame>::new();
     let mut receipts: Option<Receipts> = None;
@@ -123,6 +257,27 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
             tokio::select!{
                 _=quit.cancelled()=>break,
                 _=tick.tick()=>{
+                    finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
+                    if active.is_none() { for lease in goals.expired_dispatches(&owner) {
+                        goals.wait(&lease.goal_id,"waiting_authorization",60)?;
+                        let path=settings.session_path_for(&owner,&lease.session)?;
+                        if let Ok(goal)=agent::suspend_goal(&path,&settings.cwd,&lease.goal_id,"waiting_authorization") {
+                            socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":lease.session,"goal":goal}).to_string().into())).await?;
+                        }
+                    } }
+                    for lease in goals.waiting_jobs(&owner) {
+                        match job_manager(settings,&lease).and_then(|jobs|{let receipts=jobs.unfinished()?;anyhow::ensure!(!receipts.iter().any(|r|r.state=="interrupted"),"Job worker interrupted; effects require reconciliation");jobs.ready_to_continue()}) {
+                            Ok(true)=>goals.wait(&lease.goal_id,"yielded",0)?,
+                            Ok(false)=>goals.wait(&lease.goal_id,"waiting_job",2)?,
+                            Err(error)=>{
+                                eprintln!("goal Job recovery fenced: {error:#}");goals.wait(&lease.goal_id,"waiting_recovery",60)?;
+                                let path=settings.session_path_for(&owner,&lease.session)?;
+                                if active.is_none() { if let Ok(goal)=agent::suspend_goal(&path,&settings.cwd,&lease.goal_id,"waiting_recovery") {
+                                    socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":lease.session,"goal":goal}).to_string().into())).await?;
+                                } }
+                            },
+                        }
+                    }
                     if let Some(run)=active.as_mut() {
                         if !run.ending.load(Ordering::SeqCst) && run.job.is_none() && (run.cancel.is_cancelled() || Instant::now()>=run.grant_until) {
                             // Fence late grants before the terminal packets enter the outbound queue.
@@ -134,6 +289,11 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                             reject_agent(&sender,&id,status,error,true).await?;
                         }
                     }
+                    if active.is_none() && queued.is_empty() && !owner.is_empty() {
+                        if let Some(next)=goals.next(&owner)? {
+                            start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;
+                        }
+                    }
                 },
                 outgoing=rx.recv()=>{
                     let Some(packet)=outgoing else {break;};
@@ -141,15 +301,31 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                     let done=packet.settled_id;
                     tokio::time::timeout(Duration::from_secs(10),socket.send(Message::Text(packet.value.to_string().into()))).await??;
                     if let Some(id)=done {
-                        if active.as_ref().is_some_and(|run|run.frame.id==id){
-                            if active.as_ref().is_some_and(|run|run.frame.k=="agent-loop") {
+                        let finishing_active=active.as_ref().is_some_and(|run|run.frame.id==id);
+                        let finished=if finishing_active {active.as_ref().map(|run|run.frame.clone())} else {retired.remove(&id)};
+                        if let Some(finished)=finished {
+                            if finished.k=="agent-loop" {
                                 socket.send(Message::Text(json!({"k":"model-grant-end","run":id,"fp":settings.fp}).to_string().into())).await?;
                             }
-                            stop(&mut active).await?;
+                            if finishing_active { stop(&mut active).await?; }
                             if let Some(receipts)=&mut receipts{receipts.finish(&id)?;}
-                            if let Some(next)=queued.pop_front(){
-                                start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;
+                            if finished.k=="agent-loop" {
+                                let path=settings.session_path_for(&owner,&finished.session_key)?;
+                                match agent::session_goal(&path,&settings.cwd) {
+                                    Ok(Some(goal))=>{
+                                        if goal.last_settled_run==finished.id || goal.run==finished.id { goals.observe(&finished.session_key,&goal)?; }
+                                        socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":finished.session_key,"goal":goal}).to_string().into())).await?;
+                                    },
+                                    Ok(None)=>{},
+                                    Err(error)=>{
+                                        if !finished.goal_id.is_empty(){goals.wait(&finished.goal_id,"waiting_recovery",60)?;}
+                                        eprintln!("goal recovery fenced: {error:#}");
+                                    },
+                                }
                             }
+                            if active.is_none() { if let Some(next)=queued.pop_front(){
+                                start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;
+                            } }
                         }
                     }
                 },
@@ -166,6 +342,15 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                     let sig:Value=serde_json::from_slice(&raw).context("malformed HandWave signal")?;
                     match sig["k"].as_str().unwrap_or_default(){
                         "pair-req"=>{
+                            let incoming=sig["ctlfp"].as_str().context("controller identity missing")?;
+                            let retain=owner==incoming && active.as_ref().is_some_and(|run|run.lease.as_ref().is_some_and(|lease|
+                                lease.controller==owner && lease.session==run.frame.session_key && lease.expires_at>crate::goal_runtime::now()));
+                            if retain {
+                                // Returning to the workbench observes the same native Run;
+                                // it must not revoke an explicit background contract.
+                                socket.send(Message::Text(wire::dc(json!({"k":"node-hello","fp":settings.fp,"info":settings.hello()})).to_string().into())).await?;
+                                continue;
+                            }
                             alive.cancel();
                             stop(&mut active).await?;
                             alive=CancellationToken::new();
@@ -173,14 +358,58 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                             owner=sig["ctlfp"].as_str().context("controller identity missing")?.into();
                             let state=settings.session_path(&owner)?;
                             receipts=Some(Receipts::load(state.with_extension("receipts.json"))?);
+                            for key in goals.sessions(&owner) {
+                                let recovered=settings.session_path_for(&owner,&key).and_then(|path|agent::session_goal(&path,&settings.cwd));
+                                goals.recover(&key,recovered.as_ref().ok().and_then(|g|g.as_ref()))?;
+                            }
                             eprintln!("controller paired: owner={owner}");
                             // The cloud workbench uses relay; also support relay fallback on auto-pair.
                             socket.send(Message::Text(wire::dc(json!({"k":"node-hello","fp":settings.fp,"info":settings.hello()})).to_string().into())).await?;
                         },
                         "unpaired"|"pair-fail"=>{
-                            alive.cancel();
-                            stop(&mut active).await?;epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;
+                            cancel_goal_jobs(settings,&owner,"",goals)?;
+                            let stopped_frame=active.as_ref().map(|r|r.frame.clone());
+                            let settlement=stop(&mut active).await;
+                            let cleanup=cancel_goal_jobs(settings,&owner,"",goals);
+                            settlement?;cleanup?;
+                            if let Some(frame)=stopped_frame {
+                                if frame.k=="agent-loop" { socket.send(Message::Text(json!({"k":"model-grant-end","run":frame.id,"fp":settings.fp}).to_string().into())).await?; }
+                                if let Some(receipts)=&mut receipts{receipts.finish(&frame.id)?;}
+                            }
+                            alive.cancel();epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;retired.clear();
                             eprintln!("controller unpaired; pending effects will not be replayed");
+                        },
+                        "controller-detached"=>{
+                            queued.clear();upload=None;
+                            let active_authorized=active.as_ref().is_none_or(|run|run.lease.as_ref().is_some_and(|lease|
+                                lease.controller==owner && lease.device==settings.fp && lease.session==run.frame.session_key
+                                && lease.goal_id==if run.frame.goal_id.is_empty(){run.frame.id.as_str()}else{run.frame.goal_id.as_str()}
+                                && lease.expires_at>crate::goal_runtime::now()));
+                            if !active_authorized {
+                                let stopped_frame=active.as_ref().map(|r|r.frame.clone());stop(&mut active).await?;
+                                if let Some(frame)=stopped_frame{retired.insert(frame.id.clone(),frame);}
+                                finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
+                            }
+                            if goals.has_lease(&owner) {
+                                eprintln!("controller detached; continuing only the explicit unexpired goal contract");
+                            } else {
+                                alive.cancel();stop(&mut active).await?;epoch+=1;owner.clear();queued.clear();receipts=None;
+                            }
+                        },
+                        "goal-command"=>{
+                            let result=goal_command(&sig,settings,&owner,&mut active,goals,&mut retired).await;
+                            if result.as_ref().err().is_some_and(|e|e.to_string().contains("refusing to reconnect")){return Err(result.err().unwrap());}
+                            if matches!(sig["command"].as_str(),Some("pause"|"stop")){queued.retain(|f|f.session_key!=sig["session_key"].as_str().unwrap_or_default());}
+                            finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
+                            let mut reply=json!({"k":"goal-command-result","writer_epoch":goals.writer_epoch,"command_id":sig["command_id"],"goal_id":sig["goal_id"],"session_key":sig["session_key"]});
+                            match result {
+                                Ok(goal)=>{
+                                    reply["goal"]=serde_json::to_value(&goal)?;
+                                    socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":sig["session_key"],"goal":goal}).to_string().into())).await?;
+                                },
+                                Err(error)=>reply["err"]=json!(error.to_string()),
+                            }
+                            socket.send(Message::Text(reply.to_string().into())).await?;
                         },
                         "model-grant"=>{
                             if owner.is_empty(){continue;}
@@ -198,9 +427,31 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                                 run.ending.store(true,Ordering::SeqCst);
                                 let sender=Sender{tx:tx.clone(),epoch,alive:alive.clone()};
                                 reject_agent(&sender,&run.frame.id,"failed","model grant denied or too short",true).await?;
+                                if !run.frame.goal_id.is_empty(){goals.wait(&run.frame.goal_id,"waiting_authorization",60)?;}
                                 continue;
                             }
-                            let frame=run.frame.clone();
+                            let mut frame=run.frame.clone();
+                            let lease:Option<crate::goal_runtime::Lease>=sig.get("goal_lease").filter(|v|!v.is_null()).cloned().map(serde_json::from_value).transpose()?;
+                            if let Some(lease)=&lease {
+                                let goal_id=if frame.goal_id.is_empty(){&frame.id}else{&frame.goal_id};
+                                if let Err(error)=lease.validate(&owner,&settings.fp,&frame.session_key,goal_id,crate::goal_runtime::now()) {
+                                    run.ending.store(true,Ordering::SeqCst);
+                                    let sender=Sender{tx:tx.clone(),epoch,alive:alive.clone()};
+                                    reject_agent(&sender,&frame.id,"failed",&error.to_string(),true).await?;continue;
+                                }
+                                anyhow::ensure!(frame.execution_mode=="goal","goal lease supplied outside Goal mode");
+                                // Hub has verified the original explicit selection or chosen Auto
+                                // once; its trusted binding is authority for every slice.
+                                frame.smart=true;frame.model.clear();frame.protocol.clear();
+                                frame.goal_background=true;
+                                goals.register(&frame,lease)?;
+                            } else if frame.goal_policy.is_some() || goals.requires_lease(&frame.goal_id) {
+                                run.ending.store(true,Ordering::SeqCst);
+                                let sender=Sender{tx:tx.clone(),epoch,alive:alive.clone()};
+                                reject_agent(&sender,&frame.id,"waiting_authorization","Hub did not provide the requested goal lease",true).await?;
+                                goals.wait(&frame.goal_id,"waiting_authorization",60)?;continue;
+                            }
+                            run.frame=frame.clone();run.lease=lease.clone();
                             let state_path=settings.session_path_for(&owner,&frame.session_key)?;
                             let selection=agent::session_route(&state_path,&settings.cwd)
                                 .and_then(|previous|crate::gateway::grant_route(&frame,&sig,&previous));
@@ -233,13 +484,17 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                                 brief:frame.brief.clone(),max_calls:settings.config.max_calls,max_seconds:settings.config.max_seconds.min(ttl.min(decision_budget)-10),
                                 steering:run.steering.clone(),
                                 mode:crate::execution::RunMode::parse(&frame.execution_mode)?,goal_criteria:frame.goal_criteria.clone(),goal_id:frame.goal_id.clone(),
+                                goal_lease:lease,session_key:frame.session_key.clone(),expected_revision:frame.expected_revision,reviewed_run_id:frame.reviewed_run_id.clone(),
                             };
                             eprintln!("agent start: id={} model={} budget={}s",frame.id,request.model,request.max_seconds);
+                            let writer_epoch=goals.writer_epoch.clone();
                             run.job=Some(tokio::spawn(async move{
                                 let (events,mut event_rx)=mpsc::channel::<Value>(64);
-                                let forward=sender.clone();let id=frame.id.clone();let forward_ending=ending.clone();
+                                let forward=sender.clone();let id=frame.id.clone();let forward_ending=ending.clone();let session_key=frame.session_key.clone();
                                 let event_task=tokio::spawn(async move{
                                     while let Some(event)=event_rx.recv().await{
+                                        if matches!(event["type"].as_str(),Some("goal_update"|"goal_status")) && event.get("goal").is_some()
+                                            && forward.sig(json!({"k":"goal-state","writer_epoch":writer_epoch,"session_key":session_key,"goal":event["goal"]})).await.is_err(){break;}
                                         if event["type"]=="agent_end"{forward_ending.store(true,Ordering::SeqCst);}
                                         if forward.event(&id,local_agent_event(event)).await.is_err(){break;}
                                     }
@@ -265,12 +520,41 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                             match frame.k.as_str(){
                                 "ping"=>sender.frame(json!({"k":"pong"})).await?,
                                 "bye"=>{
-                                    alive.cancel();
-                                    stop(&mut active).await?;epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;
+                                    cancel_goal_jobs(settings,&owner,"",goals)?;
+                                    let stopped_frame=active.as_ref().map(|r|r.frame.clone());
+                                    let settlement=stop(&mut active).await;
+                                    let cleanup=cancel_goal_jobs(settings,&owner,"",goals);
+                                    settlement?;cleanup?;
+                                    if let Some(frame)=stopped_frame {
+                                        if frame.k=="agent-loop" { socket.send(Message::Text(json!({"k":"model-grant-end","run":frame.id,"fp":settings.fp}).to_string().into())).await?; }
+                                        if let Some(receipts)=&mut receipts{receipts.finish(&frame.id)?;}
+                                    }
+                                    alive.cancel();epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;retired.clear();
                                     socket.send(Message::Text(json!({"k":"bye"}).to_string().into())).await?;
                                 },
                                 "cancel"|"agent-abort"|"agent-bash-abort"=>{
-                                    if let Some(run)=&active{if frame.id.is_empty() || run.frame.id==frame.id{run.cancel.cancel();}}
+                                    let canceled_contracts=goals.matching_contracts(&owner,&frame.id);
+                                    cancel_goal_jobs(settings,&owner,&frame.id,goals)?;
+                                    if active.as_ref().is_some_and(|run|frame.id.is_empty() || run.frame.id==frame.id) {
+                                        active.as_ref().unwrap().cancel.cancel();
+                                        let stopped_frame=active.as_ref().unwrap().frame.clone();
+                                        let settlement=stop(&mut active).await;
+                                        let cleanup=cancel_goal_jobs(settings,&owner,&frame.id,goals);
+                                        settlement?;cleanup?;
+                                        retired.insert(stopped_frame.id.clone(),stopped_frame);
+                                        finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
+                                    } else {
+                                        // An idle waiting-Job Goal has no Active/terminal event
+                                        // to publish its durable cancellation to the Hub mirror.
+                                        for lease in canceled_contracts {
+                                            let path=settings.session_path_for(&owner,&lease.session)?;
+                                            if let Some(goal)=agent::session_goal(&path,&settings.cwd)?
+                                                .filter(|goal|goal.id==lease.goal_id && goal.status=="canceled") {
+                                                goals.observe(&lease.session,&goal)?;
+                                                socket.send(Message::Text(json!({"k":"goal-state","writer_epoch":goals.writer_epoch,"session_key":lease.session,"goal":goal}).to_string().into())).await?;
+                                            }
+                                        }
+                                    }
                                     queued.clear();
                                 },
                                 "agent-steer"=>{
@@ -356,6 +640,8 @@ fn inherit_follow(next: &mut Frame, active: &Frame) {
     next.session_key = active.session_key.clone();
     next.execution_mode = active.execution_mode.clone();
     next.goal_criteria = active.goal_criteria.clone();
+    next.goal_background = active.goal_background || active.goal_policy.is_some();
+    next.goal_policy = None;
     next.goal_id = if active.execution_mode == "goal" && active.goal_id.is_empty() {
         active.id.clone()
     } else {
@@ -469,10 +755,20 @@ async fn start(
         grant_until: Instant::now() + Duration::from_secs(12),
         acks: None,
         steering,
+        lease: None,
     };
     if frame.k == "agent-loop" {
         let summary: String = objective(&frame).chars().take(2000).collect();
-        sender.sig(json!({"k":"model-grant","id":frame.id,"run":frame.id,"fp":settings.fp,"smart":frame.smart,"binding":previous.binding,"brief":summary,"requires_tools":true})).await?;
+        let lease_goal = if frame.goal_policy.is_some() || frame.goal_background {
+            if frame.goal_id.is_empty() {
+                frame.id.clone()
+            } else {
+                frame.goal_id.clone()
+            }
+        } else {
+            String::new()
+        };
+        sender.sig(json!({"k":"model-grant","id":frame.id,"run":frame.id,"fp":settings.fp,"smart":frame.smart,"model":frame.model,"protocol":frame.protocol,"binding":previous.binding,"brief":summary,"requires_tools":true,"goal_id":lease_goal,"session_key":frame.session_key,"goal_policy":frame.goal_policy})).await?;
     } else {
         let cwd = settings.cwd.clone();
         let (ack_tx, ack_rx) = mpsc::channel(1);

@@ -1,4 +1,4 @@
-//! Host-owned execution modes and bounded goal progress. No background worker.
+//! Host-owned execution modes and reviewed, bounded goal progress.
 use anyhow::{bail, ensure, Result};
 use async_trait::async_trait;
 use rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial};
@@ -37,6 +37,10 @@ impl RunMode {
                     | "reference_read"
                     | "reference_search"
                     | "experience_search"
+                    | "history_read"
+                    | "history_search"
+                    | "job_status"
+                    | "job_read_log"
             )
     }
     pub fn validate_command(self, text: &str) -> Result<()> {
@@ -91,6 +95,15 @@ pub struct GoalState {
     pub status: String,
     pub run: String,
     pub revision: u64,
+    #[serde(default)]
+    pub budget: Option<crate::goal_runtime::Budget>,
+    #[serde(default)]
+    pub last_settled_run: String,
+    #[serde(default = "initial_revision")]
+    pub criteria_revision: u64,
+}
+fn initial_revision() -> u64 {
+    1
 }
 impl GoalState {
     pub fn new(id: &str, objective: &str, criteria: &[String]) -> Result<Self> {
@@ -105,7 +118,28 @@ impl GoalState {
             status: "running".into(),
             run: id.into(),
             revision: 1,
+            budget: None,
+            last_settled_run: String::new(),
+            criteria_revision: 1,
         })
+    }
+    pub fn command_checked(
+        &mut self,
+        command: &str,
+        run: &str,
+        revision: Option<u64>,
+        reviewed_run: &str,
+    ) -> Result<()> {
+        if command != "status" && self.budget.is_some() {
+            ensure!(revision == Some(self.revision), "goal revision changed; refresh the goal card");
+        }
+        if command == "accept" && self.budget.is_some() {
+            ensure!(
+                !reviewed_run.is_empty() && reviewed_run == self.last_settled_run,
+                "reviewed Run differs from the latest settled goal result"
+            );
+        }
+        self.command(command, run)
     }
     pub fn command(&mut self, command: &str, run: &str) -> Result<()> {
         match command {
@@ -121,6 +155,10 @@ impl GoalState {
             "resume" => {
                 ensure!(self.status == "paused", "only a paused goal can be resumed");
                 self.status = "running".into();
+            }
+            "stop" => {
+                ensure!(self.status != "accepted", "accepted goal cannot be stopped");
+                self.status = "canceled".into();
             }
             _ => bail!("use /goal status|accept|pause|resume"),
         }

@@ -451,3 +451,68 @@ projection, and a near-limit regression verifies byte-for-byte preservation.
 Both earlier failures and the new image trial remain separate in
 [the release evidence](../evidence/evolution-20261015.md). No causal or efficiency
 percentage is inferred from a successful candidate.
+
+## HWN-019: a canceled waiting Job must not resurrect its Goal
+
+2026-10-16. The first actual Goal fault fixture confirmed that worker cancellation
+alone was insufficient: a waiting Goal had no Active Run, and its late native
+`waiting_job` observation overwrote the dispatch cancellation. The worker had a
+real canceled receipt, yet the scheduler issued another model Run. Restart could
+also restore the old native status over the canceled dispatch manifest.
+
+The fix retains a durable cancellation fence across observation and recovery,
+and records the idle native Goal as canceled when safe. Pending native effects
+are still settled by their own emitter. An actual targeted retest verifies no
+new provider call before or after Node restart and no delayed file effect.
+The original failing fixture remains separate from that retest. Full final-image
+acceptance is recorded with the long-task delivery evidence, not inferred from
+the source correction alone.
+
+## HWN-020: stopping a Run must settle authority even if output stalls
+
+2026-10-16. Independent reviews found that taking Active during pause/cancel
+made the later terminal packet miss its identity match. That skipped model
+grant end, operation receipt completion and the cloud Goal mirror. A bounded
+output channel can also prevent a terminal packet from being queued at all.
+
+The Node now finalizes successfully stopped frames directly through the socket
+and durable receipts, independently of late terminal delivery. Old terminal
+packets cannot stop a newer Active Run. Cleanup timeout remains fatal even when
+the second Job cancellation scan also fails; reconnecting in that state could
+otherwise overlap an unsettled old task. Actual active-pause fixtures verify
+child cleanup, ended grant, settled operation receipt and stable command result.
+Combined disk failure plus cleanup timeout remains a separate fault boundary.
+
+## HWN-021: idle cancellation needs its own cloud publication
+
+2026-10-16. Independent review found a separate visibility gap after HWN-019:
+an idle waiting-Job Goal could be durably canceled without any Active Run to
+emit its terminal Goal mirror. The Hub therefore retained waiting_job even
+though the worker and native Goal were canceled. The typed stop command already
+published the result; the old agent-abort path did not.
+
+The fix captures matching contracts before cancellation and, only when no Active
+Run matches, publishes the native canceled Goal with the same Goal identity.
+Accepted history and stale/non-canceled observations are skipped. The final
+release-v4 actual-process regression checks increasing native revision, Hub
+inspection of that exact canceled revision, worker tree cleanup and no Goal
+resurrection after restart. Seven Goal fault cases pass in111.938s. This is a
+state-publication correction, not a new authorization or recovery policy.
+
+## HWN-022: a large-history fixture can fail before testing recovery
+
+2026-10-16. Windows actual-Node stress trials crossed the former raw limits but
+did not reach every recovery assertion: some hit an artificially short180/300s
+fixture watchdog, while separate trials received intermittent Hub upstream502.
+The original fixture default was900s; there was no user latency SLA. Raising a
+functional execution budget does not turn the original timeout into a performance
+pass, and reaching17MiB does not prove the unexecuted restart/revocation chain.
+
+Isolated catalog, mixed GET/summary/agent HTTP and90actual-Node Run probes did not
+reproduce the dial failure. The first diagnostic captured only a flattened error
+chain because the transport formats the lower error with `%v`. A second isolated
+diagnostic logs types/op/errno before flattening, without URLs, credentials or
+bodies. No product retry or connection-policy change is justified by the current
+evidence. Specific errno and cause remain UNKNOWN; diagnostics are not feature
+acceptance. Full process evidence and any explicitly reviewed composed coverage
+are recorded separately in the long-task delivery evidence.

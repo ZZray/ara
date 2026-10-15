@@ -20,7 +20,7 @@ from verify_host import require, stop, validate_loop_events
 
 
 READ_TOOLS = {"read_file", "search_files", "list_dir", "find_files", "system_info",
-              "reference_read", "reference_search", "experience_search"}
+              "reference_read", "reference_search", "experience_search", "history_read", "history_search"}
 
 
 class ModesFixture(ContextFixture):

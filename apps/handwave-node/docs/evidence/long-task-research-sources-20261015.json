@@ -1,0 +1,254 @@
+{
+  "date": "2026-10-15",
+  "local_baseline": "0ddc39ef80607f6c404dc079f4a63fd3c56c0a80",
+  "status": "research_and_cross_review_only",
+  "source_code_ported": false,
+  "upstream_tests_run": false,
+  "model_trials_run": false,
+  "production_changed": false,
+  "sources": [
+    {
+      "repository": "openai/codex",
+      "commit": "3ee47c10513f1bb57d869ea650aba28638e3d11c",
+      "license": "Apache-2.0",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/LICENSE",
+          "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+          "bytes": 10926
+        },
+        {
+          "path": "codex-rs/ext/goal/src/runtime.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/ext/goal/src/runtime.rs",
+          "sha256": "9fd31e79fd06f68e192b799631cfd544b8e685dd7aa4b98b96a02da9e8ff9ea8",
+          "bytes": 24731
+        },
+        {
+          "path": "codex-rs/ext/goal/src/extension.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/ext/goal/src/extension.rs",
+          "sha256": "0af11f45975140a0774e2eb6f64c91db4ebbf5fd7515659e4d741b5790784793",
+          "bytes": 24220
+        },
+        {
+          "path": "codex-rs/ext/goal/src/accounting.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/ext/goal/src/accounting.rs",
+          "sha256": "eb1dda7a6fa71fc9461181ae31b2a3d4f9fbc46c18a9a6d8c44afd45eabfea82",
+          "bytes": 24836
+        },
+        {
+          "path": "codex-rs/state/src/runtime/goals.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/state/src/runtime/goals.rs",
+          "sha256": "11640e2a48cbd3d109f22d31695dba2ddb11f9aff9543d774d34f261fd1f48f4",
+          "bytes": 55533
+        },
+        {
+          "path": "codex-rs/core/src/compact.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/core/src/compact.rs",
+          "sha256": "9b37f42e826e45ebf2fe3115355fde5ced2f67183c19fab84119b57b0c6bd13b",
+          "bytes": 33855
+        },
+        {
+          "path": "codex-rs/rollout/src/recorder.rs",
+          "url": "https://github.com/openai/codex/blob/3ee47c10513f1bb57d869ea650aba28638e3d11c/codex-rs/rollout/src/recorder.rs",
+          "sha256": "42a973710d6eb7e6731b3774cdf30dba89f56fd7685cdeac2857825c08b83612",
+          "bytes": 77131
+        }
+      ]
+    },
+    {
+      "repository": "earendil-works/pi",
+      "commit": "eddebaeebf8168dfc31d6712b7a021e4df3b4e6a",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/earendil-works/pi/blob/eddebaeebf8168dfc31d6712b7a021e4df3b4e6a/LICENSE",
+          "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+          "bytes": 1069
+        },
+        {
+          "path": "packages/durable/src/harness/scheduler.ts",
+          "url": "https://github.com/earendil-works/pi/blob/eddebaeebf8168dfc31d6712b7a021e4df3b4e6a/packages/durable/src/harness/scheduler.ts",
+          "sha256": "5bce370773c6408c917ef1692fa01c2c508a20870e5a21431ff150d3e57fcadb",
+          "bytes": 84616
+        },
+        {
+          "path": "packages/durable/src/harness/tool.ts",
+          "url": "https://github.com/earendil-works/pi/blob/eddebaeebf8168dfc31d6712b7a021e4df3b4e6a/packages/durable/src/harness/tool.ts",
+          "sha256": "ed426f36d2c1be7660de21977914505a424b6ad9e386d63bac38cd9b712a36fb",
+          "bytes": 40143
+        },
+        {
+          "path": "packages/durable/src/harness/compaction.ts",
+          "url": "https://github.com/earendil-works/pi/blob/eddebaeebf8168dfc31d6712b7a021e4df3b4e6a/packages/durable/src/harness/compaction.ts",
+          "sha256": "9459f26f1704e263e11635e7fd4900457dcbf55817725fe21b4f3f6b35b8335b",
+          "bytes": 20005
+        },
+        {
+          "path": "packages/durable/src/storage/jsonl/storage.ts",
+          "url": "https://github.com/earendil-works/pi/blob/eddebaeebf8168dfc31d6712b7a021e4df3b4e6a/packages/durable/src/storage/jsonl/storage.ts",
+          "sha256": "302e9d1f78e19d279408d51261eb7d30b6aae86f5a7a4c36e01617ba3818480a",
+          "bytes": 30102
+        }
+      ]
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "commit": "81200db2a3a86fc72a60dff996557f59865a6f24",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/anomalyco/opencode/blob/81200db2a3a86fc72a60dff996557f59865a6f24/LICENSE",
+          "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+          "bytes": 1065
+        },
+        {
+          "path": "packages/core/src/session/execution/restart.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/81200db2a3a86fc72a60dff996557f59865a6f24/packages/core/src/session/execution/restart.ts",
+          "sha256": "4757779a499e5674de735956a5b68e26c01e747fa6b6f3d362320472efb378f5",
+          "bytes": 10014
+        },
+        {
+          "path": "packages/core/src/session/compaction.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/81200db2a3a86fc72a60dff996557f59865a6f24/packages/core/src/session/compaction.ts",
+          "sha256": "0ef0aef6759479f76bc0affe8edf8672460bf549da5f501a541ea6250943200b",
+          "bytes": 45164
+        }
+      ]
+    },
+    {
+      "repository": "langchain-ai/langgraph",
+      "commit": "5eb60aef6f3837a1fb632a8abc6cf8e8da81785b",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/langchain-ai/langgraph/blob/5eb60aef6f3837a1fb632a8abc6cf8e8da81785b/LICENSE",
+          "sha256": "d9bb52f2e3540d60ff50d8f0f5b6ba649b7fd346948c4c3d086c8afb120763c7",
+          "bytes": 1072
+        },
+        {
+          "path": "libs/langgraph/langgraph/pregel/_runner.py",
+          "url": "https://github.com/langchain-ai/langgraph/blob/5eb60aef6f3837a1fb632a8abc6cf8e8da81785b/libs/langgraph/langgraph/pregel/_runner.py",
+          "sha256": "437f4cdf1fa619055b4ea4ff5fcd9ec7c7ee6491725bf6aa36ba37f7db669b42",
+          "bytes": 37090
+        },
+        {
+          "path": "libs/langgraph/langgraph/pregel/_loop.py",
+          "url": "https://github.com/langchain-ai/langgraph/blob/5eb60aef6f3837a1fb632a8abc6cf8e8da81785b/libs/langgraph/langgraph/pregel/_loop.py",
+          "sha256": "1485e5d299b71b91f59f4685ef33318ac4543bb1c81f6282e9e15323eec4526c",
+          "bytes": 90108
+        }
+      ]
+    },
+    {
+      "repository": "OpenHands/software-agent-sdk",
+      "commit": "f5f849f5ab51502cdfff97870f29de95307882a4",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/f5f849f5ab51502cdfff97870f29de95307882a4/LICENSE",
+          "sha256": "14a9b631c658eee682c6c2973525fbdf808c3457176bc47513052c559cc5ce86",
+          "bytes": 1079
+        },
+        {
+          "path": "openhands-sdk/openhands/sdk/conversation/event_store.py",
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/f5f849f5ab51502cdfff97870f29de95307882a4/openhands-sdk/openhands/sdk/conversation/event_store.py",
+          "sha256": "af721391c46a1979c45e0e414c45a82dfc42d8a92d62ac2ccea0242f725450b0",
+          "bytes": 14192
+        },
+        {
+          "path": "openhands-sdk/openhands/sdk/event/condenser.py",
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/f5f849f5ab51502cdfff97870f29de95307882a4/openhands-sdk/openhands/sdk/event/condenser.py",
+          "sha256": "1b172330b5270e29c6bf12a8a61818009b9b252fd497c51ad3eac51a3deb5c1e",
+          "bytes": 4679
+        },
+        {
+          "path": "openhands-sdk/openhands/sdk/conversation/goal/runner.py",
+          "url": "https://github.com/OpenHands/software-agent-sdk/blob/f5f849f5ab51502cdfff97870f29de95307882a4/openhands-sdk/openhands/sdk/conversation/goal/runner.py",
+          "sha256": "20362715f27015ca9a2bbda88acf148e37aad778e3d9f443f324ac8d7ae7aa0b",
+          "bytes": 2003
+        }
+      ]
+    },
+    {
+      "repository": "anthropics/claude-quickstarts",
+      "commit": "9ec32b91df50b0d4906cae64b13c6298055ff40d",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/anthropics/claude-quickstarts/blob/9ec32b91df50b0d4906cae64b13c6298055ff40d/LICENSE",
+          "sha256": "d7a04bf11ce24a7b79cd44b4a78dcc9971eaeb3b565821de437e0ecb7723e634",
+          "bytes": 1065
+        },
+        {
+          "path": "autonomous-coding/agent.py",
+          "url": "https://github.com/anthropics/claude-quickstarts/blob/9ec32b91df50b0d4906cae64b13c6298055ff40d/autonomous-coding/agent.py",
+          "sha256": "4cfe854312b8086bf5793a0e6020fe17e41d0a086e7c699d951eac65b868b2cb",
+          "bytes": 7095
+        },
+        {
+          "path": "autonomous-coding/prompts/initializer_prompt.md",
+          "url": "https://github.com/anthropics/claude-quickstarts/blob/9ec32b91df50b0d4906cae64b13c6298055ff40d/autonomous-coding/prompts/initializer_prompt.md",
+          "sha256": "dc30edc9806096d7a9337a1676acb6b53caee539791663f675fdaec54b98cd13",
+          "bytes": 3586
+        },
+        {
+          "path": "autonomous-coding/prompts/coding_prompt.md",
+          "url": "https://github.com/anthropics/claude-quickstarts/blob/9ec32b91df50b0d4906cae64b13c6298055ff40d/autonomous-coding/prompts/coding_prompt.md",
+          "sha256": "6f1fe5ef3c81a9aed7478ce0c51d8fd067f8c6b90183c5f921610fa4b35dfedc",
+          "bytes": 5571
+        }
+      ]
+    },
+    {
+      "repository": "alexzhang13/rlm",
+      "commit": "d04208afbad29ca675ab13478c40ee8bebc84bfe",
+      "license": "MIT",
+      "evidence_level": "source_read_not_executed",
+      "selected_files": [
+        {
+          "path": "LICENSE",
+          "url": "https://github.com/alexzhang13/rlm/blob/d04208afbad29ca675ab13478c40ee8bebc84bfe/LICENSE",
+          "sha256": "593a97b622a1ca63bf222ccea9da6d8d2bf8dbd4ed793f56f1f86ed926d98154",
+          "bytes": 1067
+        },
+        {
+          "path": "rlm/core/rlm.py",
+          "url": "https://github.com/alexzhang13/rlm/blob/d04208afbad29ca675ab13478c40ee8bebc84bfe/rlm/core/rlm.py",
+          "sha256": "f7df6af55027159b2f428ff98c9b19beb872618ee88aa8fef62c9498fa1e0562",
+          "bytes": 42530
+        },
+        {
+          "path": "rlm/environments/local_repl.py",
+          "url": "https://github.com/alexzhang13/rlm/blob/d04208afbad29ca675ab13478c40ee8bebc84bfe/rlm/environments/local_repl.py",
+          "sha256": "cee6bcfc530b01cef4b39f722b2efc084dd2fa08fe495b88ceda7efa63b5e31e",
+          "bytes": 22272
+        }
+      ]
+    }
+  ],
+  "engineering_articles": [
+    "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+    "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+    "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+    "https://www.anthropic.com/engineering/managed-agents"
+  ],
+  "paper": "https://arxiv.org/abs/2512.24601v3",
+  "reviewers": [
+    "Codex context_modes_audit",
+    "Codex agent_research",
+    "Codex context_cloud_audit"
+  ],
+  "review_boundary": "direction reviewed; final document review recorded separately; no runtime delivery"
+}

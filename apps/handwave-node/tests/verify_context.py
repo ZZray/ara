@@ -23,6 +23,40 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def native_state(path):
+    """Read the authoritative append history, checking every retained raw hash.
+
+    The JSON checkpoint now contains only a hot tail. Existing invariants still
+    compare the complete raw prefix; they must not mistake that tail for history.
+    """
+    path = Path(path)
+    journal = path.with_suffix(".journal")
+    if not (journal / "head.json").exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    envelope = json.loads((journal / "head.json").read_text(encoding="utf-8"))
+    head = envelope["head"]
+    compact = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+    sha = lambda value: hashlib.sha256(value).hexdigest()
+    require(sha(compact(head)) == envelope["checksum"], "Native journal head checksum differs")
+    messages, previous = [], "handwave-native-journal-v1"
+    for number, segment in enumerate(head["segments"]):
+        raw = (journal / f"segment-{number:08}.jsonl").read_bytes()
+        require(len(raw) == segment["bytes"] and segment["first"] == len(messages) and segment["previous"] == previous,
+                "Native segment bounds changed")
+        for line in raw.splitlines():
+            row = json.loads(line)
+            require(row["index"] == len(messages) and row["previous"] == previous, "Native record order changed")
+            require(sha(compact(row["message"])) == row["hash"], "Native message hash differs")
+            previous = sha(f'{row["index"]}:{previous}:{row["hash"]}'.encode())
+            require(previous == row["chain"], "Native hash chain differs")
+            messages.append(row["message"])
+        require(segment["end"] == len(messages) and segment["tip"] == previous, "Native segment tip differs")
+    require(len(messages) == head["raw_count"] and previous == head["tip"], "Native journal head range differs")
+    result = dict(head["metadata"])
+    result["messages"] = messages
+    return result
+
+
 def working_view(request):
     for message in request.get("messages", []):
         content = message.get("content", "")
@@ -344,7 +378,7 @@ def build_summary(host, after_prefix=0):
 def summary_restart(host, passed):
     host.run("REFERENCE_SUMMARY_SOURCE_73 原文保留")
     summary=build_summary(host)
-    raw=json.loads(host.raw_path().read_text(encoding="utf-8"))
+    raw=native_state(host.raw_path())
     assert_closed(raw["messages"])
     require(any("raw_log_payload_73_" in json.dumps(m) for m in raw["messages"]),"Raw tool receipt replaced by projection")
     require(summary["sources"] and summary["prefix_hash"] and summary["hash"],"Summary lacks source/integrity receipts")
@@ -367,7 +401,7 @@ def summary_restart(host, passed):
     raw_messages=raw["messages"]
     host.restart()
     host.run("PROBE_RESTARTED_SUMMARY_73")
-    after=json.loads(host.raw_path().read_text(encoding="utf-8"))
+    after=native_state(host.raw_path())
     require(after["messages"][:len(raw_messages)]==raw_messages,"Restart rewrote raw history prefix")
     require("SOURCE_BACKED_SUMMARY_73" in json.dumps(host.fixture.agent_requests[-1]),"Restart did not use saved working summary")
     require("AUTO_CANDIDATE_73" not in json.dumps(working_view(host.fixture.agent_requests[-1])["accepted_memories"]),
@@ -390,7 +424,7 @@ def project_rules(host, passed):
     request = host.fixture.agent_requests[-1]
     require("RULES_FIRST_73" in json.dumps([m for m in request["messages"] if m["role"] == "system"]),
             "Project rules absent from actual system prompt")
-    raw = json.loads(host.raw_path().read_text(encoding="utf-8"))
+    raw = native_state(host.raw_path())
     require("RULES_FIRST_73" not in json.dumps(raw["messages"]), "Project rules were written as native conversation messages")
     rules.write_text("RULES_SECOND_73: retain exact source citations.\n", encoding="utf-8")
     host.run("PROBE_PROJECT_GUIDANCE_TWO_73")
@@ -434,13 +468,13 @@ def summary_fault(host, passed, mode):
         host.restart(max_calls=1)
     before_raw = None
     for i in range(16):
-        before_raw = json.loads(host.raw_path().read_text(encoding="utf-8"))
+        before_raw = native_state(host.raw_path())
         before_summary = host.state_json().get("summary")
         before_calls = len(host.fixture.requests)
         terminal, _, _ = host.run("HEAVY_CONTEXT_73 fault " + str(i), success=None, cancel_summary=mode == "cancel")
         if host.fixture.summary_started.is_set():
             require(terminal.get("err") or terminal.get("code", 0) != 0, "Summary " + mode + " reported success")
-            after = json.loads(host.raw_path().read_text(encoding="utf-8"))
+            after = native_state(host.raw_path())
             require(after["messages"][:len(before_raw["messages"])] == before_raw["messages"], "Summary fault rewrote raw history")
             if mode != "budget":
                 require(host.state_json().get("summary") == before_summary, "Summary fault replaced last good summary")
@@ -458,7 +492,7 @@ def summary_fault(host, passed, mode):
                 host.restart(max_calls=8)
             before_recovery = len(host.fixture.requests)
             host.run("PROBE_FAULT_RECOVERY_73")
-            recovered = json.loads(host.raw_path().read_text(encoding="utf-8"))
+            recovered = native_state(host.raw_path())
             require(recovered["messages"][:len(retained)] == retained, "Fault recovery changed prior native history")
             recovered_calls = host.fixture.requests[before_recovery:]
             require(sum(bool(body.get("tools")) for body in recovered_calls) == 1,
@@ -474,7 +508,7 @@ def large_turn_summary(host, passed):
     host.run("LARGE_SINGLE_TURN_73 second")
     require(host.state_json().get("summary") is not None and host.fixture.summary_requests,
             "A single complete old large turn could not be compacted")
-    assert_closed(json.loads(host.raw_path().read_text(encoding="utf-8"))["messages"])
+    assert_closed(native_state(host.raw_path())["messages"])
     passed.append("one_large_old_closed_turn_compacts_before_second_turn_finishes")
 
 
