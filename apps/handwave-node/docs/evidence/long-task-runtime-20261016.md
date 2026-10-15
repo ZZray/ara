@@ -173,7 +173,7 @@ receipt above). Linux clippy is UNAVAILABLE (component absent),
 not a pass. Binary-only `cargo test --doc` exits101 because there is no library;
 it is not a failed unit test and no doctest acceptance is claimed.
 
-Independent Codex context_modes_audit: ACCEPT_BOUNDED_SOFTWARE_POINT. All 25 Rust paths, 17 Go paths, 23 runtime pins, 608 packaged files and final artifacts were checked. Publication tree: 06787c89c8da95689f6f190e03a6da0045650d8d. Git push, deployment and authenticated browser acceptance remain pending. No new version is yet advertised as installed/public.
+Independent Codex context_modes_audit: ACCEPT_BOUNDED_SOFTWARE_POINT. All 25 Rust paths, 17 Go paths, 23 runtime pins, 608 packaged files and final artifacts were checked. Publication tree: 06787c89c8da95689f6f190e03a6da0045650d8d. The scoped software point was subsequently published and activated below; authenticated browser task acceptance remains pending.
 
 ## Explicit limits
 
@@ -184,3 +184,45 @@ Unix worker SIGKILL can leave descendants; such effects remain interrupted/unkno
 Legacy checkpoints with an unsummarized active tail over8MiB need inspection.
 Journal v2 does not promise transparent downgrade to an old executable; preserve
 the original backup and reconcile unknown effects before any rollback/replay.
+
+
+## Publication and installed activation — 2026-10-16
+
+Scoped commits were pushed: Rust `7d086c7d8a29c832ef6f8a38613279d8e0849151`
+and Go `1f29b4ddb0693e7820e6d19ab548f9202cca14ac`. The Go commit differs
+from tested prospective tree `06787c89c8da95689f6f190e03a6da0045650d8d`
+only in the delivery evidence document. Existing Go authentication/browser WIP
+remains unstaged; `hub.go` committed task-only blob remains
+`787d30e43bcc3b688a3c55c36d7fcc7a9fdaff94`. Root Rust WIP is excluded.
+The Git whitespace check explicitly accepts CRLF using `cr-at-eol`; no packaged
+source files were rewritten to satisfy an LF-only whitespace default.
+
+Binary-only cloud activation passed the deployment receipt: Hub SHA256
+`9e6a4c7fad9cf069eedb40dda0277023d2d22496c76a9ec0f485e7e4cbe4bc8b`
+and Ray SHA256
+`353c675e49326b69d5445e7852a45471bf7bb2a5bfb04dad7243ed6cd49372dd`.
+The actual running processes, Hub health/Bearer/unauthorized gates, eight stable
+web assets, reference APIs, normal Ray login and all six old/new package hashes
+passed. All30protected configuration/data files and the other three service
+processes remained unchanged. Backups are private; no credentials are published.
+
+The installed Windows Node was stopped only after confirming seven settled native
+Sessions and no command children, then upgraded to SHA256
+`a38da90708ca929780438d9e0c00c935a2018e71aa0ea1a99d254200968c7db1`
+(4,899,328bytes). Actual running image, original startup arguments and unchanged
+config/identity/start command passed. All17pre-existing native state files remain
+byte-identical; the runtime-owned lock is excluded. No automatic downgrade of v2
+Session data is attempted.
+
+Two preflight failures are retained: empty Go device slice encodes as JSON null,
+and the prior device approval had disappeared. Both occurred before binary
+replacement. The private release helper now validates null as an empty device
+list and preserves absent approval exactly; it does not create or extend access.
+The successful deploy had zero online Nodes and zero Hub Gateway connections.
+
+Actual browser reload reaches the normal Ray six-digit-code login gate. Current
+approval storage is empty before and after deployment. User authentication and
+fresh24hour device authorization were requested separately. Actual post-release
+browser Goal/Job controls and task completion are **PENDING**, not accepted from
+API/software fixtures. The page, screenshot and private receipts remain in
+`D:/WorkSpace/tmp/handwave-long-task-implementation-20261015/deployment/`.
