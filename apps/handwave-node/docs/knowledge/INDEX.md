@@ -16,3 +16,5 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Problem-solving tools and computer-use boundaries](problem-solving-tools.md): explicit interpreters, bounded filename/content retrieval and actual task evidence.
 
 - [Reviewed experience and self-evolution](reviewed-experiences.md): current-Run native evidence, explicit adoption and bounded subsequent recall.
+
+- [Linked context and execution modes](linked-context-modes.md): global/project/device memory boundaries, session narrative references, non-renewing machine selection, read-only plans and reviewed goals.

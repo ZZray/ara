@@ -1,6 +1,7 @@
 mod agent;
 mod config;
 mod context_memory;
+mod execution;
 mod experience;
 mod file_discovery;
 mod gateway;

@@ -30,6 +30,12 @@ pub struct Frame {
     #[serde(default)]
     pub session_key: String,
     #[serde(default)]
+    pub execution_mode: String,
+    #[serde(default)]
+    pub goal_criteria: Vec<String>,
+    #[serde(default)]
+    pub goal_id: String,
+    #[serde(default)]
     pub b64: String,
     #[serde(default)]
     pub size: u64,

@@ -1,5 +1,18 @@
 # Investigated cases — 2026-10-14
 
+## HWN-019: busy wire follow-ups must inherit the active execution authority
+
+2026-10-15. The legacy workbench sends a follow-up as another agent-loop frame,
+whereas the first implementation inherited plan/goal only for agent-follow.
+A busy Plan could therefore queue an execute frame; a first Goal could lose its
+Run-derived goal ID. Independent source review found this reachable branch.
+Preparing both forms from the active frame fixes mode/Session/goal/criteria
+inheritance while retaining each controller request ID. A real Hub/Node fixture
+waits for the queued receipt before releasing the first provider request, then
+verifies exact read schemas and unchanged goal identity/criteria. This proves
+the specific wire boundary; it does not make allowlists an OS sandbox. See
+[current evidence](../evidence/linked-context-modes-20261015.md).
+
 ## HWN-001: native tool history failed after a successful first Run
 
 First controlled-model task wrote/read a real file, but the next task failed

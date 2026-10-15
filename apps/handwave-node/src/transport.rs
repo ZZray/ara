@@ -232,6 +232,7 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                                 endpoint:settings.endpoint(),token,route,max_output,cwd:settings.cwd.clone(),state_path,
                                 brief:frame.brief.clone(),max_calls:settings.config.max_calls,max_seconds:settings.config.max_seconds.min(ttl.min(decision_budget)-10),
                                 steering:run.steering.clone(),
+                                mode:crate::execution::RunMode::parse(&frame.execution_mode)?,goal_criteria:frame.goal_criteria.clone(),goal_id:frame.goal_id.clone(),
                             };
                             eprintln!("agent start: id={} model={} budget={}s",frame.id,request.model,request.max_seconds);
                             run.job=Some(tokio::spawn(async move{
@@ -312,8 +313,15 @@ async fn session(settings: &Resolved, quit: CancellationToken) -> Result<()> {
                                         if frame.id==run.frame.id || queued.iter().any(|queued|queued.id==frame.id) {
                                             run_event(&sender,run,json!({"type":"retry","status":"running","detail":"duplicate request ignored; active run unchanged"})).await?;
                                         } else if frame.k=="agent-loop" && run.frame.k=="agent-loop" && queued.len()<16 {
+                                            let mut next = match prepare_follow(&frame, Some(&run.frame)) {
+                                                Ok(next) => next,
+                                                Err(error) => { reject_agent(&sender, &frame.id, "failed", &error.to_string(), false).await?; continue; }
+                                            };
+                                            // agent-loop already owns its controller-issued request ID;
+                                            // inherit the active authority without renaming its receipt.
+                                            next.id = frame.id.clone();
                                             run_event(&sender,run,json!({"type":"steer","status":"queued","output":"Follow-up queued"})).await?;
-                                            queued.push_back(frame);
+                                            queued.push_back(next);
                                         }else {sender.output(&frame.id,&[],-1,"node busy; use follow-up or cancel current run").await?;}
                                     }
                                     else{start(frame,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;}
@@ -346,6 +354,13 @@ fn inherit_follow(next: &mut Frame, active: &Frame) {
     next.smart = active.smart;
     next.brief = crate::context_memory::follow_brief(&active.brief);
     next.session_key = active.session_key.clone();
+    next.execution_mode = active.execution_mode.clone();
+    next.goal_criteria = active.goal_criteria.clone();
+    next.goal_id = if active.execution_mode == "goal" && active.goal_id.is_empty() {
+        active.id.clone()
+    } else {
+        active.goal_id.clone()
+    };
 }
 
 fn prepare_follow(frame: &Frame, active: Option<&Frame>) -> Result<Frame> {
@@ -386,6 +401,14 @@ async fn start(
     let sender = Sender { tx: tx.clone(), epoch, alive };
     if frame.id.is_empty() {
         frame.id = wire::fresh_id();
+    }
+    if frame.k == "agent-loop" {
+        if let Err(error) = crate::execution::RunMode::parse(&frame.execution_mode)
+            .and_then(|_| crate::execution::validate_criteria(&frame.goal_criteria))
+        {
+            reject_agent(&sender, &frame.id, "failed", &error.to_string(), false).await?;
+            return Ok(());
+        }
     }
     if frame.k == "agent-loop" && objective(&frame).trim().is_empty() {
         reject_agent(&sender, &frame.id, "failed", "objective required", false).await?;
@@ -478,6 +501,9 @@ mod tests {
     #[test]
     fn queued_follow_keeps_active_session_even_when_ui_selection_changes() {
         let active = Frame {
+            id: "first-goal-run".into(),
+            execution_mode: "goal".into(),
+            goal_criteria: vec!["verified".into()],
             session_key: "workspace-a/session-a".into(),
             model: "model-a".into(),
             brief: "HANDWAVE_CLOUD_SNAPSHOT_V1\n{}\nHANDWAVE_BRIEF\nlegacy".into(),
@@ -489,6 +515,9 @@ mod tests {
         assert_eq!(next.session_key, "workspace-a/session-a");
         assert_eq!(next.model, "model-a");
         assert_eq!(next.brief, "legacy");
+        assert_eq!(next.execution_mode, "goal");
+        assert_eq!(next.goal_id, "first-goal-run");
+        assert_eq!(next.goal_criteria, vec!["verified"]);
         inherit_follow(&mut next, &Frame::default());
         assert!(next.session_key.is_empty());
     }
