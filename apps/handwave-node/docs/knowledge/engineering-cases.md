@@ -357,3 +357,34 @@ The actual revoked-memory trial answered UNKNOWN with no old marker in raw
 history but additionally called reference_read once against the instruction.
 Memory invalidation and model obedience are separate judgments. Preserve this
 failure rather than claiming a fully passed no-tools task or automatic learning.
+
+## HWN-015: a successful content match can hide its own evidence
+
+2026-10-15. search_files searched a longer line but returned its first1024 bytes.
+A hit near the end therefore gave the model an excerpt without the requested
+literal, encouraging unnecessary rereads. The fix maps the first match back to
+original UTF-8 and clips near it, preserving byte offset and explicit truncation.
+İ lowercase expansion and Greek contextual sigma are covered independently;
+actual temporary-file search and real Hub/model receipt check the visible hit.
+This does not expand the existing inspected-byte budget. Controlled host success
+is separate from real-model task success; no manual baseline exists.
+[Versioned evidence](../evidence/problem-tools-20261015.md).
+
+## HWN-016: script initialization can invalidate valid PowerShell source
+
+2026-10-15. Independent Codex reviewer rust_tools_review reproduced a P2:
+prefixing executable initialization before param()/using makes legal source fail.
+The rejected design is preserved here as counterevidence to treating a simple
+Write-Output fixture as full script acceptance. A separate bootstrap receives the
+unchanged BOM-prefixed source path via argv and propagates errors/native exits.
+Final Windows tests exercise param defaults, using namespace, native exit7,
+Write-Error, timeout/cancel and cleanup. Python readiness-marked descendant tests
+verify no delayed file effect after cancel. This is not universal interpreter
+semantics acceptance or an OS sandbox.
+
+The real DeepSeek repair trial also encountered one exact-edit failure because
+its replacement used LF against a CRLF file. It inspected bytes, rewrote and
+executed the repaired code successfully. Exact-match edit behavior remains
+intentional; no fuzzy patch or silent line-ending rewrite was introduced. The
+18.821-second task time has no comparison baseline; supplier token usage is
+unknown. Receipts and remaining platform boundaries are in the same evidence.

@@ -12,3 +12,5 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Code, context and memory slice evidence](../evidence/context-memory-20261014.md)
 - [Authenticated browser and complete live acceptance](../evidence/gui-live-20261015.md)
 - [Linux source installer delivery and boundaries](../evidence/source-install-20261015.md)
+
+- [Problem-solving tools and computer-use boundaries](problem-solving-tools.md): explicit interpreters, bounded filename/content retrieval and actual task evidence.

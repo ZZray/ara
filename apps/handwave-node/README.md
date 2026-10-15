@@ -43,6 +43,17 @@ $env:HW_TOKEN = '<node enrollment token>'
 
 ## 本版新增能力
 
+本轮编码／排障增强包：Windows EXE **4,567,040 字节（约 4.57 MB）**，
+比上一版增加 48,128 字节；SHA-256 `080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3`。
+新增 `find_files`（文件名／路径定位）、`system_info`（OS 与解释器候选）、
+`run_script`（Python／PowerShell／cmd／sh）。脚本使用本机解释器，默认输出
+8 KiB 并保留 stdout/stderr 首尾；错误、取消、超时均有明确收据。内容搜索
+现在返回长行命中附近的摘录。完整边界和实际模型修复任务见
+[本轮交付记录](docs/evidence/problem-tools-20261015.md)。桌面 UIA、截图与点击
+闭环尚未实现；本轮包不会自动替换已运行的节点。
+
+以下云端下载链接仍对应此前已发布的云端记忆版本，不能据此取得本轮新包。
+
 2026-10-15 版增加云端显式记忆和独立网页会话。Windows 独立 EXE 为 **4,518,912 字节（约 4.52 MB）**，SHA-256 为 `40669969a4b84074674f767b38180901293d9adbeebb8263347ed3c3d4729f73`。最终 Windows 进程、Linux x86_64 GNU 源码构建、线上真实模型召回/撤销均有分层证据；[最终交付记录](docs/evidence/cloud-memory-20261015.md)同时保留失败和未覆盖项。此前的[上下文切片](docs/evidence/context-memory-20261014.md)属于对应历史版本。
 
 下载入口：[Windows 独立包](https://118.25.103.226/ray/releases/handwave-node-windows-40669969.zip)、[Linux 源码安装](https://118.25.103.226/ray/install)。源码脚本保留已有配置与设备记录；首次设备仍需入网配置和审批。ARM、musl 和 macOS 不在本轮运行验收范围内。

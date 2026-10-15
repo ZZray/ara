@@ -1,0 +1,139 @@
+{
+  "date": "2026-10-15",
+  "base_commit": "42c3a3977906d7ed45f2e4b4857c4eaf59d2a8c9",
+  "status": "accepted bounded Windows tool slice; Linux unit/process tests accepted",
+  "binary": {
+    "bytes": 4567040,
+    "sha256": "080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3",
+    "previous_bytes": 4518912,
+    "increase_bytes": 48128
+  },
+  "source_sha256": {
+    "src/agent.rs": "18be0c8dd66c08dc6475f29f4cc0f29979e579a469dc3a0f9c045b753e1952d3",
+    "src/local_tools.rs": "c396ffeb49a076830a7a28e3803b7997ede327ab402ae439e9e15b059351ef59",
+    "src/main.rs": "8f470cb91e0ac41641c19aa0448cc03381b5ad2809799b7f8fe65ebf3465c531",
+    "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+    "src/system_capabilities.rs": "26ebfdbbc60637f7408b83549e881451a87238e4d46056eb8539fbcce7484fd8",
+    "tests/verify_problem_tools.py": "3ef11522956dd20bef43375aa81821da085e25aadfa82333c5020ed0e8806e25",
+    "tests/verify_problem_live.py": "4ad6491eae83a8dfc6d9e826d324e8ca9d6c85c4c07ed0bb84cfae453e0afccb",
+    "Cargo.toml": "f6d37ed0e42df579c68663487a6a24608ae6deef05b48a47e24ba89a5da81b60",
+    "Cargo.lock": "6e7f856f537b85dfef56ae29063418ed450a9a93d49be5df796ecb81405b52bc"
+  },
+  "windows": {
+    "fmt": "PASS",
+    "clippy": "PASS -D warnings all targets/features locked",
+    "tests": {
+      "passed": 60,
+      "failed": 0
+    }
+  },
+  "linux": {
+    "platform": "WSL x86_64 GNU Linux, Rust1.97.1",
+    "tests": {
+      "passed": 58,
+      "failed": 0,
+      "run_as": "ara-verify"
+    },
+    "preserved_failures": [
+      "initial default CARGO_HOME failed pinned git fetch with SSL error",
+      "first executable run as root:57pass1fail because chmod000 remains readable; same test executable run as normal account:58pass"
+    ],
+    "release_packaging": "not performed this slice"
+  },
+  "controlled_host": {
+    "scope": "actual Go Hub and Rust Node; deterministic model fixture; isolated files",
+    "passed": [
+      "PROBLEM_PIPELINE",
+      "PROBLEM_EXIT7",
+      "PROBLEM_CANCEL_ACTUAL_PROCESS"
+    ],
+    "not_run": [
+      "real-model intelligence",
+      "production installation",
+      "missing interpreter (unit-test boundary)"
+    ],
+    "status": "PASS",
+    "elapsed_seconds": 15.724,
+    "binary_sha256": "080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3",
+    "hub_sha256": "27c9b2657da185fcd42ba4764259f48ab503011fa4e3ebbbf229f5e748cb48f7",
+    "model_requests": 8,
+    "fixture_errors": []
+  },
+  "real_model": {
+    "status": "PASS",
+    "scope": "one real cloud-model autonomous troubleshooting run on temporary Node; no production deployment",
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "max_model_runs": 1,
+    "max_provider_calls": 10,
+    "deadline_seconds": 180,
+    "actual_provider_http_requests": null,
+    "token_usage": null,
+    "usage_boundary": "Wire model_call counts reservations, not confirmed HTTP requests. Missing supplier token usage is unknown, not zero.",
+    "isolation_boundary": "fresh fixture directory and instructed scope; tools retain OS-account authority, not an OS sandbox",
+    "inventory_receipt": {
+      "path": "/api/models",
+      "http_status": 200,
+      "body_type": "list",
+      "top_keys": [],
+      "row_count": 16
+    },
+    "model_run_seconds": 18.821,
+    "live_text_received": true,
+    "passed": [
+      "real_model_autonomous_repair",
+      "actual_run_script_stdout",
+      "exact_report_artifact",
+      "independent_repaired_program_execution",
+      "input_log_preserved"
+    ],
+    "artifact_sha256": "4ed394d30c7479f28de05e3610f645365052896d5b96d26458cc23bbcdab5d31",
+    "repaired_source_sha256": "060c285ad1e47f9b428ac71d42f7f7d5cd9f88ae93f30b885aa509071c9b0771",
+    "independent_stdout": "REPORT_OK total=42\r\n",
+    "own_temporary_approval_revoked": true,
+    "observed_model_call_reservations": 8,
+    "reservations_complete": true,
+    "elapsed_seconds": 24.15,
+    "binary_sha256": "080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3"
+  },
+  "independent_review": {
+    "reviewer": "Codex /root/rust_tools_review",
+    "result": "PASS: bounded Windows tool slice; Linux normal-user unit/process suite; docs/evidence verified",
+    "review_gap": null
+  },
+  "not_accepted": [
+    "installed persistent Node replacement",
+    "production package URL update",
+    "full desktop UIA/vision/action loop",
+    "macOS/ARM/musl",
+    "other machines/interpreters",
+    "global speedup or token savings percentage"
+  ],
+  "private_receipts": "D:\\WorkSpace\\tmp\\handwave-problem-tools-20261015",
+  "documentation_checks": {
+    "changed_page_links": "PASS",
+    "source_hashes_unchanged": true,
+    "bootstrap": {
+      "status": "NOT COMPLETED",
+      "time_limit_seconds": 30
+    },
+    "seconds": 30.041
+  },
+  "package_readback": {
+    "package_bytes": 3450267,
+    "package_sha256": "d283ecb7d63844f9a42f8335b7b227d7e62f68b34cbc289eaeffcb3a208ef00e",
+    "exe_sha256": "080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3",
+    "exe_bytes": 4567040,
+    "readme_exact": true,
+    "secret_allowlist_check": "PASS"
+  },
+  "source_package": {
+    "source_name": "handwave-node-source-91e495059de34ea5.tar.gz",
+    "source_sha256": "91e495059de34ea57d6116be91c39eaf1606a114c13acedd7a9fcf03b5d02190",
+    "source_bytes": 309482,
+    "script_name": "install-linux-fe4b10bee6a73659.sh",
+    "script_sha256": "fe4b10bee6a73659f6c5db78e624aa794bec0e0b57f91619d8be13c4f694094c",
+    "tested_source_hashes_match": true
+  }
+}

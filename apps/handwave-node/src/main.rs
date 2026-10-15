@@ -1,11 +1,14 @@
 mod agent;
 mod config;
 mod context_memory;
+mod file_discovery;
 mod gateway;
 mod local_tools;
 mod operations;
 mod project_rules;
 mod proxy;
+mod script_tools;
+mod system_capabilities;
 mod transport;
 mod wire;
 

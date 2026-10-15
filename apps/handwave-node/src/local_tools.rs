@@ -515,10 +515,9 @@ async fn search_files(root: &Path, args: &Value, signal: CancellationToken, limi
             if line.truncated {
                 file_limited = true;
             }
-            let haystack = if sensitive { text.clone() } else { text.to_lowercase() };
-            if haystack.contains(&needle) {
-                let row =
-                    json!({"path":path,"line":number,"excerpt":bounded(text,1024),"line_truncated":line.truncated});
+            if let Some((excerpt, offset, truncated)) = match_excerpt(&text, &needle, sensitive, 1024) {
+                let row = json!({"path":path,"line":number,"excerpt":excerpt,
+                    "excerpt_byte_offset":offset,"excerpt_truncated":truncated,"line_truncated":line.truncated});
                 let bytes = serde_json::to_vec(&row)?.len() + 1;
                 if output_bytes + bytes > data_budget {
                     output_cut = true;
@@ -748,6 +747,35 @@ async fn download_file(url: reqwest::Url, destination: &Path, signal: Cancellati
     result
 }
 
+// Locate in the original UTF-8 line, including lowercase expansions such as İ.
+fn match_excerpt<'a>(text: &'a str, needle: &str, sensitive: bool, limit: usize) -> Option<(&'a str, usize, bool)> {
+    let hit = if sensitive {
+        text.find(needle)?
+    } else {
+        let lowered = text.to_lowercase();
+        let hit = lowered.find(needle)?;
+        // String::to_lowercase has contextual mappings (Greek sigma), but their
+        // encoded lengths match per-character mappings; expansions remain mapped
+        // to the source character rather than used as source byte offsets.
+        let mut position = 0;
+        text.char_indices().find_map(|(offset, ch)| {
+            let end = position + ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+            let found = (hit < end).then_some(offset);
+            position = end;
+            found
+        })?
+    };
+    let mut start = hit.saturating_sub(limit / 4);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + limit).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some((&text[start..end], start, start != 0 || end != text.len()))
+}
+
 pub(crate) fn bounded(mut text: String, max: usize) -> String {
     if text.len() > max {
         let mut end = max;
@@ -760,8 +788,9 @@ pub(crate) fn bounded(mut text: String, max: usize) -> String {
     text
 }
 
-async fn drain<R: AsyncRead + Unpin>(mut reader: R) -> std::io::Result<(Vec<u8>, bool)> {
+async fn drain<R: AsyncRead + Unpin>(mut reader: R, limit: usize, keep_tail: bool) -> std::io::Result<(Vec<u8>, bool)> {
     let mut bytes = Vec::new();
+    let mut tail = VecDeque::new();
     let mut buf = [0u8; 8192];
     let mut truncated = false;
     loop {
@@ -769,11 +798,46 @@ async fn drain<R: AsyncRead + Unpin>(mut reader: R) -> std::io::Result<(Vec<u8>,
         if size == 0 {
             break;
         }
-        let keep = size.min(OUTPUT_LIMIT.saturating_sub(bytes.len()));
+        let head_limit = if keep_tail { limit / 2 } else { limit };
+        let keep = size.min(head_limit.saturating_sub(bytes.len()));
         bytes.extend_from_slice(&buf[..keep]);
-        truncated |= keep < size;
+        if keep_tail {
+            for byte in &buf[keep..size] {
+                if tail.len() == limit - head_limit {
+                    tail.pop_front();
+                    truncated = true;
+                }
+                tail.push_back(*byte);
+            }
+        } else {
+            truncated |= keep < size;
+        }
+    }
+    if keep_tail {
+        if truncated {
+            bytes.extend_from_slice(b"\n[... middle output omitted ...]\n");
+        }
+        bytes.extend(tail);
     }
     Ok((bytes, truncated))
+}
+
+fn compact_stream(bytes: &[u8], limit: usize) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() <= limit {
+        return text.into_owned();
+    }
+    const MARKER: &str = "\n[... middle output omitted ...]\n";
+    let available = limit.saturating_sub(MARKER.len());
+    let mut head = available / 2;
+    while !text.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = text.len() - (available - available / 2);
+    while !text.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!("{}{}{}", &text[..head], MARKER, &text[tail..])
 }
 
 /// Run one command with bounded output and process-tree cleanup before settlement.
@@ -786,7 +850,7 @@ pub async fn run_shell(
     if cancel.is_cancelled() {
         bail!("command canceled before start");
     }
-    let mut cmd = if cfg!(windows) {
+    let cmd = if cfg!(windows) {
         let mut c = Command::new("powershell.exe");
         let script = format!("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; {command}");
         c.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script]);
@@ -796,6 +860,22 @@ pub async fn run_shell(
         c.args(["-c", command]);
         c
     };
+    run_process(cmd, cwd, cancel, timeout, OUTPUT_LIMIT, false).await
+}
+
+/// Shared process-tree lifecycle for shell commands and explicitly selected scripts.
+/// Compact mode reserves independent stdout/stderr budgets and retains their tails.
+pub(crate) async fn run_process(
+    mut cmd: Command,
+    cwd: &Path,
+    cancel: CancellationToken,
+    timeout: Duration,
+    stream_limit: usize,
+    compact: bool,
+) -> Result<(String, i32)> {
+    if cancel.is_cancelled() {
+        bail!("command canceled before start");
+    }
     cmd.current_dir(cwd)
         .env_remove("HW_TOKEN")
         .env_remove("HW_NODE_STATE")
@@ -827,8 +907,8 @@ pub async fn run_shell(
         let _ = child.wait().await;
         return Err(error);
     }
-    let mut stdout = tokio::spawn(drain(child.stdout.take().context("stdout unavailable")?));
-    let mut stderr = tokio::spawn(drain(child.stderr.take().context("stderr unavailable")?));
+    let mut stdout = tokio::spawn(drain(child.stdout.take().context("stdout unavailable")?, stream_limit, compact));
+    let mut stderr = tokio::spawn(drain(child.stderr.take().context("stderr unavailable")?, stream_limit, compact));
     let outcome = tokio::select! {
         result = child.wait() => result.map_err(anyhow::Error::from),
         _ = cancel.cancelled() => Err(anyhow!("command canceled; partial effects may remain")),
@@ -861,15 +941,25 @@ pub async fn run_shell(
     };
     let (out, out_cut) = outputs;
     let (err, err_cut) = errors;
-    let mut text = String::from_utf8_lossy(&out).into_owned();
-    if !err.is_empty() {
+    let mut text = if compact {
+        format!(
+            "stdout{}:\n{}\nstderr{}:\n{}",
+            if out_cut { " (truncated)" } else { "" },
+            compact_stream(&out, stream_limit),
+            if err_cut { " (truncated)" } else { "" },
+            compact_stream(&err, stream_limit)
+        )
+    } else {
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    if !compact && !err.is_empty() {
         text.push('\n');
         text.push_str(&String::from_utf8_lossy(&err));
     }
-    if out_cut || err_cut {
+    if !compact && (out_cut || err_cut) {
         text.push_str("\n[output truncated]");
     }
-    let text = bounded(text, OUTPUT_LIMIT);
+    let text = if compact { text } else { bounded(text, OUTPUT_LIMIT) };
     let status = outcome.map_err(|e| anyhow!("{e}\n{text}"))?;
     Ok((text, status.code().unwrap_or(-1)))
 }
@@ -1005,6 +1095,42 @@ fn resume_process(pid: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn excerpts_show_hits_and_map_unicode_lowercase_to_source() {
+        let text = format!("{}İ PRECISE_ERROR 中文尾部", "日志".repeat(1500));
+        for (needle, sensitive) in [("PRECISE_ERROR", true), ("i\u{307} precise_error", false)] {
+            let (excerpt, offset, cut) = match_excerpt(&text, needle, sensitive, 1024).unwrap();
+            assert!(excerpt.contains("PRECISE_ERROR"));
+            assert!(cut && offset > 0 && excerpt.len() <= 1024);
+            assert_eq!(excerpt, &text[offset..offset + excerpt.len()]);
+        }
+        assert_eq!(match_excerpt("ΟΣ END", "ος", false, 1024).unwrap().0, "ΟΣ END");
+        assert!(match_excerpt("no hit", "absent", false, 1024).is_none());
+    }
+
+    #[tokio::test]
+    async fn compact_output_preserves_both_ends_and_utf8_byte_budget() {
+        let original = [b"HEAD".as_slice(), &vec![b'x'; 20000], b"TAIL"].concat();
+        let (bytes, cut) = drain(original.as_slice(), 4096, true).await.unwrap();
+        let output = compact_stream(&bytes, 4096);
+        assert!(cut && output.starts_with("HEAD") && output.ends_with("TAIL"));
+        assert!(output.len() <= 4096);
+        let invalid = [vec![255; 4096], b"ERROR_TAIL".to_vec()].concat();
+        let output = compact_stream(&invalid, 4096);
+        assert!(output.len() <= 4096 && output.ends_with("ERROR_TAIL"));
+    }
+
+    #[tokio::test]
+    async fn actual_search_long_line_returns_matching_region() {
+        let files = Files::new();
+        std::fs::write(files.0.join("long.log"), format!("{}İ ERROR_42", "中".repeat(4000))).unwrap();
+        let result = files.run("search_files", json!({"query":"i\u{307} error_42","case_sensitive":false})).await;
+        let hit = &result["matches"][0];
+        assert!(hit["excerpt"].as_str().unwrap().contains("ERROR_42"));
+        assert!(hit["excerpt_byte_offset"].as_u64().unwrap() > 0);
+        assert_eq!(hit["excerpt_truncated"], true);
+    }
+
     struct Files(PathBuf);
     impl Files {
         fn new() -> Self {

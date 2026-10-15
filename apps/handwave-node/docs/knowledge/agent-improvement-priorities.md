@@ -128,3 +128,11 @@ Session 身份、原始来源和未完成工具 fence。不能简单删除上限
 文档检查：本页相对链接检查及限定 diff 检查通过，独立 Codex reviewer
 已回源核验关键事实。全仓 `verify_bootstrap.py` 遍历在 30 秒边界内未完成，
 不记为通过；这不替代运行时 Agent 验收。
+
+## 2026-10-15 编码与排障工具切片
+
+`find_files`、`system_info`、`run_script` 及长行命中窗口已实现，详见
+[工具与 computer use 边界](problem-solving-tools.md) 和
+[对应版本验收](../evidence/problem-tools-20261015.md)。既有分段读取、
+全文搜索、记忆压缩不重复计为新增。下一优先级为有界桌面可访问性观察、
+来源可见的按需知识召回与长会话 journal，分别验收；不把计划视为已实现。
