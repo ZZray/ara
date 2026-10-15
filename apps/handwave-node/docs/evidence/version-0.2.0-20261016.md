@@ -143,8 +143,9 @@ Nine JavaScript suites, Go Ray tests and vet passed on a clean326b1ba export
 with the reviewed allowlist. Ray binary
 `0d2a8a3468e3871e1d09d797d17017bb1ba01c5bdd2934e2624aae4ce2a28223`
 is running as PID256370. Binary-only deployment preserved all30 protected files,
-all10 old packages and four other services' PIDs/hashes;12 download URLs and
-normal login/application gate checks pass. Hub was not restarted. The preparation
+all10 old packages and four other services' PIDs/hashes;12 download URLs,
+login-page HTTP200 and unauthenticated application302/303 checks pass. This
+does not prove a successful TOTP submission. Hub was not restarted. The preparation
 receipt predates gofmt: final source_install.go SHA is
 `b31b72f309038d5f250e8f852169be99e817c21e3ae4286635c141c6bccb8456`.
 

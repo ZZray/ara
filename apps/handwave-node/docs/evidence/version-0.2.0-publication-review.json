@@ -1,0 +1,127 @@
+{
+  "reviewer": "Independent Codex /root/context_modes_audit",
+  "checked_at_utc": "2026-10-15T19:13:31.388904+00:00",
+  "decision": "ACCEPT_SCOPED_PUBLICATION_WITH_EXPLICIT_PRODUCT_ACCEPTANCE_GAPS",
+  "scope": "Read-only final closure, source/archive/commit/remote refs and existing publication receipts. No model calls, Cargo execution, SSH, browser bypass, production mutation, restart or grant change by this audit.",
+  "git": {
+    "rust_head": "bd22487783fcd06c60122ba574dfbbfc1d1ad5ac",
+    "implementation_commit": "edd10cfa530c524fcc78daf03235add5c23e99ab",
+    "implementation_ancestor": true,
+    "rust_remote_branch": "dev",
+    "tag": "handwave-node-v0.2.0",
+    "tag_object": "1db2a134cab985ad30b4f541b3d1d016cc2123fc",
+    "tag_peeled_commit": "bd22487783fcd06c60122ba574dfbbfc1d1ad5ac",
+    "remote_refs_verified": [
+      "bd22487783fcd06c60122ba574dfbbfc1d1ad5ac\trefs/heads/dev",
+      "1db2a134cab985ad30b4f541b3d1d016cc2123fc\trefs/tags/handwave-node-v0.2.0",
+      "bd22487783fcd06c60122ba574dfbbfc1d1ad5ac\trefs/tags/handwave-node-v0.2.0^{}"
+    ],
+    "go_head": "7490e37a609a953d59f39149f528145b2825de92",
+    "go_remote_branch": "dev/rust",
+    "go_remote_verified": "7490e37a609a953d59f39149f528145b2825de92\trefs/heads/dev/rust",
+    "followup_scope": "bd224877 only appends version evidence document; no runtime/package changes",
+    "scope_inventory": "Rust unrelated root WIP remains outside apps/handwave-node commits; Go 12 original auth/UI/other dirty paths remain excluded from nine-file release commit.",
+    "reference_check_time_boundary": "Remote refs were observed at Rust bd22487783fcd06c60122ba574dfbbfc1d1ad5ac and Go 7490e37a609a953d59f39149f528145b2825de92. A subsequent evidence-only documentation commit may advance branches; those later refs are not claimed verified here. Release tag stays pinned to bd224877 and is not rewritten.",
+    "later_documentation_only_limit": "Later login-page wording corrections and copying this audit into evidence do not alter the 22 runtime source files or immutable source/ZIP artifacts provided their diff remains documentation-only. No new model/browser/runtime tests are required solely for those wording updates."
+  },
+  "exact_source_equivalence": {
+    "runtime22_git_package_worktree_exact": 22,
+    "runtime_files": [
+      "src/agent.rs",
+      "src/config.rs",
+      "src/context_memory.rs",
+      "src/execution.rs",
+      "src/experience.rs",
+      "src/experience_memory_tests.rs",
+      "src/file_discovery.rs",
+      "src/gateway.rs",
+      "src/goal_runtime.rs",
+      "src/local_tools.rs",
+      "src/main.rs",
+      "src/managed_jobs.rs",
+      "src/model_caps.rs",
+      "src/model_telemetry.rs",
+      "src/operations.rs",
+      "src/project_rules.rs",
+      "src/proxy.rs",
+      "src/script_tools.rs",
+      "src/session_journal.rs",
+      "src/system_capabilities.rs",
+      "src/transport.rs",
+      "src/wire.rs"
+    ],
+    "fixture_eol": {
+      "packaged_sha256": "08ed0d8192388b0d636afad75ea2ab0027244da7186f4177b03cc08fab1b9b66",
+      "committed_sha256": "2ffc02522b131770f6d6466823a7e21182f894caa73e7ebe44b98224b5ae04b7",
+      "normalized_equal": true,
+      "packaged_crlf": 299,
+      "committed_crlf": 0
+    },
+    "review_json_eol_only": true,
+    "source_sha256": "26e8d6780498e121042973cd1fc12c668c3ee4999e23c8c7d62ac548fcd53de1",
+    "git_followup_docs_only": [
+      "apps/handwave-node/docs/evidence/version-0.2.0-20261016.md"
+    ],
+    "tag_peels_to_bd22487": true,
+    "edd10cf_ancestor": true,
+    "go_committed_packages_exact": true,
+    "ray_deployed_artifact_hash_match": true
+  },
+  "artifact_publication": {
+    "go_committed_source_zip_exact": true,
+    "ray_receipt_binary_sha256": "0d2a8a3468e3871e1d09d797d17017bb1ba01c5bdd2934e2624aae4ce2a28223",
+    "windows_node_sha256": "cb676ce827a0a496a23decd05246d0f78d5e24e0f6b5c8f569dc1e7eb5e304b1",
+    "windows_node_pid_receipt": 90172,
+    "windows_state_preservation": {
+      "native_sessions": 7,
+      "native_files_unchanged": 17,
+      "private_inputs_unchanged": true,
+      "grant_extended": false
+    },
+    "ray_receipt": {
+      "protected_files_unchanged": 30,
+      "other_service_pid_and_hash_pairs_unchanged": 4,
+      "download_urls_hash_checked": 12,
+      "login_page_http_200": true,
+      "handwave_unauthenticated_gate_redirect_302_or_303": true,
+      "receipt_label_limit": "normal_login true means login page HTTP availability only, not submitted TOTP or authenticated browser success."
+    }
+  },
+  "linux_source_install": {
+    "receipt_status": "PASS_REAL_LINUX_SOURCE_INSTALL",
+    "source_sha256": "26e8d6780498e121042973cd1fc12c668c3ee4999e23c8c7d62ac548fcd53de1",
+    "elapsed_seconds": 136,
+    "installed_version": "0.2.0",
+    "binary_sha256": "9cc2bd445241996b237760452560bf5fa595b7c5f76ac83b84f769fad4e9a768",
+    "coverage": "Existing logs: Linux x86_64 GNU locked Cargo source compile and actual unchanged installer, isolated prefix, trusted loopback HTTPS source delivery; version execution only. No service/device setup or agent task/Job runtime acceptance, other distros/architectures unproven."
+  },
+  "production_device_status": {
+    "receipt_status": "PASS_CONNECTED",
+    "state": "pending",
+    "approval_expires": null,
+    "device_approval_changed": false,
+    "model_calls": 0,
+    "acceptance": "Connection evidence only; no active controller grant shown and no production task/chat success."
+  },
+  "remaining_boundaries": [
+    "Final cb Windows actual-model Goal to Job to cross-slice readback is NOT PASSED. Preserved reference_read fixture-scope failure occurred before Job start. Older dynamic 5f success is old-image evidence; no complete old raw-source manifest or full bytewise bridge.",
+    "Production post-login interactive browser acceptance NOT RUN due to prior browser automation timeout. Login page 200 and unauthenticated gate redirect do not replace it.",
+    "Installed production Node is connected but pending approval without grant; publication did not create or extend approval. No production Goal/chat acceptance.",
+    "Linux install/build and --version do not prove Linux process tools/Jobs/Goal task runtime or all-platform support.",
+    "Automatic code/Skill/memory promotion, global cross-session Goal inventory, full desktop computer use and other deferred functionality remain excluded."
+  ],
+  "findings": [],
+  "artifact_sha256": {
+    "final-point-audit.json": "a144afa01f4db0e9426697f9916d7e12c3ed96eacaa25cfa0eb7e044e64fa973",
+    "final-publication-source-check.json": "4548f9c90ce0a736d7b6c30eb10403436d245468dca7a510c10eb52534ecb9a1",
+    "commit-eol-equivalence.json": "ce8b34f3e17ae33c5ea6d6f069d14e27584a9e8786f2a687bb8029e775ac768f",
+    "node-upgrade.json": "037fe68bc453d75d9e549e2616a0ef212cc616cc5b413e89ebb596764b74f912",
+    "node-online.json": "a659b484eab85106554a15fba61281f67fbec2ddce58a52c67240a0478887ceb",
+    "deployment/ray-deploy-receipt.json": "3db3118639ff94d6a57a8a212ddbb3b7928bfa5b800d307bf5c196046cb4a3f0",
+    "deployment/deploy-ray.py": "d821e9e71b22d9e0a13b31d7916e8c610e5163493088325b3aadf33aaf715568",
+    "deployment/deploy-output.log": "602e101f6ac328390407496906a18ff0d1c60f72b1b4c488fcb7b8ef94b94350",
+    "linux-install-trial.sh": "42d4593f175288d57498405c76e51864abb61d1740e7ed3b2e2be6cffed8cb1f",
+    "linux-source-install.log": "1207517e843b45d4eab88572628148f5e4dfc294f893f1a3b56533c251e4b315",
+    "linux-source-install-build.log": "3012782b3de2e98d58ccca6ca77c87511e16d95ec37a587aadf96bf94c85e8c2"
+  }
+}
