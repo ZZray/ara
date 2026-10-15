@@ -71,6 +71,8 @@ def main():
     parser.add_argument("--model", required=True, help="Exact previously verified inventory model ID")
     parser.add_argument("--protocol", default="openai-completions", choices=("openai-completions", "openrouter-chat"))
     parser.add_argument("--public-hub", help="Optional public HTTPS Node entry; root controller remains private over SSH")
+    parser.add_argument("--experience", action="store_true", help="Reproduce original failure, then propose one evidence-bound lesson; no adoption")
+    parser.add_argument("--experience-smoke", action="store_true", help="Separate small LF one-fault fixture, within the same 10-call ceiling")
     parser.add_argument("--max-calls", type=int, default=10)
     parser.add_argument("--max-seconds", type=int, default=180)
     args = parser.parse_args()
@@ -86,6 +88,15 @@ def main():
     work.mkdir()
     state.mkdir()
     original = prepare_work(work)
+    require(not args.experience_smoke or args.experience, "Experience smoke requires --experience")
+    if args.experience_smoke:
+        original = ("import json\nfrom pathlib import Path\n"
+                    "rows = [line.split('|') for line in Path('logs/requests.log').read_text(encoding='utf-8').splitlines() if line.strip()]\n"
+                    "ok = [row for row in rows if row[1] == 'OK']\n"
+                    "report = {'ok_count': len(ok), 'total_ms': sum(int(row[2]) for row in rows), 'error_count': len(rows) - len(ok)}\n"
+                    "Path('report.json').write_text(json.dumps(report), encoding='utf-8')\n"
+                    "print('REPORT_OK total=' + str(report['total_ms']))\n")
+        (work / "aggregate.py").write_text(original, encoding="utf-8", newline="\n")
     input_hash = hashlib.sha256((work / "logs" / "requests.log").read_bytes()).hexdigest()
     root_token, node_token = read_credentials(args.ssh_alias, args.remote_config)
     logs = [(root / "tunnel.log").open("wb"), (root / "node.log").open("wb")]
@@ -95,6 +106,7 @@ def main():
     transcript, events = [], []
     started = time.monotonic()
     result = {"status": "FAIL", "scope": "one real cloud-model autonomous troubleshooting run on temporary Node; no production deployment", "model": args.model, "protocol": args.protocol,
+              "scenario": "one-fault LF experience admission" if args.experience_smoke else "general report repair",
               "max_model_runs": 1, "max_provider_calls": args.max_calls, "deadline_seconds": args.max_seconds,
               "actual_provider_http_requests": None, "token_usage": None,
               "usage_boundary": "Wire model_call counts reservations, not confirmed HTTP requests. Missing supplier token usage is unknown, not zero.",
@@ -139,6 +151,15 @@ def main():
             "只读写此临时目录，保留输入日志，不下载、不安装、不修改系统或环境、不访问其他目录或账号数据、不启动后台任务。"
             "你自行决定查找、读取、编辑步骤；最后简洁说明根因、修复与实际验证。"
         )
+        if args.experience_smoke:
+            prompt += (" 本次是单一故障经验验收，小程序使用LF换行。为保留真实失败状态，原程序复现用 run_script Python直接执行 "
+                       "import runpy; runpy.run_path('aggregate.py', run_name='__main__')，不要吞掉异常或把子进程失败变成外层成功。"
+                       "只有10次调用预算，请聚焦该单一故障，不进行无关目录盘点。")
+        if args.experience:
+            prompt += (" 这次也验收经验提取：先用 run_script 运行原始 aggregate.py 复现真实错误，然后修复并实际执行、核对报告。"
+                       "完成验证后，使用 experience_propose 提出且仅提出一条简短经验候选，写清适用条件，"
+                       "source_ids使用本轮真实objective来源ID，tool_call_ids引用本轮实际失败与恢复成功的调用ID并按先后排序。"
+                       "不要为了凑证据故意执行无关失败命令，不要采纳候选，不要声称仅凭exit0就验证了普适经验。")
         (root / "prompt.txt").write_text(prompt, encoding="utf-8")
         remaining = args.max_seconds - (time.monotonic() - started)
         require(remaining > 1, "Trial deadline exhausted before the sole run")
@@ -150,6 +171,16 @@ def main():
         require((work / "aggregate.py").read_text(encoding="utf-8") != original, "Program was not repaired")
         require(hashlib.sha256((work / "logs" / "requests.log").read_bytes()).hexdigest() == input_hash, "Input log was modified")
         require(any(event.get("type") == "tool_end" and event.get("title") == "run_script" and event.get("status") == "completed" and STDOUT in event.get("output", "") for event in events), "Actual run_script stdout receipt missing")
+        if args.experience:
+            sidecars = list((state / "sessions").rglob("*.context.json"))
+            require(len(sidecars) == 1, "Expected one temporary native context sidecar")
+            memories = json.loads(sidecars[0].read_text(encoding="utf-8"))["memories"]
+            candidates = [m for m in memories if m.get("experience")]
+            require(len(candidates) == 1 and candidates[0]["status"] == "candidate" and candidates[0].get("adoption") is None, "Experience was absent or silently adopted")
+            records = candidates[0]["experience"]["receipts"]
+            require(records[0]["is_error"] and not records[-1]["is_error"], "Experience lacks actual failure/recovery evidence")
+            require(any(event.get("type") == "tool_end" and event.get("title") == "experience_propose" and event.get("status") == "completed" for event in events), "No actual experience proposal receipt")
+            result["experience"] = {"id":candidates[0]["id"],"status":"candidate","receipt_tools":[r["tool_name"] for r in records],"task_accepted":False}
         # Independent reexecution checks repaired behavior, not the assistant's claim.
         # Never repeat the Agent request or a tool whose side effects are unknown.
         remaining = args.max_seconds - (time.monotonic() - started)

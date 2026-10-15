@@ -43,7 +43,16 @@ $env:HW_TOKEN = '<node enrollment token>'
 
 ## 本版新增能力
 
-本轮编码／排障增强包：Windows EXE **4,567,040 字节（约 4.57 MB）**，
+最新可审经验增强：Windows EXE **4,602,880 字节（约 4.60 MB）**，比上一轮
+增加 35,840 字节，SHA-256 `c3ff87a704d89b81bf4584057757efdd4be612d58583df185f4cf308326f1059`。
+实际工具失败、恢复后，Agent 可通过 `experience_propose` 提出带适用条件和
+真实工具收据的经验候选；`/memory list` 查看、`/memory accept ID` 采纳。
+后续 `experience_search` 只返回已采纳且来源当前有效的经验，最多 3 条、
+完整 JSON 最多 8 KiB。撤销或更正来源后失效。候选不会自动采纳；不自动
+修改程序、权限或 Skills。经验当前沿用本原生会话范围，不自动跨设备或
+网页会话共享。见[完整验收](docs/evidence/evolution-20261015.md)。
+
+上一轮编码／排障增强包：Windows EXE **4,567,040 字节（约 4.57 MB）**，
 比上一版增加 48,128 字节；SHA-256 `080bdb85771c68d297752b1a8887c2f78bb984519c82881e1b5d50f3383f05d3`。
 新增 `find_files`（文件名／路径定位）、`system_info`（OS 与解释器候选）、
 `run_script`（Python／PowerShell／cmd／sh）。脚本使用本机解释器，默认输出

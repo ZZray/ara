@@ -1,0 +1,238 @@
+{
+  "date": "2026-10-15",
+  "base_commit": "d565d62914c68d9791cb76982540af5e68184dd5",
+  "status": "accepted: bounded reviewed-experience slice",
+  "image": {
+    "sha256": "c3ff87a704d89b81bf4584057757efdd4be612d58583df185f4cf308326f1059",
+    "bytes": 4602880,
+    "previous_bytes": 4567040,
+    "increase_bytes": 35840
+  },
+  "source_sha256": {
+    "src/agent.rs": "486041819d18e9154ea83e61f57278b1f9afc3d3cc2fbdfcbf46c5a57eebd5d7",
+    "src/config.rs": "738f51960cb6e5e535b911ddc067c31de5ce26d6220ce66147458372fc3bf547",
+    "src/context_memory.rs": "70b48fc7a27510a911aad2585c7c333906d0731d5eb9f8752f1716cd14c7099c",
+    "src/experience.rs": "1dd6942fc15643828b21605c55b98194b8cdc43445b1fbfbd9ee6f08e4ba4a45",
+    "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src/gateway.rs": "2e3c305f9cde6b44053e83cbc73f5ab3a2f9438676772180680a5afab4332dec",
+    "src/local_tools.rs": "c396ffeb49a076830a7a28e3803b7997ede327ab402ae439e9e15b059351ef59",
+    "src/main.rs": "84f17e1b47b013e0a6bdbed7050fd9cb5d31d096e1dbe55c286f323f5b67fc64",
+    "src/operations.rs": "b5447bd14390a90bb19bb46228b2adb9d77f039d5c1658f286bcef775c7c8b99",
+    "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src/proxy.rs": "fdcb1c3c0f21e9b2b4b792504afd04253d8848c30c4be77540cec991e3a368c5",
+    "src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+    "src/system_capabilities.rs": "26ebfdbbc60637f7408b83549e881451a87238e4d46056eb8539fbcce7484fd8",
+    "src/transport.rs": "a7c9a93938e2c56dc7ce0a98aedadb51ba27c63df9a032475898dbe2b306a339",
+    "src/wire.rs": "54db2bc8dd830a0d2882efaa5ee8f57ad26069f6a4744ea95976528e94d127b8",
+    "Cargo.toml": "f6d37ed0e42df579c68663487a6a24608ae6deef05b48a47e24ba89a5da81b60",
+    "Cargo.lock": "6e7f856f537b85dfef56ae29063418ed450a9a93d49be5df796ecb81405b52bc",
+    "tests/verify_evolution.py": "7267278639c378e4f8846afcb589af2f0e8023f9d6e9bb96d698866e1ca5a018",
+    "tests/verify_problem_live.py": "e4f772b34e3d5a02e2e0d3e12f04f5ffe3ed5dd57f42aa97049be49282ee1217"
+  },
+  "windows": {
+    "fmt": "PASS",
+    "clippy": "PASS all targets/features locked -D warnings",
+    "tests_passed": 80,
+    "tests_failed": 0
+  },
+  "linux": {
+    "compile_exit": 0,
+    "test_exit": 0,
+    "run_as": "ara-verify",
+    "seconds": 45.194,
+    "binary_sha256": "18622f02d4df13f22789d385497c3d670690566e24d8dcdb01b78157cc738e4e",
+    "source_hashes_match": true
+  },
+  "controlled_host": {
+    "scope": "actual Rust Node + Go Hub; deterministic model; isolated script artifacts",
+    "not_run": [
+      "real-model intelligence",
+      "causal correctness of proposed lesson",
+      "production installation"
+    ],
+    "passed": [
+      "failure_recovery_artifact_and_native_hash_status_provenance",
+      "forged_and_cross_run_ids_rejected_without_memory_write",
+      "candidate_restart_explicit_accept_recall_revoke_zero_model_commands",
+      "accepted_experience_excluded_after_source_revocation",
+      "current_run_recovery_ids_provider_only_no_cross_run_or_restart_directory"
+    ],
+    "status": "PASS",
+    "elapsed_seconds": 10.043,
+    "binary_sha256": "c3ff87a704d89b81bf4584057757efdd4be612d58583df185f4cf308326f1059",
+    "hub_sha256": "27c9b2657da185fcd42ba4764259f48ab503011fa4e3ebbbf229f5e748cb48f7",
+    "model_requests": 24,
+    "fixture_errors": []
+  },
+  "context_regression": {
+    "scope": "actual Rust node + isolated Go Hub + controlled model; production/paid real model NOT RUN",
+    "passed": [
+      "reference_read_and_search_actual_tools_exact_original",
+      "candidate_stays_unaccepted_under_brief_and_tool_command_injection",
+      "trusted_accept_revoke_zero_http_and_request_visibility",
+      "immutable_original_hash_version_correct_revoke_watermark",
+      "project_rules_real_request_reload_raw_separation_and_fail_before_gateway",
+      "context_store_failure_keeps_last_good_and_blocks_provider",
+      "separate_controller_and_canonical_cwd_scopes",
+      "source_backed_summary_closed_pairs_raw_preservation_and_restart",
+      "incremental_summary_advances_closed_prefix_with_previous_summary",
+      "one_large_old_closed_turn_compacts_before_second_turn_finishes",
+      "summary_invalid_retains_raw_and_prevents_following_effectful_loop",
+      "summary_unknown_source_retains_raw_and_prevents_following_effectful_loop",
+      "summary_tool_call_retains_raw_and_prevents_following_effectful_loop",
+      "summary_cancel_retains_raw_and_prevents_following_effectful_loop",
+      "summary_budget_retains_raw_and_prevents_following_effectful_loop"
+    ],
+    "status": "PASS",
+    "binary_sha256": "c3ff87a704d89b81bf4584057757efdd4be612d58583df185f4cf308326f1059",
+    "hub_sha256": "27c9b2657da185fcd42ba4764259f48ab503011fa4e3ebbbf229f5e748cb48f7",
+    "fixture_sha256": "7e041dc884dda3d4b58be496d20827e6bb74b0a60e6910e0a966abec2974874f",
+    "elapsed_seconds": 58.257,
+    "remaining_cases": [],
+    "private_fixture_files_not_copied_or_printed": true
+  },
+  "real_model": {
+    "status": "PASS",
+    "scope": "one real cloud-model autonomous troubleshooting run on temporary Node; no production deployment",
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "scenario": "one-fault LF experience admission",
+    "max_model_runs": 1,
+    "max_provider_calls": 10,
+    "deadline_seconds": 180,
+    "actual_provider_http_requests": null,
+    "token_usage": null,
+    "usage_boundary": "Wire model_call counts reservations, not confirmed HTTP requests. Missing supplier token usage is unknown, not zero.",
+    "isolation_boundary": "fresh fixture directory and instructed scope; tools retain OS-account authority, not an OS sandbox",
+    "inventory_receipt": {
+      "path": "/api/models",
+      "http_status": 200,
+      "body_type": "list",
+      "top_keys": [],
+      "row_count": 16
+    },
+    "model_run_seconds": 29.309,
+    "experience": {
+      "id": "mem-1",
+      "status": "candidate",
+      "receipt_tools": [
+        "run_script",
+        "run_script"
+      ],
+      "task_accepted": false
+    },
+    "live_text_received": true,
+    "passed": [
+      "real_model_autonomous_repair",
+      "actual_run_script_stdout",
+      "exact_report_artifact",
+      "independent_repaired_program_execution",
+      "input_log_preserved"
+    ],
+    "artifact_sha256": "4ed394d30c7479f28de05e3610f645365052896d5b96d26458cc23bbcdab5d31",
+    "repaired_source_sha256": "ff57926a750b1ad04e1f048dae7490a84620841bc08ae8987640e5e7ed096355",
+    "independent_stdout": "REPORT_OK total=42\r\n",
+    "own_temporary_approval_revoked": true,
+    "observed_model_call_reservations": 7,
+    "reservations_complete": true,
+    "elapsed_seconds": 32.779,
+    "binary_sha256": "c3ff87a704d89b81bf4584057757efdd4be612d58583df185f4cf308326f1059"
+  },
+  "preserved_failed_real_trials": [
+    {
+      "status": "FAIL",
+      "scope": "one real cloud-model autonomous troubleshooting run on temporary Node; no production deployment",
+      "model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "max_model_runs": 1,
+      "max_provider_calls": 10,
+      "deadline_seconds": 180,
+      "actual_provider_http_requests": null,
+      "token_usage": null,
+      "usage_boundary": "Wire model_call counts reservations, not confirmed HTTP requests. Missing supplier token usage is unknown, not zero.",
+      "isolation_boundary": "fresh fixture directory and instructed scope; tools retain OS-account authority, not an OS sandbox",
+      "inventory_receipt": {
+        "path": "/api/models",
+        "http_status": 200,
+        "body_type": "list",
+        "top_keys": [],
+        "row_count": 16
+      },
+      "model_run_seconds": 20.22,
+      "failure": "AssertionError: bounded trial failed; inspect sanitized tool receipts; not replayed",
+      "own_temporary_approval_revoked": true,
+      "observed_model_call_reservations": 10,
+      "reservations_complete": true,
+      "elapsed_seconds": 23.339,
+      "binary_sha256": "e47d8700de4d11ee550b8620bf91c8056ec7ac9a1be807516fe1de433498c753"
+    },
+    {
+      "status": "FAIL",
+      "scope": "one real cloud-model autonomous troubleshooting run on temporary Node; no production deployment",
+      "model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "scenario": "one-fault LF experience admission",
+      "max_model_runs": 1,
+      "max_provider_calls": 10,
+      "deadline_seconds": 180,
+      "actual_provider_http_requests": null,
+      "token_usage": null,
+      "usage_boundary": "Wire model_call counts reservations, not confirmed HTTP requests. Missing supplier token usage is unknown, not zero.",
+      "isolation_boundary": "fresh fixture directory and instructed scope; tools retain OS-account authority, not an OS sandbox",
+      "inventory_receipt": {
+        "path": "/api/models",
+        "http_status": 200,
+        "body_type": "list",
+        "top_keys": [],
+        "row_count": 16
+      },
+      "model_run_seconds": 35.736,
+      "failure": "AssertionError: bounded trial failed; inspect sanitized tool receipts; not replayed",
+      "own_temporary_approval_revoked": true,
+      "observed_model_call_reservations": 10,
+      "reservations_complete": true,
+      "elapsed_seconds": 39.282,
+      "binary_sha256": "e47d8700de4d11ee550b8620bf91c8056ec7ac9a1be807516fe1de433498c753"
+    }
+  ],
+  "real_model_extra_boundary": "one redundant second experience_propose was rejected by per-Run limit; candidate remains singular and unadopted",
+  "independent_review": {
+    "reviewer": "Codex /root/evolution_pre_review",
+    "source_review": "PASS; JSON envelope budget and optional-directory context ceiling fixed",
+    "artifact_review": "PASS: independent readback of final image, native provenance, candidate state, artifact hashes, all declared test receipts and preserved failures"
+  },
+  "not_accepted": [
+    "autonomous code/policy/Skill rewrites or model-weight training",
+    "automatic experience adoption",
+    "cross-native-Session/device/project sharing",
+    "causal correctness or generality of every proposed lesson",
+    "production persistent node or download URL update",
+    "global speedup/token percentage",
+    "macOS/ARM/musl and Linux pwsh/release packaging"
+  ],
+  "private_receipts": "D:\\WorkSpace\\tmp\\handwave-evolution-20261015",
+  "package": {
+    "bytes": 3466979,
+    "sha256": "b9e9946b5e7337dfae21eca8810d348c6544a20b526624d6cf3b4fd7671f0454",
+    "exe_sha_matches": true,
+    "readme_exact": true,
+    "secret_allowlist": "PASS"
+  },
+  "source_package": {
+    "source_name": "handwave-node-source-5b9df47655687915.tar.gz",
+    "source_sha256": "5b9df47655687915ee8057cf3985e574066d11eaf63f3ab5e85fed1b229863f2",
+    "source_bytes": 327466,
+    "script_name": "install-linux-fe4b10bee6a73659.sh",
+    "script_sha256": "fe4b10bee6a73659f6c5db78e624aa794bec0e0b57f91619d8be13c4f694094c",
+    "tested_sources_match": true
+  },
+  "documentation": {
+    "changed_page_links": "PASS",
+    "source_hashes_unchanged": true,
+    "bootstrap": {
+      "status": "NOT COMPLETED",
+      "timeout_seconds": 30
+    }
+  }
+}

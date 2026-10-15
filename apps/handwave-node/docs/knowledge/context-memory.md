@@ -138,3 +138,13 @@ correction, candidate/adopted separation, revocation, scope isolation, restart,
 budget/failure/cancellation guards and measured executable size. Controlled
 provider tests and real-model trials prove different boundaries. Evidence and
 independent review determine acceptance; this design page alone does not.
+
+## Reviewed tool experience
+
+The 2026-10-15 extension reuses this Store's memory states and source invalidation
+for conditional failure/recovery experiences. It resolves actual native tool
+pairs in the current Run, retains bounded evidence on a candidate, and recalls
+only user-adopted/current experiences on demand. See
+[the complete contract](reviewed-experiences.md) and
+[versioned execution evidence](../evidence/evolution-20261015.md). This does not
+add cross-Session sharing, automatic adoption or a background learner.

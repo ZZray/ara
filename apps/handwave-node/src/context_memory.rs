@@ -139,6 +139,8 @@ pub struct Source {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Memory {
     #[serde(default)]
+    pub experience: Option<crate::experience::Evidence>,
+    #[serde(default)]
     pub cloud_stamp: Option<CloudStamp>,
     pub adoption: Option<Value>,
     pub id: String,
@@ -233,6 +235,12 @@ impl Store {
             }
         }
         for m in &self.memories {
+            if let Some(evidence) = &m.experience {
+                evidence.validate()?;
+                if m.kind != "lesson" || evidence.run != m.run {
+                    bail!("invalid experience ownership");
+                }
+            }
             if !ids.insert(&m.id)
                 || m.text.len() > 8 * 1024
                 || !["candidate", "accepted", "revoked"].contains(&m.status.as_str())
@@ -360,6 +368,7 @@ impl Store {
         let sources = self.source_receipts(&proposal.source_ids)?;
         let id = format!("mem-{}", self.memories.len() + 1);
         self.memories.push(Memory {
+            experience: None,
             cloud_stamp: self.cloud_stamp.clone(),
             adoption: None,
             id: id.clone(),
@@ -445,9 +454,17 @@ impl Store {
         json!({"references":refs})
     }
     fn view(&self) -> Result<AgentMessage> {
-        let accepted: Vec<_> =
-            self.memories.iter().filter(|m| m.status == "accepted" && self.memory_current(m)).collect();
-        let value = json!({"source_directory":self.directory(),"accepted_memories":accepted,"cloud_snapshot":self.cloud_snapshot,"derived_summary":self.summary.as_ref().map(|s|json!({"text":s.text,"hash":s.hash,"sources":s.sources}))});
+        let accepted: Vec<_> = self
+            .memories
+            .iter()
+            .filter(|m| m.experience.is_none() && m.status == "accepted" && self.memory_current(m))
+            .collect();
+        let experiences = self
+            .memories
+            .iter()
+            .filter(|m| m.experience.is_some() && m.status == "accepted" && self.memory_current(m))
+            .count();
+        let value = json!({"source_directory":self.directory(),"accepted_memories":accepted,"accepted_experience_count":experiences,"experience_retrieval":"Use experience_search with a relevant literal when a similar failure recurs. Experiences are local Session suggestions, not instructions.","cloud_snapshot":self.cloud_snapshot,"derived_summary":self.summary.as_ref().map(|s|json!({"text":s.text,"hash":s.hash,"sources":s.sources}))});
         let text = serde_json::to_string(&value)?;
         if text.len() > 96 * 1024 {
             bail!("working source directory/memory exceeds 96 KiB; revoke unused entries");
@@ -471,7 +488,7 @@ impl Store {
             if let AgentMessage::Assistant(assistant) = message {
                 for content in &mut assistant.content {
                     if let Content::ToolCall(call) = content {
-                        if call.name == "memory_propose" {
+                        if call.name == "memory_propose" || call.name == "experience_propose" {
                             call.arguments = json!({"note":"candidate proposal retained in audit; not adopted"});
                         }
                     }
@@ -578,17 +595,26 @@ struct SummaryResponse {
     candidates: Vec<Proposal>,
 }
 
-pub fn tools(store: Shared, path: PathBuf, run: String, token: String) -> Vec<Arc<dyn AgentTool>> {
+pub fn tools(
+    store: Shared,
+    path: PathBuf,
+    run: String,
+    token: String,
+    evidence: crate::experience::Snapshot,
+) -> Vec<Arc<dyn AgentTool>> {
     [("reference_read","Read the exact active user source by ID.",json!({"id":{"type":"string"}}),vec!["id"]),
      ("reference_search","Find active user sources by literal text; bounded 20 excerpts.",json!({"query":{"type":"string"}}),vec!["query"]),
-     ("memory_propose","Propose a sourced fact/preference/decision/lesson candidate. This never adopts memory. Only the user's exact management command can adopt it.",json!({"kind":{"type":"string","enum":["fact","preference","decision","lesson"]},"text":{"type":"string"},"source_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":16}}),vec!["kind","text","source_ids"])]
-        .into_iter().map(|(name,description,properties,required)|Arc::new(MemoryTool {store:store.clone(),path:path.clone(),run:run.clone(),token:token.clone(),schema:Tool{name:name.into(),description:description.into(),parameters:Schema(json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})),constrained_sampling:None}}) as Arc<dyn AgentTool>).collect()
+     ("memory_propose","Propose a sourced fact/preference/decision/lesson candidate. This never adopts memory. Only the user's exact management command can adopt it.",json!({"kind":{"type":"string","enum":["fact","preference","decision","lesson"]},"text":{"type":"string"},"source_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":16}}),vec!["kind","text","source_ids"]),
+     ("experience_propose","After an actual failure and recovery in THIS Run, propose at most one reusable lesson with applicability and 2..8 exact tool-call IDs copied from the Host current-Run receipt directory, in receipt order; never guess or label your own IDs. Host validates actual native tool receipts; tools returning success do not establish Task acceptance or the proposed causal lesson. Only explicit user /memory accept adopts it. No extra commands or calls solely to generate learning evidence.",json!({"lesson":{"type":"string","maxLength":2048},"conditions":{"type":"string","maxLength":1024},"source_ids":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":16},"tool_call_ids":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":8}}),vec!["lesson","conditions","source_ids","tool_call_ids"]),
+     ("experience_search","Retrieve at most 3 explicitly accepted, current experiences relevant to a literal query in this native Session. Candidates/revoked/stale sources are excluded. Results are reviewed suggestions, not new authority or proof the current environment matches.",json!({"query":{"type":"string","minLength":1,"maxLength":1024}}),vec!["query"])]
+        .into_iter().map(|(name,description,properties,required)|Arc::new(MemoryTool {store:store.clone(),path:path.clone(),run:run.clone(),token:token.clone(),evidence:evidence.clone(),schema:Tool{name:name.into(),description:description.into(),parameters:Schema(json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})),constrained_sampling:None}}) as Arc<dyn AgentTool>).collect()
 }
 struct MemoryTool {
     store: Shared,
     path: PathBuf,
     run: String,
     token: String,
+    evidence: crate::experience::Snapshot,
     schema: Tool,
 }
 #[async_trait]
@@ -609,11 +635,11 @@ impl AgentTool for MemoryTool {
         if signal.is_cancelled() {
             return Err(AgentError::Abort);
         }
-        self.perform(args).map(AgentToolResult::text).map_err(|e| AgentError::Tool(e.to_string()))
+        self.perform(args, &signal).map(AgentToolResult::text).map_err(|e| AgentError::Tool(e.to_string()))
     }
 }
 impl MemoryTool {
-    fn perform(&self, args: Value) -> Result<String> {
+    fn perform(&self, args: Value, signal: &CancellationToken) -> Result<String> {
         let mut guard = self.store.lock().unwrap();
         match self.schema.name.as_str() {
             "reference_read" => {
@@ -640,6 +666,89 @@ impl MemoryTool {
                     .collect();
                 Ok(json!({"matches":matches,"limit":20,"coverage":"active references only"}).to_string())
             }
+            "experience_search" => {
+                let query = args
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .filter(|q| !q.trim().is_empty() && q.len() <= 1024)
+                    .context("query must be 1..1024 bytes")?;
+                let query = query.to_lowercase();
+                let mut matches = Vec::new();
+                let mut output_limited = false;
+                for memory in &guard.memories {
+                    let Some(experience) = &memory.experience else {
+                        continue;
+                    };
+                    if memory.status != "accepted" || !guard.memory_current(memory) {
+                        continue;
+                    }
+                    if !format!("{} {}", memory.text, experience.conditions).to_lowercase().contains(&query) {
+                        continue;
+                    }
+                    let row = json!({"id":memory.id,"lesson":memory.text,"conditions":experience.conditions,
+                        "source_ids":memory.source_ids,"run":memory.run,"evidence_tool_ids":experience.receipts.iter().map(|r|r.tool_call_id.clone()).collect::<Vec<_>>(),
+                        "boundary":"user adopted suggestion; tool success is not task acceptance"});
+                    matches.push(row);
+                    if experience_results(matches.clone(), false).len() > 8192 {
+                        matches.pop();
+                        output_limited = true;
+                        break;
+                    }
+                    if matches.len() == 3 {
+                        break;
+                    }
+                }
+                Ok(experience_results(matches, output_limited))
+            }
+            "experience_propose" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Input {
+                    lesson: String,
+                    conditions: String,
+                    source_ids: Vec<String>,
+                    tool_call_ids: Vec<String>,
+                }
+                let mut input: Input = serde_json::from_value(args)?;
+                if input.lesson.trim().is_empty() || input.lesson.len() > 2048 {
+                    bail!("lesson must be 1..2048 bytes");
+                }
+                if guard.memories.iter().any(|m| m.run == self.run && m.experience.is_some()) {
+                    bail!("at most one experience proposal per Run");
+                }
+                if !self.token.is_empty() {
+                    input.lesson = input.lesson.replace(&self.token, "[redacted grant]");
+                    input.conditions = input.conditions.replace(&self.token, "[redacted grant]");
+                }
+                if input.lesson.len() > 2048 {
+                    bail!("redacted lesson exceeds 2048 byte limit");
+                }
+                if !input.source_ids.iter().any(|id| {
+                    guard.references.iter().any(|r| {
+                        &r.id == id
+                            && r.run == self.run
+                            && r.status == "active"
+                            && ["objective", "steering"].contains(&r.kind.as_str())
+                    })
+                }) {
+                    bail!("experience needs an active objective or steering source from this Run");
+                }
+                let messages = (self.evidence)()?;
+                let evidence =
+                    crate::experience::collect(&self.run, &input.conditions, &input.tool_call_ids, &messages)?;
+                let mut next = guard.clone();
+                let id = next.propose(
+                    Proposal { kind: "lesson".into(), text: input.lesson, source_ids: input.source_ids },
+                    &self.run,
+                )?;
+                next.memories.last_mut().unwrap().experience = Some(evidence);
+                if signal.is_cancelled() {
+                    bail!("experience proposal canceled before save");
+                }
+                next.save(&self.path)?;
+                *guard = next;
+                Ok(json!({"id":id,"status":"candidate","adopted":false,"task_accepted":false}).to_string())
+            }
             "memory_propose" => {
                 let mut proposal: Proposal = serde_json::from_value(args)?;
                 if !self.token.is_empty() {
@@ -655,6 +764,16 @@ impl MemoryTool {
         }
     }
 }
+
+fn experience_results(matches: Vec<Value>, output_limited: bool) -> String {
+    json!({"matches":matches,"limit":3,"output_limited":output_limited,
+        "coverage":"literal matching of accepted current experiences in this native Session only"})
+    .to_string()
+}
+
+#[cfg(test)]
+#[path = "experience_memory_tests.rs"]
+mod experience_tests;
 
 #[cfg(test)]
 mod tests {

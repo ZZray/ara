@@ -388,3 +388,42 @@ executed the repaired code successfully. Exact-match edit behavior remains
 intentional; no fuzzy patch or silent line-ending rewrite was introduced. The
 18.821-second task time has no comparison baseline; supplier token usage is
 unknown. Receipts and remaining platform boundaries are in the same evidence.
+
+## HWN-017: a proposed lesson must not manufacture its own evidence
+
+2026-10-15, Node self-evolution slice. Existing user references prove received
+input, not successful tool effects. Reusing only model-written lesson text as
+proof of recovery would create a self-confirming loop. The selected design
+resolves call/result pairs from the current native Run, not model-supplied status
+or output, and retains the existing user adoption boundary. An Emitter append
+is not durable when checkpoint save failed; the snapshot rejects fatal/context
+failure and cancellation on both sides of the copy. Pending proposal calls are
+excluded from completed-pair evidence rather than requiring premature Run closure.
+
+Independent Codex reviewer evolution_pre_review also found the initial 8KiB
+retrieval budget omitted its JSON envelope. The fix measures the whole response,
+with escaped/Chinese boundary tests; candidate proposal arguments must be removed
+from projections just like ordinary memory proposals. These safeguards preserve
+reviewable provenance rather than claiming automatic intelligence improvement.
+[Actual tests, immutable image and remaining limits](../evidence/evolution-20261015.md).
+
+
+## HWN-018: opaque protocol IDs were not a usable model-facing reference
+
+2026-10-15. The first real-model evolution task used its 10-call allowance after
+repairing the report but before proposing a lesson. A separate one-fault LF
+trial then repaired and verified the report, but guessed symbolic tool IDs in
+repeated proposals. The strict Host correctly rejected missing native pairs;
+no candidate was adopted or persisted. This is a tool reference usability gap,
+not evidence that invented IDs should be accepted or that budgets should grow
+until an experiment passes.
+
+The repair exposes two exact current-Run receipt IDs in bounded provider-only
+metadata, without output bodies, persistence or an extra model call. The model
+can copy these references while the original native pair validation remains.
+Independent review caught the added metadata potentially pushing an otherwise
+valid context over its byte limit; optional omission preserves the original
+projection, and a near-limit regression verifies byte-for-byte preservation.
+Both earlier failures and the new image trial remain separate in
+[the release evidence](../evidence/evolution-20261015.md). No causal or efficiency
+percentage is inferred from a successful candidate.

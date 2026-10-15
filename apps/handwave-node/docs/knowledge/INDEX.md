@@ -14,3 +14,5 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Linux source installer delivery and boundaries](../evidence/source-install-20261015.md)
 
 - [Problem-solving tools and computer-use boundaries](problem-solving-tools.md): explicit interpreters, bounded filename/content retrieval and actual task evidence.
+
+- [Reviewed experience and self-evolution](reviewed-experiences.md): current-Run native evidence, explicit adoption and bounded subsequent recall.
