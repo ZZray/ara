@@ -57,3 +57,9 @@ apply independently. A successful Run never promotes its own memory or Skill.
 
 Current verification and any untested production boundaries are recorded in
 [delivery evidence](../evidence/linked-context-modes-20261015.md).
+
+The earlier source-only activation boundary was subsequently closed by the
+[maintained production upgrade](../evidence/production-activation-20261015.md).
+Actual public browser/native receipts cover target selection, sourced session
+reference, Plan and explicit Goal acceptance. Candidate cloud-save and physical
+mobile keyboard coverage remain separate limits.

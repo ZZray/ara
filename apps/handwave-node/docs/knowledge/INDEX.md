@@ -7,6 +7,7 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [Context and sourced memory](context-memory.md)
 
 - [Model declarations and dynamic text budgets](../evidence/model-capabilities-20261015.md): editable1M/multimodal metadata, complete-request allocation checks and capacity-shrink recovery; image transport remains separate.
+- [Maintained production activation](../evidence/production-activation-20261015.md): installed/public f8935 artifacts, real authenticated session references and Plan/Goal execution, unchanged grants and explicit auth/multimodal limits.
 - [Per-device cloud knowledge and memory](cloud-memory.md): M1 explicit records and per-Run snapshots deployed; [release and live recall/revocation evidence](../evidence/cloud-memory-20261015.md). Personal identity, outbox and automatic consolidation remain planned.
 - [Agent improvement priorities](agent-improvement-priorities.md): source-backed project knowledge boundaries and UI/function/Agent priorities; new management UI and subsequent retrieval/journal work require their own acceptance.
 - [Investigated defects and verification traps](engineering-cases.md)

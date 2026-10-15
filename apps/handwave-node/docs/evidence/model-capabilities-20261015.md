@@ -48,3 +48,10 @@ Changed/index relative links pass. The full root bootstrap scan exceeded a
 30-second bound and is NOT COMPLETED. Final independent Codex readback verified
 actual request sizes, capability events, native goal/pending state, image hashes
 and deployment pins and accepted only the declared bounded scope.
+
+## Subsequent installed and public activation
+
+The f8935 Node and its public Windows/source packages were subsequently
+[activated and verified through the real Ray browser](production-activation-20261015.md).
+The earlier statements about unchanged installation/public URLs describe that
+point's checkpoint.1M-token stress and image transport remain unaccepted.

@@ -109,3 +109,11 @@ audit was not rerun; no dependency/lockfile change belongs to this slice.
 Final package ZIP3,483,757 bytes, SHA256
 `d411f7227345593c65fab1ae62880fdfe6cb01caedea43258314bc8c715317dc`;
 ZIP EXE and README match the delivered files, with no live configuration/state.
+
+## Subsequent production activation
+
+The user later confirmed the local maintained source and execution-target
+behavior. The earlier deployment boundary above remains historical evidence.
+[Maintained production activation](production-activation-20261015.md) records
+the newer f8935 image, live target/reference/Plan/Goal workflow and retained
+authentication, grant, image-input and unexercised candidate-save boundaries.
