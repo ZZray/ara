@@ -202,8 +202,10 @@ Binary-only cloud activation passed the deployment receipt: Hub SHA256
 and Ray SHA256
 `353c675e49326b69d5445e7852a45471bf7bb2a5bfb04dad7243ed6cd49372dd`.
 The actual running processes, Hub health/Bearer/unauthorized gates, eight stable
-web assets, reference APIs, normal Ray login and all six old/new package hashes
-passed. All30protected configuration/data files and the other three service
+web assets, workspace-list read, normal Ray login and all six old/new package
+hashes passed. Reference metadata/source assertions are conditional on existing
+workspace/session rows; their receipt flags alone do not prove nonempty reference
+integration. All30protected configuration/data files and the other three service
 processes remained unchanged. Backups are private; no credentials are published.
 
 The installed Windows Node was stopped only after confirming seven settled native
@@ -226,3 +228,5 @@ fresh24hour device authorization were requested separately. Actual post-release
 browser Goal/Job controls and task completion are **PENDING**, not accepted from
 API/software fixtures. The page, screenshot and private receipts remain in
 `D:/WorkSpace/tmp/handwave-long-task-implementation-20261015/deployment/`.
+
+Independent Codex post-deployment audit: `ACCEPT_BOUNDED_DEPLOYMENT_AND_NODE_UPGRADE_EVIDENCE` (`post-deploy-audit.json`). This accepts deployment/installation evidence, while actual authenticated UI tasks remain pending.
