@@ -498,12 +498,21 @@ impl Store {
         Ok(())
     }
     /// Only complete old user turns can move into the summary. Current run stays exact.
+    #[cfg(test)]
     pub fn summary_input(&self, messages: &[AgentMessage], old_count: usize) -> Result<Option<(usize, String)>> {
+        self.summary_input_with_limit(messages, old_count, CONTEXT_LIMIT)
+    }
+    pub fn summary_input_with_limit(
+        &self,
+        messages: &[AgentMessage],
+        old_count: usize,
+        limit: usize,
+    ) -> Result<Option<(usize, String)>> {
         let projected = self.projection(messages)?;
-        if serde_json::to_vec(&projected)?.len() <= CONTEXT_LIMIT {
+        if serde_json::to_vec(&projected)?.len() <= limit {
             return Ok(None);
         }
-        if old_count > messages.len() || serde_json::to_vec(&messages[old_count..])?.len() > CONTEXT_LIMIT {
+        if old_count > messages.len() || serde_json::to_vec(&messages[old_count..])?.len() > limit {
             bail!("current run exceeds context byte budget; narrow the request or tool output");
         }
         let previous = self.summary.as_ref().map(|s| s.prefix_end).unwrap_or(self.watermark);
@@ -530,7 +539,7 @@ impl Store {
         let text = serde_json::to_string(
             &json!({"source_directory":self.directory(),"previous_summary":self.summary,"closed_old_messages":closed}),
         )?;
-        if text.len() > CONTEXT_LIMIT {
+        if text.len() > limit {
             bail!("summary input exceeds context byte budget");
         }
         Ok(Some((cut, text)))
@@ -1008,6 +1017,17 @@ mod tests {
         let projected = s.projection(&messages).unwrap();
         assert_eq!(projected.last(), messages.last());
         assert!(serde_json::to_vec(&projected).unwrap().len() < CONTEXT_LIMIT);
+    }
+    #[test]
+    fn declared_context_changes_budget_without_resetting_sources() {
+        let mut s = store();
+        s.add_reference("objective", "capacity source".into(), "r1").unwrap();
+        let messages = vec![user("x".repeat(110 * 1024)), user("y".repeat(110 * 1024))];
+        let before = serde_json::to_vec(&s).unwrap();
+        assert!(s.summary_input_with_limit(&messages, 1, 900_000).unwrap().is_none());
+        assert!(s.summary_input_with_limit(&messages, 1, 16_000).is_err());
+        assert_eq!(serde_json::to_vec(&s).unwrap(), before);
+        assert_eq!(messages[1], user("y".repeat(110 * 1024)));
     }
     #[test]
     fn malformed_summary_and_unknown_provenance_are_rejected() {

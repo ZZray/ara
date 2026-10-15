@@ -6,6 +6,7 @@ mod experience;
 mod file_discovery;
 mod gateway;
 mod local_tools;
+mod model_caps;
 mod operations;
 mod project_rules;
 mod proxy;

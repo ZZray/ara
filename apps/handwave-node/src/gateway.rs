@@ -83,7 +83,7 @@ pub async fn resolve(
     endpoint: &str,
     token: &str,
     run: &str,
-) -> Result<(Route, reqwest::Client, u64)> {
+) -> Result<(Route, reqwest::Client, crate::model_caps::ModelCaps)> {
     let mut h = reqwest::header::HeaderMap::new();
     for (key, value) in headers(&route, run) {
         h.insert(reqwest::header::HeaderName::from_bytes(key.as_bytes())?, value.parse()?);
@@ -144,8 +144,8 @@ pub async fn resolve(
             route.protocol
         );
     }
-    let advertised_cap = row["max_tokens"].as_u64().filter(|n| *n > 0).unwrap_or(8192);
-    Ok((route, client, advertised_cap))
+    let capabilities = crate::model_caps::ModelCaps::parse(row)?;
+    Ok((route, client, capabilities))
 }
 
 #[cfg(test)]

@@ -43,7 +43,9 @@ class ContextFixture(Fixture):
         self.summary_requests = []
         self.agent_requests = []
         self.summary_source_ids = []
-        super().__init__(root, modern=True)
+        # These compaction tests exercise the legacy unknown-capacity 192 KiB
+        # policy. Explicit provider capacity is accepted separately by verify_model_caps.
+        super().__init__(root, modern=True, context_window=0)
 
     def emit(self, handler, *, text=None, tool=None, arguments=None, reasoning=None):
         handler.send_response(200)

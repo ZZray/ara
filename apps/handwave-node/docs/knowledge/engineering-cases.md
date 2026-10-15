@@ -1,5 +1,16 @@
 # Investigated cases — 2026-10-14
 
+## HWN-020: capability validation belongs before a pending-effect fence
+
+2026-10-15. Independent source review found a new fallible capacity check after
+pending_run had been durably saved. A too-small declared window could return
+before the normal finalizer, leaving a recoverable input error looking like an
+unfinished effectful Run. No provider/tool had run. Capacity/input checks and
+their bounded event admission now precede that checkpoint. Actual4096-window
+rejection, native pending_run=None and recovery at1M in the same Session prove
+the boundary without resetting native history. See
+[current evidence](../evidence/model-capabilities-20261015.md).
+
 ## HWN-019: busy wire follow-ups must inherit the active execution authority
 
 2026-10-15. The legacy workbench sends a follow-up as another agent-loop frame,

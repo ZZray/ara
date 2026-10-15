@@ -142,10 +142,12 @@ class WS:
 
 
 class Fixture:
-    def __init__(self, root, modern=False):
+    def __init__(self, root, modern=False, *, context_window=128000, input_modalities=None):
         self.root = root
         self.modern = modern
         self.expected_model = "fixture-model"
+        self.context_window = context_window
+        self.input_modalities = ["text"] if input_modalities is None else input_modalities
         self.requests = []
         self.downloads = []
         self.catalog_requests = 0
@@ -172,7 +174,7 @@ class Fixture:
                     require(self.headers.get("Authorization") == "Bearer fixture-key", "Hub directory did not use its gateway credential")
                     fixture.catalog_requests += 1
                     data = json.dumps({"object": "list", "data": [
-                        {"id": "fixture-model", "object": "model", "protocols": ["openai-completions"], "context_window": 128000, "max_tokens": 4096, "omp": {"name": "Fixture", "input": ["text"], "supportsTools": True, "reasoning": False}},
+                        {"id": "fixture-model", "object": "model", "protocols": ["openai-completions"], "context_window": fixture.context_window, "max_tokens": 4096, "omp": {"name": "Fixture", "input": fixture.input_modalities, "supportsTools": True, "reasoning": False}},
                         {"id": "fixture-other-protocol", "object": "model", "protocols": ["anthropic-messages"], "context_window": 128000, "max_tokens": 8192, "omp": {"name": "Unsupported fixture", "input": ["text"], "supportsTools": True}}
                         , {"id": "fixture-ambiguous", "object": "model", "protocols": ["openai-completions", "anthropic-messages"], "context_window": 128000, "max_tokens": 8192, "omp": {"name": "Ambiguous fixture", "input": ["text"], "supportsTools": True}}
                         , {"id": "fixture-legacy-null", "protocols": None, "context_window": 128000, "max_tokens": 4096, "omp": {"supportsTools": True}}

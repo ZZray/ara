@@ -139,6 +139,26 @@ budget/failure/cancellation guards and measured executable size. Controlled
 provider tests and real-model trials prove different boundaries. Evidence and
 independent review determine acceptance; this design page alone does not.
 
+## Model declarations and text allocation
+
+The Node now reads context_window/max_tokens/input from the current authorized
+Hub model directory (including OMP nested metadata). Conflicting positive limits
+use the smaller declaration; conflicting modality sets intersect. Unknown
+context retains the old192KiB projected-message policy; malformed declarations
+fail explicitly. Declared modalities remain distinct from the Host's currently
+text-only input transport. A model claiming image support does not add an image
+tool or make browser attachments available to this Node.
+
+Known context sizes adjust the text projection/summary trigger. Output and
+framing reserves, actual system/schema overhead and a4MiB local resource limit
+remain. Both ordinary and summary requests check the fully serialized Context,
+including second-stage JSON escaping, before provider HTTP. Byte allocation is
+an estimate, not actual tokens or proof of supplier maximum context. A capacity
+shrink cannot reset native identity, discard raw history or relax the allowance;
+uncompactable content fails with its audit retained. New capability validation
+occurs before pending-run persistence so an invalid capacity does not strand the
+Session. See[execution evidence](../evidence/model-capabilities-20261015.md).
+
 ## Reviewed tool experience
 
 The 2026-10-15 extension reuses this Store's memory states and source invalidation
