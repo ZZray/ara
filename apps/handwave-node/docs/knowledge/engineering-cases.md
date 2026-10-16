@@ -626,3 +626,67 @@ AppData Node state through its redirected view. A zero-file scan was rejected
 and retained; native PowerShell with hidden files reports54 real state files
 before the live task. Safety preflight must require the known state directory
 and a nonempty manifest rather than treating an empty traversal as quiescence.
+
+## HWN-029: stale native Goal could reopen input after a canceled dispatch
+
+2026-10-16. Independent review of the0.2.4 implementation found a crash window:
+Runner persisted cancellation before Job markers/native suspension. If Node
+crashed between those steps, the independent worker could still be alive and
+native Goal could still say waiting_job. Exposing Execute input tools from that
+native snapshot alone would bypass the durable canceled dispatch fence.
+
+The rejected assumption was that matching native Goal/lease proved current
+authority. Transport now supplies resume_job_lease only after Runner and native
+Goal agree on the identical active original lease. No native-history fallback
+can manufacture this Host authorization. A focused restart/cancellation test
+keeps native waiting_job deliberately stale and proves input remains denied.
+This deterministic fault test does not prove every physical crash/power-loss
+interleaving. See [0.2.4 evidence](../evidence/interactive-0.2.4-20261016.md).
+
+## HWN-030: returning to the same process did not identify the same log view
+
+2026-10-16. The reviewer reproduced A->B->A selection while A's old cursor8192
+request was in flight. Matching only job_id allowed the old suffix to replace a
+new view at cursor0, skipping the prefix. A stable process identity therefore
+was insufficient to identify the presentation generation.
+
+The console now binds response admission to selection generation, requested
+cursor and current cursor, and retires old log tickets on selection changes.
+The reproduced controlled DOM case passes after repair. Real browser checks
+exercise normal display/input/EOF; the exact ABA interleaving is a controlled
+transport test, not a claim of physical-network coverage. Unknown input recovery
+separately retains scoped operation IDs only, so reload cannot silently convert
+an unconfirmed send into permission for a fresh input.
+
+
+## 2026-10-16 Native terminal host boundaries
+
+Scope: compact Host0.2.4; Windows ConPTY and WSL Linux PTY, independent of
+root Core/OMP. Sources: terminal_process.rs, terminal_emulator.rs and
+[executed terminal evidence](../evidence/terminal-0.2.4-20261016.md).
+
+- A pipe-redirected Windows worker can leak its own redirected std handles into
+  the ConPTY child even when a pseudoconsole attribute exists. The delivered
+  spawn uses STARTF_USESTDHANDLES with INVALID_HANDLE_VALUE for all three handles;
+  actual Python stdin/stdout/stderr isatty and CMD/Read-Host input establish this
+  host shape, beyond merely successful CreatePseudoConsole.
+- An interactive Unix shell can create other process groups inside its terminal
+  session. Killing only the root group leaves such jobs alive. Linux cleanup
+  enumerates groups belonging to the original session, with a one-shot guard;
+  actual bash job control and descendant tests pass. Deliberate setsid escape
+  remains outside this boundary, as does Unix worker SIGKILL cleanup.
+- Browser replay must not answer old terminal queries. A persistent worker VT
+  parser answers the declared live DSR/DA subset; fixed xterm input-source
+  classification forwards only actual keyboard/IME/paste. Initial no-browser
+  CPR, reconnect and attached-parser tests distinguish this from dropping every
+  response or flushing old responses on attach.
+- The old generic metadata writer had a256KiB ceiling. Terminal input receipts
+  use a separate2MiB atomic journal with an executed1004-entry regression; a
+  larger read allowance alone would not fix persistence admission.
+- Completed test/build evidence is bound to image hashes. Rebuilding the same
+  release directory during packaging can change the image; the final package
+  is re-exercised and copied to an immutable evidence path before publication.
+
+The independent reviewer requested each of these corrections or verification
+boundaries. Actual output, negative cases and unverified platforms remain in the
+release evidence; no unreviewed runtime experience is automatically adopted.

@@ -89,6 +89,7 @@ fn job_manager(settings: &Resolved, lease: &crate::goal_runtime::Lease) -> Resul
         &settings.cwd,
         crate::managed_jobs::Policy {
             owner: crate::managed_jobs::Owner::new(&state, &settings.fp, &lease.session)?,
+            goal_id: lease.goal_id.clone(),
             lease_expires_at: lease.expires_at,
             max_jobs: 8,
             max_log_bytes: 8 * 1024 * 1024,
@@ -422,6 +423,11 @@ async fn session(
                                 alive.cancel();stop(&mut active).await?;epoch+=1;owner.clear();queued.clear();receipts=None;
                             }
                         },
+                        "job-command"=>{
+                            let result=crate::job_control::handle(&sig,settings,&owner,goals).await;
+                            let reply=crate::job_control::reply(&sig,&settings.fp,result);
+                            socket.send(Message::Text(reply.to_string().into())).await?;
+                        },
                         "goal-command"=>{
                             let result=goal_command(&sig,settings,&owner,&mut active,goals,&mut retired).await;
                             if result.as_ref().err().is_some_and(|e|e.to_string().contains("refusing to reconnect")){return Err(result.err().unwrap());}
@@ -504,6 +510,9 @@ async fn session(
                             let sender=Sender{tx:tx.clone(),epoch,alive:alive.clone()};
                             let cancel=run.cancel.clone();
                             let ending=run.ending.clone();
+                            let resume_job_lease=if matches!(frame.execution_mode.as_str(),""|"execute") {
+                                crate::job_control::resume_lease(settings,&owner,&frame.session_key,goals).ok().flatten()
+                            } else {None};
                             let request=RunRequest{
                                 id:frame.id.clone(),objective:objective(&frame),device_fp:settings.fp.clone(),
                                 model:if frame.model.is_empty(){"default".into()}else{frame.model.clone()},
@@ -511,7 +520,7 @@ async fn session(
                                 brief:frame.brief.clone(),max_calls:settings.config.max_calls,max_seconds:settings.config.max_seconds.min(ttl.min(decision_budget)-10),
                                 steering:run.steering.clone(),
                                 mode:crate::execution::RunMode::parse(&frame.execution_mode)?,goal_criteria:frame.goal_criteria.clone(),goal_id:frame.goal_id.clone(),
-                                goal_lease:lease,session_key:frame.session_key.clone(),expected_revision:frame.expected_revision,reviewed_run_id:frame.reviewed_run_id.clone(),
+                                goal_lease:lease,resume_job_lease,session_key:frame.session_key.clone(),expected_revision:frame.expected_revision,reviewed_run_id:frame.reviewed_run_id.clone(),
                             };
                             eprintln!("agent start: id={} model={} budget={}s",frame.id,request.model,request.max_seconds);
                             let writer_epoch=goals.writer_epoch.clone();

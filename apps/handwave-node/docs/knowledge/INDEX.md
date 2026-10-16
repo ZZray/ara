@@ -3,6 +3,14 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [0.2.4 native PTY / ConPTY terminal](../evidence/terminal-0.2.4-20261016.md):
+  native terminal ownership, live headless query responses, keyboard/resize/control
+  receipts and final release evidence.
+
+- [0.2.4 pipe-stage interactive process console](../evidence/interactive-0.2.4-20261016.md):
+  same-worker pipe input/EOF, private controller path, normal-message continuation,
+  scoped receipts, executed Windows evidence and publication limits.
+
 - [2026-10-16 product checkpoint](../evidence/product-checkpoint-20261016.md): daily supervised-use assessment, implemented capability boundaries and evidence-led next priorities.
 
 - [Connection-local message queue](message-queue.md): authoritative pending-message controls, scoped Run handover and steering admission receipts.

@@ -224,6 +224,20 @@ impl Runner {
             .map(|e| e.lease.clone())
             .ok_or_else(|| anyhow::anyhow!("no matching local goal contract"))
     }
+    /// Reading a receipt does not renew execution authority. Input needs both
+    /// this durable dispatch fence and the native Session's current Goal.
+    pub fn job_contract(&self, goal: &str, owner: &str, session: &str, input: bool) -> Result<Lease> {
+        let lease = self.contract(goal, owner, session)?;
+        if input {
+            let entry = self.entries.iter().find(|e| e.lease == lease).expect("contract exists");
+            ensure!(
+                matches!(entry.status.as_str(), "running" | "yielded" | "resume_ready" | "waiting_job"),
+                "goal is not accepting process input"
+            );
+            ensure!(lease.allow_jobs && lease.expires_at > now(), "goal process-input authority expired or denied");
+        }
+        Ok(lease)
+    }
     pub fn waiting_jobs(&self, owner: &str) -> Vec<Lease> {
         self.entries
             .iter()
@@ -353,7 +367,33 @@ mod tests {
         let mut restarted = Runner::load(&root).unwrap();
         restarted.recover("session", Some(&goal)).unwrap();
         assert_eq!(restarted.entries[0].status, "canceled");
+        assert!(restarted.job_contract("goal", "owner", "session", true).is_err());
+        assert!(restarted.job_contract("goal", "owner", "session", false).is_ok());
         assert!(restarted.next("owner").unwrap().is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn process_input_requires_live_authority_and_active_dispatch() {
+        let root = std::env::temp_dir().join(format!("goal-input-{}", crate::wire::fresh_id()));
+        std::fs::create_dir(&root).unwrap();
+        let mut runner = Runner::load(&root).unwrap();
+        let mut contract = lease();
+        contract.expires_at = now() + 120;
+        runner
+            .register(&Frame { id: "r".into(), session_key: "session".into(), ..Frame::default() }, &contract)
+            .unwrap();
+        assert!(runner.job_contract("goal", "owner", "session", true).is_ok());
+        assert!(runner.job_contract("goal", "other", "session", true).is_err());
+        assert!(runner.job_contract("goal", "owner", "other", true).is_err());
+        runner.entries[0].status = "paused".into();
+        assert!(runner.job_contract("goal", "owner", "session", true).is_err());
+        runner.entries[0].status = "waiting_job".into();
+        runner.entries[0].lease.expires_at = now();
+        assert!(runner.job_contract("goal", "owner", "session", true).is_err());
+        runner.entries[0].lease.expires_at = now() + 120;
+        runner.entries[0].lease.allow_jobs = false;
+        assert!(runner.job_contract("goal", "owner", "session", true).is_err());
+        assert!(runner.job_contract("goal", "owner", "session", false).is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -85,6 +85,84 @@ permission extension or unknown script replay substitutes for native recovery.
 
 ## Managed process contract
 
+### Native terminal and pipe input (0.2.4)
+
+`terminal=true` implies interactive input and creates native ConPTY on Windows,
+PTY on Unix, initially24rows/80columns (rows10..300, columns20..500). Terminal
+stdout/stderr share a single byte artifact in stdout; stderr is empty. Tools
+`job_terminal_resize` and `job_terminal_signal` share the original input lease,
+owner and durable operation IDs. Ctrl+C is a terminal control key, not guaranteed
+Job cancellation; EOF is Ctrl+D on Unix or Ctrl+Z+Enter on Windows and leaves
+the terminal writer open. `job_cancel` remains the separate process-tree stop.
+Terminal operations have8KiB per input,1MiB total text/2048 control receipts,
+and a separate2MiB atomic journal. Pipe limits below stay unchanged.
+
+The worker retains a bounded vt100 screen and answers live DSR5/6/private6,
+primary/secondary DA and ESC Z requests through the same serialized writer.
+It never reparses historical artifacts for input. Query floods or input/output
+service faults interrupt the Job and clean up the owned terminal tree. Screen
+state is bounded300x500 with no scrollback. OSC colors, DECRQM, DCS and all
+xterm extensions are not claimed; browser xterm displays VT output and forwards
+only actual user input. Its pinned6.0.0 CoreService user-input adapter fails
+closed if that interface is unavailable; upgrades require the actual-vendor
+keyboard/IME/paste/query tests. Windows requires OS ConPTY support.
+
+Linux cleanup includes process groups in the original PTY session, including
+shell job-control groups. A child deliberately creating a new session escapes
+that boundary; it is not an OS sandbox. Non-Linux Unix session-wide group
+cleanup has not been run in this delivery. Windows owns a Job Object assigned
+before the child resumes. Closing ConPTY runs off the Tokio thread while the
+output pump continues draining.
+
+The browser starts observing and may attach only after snapshot replay and
+xterm parsing finish. Keyboard is scoped to its focused terminal; input batches
+are bounded,80ms and single-ACK serialized. Attached visible views refresh at
+150ms without overlapping requests, with an immediate read after input/signal
+ACK; observation retains2s polling. Disconnect, pause, owner/Job changes and
+unknown ACK discard unsent bytes. Credentials can be echoed by the terminal,
+so direct input is excluded from chat storage, not guaranteed absent from logs.
+
+### Pipe compatibility
+
+
+An explicitly leased `job_start` may set `interactive=true`; the default and
+legacy noninteractive Spec serialization remain unchanged. The same detached
+worker retains stdin across model Runs and controller reconnects. This is a
+pipe; use terminal=true for the native terminal above. Neither provides desktop control. Interpreters remain supplied
+by the host machine. Windows suspended -> Job Object -> resume is preserved.
+
+`job_write_input` writes exact text (including any intended newline), and
+`job_input_status` retrieves metadata-only receipts. A normal Execute follow-up
+can access existing-process tools only after the Host checks the durable
+Runner cancellation fence and native Goal against the identical original lease;
+it cannot gain `job_start`. Plan remains read-only. Original Goal identity,
+device/Session ownership, both Host and worker deadlines, and cancellation
+markers gate new input. A new Goal cannot renew an old process's input authority.
+
+Input uses authenticated bounded loopback IPC to the original worker. The
+worker serializes input, commits a pending receipt before writing, then records
+written or unknown. Stable input IDs prohibit duplicate writes or conflicting
+replacement text. Partial writes, failed acknowledgement and pending outcomes
+are reconciled by receipt; they do not authorize a new ID or automatic replay.
+Limits are8KiB per input and64KiB/64 operations per Job. EOF closes stdin.
+Writes are bounded independently of cancellation and process-tree cleanup.
+
+The browser console uses a separately authorized Hub signal and does not call
+the model for refresh, input, EOF or cancellation. It defaults to collapsed;
+expanded views read bounded stdout/stderr chunks with independent cursors.
+Selection generations reject stale log responses. Controller/device/Session/
+Goal changes fence replies. Before input, sessionStorage retains only scoped
+Job/input IDs; after a refresh, an unresolved input disables new submissions
+until its receipt is checked. Input text is not stored there or in chat/native
+history by this direct path. A child program can still echo its input into logs.
+Model-mediated text input is ordinary tool history, so credentials belong in
+the direct console rather than chat/tool arguments. Private worker nonces are
+removed from model/browser receipts and runtime observations.
+
+The exact Windows process tests, controlled browser checks, real-model
+regression and unverified platform/publication boundaries are recorded in
+[0.2.4 evidence](../evidence/interactive-0.2.4-20261016.md).
+
 `job_start`, `job_status`, `job_read_log` and `job_cancel` use a detached worker
 of the same EXE. The Host fixes owner, lease and quotas; tool arguments contain
 only the intended script/interpreter/cwd/timeout and stable `op_id`. A durable

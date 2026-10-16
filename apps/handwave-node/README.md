@@ -4,9 +4,15 @@
 
 ## 使用
 
-当前发布版本为 **0.2.3**，Windows 独立 EXE 4,961,792 字节；[Windows 包](https://118.25.103.226/ray/releases/handwave-node-windows-e56c5265.zip)、[Linux 源码安装](https://118.25.103.226/ray/install)。重连、异常与恢复的实际验证见[恢复交付记录](docs/evidence/recovery-0.2.3-20261016.md)，消息队列见[队列交付记录](docs/evidence/message-queue-0.2.2-20261016.md)。安装、工具、压缩、参考记忆、任务清单和目标
-验收统一记录在[版本验收](docs/evidence/version-0.2.0-20261016.md)；研究依据见
-[上下文与缓存效率](docs/research-efficiency-20261016.md)。发布状态以验收记录为准。
+本版 **0.2.4** 的 Windows 独立 EXE 为5,151,744字节（约5.15MB）；
+[Windows 包](https://118.25.103.226/ray/releases/handwave-node-windows-1396bffa.zip)、
+[Linux 源码安装](https://118.25.103.226/ray/install)。原生终端、产物校验及实际发布
+状态见[终端版本验收](docs/evidence/terminal-0.2.4-20261016.md)。Windows需要
+Windows10 1809及以上或Windows11。重连和队列的历史验证分别见
+[恢复记录](docs/evidence/recovery-0.2.3-20261016.md)、[队列记录](docs/evidence/message-queue-0.2.2-20261016.md)。
+安装、工具、压缩、参考记忆、任务清单和目标见
+[基础版本验收](docs/evidence/version-0.2.0-20261016.md)；研究依据见
+[上下文与缓存效率](docs/research-efficiency-20261016.md)。
 
 执行模式可调用 `task_update` 维护本次 Run 的清单，完成项必须带证据；它不等于
 跨会话项目任务数据库。目标模式使用原生持久 Goal 步骤、预算、续跑和待验收状态。
@@ -53,6 +59,21 @@ $env:HW_TOKEN = '<node enrollment token>'
 单任务默认最多 24 次模型请求、600 秒，并按收到的短期访问码 TTL 缩短；使用 `--max-calls` / `--max-seconds` 调整。任务超过授权时限会明确停止，不盲目续码重放。上下文摘要也计入同一任务预算。文本文件完整读取限 1 MiB，大日志可用 `read_file` 的 `offset` / `limit` 分段读取或 `tail` 读取末尾；命令输出限 128 KiB。下载限 128 MiB；Web 文件上传限 16 MiB，下载按确认帧流式传输。
 
 ## 本版新增能力
+
+**0.2.4** 增加同一进程的管道输入与原生终端：`job_start`
+使用 `terminal=true` 创建 Windows ConPTY / Unix PTY；输出合并到 stdout，支持
+连续键盘输入、Ctrl+C、终端 EOF、尺寸变化与进程树停止。`interactive=true`
+保留管道方式，适合普通行输入。解释器仍来自被控电脑。
+
+工作台「进程控制台」默认折叠，先只观察；回放完成后点击「接入终端」才接收
+键盘和粘贴。当前终端接入时每150ms有界刷新，输入ACK后立即读取，不调用模型。
+控制台直接输入不进入聊天；终端或程序自身仍可能回显到输出日志。
+断线、切换任务或未知ACK立即脱离输入，只核对原操作编号，不自动重发。
+
+终端常用 DSR/DA 查询由活着的 worker 实时处理，浏览器回放不会向进程补发
+历史查询响应。具体支持集、跨平台执行证据与发布状态见
+[0.2.4 原生终端验收](docs/evidence/terminal-0.2.4-20261016.md)。
+此前[管道阶段记录](docs/evidence/interactive-0.2.4-20261016.md)保留作历史证据。
 
 长任务版本的 Windows 独立 EXE 为 **4,899,328 字节（约 4.90 MB）**，SHA-256
 `a38da90708ca929780438d9e0c00c935a2018e71aa0ea1a99d254200968c7db1`。

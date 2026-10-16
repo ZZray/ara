@@ -166,6 +166,7 @@ def main():
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--hub-binary", required=True, type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--terminal", action="store_true", help="Require the same fixed task through native PTY/ConPTY")
     args = parser.parse_args()
     require(args.binary.is_file() and args.hub_binary.is_file(), "Provide existing final Node and local Hub binaries")
     root = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix="hw-long-goal-live-"))
@@ -177,7 +178,7 @@ def main():
     started, wall_started = time.monotonic(), int(time.time())
     result = {"status": "FAIL", "scope": "actual cloud model via temporary local Hub and temporary Node; production HandWave not accepted",
               "model": MODEL, "protocol": PROTOCOL, "limits": {"root_http_calls": MAX_CALLS, "slices": MAX_SLICES, "goal_seconds": GOAL_SECONDS,
-              "calls_per_slice": 2, "seconds_per_slice": 60, "watchdog_seconds": WATCHDOG_SECONDS},
+              "calls_per_slice": 2, "seconds_per_slice": 60, "watchdog_seconds": WATCHDOG_SECONDS}, "terminal_required": args.terminal,
               "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               "hub_binary_sha256": hashlib.sha256(args.hub_binary.read_bytes()).hexdigest(),
               "no_os_sandbox_claim": True, "no_automatic_retry": True}
@@ -280,6 +281,8 @@ def main():
                   "a result before reading the real receipts. A goal_update plan is optional. Finish with a concise factual result for user review. "
                   "For job_start.script copy this exact fixed reference script, without substitutions or alternate implementations (whitespace may differ):\n```python\n"
                   + REFERENCE_JOB_SCRIPT + "```\n")
+        if args.terminal:
+            prompt += " For job_start set terminal=true explicitly; keep the reference script unchanged. The worker must use a native PTY/ConPTY, not pipes."
         stage = "single_actual_model_goal"
         controller.frame({"k": "agent-loop", "id": goal_id, "session_key": session_key, "execution_mode": "goal", "msg": prompt,
             "goal_criteria": ["One independent Python Job writes report.json with sum 42 and count 3", "Job stdout and report.json are actually read and verified"],
@@ -343,6 +346,9 @@ def main():
         require(job["worker_pid"] and job["finished_at"] is not None, "Independent worker receipt missing")
         request = read_json(job_dir / "request.json")
         require(request["spec"]["language"] == "python" and same_existing_directory(request["spec"]["cwd"], work), "Job escaped fixture language/cwd")
+        if args.terminal:
+            require(request["spec"].get("terminal") is True and job.get("terminal") is True, "Actual model did not select a native terminal")
+            require(job["stderr_bytes"] == 0, "Native terminal output was duplicated")
         report = read_json(work / "report.json")
         require(report == {"sum": 42, "count": 3}, "Actual report artifact differs from computed fixture result")
         require(read_json(work / "input.json") == [6, 12, 24] and {path.name for path in work.iterdir()} == {"AGENTS.md", "input.json", "report.json"}, "Model changed fixture inputs or produced extra effects")

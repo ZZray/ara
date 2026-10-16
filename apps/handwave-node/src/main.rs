@@ -7,6 +7,7 @@ mod experience;
 mod file_discovery;
 mod gateway;
 mod goal_runtime;
+mod job_control;
 mod local_tools;
 mod managed_jobs;
 mod model_caps;
@@ -17,6 +18,8 @@ mod proxy;
 mod script_tools;
 mod session_journal;
 mod system_capabilities;
+mod terminal_emulator;
+mod terminal_process;
 mod transport;
 mod wire;
 

@@ -4,7 +4,7 @@ This bundle records all third-party packages in the locked Cargo resolution,
 including build and target dependencies. It does not assert that every package
 is linked into the executable. Original license and notice text is retained.
 
-Cargo.lock SHA256: `6e7f856f537b85dfef56ae29063418ed450a9a93d49be5df796ecb81405b52bc`.
+Cargo.lock SHA256: `8e06065920a15226248bb9995a9c2da0912a47a71f824a14bec58d0a698078a4`.
 
 Rust standard-library/toolchain notices are retained under `licenses/rust-toolchain`.
 Operating-system runtime libraries are supplied by the OS. Local credentials
@@ -23,6 +23,7 @@ Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.
 | anstyle-query 1.1.5 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/anstyle-query-1.1.5/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/anstyle-query-1.1.5/LICENSE-MIT) |
 | anstyle-wincon 3.0.11 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/anstyle-wincon-3.0.11/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/anstyle-wincon-3.0.11/LICENSE-MIT) |
 | anyhow 1.0.104 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/anyhow-1.0.104/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/anyhow-1.0.104/LICENSE-MIT) |
+| arrayvec 0.7.8 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/arrayvec-0.7.8/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/arrayvec-0.7.8/LICENSE-MIT) |
 | async-trait 0.1.92 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/async-trait-0.1.92/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/async-trait-0.1.92/LICENSE-MIT) |
 | atomic-waker 1.1.2 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/atomic-waker-1.1.2/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/atomic-waker-1.1.2/LICENSE-MIT) · [LICENSE-THIRD-PARTY](licenses/third-party/atomic-waker-1.1.2/LICENSE-THIRD-PARTY) |
 | autocfg 1.5.1 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/autocfg-1.5.1/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/autocfg-1.5.1/LICENSE-MIT) |
@@ -232,6 +233,7 @@ Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.
 | tungstenite 0.26.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/tungstenite-0.26.2/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/tungstenite-0.26.2/LICENSE-MIT) |
 | typenum 1.20.1 | MIT OR Apache-2.0 | [LICENSE](licenses/third-party/typenum-1.20.1/LICENSE) · [LICENSE-APACHE](licenses/third-party/typenum-1.20.1/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/typenum-1.20.1/LICENSE-MIT) |
 | unicode-ident 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | [LICENSE-APACHE](licenses/third-party/unicode-ident-1.0.27/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/unicode-ident-1.0.27/LICENSE-MIT) · [LICENSE-UNICODE](licenses/third-party/unicode-ident-1.0.27/LICENSE-UNICODE) |
+| unicode-width 0.2.2 | MIT OR Apache-2.0 | [COPYRIGHT](licenses/third-party/unicode-width-0.2.2/COPYRIGHT) · [LICENSE-APACHE](licenses/third-party/unicode-width-0.2.2/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/unicode-width-0.2.2/LICENSE-MIT) |
 | untrusted 0.9.0 | ISC | [LICENSE.txt](licenses/third-party/untrusted-0.9.0/LICENSE.txt) |
 | url 2.5.8 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/url-2.5.8/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/url-2.5.8/LICENSE-MIT) |
 | utf-8 0.7.6 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/utf-8-0.7.6/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/utf-8-0.7.6/LICENSE-MIT) |
@@ -239,6 +241,8 @@ Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.
 | utf8parse 0.2.2 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/utf8parse-0.2.2/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/utf8parse-0.2.2/LICENSE-MIT) |
 | uuid 1.28.0 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/uuid-1.28.0/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/uuid-1.28.0/LICENSE-MIT) |
 | version_check 0.9.5 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/version_check-0.9.5/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/version_check-0.9.5/LICENSE-MIT) |
+| vt100 0.16.2 | MIT | [LICENSE](licenses/third-party/vt100-0.16.2/LICENSE) |
+| vte 0.15.0 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/vte-0.15.0/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/vte-0.15.0/LICENSE-MIT) |
 | want 0.3.2 | MIT | [LICENSE](licenses/third-party/want-0.3.2/LICENSE) |
 | wasi 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/wasi-0.11.1+wasi-snapshot-preview1/LICENSE-APACHE) · [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/third-party/wasi-0.11.1+wasi-snapshot-preview1/LICENSE-Apache-2.0_WITH_LLVM-exception) · [LICENSE-MIT](licenses/third-party/wasi-0.11.1+wasi-snapshot-preview1/LICENSE-MIT) |
 | wasip2 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/wasip2-1.0.4+wasi-0.2.12/LICENSE-APACHE) · [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/third-party/wasip2-1.0.4+wasi-0.2.12/LICENSE-Apache-2.0_WITH_LLVM-exception) · [LICENSE-MIT](licenses/third-party/wasip2-1.0.4+wasi-0.2.12/LICENSE-MIT) |

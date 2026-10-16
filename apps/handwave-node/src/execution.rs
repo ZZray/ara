@@ -41,6 +41,7 @@ impl RunMode {
                     | "history_search"
                     | "job_status"
                     | "job_read_log"
+                    | "job_input_status"
             )
     }
     pub fn validate_command(self, text: &str) -> Result<()> {

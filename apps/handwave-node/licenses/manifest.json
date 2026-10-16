@@ -1,6 +1,6 @@
 {
-  "cargo_lock_sha256": "6e7f856f537b85dfef56ae29063418ed450a9a93d49be5df796ecb81405b52bc",
-  "package_count": 271,
+  "cargo_lock_sha256": "8e06065920a15226248bb9995a9c2da0912a47a71f824a14bec58d0a698078a4",
+  "package_count": 275,
   "scope": "all locked resolved third-party packages, including build and target dependencies",
   "missing_original_texts": [],
   "packages_without_standalone_license_in_archive": [
@@ -214,6 +214,28 @@
           "file": "licenses/third-party/anyhow-1.0.104/LICENSE-MIT",
           "source_relative": "LICENSE-MIT",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    {
+      "name": "arrayvec",
+      "version": "0.7.8",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/bluss/arrayvec",
+      "authors": [
+        "bluss"
+      ],
+      "files": [
+        {
+          "file": "licenses/third-party/arrayvec-0.7.8/LICENSE-APACHE",
+          "source_relative": "LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "file": "licenses/third-party/arrayvec-0.7.8/LICENSE-MIT",
+          "source_relative": "LICENSE-MIT",
+          "sha256": "4da95ec4ecb65b738d470b7d762894ad9c97da93e6cbfb18b570fc2c96f4b871"
         }
       ]
     },
@@ -4721,6 +4743,34 @@
       ]
     },
     {
+      "name": "unicode-width",
+      "version": "0.2.2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/unicode-rs/unicode-width",
+      "authors": [
+        "kwantam <kwantam@gmail.com>",
+        "Manish Goregaokar <manishsmail@gmail.com>"
+      ],
+      "files": [
+        {
+          "file": "licenses/third-party/unicode-width-0.2.2/COPYRIGHT",
+          "source_relative": "COPYRIGHT",
+          "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d"
+        },
+        {
+          "file": "licenses/third-party/unicode-width-0.2.2/LICENSE-APACHE",
+          "source_relative": "LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "file": "licenses/third-party/unicode-width-0.2.2/LICENSE-MIT",
+          "source_relative": "LICENSE-MIT",
+          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
+        }
+      ]
+    },
+    {
       "name": "untrusted",
       "version": "0.9.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4879,6 +4929,46 @@
           "file": "licenses/third-party/version_check-0.9.5/LICENSE-MIT",
           "source_relative": "LICENSE-MIT",
           "sha256": "b7e650f3fce5c53249d1cdc608b54df156a97edd636cf9d23498d0cfe7aec63e"
+        }
+      ]
+    },
+    {
+      "name": "vt100",
+      "version": "0.16.2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT",
+      "repository": "https://github.com/doy/vt100-rust",
+      "authors": [
+        "Jesse Luehrs <doy@tozt.net>"
+      ],
+      "files": [
+        {
+          "file": "licenses/third-party/vt100-0.16.2/LICENSE",
+          "source_relative": "LICENSE",
+          "sha256": "53a04b0a11073f3d0183c31a4b7bdf9a3f68d453adeec136e59e5a9d9a554370"
+        }
+      ]
+    },
+    {
+      "name": "vte",
+      "version": "0.15.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "Apache-2.0 OR MIT",
+      "repository": "https://github.com/alacritty/vte",
+      "authors": [
+        "Joe Wilm <joe@jwilm.com>",
+        "Christian Duerr <contact@christianduerr.com>"
+      ],
+      "files": [
+        {
+          "file": "licenses/third-party/vte-0.15.0/LICENSE-APACHE",
+          "source_relative": "LICENSE-APACHE",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "file": "licenses/third-party/vte-0.15.0/LICENSE-MIT",
+          "source_relative": "LICENSE-MIT",
+          "sha256": "e4c9b06fa850cb9b540a5e400e9f6394cf15efcf4098144de477d1d3dae10150"
         }
       ]
     },

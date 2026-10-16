@@ -1,6 +1,6 @@
 [package]
 name = "handwave-node"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 license = "MIT"
 description = "Standalone Rust computer agent for the HandWave cloud workbench"
@@ -31,9 +31,10 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["c
 tokio-socks = "0.5"
 url = "2"
 percent-encoding = "2"
+vt100 = "=0.16.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
