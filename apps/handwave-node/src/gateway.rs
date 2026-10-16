@@ -84,15 +84,19 @@ pub async fn resolve(
     token: &str,
     run: &str,
 ) -> Result<(Route, reqwest::Client, crate::model_caps::ModelCaps)> {
+    let endpoint_url = url::Url::parse(endpoint).context("invalid Hub model endpoint")?;
+    crate::transport_security::validate(&endpoint_url)?;
     let mut h = reqwest::header::HeaderMap::new();
     for (key, value) in headers(&route, run) {
         h.insert(reqwest::header::HeaderName::from_bytes(key.as_bytes())?, value.parse()?);
     }
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
-        .default_headers(h)
-        .build()?;
+        .default_headers(h);
+    let client =
+        if crate::transport_security::plaintext_loopback(&endpoint_url) { builder.no_proxy() } else { builder }
+            .build()?;
     let mut response = client
         .get(format!("{}/models", endpoint.trim_end_matches('/')))
         .bearer_auth(token)

@@ -4,6 +4,11 @@
 
 ## 使用
 
+源码 **0.2.5** 增加安全修补，尚未替换下方已发布的 0.2.4 下载。公网连接必须
+使用有效证书的 HTTPS/WSS；设备通过原有密钥签名证明身份，旧设备授权需要明确
+重新批准。Hub 与被控端须同步更新；旧目标和会话不自动迁移所有者。详见
+[修补与升级边界](docs/evidence/security-hardening-0.2.5-20261016.md)。
+
 本版 **0.2.4** 的 Windows 独立 EXE 为5,151,744字节（约5.15MB）；
 [Windows 包](https://118.25.103.226/ray/releases/handwave-node-windows-1396bffa.zip)、
 [Linux 源码安装](https://118.25.103.226/ray/install)。原生终端、产物校验及实际发布

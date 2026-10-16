@@ -3,6 +3,14 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [0.2.5 security hardening](../evidence/security-hardening-0.2.5-20261016.md):
+  signed socket identity, complete-key approval pins, verified public transport,
+  safe Web rendering and explicit coordinated-upgrade boundaries.
+
+- [0.2.4 read-only security audit](../evidence/security-audit-20261016.md):
+  confirmed identity/HTML injection defects, plaintext machine transport,
+  shared-administrator and OS-account execution boundaries; remediation pending.
+
 - [0.2.4 native PTY / ConPTY terminal](../evidence/terminal-0.2.4-20261016.md):
   native terminal ownership, live headless query responses, keyboard/resize/control
   receipts and final release evidence.

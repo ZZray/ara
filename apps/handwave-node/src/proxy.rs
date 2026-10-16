@@ -35,6 +35,11 @@ pub fn bypass_proxy(host: &str, port: u16, rules: &str) -> bool {
 }
 
 fn proxy_for(url: &Url) -> Option<String> {
+    // The plaintext development exception means this computer, never a
+    // proxy's loopback interface. Secure public connections may still proxy.
+    if crate::transport_security::plaintext_loopback(url) {
+        return None;
+    }
     let host = url.host_str()?;
     let port = url.port_or_known_default()?;
     let no_proxy = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
@@ -51,6 +56,7 @@ fn proxy_for(url: &Url) -> Option<String> {
 }
 
 pub async fn connect(url: &Url, token: &str) -> Result<Socket> {
+    crate::transport_security::validate(url)?;
     let host = url.host_str().context("missing hub host")?;
     let port = url.port_or_known_default().context("missing hub port")?;
     let socket = match proxy_for(url) {

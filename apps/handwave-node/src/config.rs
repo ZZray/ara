@@ -39,6 +39,7 @@ pub struct Resolved {
     pub state: PathBuf,
     pub cwd: PathBuf,
     pub fp: String,
+    identity: crate::node_identity::Identity,
     _lock: std::fs::File,
 }
 
@@ -63,7 +64,7 @@ impl Resolved {
             .hub
             .clone()
             .or_else(|| conf.get("hub").cloned())
-            .or_else(|| config.identity.then(|| "http://localhost".to_string()))
+            .or_else(|| config.identity.then(|| "http://127.0.0.1".to_string()))
             .context("set HW_HUB or hub= in node.conf")?;
         let hub = normalize_hub(&hub)?;
         let token = config.token.take().or_else(|| conf.get("token").cloned()).unwrap_or_default();
@@ -89,8 +90,13 @@ impl Resolved {
         anyhow::ensure!(config.max_calls > 0 && config.max_seconds > 0, "budgets must be positive");
         let cwd = std::fs::canonicalize(&config.cwd).context("working directory does not exist")?;
         anyhow::ensure!(cwd.is_dir(), "cwd must be a directory");
-        let fp = fingerprint(&state)?;
-        Ok(Self { config, hub, token, state, cwd, fp, _lock: lock })
+        let identity = crate::node_identity::Identity::load(&state)?;
+        let fp = identity.fingerprint();
+        Ok(Self { config, hub, token, state, cwd, fp, identity, _lock: lock })
+    }
+
+    pub fn signed_join(&self, challenge: &Value) -> Result<Value> {
+        self.identity.signed_join(challenge, self.hello())
     }
 
     pub fn hello(&self) -> Value {
@@ -185,7 +191,7 @@ fn read_conf(path: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 pub fn normalize_hub(hub: &str) -> Result<Url> {
-    let text = if hub.contains("://") { hub.to_string() } else { format!("http://{hub}") };
+    let text = if hub.contains("://") { hub.to_string() } else { format!("https://{hub}") };
     let mut url = Url::parse(&text)?;
     let scheme = match url.scheme() {
         "ws" | "http" => "http",
@@ -197,39 +203,12 @@ pub fn normalize_hub(hub: &str) -> Result<Url> {
         url.host_str().is_some() && url.username().is_empty() && url.password().is_none(),
         "invalid hub URL"
     );
+    crate::transport_security::validate(&url)?;
     let path = url.path().trim_end_matches('/').trim_end_matches("/ws").to_string();
     url.set_path(&path);
     url.set_query(None);
     url.set_fragment(None);
     Ok(url)
-}
-
-fn fingerprint(state: &Path) -> Result<String> {
-    let path = state.join("identity.key");
-    let seed = match std::fs::read(&path) {
-        Ok(bytes) => {
-            bytes.try_into().map_err(|_| anyhow::anyhow!("invalid identity.key; existing identity was preserved"))?
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            use std::io::Write;
-            let mut seed = [0u8; 32];
-            getrandom::fill(&mut seed)?;
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&path)?;
-            file.write_all(&seed)?;
-            file.sync_all()?;
-            seed
-        }
-        Err(e) => return Err(e.into()),
-    };
-    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
-    Ok(data_encoding::BASE32_NOPAD.encode(&key.verifying_key().to_bytes()[..8]))
 }
 
 #[cfg(test)]

@@ -1,5 +1,37 @@
 # Investigated cases — 2026-10-14
 
+## HWN-024: functional terminal acceptance does not establish trusted identity
+
+2026-10-16. Read-only audit of the published 0.2.4 Host and pinned Go
+`16da1d5` found that console Session/lease/receipt checks depend on an identity
+layer which accepts a node-supplied fingerprint without private-key proof.
+An isolated real-WebSocket fixture confirmed that an admitted node can replace
+an approved fingerprint and inherit its pairing; a second confirmed that a
+controller can claim an existing owner FP to read a Goal. Shared QR currently
+means a shared administrator, not isolated user accounts. Installed HTTP Node
+configuration also leaves the independent machine transport unencrypted.
+
+The maintained release Web archive contains two unsafe HTML constructions:
+pending-device hostname notifications and quote-unescaped code-block attributes.
+The final Ray rewrite leaves both intact. Actual renderer fixtures confirmed
+three event-bearing attribute trees, without browser event execution or a
+production attack. Cookie HttpOnly and terminal input fences do not prevent
+same-origin injected script from borrowing the logged-in session.
+
+All findings remain unfixed in this read-only investigation; there is no evidence
+of actual compromise or OS administrator escalation. Keep ingress identity,
+transport confidentiality, browser rendering and local OS authority as separate
+acceptance layers. See [audit evidence and remediation priorities](../evidence/security-audit-20261016.md).
+
+The authorized follow-up is [0.2.5 security hardening](../evidence/security-hardening-0.2.5-20261016.md).
+Its independent review caught two important transport distinctions: a loopback
+URL sent through an external proxy refers to that proxy's machine, and a verified
+initial TLS URL does not protect a bearer if the WS client follows a downgrade
+redirect. The fix must cover the actual dial/client policy, not URL validation
+alone. Shared-admin controller ownership is server-derived; compatibility cannot
+be preserved by accepting the old client-supplied owner or automatically pinning
+legacy approvals. Publication is separate from source/test acceptance.
+
 ## HWN-023: capacity telemetry must follow authenticated Goal slices
 
 2026-10-16. Independent Codex UI review traced a fresh Goal slice through

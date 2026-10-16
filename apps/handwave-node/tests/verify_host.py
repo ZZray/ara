@@ -73,6 +73,12 @@ class WS:
         expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
         require(expected.lower() in headers.lower(), "Invalid WebSocket accept")
         self.pending.extend(rest)
+        self.controller_fp = None
+        if role == "ctl":
+            identity = self.receive()
+            require(identity.get("k") == "controller-identity" and isinstance(identity.get("fp"), str)
+                    and len(identity["fp"]) == 32, "Hub did not provide a server-authenticated controller identity")
+            self.controller_fp = identity["fp"]
 
     def send_raw(self, data, opcode=1):
         mask = secrets.token_bytes(4)
@@ -515,12 +521,14 @@ def validate_loop_events(events, run_id, terminal):
     require(events[-1].get("type") == "agent_end", "Progress followed terminal local end: " + run_id)
 
 
-def run_frames(ws, run_id, prompt, transcript, cancel=False, timeout=15, model="fixture-model", protocol=None, smart=False):
+def run_frames(ws, run_id, prompt, transcript, cancel=False, timeout=15, model="fixture-model", protocol=None, smart=False, session_key=None):
     request = {"k": "agent-loop", "id": run_id, "msg": prompt, "model": model, "brief": "Real local host acceptance fixture."}
     if protocol:
         request["protocol"] = protocol
     if smart:
         request["smart"] = True
+    if session_key:
+        request["session_key"] = session_key
     ws.frame(request)
     events = []
     output = bytearray()
@@ -607,18 +615,21 @@ def catalog_variants(controller, hub_port, root_token, fp, fixture, transcript, 
     for index, model in enumerate(cases):
         controller.close()
         controller = WS(hub_port, "ctl", root_token)
-        # Each owner gets fresh native state: selection is exercised without a
-        # prior model-binding mismatch masking the actual catalog behavior.
+        # A shared administrator has one authenticated owner. Explicit Sessions
+        # give each catalog case fresh native state without spoofing ownership.
         owner = f"catalog-fixture-{index}"
-        controller.send({"k": "hello", "fp": owner, "relay": True})
-        message = controller.until(lambda m: m.get("k") == "status" and any(row.get("fp") == fp and row.get("nid", "").startswith("n") and row.get("state") != "paired" for row in status_rows(m)))
+        # Clear the prior grant before hello: the same authenticated principal
+        # otherwise legitimately auto-pairs, so waiting for an idle row is wrong.
+        controller.send({"k": "revoke", "fp": fp})
+        message = controller.until(lambda m: m.get("k") == "status" and any(row.get("fp") == fp and row.get("nid", "").startswith("n") and row.get("state") == "pending" for row in status_rows(m)))
         row = next(row for row in status_rows(message) if row.get("fp") == fp)
+        controller.send({"k": "hello", "fp": owner, "relay": True})
         controller.send({"k": "approve", "nid": row["nid"], "relay": True})
         controller.until(lambda m: m.get("k") == "paired")
         controller.until(lambda m: m.get("k") == "dc" and json.loads(base64.b64decode(m["d"])).get("k") == "node-hello")
         fixture.expected_model = model
         before = len(fixture.requests)
-        out, _, _ = run_frames(controller, model, "CATALOG_CASE", transcript, model=model)
+        out, _, _ = run_frames(controller, model, "CATALOG_CASE", transcript, model=model, session_key=f"catalog/case-{index}")
         require(not out.get("err") and out.get("code", 0) == 0, "Fresh catalog compatibility case failed: " + model)
         require(len(fixture.requests) == before + 1, "Catalog compatibility did not execute exactly one actual model request")
         passed.append(model + "_fresh_native_state")
@@ -767,15 +778,13 @@ def main():
         out, _, _ = run_frames(controller, "continue", "CHECK_CONTINUITY", transcript)
         require(not out.get("err") and b"CONTINUITY_OK" in base64.b64decode(out.get("b64", "")), "Same-process continuation failed")
         passed.append("same_process_native_continuation")
-        # Reconnect controller after restart: Hub node join auto-pair has relay=false,
-        # while controller hello preserves relay=true for the standalone relay client.
+        # Reconnect under the same authenticated authority. Auto-pair may arrive
+        # before status/hello, so do not discard its one-shot paired event.
         controller.close()
         controller = None
         stop(node)
         node = subprocess.Popen(node_args, env=node_env, stdout=node_log, stderr=node_log, cwd=work)
         controller = WS(hub_port, "ctl", root_token)
-        controller.send({"k": "status"})
-        message = controller.until(lambda m: m.get("k") == "status" and any(row.get("fp") == device["fp"] and row.get("nid", "").startswith("n") for row in status_rows(m)))
         controller.send({"k": "hello", "fp": "fixture-controller", "relay": True})
         controller.until(lambda m: m.get("k") == "paired")
         controller.until(lambda m: m.get("k") == "dc" and json.loads(base64.b64decode(m["d"])).get("k") == "node-hello")
@@ -824,10 +833,12 @@ def main():
             controller = catalog_variants(controller, hub_port, root_token, device["fp"], fixture, transcript, passed)
         if proxy:
             require(not proxy.errors, "Proxy fixture errors: " + "; ".join(proxy.errors))
-            require(any(r["method"] == "CONNECT" for r in proxy.receipts), "WebSocket never traversed actual CONNECT proxy")
-            require(any(r["method"] == "POST" and r["target"].endswith("/v1/chat/completions") for r in proxy.receipts), "Model HTTP never traversed actual forward proxy")
+            hub_authority = f"127.0.0.1:{hub_port}"
+            require(not any(r["target"] == hub_authority or r["target"].startswith(hub_url + "/")
+                            for r in proxy.receipts),
+                    "Plaintext loopback Hub WS/model traffic escaped through the configured proxy")
             require(any(r["method"] == "GET" and r["target"].endswith("/fixture-tool.txt") for r in proxy.receipts), "File download never traversed actual forward proxy")
-            passed.append("actual_proxy_for_websocket_and_model_http")
+            passed.append("loopback_hub_ws_and_model_force_direct_while_download_tool_uses_actual_proxy")
         require(not fixture.errors, "Controlled upstream assertions failed: " + "; ".join(fixture.errors))
         result["status"] = "PASS"
     except Exception as error:

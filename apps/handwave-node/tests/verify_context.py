@@ -184,11 +184,15 @@ class ContextFixture(Fixture):
 class Host:
     def __init__(self, args, root, *, state=None, work=None, owner="context-owner-a", max_calls=8):
         self.args, self.root, self.owner, self.max_calls = args, root, owner, max_calls
+        # Separate test authorities model separate owners; hello.fp is only a
+        # client label and cannot establish a new owner in the secured Hub.
+        self.root_token = "controlled-context-root-" + owner
+        self.owner_bound = False
         self.state = state or root / "state"
         self.work = work or root / "work"
         for p in (root, self.state, self.work, root / "hub-conf"):
             p.mkdir(parents=True, exist_ok=True)
-        self.initial_sidecars=set((self.state / "sessions" / self.owner).glob("*.context.json"))
+        self.initial_sidecars=set((self.state / "sessions").glob("*/*.context.json"))
         self.fixture = ContextFixture(self.work)
         (self.work / "heavy.txt").write_text("".join(f"line {i:04d} " + "raw_log_payload_73_" * 7 + "\n" for i in range(300)), encoding="utf-8")
         (self.work / "large-single.txt").write_text("single_old_turn_payload_73_" * 4500, encoding="utf-8")
@@ -208,7 +212,7 @@ class Host:
     def start(self):
         log = (self.root / "hub.log").open("wb"); self.logs.append(log)
         self.hub = subprocess.Popen([str(self.args.hub_binary.resolve()), "hub", "-listen", f"127.0.0.1:{self.hub_port}",
-                    "-token", "controlled-context-root", "-node_token", "controlled-context-enrollment",
+                    "-token", self.root_token, "-node_token", "controlled-context-enrollment",
                     "-gateway", f"http://127.0.0.1:{self.fixture.server.server_port}", "-gateway_token_env", "HW_TEST_GATEWAY_TOKEN",
                     "-model", "fixture-model", "-protocol", "openai-completions", "-allow_loopback"],
                     env=self.env, stdout=log, stderr=log, cwd=self.root / "hub-conf")
@@ -222,11 +226,13 @@ class Host:
         self.node = subprocess.Popen([str(self.args.binary.resolve()), "--hub", self.hub_url, "--cwd", str(self.work.resolve()),
                     "--state-dir", str(self.state.resolve()), "--max-seconds", "90", "--max-calls", str(self.max_calls), "--once"],
                     env=env, stdout=log, stderr=log, cwd=self.work)
-        self.controller = WS(self.hub_port, "ctl", "controlled-context-root")
-        if self.device is not None:
-            self.controller.send({"k": "status"})
-            self.controller.until(lambda m: m.get("k") == "status" and any(
-                r.get("fp") == self.device["fp"] and r.get("nid", "").startswith("n") for r in status_rows(m)))
+        self.controller = WS(self.hub_port, "ctl", self.root_token)
+        if self.owner_bound:
+            require(self.controller.controller_fp == self.owner, "Reconnected Hub changed the authenticated owner")
+        self.owner = self.controller.controller_fp
+        self.owner_bound = True
+        # A signed reconnect can auto-pair before the status broadcast. Waiting
+        # for status first would discard the one paired event we must observe.
         self.controller.send({"k": "hello", "fp": self.owner, "relay": True})
         if self.device is None:
             packet = self.controller.until(lambda m: m.get("k") == "status" and any(r.get("state") == "pending" for r in status_rows(m)))

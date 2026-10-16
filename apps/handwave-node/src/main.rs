@@ -12,6 +12,7 @@ mod local_tools;
 mod managed_jobs;
 mod model_caps;
 mod model_telemetry;
+mod node_identity;
 mod operations;
 mod project_rules;
 mod proxy;
@@ -21,6 +22,7 @@ mod system_capabilities;
 mod terminal_emulator;
 mod terminal_process;
 mod transport;
+mod transport_security;
 mod wire;
 
 use clap::Parser;

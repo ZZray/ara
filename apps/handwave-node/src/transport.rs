@@ -256,7 +256,7 @@ async fn session(
     healthy: &mut bool,
 ) -> Result<()> {
     let mut socket = connection::Socket::connect(&settings.websocket_url(), &settings.token, quit.clone()).await?;
-    socket.send(Message::Text(json!({"k":"join","fp":settings.fp,"info":settings.hello()}).to_string().into())).await?;
+    crate::node_identity::authenticate(&mut socket, settings, quit.clone()).await?;
     eprintln!("connected; device={} waiting for controller approval", settings.fp);
     let (tx, mut rx) = mpsc::channel::<Packet>(128);
     let mut owner = String::new();

@@ -109,7 +109,8 @@ class LongHost(Host):
             "goal_policy": {"expires_at": int(time.time()) + 120, "max_calls": 12, "max_slices": 8, "allow_jobs": jobs}})
 
     def reconnect(self):
-        self.controller = WS(self.hub_port, "ctl", "controlled-context-root")
+        self.controller = WS(self.hub_port, "ctl", self.root_token)
+        require(self.controller.controller_fp == self.owner, "Reconnected controller changed authenticated owner")
         self.controller.send({"k": "hello", "fp": self.owner, "relay": True})
         self.controller.until(lambda m: m.get("k") == "paired")
         self.controller.until(lambda m: m.get("k") == "dc" and json.loads(base64.b64decode(m["d"])).get("k") == "node-hello")
