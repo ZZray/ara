@@ -30,8 +30,8 @@ Stable IDs and metadata-only recovery prevent unknown input replay.
 Current evidence root: `D:/WorkSpace/tmp/handwave-terminal-20261016`.
 Native harness: `D:/WorkSpace/tmp/handwave-terminal-native-tests`.
 The earlier pipe-only evidence remains in interactive-0.2.4-20261016.md and cannot
-prove this native implementation. Final check receipts and publication status
-will be appended after execution. Until then this point is not marked accepted.
+prove this native implementation. Final software and production receipts below
+accept the declared Windows/Linux terminal scope.
 
 ## Boundaries
 
@@ -86,7 +86,7 @@ original text. Official xterm/Fit MIT notices are separately shipped in Ray.
 
 Source candidate: `handwave-node-source-4ffb36ddd1c069f9.tar.gz`,499,364bytes,
 SHA256 `4ffb36ddd1c069f951350e4b08a847e28918e28ca2a354d78c139284285d5fcb`.
-All19previously published package files are preserved unchanged. The installer
+All18previously published package/script files and the releases Git metadata file are preserved unchanged. The installer
 script remains its existing immutable fe4b10be version; only its default source
 URL/checksum and current Windows package are advanced.
 
@@ -110,5 +110,94 @@ URL/checksum and current Windows package are advanced.
 
 ## Publication
 
-Software point accepted. Scoped commit/push, deployed binaries, public download
-verification and installed-device/browser receipts are pending at this snapshot.
+Software and publication points accepted. Exact commit/push, binary, public
+download and installed-device/browser receipts follow.
+
+
+## Published and real-browser accepted
+
+Implementation commits: Rust`bd90b470fc89cc82e089d9c22eb1824a9340622f` on origin/dev;
+Go`16da1d5adc4e09fff595872e9d1c3d9ab90328c2` on origin/dev/rust. Both pushes
+succeeded before deployment. Subsequent documentation receipts do not change
+runtime artifacts. Unrelated root Core/OMP and Go auth/Web WIP remain untouched.
+
+`deploy-receipt-all.json` confirms:
+
+- Hub running image SHA256`88ef4572d4cdcf710e7b71592b0f8b6f9fb23485a3af80fe6aaceb5268ae26f1`.
+- Ray running image SHA256`e57899eeccffb91a52a8956b0ebb95f7603f0c4529c331bf4fcdc64e76caf530`.
+-30protected authentication/configuration/approval/history files unchanged at
+  the replacement boundary; other gateway/edge/RainFlow processes unchanged.
+-20public old+new package/script URLs have expected bodies/hashes. Local public
+  HTTPS download independently verifies new ZIP/tar against the recorded pins.
+- Normal Ray login remains200and unauthenticated HandWave remains gated.
+- Rollback backup:
+  `/opt/handwave/deploy-terminal-20261016T081828Z/backup-1792138793113246346`.
+
+The installed RAYWORK Node was replaced with the exact1396image, PID73800;
+49original state files and state/node.conf were hash-preserved before live
+trials. The actual browser reports`node rust-0.2.4`, deviceU75VP37OFSBBK. Existing
+browser login and device approval were reused; no fresh credential or grant was
+created. `installed-024-receipt.json` records the replacement.
+
+The authenticated production browser created a separate bounded goal using
+`deepseek-v4.1-flash`/`openai-completions`, with both background and managed-Job
+permissions explicitly checked. It invoked exactly one terminal Python script,
+then the real browser clicked attach and typed`RAY_TERMINAL_024_OK`+Enter.
+Actual Job`d36f49d0aa8a612d665e219eddf1cbb367a546c3198798bc0cb8124b814778d4`,
+childPID90632, ended`succeeded`, exit0, stdout424bytes/stderr0:
+
+```text
+TERMINAL024_TTY:True
+TERMINAL024_INPUT:RAY_TERMINAL_024_OK
+TERMINAL024_REPLY:RAY_TERMINAL_024_OK
+```
+
+`production-terminal-receipt.json`/size.json, `production-goal-receipt.json`
+and `production-terminal-final.png` establish Web→Ray→Hub→installed Node→ConPTY
+input/output. Initial Spec was24x80; explicit browser attachment correctly
+resized it to17x125 (acknowledged resize receipt). The model's final narrative
+mistook the final geometry for missing initial evidence; the independent
+original-request/resize check confirms both, without replaying the Job.
+The Goal remains`awaiting_review`,6reserved model calls/2slices, without automatic
+acceptance. There are no live Jobs left by this trial. This does not imply
+universal model obedience or all-provider acceptance.
+
+Retained rollout diagnostics:
+
+- The first deployment plan accidentally treated`releases/.gitattributes`as a
+  public package. Its303triggered automatic binary rollback. The package was
+  never public; after checking restored running hashes, the checklist excluded
+  only that metadata file and the complete20URL plan passed.
+- A local preflight misread an array of null pending_run fields as a live Run;
+  the corrected native PowerShell scan enumerated records and confirmed no
+  pending work. Hub restart updated two canceled Goal heads; the installation
+  snapshot was refreshed only after confirming their canceled state.
+- The install initially looked for node.conf beside the EXE; source confirmed
+  the existing configuration is state/node.conf. Windows briefly retained the
+  stopped image handle. After verifying no Node and unchanged old/backup hash,
+  `.new`atomic replacement succeeded, with no task replay or data reset.
+- First browser goal enabled background continuation but omitted managed-Job
+  permission. The Node correctly withheld job_start. That unrelated-CLI fallback
+  trial failed on an upstream400and created no managed Job. The fresh, correctly
+  authorized trial above passed. No product permission guard was weakened.
+
+Release accepted for the declared Windows/Linux native terminal scope. No
+additional feature, cloud auth reset, Root OMP marker advancement or model-route
+change is included.
+
+
+Final independent publication review: Codex`/root/interactive_review` verified
+running installed PID/image, exact original Job request, stdout SHA256 and live
+screenshot, then accepted publication with no remaining blocker. It confirmed
+the initial24x80and browser resize17x125are both evidenced, so the model's
+geometry caveat does not require another effectful Run. The original first
+failed deployment response and post-rollback hashes are retained separately in
+`deploy-first-failure-retained.json`with its session-output provenance.
+Generated dependency index/notice listings were normalized to repository LF;
+original third-party license texts remain byte-preserved with manifest hashes.
+
+
+After acceptance, the browser's model chooser was restored to Auto and a fresh
+idle Session was left connected to RAYWORK; the trial remains in history with
+its original DeepSeek binding and awaiting_review state. Temporary preview tab
+and local preview service are cleaned up. No extra product feature was added.
