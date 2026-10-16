@@ -6,6 +6,9 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 - [0.2.5 security hardening](../evidence/security-hardening-0.2.5-20261016.md):
   signed socket identity, complete-key approval pins, verified public transport,
   safe Web rendering and explicit coordinated-upgrade boundaries.
+- [0.2.5 coordinated production deployment](../evidence/security-deployment-0.2.5-20261016.md):
+  signed live device, preserved grant expiry, verified public downloads, Linux
+  process acceptance and explicit full-suite fixture gaps.
 
 - [0.2.4 read-only security audit](../evidence/security-audit-20261016.md):
   confirmed identity/HTML injection defects, plaintext machine transport,

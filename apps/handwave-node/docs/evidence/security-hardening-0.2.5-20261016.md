@@ -122,6 +122,11 @@ provider or production activation is claimed for 0.2.5.
 
 ## Remaining limits
 
+Publication follow-up: [coordinated production deployment](security-deployment-0.2.5-20261016.md)
+records the subsequently authorized cloud/installed-node/download activation and
+new Linux evidence. The earlier non-deployment statements above describe this
+local hardening checkpoint, not the later publication status.
+
 This is a bounded security repair, not an exhaustive penetration test. The shared
 QR still represents one administrator, without personal accounts or per-person
 revocation. Agent shell/filesystem tools retain OS-account permissions; cwd is

@@ -32,6 +32,30 @@ alone. Shared-admin controller ownership is server-derived; compatibility cannot
 be preserved by accepting the old client-supplied owner or automatically pinning
 legacy approvals. Publication is separate from source/test acceptance.
 
+The [coordinated0.2.5 publication](../evidence/security-deployment-0.2.5-20261016.md)
+subsequently preserved the still-live device grant's absolute expiry while
+pinning its verified full key; it did not issue another24h grant. Switching both
+server binaries and installer defaults together avoids advertising an unsigned
+old client to the new Hub. Native Linux verification also distinguished two
+fixture assumptions from production effects: root can read chmod000 files, and a
+direct execute_worker unit fixture omits the worker lock used by the production
+process. Non-root and real separate-worker after-grace checks pass; the original
+157/159 suite result remains explicitly open rather than being rewritten green.
+
+Production acceptance exposed another distinct boundary: the Hub can reserve a
+Goal lease before the Node rejects an incompatible saved Session authority.
+The resulting empty lease has no Run/call/tool effect, but can still block that
+Session. Normal authenticated controller bye revokes that controller's
+device-scoped test leases. However, the current UI button labeled "接入" issues
+default24h approval, so the attempted reconnect temporarily renewed the test
+grant. An independent readback caught it; authenticated setttl retracted expiry
+to earlier than the old one, preserving every other approval field. The original
+needs_correction and corrected receipts are retained. Reconnection must use a
+non-renewing connect-approved path rather than assuming that label guarantees it.
+Do not silently change the saved binding, extend the
+grant, migrate other owners or restore the whole lease store. This edge is
+recorded for a future focused repair, not claimed fixed by the security release.
+
 ## HWN-023: capacity telemetry must follow authenticated Goal slices
 
 2026-10-16. Independent Codex UI review traced a fresh Goal slice through
