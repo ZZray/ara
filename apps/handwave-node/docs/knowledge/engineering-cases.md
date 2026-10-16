@@ -585,3 +585,44 @@ This applies to queued agent-loop text; the independent agent-task contract and
 large immediate-request behavior remain unchanged. A focused unit test covers
 structured ingress, editing and later effective objective consistency. It does
 not stand for full legacy task or OMP protocol parity.
+
+## HWN-027: successful writes and elapsed attempts did not prove liveness
+
+2026-10-16. Source audit of0.2.2 found no active Node Ping/Pong deadline, bounded
+only the outgoing-channel write rather than every direct write, and reset the
+retry delay after any session attempt lasting twenty seconds. A timed-out
+twenty-second handshake therefore repeatedly returned to the shortest delay.
+The maintained Hub's fixed nhooyr v1.8.17 Ping only returns on missing Pong;
+its concurrent Read does not inherit that deadline after a successful Flush.
+
+The scoped fix binds all Node writes/dial to deadlines and shutdown, requires a
+matching timely Pong for liveness and healthy reset, and closes the failed Hub
+connection to release its ordinary cleanup. Actual0.2.3 loopback faults prove
+missing/wrong Pong reconnection, healthy survival and increasing handshake-fault
+backoff; the real Hub test observes cleanup after its production60s heartbeat
+window. Physical-network and send-buffer saturation are not established.
+See [the evolving recovery evidence](../evidence/recovery-0.2.3-20261016.md).
+
+## HWN-028: transport restoration and recovery notice diverged
+
+2026-10-16. Authenticated production acceptance of0.2.3 found a connected
+RAYWORK header beside an old offline/grant-expiry notice. Accepted node-hello
+cleared the observation flag but never refreshed that notice; the first Hub
+status without the peer also permanently consumed the automatic observation
+attempt. A later peer could restore legacy pairing without restoring the
+recovery UI. This was not evidence that device authorization had expired.
+
+The narrow two-file frontend fix refreshes only visible connection notices
+after actual peer/current-scope binding. A temporarily missing or offline peer
+can be checked on later status under the exact original controller and valid
+grant. Explicit expiry/rejection remains manual; auth/stream notices and
+dismissed prompts are not replaced. New controlled cases fail on the old leaf
+and pass on the final leaf. Final production restart observes retained draft,
+consistent connected header/notice,55 unchanged native files and no replay.
+See [final recovery evidence](../evidence/recovery-0.2.3-20261016.md).
+
+Preflight trap: this host's Microsoft Store Python cannot see the actual
+AppData Node state through its redirected view. A zero-file scan was rejected
+and retained; native PowerShell with hidden files reports54 real state files
+before the live task. Safety preflight must require the known state directory
+and a nonempty manifest rather than treating an empty traversal as quiescence.

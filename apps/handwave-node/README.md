@@ -4,7 +4,7 @@
 
 ## 使用
 
-当前候选版本为 **0.2.2**；消息队列的范围与验收见[队列交付记录](docs/evidence/message-queue-0.2.2-20261016.md)。安装、工具、压缩、参考记忆、任务清单和目标
+当前发布版本为 **0.2.3**，Windows 独立 EXE 4,961,792 字节；[Windows 包](https://118.25.103.226/ray/releases/handwave-node-windows-e56c5265.zip)、[Linux 源码安装](https://118.25.103.226/ray/install)。重连、异常与恢复的实际验证见[恢复交付记录](docs/evidence/recovery-0.2.3-20261016.md)，消息队列见[队列交付记录](docs/evidence/message-queue-0.2.2-20261016.md)。安装、工具、压缩、参考记忆、任务清单和目标
 验收统一记录在[版本验收](docs/evidence/version-0.2.0-20261016.md)；研究依据见
 [上下文与缓存效率](docs/research-efficiency-20261016.md)。发布状态以验收记录为准。
 

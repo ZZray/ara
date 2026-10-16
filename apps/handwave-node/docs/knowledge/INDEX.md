@@ -3,8 +3,11 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [2026-10-16 product checkpoint](../evidence/product-checkpoint-20261016.md): daily supervised-use assessment, implemented capability boundaries and evidence-led next priorities.
+
 - [Connection-local message queue](message-queue.md): authoritative pending-message controls, scoped Run handover and steering admission receipts.
 - [0.2.2 queue delivery evidence](../evidence/message-queue-0.2.2-20261016.md): final image/process checks, independent review, preserved production services and real desktop/mobile browser trials.
+- [Connection loss and recovery boundaries](connection-recovery.md): bounded I/O, matching heartbeat, proven healthy backoff and non-replaying recovery; [0.2.3 executable evidence](../evidence/recovery-0.2.3-20261016.md).
 
 - [0.2.1 context and calendar integration](../evidence/ui-context-0.2.1-20261016.md): actual byte telemetry, current Goal-slice ownership, bounded appointments, scoped reviews, production UI and upstream-quota acceptance boundary.
 

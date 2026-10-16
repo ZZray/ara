@@ -4,12 +4,11 @@ pub(crate) mod message_queue;
 use crate::{
     agent::{self, RunRequest},
     config::Resolved,
+    connection,
     operations::{self, Packet, Receipts, Sender, Upload},
-    proxy,
     wire::{self, Frame},
 };
 use anyhow::{Context, Result};
-use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -115,7 +114,7 @@ fn cancel_goal_jobs(settings: &Resolved, owner: &str, id: &str, goals: &mut crat
 
 #[allow(clippy::too_many_arguments)]
 async fn finalize_retired(
-    socket: &mut proxy::Socket,
+    socket: &mut connection::Socket,
     retired: &mut HashMap<String, Frame>,
     settings: &Resolved,
     owner: &str,
@@ -221,10 +220,14 @@ pub async fn run(settings: Resolved) -> Result<()> {
         let _ = tokio::signal::ctrl_c().await;
         signal.cancel();
     });
-    let mut backoff = 1u64;
+    let mut backoff = connection::Backoff::default();
     while !quit.is_cancelled() {
-        let since = Instant::now();
-        match session(&settings, quit.clone(), &mut goals).await {
+        let mut healthy = false;
+        let result = session(&settings, quit.clone(), &mut goals, &mut healthy).await;
+        if settings.config.once {
+            return result;
+        }
+        match result {
             Ok(()) => {}
             Err(error) => {
                 eprintln!("connection ended: {error:#}");
@@ -233,23 +236,25 @@ pub async fn run(settings: Resolved) -> Result<()> {
                 }
             }
         }
-        if settings.config.once || quit.is_cancelled() {
+        if quit.is_cancelled() {
             break;
         }
-        if since.elapsed() > Duration::from_secs(20) {
-            backoff = 1;
-        }
-        eprintln!("reconnecting in {backoff}s");
-        tokio::select! {_=quit.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(backoff))=>{}}
-        backoff = (backoff * 2).min(30);
+        let mut random = [0; 8];
+        let _ = getrandom::fill(&mut random);
+        let delay = backoff.next(healthy, u64::from_le_bytes(random));
+        eprintln!("reconnecting in {:.2}s; pending operations are not replayed", delay.as_secs_f64());
+        tokio::select! {_=quit.cancelled()=>break,_=tokio::time::sleep(delay)=>{}}
     }
     Ok(())
 }
 
-async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate::goal_runtime::Runner) -> Result<()> {
-    let mut socket =
-        tokio::time::timeout(Duration::from_secs(20), proxy::connect(&settings.websocket_url(), &settings.token))
-            .await??;
+async fn session(
+    settings: &Resolved,
+    quit: CancellationToken,
+    goals: &mut crate::goal_runtime::Runner,
+    healthy: &mut bool,
+) -> Result<()> {
+    let mut socket = connection::Socket::connect(&settings.websocket_url(), &settings.token, quit.clone()).await?;
     socket.send(Message::Text(json!({"k":"join","fp":settings.fp,"info":settings.hello()}).to_string().into())).await?;
     eprintln!("connected; device={} waiting for controller approval", settings.fp);
     let (tx, mut rx) = mpsc::channel::<Packet>(128);
@@ -262,11 +267,14 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
     let mut queued = message_queue::Queue::new();
     let mut receipts: Option<Receipts> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut heartbeat = connection::Heartbeat::new(Instant::now());
     let result:Result<()> = async {
         loop {
             tokio::select!{
                 _=quit.cancelled()=>break,
                 _=tick.tick()=>{
+                    if let Some(payload) = heartbeat.tick(Instant::now())? { socket.send(Message::Ping(payload.into())).await?; }
                     for receipt in queued.drain_outcomes(){send_queue_frame(&mut socket,receipt).await?;}
                     finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
                     if active.is_none() { for lease in goals.expired_dispatches(&owner) {
@@ -314,7 +322,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                     if packet.epoch!=epoch || owner.is_empty(){continue;}
                     for receipt in queued.drain_outcomes(){send_queue_frame(&mut socket,receipt).await?;}
                     let done=packet.settled_id;
-                    tokio::time::timeout(Duration::from_secs(10),socket.send(Message::Text(packet.value.to_string().into()))).await??;
+                    socket.send(Message::Text(packet.value.to_string().into())).await?;
                     if let Some(id)=done {
                         let finishing_active=active.as_ref().is_some_and(|run|run.frame.id==id);
                         let finished=if finishing_active {active.as_ref().map(|run|run.frame.clone())} else {retired.remove(&id)};
@@ -351,6 +359,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                     let raw=match message {
                         Message::Text(text)=>text.as_bytes().to_vec(),
                         Message::Ping(bytes)=>{socket.send(Message::Pong(bytes)).await?;continue;},
+                        Message::Pong(bytes)=>{heartbeat.pong(&bytes, Instant::now());continue;},
                         Message::Close(_)=>break,
                         _=>continue,
                     };
@@ -654,10 +663,11 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
         Ok(())
     }.await;
     // First invalidate outbound generation and signal every in-flight task; then await settlement.
+    *healthy = socket.was_healthy() && heartbeat.proven();
     alive.cancel();
     stop(&mut active).await?;
     drop(upload);
-    let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), socket.close()).await;
     result
 }
 
@@ -721,12 +731,12 @@ fn prepare_follow(frame: &Frame, active: Option<&Frame>) -> Result<Frame> {
     Ok(next)
 }
 
-async fn send_queue_frame(socket: &mut proxy::Socket, value: Value) -> Result<()> {
+async fn send_queue_frame(socket: &mut connection::Socket, value: Value) -> Result<()> {
     socket.send(Message::Text(wire::dc(value).to_string().into())).await?;
     Ok(())
 }
 async fn publish_queue(
-    socket: &mut proxy::Socket,
+    socket: &mut connection::Socket,
     queue: &message_queue::Queue,
     _active: &Option<Active>,
     id: &str,
@@ -749,7 +759,7 @@ async fn start(
     active: &mut Option<Active>,
     receipts: &mut Receipts,
     queued: &mut message_queue::Queue,
-    socket: &mut proxy::Socket,
+    socket: &mut connection::Socket,
 ) -> Result<()> {
     if frame.id.is_empty() {
         frame.id = wire::fresh_id();

@@ -1,5 +1,6 @@
 mod agent;
 mod config;
+mod connection;
 mod context_memory;
 mod execution;
 mod experience;

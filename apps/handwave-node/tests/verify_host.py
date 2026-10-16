@@ -21,6 +21,7 @@ import socketserver
 import ssl
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -156,7 +157,20 @@ class Fixture:
         self.lock = threading.Lock()
         self.partial_path = root / "partial-must-not-exist.txt"
         self.live_sent = threading.Event()
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
+        self.connection_resets = []
+        fixture = self
+        class Server(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                error = sys.exception()
+                if isinstance(error, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+                    # Expected canceled/idle HTTP sockets must not leave daemon
+                    # threads printing tracebacks during interpreter teardown.
+                    # Request/result assertions still decide whether a lost
+                    # application response is a failure.
+                    fixture.connection_resets.append({"type": type(error).__name__, "errno": error.errno})
+                    return
+                super().handle_error(request, client_address)
+        self.server = Server(("127.0.0.1", 0), self.handler())
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
