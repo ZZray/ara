@@ -550,3 +550,38 @@ bodies. No product retry or connection-policy change is justified by the current
 evidence. Specific errno and cause remain UNKNOWN; diagnostics are not feature
 acceptance. Full process evidence and any explicitly reviewed composed coverage
 are recorded separately in the long-task delivery evidence.
+
+## HWN-025: cancel before model grant had no frontend terminal
+
+2026-10-16. During managed-queue regression, the actual `verify_grant_terminal.py`
+fixture reached the model-grant request, canceled before grant admission, and
+received only `model-grant-end`. No `agent_end`/`out.done` reached the controller;
+the frontend could remain busy although execution had stopped. The exact0.2.1
+installed image and the first0.2.2 candidate both reproduce the same30s timeout,
+with zero model/tool HTTP effects. This is an existing publication defect, not
+evidence of a replayed model call or a new queue execution failure.
+
+Source: an admitted Active with `job=None` has no Agent worker to publish a
+terminal when `stop` removes it. Cancellation must create one canceled terminal
+only if no terminal was already claimed, then preserve the existing receipt and
+model-grant settlement path. Late grants must still have no authority. Current
+fix verification and retained baseline failures belong to the
+[0.2.2 queue evidence](../evidence/message-queue-0.2.2-20261016.md).
+
+Final executable regression passes eight groups in16.201s, including three
+cancel-to-next-message trials and two actual early active snapshots. Exactly
+one old terminal precedes the next grant. The authenticated production browser
+also completed a real DeepSeek Run and its edited FIFO successor; that does
+not replace the deterministic pending-grant cancellation evidence.
+
+## HWN-026: queue presentation and effective objective must have one owner
+
+2026-10-16. Independent source review of the new queue identified that the
+legacy Frame can carry `task.objective`, which `objective(frame)` prefers over
+`msg`. Editing only `msg` could acknowledge a new displayed queue text while
+starting the old hidden objective. Queue admission now normalizes this effective
+objective into the sole pending message and removes the redundant task payload.
+This applies to queued agent-loop text; the independent agent-task contract and
+large immediate-request behavior remain unchanged. A focused unit test covers
+structured ingress, editing and later effective objective consistency. It does
+not stand for full legacy task or OMP protocol parity.

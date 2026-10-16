@@ -3,6 +3,9 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [Connection-local message queue](message-queue.md): authoritative pending-message controls, scoped Run handover and steering admission receipts.
+- [0.2.2 queue delivery evidence](../evidence/message-queue-0.2.2-20261016.md): final image/process checks, independent review, preserved production services and real desktop/mobile browser trials.
+
 - [0.2.1 context and calendar integration](../evidence/ui-context-0.2.1-20261016.md): actual byte telemetry, current Goal-slice ownership, bounded appointments, scoped reviews, production UI and upstream-quota acceptance boundary.
 
 - [Host and upstream boundaries](host-boundaries.md)

@@ -45,6 +45,14 @@ pub struct Frame {
     #[serde(default)]
     pub reviewed_run_id: String,
     #[serde(default)]
+    pub queue_op: String,
+    #[serde(default)]
+    pub queue_id: String,
+    #[serde(default)]
+    pub target_run_id: String,
+    #[serde(default)]
+    pub queue_epoch: String,
+    #[serde(default)]
     pub b64: String,
     #[serde(default)]
     pub size: u64,

@@ -1,3 +1,6 @@
+#[path = "message_queue.rs"]
+pub(crate) mod message_queue;
+
 use crate::{
     agent::{self, RunRequest},
     config::Resolved,
@@ -9,7 +12,7 @@ use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -27,7 +30,7 @@ struct Active {
     ending: Arc<AtomicBool>,
     grant_until: Instant,
     acks: Option<mpsc::Sender<()>>,
-    steering: Arc<Mutex<Vec<String>>>,
+    steering: Arc<Mutex<message_queue::SteeringBuffer>>,
     lease: Option<crate::goal_runtime::Lease>,
 }
 
@@ -59,6 +62,12 @@ async fn reject_agent(sender: &Sender, id: &str, status: &str, error: &str, admi
     }
 }
 
+// Only the first abort before a model task exists owns the missing terminal.
+// A timeout/denial may already have queued its terminal while awaiting drainage.
+fn claim_pending_grant_cancel(run: &Active) -> bool {
+    run.frame.k == "agent-loop" && run.job.is_none() && !run.ending.swap(true, Ordering::SeqCst)
+}
+
 async fn stop(active: &mut Option<Active>) -> Result<()> {
     if let Some(mut run) = active.take() {
         run.cancel.cancel();
@@ -69,6 +78,7 @@ async fn stop(active: &mut Option<Active>) -> Result<()> {
                 .context("run cleanup did not settle; refusing to reconnect")?
                 .context("run cleanup task failed; refusing to reconnect")?;
         }
+        run.steering.lock().unwrap().finish();
     }
     Ok(())
 }
@@ -249,7 +259,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
     let mut active: Option<Active> = None;
     let mut retired = HashMap::<String, Frame>::new();
     let mut upload: Option<Upload> = None;
-    let mut queued = VecDeque::<Frame>::new();
+    let mut queued = message_queue::Queue::new();
     let mut receipts: Option<Receipts> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     let result:Result<()> = async {
@@ -257,6 +267,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
             tokio::select!{
                 _=quit.cancelled()=>break,
                 _=tick.tick()=>{
+                    for receipt in queued.drain_outcomes(){send_queue_frame(&mut socket,receipt).await?;}
                     finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
                     if active.is_none() { for lease in goals.expired_dispatches(&owner) {
                         goals.wait(&lease.goal_id,"waiting_authorization",60)?;
@@ -289,15 +300,19 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                             reject_agent(&sender,&id,status,error,true).await?;
                         }
                     }
+                    if active.is_none() && !queued.is_empty() && !owner.is_empty(){if let Some(next)=queued.pop_front(){
+                        start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?,&mut queued,&mut socket).await?;
+                    }}
                     if active.is_none() && queued.is_empty() && !owner.is_empty() {
                         if let Some(next)=goals.next(&owner)? {
-                            start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;
+                            start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?,&mut queued,&mut socket).await?;
                         }
                     }
                 },
                 outgoing=rx.recv()=>{
                     let Some(packet)=outgoing else {break;};
                     if packet.epoch!=epoch || owner.is_empty(){continue;}
+                    for receipt in queued.drain_outcomes(){send_queue_frame(&mut socket,receipt).await?;}
                     let done=packet.settled_id;
                     tokio::time::timeout(Duration::from_secs(10),socket.send(Message::Text(packet.value.to_string().into()))).await??;
                     if let Some(id)=done {
@@ -308,6 +323,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                 socket.send(Message::Text(json!({"k":"model-grant-end","run":id,"fp":settings.fp}).to_string().into())).await?;
                             }
                             if finishing_active { stop(&mut active).await?; }
+                            for receipt in queued.drain_outcomes(){send_queue_frame(&mut socket,receipt).await?;}
                             if let Some(receipts)=&mut receipts{receipts.finish(&id)?;}
                             if finished.k=="agent-loop" {
                                 let path=settings.session_path_for(&owner,&finished.session_key)?;
@@ -324,8 +340,8 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                 }
                             }
                             if active.is_none() { if let Some(next)=queued.pop_front(){
-                                start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;
-                            } }
+                                start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?,&mut queued,&mut socket).await?;
+                            } else {queued.sync_active(None);publish_queue(&mut socket,&queued,&active,"",None).await?;} }
                         }
                     }
                 },
@@ -346,6 +362,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                             let retain=owner==incoming && active.as_ref().is_some_and(|run|run.lease.as_ref().is_some_and(|lease|
                                 lease.controller==owner && lease.session==run.frame.session_key && lease.expires_at>crate::goal_runtime::now()));
                             if retain {
+                                queued.renew_epoch();queued.sync_active(active.as_ref().map(|r|&r.frame));
                                 // Returning to the workbench observes the same native Run;
                                 // it must not revoke an explicit background contract.
                                 socket.send(Message::Text(wire::dc(json!({"k":"node-hello","fp":settings.fp,"info":settings.hello()})).to_string().into())).await?;
@@ -354,7 +371,7 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                             alive.cancel();
                             stop(&mut active).await?;
                             alive=CancellationToken::new();
-                            epoch+=1;queued.clear();upload=None;
+                            epoch+=1;queued.reset();upload=None;
                             owner=sig["ctlfp"].as_str().context("controller identity missing")?.into();
                             let state=settings.session_path(&owner)?;
                             receipts=Some(Receipts::load(state.with_extension("receipts.json"))?);
@@ -376,11 +393,11 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                 if frame.k=="agent-loop" { socket.send(Message::Text(json!({"k":"model-grant-end","run":frame.id,"fp":settings.fp}).to_string().into())).await?; }
                                 if let Some(receipts)=&mut receipts{receipts.finish(&frame.id)?;}
                             }
-                            alive.cancel();epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;retired.clear();
+                            alive.cancel();epoch+=1;owner.clear();queued.reset();upload=None;receipts=None;retired.clear();
                             eprintln!("controller unpaired; pending effects will not be replayed");
                         },
                         "controller-detached"=>{
-                            queued.clear();upload=None;
+                            queued.clear();queued.sync_active(active.as_ref().map(|r|&r.frame));upload=None;
                             let active_authorized=active.as_ref().is_none_or(|run|run.lease.as_ref().is_some_and(|lease|
                                 lease.controller==owner && lease.device==settings.fp && lease.session==run.frame.session_key
                                 && lease.goal_id==if run.frame.goal_id.is_empty(){run.frame.id.as_str()}else{run.frame.goal_id.as_str()}
@@ -399,8 +416,9 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                         "goal-command"=>{
                             let result=goal_command(&sig,settings,&owner,&mut active,goals,&mut retired).await;
                             if result.as_ref().err().is_some_and(|e|e.to_string().contains("refusing to reconnect")){return Err(result.err().unwrap());}
-                            if matches!(sig["command"].as_str(),Some("pause"|"stop")){queued.retain(|f|f.session_key!=sig["session_key"].as_str().unwrap_or_default());}
+                            if matches!(sig["command"].as_str(),Some("pause"|"stop")){queued.remove_session(sig["session_key"].as_str().unwrap_or_default());}
                             finalize_retired(&mut socket,&mut retired,settings,&owner,&mut receipts,goals).await?;
+                            queued.sync_active(active.as_ref().map(|r|&r.frame));publish_queue(&mut socket,&queued,&active,"",None).await?;
                             let mut reply=json!({"k":"goal-command-result","writer_epoch":goals.writer_epoch,"command_id":sig["command_id"],"goal_id":sig["goal_id"],"session_key":sig["session_key"]});
                             match result {
                                 Ok(goal)=>{
@@ -519,6 +537,13 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                             let sender=Sender{tx:tx.clone(),epoch,alive:alive.clone()};
                             match frame.k.as_str(){
                                 "ping"=>sender.frame(json!({"k":"pong"})).await?,
+                                "agent-queue"=>{
+                                    queued.sync_active(active.as_ref().map(|r|&r.frame));
+                                    let live=active.as_ref().is_some_and(|r|!r.ending.load(Ordering::SeqCst)&&!r.cancel.is_cancelled());
+                                    let (reply,submitted)=queued.command(&frame,active.as_ref().map(|r|&r.frame),live,active.as_ref().map(|r|&r.steering));
+                                    send_queue_frame(&mut socket,reply).await?;
+                                    if let Some(receipt)=submitted{send_queue_frame(&mut socket,receipt).await?;}
+                                },
                                 "bye"=>{
                                     cancel_goal_jobs(settings,&owner,"",goals)?;
                                     let stopped_frame=active.as_ref().map(|r|r.frame.clone());
@@ -529,13 +554,17 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                         if frame.k=="agent-loop" { socket.send(Message::Text(json!({"k":"model-grant-end","run":frame.id,"fp":settings.fp}).to_string().into())).await?; }
                                         if let Some(receipts)=&mut receipts{receipts.finish(&frame.id)?;}
                                     }
-                                    alive.cancel();epoch+=1;owner.clear();queued.clear();upload=None;receipts=None;retired.clear();
+                                    alive.cancel();epoch+=1;owner.clear();queued.reset();upload=None;receipts=None;retired.clear();
                                     socket.send(Message::Text(json!({"k":"bye"}).to_string().into())).await?;
                                 },
                                 "cancel"|"agent-abort"|"agent-bash-abort"=>{
                                     let canceled_contracts=goals.matching_contracts(&owner,&frame.id);
                                     cancel_goal_jobs(settings,&owner,&frame.id,goals)?;
                                     if active.as_ref().is_some_and(|run|frame.id.is_empty() || run.frame.id==frame.id) {
+                                        if frame.k=="agent-abort" && claim_pending_grant_cancel(active.as_ref().unwrap()) {
+                                            let id=active.as_ref().unwrap().frame.id.clone();
+                                            reject_agent(&sender,&id,"canceled","cancelled while waiting for model grant",true).await?;
+                                        }
                                         active.as_ref().unwrap().cancel.cancel();
                                         let stopped_frame=active.as_ref().unwrap().frame.clone();
                                         let settlement=stop(&mut active).await;
@@ -555,12 +584,16 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                             }
                                         }
                                     }
-                                    queued.clear();
+                                    queued.clear();queued.sync_active(active.as_ref().map(|r|&r.frame));publish_queue(&mut socket,&queued,&active,"",None).await?;
                                 },
                                 "agent-steer"=>{
                                     if let Some(run)=&active{
                                         if run.frame.k=="agent-loop" && !frame.msg.trim().is_empty(){
-                                            run.steering.lock().unwrap().push(frame.msg.clone());
+                                            if (!frame.session_key.is_empty()&&frame.session_key!=run.frame.session_key)||(!frame.target_run_id.is_empty()&&frame.target_run_id!=run.frame.id)||run.ending.load(Ordering::SeqCst){
+                                                sender.output(&frame.id,&[],-1,"steering target changed or is ending").await?;continue;
+                                            }
+                                            let submitted=run.steering.lock().unwrap().submit_legacy(frame.msg.clone());
+                                            if let Err(error)=submitted{sender.output(&frame.id,&[],-1,&error.to_string()).await?;continue;}
                                             run_event(&sender,run,json!({"type":"steer","status":"queued","output":frame.msg})).await?;
                                         }
                                     }else{sender.output(&frame.id,&[],-1,"no active agent run").await?;}
@@ -571,8 +604,8 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                         Err(error)=>{reject_agent(&sender,&frame.id,"failed",&error.to_string(),false).await?;continue;}
                                     };
                                     if let Some(run)=&active{if next.id==run.frame.id || queued.iter().any(|queued|queued.id==next.id){run_event(&sender,run,json!({"type":"retry","status":"running","detail":"duplicate follow-up ignored; active run unchanged"})).await?;continue;}}
-                                    if let Some(run)=&active{if queued.len()<16{if run.frame.k=="agent-loop"{run_event(&sender,run,json!({"type":"steer","status":"queued","output":"Follow-up queued"})).await?;}queued.push_back(next);}else{sender.output(&frame.id,&[],-1,"follow-up queue full").await?;}}
-                                    else{start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;}
+                                    if let Some(run)=&active{if queued.len()<16{if run.frame.k=="agent-loop"{run_event(&sender,run,json!({"type":"steer","status":"queued","output":"Follow-up queued"})).await?;}match queued.push_back(next){Ok(())=>publish_queue(&mut socket,&queued,&active,"",None).await?,Err(error)=>{sender.output(&frame.id,&[],-1,&error.to_string()).await?;send_queue_frame(&mut socket,queued.snapshot(&frame.session_key,"",Some(&error.to_string()))).await?;}}}else{sender.output(&frame.id,&[],-1,"follow-up queue full").await?;}}
+                                    else{start(next,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?,&mut queued,&mut socket).await?;}
                                 },
                                 "ack"=>{if let Some(run)=&active{if frame.id==run.frame.id{if let Some(acks)=&run.acks{let _=acks.try_send(());}}}},
                                 "put"=>{
@@ -605,10 +638,10 @@ async fn session(settings: &Resolved, quit: CancellationToken, goals: &mut crate
                                             // inherit the active authority without renaming its receipt.
                                             next.id = frame.id.clone();
                                             run_event(&sender,run,json!({"type":"steer","status":"queued","output":"Follow-up queued"})).await?;
-                                            queued.push_back(next);
+                                            match queued.push_back(next){Ok(())=>publish_queue(&mut socket,&queued,&active,"",None).await?,Err(error)=>{sender.output(&frame.id,&[],-1,&error.to_string()).await?;send_queue_frame(&mut socket,queued.snapshot(&frame.session_key,"",Some(&error.to_string()))).await?;}}
                                         }else {sender.output(&frame.id,&[],-1,"node busy; use follow-up or cancel current run").await?;}
                                     }
-                                    else{start(frame,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?).await?;}
+                                    else{start(frame,settings,&owner,epoch,&tx,alive.clone(),&mut active,receipts.as_mut().context("missing receipts")?,&mut queued,&mut socket).await?;}
                                 },
                                 _=>sender.output(&frame.id,&[],-1,"unsupported command in the Rust node").await?,
                             }
@@ -650,6 +683,21 @@ fn inherit_follow(next: &mut Frame, active: &Frame) {
 }
 
 fn prepare_follow(frame: &Frame, active: Option<&Frame>) -> Result<Frame> {
+    if let Some(active) = active {
+        anyhow::ensure!(
+            frame.execution_mode.is_empty() || frame.execution_mode == active.execution_mode,
+            "follow-up mode differs from active run"
+        );
+        let active_goal = if active.execution_mode == "goal" && active.goal_id.is_empty() {
+            active.id.as_str()
+        } else {
+            active.goal_id.as_str()
+        };
+        anyhow::ensure!(
+            frame.goal_id.is_empty() || frame.goal_id == active_goal,
+            "follow-up Goal differs from active run"
+        );
+    }
     if !frame.session_key.is_empty() {
         if let Some(active) = active {
             anyhow::ensure!(frame.session_key == active.session_key, "follow-up session differs from active run");
@@ -673,7 +721,24 @@ fn prepare_follow(frame: &Frame, active: Option<&Frame>) -> Result<Frame> {
     Ok(next)
 }
 
-#[allow(clippy::too_many_arguments)] // Connection-scoped ownership and receipts remain explicit.
+async fn send_queue_frame(socket: &mut proxy::Socket, value: Value) -> Result<()> {
+    socket.send(Message::Text(wire::dc(value).to_string().into())).await?;
+    Ok(())
+}
+async fn publish_queue(
+    socket: &mut proxy::Socket,
+    queue: &message_queue::Queue,
+    _active: &Option<Active>,
+    id: &str,
+    error: Option<&str>,
+) -> Result<()> {
+    if !queue.session().is_empty() {
+        send_queue_frame(socket, queue.snapshot(queue.session(), id, error)).await?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)] // The connection actor remains the sole dispatch owner.
 async fn start(
     mut frame: Frame,
     settings: &Resolved,
@@ -683,6 +748,43 @@ async fn start(
     alive: CancellationToken,
     active: &mut Option<Active>,
     receipts: &mut Receipts,
+    queued: &mut message_queue::Queue,
+    socket: &mut proxy::Socket,
+) -> Result<()> {
+    if frame.id.is_empty() {
+        frame.id = wire::fresh_id();
+    }
+    queued.sync_active(active.as_ref().map(|r| &r.frame));
+    // Even a busy->idle race receives a genuine accepted pending item before
+    // it is dequeued. A browser can bind handover only to a known queued ID.
+    if frame.k == "agent-loop"
+        && !objective(&frame).trim().is_empty()
+        && objective(&frame).len() <= message_queue::MAX_MESSAGE_BYTES
+    {
+        queued.push_back(frame.clone())?;
+        publish_queue(socket, queued, active, "", None).await?;
+        // This dispatch was already selected by the caller. Other pending items
+        // retain their relative order; remove this exact identity, not the head.
+        queued.take_dispatch(&frame.id);
+    }
+    let result = start_inner(frame, settings, owner, epoch, tx, alive, active, receipts, queued.buffer()).await;
+    queued.sync_active(active.as_ref().map(|r| &r.frame));
+    // Direct socket ordering precedes draining the model-grant/event channel.
+    publish_queue(socket, queued, active, "", None).await?;
+    result
+}
+
+#[allow(clippy::too_many_arguments)] // Connection-scoped ownership and receipts remain explicit.
+async fn start_inner(
+    mut frame: Frame,
+    settings: &Resolved,
+    owner: &str,
+    epoch: u64,
+    tx: &mpsc::Sender<Packet>,
+    alive: CancellationToken,
+    active: &mut Option<Active>,
+    receipts: &mut Receipts,
+    queue_buffer: message_queue::SteeringBuffer,
 ) -> Result<()> {
     let sender = Sender { tx: tx.clone(), epoch, alive };
     if frame.id.is_empty() {
@@ -746,7 +848,7 @@ async fn start(
         return Ok(());
     }
     let cancel = CancellationToken::new();
-    let steering = Arc::new(Mutex::new(Vec::new()));
+    let steering = Arc::new(Mutex::new(queue_buffer));
     let mut run = Active {
         frame: frame.clone(),
         cancel: cancel.clone(),
@@ -834,5 +936,64 @@ mod tests {
         assert_ne!(prepare_follow(&legacy, Some(&active)).unwrap().id, legacy.id);
         let missing = Frame { id: String::new(), ..follow };
         assert!(!prepare_follow(&missing, Some(&active)).unwrap().id.is_empty());
+    }
+    #[test]
+    fn explicit_follow_cannot_change_mode_or_goal_even_through_legacy_session() {
+        let active = Frame {
+            id: "goal-first".into(),
+            session_key: "w/s".into(),
+            execution_mode: "goal".into(),
+            goal_background: true,
+            goal_policy: Some(json!({"max_calls":12})),
+            goal_criteria: vec!["verify actual receipts".into()],
+            model: "fixed-model".into(),
+            ..Frame::default()
+        };
+        for key in ["w/s", ""] {
+            let requested = Frame {
+                id: "queued".into(),
+                session_key: key.into(),
+                execution_mode: "execute".into(),
+                ..Frame::default()
+            };
+            assert!(prepare_follow(&requested, Some(&active)).is_err());
+            let requested = Frame { execution_mode: "goal".into(), goal_id: "another-goal".into(), ..requested };
+            assert!(prepare_follow(&requested, Some(&active)).is_err());
+        }
+        let follow = Frame {
+            id: "queued".into(),
+            session_key: "w/s".into(),
+            msg: "continue".into(),
+            execution_mode: "goal".into(),
+            goal_id: "goal-first".into(),
+            ..Frame::default()
+        };
+        let prepared = prepare_follow(&follow, Some(&active)).unwrap();
+        assert_eq!(prepared.goal_id, "goal-first");
+        assert_eq!(prepared.model, "fixed-model");
+        assert_eq!(prepared.goal_criteria, active.goal_criteria);
+        assert!(prepared.goal_background);
+        assert!(prepared.goal_policy.is_none());
+    }
+    #[test]
+    fn pending_grant_cancel_terminal_has_one_owner() {
+        let mut run = Active {
+            frame: Frame { k: "agent-loop".into(), id: "waiting".into(), ..Frame::default() },
+            cancel: CancellationToken::new(),
+            job: None,
+            ending: Arc::new(AtomicBool::new(false)),
+            grant_until: Instant::now(),
+            acks: None,
+            steering: Arc::new(Mutex::new(message_queue::SteeringBuffer::default())),
+            lease: None,
+        };
+        assert!(claim_pending_grant_cancel(&run));
+        assert!(!claim_pending_grant_cancel(&run));
+        run.ending.store(true, Ordering::SeqCst); // Timeout/denial already owns a queued terminal.
+        assert!(!claim_pending_grant_cancel(&run));
+        run.ending.store(false, Ordering::SeqCst);
+        run.frame.k = "exec".into();
+        assert!(!claim_pending_grant_cancel(&run));
+        assert!(!run.ending.load(Ordering::SeqCst));
     }
 }

@@ -159,6 +159,31 @@ def main():
         hub.terminal(run_id, "failed")
         require(hub.http == [{"method": "GET", "path": "/v1/models"}] and not list(work.iterdir()), "Execute failure triggered model/tool effects or lost catalog receipt")
         passed.append("execute_catalog_error_local_end_before_out_no_model_tool_effect")
+        # A controller may send its next message before reading cancellation.
+        # A queue-state projection may be early, but the next model grant cannot
+        # overtake the old terminal on the actor's outbound FIFO.
+        early_projections = 0
+        for trial in range(3):
+            previous, following = f"burst-cancel-{trial}", f"burst-follow-{trial}"
+            selection = {"session_key": "workspace/burst", "msg": "NO_EFFECT", "model": "fixture-model"}
+            hub.wire.frame({"k": "agent-loop", "id": previous, **selection})
+            hub.grant_request(previous)
+            start = len(hub.receipts)
+            hub.wire.frame({"k": "agent-abort", "id": previous, "session_key": selection["session_key"]})
+            hub.wire.frame({"k": "agent-loop", "id": following, **selection})
+            hub.grant_request(following)
+            observed = hub.receipts[start:]
+            old_out = next(i for i, row in enumerate(observed) if row.get("k") == "out" and row.get("id") == previous and row.get("done"))
+            new_grant = next(i for i, row in enumerate(observed) if row.get("k") == "model-grant" and row.get("id") == following)
+            require(old_out < new_grant, "Next model grant overtook canceled Run terminal")
+            early_projections += int(any(i < old_out and row.get("k") == "agent-queue-state" and row.get("active_run_id") == following for i, row in enumerate(observed)))
+            old_end = [row for row in observed if row.get("k") == "agent-event" and row.get("id") == previous and row.get("event", {}).get("type") == "agent_end"]
+            require(len(old_end) == 1 and old_end[0]["event"]["status"] == "canceled", "Cancellation lost or duplicated terminal ownership")
+            hub.wire.send({"k": "model-grant", "id": following, "d": "", "ttl": 120, "err": "controlled denial"})
+            hub.terminal(following, "failed")
+        result["early_active_projections_observed"] = early_projections
+        require(hub.http == [{"method": "GET", "path": "/v1/models"}] and not list(work.iterdir()), "Burst cancellation admitted model/tool effects")
+        passed.append("three_back_to_back_cancel_follow_trials_old_terminal_precedes_new_grant_no_replay")
         result["status"] = "PASS"
     except Exception as error:
         result.update(status="FAIL", error=f"{type(error).__name__}: {error}")

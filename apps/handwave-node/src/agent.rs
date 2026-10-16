@@ -42,7 +42,7 @@ pub struct RunRequest {
     pub brief: String,
     pub max_calls: usize,
     pub max_seconds: u64,
-    pub steering: Arc<Mutex<Vec<String>>>,
+    pub steering: Arc<Mutex<crate::transport::message_queue::SteeringBuffer>>,
 }
 
 pub struct RunResult {
@@ -1040,13 +1040,13 @@ pub async fn execute(
         prepare_next_turn: None,
         after_tool_results: None,
         get_steering_messages: Some(Arc::new(move || {
-            let pending = std::mem::take(&mut *steering.lock().unwrap());
+            let pending = steering.lock().unwrap().take_pending();
             let result = (|| -> Result<Vec<AgentMessage>> {
                 let mut guard = steering_store.lock().unwrap();
                 let mut next = guard.clone();
                 let mut messages = Vec::new();
-                for text in pending {
-                    let text = redact(&text, &steering_token);
+                for note in &pending {
+                    let text = redact(&note.text, &steering_token);
                     if matches!(text.split_whitespace().next(), Some("/memory" | "/reference" | "/goal")) {
                         bail!(
                             "memory/reference/goal management is not accepted as steering; submit it as a new request"
@@ -1062,8 +1062,12 @@ pub async fn execute(
                 Ok(messages)
             })();
             let messages = match result {
-                Ok(messages) => messages,
+                Ok(messages) => {
+                    steering.lock().unwrap().complete(pending, true);
+                    messages
+                }
                 Err(error) => {
+                    steering.lock().unwrap().complete(pending, false);
                     *steering_failure.lock().unwrap() = Some(format!("steering context admission failed: {error}"));
                     steering_signal.cancel();
                     vec![]
@@ -1548,7 +1552,7 @@ mod tests {
             brief: String::new(),
             max_calls: 1,
             max_seconds: 30,
-            steering: Arc::new(Mutex::new(vec![])),
+            steering: Arc::new(Mutex::new(crate::transport::message_queue::SteeringBuffer::default())),
         };
         let cancellation = CancellationToken::new();
         cancellation.cancel();
