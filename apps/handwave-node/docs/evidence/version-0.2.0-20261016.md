@@ -175,3 +175,13 @@ to the committed test, with no code/assertion changes. The22 packaged runtime
 sources still match current Git source bytes exactly. Scoped staged whitespace
 checks passed after this normalization. First delivery commits: Rust`edd10cf`
 and Go`7490e37`; normal push/tag receipts are verified separately.
+
+## User-authorized follow-up — 2026-10-16 08:45 +08:00
+
+The user subsequently renewed this device for24h and completed the normal
+browser login. A new [production Goal/Job trial](postlogin-production-20261016.md)
+on the final cb standalone EXE passed4actual DeepSeek calls/2slices/one Job,
+with report/log readback, original journal and UI criteria/evidence confirmed.
+Goal remains awaiting_review. This closes the pending-grant, final-image actual
+Goal and authenticated-browser workflow gaps for that bounded task; the earlier
+failed fixtures and publication-time pending status remain historical evidence.

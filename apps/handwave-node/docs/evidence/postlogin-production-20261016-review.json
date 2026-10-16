@@ -1,0 +1,157 @@
+{
+  "reviewer": "Independent Codex /root/context_modes_audit",
+  "decision": "ACCEPT_BOUNDED_PRODUCTION_POSTLOGIN_GOAL_JOB_TASK",
+  "checked_at_utc": "2026-10-16T00:57:35.740633+00:00",
+  "scope": "Read-only acceptance of this new production task using the installed image, source, native journal, Job receipts, DOM, and artifacts. This reviewer did not control the browser, call a model, run Cargo, edit grants, restart services, or change production code/configuration.",
+  "authorization_provenance": "Root reports that the user newly authorized RAYWORK for 24 hours and completed normal TOTP login; Root used the real IAB approval control with ttl=86400. The resulting device/controller Goal and Job lease was independently checked. This reviewer did not replay login or independently fetch the 24-hour device grant.",
+  "versions": {
+    "rust_commit": "7c2838c9e944cdbd8021d0724657bd7d9e9f313c",
+    "runtime22_source_match": "PASS",
+    "installed_image": {
+      "path": "C:\\Users\\loveu\\AppData\\Local\\HandWaveNode\\handwave-node.exe",
+      "sha256": "cb676ce827a0a496a23decd05246d0f78d5e24e0f6b5c8f569dc1e7eb5e304b1",
+      "bytes": 4922880,
+      "pid": 90172
+    },
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions"
+  },
+  "checks_passed": [
+    "The 22 runtime files at Git 7c2838c match accepted source archive pins exactly.",
+    "All 11 raw journal indices, message hashes, previous pointers, and chain hashes validate.",
+    "The actual segment byte size, range, tip, head checksum, raw count 11, and head sequence 23 validate.",
+    "The native checkpoint hot tail and metadata equal the journal head projection at raw_base=4.",
+    "Two settled Run filename hashes and sequences are confirmed by the head; completed IDs agree; no pending Run or intent exists.",
+    "Five tool calls have exactly paired IDs/names and successful results.",
+    "The unique job_start op_id, language, timeout, and cwd match the canonical request.",
+    "source.py bytes equal both the request script and actual tool argument; the spec hash and owner-scoped Job ID validate.",
+    "Job owner device/session, nonce, and expiry match its Goal lease; it finished before expiry.",
+    "The terminal Job succeeded with exit 0 and known effects; stdout 33 bytes/hash and stderr 0 bytes/hash validate.",
+    "Actual job_read_log text/hash/cursor/eof matches stdout; actual read_file JSON matches the report.",
+    "Input [6,12,24], report sum=42/count=3, and the final reply agree.",
+    "Four native assistant messages equal calls_reserved=4; two settled Runs equal slices_started=2, within the lease limits.",
+    "Goal revision 5 / criteria revision 1 has three evidenced done steps and remains awaiting_review without automatic acceptance.",
+    "The actual production DOM shows connected RAYWORK, awaiting review 3/3, stdout/report reply, and a confirm-completion button; the reviewer viewed the screenshot.",
+    "Direct old-state comparison to the pre-upgrade backup finds 16 unchanged files; the shared receipt retains all 12 old values and only appends the two new Runs."
+  ],
+  "goal": {
+    "id": "GOTR2T6FAE",
+    "status": "awaiting_review",
+    "revision": 5,
+    "criteria_revision": 1,
+    "steps_done": 3,
+    "calls_reserved": 4,
+    "slices_started": 2,
+    "max_calls": 48,
+    "max_slices": 8,
+    "lease_expires_unix": 1792115275,
+    "controller": "BJENA3VEQEUQG",
+    "device": "U75VP37OFSBBK",
+    "automatic_acceptance": false,
+    "native_observed_duration_ms": 10819
+  },
+  "job": {
+    "id": "5e6ace116ad641a2d22d36a50bfbe2a6c58e1651d3a2e58ee27eed2c473875ad",
+    "opid": "prod020-report-20261016",
+    "language": "python",
+    "timeout_seconds": 30,
+    "start_calls": 1,
+    "job_status_poll_calls": 0,
+    "tool_names": [
+      "reference_read",
+      "job_start",
+      "job_read_log",
+      "read_file",
+      "goal_update"
+    ],
+    "state": "succeeded",
+    "exit_code": 0,
+    "effects_unknown": false,
+    "duration_seconds": 2,
+    "stdout_bytes": 33,
+    "stdout_sha256": "a0b3a0f3559497bdcdd9568fb65cae7c1fa8c79586877f18824fc2aee4d10187",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "report": {
+      "sum": 42,
+      "count": 3
+    },
+    "report_sha256": "47e60deeac17b806337b26dcdbaf99a6114890a9536d15fe6ae8334f7da77c92",
+    "work_files": [
+      "input.json",
+      "report.json"
+    ]
+  },
+  "usage": {
+    "native_adapter_observations_summed": {
+      "input": 9589,
+      "output": 1304,
+      "cacheRead": 12928,
+      "cacheWrite": 0,
+      "reasoning": 339,
+      "totalTokens": 23821
+    },
+    "budget_usage_known": false,
+    "limits": "Four completed native responses and four budget reservations agree. This is not an independently observed gateway HTTP/retry ledger. Zero or absent usage remains unknown; native cost=0 does not prove zero billing, cache hit rate, or savings."
+  },
+  "old_state": {
+    "status": "PASS",
+    "old_receipts_unchanged": 12,
+    "original_files": 17,
+    "method": "Independent direct backup/current SHA256 and JSON value comparisons",
+    "changed_shared_receipt_files": 1,
+    "baseline": "Pre-upgrade backup 2026-10-15T19:05:34Z, not fresh pre-task",
+    "new_receipts": [
+      "GOTR2T6FAE",
+      "aacec3fe9d051842e6e28e48"
+    ],
+    "unchanged_files": 16
+  },
+  "ui": {
+    "DOM": "goal-final.dom.txt",
+    "screenshot": "goal-awaiting-review.jpg",
+    "screenshot_viewed": true,
+    "current_desktop_task_result": "PASS",
+    "broader_ui_matrix": "NOT_CLAIMED"
+  },
+  "old_gap_closeout": {
+    "pending_no_grant": "Closed for this newly authorized task: a device/controller Goal and Job lease and actual effects are evidenced. The 24-hour device grant expiry remains a Root observation.",
+    "postloginUI": "Closed within this task: independently inspected actual production IAB DOM and screenshot; the user performed TOTP login.",
+    "finalcbactualGoalJob": "Closed by this separate fresh production task: final cb Goal -> single Job -> second slice -> stdout/report readback -> awaiting_review. The original fixture failure remains unchanged."
+  },
+  "remaining_boundaries": [
+    "This is one fixed Python task in one new Session/work directory. It does not prove arbitrary Goals, all script types, computer use, or all platforms.",
+    "Old-state endpoints compare against the pre-upgrade backup, not a fresh pre-task capture or continuous mutation trace. No claim is made that transient effects never occurred.",
+    "Tool receipts and leases are not an OS sandbox or proof against all external side effects.",
+    "Native responses and budget reservations do not independently prove exact upstream HTTP/retry counts or cache economy.",
+    "The Goal intentionally remains awaiting_review. This software acceptance does not mutate user/Task acceptance or promote memory or Skills."
+  ],
+  "findings": [],
+  "verification_notes": [
+    "Detailed offline assertions verified the listed checks. WindowsApps Python could not see the installed AppData path; native PowerShell independently checked the image hash and PID. No product operation or model request was retried."
+  ],
+  "artifact_sha256": {
+    "global-receipts-append-check.json": "98d0cd191dc7a8352ec1fcf061cbdf9a9da5dedcbd42ed2b1ce313ff7d509743",
+    "goal-awaiting-review.jpg": "4bc80451c38a4427314eeb94b69ca0a9a4e34948a505f6283278f2f7c7ea62b9",
+    "goal-final.dom.txt": "564b7e11df6a2ced123ba1e0cb836701c367f1526d6694944ff2fe378bb37a9a",
+    "goal-summary.json": "0c160f8a5b19b6587586ac9c8a4e1cf9d63ab0618a25567d94dc666421cbcb29",
+    "independent-installed-image.json": "92d5823090996f2ecbbcea5567048fbeb296c7733b5b2f605323d8f08ce2d9c6",
+    "independent-old-state-check.json": "9a4f5aa60816c6e14294330dd9c4e989ea3a5d55cb4feb21bfd6d2d33351765a",
+    "installed-exe-sha256.txt": "ca8536da6fab2228d54163084e55d8379eaf861c8f3d01929f6ad1a856a9783c",
+    "native-goal-private.json": "eb48346762cf4ab6900f4d8ceeadc3dad638ee904b5a6b874f87f59815298d45",
+    "native-private.json": "c919b6e28ec1356c2d9c96985a11c38e415d126b8f01f1a7a59f9e9cf483edfb",
+    "original-files-endpoint-comparison.json": "64f80633b196035225fee3e37c8a78ab9b8796bb0ffc92767a2760197a92de22",
+    "job-private/receipt.json": "c79baf294141005dcb8e79eb425568999a0a4067a9f5c3d30d56df90dbcf3040",
+    "job-private/request.json": "6d3ed47d6d7db63e1ca345291304e7c5ea7a1b5752c3ef4164b48ec33dcee196",
+    "job-private/source.py": "548f6f9ea7f0da887b513110de8aee2a765f0568f0a9aa3ec47fac2fcc2b1f3f",
+    "job-private/stderr.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "job-private/stdout.bin": "a0b3a0f3559497bdcdd9568fb65cae7c1fa8c79586877f18824fc2aee4d10187",
+    "job-private/worker.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native-private.journal/head.json": "cbf8f80e174b36ca7664e0ef1365f9267cbd4394740af0111d497540d048daac",
+    "native-private.journal/segment-00000000.jsonl": "6b7d5448b872fbda7fd04aa32127d617e74d24b43188931aabe2c91c9ff11110",
+    "work/input.json": "3af3856ce353baf6a49080e55ecc8bf0d4826164039b3b21f70af52008dfa453",
+    "work/report.json": "47e60deeac17b806337b26dcdbaf99a6114890a9536d15fe6ae8334f7da77c92",
+    "native-private.journal/runs/0bfefcc83f82dbe3584bbfafbb401c23aa57a8982bcc8887d457cd46d2c29c94.json": "6a2093dda31f4d6cdac38b13d0ac31af9b45a0695a8e9dd700d37d9fef5250cd",
+    "native-private.journal/runs/ead1a4206ca33a05902be1ae1ff5c83cb737101420270630afc501383255ff2a.json": "948926c783f8e0284145751259521425ec438b5023bf64f0cdeddb119234f26f"
+  }
+}
