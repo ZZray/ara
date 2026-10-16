@@ -31,6 +31,22 @@ pub fn context_observation(context: &Context) -> Value {
         "cache_policy":"provider_managed_no_hit_guarantee"})
 }
 
+/// Same serialized allocation used by TextBudget::check, not provider token usage.
+pub fn request_observation(context: &Context, budget: crate::model_caps::TextBudget) -> anyhow::Result<Value> {
+    let mut value = context_observation(context);
+    value["request_json_bytes"] = json!(budget.request_json_bytes(context)?);
+    value["request_limit_bytes"] = json!(budget.request_bytes);
+    value["budget_source"] = json!("host_conservative_text_allocation");
+    Ok(value)
+}
+
+pub fn projection_observation(bytes: usize, limit: usize, status: &str) -> Value {
+    json!({"type":"context_status", "status":status, "projection_json_bytes":bytes,
+        "projection_limit_bytes":limit, "unit":"utf8_json_bytes_not_tokens",
+        "near_threshold":bytes >= limit.saturating_sub(limit / 5),
+        "source":"host_working_projection"})
+}
+
 pub fn compaction_receipt(raw_base: usize, cut: usize, window_messages: usize) -> anyhow::Result<Value> {
     anyhow::ensure!(cut <= window_messages, "compaction cut exceeds retained window");
     let covered = raw_base.checked_add(cut).ok_or_else(|| anyhow::anyhow!("compaction prefix overflow"))?;
@@ -84,6 +100,17 @@ mod tests {
         assert_eq!(receipt["raw_messages"], 1100);
         assert!(compaction_receipt(0, 101, 100).is_err());
         assert!(compaction_receipt(usize::MAX, 1, 1).is_err());
+    }
+    #[test]
+    fn observations_share_request_budget_and_do_not_invent_token_usage() {
+        let budget = crate::model_caps::TextBudget { projection_bytes: 512, request_bytes: 1024 };
+        let context = Context { system_prompt: Some("中\\\"".repeat(5)), ..Default::default() };
+        let value = request_observation(&context, budget).unwrap();
+        assert_eq!(value["request_json_bytes"], serde_json::to_vec(&context).unwrap().len());
+        assert_eq!(value["request_limit_bytes"], 1024);
+        assert!(value.get("tokens").is_none());
+        assert_eq!(projection_observation(799, 1000, "ready")["near_threshold"], false);
+        assert_eq!(projection_observation(800, 1000, "ready")["near_threshold"], true);
     }
     #[test]
     fn context_observation_is_content_free_and_stable() {

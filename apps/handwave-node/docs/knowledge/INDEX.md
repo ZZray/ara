@@ -3,6 +3,8 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [0.2.1 context and calendar integration](../evidence/ui-context-0.2.1-20261016.md): actual byte telemetry, current Goal-slice ownership, bounded appointments, scoped reviews, production UI and upstream-quota acceptance boundary.
+
 - [Host and upstream boundaries](host-boundaries.md)
 - [Context and sourced memory](context-memory.md)
 - [0.2.0 version acceptance](../evidence/version-0.2.0-20261016.md): seven requested capability groups, final executable tests and explicit release boundaries.

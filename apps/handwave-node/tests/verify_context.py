@@ -397,6 +397,20 @@ def summary_restart(host, passed):
     compact = [event for event in receipts if event.get("type") == "compact" and event.get("status") == "completed"]
     require(compact and compact[-1]["covered_prefix"] == summary["prefix_end"] and compact[-1]["index_unit"] == "global_raw_message_indexes",
             "Successful compaction lacks a post-checkpoint global receipt")
+    statuses = [(i, event) for i, event in enumerate(receipts) if event.get("type") == "context_status"]
+    require(statuses and all(event.get("unit") == "utf8_json_bytes_not_tokens"
+                            and event.get("source") == "host_working_projection"
+                            and event["projection_json_bytes"] > 0 and event["projection_limit_bytes"] > 0
+                            for _, event in statuses), "Context status must report real nonzero byte allocations")
+    summary_call = next(i for i, event in enumerate(receipts) if event.get("type") == "model_call" and event.get("phase") == "summary")
+    require(any(i < summary_call and event.get("status") == "compressing" for i, event in statuses),
+            "Compression did not report its start before the actual summary call")
+    require(any(event.get("status") == "ready" and event["projection_json_bytes"] <= event["projection_limit_bytes"] for _, event in statuses),
+            "Working projection never reported a checked ready allocation")
+    observations = [event["context_observation"] for event in receipts if event.get("type") == "model_call" and event.get("phase") == "agent"]
+    require(observations and all(0 < item["request_json_bytes"] <= item["request_limit_bytes"]
+                                and item["budget_source"] == "host_conservative_text_allocation" for item in observations),
+            "Model call lacks complete checked request byte accounting")
     source_map={r["id"]:r["hash"] for r in host.state_json()["references"]}
     require(all(source_map.get(s["id"])==s["hash"] for s in summary["sources"]),"Summary source hash not bound to original reference")
     require(any(m["text"] == "AUTO_CANDIDATE_73" and m["status"] == "candidate" for m in host.state_json()["memories"]),

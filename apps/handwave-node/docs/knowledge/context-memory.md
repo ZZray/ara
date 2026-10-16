@@ -159,6 +159,28 @@ uncompactable content fails with its audit retained. New capability validation
 occurs before pending-run persistence so an invalid capacity does not strand the
 Session. See[execution evidence](../evidence/model-capabilities-20261015.md).
 
+## Working-context display contract (2026-10-16)
+
+The Host emits `context_status` for the actual serialized working projection
+and `model_call.context_observation` for the complete serialized Context. These
+reuse TextBudget's JSON allocation checks; they are UTF-8 byte measurements,
+not model token usage or a guarantee about provider framing. Declared model
+window capacity is shown separately. The near-threshold signal means a future
+turn may need maintenance, not that compression is already complete.
+
+`compressing` is emitted only after budget reservation and immediately before
+the real summary request. `compact.completed` still follows successful durable
+summary persistence. Browser cards must scope live observations to the current
+Session/device/Run and reject history playback as current usage. Missing data
+is unknown, never a fabricated zero-percent meter. This telemetry does not
+change compaction policy, model choice, source retention, or memory adoption.
+
+Cloud appointments can resume an already paused, leased Goal through the
+existing command interface. The Node does not gain a separate calendar engine:
+its original lease, root budget, Jobs, and review remain authoritative. Hub or
+Node reconnection invalidates the old writer connection; schedules cannot
+silently repair ownership, extend authority, or replay an unknown command.
+
 ## Reviewed tool experience
 
 The 2026-10-15 extension reuses this Store's memory states and source invalidation

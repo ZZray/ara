@@ -813,6 +813,16 @@ pub async fn execute(
             producer.push(AssistantMessageEvent::Error { reason: rpi_ai::ErrorReason::Error, error: message });
             return consumer;
         }
+        let observation = match crate::model_telemetry::request_observation(context, text_budget) {
+            Ok(value) => value,
+            Err(error) => {
+                let mut message = rpi_ai::AssistantMessage::empty(model.api.clone(), &model.provider, &model.id, 0);
+                message.stop_reason = StopReason::Error;
+                message.error_message = Some(error.to_string());
+                producer.push(AssistantMessageEvent::Error { reason: rpi_ai::ErrorReason::Error, error: message });
+                return consumer;
+            }
+        };
         let call_number = call_counter.load(Ordering::SeqCst);
         let call_events = call_events.clone();
         let event_failure = gate_journal.clone();
@@ -822,7 +832,7 @@ pub async fn execute(
         let options = options.clone();
         tokio::spawn(async move {
             let started = std::time::Instant::now();
-            let receipt = json!({"type":"model_call","phase":"agent","call":call_number,"usage":"unknown","status":"reserved","context_observation":crate::model_telemetry::context_observation(&context)});
+            let receipt = json!({"type":"model_call","phase":"agent","call":call_number,"usage":"unknown","status":"reserved","context_observation":observation});
             tokio::select! {_ = options.signal.cancelled()=>return, result=call_events.send(receipt)=>if result.is_err(){*event_failure.lock().unwrap()=Some("model-call event transport closed".into());options.signal.cancel();return;}}
             let mut stream = provider.stream_simple(&model, &context, &options).await;
             while let Some(event) = stream.next().await {
@@ -914,6 +924,11 @@ pub async fn execute(
                     text_budget.check(&context)?;
                     reserve_call(&calls,max_calls,&signal,deadline)?;
                     root_reservation()?;
+                    let mut before=store.lock().unwrap().projection(&messages)?;
+                    if let Some(carrier)=runtime_carrier.first() { before.insert(1.min(before.len()),carrier.clone()); }
+                    let receipt=crate::model_telemetry::projection_observation(
+                        serde_json::to_vec(&before)?.len(),text_budget.projection_bytes,"compressing");
+                    tokio::select! {_=signal.cancelled()=>bail!("context maintenance canceled"), _=tokio::time::sleep_until(deadline)=>bail!("context maintenance deadline exceeded"), result=events.send(receipt)=>result.context("context status transport closed")?}
                     let receipt=json!({"type":"model_call","phase":"summary","call":calls.load(Ordering::SeqCst),"usage":"unknown","status":"reserved"});
                     tokio::select! {_=signal.cancelled()=>bail!("context maintenance canceled"),_=tokio::time::sleep_until(deadline)=>bail!("context maintenance deadline exceeded"),result=events.send(receipt)=>{if result.is_err(){*journal.lock().unwrap()=Some("context event transport closed".into());bail!("context event transport closed");}}}
                     let response=async {
@@ -951,7 +966,10 @@ pub async fn execute(
                 if let Some(directory)=crate::experience::directory(messages.get(previous_message_count..).context("native experience scope unavailable")?) {
                     attach_experience_directory(&mut projection,directory,text_budget.projection_bytes)?;
                 }
-                if serde_json::to_vec(&projection)?.len()>text_budget.projection_bytes {bail!("working context exceeds byte budget after compaction; narrow the request");}
+                let projection_bytes=serde_json::to_vec(&projection)?.len();
+                if projection_bytes>text_budget.projection_bytes {bail!("working context exceeds byte budget after compaction; narrow the request");}
+                let receipt=crate::model_telemetry::projection_observation(projection_bytes,text_budget.projection_bytes,"ready");
+                tokio::select! {_=signal.cancelled()=>bail!("context maintenance canceled"), _=tokio::time::sleep_until(deadline)=>bail!("context maintenance deadline exceeded"), result=events.send(receipt)=>result.context("context status transport closed")?}
                 Ok::<_,anyhow::Error>(projection)
             }.await;
             match operation {

@@ -1,0 +1,156 @@
+{
+  "reviewer": "independent Codex /root/schedule_arch_audit",
+  "reviewed_at": "2026-10-16T10:08:56.059953+08:00",
+  "result": "APPROVE_SCOPED_RELEASE_RECEIPTS_AND_DOCUMENTATION",
+  "scope": "Read-only final docs, byte pins and recorded execution/deployment receipts. No product edits or new tests/live actions.",
+  "findings": [],
+  "documents": [
+    {
+      "path": "E:\\repos\\ara\\docs\\evidence\\handwave-ui-goals-20261016.md",
+      "sha256": "0689d6b020acf23130a54af533aa4a7ef760e3c30a3f6ff5fe83b068e2f53d57"
+    },
+    {
+      "path": "E:\\repos\\ara\\apps\\handwave\\docs\\knowledge\\scheduled-goal-resume.md",
+      "sha256": "8405b6ea97680a5ea0f695e761ad8defb38d5a50e1efbbf2cced06b3738febc9"
+    },
+    {
+      "path": "E:\\repos\\ara-github\\apps\\handwave-node\\docs\\evidence\\ui-context-0.2.1-20261016.md",
+      "sha256": "b26cc807b20b51ceb509fc7aa302eff12cab97c783ca75f39f0e61363196512b"
+    }
+  ],
+  "verified": {
+    "context_process": {
+      "status": "PASS",
+      "groups": 15,
+      "seconds": 136.163,
+      "node_sha256": "626f4b669bcef542bdf0a9a83eb9b6dcf7597716ef2e9f7694bdddc7156844f9",
+      "hub_sha256": "98f1b0d5726a732a8c7e34bdff25ccb3f562784a0e99dedc491e9d93632f8939"
+    },
+    "schedule_process": {
+      "ok": true,
+      "model_calls": 4,
+      "native_slices": 2,
+      "seconds": 20.9,
+      "boundary": "Real Rust and Hub processes with controlled provider. Resume acknowledged, Goal awaiting review before later negative-case pause."
+    },
+    "go_commands": {
+      "count": 13,
+      "all_exit_zero": true,
+      "scope": "Complete Ray package, selected Hub/race,10 JS suites; not full repository tests."
+    },
+    "two_independent_post_reviews": "composer-post-review.json and context-ui-post-review.json approve their independent declared scopes and close the two P2 findings. Own-source self-review exclusions retained.",
+    "final_normalized_source_overlay_all_23_pins_match": {
+      "apps/provider/cmd/ray_front/handwave_context.js": true,
+      "apps/provider/cmd/ray_front/handwave_context.css": true,
+      "apps/provider/cmd/ray_front/handwave_context.test.cjs": true,
+      "apps/provider/cmd/ray_front/handwave_memory.js": true,
+      "apps/provider/cmd/ray_front/handwave_memory.css": true,
+      "apps/provider/cmd/ray_front/handwave_memory.test.cjs": true,
+      "apps/provider/cmd/ray_front/handwave_links.js": true,
+      "apps/provider/cmd/ray_front/handwave_links.css": true,
+      "apps/provider/cmd/ray_front/handwave_links.test.cjs": true,
+      "apps/provider/cmd/ray_front/handwave_schedule.js": true,
+      "apps/provider/cmd/ray_front/handwave_schedule.css": true,
+      "apps/provider/cmd/ray_front/handwave_schedule.test.cjs": true,
+      "apps/provider/cmd/ray_front/handwave_composer_menu.js": true,
+      "apps/provider/cmd/ray_front/handwave_ui.go": true,
+      "apps/provider/cmd/ray_front/handwave_ui_test.go": true,
+      "apps/handwave/schedule_book.go": true,
+      "apps/handwave/schedule_book_test.go": true,
+      "apps/handwave/long_tasks.go": true,
+      "apps/handwave/main.go": true,
+      "apps/handwave/proto.go": true,
+      "apps/handwave/connect_approved.go": true,
+      "apps/handwave/connect_approved_test.go": true,
+      "apps/handwave/hub.go": true
+    },
+    "line_ending_bridge": "final-line-ending-review.json independently reverses each final LF file to the exact original reviewed CRLF hash. No behavioral delta inferred.",
+    "source_archive": "All613 manifest member hashes match, no duplicates; current src/Cargo.toml/Cargo.lock match package manifest. Closeout docs are later snapshots.",
+    "windows_package": {
+      "name": "handwave-node-windows-626f4b66.zip",
+      "sha256": "7238af79d1c5d92ab068fee2a4e4938c7d37f72e297095eb21e31c7ba8a9cbd6",
+      "exe_sha256": "626f4b669bcef542bdf0a9a83eb9b6dcf7597716ef2e9f7694bdddc7156844f9",
+      "exe_bytes": 4931072,
+      "zip_bytes": 3541089
+    },
+    "pe_imports": "Pinned626f4b66 actual EXE matches pe-imports.json:8 Windows system normal imports,0 delay imports, no dynamic CRT. No fresh PE program execution in this review.",
+    "preserved_packages": "All13 preserved file hashes match: .gitattributes plus12 immutable release URLs; not13 old URLs.",
+    "deployment": {
+      "initial_receipt": {
+        "success": true,
+        "scope": "Hub appointments + Ray UI/packages; authorization and other services preserved",
+        "services": {
+          "handwave.service": {
+            "pid": 346904,
+            "sha256": "4379010b55889e4d971951458b82cdeec7cfac31adaa6b2c5a523af0607b0e50"
+          },
+          "ray-front.service": {
+            "pid": 346914,
+            "sha256": "7d6d9cd8f6c76944a36e8489da94c641cfa8433a85855829635407024f14b2cc"
+          }
+        },
+        "protected_files_unchanged": 30,
+        "other_services_unchanged": true,
+        "downloads_verified": 14,
+        "normal_login": true,
+        "application_gate": true,
+        "backup": "/opt/handwave/deploy-ui-goals-20261016/backup-1792115515452169290"
+      },
+      "final_ray_only_refresh_receipt": {
+        "success": true,
+        "scope": "Hub appointments + Ray UI/packages; authorization and other services preserved",
+        "services": {
+          "ray-front.service": {
+            "pid": 350250,
+            "sha256": "118e3866618ffa9ce78a2721ebef52eee4bb4699d48a6b9ca131261a6b6c89b2"
+          }
+        },
+        "protected_files_unchanged": 30,
+        "other_services_unchanged": true,
+        "downloads_verified": 14,
+        "normal_login": true,
+        "application_gate": true,
+        "backup": "/opt/handwave/deploy-ui-goals-20261016/backup-1792116405809595941"
+      }
+    },
+    "node_install": {
+      "Pid": 54956,
+      "Exe": "C:\\Users\\loveu\\AppData\\Local\\HandWaveNode\\handwave-node.exe",
+      "SHA256": "626F4B669BCEF542BDF0A9A83EB9B6DCF7597716EF2E9F7694BDDDC7156844F9",
+      "PrivateInputsUnchanged": true,
+      "Bytes": 4931072
+    },
+    "links": "The knowledge delivery link resolves to the Go evidence document."
+  },
+  "superseded_historical_receipt_fields": [
+    {
+      "file": "context-ui-post-review.json",
+      "field": "artifact_crosscheck.windows_zip_sha256",
+      "historical_value": "06307f0b21f06c4d5ecfe607e9b058bf2cd1b4976d6d826b85d176790dda8a1b",
+      "final_value": "7238af79d1c5d92ab068fee2a4e4938c7d37f72e297095eb21e31c7ba8a9cbd6",
+      "resolution": "Final raw ZIP member read/hash in final-release-static-crosscheck.json and final go-checks/package/deploy receipts supersede the earlier unpublished ZIP."
+    },
+    {
+      "file": "composer-post-review.json",
+      "field": "go_historical_failure",
+      "correction": "The final go-checks.json has13 commands, not14;14 is the public package URL count. All three release documents use the correct13."
+    }
+  ],
+  "production_boundaries": {
+    "failed_auto_trial": "live-auto-quota-failure-dom.txt contains Nvidia ResourceExhausted16/16 and stopped state. No successful real-model trial is inferred.",
+    "preserved_previous_goal": "live-final-dom.txt retains previous0.2.0 Goal awaiting_review.",
+    "calendar": "Authenticated production list and disabled invalid creation only; no production calendar save/trigger or real-model calendar success claimed.",
+    "preservation": "Auth/input/other service preservation attributed to actual primary-agent deployment receipts; reviewer did not independently reconnect production."
+  },
+  "rust_command_evidence": {
+    "receipt": "rust-command-receipt.json",
+    "provenance": "Primary-agent actual-tool transcript receipt:118 tests,8.06s,v0.2.1; Clippy/fmt/deny/build results recorded. Reviewer did not possess full raw Cargo stdout or independently rerun it.",
+    "excluded": "Old handwave-version-20261016/unit-final.log117-test0.2.0 evidence was not used for0.2.1 acceptance."
+  },
+  "limits": [
+    "No new Cargo, tests, production operations, or model requests during this final review.",
+    "No Linux/ARM/macOS rebuild,1M exact-token usage, provider billing/cache economics or power-loss acceptance.",
+    "One-time calendar resumes existing paused leased Goal only; retained64-record history and manual refresh limitations are documented.",
+    "Root bootstrap recursive scan was stopped, not passed; no shared Core/OMP acceptance claimed."
+  ]
+}

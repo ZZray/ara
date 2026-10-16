@@ -89,11 +89,14 @@ pub struct TextBudget {
     pub request_bytes: usize,
 }
 impl TextBudget {
+    pub fn request_json_bytes(&self, context: &rpi_ai::Context) -> Result<usize> {
+        Ok(serde_json::to_vec(context)?.len())
+    }
     pub fn check(&self, context: &rpi_ai::Context) -> Result<()> {
         // Includes actual system prompt, schemas and escaped message strings.
         // UTF-8 JSON bytes are a conservative text allocation, not a tokenizer
         // or a guarantee about undocumented supplier framing/image accounting.
-        if serde_json::to_vec(context)?.len() > self.request_bytes {
+        if self.request_json_bytes(context)? > self.request_bytes {
             bail!("complete model request exceeds declared context/local text-byte budget; original Session retained");
         }
         Ok(())

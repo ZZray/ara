@@ -1,5 +1,21 @@
 # Investigated cases — 2026-10-14
 
+## HWN-023: capacity telemetry must follow authenticated Goal slices
+
+2026-10-16. Independent Codex UI review traced a fresh Goal slice through
+`Runner::next`, transport and `wire.task_id`. A first UI draft accepted only
+the browser's initial `localRunID` while `localBusy` remained true. A controlled
+DOM reproduction proved that after the first slice ended, a later 900/1000-byte
+receipt left the card showing the old 200/1000-byte settled observation.
+
+The correction needs a separate capacity observer authenticated by the current
+Hub Goal mirror (device, Session, Goal lease, writer epoch and current Run),
+without granting task controls to arbitrary telemetry. Events ahead of that
+mirror must remain unreported; loosening the task ID gate would mix sessions.
+Per-Run tests, independent re-review and browser evidence are recorded in this
+release's delivery record. The raw history and compression algorithm are not
+the cause and require no policy change.
+
 ## 0.2.0 verification traps — 2026-10-16
 
 An initial4.81MB candidate still imported vcruntime140 and the dynamic CRT.
