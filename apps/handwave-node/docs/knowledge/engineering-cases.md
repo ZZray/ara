@@ -799,3 +799,28 @@ prove the shell invocation was valid. The fixture now passes backslash-normalize
 arguments with `/d /c` and retains stdout/stderr in assertion failures. It still
 requires an actual junction and an actual rejected read; no guard or assertion
 was disabled to make the test pass.
+
+## HWN-033 — publication must verify package inputs and actual image readiness
+
+2026-10-18, 0.2.7 stage publication. Source builds need the compile-time Markdown
+payloads as well as Rust files. The old source allowlist omitted four include_str
+inputs; inspecting an EXE or a successful worktree build could not validate that
+archive. Adding those exact resources and compiling the actual archive under
+GNU Linux verified the repaired publication path. Archive/export equality and
+actual Host tests are separate from autonomous model-task acceptance, which
+remained OPEN after four bounded failures.
+
+A local identity preflight initially compared full banners, so the intended
+version update looked like an identity change. The actual device fingerprint
+and all 107 state-file hashes were unchanged; reconciling the completed binary
+swap before continuing avoided replaying an operation with uncertain status.
+
+The first Ray deployment failed an immediate process-image check and rolled back
+only its binary. A new preflight confirmed user state and other services were
+unchanged. A bounded readiness probe then directly observed the same MainPID
+running systemd-executor before executing Ray. Its intermediate SHA matches the
+host executor binary, and the final SHA matches the exact-commit candidate.
+Type=simple startup is therefore not target-image readiness. The first attempt
+did not record its intermediate SHA; do not claim more about that attempt than
+the retained rollback receipt proves. See the
+[stage publication record](../evidence/stage-publication-0.2.7-20261018.md).

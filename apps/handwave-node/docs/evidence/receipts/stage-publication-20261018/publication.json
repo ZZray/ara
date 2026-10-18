@@ -1,0 +1,119 @@
+{
+  "version": "0.2.7",
+  "date": "2026-10-18",
+  "publication_state": "stage_publication_verified",
+  "autonomous_two_session_acceptance": "OPEN",
+  "rust_commit": "5b6f78adbb34e89e0cd712c623fd4c08a8185d06",
+  "ray_commit": "27349eff3ce33bf4de2312a654b2701a0c683756",
+  "windows": {
+    "name": "handwave-node-windows-dba28da4.zip",
+    "sha256": "2ef024d0c817ec6ff5a3fa556c3fc48ea10d28532a2724ac64c081ee2190428b",
+    "exe_sha256": "dba28da40a66c45a7025473876f2215c75598cdfc4ceb2246e781ce35d468535",
+    "exe_bytes": 5349888,
+    "zip_bytes": 3740823,
+    "files": 560
+  },
+  "source": {
+    "source_name": "handwave-node-source-324d4cbcbb6e66ad.tar.gz",
+    "source_sha256": "324d4cbcbb6e66add330345b4a9844b27ef66319a1f58230d4fc940328b3e162",
+    "source_bytes": 578953,
+    "script_name": "install-linux-fe4b10bee6a73659.sh",
+    "script_sha256": "fe4b10bee6a73659f6c5db78e624aa794bec0e0b57f91619d8be13c4f694094c"
+  },
+  "cloud": {
+    "success": true,
+    "commit": "27349eff3ce33bf4de2312a654b2701a0c683756",
+    "utc": "2026-10-18T13:50:46Z",
+    "startup_probes": [
+      {
+        "pid": 1142887,
+        "sha256": "95c258398b954fd34f9dec8028c8051d3904806a32db1c7d7ddc8176704a826b"
+      },
+      {
+        "pid": 1142887,
+        "sha256": "59800122bdab0c1de055db7116d1de453c88f6ee286c7480edbd1e606902ff33"
+      }
+    ],
+    "ray": {
+      "pid": 1142887,
+      "sha256": "59800122bdab0c1de055db7116d1de453c88f6ee286c7480edbd1e606902ff33"
+    },
+    "backup": "/opt/ray-front/deploy-node-027-20261018/backup-1792331446949495257",
+    "protected_files_unchanged": 59,
+    "other_services_unchanged": true,
+    "arena_unchanged": true,
+    "downloads_verified": 24,
+    "public_tls_verified": true,
+    "default_source_pin_updated": true,
+    "avatar_gate_verified": true,
+    "browser_visual_verified": false
+  },
+  "public_fetch": {
+    "artifacts": [
+      {
+        "name": "handwave-node-source-324d4cbcbb6e66ad.tar.gz",
+        "status": 200,
+        "bytes": 578953,
+        "sha256": "324d4cbcbb6e66add330345b4a9844b27ef66319a1f58230d4fc940328b3e162"
+      },
+      {
+        "name": "handwave-node-windows-dba28da4.zip",
+        "status": 200,
+        "bytes": 3740823,
+        "sha256": "2ef024d0c817ec6ff5a3fa556c3fc48ea10d28532a2724ac64c081ee2190428b"
+      }
+    ],
+    "default_source_pin_matches": true,
+    "tls": "default verification",
+    "browser_visual": false
+  },
+  "windows_checks": {
+    "tests_passed": 201,
+    "failed": 0,
+    "ignored_public_network": 1,
+    "environment_host": [
+      "ENV_CREATE",
+      "ENV_INSTALL",
+      "ENV_REUSE",
+      "ENV_RETIRE",
+      "ENV_PLAN"
+    ],
+    "existing_host_passed": 27,
+    "tested_sha256": "dba28da40a66c45a7025473876f2215c75598cdfc4ceb2246e781ce35d468535"
+  },
+  "linux_checks": {
+    "build": "PASS",
+    "profile": "debug_GNU_Linux",
+    "environment_tests": 14,
+    "skills_tests": 12,
+    "actual_host": 5,
+    "source_archive_sha256": "324d4cbcbb6e66add330345b4a9844b27ef66319a1f58230d4fc940328b3e162",
+    "binary_sha256": "af8b407a38aaccfef6cba4de5e8276653c49bc442247819cdc11fae9c3fbc994",
+    "note": "Actual source archive; uid1000; original cache-copy and export-metadata failures retained outside Git"
+  },
+  "installed_node": {
+    "launcher_limits_preserved": true,
+    "preserved_at_switch": 107,
+    "grant_renewed": false,
+    "new_pid": 26368,
+    "initial_guard_failure": "Compared complete versioned banners; fingerprint and all state hashes were unchanged; reconciled without repeating swap",
+    "fingerprint": "U75VP37OFSBBK",
+    "old_image": "8b01e4384e7e39aec7149ff9b75dbbac3ab79eff80478ece871402e2f60d439e",
+    "success": true,
+    "sha256": "dba28da40a66c45a7025473876f2215c75598cdfc4ceb2246e781ce35d468535"
+  },
+  "independent_review": {
+    "reviewer": "/root/environment_evolution_review",
+    "result": "APPROVE_STAGE_PUBLICATION_ONLY",
+    "report": "review.md",
+    "original_report_sha256": "63e8876a0fc15ae9390a59b823fa0844078aeb9afb8635b2dc524f51640ad460",
+    "stored_lf_report_sha256": "0104791a3e50d6f3927c9383b074f6be7d6996bf0b9a980c3f4aabc75bd1ba77"
+  },
+  "not_accepted": [
+    "autonomous real-model two-Session task",
+    "production authorized model task",
+    "browser visual acceptance",
+    "Linux release/LTO and other platforms",
+    "guaranteed default DDG reachability"
+  ]
+}

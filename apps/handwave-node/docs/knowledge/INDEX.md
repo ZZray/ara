@@ -3,6 +3,10 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [0.2.7 stage publication](../evidence/stage-publication-0.2.7-20261018.md):
+  pushed sources, verified Windows packages and Linux source installation,
+  preserved production state and explicit autonomous-model acceptance limits.
+
 - [Environment knowledge and reusable skills](environment-library.md): default
   project/global INDEX plus content pages, progressive skill carriers, native
   receipt association, revocation and runtime permissions;
