@@ -1,0 +1,233 @@
+{
+  "date": "2026-10-18",
+  "product": "handwave-node",
+  "version": "0.2.7",
+  "state": "local_implementation_tested_real_model_acceptance_open",
+  "binary": {
+    "sha256": "81ec56dac455c8e20d7e2907a6f6767332bedb7748f73502a82732723c11eaf3",
+    "bytes": 5349888,
+    "target": "x86_64-pc-windows-msvc",
+    "static_crt": true
+  },
+  "source_pins": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "fc718718fe84005e7b3c26c1cb0eb8635df9dd2bf4ef6a61e22ce04eda0d99a8"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "89f8088bc7737066c563cad7acf8f82fe083d83d569a658b3df9e6750327e33c"
+    },
+    {
+      "path": "src/agent.rs",
+      "sha256": "36bc808a53185b6b70b3c0722d60f9a9c6ec41615909e597e3024ffa6cd18d9e"
+    },
+    {
+      "path": "src/config.rs",
+      "sha256": "c9b349c878c905c6d18458372ea411157bba3e2c623a6706ce3793c55e8b2b4d"
+    },
+    {
+      "path": "src/execution.rs",
+      "sha256": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b"
+    },
+    {
+      "path": "src/experience.rs",
+      "sha256": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac"
+    },
+    {
+      "path": "src/local_tools.rs",
+      "sha256": "6f2879238356fbf64fa572949c5831186ce639a46c60cf5c124713f7a03ab498"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "6b585ea50658f6551e386957a46d8ad1f5d353a9585b81e7728bfeabad219963"
+    },
+    {
+      "path": "src/transport.rs",
+      "sha256": "a62ca2f6003b234ab1f52213f5ecd108b6b65d9b15da78558666d23b4dc45840"
+    },
+    {
+      "path": "src/environment_library.rs",
+      "sha256": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f"
+    },
+    {
+      "path": "src/environment_library_tests.rs",
+      "sha256": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676"
+    },
+    {
+      "path": "src/environment_tools.rs",
+      "sha256": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0"
+    },
+    {
+      "path": "src/environment_prompt.md",
+      "sha256": "bb1631d9520a0d09238d03d45f41da2538ae6c03bd9f1a34bffda7a8e6b59253"
+    },
+    {
+      "path": "src/skill_library.rs",
+      "sha256": "7aa19d2048e9f30861d8a815d4dc2a4fe6d666437c58a81450da8ff3dafc76c4"
+    },
+    {
+      "path": "src/skill_library_tests.rs",
+      "sha256": "fc7c48705d2ed940624f694f24c4b6688187356cc4b7414e7d0a1845947e746b"
+    },
+    {
+      "path": "src/builtin_skills/skill-creator/SKILL.md",
+      "sha256": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343"
+    },
+    {
+      "path": "src/builtin_skills/skill-installer/SKILL.md",
+      "sha256": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd"
+    }
+  ],
+  "checks": {
+    "unit_tests": {
+      "passed": 201,
+      "failed": 0,
+      "ignored_public_network": 1
+    },
+    "fmt": "PASS",
+    "clippy": "PASS",
+    "dependency_policy": "PASS",
+    "actual_environment_host": {
+      "status": "PASS",
+      "cases": [
+        "ENV_CREATE",
+        "ENV_INSTALL",
+        "ENV_REUSE",
+        "ENV_RETIRE",
+        "ENV_PLAN"
+      ],
+      "elapsed_seconds": 55.107
+    },
+    "existing_actual_host_regression": {
+      "status": "PASS",
+      "passed": 27,
+      "elapsed_seconds": 77.879
+    }
+  },
+  "real_model_trials": [
+    {
+      "id": "live-two-sessions-v1",
+      "status": "FAIL",
+      "calls": 13,
+      "conservative_reservation": 530418,
+      "elapsed_seconds": 62.311,
+      "provider_reported_total_tokens": 128960,
+      "provider_reported_cached_prompt_tokens": 108160,
+      "trials": [
+        {
+          "name": "create",
+          "status": "FAIL",
+          "error": "AssertionError: Actual model trial did not settle successfully"
+        },
+        {
+          "name": "reuse",
+          "status": "FAIL",
+          "error": "AssertionError: Actual model trial did not settle successfully"
+        }
+      ],
+      "budget_denials": [
+        {
+          "trial": "reuse",
+          "reason": "300000 conservative UTF8/output reservation per trial",
+          "request_utf8_bytes": 95081,
+          "candidate_reservation": 96581
+        }
+      ]
+    },
+    {
+      "id": "live-two-sessions-v2",
+      "status": "FAIL",
+      "calls": 16,
+      "conservative_reservation": 831961,
+      "elapsed_seconds": 76.478,
+      "provider_reported_total_tokens": 219560,
+      "provider_reported_cached_prompt_tokens": 160768,
+      "trials": [
+        {
+          "name": "create",
+          "status": "FAIL",
+          "error": "AssertionError: Actual model trial did not settle successfully"
+        },
+        {
+          "name": "reuse",
+          "status": "NOT_RUN",
+          "reason": "dependency_create_failed; no reuse task dispatched and no model call spent on a missing prerequisite"
+        }
+      ],
+      "budget_denials": []
+    },
+    {
+      "id": "live-two-sessions-v3",
+      "status": "FAIL",
+      "calls": 19,
+      "conservative_reservation": 938037,
+      "elapsed_seconds": 74.475,
+      "provider_reported_total_tokens": 241570,
+      "provider_reported_cached_prompt_tokens": 191872,
+      "trials": [
+        {
+          "name": "create",
+          "status": "FAIL",
+          "error": "AssertionError: Actual model trial did not settle successfully"
+        },
+        {
+          "name": "reuse",
+          "status": "NOT_RUN",
+          "reason": "dependency_create_failed; no reuse task dispatched and no model call spent on a missing prerequisite"
+        }
+      ],
+      "budget_denials": [
+        {
+          "trial": "create",
+          "reason": "1000000 conservative UTF8/output reservation per trial",
+          "request_utf8_bytes": 65541,
+          "candidate_reservation": 69637
+        }
+      ]
+    },
+    {
+      "id": "live-project-two-sessions-v4",
+      "status": "FAIL",
+      "calls": 16,
+      "conservative_reservation": 934592,
+      "elapsed_seconds": 87.817,
+      "provider_reported_total_tokens": 254692,
+      "provider_reported_cached_prompt_tokens": 184064,
+      "trials": [
+        {
+          "name": "create",
+          "status": "FAIL",
+          "error": "AssertionError: Actual model trial did not settle successfully"
+        },
+        {
+          "name": "reuse",
+          "status": "NOT_RUN",
+          "reason": "dependency_create_failed; no reuse task dispatched and no model call spent on a missing prerequisite"
+        }
+      ],
+      "budget_denials": [
+        {
+          "trial": "create",
+          "reason": "1000000 conservative UTF8/output reservation per trial",
+          "request_utf8_bytes": 73947,
+          "candidate_reservation": 78043
+        }
+      ]
+    }
+  ],
+  "boundary": [
+    "No production deployment or installed-node replacement",
+    "Linux/macOS execution not covered",
+    "Actual-model autonomous two-Session acceptance remains OPEN",
+    "No automatic private-memory adoption",
+    "Conservative byte/output reservations are distinct from provider usage; no cost-saving claim"
+  ],
+  "independent_review": {
+    "reviewer": "/root/environment_evolution_review",
+    "source_and_actual_host": "APPROVE",
+    "autonomous_two_session_point": "OPEN_NOT_ACCEPTED",
+    "report": "review.md",
+    "sha256": "ae16cfe30d54f9ea46dbf5945821e5ded964dc3bd29d084b18e008567e5d54cb"
+  }
+}

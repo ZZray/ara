@@ -3,6 +3,15 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [Environment knowledge and reusable skills](environment-library.md): default
+  project/global INDEX plus content pages, progressive skill carriers, native
+  receipt association, revocation and runtime permissions;
+  [0.2.7 local candidate evidence](../evidence/environment-library-0.2.7-20261018.md).
+
+- [Native web research and verified downloads](web-research.md): bounded search,
+  public document reading, source receipts and download checksum boundaries;
+  [0.2.6 candidate evidence](../evidence/web-research-0.2.6-20261018.md).
+
 - [0.2.5 security hardening](../evidence/security-hardening-0.2.5-20261016.md):
   signed socket identity, complete-key approval pins, verified public transport,
   safe Web rendering and explicit coordinated-upgrade boundaries.

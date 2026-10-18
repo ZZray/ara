@@ -121,6 +121,13 @@ pub fn collect(run: &str, conditions: &str, tool_call_ids: &[String], messages: 
     if !identifier(run) || conditions.trim().is_empty() || conditions.len() > 1024 {
         bail!("experience requires a bounded run identifier and nonempty conditions (up to 1024 bytes)");
     }
+    let receipts = selected_receipts(tool_call_ids, messages)?;
+    let evidence = Evidence { run: run.into(), conditions: conditions.into(), receipts };
+    evidence.validate()?;
+    Ok(evidence)
+}
+
+fn selected_receipts(tool_call_ids: &[String], messages: &[AgentMessage]) -> Result<Vec<Receipt>> {
     if !(1..=MAX_RECEIPTS).contains(&tool_call_ids.len()) {
         bail!("select 1 to 8 unique tool call IDs");
     }
@@ -188,9 +195,42 @@ pub fn collect(run: &str, conditions: &str, tool_call_ids: &[String], messages: 
     if receipts.len() != selected.len() {
         bail!("selected native tool call/result pair is missing or incomplete");
     }
-    let evidence = Evidence { run: run.into(), conditions: conditions.into(), receipts };
-    evidence.validate()?;
-    Ok(evidence)
+    Ok(receipts)
+}
+
+/// Environment knowledge stores only native receipt metadata, never copied
+/// private transcript/output bodies. This is observed evidence, not adoption of
+/// the existing private-memory/experience candidate or Task acceptance.
+pub fn library_evidence(run: &str, ids: &[String], messages: &[AgentMessage]) -> Result<serde_json::Value> {
+    if !identifier(run) {
+        bail!("invalid library evidence Run");
+    }
+    let receipts = selected_receipts(ids, messages)?;
+    if receipts.iter().any(|receipt| receipt.is_error) {
+        bail!("library observation requires successful native receipts");
+    }
+    Ok(
+        serde_json::json!({"source":"native_current_run","run":run,"receipts":receipts.iter().map(|receipt| serde_json::json!({
+        "source":receipt.source,"tool_call_id":receipt.tool_call_id,"tool_name":receipt.tool_name,
+        "is_error":false,"output_hash":receipt.output_hash
+    })).collect::<Vec<_>>(),"boundary":"Native tool completion metadata; not Task acceptance or generalized skill correctness"}),
+    )
+}
+
+pub fn library_directory(messages: &[AgentMessage]) -> serde_json::Value {
+    let mut ids = Vec::new();
+    for message in messages.iter().rev() {
+        let AgentMessage::ToolResult(result) = message else { continue };
+        if result.is_error || !allowed_tool(&result.tool_name) || ids.len() == 8 {
+            continue;
+        }
+        if let Ok(receipts) = selected_receipts(std::slice::from_ref(&result.tool_call_id), messages) {
+            let receipt = &receipts[0];
+            ids.push(serde_json::json!({"tool_call_id":receipt.tool_call_id,"tool_name":receipt.tool_name,"is_error":false,"output_hash":receipt.output_hash}));
+        }
+    }
+    ids.reverse();
+    serde_json::json!({"source":"native_current_run","receipts":ids,"boundary":"IDs for the current Run only; no output bodies or Task acceptance"})
 }
 
 /// Provider-only ID directory from the host's current-run native transcript.
@@ -287,6 +327,28 @@ mod tests {
 
     fn ids() -> Vec<String> {
         vec!["failed".into(), "fixed".into()]
+    }
+
+    #[test]
+    fn library_observations_use_real_successful_pairs_without_promoting_private_experience() {
+        let native = messages();
+        let proof = library_evidence("run", &["fixed".into()], &native).unwrap();
+        assert_eq!(proof["run"], "run");
+        assert_eq!(proof["receipts"][0]["tool_name"], "run_script");
+        assert!(proof["receipts"][0].get("excerpt").is_none());
+        assert!(!proof.to_string().contains("verified artifact"));
+        for ids in [vec![], vec!["failed".into()], vec!["invented".into()], vec!["fixed".into(), "fixed".into()]] {
+            assert!(library_evidence("run", &ids, &native).is_err());
+        }
+        let directory = library_directory(&native);
+        assert_eq!(directory["receipts"].as_array().unwrap().len(), 1);
+        assert_eq!(directory["receipts"][0]["tool_call_id"], "fixed");
+        // Successful observations do not satisfy the older reviewed recovery contract.
+        assert!(collect("run", "condition", &["fixed".into()], &native).is_err());
+        assert!(collect("run", "condition", &ids(), &native).is_ok());
+        let mut incomplete = native.clone();
+        incomplete.pop();
+        assert!(library_evidence("run", &["fixed".into()], &incomplete).is_err());
     }
 
     #[test]

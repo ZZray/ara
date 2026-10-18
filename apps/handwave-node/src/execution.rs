@@ -30,6 +30,13 @@ impl RunMode {
             || matches!(
                 name,
                 "read_file"
+                    | "web_search"
+                    | "fetch_url"
+                    | "environment_catalog"
+                    | "library_evidence"
+                    | "knowledge_read"
+                    | "knowledge_search"
+                    | "skill_read"
                     | "search_files"
                     | "list_dir"
                     | "find_files"
@@ -353,11 +360,24 @@ mod tests {
             "experience_propose",
             "goal_update",
             "future_tool",
+            "knowledge_write",
+            "knowledge_revoke",
+            "skill_create",
+            "skill_install",
+            "skill_verify",
+            "skill_remove",
         ] {
             assert!(!RunMode::Plan.allows(name));
         }
         for name in [
             "read_file",
+            "web_search",
+            "fetch_url",
+            "environment_catalog",
+            "library_evidence",
+            "knowledge_read",
+            "knowledge_search",
+            "skill_read",
             "search_files",
             "list_dir",
             "find_files",

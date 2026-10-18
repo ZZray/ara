@@ -17,6 +17,10 @@ for directory, pattern in [('src', '*.rs'), ('tests', '*.py'),
                            ('docs/knowledge', '*.md')]:
     names.extend(p.relative_to(root).as_posix() for p in (root / directory).glob(pattern) if p.is_file())
 names.extend(p.relative_to(root).as_posix() for p in (root / 'licenses').rglob('*') if p.is_file())
+# Compile-time prompt and builtin-skill payloads are part of the Rust sources.
+names.extend(['src/web_research_prompt.md', 'src/environment_prompt.md',
+              'src/builtin_skills/skill-creator/SKILL.md',
+              'src/builtin_skills/skill-installer/SKILL.md'])
 names.extend(['scripts/install-linux.sh', 'scripts/test-install-linux.sh', 'scripts/package-source.py'])
 pins = {}
 archive = io.BytesIO()

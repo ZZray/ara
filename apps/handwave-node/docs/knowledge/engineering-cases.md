@@ -746,3 +746,56 @@ root Core/OMP. Sources: terminal_process.rs, terminal_emulator.rs and
 The independent reviewer requested each of these corrections or verification
 boundaries. Actual output, negative cases and unverified platforms remain in the
 release evidence; no unreviewed runtime experience is automatically adopted.
+
+## HWN-031: a bounded search result must retain a usable source identity
+
+2026-10-18, local0.2.6 candidate. The Node originally had file download but no
+registered search/page-reading tools; root Core declarations were insufficient
+evidence for this independent Host. During implementation, the independent
+reviewer found that truncating a URL at600/2048bytes silently changed source
+identity, even when the result's truncated flag was false. Limiting the text
+payload by cutting its identifier was the rejected assumption.
+
+The repair retains complete URLs or omits an entire item at the output budget,
+and explicitly identifies query-redacted addresses as non-reproducible. Real
+HTTP fixtures cover long source URLs and whole-item omission; final173 product
+tests and release Host checks cover related download/reader behavior. Sources,
+exact artifact hashes and retained failed checks are in
+[the candidate evidence](../evidence/web-research-0.2.6-20261018.md).
+
+Public search availability is a separate boundary: a default DDG tool test
+returned official results, while a subsequent real-model trial received a
+connection failure. Official-page reading succeeded in the real-model trial.
+Neither observation proves uniformly working search; configured maintained
+search service availability remains an operational concern. No comparable
+before/after intelligence or cost baseline was measured.
+
+## HWN-032: canonical Windows paths must be checked as complete filesystem paths
+
+2026-10-18, local 0.2.7 candidate. The first actual isolated Node/Hub environment
+trial created/read a skill, executed its exact Python resource, associated the
+native execution receipt and wrote global technical knowledge. Project knowledge
+catalog/read/write instead failed with Windows error 1. The artifact used a
+canonical working directory with a verbatim drive prefix (`\\?\D:\...`), while
+the initial unit fixtures used ordinary temporary paths.
+
+Source inspection identified `check_path` querying the intermediate Prefix
+component (`\\?\D:`) before its RootDir had been accumulated. That component
+alone is not the complete filesystem path checked by the later Normal entries.
+The narrow repair skips standalone Prefix/RootDir probes and continues checking
+every Normal component with its complete root; regular-file, reparse and inode
+protections remain. A new canonicalized-runtime-cwd fixture exercises both
+indexes, write/read/hash/status and hardlink rejection.
+
+The original failed Host evidence is retained under the isolated run's
+`host-release-v1` result/controller/model-receipts files. Corrected-binary Host
+acceptance and final hashes are a separate delivery record; the source repair
+and added regression do not establish that result by themselves.
+
+The Windows junction fixture had an independent shell boundary: `cmd`'s `mklink`
+builtin interpreted embedded forward slashes from a joined path as switches
+(`Invalid switch - knowledge\linked`). File APIs accepting that path did not
+prove the shell invocation was valid. The fixture now passes backslash-normalized
+arguments with `/d /c` and retains stdout/stderr in assertion failures. It still
+requires an actual junction and an actual rejected read; no guard or assertion
+was disabled to make the test pass.

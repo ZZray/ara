@@ -4,6 +4,33 @@
 
 ## 使用
 
+本地 **0.2.7 候选**增加运行环境的项目／全局知识库与技能载体：知识使用
+`INDEX.md` 加独立内容页，技能先发现名称和说明，再按需读取 `SKILL.md` 和脚本。
+模型可创建技能、安装已检查的本地技能目录，显式运行后关联真实工具收据；安装
+本身不执行脚本。重启或新会话可重新发现这些文件，权限仍由本次任务决定。
+源码状态与最终运行验收分别记录，不能从候选版本推断已经上线。
+
+项目知识默认在最近 Git 根目录的 `docs/knowledge`（无 Git 时使用工作目录），
+全局知识默认在 `<state-dir>/library/knowledge`，现有索引和人工内容会保留。
+可通过 `--knowledge-dir`、`HW_KNOWLEDGE_DIR` 或 `node.conf` 的 `knowledge_dir=`
+复用本机已有全局知识目录，例如：
+
+```powershell
+.\handwave-node.exe --cwd E:\your-project --knowledge-dir E:\doc\knowledge
+```
+
+这些是运行环境的技术知识与工具方法，不会自动导入 Codex 私有记忆或整段会话。
+计划模式只发现和读取，不创建知识库或安装技能。状态、撤销和权限边界见
+[环境知识与技能](docs/knowledge/environment-library.md)。
+
+本地候选 **0.2.6** 补齐联网研究：`web_search` 搜索、`fetch_url` 分段读取网页，
+支持来源引用；下载返回 SHA256，并可用 `expected_sha256` 校验后再替换文件。
+默认 DuckDuckGo Lite 免密钥但不保证各网络可达；可配置
+`HANDWAVE_SEARCH_URL=https://你的搜索服务/search` 接入已启用 JSON 的 SearXNG。
+网页是资料，不能授权执行命令。计划模式可检索，不可下载或安装。
+实现与可用边界见[联网研究](docs/knowledge/web-research.md)，
+实际验证及是否上线见[候选交付记录](docs/evidence/web-research-0.2.6-20261018.md)。
+
 **0.2.5** 是需要同步升级 Hub 与被控端的安全版本。平台当前下载以安装页为准，
 下方 0.2.4 固定链接保留作历史版本与验收记录。公网连接必须
 使用有效证书的 HTTPS/WSS；设备通过原有密钥签名证明身份，旧设备授权需要明确

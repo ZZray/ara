@@ -3,4 +3,6 @@ hub=https://118.25.103.226/handwave/
 token=YOUR_HANDWAVE_NODE_ENROLLMENT_TOKEN
 # Optional local HTTP or SOCKS5 proxy (both WebSocket and model/download HTTP).
 # proxy=http://127.0.0.1:7890
+# Optional existing environment-wide INDEX.md + Markdown knowledge library.
+# knowledge_dir=E:/doc/knowledge
 

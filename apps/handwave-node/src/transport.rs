@@ -517,6 +517,7 @@ async fn session(
                                 id:frame.id.clone(),objective:objective(&frame),device_fp:settings.fp.clone(),
                                 model:if frame.model.is_empty(){"default".into()}else{frame.model.clone()},
                                 endpoint:settings.endpoint(),token,route,max_output,cwd:settings.cwd.clone(),state_path,
+                                environment_state:settings.state.clone(),global_knowledge:settings.config.knowledge_dir.clone(),
                                 brief:frame.brief.clone(),max_calls:settings.config.max_calls,max_seconds:settings.config.max_seconds.min(ttl.min(decision_budget)-10),
                                 steering:run.steering.clone(),
                                 mode:crate::execution::RunMode::parse(&frame.execution_mode)?,goal_criteria:frame.goal_criteria.clone(),goal_id:frame.goal_id.clone(),

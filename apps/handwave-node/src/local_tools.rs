@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolExecutionMode, ToolResultPartial};
 use rpi_ai::{Schema, Tool};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     io::SeekFrom,
@@ -29,7 +30,7 @@ pub fn tools(root: PathBuf) -> Vec<Arc<dyn AgentTool>> {
         ("write_file", "Write UTF-8 text. Relative paths use the working directory; absolute paths are allowed. Parent directories are created.", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path", "content"]),
         ("edit_file", "Replace exactly one matching text occurrence in a file. Absolute paths are allowed.", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}}), vec!["path", "old_text", "new_text"]),
         ("list_dir", "List directory entries; use search_files for bounded recursive text searches. Absolute paths are allowed.", json!({"path":{"type":"string"}}), vec!["path"]),
-        ("download_file", "Download an HTTP/HTTPS file, respecting the configured HTTP proxy. Maximum 128 MiB, 300-second deadline. Existing destination is replaced only after the complete download. Use exec to extract or install the downloaded file.", json!({"url":{"type":"string"},"path":{"type":"string"}}), vec!["url", "path"]),
+        ("download_file", "Download an HTTP/HTTPS file, respecting the configured HTTP proxy. Maximum 128 MiB, 300-second deadline. Returns SHA256; optional expected_sha256 must match before replacing the destination. Existing destination is preserved on transfer or checksum failure. Download does not install or execute the file.", json!({"url":{"type":"string"},"path":{"type":"string"},"expected_sha256":{"type":"string","pattern":"^[a-fA-F0-9]{64}$"}}), vec!["url", "path"]),
         ("exec", "Run a shell command. Windows uses PowerShell; other systems use sh. This is not an OS sandbox. Output is bounded; timeout defaults to 600 seconds, limited by the overall run deadline.", json!({"cmd":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","minimum":1,"maximum":3600}}), vec!["cmd"]),
     ].into_iter().map(|(name, description, properties, required)| {
         Arc::new(LocalTool { root: root.clone(), schema: Tool {
@@ -627,12 +628,13 @@ impl LocalTool {
             }
             "search_files" => search_files(&self.root, args, signal, SearchLimits::default()).await,
             "download_file" => {
+                let expected = expected_sha256(args)?;
                 let url = reqwest::Url::parse(argument(args, "url")?).context("invalid download URL")?;
                 if !matches!(url.scheme(), "http" | "https") {
                     bail!("downloads require HTTP or HTTPS");
                 }
                 let path = rooted(&self.root, argument(args, "path")?, true)?;
-                download_file(url, &path, signal).await
+                download_file(url, &path, expected.as_deref(), signal).await
             }
             "write_file" => {
                 let text = argument(args, "content")?;
@@ -680,7 +682,22 @@ impl LocalTool {
     }
 }
 
-async fn download_file(url: reqwest::Url, destination: &Path, signal: CancellationToken) -> Result<String> {
+fn expected_sha256(args: &Value) -> Result<Option<String>> {
+    match args.get("expected_sha256") {
+        None => Ok(None),
+        Some(Value::String(value)) if value.len() == 64 && value.bytes().all(|c| c.is_ascii_hexdigit()) => {
+            Ok(Some(value.to_ascii_lowercase()))
+        }
+        Some(_) => bail!("expected_sha256 must be exactly 64 hexadecimal characters"),
+    }
+}
+
+async fn download_file(
+    url: reqwest::Url,
+    destination: &Path,
+    expected: Option<&str>,
+    signal: CancellationToken,
+) -> Result<String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(300))
@@ -708,23 +725,29 @@ async fn download_file(url: reqwest::Url, destination: &Path, signal: Cancellati
                 bail!("download exceeds 128 MiB limit");
             }
             let mut size = 0u64;
+            let mut hasher = Sha256::new();
             while let Some(chunk) = response.chunk().await.map_err(reqwest::Error::without_url)? {
                 size = size.checked_add(chunk.len() as u64).context("download length overflow")?;
                 if size > DOWNLOAD_LIMIT {
                     bail!("download exceeds 128 MiB limit");
                 }
                 file.write_all(&chunk).await?;
+                hasher.update(&chunk);
             }
             file.flush().await?;
             file.sync_all().await?;
             drop(file);
+            let hash = format!("{:x}", hasher.finalize());
+            if expected.is_some_and(|value| value != hash) {
+                bail!("download SHA256 mismatch; existing destination preserved (actual {hash})");
+            }
             if signal.is_cancelled() {
                 bail!("download canceled before destination replacement");
             }
             // The final effect is synchronous: cancellation cannot drop a detached
             // async rename and then report a failure before that rename executes.
             std::fs::rename(&temporary, destination).context("replace download destination")?;
-            Ok::<_, anyhow::Error>(format!("Downloaded {size} bytes to {}", destination.display()))
+            Ok::<_, anyhow::Error>(format!("Downloaded {size} bytes to {}\nSHA256: {hash}", destination.display()))
         };
         tokio::select! {
             result = operation => result,
@@ -1161,6 +1184,64 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn download_checksum_validates_before_effects_and_preserves_destination_on_mismatch() {
+        let files = Files::new();
+        let tool = files.tool("download_file");
+        for value in [json!(null), json!(42), json!("bad"), json!("z".repeat(64))] {
+            assert!(tool
+                .run(
+                    &json!({"url":"http://127.0.0.1:1/", "path":"new/file", "expected_sha256":value}),
+                    CancellationToken::new()
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("expected_sha256"));
+            assert!(!files.0.join("new").exists());
+        }
+        let payload = b"verified tool payload\n";
+        let hash = format!("{:x}", Sha256::digest(payload));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                let _ = socket.read(&mut request).await.unwrap();
+                socket
+                    .write_all(
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len())
+                            .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                socket.write_all(payload).await.unwrap();
+            }
+        });
+        let url = format!("http://{address}/tool");
+        std::fs::write(files.0.join("tool"), b"original").unwrap();
+        let error = tool
+            .run(&json!({"url":url,"path":"tool","expected_sha256":"0".repeat(64)}), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("SHA256 mismatch"));
+        assert_eq!(std::fs::read(files.0.join("tool")).unwrap(), b"original");
+        let receipt = tool
+            .run(
+                &json!({"url":url,"path":"tool","expected_sha256":hash.to_ascii_uppercase()}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert!(receipt.contains(&format!("SHA256: {hash}")));
+        assert_eq!(std::fs::read(files.0.join("tool")).unwrap(), payload);
+        let receipt = tool.run(&json!({"url":url,"path":"other"}), CancellationToken::new()).await.unwrap();
+        assert!(receipt.contains(&format!("SHA256: {hash}")));
+        server.await.unwrap();
+        assert_eq!(std::fs::read_dir(&files.0).unwrap().count(), 2, "temporary download file leaked");
     }
 
     #[tokio::test]

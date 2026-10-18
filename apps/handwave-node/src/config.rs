@@ -16,6 +16,9 @@ pub struct Config {
     pub token: Option<String>,
     #[arg(long, env = "HW_NODE_STATE")]
     pub state_dir: Option<PathBuf>,
+    /// Existing environment-wide INDEX.md + Markdown knowledge directory.
+    #[arg(long, env = "HW_KNOWLEDGE_DIR")]
+    pub knowledge_dir: Option<PathBuf>,
     #[arg(long, default_value = ".")]
     pub cwd: PathBuf,
     #[arg(long, env = "HW_PROXY")]
@@ -73,6 +76,9 @@ impl Resolved {
         }
         anyhow::ensure!(!token.contains(['\r', '\n']), "invalid enrollment token");
         config.proxy = config.proxy.or_else(|| conf.get("proxy").filter(|s| !s.is_empty()).cloned());
+        config.knowledge_dir = config
+            .knowledge_dir
+            .or_else(|| conf.get("knowledge_dir").filter(|s| !s.trim().is_empty()).map(PathBuf::from));
         if let Some(proxy) = &config.proxy {
             let parsed = Url::parse(proxy).context("invalid proxy URL")?;
             anyhow::ensure!(
@@ -115,7 +121,7 @@ impl Resolved {
         json!({"hostname":std::env::var("COMPUTERNAME").or_else(|_|std::env::var("HOSTNAME")).unwrap_or_else(|_|"rust-node".into()),
             "user":std::env::var("USERNAME").or_else(|_|std::env::var("USER")).unwrap_or_else(|_|"unknown".into()),
             "os":os,"arch":arch,"version":concat!("rust-",env!("CARGO_PKG_VERSION")),
-              "caps":["exec","files","agent-task","agent-loop","cancel","cloud-memory-v1","session-v1","run-modes-v1","goal-runner-v1","managed-jobs-v1","interactive-jobs-v1","terminal-jobs-v1","history-journal-v1","agent-queue-v1"]})
+              "caps":["exec","files","agent-task","agent-loop","cancel","cloud-memory-v1","session-v1","run-modes-v1","goal-runner-v1","managed-jobs-v1","interactive-jobs-v1","terminal-jobs-v1","history-journal-v1","agent-queue-v1","web-research-v1","environment-library-v1"]})
     }
 
     pub fn websocket_url(&self) -> Url {
