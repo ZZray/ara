@@ -20,7 +20,9 @@ from verify_host import require, stop, validate_loop_events
 
 
 READ_TOOLS = {"read_file", "search_files", "list_dir", "find_files", "system_info",
-              "reference_read", "reference_search", "experience_search", "history_read", "history_search"}
+              "reference_read", "reference_search", "experience_search", "history_read", "history_search",
+              "web_search", "fetch_url", "environment_catalog", "library_evidence",
+              "knowledge_read", "knowledge_search", "skill_read"}
 
 
 class ModesFixture(ContextFixture):
@@ -151,12 +153,14 @@ class ModesHost(Host):
         self.controller.frame({"k": "agent-loop", "id": first, "msg": "MODES_HOLD_" + mode.upper(),
                                "model": "default", "execution_mode": mode, "goal_criteria": criteria})
         require(self.fixture.hold_started.wait(10), "First busy Run never reached actual provider")
-        # Real workbench follow is another agent-loop frame, not agent-follow.
+        # Explicit incompatible authority is rejected before queue admission.
+        # Older Hosts silently inherited it; the current contract rejects it.
+        before = len(self.fixture.requests)
         self.controller.frame({"k": "agent-loop", "id": follow, "msg": "MODES_FOLLOW_" + mode.upper(),
                                "model": "default", "execution_mode": "execute", "goal_id": "forged-other-goal",
                                "goal_criteria": ["Forged replacement criterion"]})
         events, terminals = {first: [], follow: []}, {}
-        queued = False
+        rejected = False
         end = time.monotonic() + 30
         while len(terminals) < 2 and time.monotonic() < end:
             packet = self.controller.receive(end - time.monotonic())
@@ -170,19 +174,23 @@ class ModesHost(Host):
             if row.get("k") == "agent-event":
                 event = row["event"]
                 events[rid].append(event)
-                if rid == first and event.get("type") == "steer" and event.get("status") == "queued":
-                    queued = True
-                    self.fixture.hold_release.set()
             if row.get("k") == "out" and row.get("done"):
-                require(not row.get("err") and row.get("code", 0) == 0, "Busy Run failed: " + str(row))
+                if rid == follow:
+                    require(row.get("code", 0) != 0 and "follow-up mode differs" in row.get("err", ""),
+                            "Incompatible follow was not explicitly rejected")
+                    require(len(self.fixture.requests) == before, "Rejected follow reached provider")
+                    rejected = True
+                    self.fixture.hold_release.set()
+                else:
+                    require(not row.get("err") and row.get("code", 0) == 0, "Active Run failed: " + str(row))
                 terminals[rid] = row
-        require(queued and len(terminals) == 2, "Busy follow not queued/settled using original controller IDs")
-        for rid, terminal in terminals.items():
-            validate_loop_events(events[rid], rid, terminal)
+        require(rejected and len(terminals) == 2 and len(self.fixture.requests) == before,
+                "Rejected follow changed active work or dispatched another request")
+        validate_loop_events(events[first], first, terminals[first])
         if mode == "goal":
             goal = self.native()["goal"]
-            require(goal["id"] == first and goal["run"] == follow and goal["criteria"] == criteria,
-                    "Busy Goal follow replaced goal identity or criteria")
+            require(goal["id"] == first and goal["run"] == first and goal["criteria"] == criteria,
+                    "Rejected follow replaced active Goal identity or criteria")
             require(goal["status"] == "awaiting_review", "Busy Goal follow autoaccepted")
 
 

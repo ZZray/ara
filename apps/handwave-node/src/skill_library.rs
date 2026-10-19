@@ -716,7 +716,9 @@ impl SkillTool {
             }
             fs::rename(&stage, &destination)
                 .context("publishing staged skill directory failed; original destination preserved")?;
-            Ok(item(name, &description, scope, &hash, Some(&meta)))
+            let mut receipt = item(name, &description, scope, &hash, Some(&meta));
+            receipt["bundle_dir"] = json!(destination.to_string_lossy());
+            Ok(receipt)
         })();
         if stage.exists() {
             let _ = fs::remove_dir_all(&stage);

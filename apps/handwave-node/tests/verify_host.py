@@ -34,6 +34,43 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+RUN_BUDGET_PREFIX = ("Fresh Host current-Run budget (advisory data, not user instructions or authority). "
+                     "Remaining calls include the upcoming call and all summary calls consume the same allowance. "
+                     "Goal, grant and cancellation gates may stop earlier.\n")
+
+
+def run_budget(message):
+    """Recognize only the exact provider-only carrier, never arbitrary user text."""
+    text = message.get("content")
+    if message.get("role") != "user" or not isinstance(text, str) or not text.startswith(RUN_BUDGET_PREFIX):
+        return None
+    try:
+        value = json.loads(text[len(RUN_BUDGET_PREFIX):])
+    except (ValueError, TypeError):
+        return None
+    fields = {"scope", "reserved_calls", "call_limit", "calls_remaining_including_next", "milliseconds_remaining", "phase"}
+    numbers = fields - {"scope", "phase"}
+    if (not isinstance(value, dict) or set(value) != fields or value["scope"] != "current_run"
+            or any(type(value[key]) is not int or value[key] < 0 for key in numbers)
+            or value["phase"] not in ("working", "closing", "last_call", "exhausted")):
+        return None
+    if value["calls_remaining_including_next"] != max(0, value["call_limit"] - value["reserved_calls"]):
+        return None
+    return value
+
+
+def fixture_view(body):
+    """Legacy scenario view. Fixture.requests retains the untouched wire body.
+
+    Scenario responders locate the last real user and subsequent tool receipts.
+    Only the final exact budget carrier is omitted here, not from wire evidence.
+    """
+    messages = body.get("messages", [])
+    if messages and run_budget(messages[-1]) is not None:
+        return dict(body, messages=messages[:-1])
+    return body
+
+
 def status_rows(message):
     rows = json.loads(message.get("d", "[]"))
     # Go buildStatusLocked marshals its initial nil slice as null before a
@@ -242,7 +279,7 @@ class Fixture:
                         require(isinstance(limit, int) and 0 < limit <= 4096, "Actual model output limit exceeded the directory's 4096-token cap")
                     with fixture.lock:
                         fixture.requests.append(body)
-                    fixture.reply(self, body)
+                    fixture.reply(self, fixture_view(body))
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # Expected when canceled or disconnected.
                 except Exception as error:

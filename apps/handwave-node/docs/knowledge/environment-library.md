@@ -89,6 +89,10 @@ overwritten. Remote archives must first be acquired and inspected with the
 separately authorized web/download/script tools; no remote package hook runs
 implicitly in the installer.
 
+Successful create/install receipts return the final `bundle_dir`, after atomic
+publication. Use it directly instead of scanning for the new bundle; resource
+reads additionally return `file_path`. A returned path does not imply execution.
+
 New or changed bundles are `unverified`. `skill_verify` requires the exact current
 bundle hash and authentic successful current-Run native execution receipts. The
 result `execution_evidence_attached` means those receipts are associated with that
@@ -129,3 +133,21 @@ explicit validation budgets before final settlement; two-Session model acceptanc
 remains open. See the [delivery evidence](../evidence/environment-library-0.2.7-20261018.md).
 Do not infer general autonomous consolidation or production deployment from the
 implemented library tools or their controlled Host checks.
+
+## Current-Run efficiency observation
+
+The 2026-10-19 follow-up candidate supplies a small advisory budget to ordinary
+model requests: reservations already consumed, remaining calls including the
+upcoming call, and sampled monotonic time remaining. Summary calls use the same
+counter. `working`, `closing`, `last_call` and `exhausted` describe local allowance;
+Goal/grant/cancellation gates may reject earlier. The static prompt asks the
+model to reuse current directories and successful probes, then prioritize
+verification and an honest final status as time/calls run low.
+
+This observation is appended only to the provider Context after compaction and
+before call reservation. It never enters native history, memory or summary input.
+If the complete request cannot fit it, the exact original Context is retained.
+Appending preserves the preceding message prefix for this new carrier only;
+neither cache hits, lower costs nor better task completion are guaranteed.
+The [bounded candidate evidence](../evidence/run-efficiency-20261019.md) records
+actual Host checks and the separate open new-Session autonomous-reuse gate.

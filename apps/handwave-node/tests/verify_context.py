@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 
-from verify_host import Fixture, WS, port, require, status_rows, stop, validate_loop_events, wait_health
+from verify_host import Fixture, WS, port, require, run_budget, RUN_BUDGET_PREFIX, status_rows, stop, validate_loop_events, wait_health
 
 
 def digest(path):
@@ -400,6 +400,19 @@ def summary_restart(host, passed):
     require("CONTROLLED_SUMMARY_REASONING_73" not in json.dumps(host.transcript),
             "Summary provider thinking leaked into controller events")
     require(all(not b.get("tools") for b in host.fixture.summary_requests),"Summary advertised effectful tools")
+    calls = [event for event in receipts if event.get("type") == "model_call"]
+    require(len(calls) == len(host.fixture.requests), "Actual model request/event sequence differs")
+    for event, body in zip(calls, host.fixture.requests):
+        observation = run_budget(body["messages"][-1])
+        if event["phase"] == "agent":
+            require(observation is not None and observation["reserved_calls"] == event["call"] - 1
+                    and observation["calls_remaining_including_next"] == host.max_calls - event["call"] + 1,
+                    "Fresh budget did not include shared summary reservations")
+        else:
+            require(RUN_BUDGET_PREFIX.splitlines()[0] not in json.dumps(body, ensure_ascii=False), "Budget entered summary input")
+    require(RUN_BUDGET_PREFIX.splitlines()[0] not in json.dumps(raw, ensure_ascii=False)
+            and RUN_BUDGET_PREFIX.splitlines()[0] not in host.sidecar().read_text(encoding="utf-8"),
+            "Budget entered raw history or context memory")
     compact = [event for event in receipts if event.get("type") == "compact" and event.get("status") == "completed"]
     require(compact and compact[-1]["covered_prefix"] == summary["prefix_end"] and compact[-1]["index_unit"] == "global_raw_message_indexes",
             "Successful compaction lacks a post-checkpoint global receipt")

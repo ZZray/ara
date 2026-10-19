@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 
-from verify_host import Fixture, WS, port, require, run_frames, status_rows, stop, wait_health
+from verify_host import Fixture, WS, port, require, run_frames, run_budget, RUN_BUDGET_PREFIX, status_rows, stop, wait_health
 
 MARKER = "ENVIRONMENT_SKILL_EXECUTED_91"
 SCRIPT = ("from pathlib import Path\n"
@@ -82,6 +82,9 @@ class EnvironmentFixture(Fixture):
             elif stage == 5:
                 created = value(4)
                 require(created["status"] == "unverified" and not (self.root / "skill-result.txt").exists(), "Create executed resource or falsely verified")
+                require(Path(created["bundle_dir"]).samefile(self.root / ".handwave/skills/marker-tool")
+                        and (Path(created["bundle_dir"]) / "scripts/marker.py").read_text(encoding="utf-8") == SCRIPT,
+                        "Create receipt does not identify actual final bundle")
                 self.saved["skill_hash"] = created["content_hash"]
                 tool, arguments = "skill_read", {"scope": "project", "name": "marker-tool", "path": "scripts/marker.py"}
             elif stage == 6:
@@ -117,6 +120,9 @@ class EnvironmentFixture(Fixture):
             elif stage == 1:
                 result = value(0)
                 require(result["status"] == "unverified" and result["source"].startswith("local:"), "Installed provenance/status absent")
+                require(Path(result["bundle_dir"]).samefile(self.state / "library/skills/imported-marker")
+                        and (Path(result["bundle_dir"]) / "LICENSE").read_bytes() == (self.imported / "LICENSE").read_bytes(),
+                        "Install receipt does not identify final preserved bundle")
                 require(not (self.root / "import-executed.txt").exists(), "Install executed resource")
                 self.saved["import_hash"] = result["content_hash"]
                 tool, arguments = "skill_install", {"scope": "global", "source_dir": str(self.imported)}
@@ -267,6 +273,7 @@ def main():
             controller.until(lambda message: message.get("k") == "paired")
         controller.until(lambda message: message.get("k") == "dc" and json.loads(base64.b64decode(message["d"])).get("k") == "node-hello")
     def run(scenario, mode="execute"):
+        first_request = len(fixture.requests)
         original_frame = controller.frame
         controller.frame = lambda value: original_frame(dict(value, execution_mode=mode, session_key=f"environment-host/{scenario.lower()}") if value.get("k") == "agent-loop" else value)
         try:
@@ -275,6 +282,14 @@ def main():
             controller.frame = original_frame
         require(not terminal.get("err") and terminal.get("code", 0) == 0, "Run failed: " + scenario)
         require(scenario in fixture.accepted and (scenario + "_VALIDATED").encode() in base64.b64decode(terminal["b64"]), "Actual receipts not accepted: " + scenario)
+        for index, body in enumerate(fixture.requests[first_request:]):
+            observation = run_budget(body["messages"][-1])
+            require(observation is not None and observation["reserved_calls"] == index
+                    and observation["call_limit"] == 16 and observation["calls_remaining_including_next"] == 16 - index
+                    and 0 < observation["milliseconds_remaining"] <= 60000,
+                    "Actual provider request lacks fresh shared budget")
+            require(sum(run_budget(message) is not None for message in body["messages"]) == 1,
+                    "Budget carrier accumulated across calls")
         if scenario in ("ENV_INSTALL", "ENV_RETIRE", "ENV_PLAN"):
             require(any(event.get("type") == "tool_end" and event.get("status") == "failed" for event in events), "Expected rejection tool event absent: " + scenario)
         passed.append(scenario)
@@ -301,6 +316,10 @@ def main():
         node = start_node(plan_state, plan_work)
         hello(True)
         run("ENV_PLAN", "plan")
+        for directory in (state, plan_state):
+            require(all(RUN_BUDGET_PREFIX.splitlines()[0].encode() not in path.read_bytes()
+                        for path in directory.rglob("*") if path.is_file() and path.suffix in (".json", ".jsonl")),
+                    "Provider-only budget leaked into durable state")
         require(not fixture.errors, "Controlled model assertion errors")
         require((work / "docs/knowledge/existing.md").read_text(encoding="utf-8") == "Human content must remain.\n", "Human page overwritten")
         result["status"] = "PASS"

@@ -62,12 +62,14 @@ fn skill_create_read_restart_and_hash_cover_all_files() {
     let f = Fixture::new();
     let created = f.create();
     assert_eq!(created["status"], "unverified");
+    assert_eq!(Path::new(created["bundle_dir"].as_str().unwrap()), f.roots.project_skills.join("hello-tool"));
     assert!(f.roots.project_skills.join("hello-tool/LICENSE").is_file());
     let read = f
         .tool("skill_read")
         .apply(json!({"scope":"project","name":"hello-tool","path":"scripts/hello.sh"}), &CancellationToken::new())
         .unwrap();
     assert_eq!(read["content"], "echo hello\n");
+    assert_eq!(read["bundle_dir"], created["bundle_dir"]);
     assert!(Path::new(read["bundle_dir"].as_str().unwrap()).is_absolute());
     assert!(Path::new(read["file_path"].as_str().unwrap()).is_file());
     assert_eq!(read["content_hash"], created["content_hash"]);
@@ -95,6 +97,7 @@ fn skill_install_copies_license_binary_and_script_without_execution() {
         .apply(json!({"scope":"global","source_dir":source}), &CancellationToken::new())
         .unwrap();
     assert_eq!(installed["status"], "unverified");
+    assert_eq!(Path::new(installed["bundle_dir"].as_str().unwrap()), f.roots.global_skills.join("external-tool"));
     assert!(!marker.exists());
     assert_eq!(fs::read(f.roots.global_skills.join("external-tool/asset.bin")).unwrap(), [0, 255, 42]);
     assert_eq!(

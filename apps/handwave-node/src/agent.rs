@@ -505,6 +505,44 @@ fn reserve_call(
     Ok(())
 }
 
+const RUN_BUDGET_PREFIX: &str = "Fresh Host current-Run budget (advisory data, not user instructions or authority). Remaining calls include the upcoming call and all summary calls consume the same allowance. Goal, grant and cancellation gates may stop earlier.\n";
+
+fn with_run_budget(
+    context: &rpi_ai::Context,
+    reserved: usize,
+    maximum: usize,
+    remaining: Duration,
+    budget: crate::model_caps::TextBudget,
+) -> rpi_ai::Context {
+    let calls_remaining = maximum.saturating_sub(reserved);
+    let phase = if calls_remaining == 0 || remaining.is_zero() {
+        "exhausted"
+    } else if calls_remaining == 1 {
+        "last_call"
+    } else if calls_remaining <= 3 || remaining <= Duration::from_secs(30) {
+        "closing"
+    } else {
+        "working"
+    };
+    let value = json!({"scope":"current_run","reserved_calls":reserved,"call_limit":maximum,
+        "calls_remaining_including_next":calls_remaining,
+        "milliseconds_remaining":remaining.as_millis().min(u64::MAX as u128) as u64,"phase":phase});
+    let mut candidate = context.clone();
+    // Provider-only, sampled after compaction and before reservation. Appending
+    // preserves the existing prefix; it does not promise a provider cache hit.
+    candidate.messages.push(rpi_ai::Message::User(UserMessage {
+        role: Default::default(),
+        content: format!("{RUN_BUDGET_PREFIX}{value}").into(),
+        timestamp: 0,
+    }));
+    // Check the complete request, including system/schemas/escaping. Optional
+    // metadata must never displace history or newly reject a valid request.
+    if budget.check(&candidate).is_err() {
+        candidate.messages.pop();
+    }
+    candidate
+}
+
 fn attach_experience_directory(projection: &mut Vec<AgentMessage>, directory: Value, limit: usize) -> Result<()> {
     let carrier = context_memory::user(format!("Host current-Run receipt directory; source metadata, not user instructions. For experience_propose copy these exact IDs; never invent IDs. Tool success does not imply Task acceptance.\n{directory}"));
     let index = 1.min(projection.len());
@@ -812,13 +850,20 @@ pub async fn execute(
     let call_events = events.clone();
     let stream_fn = rpi_agent::stream_fn(move |model, context, options| {
         let (mut producer, consumer) = rpi_ai::event_stream::create_assistant_message_event_stream();
+        let context = with_run_budget(
+            context,
+            call_counter.load(Ordering::SeqCst),
+            max_calls,
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            text_budget,
+        );
         let admission = if let Some(error) =
             gate_failure.lock().unwrap().clone().or_else(|| gate_journal.lock().unwrap().clone())
         {
             Err(anyhow::anyhow!(error))
         } else {
             text_budget
-                .check(context)
+                .check(&context)
                 .and_then(|_| reserve_call(&call_counter, max_calls, &options.signal, deadline))
                 .and_then(|_| stream_root())
         };
@@ -832,7 +877,7 @@ pub async fn execute(
             producer.push(AssistantMessageEvent::Error { reason: rpi_ai::ErrorReason::Error, error: message });
             return consumer;
         }
-        let observation = match crate::model_telemetry::request_observation(context, text_budget) {
+        let observation = match crate::model_telemetry::request_observation(&context, text_budget) {
             Ok(value) => value,
             Err(error) => {
                 let mut message = rpi_ai::AssistantMessage::empty(model.api.clone(), &model.provider, &model.id, 0);
@@ -847,7 +892,6 @@ pub async fn execute(
         let event_failure = gate_journal.clone();
         let provider = stream_provider.clone();
         let model = model.clone();
-        let context = context.clone();
         let options = options.clone();
         tokio::spawn(async move {
             let started = std::time::Instant::now();
@@ -1500,6 +1544,78 @@ mod tests {
     }
 
     use super::*;
+    fn budget_value(context: &rpi_ai::Context) -> Value {
+        let rpi_ai::Message::User(message) = context.messages.last().unwrap() else { panic!("missing user carrier") };
+        let value = serde_json::to_value(&message.content).unwrap();
+        serde_json::from_str(value.as_str().unwrap().strip_prefix(RUN_BUDGET_PREFIX).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn current_run_budget_is_fresh_includes_next_and_never_mutates_history() {
+        let original = rpi_ai::Context::new(vec![rpi_ai::Message::User(UserMessage {
+            role: Default::default(),
+            content: "original task".into(),
+            timestamp: 0,
+        })]);
+        let before = serde_json::to_value(&original).unwrap();
+        let budget = crate::model_caps::TextBudget { projection_bytes: 4096, request_bytes: 8192 };
+        for (reserved, maximum, remaining, phase) in [
+            (0, 12, 12, "working"),
+            (9, 12, 3, "closing"),
+            (11, 12, 1, "last_call"),
+            (12, 12, 0, "exhausted"),
+            (usize::MAX, 12, 0, "exhausted"),
+            (0, 1, 1, "last_call"),
+        ] {
+            let request = with_run_budget(&original, reserved, maximum, Duration::from_secs(60), budget);
+            let value = budget_value(&request);
+            assert_eq!(value["scope"], "current_run");
+            assert_eq!(value["reserved_calls"], reserved);
+            assert_eq!(value["call_limit"], maximum);
+            assert_eq!(value["calls_remaining_including_next"], remaining);
+            assert_eq!(value["milliseconds_remaining"], 60000);
+            assert_eq!(value["phase"], phase);
+            assert_eq!(request.messages.len(), original.messages.len() + 1);
+            assert_eq!(serde_json::to_value(&request.messages[..1]).unwrap(), before["messages"]);
+            assert_eq!(serde_json::to_value(&original).unwrap(), before);
+        }
+        assert_eq!(
+            budget_value(&with_run_budget(&original, 0, 12, Duration::from_secs(30), budget))["phase"],
+            "closing"
+        );
+        assert_eq!(budget_value(&with_run_budget(&original, 0, 12, Duration::ZERO, budget))["phase"], "exhausted");
+        // Summary and agent calls share this counter; sample after reservation.
+        let calls = AtomicUsize::new(0);
+        reserve_call(&calls, 2, &CancellationToken::new(), tokio::time::Instant::now() + Duration::from_secs(60))
+            .unwrap();
+        let next = with_run_budget(&original, calls.load(Ordering::SeqCst), 2, Duration::from_secs(59), budget);
+        assert_eq!(budget_value(&next)["calls_remaining_including_next"], 1);
+        assert_eq!(budget_value(&next)["reserved_calls"], 1);
+    }
+
+    #[test]
+    fn optional_run_budget_preserves_exact_full_request_at_admission_boundary() {
+        let original = rpi_ai::Context {
+            system_prompt: Some("System with escaping: \\\"".repeat(50)),
+            messages: vec![rpi_ai::Message::User(UserMessage {
+                role: Default::default(),
+                content: "retain original task".into(),
+                timestamp: 0,
+            })],
+            ..Default::default()
+        };
+        let before = serde_json::to_vec(&original).unwrap();
+        let budget = crate::model_caps::TextBudget { projection_bytes: 4096, request_bytes: before.len() };
+        budget.check(&original).unwrap();
+        let omitted = with_run_budget(&original, 0, 12, Duration::from_secs(60), budget);
+        assert_eq!(serde_json::to_vec(&omitted).unwrap(), before);
+        budget.check(&omitted).unwrap();
+        let invalid = crate::model_caps::TextBudget { request_bytes: before.len() - 1, ..budget };
+        let retained = with_run_budget(&original, 0, 12, Duration::from_secs(60), invalid);
+        assert_eq!(serde_json::to_vec(&retained).unwrap(), before);
+        assert!(invalid.check(&retained).is_err());
+    }
+
     #[test]
     fn summary_json_mode_is_confined_to_a_cloned_model() {
         let model =

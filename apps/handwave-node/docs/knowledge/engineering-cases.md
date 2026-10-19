@@ -824,3 +824,37 @@ Type=simple startup is therefore not target-image readiness. The first attempt
 did not record its intermediate SHA; do not claim more about that attempt than
 the retained rollback receipt proves. See the
 [stage publication record](../evidence/stage-publication-0.2.7-20261018.md).
+
+## HWN-034 — optional provider metadata and evaluator views have different owners
+
+2026-10-19, small efficiency increment after published 0.2.7. Earlier bounded
+model tasks exhausted their validation budgets while exploring and verifying.
+That suggests making existing local allowance visible and reusing known paths;
+it does not establish the cause of every failed task or justify larger budgets.
+
+Independent PRE review identified two important counterexamples. A carrier can
+fit a message-projection limit while exceeding the complete request's system,
+schema and escaping allocation. Append it to a cloned actual provider Context
+and retain it only after the existing complete-request check; otherwise restore
+the original exactly. A trailing provider User carrier also invalidates old
+deterministic responders that locate the objective as the last User message.
+The fixture keeps its untouched wire request and passes only a shallow legacy
+view without the final exact valid carrier to scenario responders. Actual budget
+and persistence assertions must use original wire evidence, not that view.
+
+Modes regression exposed two preexisting fixture assumptions: its exact Plan
+tool list omitted already implemented read-only web/library tools, and its busy
+follow expected silent inheritance of an explicitly incompatible mode/Goal.
+Current transport rejects that request before admission. The corrected test
+requires explicit denial with zero extra provider calls, then normal completion
+of the held original Run/Goal. Neither runtime permissions nor transport changed.
+Both initial failed test results remain preserved.
+
+One real-model trial produced the correct report, executed the stored skill via
+Python subprocess orchestration, associated the successful native receipt and
+wrote indexed project knowledge. The trial's direct-command recognizer missed
+that invocation, so its overall FAIL and skipped new-Session reuse remain intact.
+Independent source/output/hash review accepts only the narrower first-Session
+observation. A model's successful final response, a narrow evaluator failure and
+an unexecuted reuse gate are three distinct facts. This is not a measured causal
+efficiency or cache improvement. See the [candidate evidence](../evidence/run-efficiency-20261019.md).
