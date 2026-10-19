@@ -1,0 +1,227 @@
+{
+  "date": "2026-10-19",
+  "version": "0.2.8",
+  "rust_commit": "abf45378876f37a7e6a307f0987e0131702c1f44",
+  "ray_commit": "c861050e66d4596d488edf184dacc1cec813242c",
+  "git_push_remote_refs_verified": true,
+  "windows": {
+    "commit": "abf45378876f37a7e6a307f0987e0131702c1f44",
+    "exe_sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+    "exe_bytes": 5355520,
+    "zip_name": "handwave-node-windows-2abf8e84.zip",
+    "zip_sha256": "5fcafb057e04245134b0cfe71b5957fafa1509a7eda24aa0e03e6b1b4b952e6c",
+    "zip_bytes": 3742919,
+    "zip_files": 560,
+    "source_manifest": "packages/source-manifest.json"
+  },
+  "source": {
+    "source_name": "handwave-node-source-69d9cc3f2be22dfd.tar.gz",
+    "source_sha256": "69d9cc3f2be22dfdf6c00a6e91e0e74f4bd64f2784d4d0ab0acbda6d4e90fcbe",
+    "source_bytes": 585030,
+    "script_name": "install-linux-fe4b10bee6a73659.sh",
+    "script_sha256": "fe4b10bee6a73659f6c5db78e624aa794bec0e0b57f91619d8be13c4f694094c"
+  },
+  "package_contents": {
+    "source_archive_files": 654,
+    "zip_files": 560,
+    "all_files_match_exact_export": true,
+    "runtime_secrets_or_state_packaged": false,
+    "embedded_markdown_files": 4,
+    "start_launcher_matches_exact_commit": true
+  },
+  "fresh_checks": {
+    "windows_unit": {
+      "pass": 203,
+      "fail": 0,
+      "ignored": 1
+    },
+    "windows_clippy": "PASS",
+    "windows_final_host_environment": {
+      "scope": "actual isolated signed Go Hub + Rust Node; deterministic model; real file/process effects",
+      "passed": [
+        "ENV_CREATE",
+        "ENV_INSTALL",
+        "ENV_REUSE",
+        "ENV_RETIRE",
+        "ENV_PLAN"
+      ],
+      "not_run": [
+        "real-model intelligence",
+        "production deployment",
+        "system package installation"
+      ],
+      "status": "PASS",
+      "elapsed_seconds": 36.9,
+      "binary_sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+      "hub_sha256": "70e895af913ad063317772bc7ceb3f31c11269511769aac610f42facab4389c1",
+      "model_requests": 32,
+      "fixture_errors": []
+    },
+    "windows_final_host_regression": {
+      "scope": "real Rust executable + real local Go Hub + controlled model; production cloud/model NOT RUN",
+      "passed": [
+        "join_actual_hub",
+        "unapproved_has_no_effect",
+        "approve_pair_node_hello",
+        "write_read_real_artifact",
+        "live_event_before_terminal",
+        "all_native_loop_events_keep_local_card_and_terminal_order",
+        "agent_task_preserves_distinct_task_identity_and_real_effect",
+        "actual_model_read_file_range_and_tail_large_log",
+        "actual_model_native_search_schema_effects_and_partial_coverage",
+        "modern_default_resolved_from_grant_and_directory",
+        "unsupported_protocol_rejected_without_model_call",
+        "missing-model_rejected_without_model_call",
+        "ambiguous-model_rejected_without_model_call",
+        "actual_file_download_outside_cwd",
+        "actual_rust_compilation_and_executable_artifact",
+        "same_process_native_continuation",
+        "restart_native_continuation",
+        "duplicate_run_rejected_without_replay",
+        "same_id_bad_packets_do_not_settle_active_run",
+        "abort_kills_real_process_tree",
+        "disconnect_cancels_without_replay_and_session_survives",
+        "partial_stream_rejected_without_tool_effect",
+        "fixture-legacy-null_fresh_native_state",
+        "fixture-legacy-empty_fresh_native_state",
+        "fixture-legacy-absent_fresh_native_state",
+        "fixture-protocol-dupes_fresh_native_state",
+        "loopback_hub_ws_and_model_force_direct_while_download_tool_uses_actual_proxy"
+      ],
+      "status": "PASS",
+      "elapsed_seconds": 95.591,
+      "model_requests": 23,
+      "catalog_requests": 19,
+      "modern_hub": true,
+      "binary_sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+      "hub_sha256": "70e895af913ad063317772bc7ceb3f31c11269511769aac610f42facab4389c1",
+      "fixture_errors": []
+    },
+    "linux": {
+      "status": "PASS",
+      "profile": "GNU Linux x86_64 debug",
+      "tests": {
+        "knowledge": 14,
+        "skills": 12,
+        "budget": 2
+      },
+      "host_groups": 5,
+      "requests": 32,
+      "dependency_target_reused": true,
+      "archive_sha256": "69d9cc3f2be22dfdf6c00a6e91e0e74f4bd64f2784d4d0ab0acbda6d4e90fcbe"
+    },
+    "ray": {
+      "tests": "PASS",
+      "vet": "PASS",
+      "build": "PASS",
+      "dom_and_script_parse": "PASS",
+      "go_sources_byte_identical_to_candidate": 788,
+      "dirty_wip_files_preserved": 37,
+      "old_public_artifacts_preserved": 24
+    }
+  },
+  "historical_source_bridge": {
+    "base_candidate_sha256": "92470f7ab8cce9400e75ede12414466557e3e77f07bee448a32993d91101dabc",
+    "commit": "abf45378876f37a7e6a307f0987e0131702c1f44",
+    "unchanged_build_input_files": 40,
+    "only_changed_build_inputs": [
+      "Cargo.lock",
+      "Cargo.toml"
+    ],
+    "changed_semantics": "package version 0.2.7 -> 0.2.8 only",
+    "unchanged_python_fixture_files": 37,
+    "source_bridged_previous_image_checks": {
+      "host-context": 15,
+      "host-web": 5,
+      "host-modes-v3": 5
+    },
+    "new_image_checks": "203 unit + final artifact environment5 and existing regression27 run separately"
+  },
+  "cloud": {
+    "success": true,
+    "commit": "c861050e66d4596d488edf184dacc1cec813242c",
+    "utc": "2026-10-19T01:06:01Z",
+    "ray": {
+      "pid": 1291971,
+      "sha256": "01efbb9dff4942182f1c7aaa583a7d0a8ab0892d195e75b0d87aa2fe7cc94166"
+    },
+    "protected_files_unchanged": 59,
+    "other_services_unchanged": true,
+    "arena_unchanged": true,
+    "downloads_verified": 26,
+    "public_tls_verified": true,
+    "default_source_pin_updated": true,
+    "avatar_gate_verified": true,
+    "browser_visual_verified": false
+  },
+  "cloud_fresh_postcheck": {
+    "success": true,
+    "ray": {
+      "pid": 1291971,
+      "sha256": "01efbb9dff4942182f1c7aaa583a7d0a8ab0892d195e75b0d87aa2fe7cc94166"
+    },
+    "protected_files_unchanged": 59,
+    "other_services_and_arena_unchanged": true,
+    "grants_unchanged": true
+  },
+  "public_client_checks": {
+    "success": true,
+    "public_tls_verified": true,
+    "new_packages": [
+      {
+        "name": "handwave-node-windows-2abf8e84.zip",
+        "http_status": 200,
+        "sha256": "5fcafb057e04245134b0cfe71b5957fafa1509a7eda24aa0e03e6b1b4b952e6c",
+        "bytes": 3742919
+      },
+      {
+        "name": "handwave-node-source-69d9cc3f2be22dfd.tar.gz",
+        "http_status": 200,
+        "sha256": "69d9cc3f2be22dfdf6c00a6e91e0e74f4bd64f2784d4d0ab0acbda6d4e90fcbe",
+        "bytes": 585030
+      }
+    ],
+    "default_source_pin_verified": true,
+    "utc": "2026-10-19T01:09:03Z"
+  },
+  "installed_node": {
+    "success": true,
+    "pid": 42836,
+    "sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+    "identity_preserved": true,
+    "original_state_and_launcher_files_preserved": 126,
+    "full_inventory_checked": true,
+    "grant_renewed": false,
+    "launch_limits": {
+      "calls": 12,
+      "seconds": 120
+    },
+    "https_wss_connected": true,
+    "awaiting_controller_approval": true,
+    "binary_backup_retained_privately": true
+  },
+  "retained_failures": [
+    {
+      "phase": "old_identity_probe_before_stop",
+      "reason": "State directory exclusive lock refused the probe before backup/stop/swap",
+      "original_image_and_process_unchanged": true,
+      "original_state_and_launcher_files_unchanged": 126,
+      "partial_stage_or_backup_created": false,
+      "resolution": "Reconcile first, obtain identity after verified stop; never restore user state"
+    }
+  ],
+  "review": {
+    "reviewer": "independent Codex /root/environment_evolution_review",
+    "decision": "ACCEPT_BOUNDED_0.2.8_PUBLICATION",
+    "external_frozen_report_sha256": "d418d254577589960e46f142b422ad57ff48b4b2dfce78e6543de878ab80f72f",
+    "versioned_report_sha256": "2e559b5092fc174e3b49e727d9bbdea64452b94c7623fc9c1c88771e7ae1061f"
+  },
+  "limits": [
+    "Autonomous two-Session model gate remains OPEN; original trial FAIL/reuse NOT_RUN retained",
+    "No new paid-model or production task acceptance",
+    "No browser visual acceptance",
+    "Linux debug/source/Host only; not release/LTO or all distributions/architectures",
+    "No measured token/cache/speed saving",
+    "No device approval or grant renewal"
+  ]
+}

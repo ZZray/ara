@@ -858,3 +858,28 @@ Independent source/output/hash review accepts only the narrower first-Session
 observation. A model's successful final response, a narrow evaluator failure and
 an unexecuted reuse gate are three distinct facts. This is not a measured causal
 efficiency or cache improvement. See the [candidate evidence](../evidence/run-efficiency-20261019.md).
+
+## HWN-035 — identity inspection also needs the exclusive state lock
+
+2026-10-19, 0.2.8 publication. The first local upgrade helper tried `--identity`
+while the original Node was running. It failed with the explicit state-in-use
+error before backup creation, process stop or binary replacement. `main` resolves
+configuration before checking the identity flag; `Resolved::load` already owns
+the exclusive node.lock. The identity option is not a lock-free live probe.
+
+Fresh reconciliation confirmed the original PID/image, all 126 baseline state
+and launcher hashes, and absence of stage/backup effects. The helper was reordered
+to check quiescent state, stop the exact original process, verify unchanged state,
+then query the old fingerprint before replacing the executable. Only the parsed
+fingerprint is compared across versions. New startup retained the same identity,
+full inventory and bytes; the original refusal remains in the release evidence.
+
+Independent review also identified that checking only old file hashes misses
+newly created sessions/jobs. The helper now compares the entire file inventory,
+excluding the runtime lock, and hashes immediately before stop, after stop,
+before switch and after startup. Changes require reconciliation, not whole-state
+restoration or a blind retry. This bounded deployment guard is not an OS sandbox
+or an atomic guarantee against concurrent external writers. Both forward and
+rollback cloud switches wait for the actual expected process image, rather than
+treating systemd Type=simple startup as exec readiness. See the
+[0.2.8 release record](../evidence/stage-publication-0.2.8-20261019.md).

@@ -3,9 +3,13 @@
 This independent Host uses pinned rpi libraries. Its acceptance is separate from
 the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
 
+- [0.2.8 publication](../evidence/stage-publication-0.2.8-20261019.md):
+  pushed small efficiency increment, verified packages and Linux source build,
+  installed Windows Node; authorization expiry remains unchanged.
+
 - [Small Run-efficiency increment](../evidence/run-efficiency-20261019.md):
   provider-only advisory budgets, direct skill publication paths and bounded
-  verification; new-Session autonomous reuse remains open, production unchanged.
+  local-candidate verification; new-Session autonomous reuse remains open.
 
 - [0.2.7 stage publication](../evidence/stage-publication-0.2.7-20261018.md):
   pushed sources, verified Windows packages and Linux source installation,

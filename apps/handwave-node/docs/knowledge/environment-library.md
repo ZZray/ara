@@ -1,6 +1,7 @@
 # Environment knowledge and reusable skills
 
-Scope: compact Rust Node local 0.2.7 candidate, 2026-10-18. This is Host-owned
+Scope: compact Rust Node libraries introduced in 0.2.7, with the small 0.2.8
+follow-up published on 2026-10-19. This is Host-owned
 environment adaptation, separate from shared ARA Core/OMP parity and from cloud
 or private conversation memory. Source contracts are in
 `src/environment_library.rs`, `src/skill_library.rs`, `src/environment_tools.rs`,
@@ -151,3 +152,5 @@ Appending preserves the preceding message prefix for this new carrier only;
 neither cache hits, lower costs nor better task completion are guaranteed.
 The [bounded candidate evidence](../evidence/run-efficiency-20261019.md) records
 actual Host checks and the separate open new-Session autonomous-reuse gate.
+The later [0.2.8 publication](../evidence/stage-publication-0.2.8-20261019.md)
+records exact committed packages and deployed images separately from that gate.

@@ -113,3 +113,9 @@ This candidate is not committed, pushed, installed or deployed. Existing product
 authorization and the previous publication remain unchanged. Full OMP alignment,
 general self-improvement, model cache savings and autonomous cross-Session reuse
 are not accepted by this change.
+
+Publication follow-up: the user subsequently authorized commit, push and deploy.
+The reviewed implementation, with only package version metadata changed to
+0.2.8, is published in the [separate release record](stage-publication-0.2.8-20261019.md).
+The unpublished-candidate statements above describe the original audit snapshot;
+the later publication does not reclassify its failed autonomous-reuse trial.
