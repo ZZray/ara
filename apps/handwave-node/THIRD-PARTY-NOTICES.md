@@ -4,7 +4,7 @@ This bundle records all third-party packages in the locked Cargo resolution,
 including build and target dependencies. It does not assert that every package
 is linked into the executable. Original license and notice text is retained.
 
-Cargo.lock SHA256: `8e06065920a15226248bb9995a9c2da0912a47a71f824a14bec58d0a698078a4`.
+Cargo.lock SHA256: `a94a4f5b985989272e9e8551c93a21889c98f348b5f8fb8b6839542b1e8ee711`.
 
 Rust standard-library/toolchain notices are retained under `licenses/rust-toolchain`.
 Operating-system runtime libraries are supplied by the OS. Local credentials
@@ -175,7 +175,7 @@ Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.
 | rustls 0.23.46 | Apache-2.0 OR ISC OR MIT | [LICENSE-APACHE](licenses/third-party/rustls-0.23.46/LICENSE-APACHE) · [LICENSE-ISC](licenses/third-party/rustls-0.23.46/LICENSE-ISC) · [LICENSE-MIT](licenses/third-party/rustls-0.23.46/LICENSE-MIT) |
 | rustls-native-certs 0.8.5 | Apache-2.0 OR ISC OR MIT | [LICENSE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE) · [LICENSE-APACHE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-APACHE) · [LICENSE-ISC](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-ISC) · [LICENSE-MIT](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-MIT) |
 | rustls-pki-types 1.15.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-MIT) |
-| rustls-webpki 0.103.15 | ISC | [LICENSE](licenses/third-party/rustls-webpki-0.103.15/LICENSE) · [README-COPYRIGHT.txt](licenses/third-party/rustls-webpki-0.103.15/README-COPYRIGHT.txt) |
+| rustls-webpki 0.103.16 | ISC | [LICENSE](licenses/third-party/rustls-webpki-0.103.16/LICENSE) · [README-COPYRIGHT.txt](licenses/third-party/rustls-webpki-0.103.16/README-COPYRIGHT.txt) |
 | rustversion 1.0.23 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rustversion-1.0.23/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/rustversion-1.0.23/LICENSE-MIT) |
 | ryu 1.0.23 | Apache-2.0 OR BSL-1.0 | [LICENSE-APACHE](licenses/third-party/ryu-1.0.23/LICENSE-APACHE) · [LICENSE-BOOST](licenses/third-party/ryu-1.0.23/LICENSE-BOOST) |
 | schannel 0.1.29 | MIT | [LICENSE.md](licenses/third-party/schannel-0.1.29/LICENSE.md) |
@@ -254,7 +254,7 @@ Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.
 | wasm-streams 0.4.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/wasm-streams-0.4.2/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/wasm-streams-0.4.2/LICENSE-MIT) |
 | web-sys 0.3.106 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/web-sys-0.3.106/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/web-sys-0.3.106/LICENSE-MIT) |
 | web-time 1.1.0 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/web-time-1.1.0/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/web-time-1.1.0/LICENSE-MIT) · [README-COPYRIGHT.txt](licenses/third-party/web-time-1.1.0/README-COPYRIGHT.txt) |
-| webpki-roots 1.0.9 | CDLA-Permissive-2.0 | [LICENSE](licenses/third-party/webpki-roots-1.0.9/LICENSE) |
+| webpki-roots 1.0.10 | CDLA-Permissive-2.0 | [LICENSE](licenses/third-party/webpki-roots-1.0.10/LICENSE) |
 | winapi 0.3.9 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/winapi-0.3.9/LICENSE-APACHE) · [LICENSE-MIT](licenses/third-party/winapi-0.3.9/LICENSE-MIT) |
 | winapi-i686-pc-windows-gnu 0.4.0 | MIT/Apache-2.0 | [UPSTREAM-LICENSE-DECLARATION.txt](licenses/third-party/winapi-i686-pc-windows-gnu-0.4.0/UPSTREAM-LICENSE-DECLARATION.txt) · [LICENSE-APACHE-2.0.txt](licenses/third-party/winapi-i686-pc-windows-gnu-0.4.0/LICENSE-APACHE-2.0.txt) |
 | winapi-x86_64-pc-windows-gnu 0.4.0 | MIT/Apache-2.0 | [UPSTREAM-LICENSE-DECLARATION.txt](licenses/third-party/winapi-x86_64-pc-windows-gnu-0.4.0/UPSTREAM-LICENSE-DECLARATION.txt) · [LICENSE-APACHE-2.0.txt](licenses/third-party/winapi-x86_64-pc-windows-gnu-0.4.0/LICENSE-APACHE-2.0.txt) |

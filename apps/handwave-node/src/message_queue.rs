@@ -10,54 +10,7 @@ const CAPACITY: usize = 16;
 pub const MAX_MESSAGE_BYTES: usize = 8 * 1024;
 const COMMAND_RECEIPTS: usize = 128;
 
-#[derive(Clone, Debug)]
-pub struct SteeringNote {
-    pub text: String,
-    identity: Option<Value>,
-}
-impl SteeringNote {
-    pub fn legacy(text: String) -> Self {
-        Self { text, identity: None }
-    }
-}
-#[derive(Default)]
-pub struct SteeringBuffer {
-    pending: Vec<SteeringNote>,
-    outcomes: Arc<Mutex<Vec<Value>>>,
-}
-impl SteeringBuffer {
-    pub fn submit_legacy(&mut self, text: String) -> Result<()> {
-        ensure!(!text.trim().is_empty() && text.len() <= wire::MAX_FRAME, "invalid steering message size");
-        ensure!(self.pending.len() < CAPACITY, "steering buffer is full");
-        self.pending.push(SteeringNote::legacy(text));
-        Ok(())
-    }
-    pub fn take_pending(&mut self) -> Vec<SteeringNote> {
-        std::mem::take(&mut self.pending)
-    }
-    pub fn complete(&self, notes: Vec<SteeringNote>, applied: bool) {
-        let mut outcomes = self.outcomes.lock().unwrap();
-        for note in notes {
-            if let Some(mut receipt) = note.identity {
-                receipt["status"] = json!(if applied { "applied" } else { "unapplied" });
-                if applied {
-                    receipt["detail"] = json!(
-                        "Source saved and admitted to the current execution context; model consumption is not asserted"
-                    );
-                } else {
-                    receipt["error"] = json!(
-                        "Run ended or context admission failed before applying this guidance; it was not requeued"
-                    );
-                }
-                outcomes.push(receipt);
-            }
-        }
-    }
-    pub fn finish(&mut self) {
-        let notes = self.take_pending();
-        self.complete(notes, false);
-    }
-}
+pub use ara_agent_lite_core::steering::SteeringBuffer;
 
 fn valid_session(key: &str) -> bool {
     let parts = key.split('/').collect::<Vec<_>>();
@@ -174,7 +127,7 @@ impl Queue {
         }
     }
     pub fn buffer(&self) -> SteeringBuffer {
-        SteeringBuffer { pending: vec![], outcomes: self.outcomes.clone() }
+        SteeringBuffer::with_outcomes(self.outcomes.clone())
     }
     pub fn drain_outcomes(&self) -> Vec<Value> {
         std::mem::take(&mut *self.outcomes.lock().unwrap())
@@ -274,10 +227,10 @@ impl Queue {
                 validate_text(text)?;
                 ensure!(!management_text(text), "memory/reference/goal management cannot be submitted as steering");
                 let mut buffer = buffer.ok_or_else(|| anyhow::anyhow!("steering buffer unavailable"))?.lock().unwrap();
-                ensure!(buffer.pending.len() < CAPACITY, "steering buffer is full");
+                ensure!(buffer.len() < CAPACITY, "steering buffer is full");
                 let receipt = json!({"k":"agent-queue-steer-state","queue_id":frame.queue_id,"target_run_id":active.id,"session_key":frame.session_key,"queue_epoch":self.epoch,"status":"submitted"});
                 let entry = self.entries.remove(index).unwrap();
-                buffer.pending.push(SteeringNote { text: entry.msg, identity: Some(receipt.clone()) });
+                buffer.submit(entry.msg, receipt.clone())?;
                 submitted = Some(receipt);
             }
             _ => unreachable!(),
@@ -439,7 +392,7 @@ mod tests {
         assert!(q.drain_outcomes().is_empty());
         let (_, duplicate) = q.command(&steer, Some(&a), true, Some(&b));
         assert!(duplicate.is_none());
-        assert_eq!(b.lock().unwrap().pending.len(), 1);
+        assert_eq!(b.lock().unwrap().len(), 1);
         let notes = b.lock().unwrap().take_pending();
         assert_eq!(notes[0].text, "message next-a");
         b.lock().unwrap().complete(notes, true);

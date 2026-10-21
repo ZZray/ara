@@ -1,0 +1,38 @@
+[package]
+name = "ara-agent-lite-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Embeddable compact Rust agent runtime for business hosts"
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+data-encoding = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures = "0.3"
+fs2 = "0.4"
+getrandom = { version = "0.3", features = ["std"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "socks"] }
+# Keep the fixed TLS trust-store repairs when embedded in a host with an older lockfile.
+rustls-webpki = { version = ">=0.103.16, <0.104", default-features = false }
+webpki-roots = { version = "1.0.10", default-features = false }
+rpi-ai = { git = "https://github.com/bigfish1913/pi-rust.git", rev = "8ec462672d90e62712d96074638efef89436cebe", features = ["providers"] }
+rpi-agent = { git = "https://github.com/bigfish1913/pi-rust.git", rev = "8ec462672d90e62712d96074638efef89436cebe" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util", "net", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+percent-encoding = "2"
+vt100 = "=0.16.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

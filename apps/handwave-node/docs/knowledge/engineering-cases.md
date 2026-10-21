@@ -883,3 +883,42 @@ or an atomic guarantee against concurrent external writers. Both forward and
 rollback cloud switches wait for the actual expected process image, rather than
 treating systemd Type=simple startup as exec readiness. See the
 [0.2.8 release record](../evidence/stage-publication-0.2.8-20261019.md).
+
+## HWN-037 — extracting a runtime also exposes its former private assumptions
+
+2026-10-21, compact Core extraction against 935e5493. HandWave now consumes
+`crates/ara-agent-lite-core` through a path dependency. Model grants, identity,
+connection, message dispatch and scheduling stay in the Host; the runtime and
+tools have one physical implementation. Existing storage identifiers stay in
+place to avoid an unrelated migration. The full ARA/OMP workspace is excluded.
+
+Independent review found that newly public steering metadata accepted arbitrary
+JSON, although completion indexed it as an object. Admission now rejects
+non-objects before enqueue; focused tests cover rejection without queue changes
+and preservation of valid receipt metadata. A source packaging list also retained
+four moved asset paths. Packaging now collects Core resources in a nested archive
+that preserves the actual relative Cargo dependency; the exported sources compile.
+
+A generic host cannot be assumed to implement the Node's self-relaunch protocol.
+The Core requires an explicit worker executable, and the business entrypoint must
+handle worker arguments before normal startup. Without that setting, worker
+admission fails before a durable intent. Native worker and ConPTY tests verify
+one request, one effect, input/output and no re-entry into business startup.
+Plan and tool allowlists remain application policy, not an OS sandbox.
+
+The embedding evaluator initially failed to recognize direct objectives, then
+misclassified Windows CRLF output. Corrected fixture checks retain the original
+tool, artifact and single-request assertions; both failed runs remain recorded.
+The legacy crash fixture initially closed its controller before killing the old
+Node, causing a normal cancellation settlement. With the causal order corrected,
+an actual killed old process leaves pending state that the new Host refuses to
+replay. Completed old history is preserved exactly when the provider label changes
+from handwave to ara-agent-lite. These controlled fixtures establish compatibility
+for the exercised paths, not universal recovery from arbitrary damaged state.
+
+Dependency audit also required two TLS patch upgrades and consumer version floors.
+Final Windows tests, bounded real-model artifact verification, independent review
+and platform limits are recorded in the
+[Core extraction evidence](../../../../crates/ara-agent-lite-core/docs/evidence/extraction-20261021.html).
+The prior fresh-session knowledge-body retrieval FAIL remains open; extraction
+does not establish a new autonomy, token-saving or performance result.

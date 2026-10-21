@@ -1,17 +1,10 @@
 //! Model selection follows the current HandWave Hub contract, never a literal "default" model.
 use crate::wire::Frame;
-use anyhow::{bail, ensure, Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{ensure, Context, Result};
 use serde_json::Value;
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct Route {
-    pub model: String,
-    pub protocol: String,
-    pub binding: String,
-    pub decision: String,
-}
+pub use ara_agent_lite_core::model::Route;
 
 pub fn grant_route(frame: &Frame, grant: &Value, previous: &Route) -> Result<(Route, u32)> {
     let field = |key: &str| grant[key].as_str().unwrap_or_default().trim().to_string();
@@ -79,77 +72,14 @@ pub fn headers(route: &Route, run: &str) -> BTreeMap<String, String> {
 }
 
 pub async fn resolve(
-    mut route: Route,
+    route: Route,
     endpoint: &str,
     token: &str,
     run: &str,
 ) -> Result<(Route, reqwest::Client, crate::model_caps::ModelCaps)> {
-    let endpoint_url = url::Url::parse(endpoint).context("invalid Hub model endpoint")?;
-    crate::transport_security::validate(&endpoint_url)?;
-    let mut h = reqwest::header::HeaderMap::new();
-    for (key, value) in headers(&route, run) {
-        h.insert(reqwest::header::HeaderName::from_bytes(key.as_bytes())?, value.parse()?);
-    }
-    let builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(20))
-        .redirect(reqwest::redirect::Policy::none())
-        .default_headers(h);
-    let client =
-        if crate::transport_security::plaintext_loopback(&endpoint_url) { builder.no_proxy() } else { builder }
-            .build()?;
-    let mut response = client
-        .get(format!("{}/models", endpoint.trim_end_matches('/')))
-        .bearer_auth(token)
-        .timeout(Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|_| anyhow::anyhow!("Hub model directory request failed"))?;
-    ensure!(
-        response.status().is_success(),
-        "Hub model directory returned HTTP {} (body withheld)",
-        response.status().as_u16()
-    );
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| anyhow::anyhow!("Hub model directory read failed"))? {
-        ensure!(bytes.len() + chunk.len() <= 2 * 1024 * 1024, "Hub model directory exceeds 2 MiB");
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).context("invalid Hub model directory JSON")?;
-    let rows = value["data"].as_array().context("Hub model directory has no data array")?;
-    let selected: Vec<_> = rows.iter().filter(|r| r["id"].as_str() == Some(&route.model)).collect();
-    ensure!(selected.len() == 1, "selected model is missing or duplicated in Hub directory");
-    let row = selected[0];
-    let mut protocols: Vec<&str> = match row.get("protocols") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(v) => v
-            .as_array()
-            .context("invalid model protocols")?
-            .iter()
-            .map(|p| {
-                let value = p.as_str().context("invalid model protocol")?.trim();
-                ensure!(!value.is_empty(), "empty model protocol");
-                Ok(value)
-            })
-            .collect::<Result<_>>()?,
-    };
-    protocols.sort_unstable();
-    protocols.dedup();
-    if protocols.is_empty() {
-        protocols.push("openai-completions");
-    }
-    if route.protocol.is_empty() {
-        ensure!(protocols.len() == 1, "model has ambiguous protocols; select a protocol explicitly");
-        route.protocol = protocols[0].into();
-    }
-    ensure!(protocols.contains(&route.protocol.as_str()), "selected protocol is not advertised by the Hub model");
-    if !matches!(route.protocol.as_str(), "openai-completions" | "openrouter-chat") {
-        bail!(
-            "this compact node supports openai-completions/openrouter-chat; selected protocol is unsupported: {}",
-            route.protocol
-        );
-    }
-    let capabilities = crate::model_caps::ModelCaps::parse(row)?;
-    Ok((route, client, capabilities))
+    // Host owns binding headers and grants; shared catalogue validation lives once in Core.
+    let request_headers = headers(&route, run);
+    ara_agent_lite_core::model::resolve_catalog_with_headers(route, endpoint, token, run, request_headers).await
 }
 
 #[cfg(test)]
@@ -180,5 +110,22 @@ mod tests {
         changed["bound_tools"] = json!(false);
         assert!(grant_route(&frame, &changed, &Route::default()).is_err());
         assert!(grant_route(&Frame::default(), &grant, &route).is_err());
+    }
+}
+
+#[derive(Default)]
+pub struct HandWaveModelHost;
+#[async_trait::async_trait]
+impl ara_agent_lite_core::model::ModelHost for HandWaveModelHost {
+    async fn resolve(
+        &self,
+        route: Route,
+        endpoint: &str,
+        token: &str,
+        run: &str,
+    ) -> Result<ara_agent_lite_core::model::ModelSelection> {
+        let (route, client, capabilities) = resolve(route, endpoint, token, run).await?;
+        let headers = headers(&route, run);
+        Ok(ara_agent_lite_core::model::ModelSelection { route, client, capabilities, headers })
     }
 }

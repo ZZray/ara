@@ -24,6 +24,10 @@ EOF
 cat > "$test_root/bin/cargo" <<'EOF'
 #!/bin/sh
 [ "$*" = 'build --release --locked' ] || exit 12
+[ -f Cargo.toml ] && [ -f Cargo.lock ] || exit 14
+if [ "${FIXTURE_LAYOUT:-flat}" = nested ]; then
+    [ -f ../../crates/ara-agent-lite-core/Cargo.toml ] || exit 15
+fi
 [ "${BUILD_FAIL:-0}" = 0 ] || exit 13
 mkdir -p "$CARGO_TARGET_DIR/release"
 printf '#!/bin/sh\necho fixture-built\n' > "$CARGO_TARGET_DIR/release/handwave-node"
@@ -136,4 +140,25 @@ run_install --prefix "$test_root/install with spaces"
 [ "$("$test_root/install with spaces/handwave-node")" = fixture-built ]
 [ -f "$test_root/install with spaces/node.conf.example" ]
 pass installation-prefix-with-spaces
+mkdir -p "$test_root/nested/handwave-node/apps/handwave-node" "$test_root/nested/handwave-node/crates/ara-agent-lite-core"
+for name in Cargo.toml Cargo.lock node.conf.example; do
+    cp "$test_root/source/handwave-node/$name" "$test_root/nested/handwave-node/apps/handwave-node/$name"
+done
+printf '[package]\nname="ara-agent-lite-core"\n' > "$test_root/nested/handwave-node/crates/ara-agent-lite-core/Cargo.toml"
+tar -czf "$test_root/nested.tar.gz" -C "$test_root/nested" handwave-node
+FIXTURE_ARCHIVE=$test_root/nested.tar.gz; export FIXTURE_ARCHIVE
+digest=$(sha256sum "$FIXTURE_ARCHIVE"); digest=${digest%% *}
+FIXTURE_LAYOUT=nested; export FIXTURE_LAYOUT
+run_install
+[ "$("$test_root/install/handwave-node")" = fixture-built ]
+[ "$(cat "$test_root/install/node.conf")" = private-config ]
+[ "$(cat "$test_root/install/state/identity")" = existing-identity ]
+pass nested-core-layout-preserves-installation-state
+mv "$test_root/nested/handwave-node/crates/ara-agent-lite-core/Cargo.toml" "$test_root/held-core-manifest"
+tar -czf "$test_root/missing-core.tar.gz" -C "$test_root/nested" handwave-node
+FIXTURE_ARCHIVE=$test_root/missing-core.tar.gz; export FIXTURE_ARCHIVE
+digest=$(sha256sum "$FIXTURE_ARCHIVE"); digest=${digest%% *}
+expect_failure
+[ "$("$test_root/install/handwave-node")" = fixture-built ]
+pass reject-nested-bundle-without-core
 printf '%s controlled installer checks passed. No real model or Hub connection was used.\n' "$passed"

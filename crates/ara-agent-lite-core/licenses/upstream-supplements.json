@@ -1,0 +1,104 @@
+{
+  "eventsource-stream 0.2.3": [
+    {
+      "file": "licenses/source-supplements/eventsource-stream-0.2.3/UPSTREAM-LICENSE-DECLARATION.txt",
+      "url": "https://github.com/jpopesculian/eventsource-stream/blob/3d46f1c758f9ee4681e9da0427556d24c53f9c01/Cargo.toml",
+      "revision": "3d46f1c758f9ee4681e9da0427556d24c53f9c01",
+      "sha256": "4857f5d6d6e2dd9d1bb91d7038fd6b8ed8751bd86aec4c488e1b3af65f9ec9f1",
+      "kind": "exact upstream license election and attribution"
+    },
+    {
+      "file": "licenses/source-supplements/eventsource-stream-0.2.3/LICENSE-APACHE-2.0.txt",
+      "url": "https://github.com/retep998/winapi-rs/blob/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-APACHE",
+      "revision": "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "kind": "complete standard Apache-2.0 terms elected from upstream declaration"
+    }
+  ],
+  "jsonschema 0.18.3": [
+    {
+      "file": "licenses/source-supplements/jsonschema-0.18.3/LICENSE",
+      "url": "https://raw.githubusercontent.com/Stranger6667/jsonschema-rs/11ebbaaececc1830f093dca229a28c0a5ebdf877/LICENSE",
+      "revision": "11ebbaaececc1830f093dca229a28c0a5ebdf877",
+      "sha256": "0f614c290631feb320f6c0d54c72fc0f85b17ca6d6dc0b5a3383ea7de3e9dc69"
+    }
+  ],
+  "r-efi 5.3.0": [
+    {
+      "file": "licenses/source-supplements/r-efi-5.3.0/AUTHORS",
+      "url": "https://github.com/r-efi/r-efi/blob/97b55bed1c2c91dcbf787674849f05337ff80b33/AUTHORS",
+      "revision": "97b55bed1c2c91dcbf787674849f05337ff80b33",
+      "sha256": "ff92bed461f50338dd703a9ba9aee496a425957873df1d91192776e4bdf5dda7",
+      "kind": "exact upstream original"
+    },
+    {
+      "file": "licenses/source-supplements/r-efi-5.3.0/UPSTREAM-LICENSE-DECLARATION.txt",
+      "url": "https://github.com/r-efi/r-efi/blob/97b55bed1c2c91dcbf787674849f05337ff80b33/Cargo.toml",
+      "revision": "97b55bed1c2c91dcbf787674849f05337ff80b33",
+      "sha256": "9c0aef9d56bda3090e85609f312944aec4814c4ad29ff319953138901f7effa5",
+      "kind": "exact upstream license election and attribution"
+    },
+    {
+      "file": "licenses/source-supplements/r-efi-5.3.0/LICENSE-APACHE-2.0.txt",
+      "url": "https://github.com/retep998/winapi-rs/blob/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-APACHE",
+      "revision": "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "kind": "complete standard Apache-2.0 terms elected from upstream declaration"
+    }
+  ],
+  "r-efi 6.0.0": [
+    {
+      "file": "licenses/source-supplements/r-efi-6.0.0/AUTHORS",
+      "url": "https://github.com/r-efi/r-efi/blob/7e1b0322d31d625f81a5656096330934f9cd835d/AUTHORS",
+      "revision": "7e1b0322d31d625f81a5656096330934f9cd835d",
+      "sha256": "d027e91dbc9cdbb2f1190068e498bd6b61cff022b6a032b191021ba658d96111",
+      "kind": "exact upstream original"
+    },
+    {
+      "file": "licenses/source-supplements/r-efi-6.0.0/UPSTREAM-LICENSE-DECLARATION.txt",
+      "url": "https://github.com/r-efi/r-efi/blob/7e1b0322d31d625f81a5656096330934f9cd835d/Cargo.toml",
+      "revision": "7e1b0322d31d625f81a5656096330934f9cd835d",
+      "sha256": "c0330c95a5cac671ea346f94957273c900d436efedd405a6e504a5e33807274d",
+      "kind": "exact upstream license election and attribution"
+    },
+    {
+      "file": "licenses/source-supplements/r-efi-6.0.0/LICENSE-APACHE-2.0.txt",
+      "url": "https://github.com/retep998/winapi-rs/blob/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-APACHE",
+      "revision": "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "kind": "complete standard Apache-2.0 terms elected from upstream declaration"
+    }
+  ],
+  "winapi-i686-pc-windows-gnu 0.4.0": [
+    {
+      "file": "licenses/source-supplements/winapi-i686-pc-windows-gnu-0.4.0/UPSTREAM-LICENSE-DECLARATION.txt",
+      "url": "https://static.crates.io/crates/winapi-i686-pc-windows-gnu/winapi-i686-pc-windows-gnu-0.4.0.crate",
+      "revision": "crate-sha256:ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6",
+      "sha256": "201dd5816ef7ce54ad077dc1802d8c772336dc416ed314c4edd2b7c0144ba86e",
+      "kind": "exact upstream license election and attribution"
+    },
+    {
+      "file": "licenses/source-supplements/winapi-i686-pc-windows-gnu-0.4.0/LICENSE-APACHE-2.0.txt",
+      "url": "https://github.com/retep998/winapi-rs/blob/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-APACHE",
+      "revision": "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "kind": "complete standard Apache-2.0 terms elected from upstream declaration"
+    }
+  ],
+  "winapi-x86_64-pc-windows-gnu 0.4.0": [
+    {
+      "file": "licenses/source-supplements/winapi-x86_64-pc-windows-gnu-0.4.0/UPSTREAM-LICENSE-DECLARATION.txt",
+      "url": "https://static.crates.io/crates/winapi-x86_64-pc-windows-gnu/winapi-x86_64-pc-windows-gnu-0.4.0.crate",
+      "revision": "crate-sha256:712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f",
+      "sha256": "6f292cba2747948e857dff9f4a434aad449e5a1291a07f06e77d523d21e4171f",
+      "kind": "exact upstream license election and attribution"
+    },
+    {
+      "file": "licenses/source-supplements/winapi-x86_64-pc-windows-gnu-0.4.0/LICENSE-APACHE-2.0.txt",
+      "url": "https://github.com/retep998/winapi-rs/blob/796a8e6c2971dc2ff1bcff166e6671284f9b5b6b/LICENSE-APACHE",
+      "revision": "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "kind": "complete standard Apache-2.0 terms elected from upstream declaration"
+    }
+  ]
+}

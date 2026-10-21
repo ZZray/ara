@@ -1,0 +1,934 @@
+{
+  "schema": "ara-agent-lite-extraction-evidence-v1",
+  "date": "2026-10-21",
+  "decision": "accepted-scoped-windows-extraction",
+  "requirement": "One reusable compact Rust runtime; HandWave consumes the same implementation; full ARA/OMP remains separate.",
+  "baseline_commit": "935e5493ca71260f7f60aaf46d61baf9777ef6f6",
+  "target": "unstaged/new worktree snapshot; not a Git commit or publication",
+  "runtime_version": "0.1.0",
+  "host_version": "0.2.8",
+  "scope": {
+    "core": "crates/ara-agent-lite-core",
+    "host": "apps/handwave-node",
+    "excluded": [
+      "root workspace and full ARA/OMP WIP",
+      "production services and grants",
+      "Git staging/commit/push/deploy",
+      "storage migration",
+      "new product features"
+    ]
+  },
+  "api": {
+    "entrypoint": "execute(RunRequest, CancellationToken, mpsc::Sender<Value>)",
+    "defaults": {
+      "mode": "Plan",
+      "enable_local_tools": false,
+      "worker_executable": null,
+      "max_calls": 12,
+      "max_seconds": 120,
+      "max_output": 4096
+    },
+    "host_owned": [
+      "identity",
+      "authorization",
+      "model credentials/route",
+      "state and knowledge paths",
+      "queue/scheduling",
+      "event display",
+      "Task acceptance"
+    ],
+    "not_os_sandbox": true
+  },
+  "source_moves": [
+    {
+      "from": "apps/handwave-node/src/agent.rs",
+      "to": "crates/ara-agent-lite-core/src/agent.rs",
+      "normalized_equal": false,
+      "sha256_current": "d68e96d6cafed4f3bc2066f742a584bc6c9f3c734e97376c3653bbfc34b3b35a"
+    },
+    {
+      "from": "apps/handwave-node/src/builtin_skills/skill-creator/SKILL.md",
+      "to": "crates/ara-agent-lite-core/src/builtin_skills/skill-creator/SKILL.md",
+      "normalized_equal": true,
+      "sha256_current": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343"
+    },
+    {
+      "from": "apps/handwave-node/src/builtin_skills/skill-installer/SKILL.md",
+      "to": "crates/ara-agent-lite-core/src/builtin_skills/skill-installer/SKILL.md",
+      "normalized_equal": true,
+      "sha256_current": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd"
+    },
+    {
+      "from": "apps/handwave-node/src/context_memory.rs",
+      "to": "crates/ara-agent-lite-core/src/context_memory.rs",
+      "normalized_equal": false,
+      "sha256_current": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7"
+    },
+    {
+      "from": "apps/handwave-node/src/environment_library.rs",
+      "to": "crates/ara-agent-lite-core/src/environment_library.rs",
+      "normalized_equal": true,
+      "sha256_current": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f"
+    },
+    {
+      "from": "apps/handwave-node/src/environment_library_tests.rs",
+      "to": "crates/ara-agent-lite-core/src/environment_library_tests.rs",
+      "normalized_equal": true,
+      "sha256_current": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676"
+    },
+    {
+      "from": "apps/handwave-node/src/environment_prompt.md",
+      "to": "crates/ara-agent-lite-core/src/environment_prompt.md",
+      "normalized_equal": true,
+      "sha256_current": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509"
+    },
+    {
+      "from": "apps/handwave-node/src/environment_tools.rs",
+      "to": "crates/ara-agent-lite-core/src/environment_tools.rs",
+      "normalized_equal": true,
+      "sha256_current": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0"
+    },
+    {
+      "from": "apps/handwave-node/src/execution.rs",
+      "to": "crates/ara-agent-lite-core/src/execution.rs",
+      "normalized_equal": true,
+      "sha256_current": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b"
+    },
+    {
+      "from": "apps/handwave-node/src/experience.rs",
+      "to": "crates/ara-agent-lite-core/src/experience.rs",
+      "normalized_equal": true,
+      "sha256_current": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac"
+    },
+    {
+      "from": "apps/handwave-node/src/experience_memory_tests.rs",
+      "to": "crates/ara-agent-lite-core/src/experience_memory_tests.rs",
+      "normalized_equal": true,
+      "sha256_current": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda"
+    },
+    {
+      "from": "apps/handwave-node/src/file_discovery.rs",
+      "to": "crates/ara-agent-lite-core/src/file_discovery.rs",
+      "normalized_equal": true,
+      "sha256_current": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900"
+    },
+    {
+      "from": "apps/handwave-node/src/goal_runtime.rs",
+      "to": "crates/ara-agent-lite-core/src/goal_runtime.rs",
+      "normalized_equal": false,
+      "sha256_current": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed"
+    },
+    {
+      "from": "apps/handwave-node/src/local_tools.rs",
+      "to": "crates/ara-agent-lite-core/src/local_tools.rs",
+      "normalized_equal": false,
+      "sha256_current": "8f633d534f4e71d4c40fedc9af2bfbbb267cbae1a8006b71e3494b14bf6f3102"
+    },
+    {
+      "from": "apps/handwave-node/src/managed_jobs.rs",
+      "to": "crates/ara-agent-lite-core/src/managed_jobs.rs",
+      "normalized_equal": false,
+      "sha256_current": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d"
+    },
+    {
+      "from": "apps/handwave-node/src/model_caps.rs",
+      "to": "crates/ara-agent-lite-core/src/model_caps.rs",
+      "normalized_equal": true,
+      "sha256_current": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e"
+    },
+    {
+      "from": "apps/handwave-node/src/model_telemetry.rs",
+      "to": "crates/ara-agent-lite-core/src/model_telemetry.rs",
+      "normalized_equal": true,
+      "sha256_current": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a"
+    },
+    {
+      "from": "apps/handwave-node/src/project_rules.rs",
+      "to": "crates/ara-agent-lite-core/src/project_rules.rs",
+      "normalized_equal": true,
+      "sha256_current": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce"
+    },
+    {
+      "from": "apps/handwave-node/src/script_tools.rs",
+      "to": "crates/ara-agent-lite-core/src/script_tools.rs",
+      "normalized_equal": true,
+      "sha256_current": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33"
+    },
+    {
+      "from": "apps/handwave-node/src/session_journal.rs",
+      "to": "crates/ara-agent-lite-core/src/session_journal.rs",
+      "normalized_equal": true,
+      "sha256_current": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26"
+    },
+    {
+      "from": "apps/handwave-node/src/skill_library.rs",
+      "to": "crates/ara-agent-lite-core/src/skill_library.rs",
+      "normalized_equal": true,
+      "sha256_current": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0"
+    },
+    {
+      "from": "apps/handwave-node/src/skill_library_tests.rs",
+      "to": "crates/ara-agent-lite-core/src/skill_library_tests.rs",
+      "normalized_equal": true,
+      "sha256_current": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5"
+    },
+    {
+      "from": "apps/handwave-node/src/system_capabilities.rs",
+      "to": "crates/ara-agent-lite-core/src/system_capabilities.rs",
+      "normalized_equal": false,
+      "sha256_current": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074"
+    },
+    {
+      "from": "apps/handwave-node/src/terminal_emulator.rs",
+      "to": "crates/ara-agent-lite-core/src/terminal_emulator.rs",
+      "normalized_equal": true,
+      "sha256_current": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962"
+    },
+    {
+      "from": "apps/handwave-node/src/terminal_process.rs",
+      "to": "crates/ara-agent-lite-core/src/terminal_process.rs",
+      "normalized_equal": true,
+      "sha256_current": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b"
+    },
+    {
+      "from": "apps/handwave-node/src/web_research_prompt.md",
+      "to": "crates/ara-agent-lite-core/src/web_research_prompt.md",
+      "normalized_equal": true,
+      "sha256_current": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6"
+    },
+    {
+      "from": "apps/handwave-node/src/web_tools.rs",
+      "to": "crates/ara-agent-lite-core/src/web_tools.rs",
+      "normalized_equal": true,
+      "sha256_current": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856"
+    },
+    {
+      "from": "apps/handwave-node/src/web_tools_tests.rs",
+      "to": "crates/ara-agent-lite-core/src/web_tools_tests.rs",
+      "normalized_equal": true,
+      "sha256_current": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3"
+    }
+  ],
+  "source_files_sha256": {
+    "crates/ara-agent-lite-core/Cargo.lock": "3bae334ed45d20fec3642cac61db520956e0286da6d36874b74049c52ec7e4ca",
+    "crates/ara-agent-lite-core/Cargo.toml": "5cc95309e0928a8c2c8d30b423e70ff278a699907f2464330df9a903686df98f",
+    "crates/ara-agent-lite-core/deny.toml": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+    "crates/ara-agent-lite-core/examples/business_host.rs": "f450c0583175e459f76334b33cf5090b29889f6f7d7a007c1639817b48871df8",
+    "crates/ara-agent-lite-core/LICENSE": "3beaf3b7a5807279adaf2003cbe6a8359d89448dc81919425c296c167b4acd3b",
+    "crates/ara-agent-lite-core/README.md": "c536ef26faea0fee53696135e582abffcf50734079fea0a48d743a4ac6c53af5",
+    "crates/ara-agent-lite-core/src/agent.rs": "d68e96d6cafed4f3bc2066f742a584bc6c9f3c734e97376c3653bbfc34b3b35a",
+    "crates/ara-agent-lite-core/src/builtin_skills/skill-creator/SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "crates/ara-agent-lite-core/src/builtin_skills/skill-installer/SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "crates/ara-agent-lite-core/src/context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "crates/ara-agent-lite-core/src/environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "crates/ara-agent-lite-core/src/environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "crates/ara-agent-lite-core/src/environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "crates/ara-agent-lite-core/src/environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "crates/ara-agent-lite-core/src/execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "crates/ara-agent-lite-core/src/experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "crates/ara-agent-lite-core/src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "crates/ara-agent-lite-core/src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "crates/ara-agent-lite-core/src/goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "crates/ara-agent-lite-core/src/lib.rs": "15f05f7b914aec1810f6012851656c13979746651e6dcc6cc36759ef6a2e4a8c",
+    "crates/ara-agent-lite-core/src/local_tools.rs": "8f633d534f4e71d4c40fedc9af2bfbbb267cbae1a8006b71e3494b14bf6f3102",
+    "crates/ara-agent-lite-core/src/managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "crates/ara-agent-lite-core/src/model.rs": "a63864118846e955e61e4bfc6c81d30da1a178c0c90b4a958ff0d98b0b9149a7",
+    "crates/ara-agent-lite-core/src/model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "crates/ara-agent-lite-core/src/model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "crates/ara-agent-lite-core/src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "crates/ara-agent-lite-core/src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+    "crates/ara-agent-lite-core/src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "crates/ara-agent-lite-core/src/skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "crates/ara-agent-lite-core/src/skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "crates/ara-agent-lite-core/src/steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "crates/ara-agent-lite-core/src/system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "crates/ara-agent-lite-core/src/terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "crates/ara-agent-lite-core/src/terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "crates/ara-agent-lite-core/src/web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "crates/ara-agent-lite-core/src/web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "crates/ara-agent-lite-core/src/web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "crates/ara-agent-lite-core/tests/host_boundary.rs": "7d60c59df692a946f066b4fa257bbf3021138c51006501ea0554564a0df3d060",
+    "crates/ara-agent-lite-core/tests/verify_embedding.py": "9a7c268ce0dfc66d60ddadf7ef4c03ea8ebb3811e10bb4393416df8e04a61039",
+    "crates/ara-agent-lite-core/THIRD-PARTY-NOTICES.md": "6a4a698b4e94d5814f8fee8593c679f88cb11a3f2137c17533cc78db7b827a50",
+    "apps/handwave-node/Cargo.lock": "a946148a959e5e8482f07dade20f09bc8cd99dc4b2581def77ac966e79684e66",
+    "apps/handwave-node/Cargo.toml": "9ee1ba96e2d3f0a505a78c74843f6cfa435ccccfe6146b012002e20c02c355b6",
+    "apps/handwave-node/deny.toml": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+    "apps/handwave-node/LICENSE": "3beaf3b7a5807279adaf2003cbe6a8359d89448dc81919425c296c167b4acd3b",
+    "apps/handwave-node/README.md": "a851cb6d499a9757ab6ea0f5d4fd1e566bcb9dfc81b2cd3ed60b93e01771ce2f",
+    "apps/handwave-node/scripts/build.ps1": "eaf5d74633c8bb7dcced94c89ffbeeb2c8f169176a1e325ab6186dc4e304fcea",
+    "apps/handwave-node/scripts/collect-licenses.py": "b8d52981239338809cdba273b4f3615cbb3b92f1807bd6c81787aa021c8721e4",
+    "apps/handwave-node/scripts/install-linux.sh": "4ecd9f615c28aab4c5867be278b4c1ed1bd40c5ed42c167763fddfc1cae4e303",
+    "apps/handwave-node/scripts/package-source.py": "7b7dd2da954fc049f5b0a0e683b79b2272f8766fa12805fa712c22325c5df9c4",
+    "apps/handwave-node/scripts/test-install-linux.sh": "e2934e54605b2b0ab6dde2e014333613342138f79e4539e2fe97e5735d55bfa1",
+    "apps/handwave-node/src/cloud_context.rs": "a329c4802c3bed21e7563528429a5ace0cedf849fc89698c806462835a00571a",
+    "apps/handwave-node/src/config.rs": "c9b349c878c905c6d18458372ea411157bba3e2c623a6706ce3793c55e8b2b4d",
+    "apps/handwave-node/src/connection.rs": "c881849975680e9becf596dc81b67365ff5ea208ade10017bf50272401a837da",
+    "apps/handwave-node/src/gateway.rs": "d5363f75e9cec9cd2af343d4aa055f65966381d86a6214ae09e6bd825ad1b51b",
+    "apps/handwave-node/src/goal_runtime.rs": "bb646de094ec1bc12db3a27350778aa9377315feaabe6b50bd7bd9a2654153c5",
+    "apps/handwave-node/src/job_control.rs": "e9becb525c2ed463526c2b4d492a8d5b11f348eb155d5cf4b2cebdc937120d63",
+    "apps/handwave-node/src/main.rs": "268a7354e8ffa783ce080764d99b262ef8814f52c864fbad15bfc76129a7aa9b",
+    "apps/handwave-node/src/message_queue.rs": "2d4c6ca8a3418de060d2c1c420d237711f3b3edd7feb918606172baa133ca3b0",
+    "apps/handwave-node/src/node_identity.rs": "5035fd4a428142840068517dbb5cd0c1470bda7bcf47bc22821ef69feaa7e0ad",
+    "apps/handwave-node/src/operations.rs": "b5447bd14390a90bb19bb46228b2adb9d77f039d5c1658f286bcef775c7c8b99",
+    "apps/handwave-node/src/proxy.rs": "8a8dff0b74e4aa2010e3722743ca430cba66c6addc3e88b4505397c3e7cd2fcc",
+    "apps/handwave-node/src/transport.rs": "7c4239597cb3f95ab1cb9b3fe3799296c53ff4c8f28a2f08afb591f46b6a9b0d",
+    "apps/handwave-node/src/transport_security.rs": "5ab70590923a1a5892e3016ec1a4016909ae27a348b4097d67ac19ca062c7303",
+    "apps/handwave-node/src/wire.rs": "8ba5d05a9b14fef21e7d64155369d35352dea0f79b8a964dbc52fce10193c6ae",
+    "apps/handwave-node/tests/.gitignore": "32dae3052f331ee34d628ef535709b301259a45df7c7522c4d35dcf49873f00b",
+    "apps/handwave-node/tests/test_budget_fixture.py": "74102432c708e3aaef2bc8982d88728699064e2964c5098fe0c7043d117f9fcb",
+    "apps/handwave-node/tests/test_environment_live_audit.py": "3ddf0674e427b4f2cb0802e59fe7cdaaa79e56ba3860e643f89fd7b34af03f3b",
+    "apps/handwave-node/tests/verify_cloud.py": "6e610c337044f6e591467eeb83af24d739bcf93f87d8d9ee038d05a45444208e",
+    "apps/handwave-node/tests/verify_cloud_snapshot.py": "b2411eb525553a2ba1f8ab22ba37db3236880c43ea55c4366023b2737883a6d4",
+    "apps/handwave-node/tests/verify_complete_live.py": "e3827ebe63b08d47f85a5be1b8748b8aed1a9c214ae798a5975e20aa8e5bb06d",
+    "apps/handwave-node/tests/verify_context.py": "929a0d1fa4c6d169f65ce969b006f5da2348a3809e09b3be21ffa38411265ef1",
+    "apps/handwave-node/tests/verify_context_live.py": "4212f97b480ef37dae23cc0cd2edbeae47dd035c3317df2f8d9b548cd0c4d000",
+    "apps/handwave-node/tests/verify_efficiency.py": "1112bc1311afd1b66e2eceb3d0fc7a827c65f902f426575838278601a7586226",
+    "apps/handwave-node/tests/verify_environment.py": "200908e9f22ff8f07461455c8ca799b5dd3295520dfb3dd55f28497596853b2e",
+    "apps/handwave-node/tests/verify_environment_library.py": "962afcea68bca18cf8a6c9fc62172701b958fa2f074eef08e9a126b1571b9848",
+    "apps/handwave-node/tests/verify_environment_live.py": "3479c2c878a78b6b2d292f9b8145bac9551e14e54fd672765fc2aaf2577150b4",
+    "apps/handwave-node/tests/verify_evolution.py": "7267278639c378e4f8846afcb589af2f0e8023f9d6e9bb96d698866e1ca5a018",
+    "apps/handwave-node/tests/verify_gateway.py": "ef3dbd4314d3b23a6cace20afe104a37f71e4232fc3083cb948a40fb30795ead",
+    "apps/handwave-node/tests/verify_goal_faults.py": "0535e56ed5689537b349243c155859c1403910ef20d4ade24bf3e6cd855ce165",
+    "apps/handwave-node/tests/verify_grant_terminal.py": "7aaa8591bd529a4b2a4bbd45da6dfc332c71030f0275248fecf44f495c611c61",
+    "apps/handwave-node/tests/verify_host.py": "790eb6d0ad93add8bfe7c5311b25ac7f34b2bd84bc5245102a80ddc5b338e160",
+    "apps/handwave-node/tests/verify_identity.py": "ec6263d4bfc9f48ea782845dbae156f3212ef811bec945cd6919f53e691a1259",
+    "apps/handwave-node/tests/verify_interactive.py": "3ddbe19b44739d4d8ea2446d8edd5c44c6ca62822d02ec7f343804dea44547d1",
+    "apps/handwave-node/tests/verify_jobs.py": "feeff8bffa7011a854c7d6e60f7c867e8401f12d7a3f4f8c0f08360c7af3db82",
+    "apps/handwave-node/tests/verify_journal.py": "118dfbfe1298d5b7b7ced671569c650a6fc3b619490f7f071159963908b05ff7",
+    "apps/handwave-node/tests/verify_linked_reference.py": "3be7c78da4e7a8ec49de0db789cb2517bd562ceedf88bd02e7eeb64767e582ae",
+    "apps/handwave-node/tests/verify_long_goals.py": "649c9a10d280c163972543dc35725ca153d17c938872cf16a092ed3a113ff51f",
+    "apps/handwave-node/tests/verify_long_goals_live.py": "2a51d831819c1172d86ff10842f396e608bbe0eadf73d0b68878c3d795aa14bd",
+    "apps/handwave-node/tests/verify_model_caps.py": "505abcde496091b00c7ee61fbf1e7776526a9ad55f89c62f6e59648b101dc05d",
+    "apps/handwave-node/tests/verify_modes.py": "ecb2f8ff1455c02f063b1d3d88760f12e1521a4043251897cda0ba606245fd63",
+    "apps/handwave-node/tests/verify_modes_live.py": "ae230d26e75f14a959f7c52461a84b4477898abc327445cab70957c834e516a3",
+    "apps/handwave-node/tests/verify_native_sessions.py": "6a3f455e87dae004f6de58e642492a8bc7061acfa01d1f1a24e1f099be54d7f5",
+    "apps/handwave-node/tests/verify_problem_live.py": "e4f772b34e3d5a02e2e0d3e12f04f5ffe3ed5dd57f42aa97049be49282ee1217",
+    "apps/handwave-node/tests/verify_problem_tools.py": "3ef11522956dd20bef43375aa81821da085e25aadfa82333c5020ed0e8806e25",
+    "apps/handwave-node/tests/verify_queue.py": "b7cb1baf068b887cef7bf84c424a1eef9388dca1a3012bcca2413cafe2fe11d9",
+    "apps/handwave-node/tests/verify_reconnect.py": "7675ce89e83f2d14001728f4e166220945874c8c0c4f6495b4beef7eb951d809",
+    "apps/handwave-node/tests/verify_schedule.py": "4afd47fa4d75d001807dc9ead86a1f5e4a8239e6abd0e2e613a969e275fe39d0",
+    "apps/handwave-node/tests/verify_smart.py": "e9978d153e38334ca807b28c0227ff984ab27beac74a4db54639e52762e5e262",
+    "apps/handwave-node/tests/verify_terminal.py": "66025f7e3ce0c6c3963a13ae7a959d4ee059b36005cf283bbbf9c63926a18fac",
+    "apps/handwave-node/tests/verify_terminal_worker.py": "64f38b88653e38fa441ab9c3b0f3142e98a2d38a358dc0401ebf0eba24437bb2",
+    "apps/handwave-node/tests/verify_ui_events.cjs": "22bcc627359235c478018df128b67efb057510bf897ebb2306d96b77c10f687e",
+    "apps/handwave-node/tests/verify_version_live.py": "2ffc02522b131770f6d6466823a7e21182f894caa73e7ebe44b98224b5ae04b7",
+    "apps/handwave-node/tests/verify_web_research.py": "41d65bffbe735c1e7e771fdc7e473a994f81f81573563fd3a289b77e64df7a30",
+    "apps/handwave-node/tests/verify_web_research_live.py": "5bce651a953ff2733811a9134ef685a7e33af734d84f3a1cdbb00362025ae0ef",
+    "apps/handwave-node/THIRD-PARTY-NOTICES.md": "a80ae044ef32ddcf276c99ff884fafda0af8b83cf1753fdf7d3038846857813f"
+  },
+  "binaries": [
+    {
+      "role": "final-release-host",
+      "path": "D:\\WorkSpace\\target\\handwave-node-release\\x86_64-pc-windows-msvc\\release\\handwave-node.exe",
+      "sha256": "1a9ef0bd139e71f751bf16e6ca4f7e9318d16fb8aab8c00685b1733733babd6b",
+      "bytes": 5408256
+    },
+    {
+      "role": "independent-debug-example",
+      "path": "D:\\WorkSpace\\target\\ara-agent-lite-core\\debug\\examples\\business_host.exe",
+      "sha256": "5b15dc6b0618d9c60caf1bab6098350ee0d55954e183a99b4c780b00e02c2904",
+      "bytes": 21498368
+    }
+  ],
+  "release_size": {
+    "previous_published_bytes": 5355520,
+    "candidate_bytes": 5408256,
+    "delta_bytes": 52736,
+    "performance_improvement_claimed": false
+  },
+  "tests": {
+    "cargo": [
+      {
+        "name": "core-tls-check",
+        "exit_code": 0,
+        "seconds": 12.546,
+        "command": [
+          "cargo",
+          "check",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--offline"
+        ]
+      },
+      {
+        "name": "host-tls-check",
+        "exit_code": 0,
+        "seconds": 8.854,
+        "command": [
+          "cargo",
+          "check",
+          "--manifest-path",
+          "apps/handwave-node/Cargo.toml",
+          "--offline"
+        ]
+      },
+      {
+        "name": "core-tls-clippy",
+        "exit_code": 0,
+        "seconds": 8.24,
+        "command": [
+          "cargo",
+          "clippy",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--workspace",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--",
+          "-D",
+          "warnings"
+        ]
+      },
+      {
+        "name": "host-tls-clippy",
+        "exit_code": 0,
+        "seconds": 2.626,
+        "command": [
+          "cargo",
+          "clippy",
+          "--manifest-path",
+          "apps/handwave-node/Cargo.toml",
+          "--workspace",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--",
+          "-D",
+          "warnings"
+        ]
+      },
+      {
+        "name": "core-tls-tests",
+        "exit_code": 0,
+        "seconds": 66.309,
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--workspace",
+          "--all-targets",
+          "--locked",
+          "--offline"
+        ]
+      },
+      {
+        "name": "host-tls-tests",
+        "exit_code": 0,
+        "seconds": 30.676,
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "apps/handwave-node/Cargo.toml",
+          "--workspace",
+          "--all-targets",
+          "--locked",
+          "--offline"
+        ]
+      },
+      {
+        "name": "example-tls-build",
+        "exit_code": 0,
+        "seconds": 7.104,
+        "command": [
+          "cargo",
+          "build",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--example",
+          "business_host",
+          "--locked",
+          "--offline"
+        ]
+      }
+    ],
+    "unit_and_public_api_passed": 208,
+    "ignored": 1,
+    "ignored_reason": "external public DuckDuckGo network test",
+    "embedding": {
+      "status": "PASS",
+      "cases": [
+        {
+          "name": "independent-default-plan-custom-tool-and-no-local-profile",
+          "status": "PASS"
+        },
+        {
+          "name": "duplicate-run-rejected-before-model",
+          "status": "PASS"
+        },
+        {
+          "name": "fresh-process-session-resume-preserves-native-tool-history",
+          "status": "PASS"
+        },
+        {
+          "name": "reserved-extension-name-rejected",
+          "status": "PASS"
+        },
+        {
+          "name": "custom-plan-denial-advertisement-and-execution",
+          "status": "PASS"
+        },
+        {
+          "name": "plan-rejects-model-invented-local-write",
+          "status": "PASS"
+        },
+        {
+          "name": "explicit-local-tools-real-file-effect",
+          "status": "PASS"
+        },
+        {
+          "name": "cancellation-settles-without-fabricated-success",
+          "status": "PASS"
+        },
+        {
+          "name": "closed-event-consumer-settles-without-hang",
+          "status": "PASS"
+        },
+        {
+          "name": "independent-worker-real-effect-and-idempotency",
+          "status": "PASS"
+        },
+        {
+          "name": "independent-pty-worker-real-effect-and-idempotency",
+          "status": "PASS"
+        },
+        {
+          "name": "missing-worker-rejected-before-spawn-intent",
+          "status": "PASS"
+        }
+      ],
+      "scope": "actual independent business_host + controlled provider + real workers; not real-model intelligence",
+      "elapsed_seconds": 24.75,
+      "requests": 9,
+      "catalogs": 6,
+      "binary_sha256": "5b15dc6b0618d9c60caf1bab6098350ee0d55954e183a99b4c780b00e02c2904"
+    },
+    "host_regressions": [
+      {
+        "name": "host",
+        "groups": 27,
+        "passed": [
+          "join_actual_hub",
+          "unapproved_has_no_effect",
+          "approve_pair_node_hello",
+          "write_read_real_artifact",
+          "live_event_before_terminal",
+          "all_native_loop_events_keep_local_card_and_terminal_order",
+          "agent_task_preserves_distinct_task_identity_and_real_effect",
+          "actual_model_read_file_range_and_tail_large_log",
+          "actual_model_native_search_schema_effects_and_partial_coverage",
+          "modern_default_resolved_from_grant_and_directory",
+          "unsupported_protocol_rejected_without_model_call",
+          "missing-model_rejected_without_model_call",
+          "ambiguous-model_rejected_without_model_call",
+          "actual_file_download_outside_cwd",
+          "actual_rust_compilation_and_executable_artifact",
+          "same_process_native_continuation",
+          "restart_native_continuation",
+          "duplicate_run_rejected_without_replay",
+          "same_id_bad_packets_do_not_settle_active_run",
+          "abort_kills_real_process_tree",
+          "disconnect_cancels_without_replay_and_session_survives",
+          "partial_stream_rejected_without_tool_effect",
+          "fixture-legacy-null_fresh_native_state",
+          "fixture-legacy-empty_fresh_native_state",
+          "fixture-legacy-absent_fresh_native_state",
+          "fixture-protocol-dupes_fresh_native_state",
+          "loopback_hub_ws_and_model_force_direct_while_download_tool_uses_actual_proxy"
+        ],
+        "result": "host-regression-tls/result.json"
+      },
+      {
+        "name": "context",
+        "groups": 15,
+        "passed": [
+          "reference_read_and_search_actual_tools_exact_original",
+          "candidate_stays_unaccepted_under_brief_and_tool_command_injection",
+          "trusted_accept_revoke_zero_http_and_request_visibility",
+          "immutable_original_hash_version_correct_revoke_watermark",
+          "project_rules_real_request_reload_raw_separation_and_fail_before_gateway",
+          "context_store_failure_keeps_last_good_and_blocks_provider",
+          "separate_controller_and_canonical_cwd_scopes",
+          "source_backed_summary_closed_pairs_raw_preservation_and_restart",
+          "incremental_summary_advances_closed_prefix_with_previous_summary",
+          "one_large_old_closed_turn_compacts_before_second_turn_finishes",
+          "summary_invalid_retains_raw_and_prevents_following_effectful_loop",
+          "summary_unknown_source_retains_raw_and_prevents_following_effectful_loop",
+          "summary_tool_call_retains_raw_and_prevents_following_effectful_loop",
+          "summary_cancel_retains_raw_and_prevents_following_effectful_loop",
+          "summary_budget_retains_raw_and_prevents_following_effectful_loop"
+        ],
+        "result": "context-regression-tls/result.json"
+      },
+      {
+        "name": "library",
+        "groups": 5,
+        "passed": [
+          "ENV_CREATE",
+          "ENV_INSTALL",
+          "ENV_REUSE",
+          "ENV_RETIRE",
+          "ENV_PLAN"
+        ],
+        "result": "library-regression-tls/result.json"
+      },
+      {
+        "name": "modes",
+        "groups": 5,
+        "passed": [
+          "plan_exact_read_schemas_and_forged_effect_tools_rejected",
+          "unknown_mode_and_plan_management_rejected_without_model_call",
+          "actual_agent_loop_busy_follow_cannot_raise_plan_permission_or_replace_goal_identity",
+          "goal_actual_artifact_steps_restart_pause_resume_review_accept_zero_model_commands",
+          "goal_cancel_settles_and_preserves_prior_goal_history"
+        ],
+        "result": "modes-regression-tls/result.json"
+      },
+      {
+        "name": "terminal",
+        "groups": 2,
+        "passed": [
+          "actual_tty_headless_cursor_query_merged_stream_input_and_native_resize_idempotency",
+          "same_child_after_reconnect_scoped_ctrl_c_eof_and_no_model_polling"
+        ],
+        "result": "terminal-regression-tls/result.json"
+      },
+      {
+        "name": "cloud-snapshot",
+        "groups": 5,
+        "passed": [
+          "current_snapshot_real_wire_ephemeral_body_no_reference_promotion",
+          "epoch_change_filters_accepted_cloud_derivative_and_raw_assistant_preserves_audit",
+          "restart_unavailable_empty_and_missing_carrier_do_not_reuse_old_content",
+          "wrong_device_and_hash_refused_before_provider_legacy_brief_compatible",
+          "active_agent_follow_drops_inherited_snapshot_and_old_assistant"
+        ],
+        "result": "cloud-snapshot-regression-tls/result.json"
+      }
+    ],
+    "legacy_upgrade": {
+      "status": "PASS",
+      "scope": "actual legacy binary -> new Core Host; isolated Go Hub / controlled provider; no real model or production",
+      "cases": [
+        {
+          "name": "settled-old-session-continuation-preserves-prefix-route-device-and-single-effect",
+          "status": "PASS",
+          "old_provider": "handwave",
+          "new_provider": "ara-agent-lite",
+          "old_messages": 4,
+          "new_messages": 8,
+          "identity_sha256": "44927613adc77e9d2ab40748be01fc14f0462d0ad589ef74a2b9590af9921496",
+          "old_pid": 32380,
+          "new_pid": 15800
+        },
+        {
+          "name": "old-settled-run-id-rejected-without-provider-or-effect",
+          "status": "PASS"
+        },
+        {
+          "name": "old-route-identity-continuity-rejects-new-model-with-original-history",
+          "status": "PASS"
+        },
+        {
+          "name": "actual-interrupted-old-process-keeps-unknown-effect-fence-no-replay",
+          "status": "PASS",
+          "old_provider": "handwave"
+        }
+      ],
+      "old_sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+      "new_sha256": "1a9ef0bd139e71f751bf16e6ca4f7e9318d16fb8aab8c00685b1733733babd6b",
+      "hub_sha256": "70e895af913ad063317772bc7ceb3f31c11269511769aac610f42facab4389c1",
+      "script_sha256": "13b4ca4d87d5b8e817e7ec4c2e7830ee3f068de14a931af52b0171435efd5c73",
+      "elapsed_seconds": 12.743,
+      "later_checks": "all four declared checks exercised"
+    },
+    "legacy_checks": {
+      "old_message_count": 4,
+      "new_message_count": 8,
+      "exact_prefix_preserved": true,
+      "old_assistant_provider": [
+        "handwave",
+        "handwave"
+      ],
+      "new_assistant_provider": [
+        "ara-agent-lite",
+        "ara-agent-lite"
+      ],
+      "old_route": {
+        "model": "fixture-model",
+        "protocol": "openai-completions",
+        "binding": "",
+        "decision": ""
+      },
+      "new_route": {
+        "model": "fixture-model",
+        "protocol": "openai-completions",
+        "binding": "",
+        "decision": ""
+      },
+      "settled_model_http_requests": 4,
+      "pending_model_http_requests": 2,
+      "pending_run": "legacy-pending-old-93",
+      "pending_message_count": 3,
+      "pending_rejection": "incomplete previous run; tool effects may be unknown; inspect the session and filesystem before explicitly resetting it",
+      "settled_effect": "LEGACY_EFFECT_93\n",
+      "pending_effect": "LEGACY_EFFECT_93\n",
+      "fixture_errors_settled": [],
+      "fixture_errors_pending": [],
+      "settled_final_native_equals_expected": true,
+      "pending_final_native_equals_expected": true
+    },
+    "installer_controlled_checks": 19,
+    "final_checks": [
+      {
+        "name": "core-final-fmt",
+        "command": [
+          "cargo",
+          "fmt",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit_code": 0,
+        "seconds": 0.787
+      },
+      {
+        "name": "host-final-fmt",
+        "command": [
+          "cargo",
+          "fmt",
+          "--manifest-path",
+          "apps/handwave-node/Cargo.toml",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit_code": 0,
+        "seconds": 0.461
+      },
+      {
+        "name": "core-final-doctests",
+        "command": [
+          "cargo",
+          "test",
+          "--manifest-path",
+          "crates/ara-agent-lite-core/Cargo.toml",
+          "--doc",
+          "--locked",
+          "--offline"
+        ],
+        "exit_code": 0,
+        "seconds": 5.487
+      },
+      {
+        "name": "python-compile",
+        "exit_code": 0,
+        "paths": [
+          "crates/ara-agent-lite-core/tests/verify_embedding.py",
+          "apps/handwave-node/scripts/package-source.py",
+          "apps/handwave-node/tests/verify_environment_live.py",
+          "apps/handwave-node/tests/test_environment_live_audit.py"
+        ]
+      },
+      {
+        "name": "collector-python-compile",
+        "exit_code": 0,
+        "path": "apps/handwave-node/scripts/collect-licenses.py"
+      }
+    ]
+  },
+  "real_model": {
+    "status": "PASS",
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "http_calls": 4,
+    "elapsed_seconds": 17.166,
+    "budgets": {
+      "calls": 8,
+      "seconds": 45,
+      "conservative_reservation": 350000,
+      "output_per_call": 2048
+    },
+    "conservative_reservation": 141377,
+    "denials": [],
+    "source_sha256": "a687e214ac49e8ce9f90fad4346e6f0b27761e7838b8d6da1ebe4fc83290a2ac",
+    "actual_report": {
+      "count": 3,
+      "sum": 41
+    },
+    "observed_tools": [
+      "read_file",
+      "write_file",
+      "read_file"
+    ],
+    "modalities_exercised": [
+      "text"
+    ],
+    "cache_or_cost_improvement_claimed": false
+  },
+  "dependencies": {
+    "rpi_revision": "8ec462672d90e62712d96074638efef89436cebe",
+    "patches": [
+      {
+        "package": "rustls-webpki",
+        "before": "0.103.15",
+        "after": "0.103.16",
+        "advisory": "RUSTSEC-2026-0382"
+      },
+      {
+        "package": "webpki-roots",
+        "before": "1.0.9",
+        "after": "1.0.10",
+        "advisory": "RUSTSEC-2026-0381"
+      }
+    ],
+    "consumer_version_floors": true,
+    "core_and_host_deny": "PASS using local offline advisory cache; database freshness not established",
+    "license_inventory": {
+      "core_packages": 245,
+      "core_notice_files": 464,
+      "host_packages": 275,
+      "host_notice_files": 532,
+      "missing": []
+    }
+  },
+  "package": {
+    "source_name": "handwave-node-source-2a123082b201eef6.tar.gz",
+    "source_sha256": "2a123082b201eef61b3b8d624557f06f96e0ade781115ff226cc2ffb2827181d",
+    "source_bytes": 760210,
+    "script_name": "install-linux-4ecd9f615c28aab4.sh",
+    "script_sha256": "4ecd9f615c28aab4c5867be278b4c1ed1bd40c5ed42c167763fddfc1cae4e303",
+    "layout": "repository-subset-v2"
+  },
+  "source_export_check": {
+    "status": "PASS",
+    "members": 1230,
+    "source_sha256": "2a123082b201eef61b3b8d624557f06f96e0ade781115ff226cc2ffb2827181d",
+    "source_bytes": 760210,
+    "cargo_check_exit": 0,
+    "command": [
+      "cargo",
+      "check",
+      "--manifest-path",
+      "D:\\WorkSpace\\tmp\\ara-agent-lite-core-20261021\\source-export-delivery\\handwave-node\\apps\\handwave-node\\Cargo.toml",
+      "--locked",
+      "--offline"
+    ],
+    "seconds": 0.759
+  },
+  "documentation_checks": {
+    "scoped": {
+      "status": "PASS",
+      "markdown_files": 6,
+      "links": 101,
+      "errors": [],
+      "git_diff_check_exit": 0,
+      "visual": "Observed desktop report and clicked section navigation in IAB; narrow viewport not tested",
+      "bootstrap": "NOT_COMPLETED after 30 seconds"
+    },
+    "bootstrap": {
+      "status": "NOT_COMPLETED",
+      "reason": "whole-root documentation bootstrap exceeded 30 second bound; no result claimed",
+      "command": [
+        "python",
+        "scripts/verify_bootstrap.py"
+      ],
+      "seconds": 30.023
+    }
+  },
+  "reviews": {
+    "implementer": "/root/lite_core_pragmatic",
+    "architecture": "/root/lite_core_architecture",
+    "security": "/root/lite_core_security",
+    "procedure": [
+      "PRE in three views",
+      "cross PRE",
+      "ara-git-review",
+      "ara-rust-core-review",
+      "ara-backend-verification",
+      "point-delivery-audit"
+    ],
+    "final_source_decision": "APPROVE_SOURCE; original findings and resolution retained in local review reports"
+  },
+  "retained_failures": [
+    {
+      "path": "embedding-v1",
+      "reason": "invalid rows/cols on non-terminal example action"
+    },
+    {
+      "path": "embedding-v2",
+      "reason": "Windows CRLF mistaken for a second effect by evaluator"
+    },
+    {
+      "path": "legacy-upgrade-v1",
+      "reason": "controller close settled cancellation before old process termination"
+    },
+    {
+      "path": "core-deny-v2.log and host-deny-v2.log",
+      "reason": "two inherited TLS advisories before patch upgrades"
+    }
+  ],
+  "limits": [
+    "Linux/macOS native build and runtime not executed",
+    "explicit knowledge_roots override and normal custom ModelHost network path are source-reviewed, not executed",
+    "slow event consumer filling a bounded channel has no new dedicated acceptance case",
+    "existing fresh-session retrieval of persisted knowledge body remains FAIL/OPEN",
+    "no production deployment, full OMP parity, all-business compatibility, vision or autonomous self-evolution acceptance",
+    "no comparable token/cost/performance experiment"
+  ],
+  "local_evidence_root": "D:\\WorkSpace\\tmp\\ara-agent-lite-core-20261021",
+  "evidence_sha256": {
+    "baseline.json": "43cbd2f4c447164550908b5404c3d017b798253c535790d5b5f0b15e074f875e",
+    "status-before.txt": "7d693693c0657658332123b54169a563df2ac2f312cf33acda04c3ae73d63f20",
+    "source-move-audit.json": "3c2f7d3fe2108cfc5059023df80ee6c736ffa3fdd56db94f46fdb7a616fbd56f",
+    "implementation-source.md": "76594a459672c20e8f1f307261c0fe009c75aeef49582abe937239e48c0f02c7",
+    "pre-pragmatic.md": "c1662932ef6601cb83e1fc77accdc90acdd5349c09c9a4b04872d495186c1535",
+    "pre-architecture.md": "a749c8390ef4eb74e2ad5e00277efb15fb12c0049fb39850c786f38e8f64aa17",
+    "pre-security.md": "02ebf0e893764548c885eafb6ee280a88f80a90fd76a4192c13c37c1a07aa009",
+    "cross-architecture.md": "68e8cdb01701eb3e7cb99dfa0cec0af80ce32afb8667de967052e57d420baef9",
+    "cross-pre-security.md": "238d97dd0e6afe70f6f7c97e6d6957109377621ecc7702428bcfde17a9ed3663",
+    "post-architecture.md": "124952079764db513b1550ae8e3767a92a7e21ee0abbc88394c8138837781f88",
+    "post-security.md": "94b00c08e71316903aeff96cb16f38124bba368a3a5f85e4bbe81516e8c6cbe2",
+    "cargo-results-tls.json": "b27d8c7d848405486a85a7800eba2a44db9ddf87f082b2041d67b5902f5ce945",
+    "core-tls-clippy.log": "60b89626eabbc8cef79b90d887a5094536b1996f4acadc85c5bc9fe944a01523",
+    "host-tls-clippy.log": "7c1dfc1e3148a6575b986614a5d63c0d158b94f20a8b0ad8654109d6a3c4e30a",
+    "core-tls-tests.log": "973e5c31c918dd8d12033788bc7c47f9bd92474f001ab0b11e45f4768067f440",
+    "host-tls-tests.log": "d664489ab3cc3a2b1818518f11240aec9547714f6ea19236edfe76e9699384f3",
+    "core-deny-tls.log": "aa6e195401e57a58577816df81b76e08b1f2cf46fe3acdc1fa114408ddab3953",
+    "host-deny-tls.log": "cd98cf43ca5558a755a264158244891c810bf9f3f883fff6a0157e519a16db05",
+    "core-deny-v2.log": "0e1aadb94039715469385cd5d2ccea9a330de6aee8a1e26481a4e2130789fdf0",
+    "host-deny-v2.log": "3eb19e97bf909e807ca041f5c3ebaff9520cfd018e11fe3a0ed806c3c4aa8858",
+    "final-checks.json": "e13d527782a3df9692cdd1fc9f590cf9b4b2a27e87cacdcadd2b85ada4d44754",
+    "core-final-doctests.log": "c8e4acb97adc68ad9f5d277718229289ec13f0923d51dd447df802cf046cd078",
+    "release-build-tls.log": "59558ff8b3f375a953de46d280ef1346830437d3380d63bfc6d41ddce3b9f711",
+    "example-tls-build.log": "a0b7c7055b398f523144425d0f5fa3a814d9fcb2cd60f95996089101cad37dc3",
+    "installer-linux.log": "9c60b008f1f34fa788a42858d13beb587ff1b52270c230f34b75892971dcc743",
+    "embedding-v1/result.json": "d9cd45a5f03b987bdc916cb523064662af99eef39684dc61ece07646f461e68a",
+    "embedding-v2/result.json": "74af9b77ea1756e23c129a207fcd1fa5b606d10e45046b294a23f87397d072bc",
+    "embedding-tls/result.json": "7517701a8269b95b857b69e0a2223a089de501638ea81ff73a1cf19c67f10396",
+    "host-regression-tls/result.json": "9bd3177c70965ba39165ccf86bbeb522756ebbb593ddaee67ba3a81c043853c2",
+    "context-regression-tls/result.json": "5a4fadc274283e1ca5bd108fbb97da8540bfc73f0e8171f31e2289d22ad6390e",
+    "library-regression-tls/result.json": "a8357e54717e4a85b654c244ef19ab3e644542070e7ebb608480b897c42c30ea",
+    "modes-regression-tls/result.json": "9d35e2ba6c9269d4555af537d98a40ecdac2274be087ce181dcaf225881e805a",
+    "terminal-regression-tls/result.json": "4a8f270feb1279fc12127c5181507f79f42e6f1f73163895a2197cd31cb9a601",
+    "cloud-snapshot-regression-tls/result.json": "37b4558b28f5eecb1eb9b7a6bdd4e9090bedf12569b528c31159b8eaed1fc2c9",
+    "legacy-upgrade-v1/result.json": "8031c6d69659891861ab2a87b692da28504360707679c6f9aff01952fe32fdd3",
+    "legacy-upgrade-v2/result.json": "76d056be7e6a9c0854b1d2fdd3f10655536d2aac0d2092a611aac7b2d64cc87a",
+    "legacy-upgrade-v2/independent-checks.json": "325d67c113cc2dfbca3e2a4954a6d09187aca3b9d98c8d7a324a31f9c2c93a7c",
+    "real-embedding-tls/result.json": "1d2c660aed9ae52dc5b3374a6aa9b6e13f0088840d6db67a4ece1cda137d6033",
+    "source-bundle-delivery/source-manifest.json": "53f74fdb825fc5fafd5b04a23aa1cc0e84aa583ee9d923c3e7f4a67166af79c0",
+    "source-export-delivery-result.json": "e5eb725d3a29006ad1c3c924f74d77c2ceb5f1e8fe1c0072043c80544293fba6",
+    "source-export-delivery-check.log": "c54bca416b8a09e3c2018b0ada16771065b3b9b5469242539af42bc53077e2cf",
+    "bootstrap-final.json": "6e9a20834579049d6f9fcbb6bf8c8e24a3363cb904bb928011dcf6109efdc1b3",
+    "scoped-document-checks.json": "63295506d6adf2227daae25ddcbd4182027540e04b706db28d6388b43c6cea23",
+    "root-acceptance-checks.json": "3ec35472124ea5d736a851211596052752eeca312796864598bd40da98db720e"
+  },
+  "raw_evidence_policy": "raw credentials, identity keys, account data, provider SSE, live configuration and private route details are not copied into Git",
+  "preexisting_work": "Seven app audit/evidence/document paths and the full-root WIP were inventoried; no broad staging/reset/stash/rebase/clean was performed."
+}

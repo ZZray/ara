@@ -70,6 +70,7 @@ pub async fn handle(sig: &Value, settings: &Resolved, owner: &str, goals: &Runne
         &state,
         &settings.cwd,
         crate::managed_jobs::Policy {
+            worker_executable: Some(std::env::current_exe()?),
             owner: crate::managed_jobs::Owner::new(&state, &settings.fp, key)?,
             goal_id: lease.goal_id.clone(),
             lease_expires_at: lease.expires_at,

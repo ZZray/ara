@@ -1,5 +1,5 @@
 {
-  "cargo_lock_sha256": "8e06065920a15226248bb9995a9c2da0912a47a71f824a14bec58d0a698078a4",
+  "cargo_lock_sha256": "a94a4f5b985989272e9e8551c93a21889c98f348b5f8fb8b6839542b1e8ee711",
   "package_count": 275,
   "scope": "all locked resolved third-party packages, including build and target dependencies",
   "missing_original_texts": [],
@@ -3547,19 +3547,19 @@
     },
     {
       "name": "rustls-webpki",
-      "version": "0.103.15",
+      "version": "0.103.16",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "license": "ISC",
       "repository": "https://github.com/rustls/webpki",
       "authors": [],
       "files": [
         {
-          "file": "licenses/third-party/rustls-webpki-0.103.15/LICENSE",
+          "file": "licenses/third-party/rustls-webpki-0.103.16/LICENSE",
           "source_relative": "LICENSE",
           "sha256": "5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a"
         },
         {
-          "file": "licenses/third-party/rustls-webpki-0.103.15/README-COPYRIGHT.txt",
+          "file": "licenses/third-party/rustls-webpki-0.103.16/README-COPYRIGHT.txt",
           "source_relative": "README copyright lines",
           "sha256": "302b247dd743c41c7d4023ad62aacecef51d1bfefabb1cc09bc5b1130aea79fe"
         }
@@ -5222,14 +5222,14 @@
     },
     {
       "name": "webpki-roots",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "license": "CDLA-Permissive-2.0",
       "repository": "https://github.com/rustls/webpki-roots",
       "authors": [],
       "files": [
         {
-          "file": "licenses/third-party/webpki-roots-1.0.9/LICENSE",
+          "file": "licenses/third-party/webpki-roots-1.0.10/LICENSE",
           "source_relative": "LICENSE",
           "sha256": "e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8"
         }

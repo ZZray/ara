@@ -1,0 +1,5 @@
+# Preserve archive and license hashes across platforms.
+* -text whitespace=cr-at-eol
+# Upstream legal notices retain their original formatting.
+licenses/** -whitespace
+LICENSE -whitespace

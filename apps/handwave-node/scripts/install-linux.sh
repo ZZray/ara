@@ -109,6 +109,13 @@ awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { exit 1 }' "$work/types" \
 mkdir "$work/source"
 tar -xzf "$archive" -C "$work/source" --no-same-owner --no-same-permissions || fail 'Source extraction failed.'
 source_dir=$work/source/handwave-node
+# New bundles preserve the shared Core's repository-relative path dependency.
+# Continue accepting the already published flat, checksum-pinned bundles.
+if [ -f "$source_dir/apps/handwave-node/Cargo.toml" ]; then
+    [ -f "$source_dir/crates/ara-agent-lite-core/Cargo.toml" ] \
+        || fail 'Source bundle is missing ara-agent-lite-core.'
+    source_dir=$source_dir/apps/handwave-node
+fi
 [ -f "$source_dir/Cargo.toml" ] && [ -f "$source_dir/Cargo.lock" ] \
     && [ -f "$source_dir/node.conf.example" ] || fail 'Source bundle is missing Cargo.toml, Cargo.lock or node.conf.example.'
 printf '%s\n' 'Building locally (the first build can take several minutes)…'

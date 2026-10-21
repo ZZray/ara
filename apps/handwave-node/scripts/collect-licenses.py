@@ -168,7 +168,7 @@ def main() -> None:
             toolchain.append({"file": str(target.relative_to(root)).replace("\\", "/"), "sha256": digest(data)})
     elections = ["eventsource-stream 0.2.3", "r-efi 5.3.0", "r-efi 6.0.0", "winapi-i686-pc-windows-gnu 0.4.0", "winapi-x86_64-pc-windows-gnu 0.4.0"]
     receipt = {"cargo_lock_sha256": digest(lock_path.read_bytes()), "package_count": len(entries), "scope": "all locked resolved third-party packages, including build and target dependencies", "missing_original_texts": missing, "packages_without_standalone_license_in_archive": elections, "distribution_license_elections": {name: "Apache-2.0" for name in elections}, "rust_toolchain_notices": toolchain, "packages": entries}
-    (root / "licenses" / "manifest.json").write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (root / "licenses" / "manifest.json").write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     lines = ["# Third-party notices", "", "This bundle records all third-party packages in the locked Cargo resolution,", "including build and target dependencies. It does not assert that every package", "is linked into the executable. Original license and notice text is retained.", "", f"Cargo.lock SHA256: `{receipt['cargo_lock_sha256']}`.", "", "Rust standard-library/toolchain notices are retained under `licenses/rust-toolchain`.", "Operating-system runtime libraries are supplied by the OS. Local credentials", "and configuration are excluded from this source-license collection.", "", "Regenerate with `python scripts/collect-licenses.py` using cached Cargo sources.", "", "| Package | License expression | Original texts |", "| --- | --- | --- |"]
     for row in entries:
         links = " · ".join(f"[{Path(file['file']).name}]({file['file']})" for file in row["files"]) or "Not supplied in cached package"
@@ -176,7 +176,7 @@ def main() -> None:
     if missing:
         lines += ["", "Packages whose cached source does not supply original license/notice text:", ""] + ["- " + name for name in missing]
     lines += ["", "`eventsource-stream 0.2.3`, `r-efi 5.3.0/6.0.0`, and the two winapi GNU", "import-library packages 0.4.0 offer Apache-2.0 in their exact source-package", "declarations but omit separate license files from their crate archives.", "This distribution elects Apache-2.0 for these packages and includes its", "complete standard terms, the exact declaration/revision or archive checksum,", "and the original r-efi AUTHORS. No copyright owner or year has been invented.", "`licenses/upstream-supplements.json` records every source and SHA256."]
-    (root / "THIRD-PARTY-NOTICES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (root / "THIRD-PARTY-NOTICES.md").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps({"packages": len(entries), "notice_files": sum(len(row["files"]) for row in entries), "missing_original_texts": missing, "lock_sha256": receipt["cargo_lock_sha256"]}, ensure_ascii=False))
 
 

@@ -88,6 +88,7 @@ fn job_manager(settings: &Resolved, lease: &crate::goal_runtime::Lease) -> Resul
         &state,
         &settings.cwd,
         crate::managed_jobs::Policy {
+            worker_executable: Some(std::env::current_exe()?),
             owner: crate::managed_jobs::Owner::new(&state, &settings.fp, &lease.session)?,
             goal_id: lease.goal_id.clone(),
             lease_expires_at: lease.expires_at,
@@ -513,7 +514,10 @@ async fn session(
                             let resume_job_lease=if matches!(frame.execution_mode.as_str(),""|"execute") {
                                 crate::job_control::resume_lease(settings,&owner,&frame.session_key,goals).ok().flatten()
                             } else {None};
+                            let cloud_context=crate::cloud_context::split_cloud_brief(&frame.brief,&settings.fp).map(|(brief,snapshot)|(brief.to_owned(),snapshot));
                             let request=RunRequest{
+                                model_host:Arc::new(crate::gateway::HandWaveModelHost),worker_executable:Some(std::env::current_exe()?),
+                                extra_tools:vec![],context_snapshot:None,knowledge_roots:None,enable_local_tools:true,
                                 id:frame.id.clone(),objective:objective(&frame),device_fp:settings.fp.clone(),
                                 model:if frame.model.is_empty(){"default".into()}else{frame.model.clone()},
                                 endpoint:settings.endpoint(),token,route,max_output,cwd:settings.cwd.clone(),state_path,
@@ -536,7 +540,10 @@ async fn session(
                                         if forward.event(&id,local_agent_event(event)).await.is_err(){break;}
                                     }
                                 });
-                                let result=agent::execute(request,cancel.clone(),events).await;
+                                let result=match cloud_context {
+                                    Ok((brief,snapshot))=>{let mut request=request;request.brief=brief;request.context_snapshot=snapshot;agent::execute(request,cancel.clone(),events).await},
+                                    Err(error)=>{drop(events);Err(error)},
+                                };
                                 let _=event_task.await;
                                 match result{
                                     Ok(result)=>{let _=sender.terminal(&frame.id,result.text.as_bytes(),result.code,&result.error).await;},
@@ -689,7 +696,7 @@ fn inherit_follow(next: &mut Frame, active: &Frame) {
     next.model = active.model.clone();
     next.protocol = active.protocol.clone();
     next.smart = active.smart;
-    next.brief = crate::context_memory::follow_brief(&active.brief);
+    next.brief = crate::cloud_context::follow_brief(&active.brief);
     next.session_key = active.session_key.clone();
     next.execution_mode = active.execution_mode.clone();
     next.goal_criteria = active.goal_criteria.clone();
