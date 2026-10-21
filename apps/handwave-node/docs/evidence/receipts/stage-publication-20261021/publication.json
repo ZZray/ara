@@ -1,0 +1,222 @@
+{
+  "schema": "handwave-stage-publication-v1",
+  "date": "2026-10-21",
+  "status": "accepted-scoped-release",
+  "versions": {
+    "core": "0.1.0",
+    "node": "0.2.9"
+  },
+  "code": {
+    "core_commit": "0e4d81a91682196e9ef8be4a5ffae469ddd99bcc",
+    "core_remote": "https://github.com/ZZray/ara.git",
+    "core_branch": "dev",
+    "ray_commit": "0b9cb7c3eabf1e4d82bfc1d6147786c2d883721c",
+    "ray_branch": "dev/rust",
+    "rust_paths": 625,
+    "go_paths": 9,
+    "old_app_wip_excluded": 7,
+    "old_go_wip_preserved": 37
+  },
+  "artifacts": {
+    "windows_exe": {
+      "sha256": "8641836c793180f2686b96877f71a12700d3729178cb771c44ff09b9bcf37fea",
+      "bytes": 5408256
+    },
+    "windows_zip": {
+      "name": "handwave-node-windows-8641836c.zip",
+      "sha256": "fb92da81b807bd8af72db7fcf6c10dc93802566dd402446e3e58c4b3c85fa7df",
+      "bytes": 3878855,
+      "members": 563
+    },
+    "source": {
+      "source_name": "handwave-node-source-c66c50a8d91d0a3c.tar.gz",
+      "source_sha256": "c66c50a8d91d0a3c007ab3e243ded96079a759b7e2fea3c00bf855420db2b531",
+      "source_bytes": 810614,
+      "script_name": "install-linux-4ecd9f615c28aab4.sh",
+      "script_sha256": "4ecd9f615c28aab4c5867be278b4c1ed1bd40c5ed42c167763fddfc1cae4e303",
+      "layout": "repository-subset-v2"
+    },
+    "source_members": 1237,
+    "ray": {
+      "sha256": "72c4eff9bd3f747ff9c111dbdbb53803816683634e4818ab4df453c4ef61a188",
+      "bytes": 69101381
+    }
+  },
+  "executed": {
+    "windows_unit_public_api": 208,
+    "windows_ignored": 1,
+    "windows_host_groups": 27,
+    "independent_consumer_groups": 12,
+    "linux": {
+      "profile": "native GNU Linux x86_64 debug",
+      "source_sha256": "c66c50a8d91d0a3c007ab3e243ded96079a759b7e2fea3c00bf855420db2b531",
+      "selected_unit": {
+        "knowledge": 14,
+        "skills": 12,
+        "run_budget": 2
+      },
+      "host_groups": 5,
+      "binary_sha256": "4c8a48a92cccb5a50f8e41eaa5e4e9f0d5464d137975c7cf4db09fd4893226c8",
+      "binary_bytes": 190001152
+    },
+    "ray_package_test_vet_build": [
+      {
+        "name": "tests",
+        "command": [
+          "go",
+          "test",
+          "./apps/provider/cmd/ray_front"
+        ],
+        "exit": 0,
+        "seconds": 11.381
+      },
+      {
+        "name": "vet",
+        "command": [
+          "go",
+          "vet",
+          "./apps/provider/cmd/ray_front"
+        ],
+        "exit": 0,
+        "seconds": 0.594
+      },
+      {
+        "name": "build",
+        "command": [
+          "go",
+          "build",
+          "-trimpath",
+          "-o",
+          "D:\\WorkSpace\\tmp\\ara-agent-lite-core-release-20261021\\ray-front-release-linux-amd64",
+          "./apps/provider/cmd/ray_front"
+        ],
+        "exit": 0,
+        "seconds": 1.267
+      }
+    ],
+    "cargo_deny": "PASS using existing offline advisory cache; freshness not established"
+  },
+  "reused_evidence": {
+    "runtime_files_identical": 47,
+    "previous_host_groups": 59,
+    "previous_upgrade_groups": 4,
+    "previous_real_model": {
+      "model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "calls": 4,
+      "seconds": 17.166,
+      "report": {
+        "count": 3,
+        "sum": 41
+      }
+    },
+    "fresh_model_trial": false
+  },
+  "production": {
+    "ray_image_verified": true,
+    "protected_files_unchanged": 63,
+    "other_services_unchanged": true,
+    "arena_unchanged": true,
+    "shift_static_release_unchanged": true,
+    "public_downloads_verified": 29,
+    "normal_public_tls": true,
+    "bootstrap_pin_updated": true,
+    "windows_client_download_checks": [
+      {
+        "name": "handwave-node-windows-8641836c.zip",
+        "status": 200,
+        "sha256": "fb92da81b807bd8af72db7fcf6c10dc93802566dd402446e3e58c4b3c85fa7df",
+        "bytes": 3878855,
+        "attachment_filename_verified": true
+      },
+      {
+        "name": "handwave-node-source-c66c50a8d91d0a3c.tar.gz",
+        "status": 200,
+        "sha256": "c66c50a8d91d0a3c007ab3e243ded96079a759b7e2fea3c00bf855420db2b531",
+        "bytes": 810614,
+        "attachment_filename_verified": true
+      },
+      {
+        "name": "install-linux-4ecd9f615c28aab4.sh",
+        "status": 200,
+        "sha256": "4ecd9f615c28aab4c5867be278b4c1ed1bd40c5ed42c167763fddfc1cae4e303",
+        "bytes": 7137,
+        "attachment_filename_verified": true
+      }
+    ],
+    "gates": {
+      "/ray/login": 200,
+      "/handwave/": 303,
+      "/shift/": 303,
+      "/ray/assets/handwave-ai-d2f42225668b.png": 303
+    }
+  },
+  "installed_node": {
+    "version": "0.2.9",
+    "sha256": "8641836c793180f2686b96877f71a12700d3729178cb771c44ff09b9bcf37fea",
+    "original_files_preserved": 126,
+    "fingerprint_unchanged": true,
+    "original_stopped_state_preserved": true,
+    "grant_renewed": false,
+    "tasks_replayed": false
+  },
+  "review": {
+    "reviewer": "/root/lite_core_architecture",
+    "tool": "independent Codex",
+    "decision": "ACCEPT_SCOPED_RELEASE",
+    "stages": [
+      "AI integration and staged scope",
+      "Ray baseline/source and attachment repair",
+      "deployment preflight/control",
+      "production and native postcheck"
+    ]
+  },
+  "failures_retained": [
+    "Exported fmt initially lacked the root formatting configuration; independent projects now carry the original configuration.",
+    "First Linux offline build lacked the two locked TLS patches; fetched them without changing locked versions and used a fresh workspace.",
+    "Initial Linux goal_runtime filter ran zero tests and is not counted; separate run_budget execution passed two.",
+    "Review caught two stale attachment filenames before deployment; header tests added and rerun."
+  ],
+  "limits": [
+    "No new production model task or browser visual acceptance",
+    "Native GNU Linux debug and selected tests only; no release/LTO, other architectures or macOS",
+    "Existing autonomous fresh-session knowledge-body retrieval remains FAIL/OPEN",
+    "Normal custom ModelHost and explicit knowledge Roots overrides remain source-reviewed only",
+    "Slow consumer dedicated boundary and full ARA/OMP remain outside this release",
+    "No causal speed, token or cost saving measurement",
+    "Root documentation bootstrap previously NOT_COMPLETED; scoped links and diff checked"
+  ],
+  "local_evidence_id": "ara-agent-lite-core-release-20261021",
+  "evidence_sha256": {
+    "rust-commit-allowlist.json": "df67c732c7b8c498bfeb6ade8a010e9ae22a6c019b1e431210a0f4ecd8da90f4",
+    "go-commit-allowlist.json": "32597fa9362d6fce89ab71404f7745a89802174b96e4806f89abeb8df964d55b",
+    "runtime-source-bridge.json": "56ae8f62d6b3aaf682abca6d150b213b26e473267c57c287a9f90b3b93bd42fd",
+    "ray-commit-source-bridge.json": "48520e48f7bd16122f1d012f47e510fe28d5a8dbbc0ae06d4a0284b0dfa59568",
+    "windows-artifact.json": "d0560e603ea98af410d22129db06cc6c361d19af4afd64babacd50a58d4fe99b",
+    "release-checks.json": "0e2724cfe77ff827d698d8f892672264a3991ffea385f784028bb5e41336bbf3",
+    "core-tests.log": "9ff2481e30e9c09e93e329171b090396d0e0d42fe0cd879a1a533ae3d4a5ca78",
+    "host-tests.log": "c28c4d8ce612e1acf8c6e618e636b36d6d698030fc107f7082ad3ef5793999bc",
+    "core-clippy.log": "8a107e2cd6b944a044f9fe46b41e3664687e4cb346e7aef6c8d18970034f0c6a",
+    "host-clippy.log": "c22d1e392c95004451a4a54d770e51b4c7a27f845a2eee4faaf89ce06f752ec5",
+    "core-deny.log": "b333fd312b8cf36d048404ea3abe94ed986a7be39e63ccca34756fe4b797f336",
+    "host-deny.log": "6d25354f1fc88b7817cb8939856e3b598e8de7565e4f66a696a82c73365e3c1e",
+    "windows-host/result.json": "808b6657dab8ae229c470bcf80c543a9ff8321acb64693daa58bcbc4b15ba3f4",
+    "embedding/result.json": "bf16c2dd6d23398623013052ef634a1072e2a64a876f08568f2aeb278186c297",
+    "linux/result.json": "e2a2fbd80f5ac4ded4c2034b6629e4584fc81848ac7c7e75393917ba72a8ba85",
+    "linux/build.log": "fc7de28f80e885de1cde953fdb6122776f4a20a07aff308d93bc353d7162e03f",
+    "linux-v2/result.json": "78c250e42e0fce28de33110ce7b98f27ad7edf3f995ea81b892acd42d9a19566",
+    "linux-v2/knowledge.log": "5be790dbe29d90bd56dbb8bdc9cadf462411d45b6f4b968f0833c14d75bab91f",
+    "linux-v2/skills.log": "c64d8569c8777eecab5143ec2b91c68f5c0bd6402b3f5e3134205db0cf4d62b6",
+    "linux-v2/budget.log": "6a8c944bc0201cf97ca90d6fddc1917012cf7426192ccb0a6b4b203daf7b2a04",
+    "linux-v2/run-budget.log": "0f8a56ca0d21eb07d978cdda754eaae7ba43b578f6d9f109f2c27a01b15ae9fc",
+    "linux-v2/host/result.json": "4cad89073ace62d030531b42435a8b47d7bf12e798e688c0bd2cdf23aee70450",
+    "ray-checks.json": "34aaa090ec5c14ad9cbb8c33ad47a7931aabfb721c9265b86117c279a8e67e0c",
+    "deploy-receipt.json": "1bc8bbc28f2ba38a4fe9bd37861e6d99d12542bb90dcab591c86b19e8f73bc6a",
+    "cloud-postcheck.json": "e370e1b236f0a4282b2bc160e85a546cf01ec3cb8c599ed29424a1f6be85a285",
+    "public-check.json": "c8109e42fbaf4f1b19d2d7164dd332b87bbf07aebb7bcb1e39e55a1496d914e8",
+    "installed-receipt.json": "ff0fb71e5f683b519b2439acb4867f2c7ba1c72889fd176366133135dd59becd",
+    "ai-integration-review.md": "8b9afddb72789a1682e4c9e7358d2a4da3ce1f8a3b6de0f5b926addebe15873e",
+    "ray-release-review.md": "2d05e395c17fc9c8b7f4b63f47139fdd0cb03b1ef992fefc081897b5a39b4e07"
+  },
+  "raw_data_policy": "Private credentials, identity keys, account data, live configuration and user-state contents remain outside Git."
+}

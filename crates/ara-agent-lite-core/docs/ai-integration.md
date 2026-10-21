@@ -4,6 +4,11 @@
 完整示例见 [business_host.rs](../examples/business_host.rs)。接入前固定已审查的 Git 提交，
 并核对 [验收记录](evidence/extraction-20261021.html) 的适用范围。
 
+本轮已发布的运行库代码提交为 `0e4d81a91682196e9ef8be4a5ffae469ddd99bcc`，
+Core 版本 `0.1.0`，对应 HandWave Node `0.2.9`。部署和新增 GNU Linux 检查见
+[0.2.9 发布记录](../../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)。
+GitHub 的 `ZZray/ara` 是本库所在仓库；部署 Ray 的 Go 宿主仓库不是本库入口。
+
 ## 1. 代码与业务边界
 
 | 目录 | 用途 | 接入时的处理 |
@@ -39,16 +44,21 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 ```
 
-远端仓库为 `https://github.com/ZZray/ara.git`。需要可复现依赖时，可先检出指定提交，
-再依赖其中的 `crates/ara-agent-lite-core` 路径。当前未发布到 crates.io。
+远端仓库为 `https://github.com/ZZray/ara.git`，开发分支 `dev`。已验证的独立消费方式是
+检出固定提交后使用路径依赖。当前未发布到 crates.io。
+
+```shell
+git clone https://github.com/ZZray/ara.git ara-agent-source
+git -C ara-agent-source checkout --detach 0e4d81a91682196e9ef8be4a5ffae469ddd99bcc
+```
 
 直接 Git 依赖应固定 `rev`，包名明确写为 `ara-agent-lite-core`：
 
 ```toml
-ara-agent-lite-core = { git = "https://github.com/ZZray/ara.git", rev = "FILL_ACCEPTED_COMMIT", package = "ara-agent-lite-core" }
+ara-agent-lite-core = { git = "https://github.com/ZZray/ara.git", rev = "0e4d81a91682196e9ef8be4a5ffae469ddd99bcc", package = "ara-agent-lite-core" }
 ```
 
-这条配置需先填入已包含本库的完整提交 SHA，再在目标业务中验证。Cargo Git 依赖按包名
+直接 Git 依赖仍需在目标业务中验证；本轮执行记录来自路径依赖宿主。Cargo Git 依赖按包名
 查找，不能靠仓库根目录或添加 `subdir` 字段选包。仓库包含多个 crate 和独立 workspace；
 若 Cargo 在整仓扫描时报告同名包或 workspace 歧义，保留错误记录，改用固定提交检出加路径依赖，
 不要通过改名或修改完整版清单来绕过。
@@ -223,7 +233,8 @@ python crates/ara-agent-lite-core/tests/verify_embedding.py --binary PATH_TO_BUS
 - 知识目录隔离有效，外部快照跨身份、错误哈希和超限输入被拒绝。
 
 编译通过、受控 provider 通过、真实模型试验与生产验收分别记录。
-当前 Windows 有实际执行记录；Linux／macOS 的原生构建与运行仍待验证。
+当前 Windows 有实际执行记录。发布阶段还验证了 GNU Linux x86_64 的原生 debug 构建、
+28 项知识／技能／预算测试和 5 组实际 Host 用例；未验证 Linux release/LTO、其他架构或 macOS。
 “新会话自主读取已沉淀知识正文”仍为 FAIL／OPEN；通用自我进化与可量化 token／费用节省也未验收。
 后续验收不得直接继承 HandWave 或完整版 Core 的结论。
 

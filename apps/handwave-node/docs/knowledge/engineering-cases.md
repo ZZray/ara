@@ -922,3 +922,22 @@ and platform limits are recorded in the
 [Core extraction evidence](../../../../crates/ara-agent-lite-core/docs/evidence/extraction-20261021.html).
 The prior fresh-session knowledge-body retrieval FAIL remains open; extraction
 does not establish a new autonomy, token-saving or performance result.
+
+## HWN-038 — independent exports and immutable downloads need their own checks
+
+2026-10-21, Node 0.2.9 / Core 0.1.0. Exporting an independent workspace omitted
+the repository-root rustfmt configuration, so an unchanged source export failed
+format checks. Each independent workspace now carries the original configuration;
+the fresh exports pass fmt and clippy. Exported build inputs include compile-time
+resources, legal files and relative Cargo dependencies, not only Rust sources.
+
+Updating immutable download URLs left two Content-Disposition filenames at the
+previous release. Independent review caught this before deployment. The repair
+tests attachment names for every old/new GET and HEAD branch as well as payload
+hashes. A correct URL and digest alone do not verify the saved filename.
+
+A successful Linux test command initially selected zero budget tests. That output
+is retained but not counted; a separate run_budget invocation actually passed two
+tests. Acceptance requires a nonzero intended test selection and recorded results.
+See the [0.2.9 publication record](../evidence/stage-publication-0.2.9-20261021.md)
+for fresh checks, source-bridged evidence and remaining platform/autonomy limits.

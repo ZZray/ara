@@ -7,6 +7,10 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
   HandWave consumes `ara-agent-lite-core`; product authorization and transport
   remain in this Host. [Extraction evidence](../../../../crates/ara-agent-lite-core/docs/evidence/extraction-20261021.html).
 
+- [0.2.9 publication](../evidence/stage-publication-0.2.9-20261021.md):
+  pinned compact Core, AI integration guide, checked Windows/Linux artifacts,
+  preserved cloud services and stopped local Node state.
+
 - [0.2.8 publication](../evidence/stage-publication-0.2.8-20261019.md):
   pushed small efficiency increment, verified packages and Linux source build,
   installed Windows Node; authorization expiry remains unchanged.

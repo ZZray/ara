@@ -137,3 +137,8 @@ python crates/ara-agent-lite-core/tests/verify_embedding.py --binary PATH_TO_BUS
 
 当前执行结果与未覆盖项见仓库交付记录。既有“新会话自主读取已沉淀知识正文”验收仍未通过，
 不会因为改为共享库而自动变成已完成；本库也不宣称通用自我进化已经验收。
+
+代码已随 HandWave Node 0.2.9 发布，运行库源码提交为
+`0e4d81a91682196e9ef8be4a5ffae469ddd99bcc`。
+[发布验证与部署范围](../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)
+另行记录，包含后续 GNU Linux 检查；提取报告保留提取时点的原始边界。
