@@ -1427,3 +1427,155 @@ mod consumed_tests {
         }
     }
 }
+
+/// Property 34: summary reservations count toward the Task budget
+/// (requirements 25.1, 25.2). Every `model_call reserved` event, agent or
+/// summary, adds one to the Run count `drain` returns; the Task total adds
+/// those counts the way the Run loop does. Nothing is refunded when the
+/// reserved call then fails, times out or is cancelled, and a missing
+/// `model_result` changes nothing.
+#[cfg(test)]
+mod summary_reservation_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Ending {
+        Success,
+        UpstreamError,
+        Timeout,
+        Cancelled,
+    }
+
+    fn ending() -> impl Strategy<Value = Ending> {
+        prop_oneof![Just(Ending::Success), Just(Ending::UpstreamError), Just(Ending::Timeout), Just(Ending::Cancelled)]
+    }
+
+    /// Core-shaped events of one Run: every reservation but the last gets a
+    /// result; the last one gets a result only when the Run succeeds.
+    fn events(summaries: &[bool], ending: Ending, with_results: bool) -> Vec<Value> {
+        let mut events = vec![json!({"type":"agent_start"})];
+        for (index, summary) in summaries.iter().enumerate() {
+            let (call, phase) = (index + 1, if *summary { "summary" } else { "agent" });
+            events.push(json!({"type":"model_call","call":call,"phase":phase,"status":"reserved"}));
+            let last = index + 1 == summaries.len();
+            if with_results && (!last || ending == Ending::Success) {
+                events.push(
+                    json!({"type":"model_result","call":call,"phase":phase,"status":"received","stop_reason":"stop"}),
+                );
+            }
+        }
+        events.push(match ending {
+            Ending::Success => json!({"type":"agent_end","status":"completed","code":0,"detail":""}),
+            Ending::UpstreamError => json!({"type":"agent_end","status":"failed","code":-1,"detail":"upstream 503"}),
+            Ending::Timeout => json!({"type":"agent_end","status":"failed","code":-1,"detail":"request timed out"}),
+            Ending::Cancelled => json!({"type":"agent_end","status":"cancelled","code":-1,"detail":"cancelled"}),
+        });
+        events
+    }
+
+    /// Runs the real `drain` over `events`; returns its count and the
+    /// reservations per phase read back from the written event file.
+    fn drained(
+        runtime: &tokio::runtime::Runtime,
+        dir: &Path,
+        run: usize,
+        events: Vec<Value>,
+        cancelled: bool,
+    ) -> (usize, usize, usize) {
+        let path = dir.join(format!("run-{run}-events.jsonl"));
+        let file = OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+        let (sender, receiver) = mpsc::channel(64);
+        for event in events {
+            sender.try_send(event).unwrap();
+        }
+        drop(sender);
+        let cancellation = CancellationToken::new();
+        if cancelled {
+            cancellation.cancel();
+        }
+        let (ui, _) = broadcast::channel(4);
+        let observed = runtime.block_on(drain(receiver, file, "t".into(), format!("r{run}"), &cancellation, &ui));
+        let written: Vec<EventEnvelope> =
+            std::fs::read_to_string(&path).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let reserved = |phase: &str| {
+            written
+                .iter()
+                .filter(|envelope| {
+                    envelope.event["type"] == "model_call"
+                        && envelope.event["status"] == "reserved"
+                        && envelope.event["phase"] == phase
+                })
+                .count()
+        };
+        (observed.calls, reserved("agent"), reserved("summary"))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn task_total_counts_every_agent_and_summary_reservation_without_refund(
+            runs in proptest::collection::vec((proptest::collection::vec(any::<bool>(), 1..5), ending()), 1..5),
+        ) {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let (mut total, mut agent_total, mut summary_total) = (0usize, 0usize, 0usize);
+            for (number, (summaries, ending)) in runs.iter().enumerate() {
+                let reserved = summaries.len();
+                // Event by event the count only grows, one per reservation.
+                let mut stepwise = Observation::default();
+                for event in events(summaries, *ending, true) {
+                    let before = stepwise.calls;
+                    stepwise.observe(&event);
+                    let step = usize::from(event["type"] == "model_call");
+                    prop_assert_eq!(stepwise.calls, before + step);
+                }
+                // Dropping every model_result leaves the count unchanged.
+                let mut unanswered = Observation::default();
+                for event in events(summaries, *ending, false) {
+                    unanswered.observe(&event);
+                }
+                prop_assert_eq!(unanswered.calls, reserved);
+                let (calls, agent, summary) = drained(
+                    &runtime,
+                    directory.path(),
+                    number + 1,
+                    events(summaries, *ending, true),
+                    *ending == Ending::Cancelled,
+                );
+                prop_assert_eq!(calls, reserved);
+                prop_assert_eq!(summary, summaries.iter().filter(|summary| **summary).count());
+                prop_assert_eq!(agent + summary, calls);
+                // The Run loop's accumulation (`observed_calls.checked_add`).
+                let previous = total;
+                total = total.checked_add(calls).unwrap();
+                prop_assert!(total >= previous);
+                agent_total += agent;
+                summary_total += summary;
+                prop_assert_eq!(total, agent_total + summary_total);
+            }
+            let expected: usize = runs.iter().map(|(summaries, _)| summaries.len()).sum();
+            prop_assert_eq!(total, expected);
+        }
+    }
+
+    #[test]
+    fn a_failed_or_cancelled_summary_reservation_is_kept() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut total = 0usize;
+        for (run, ending) in [Ending::UpstreamError, Ending::Timeout, Ending::Cancelled].into_iter().enumerate() {
+            let (calls, agent, summary) = drained(
+                &runtime,
+                directory.path(),
+                run + 1,
+                events(&[false, true], ending, true),
+                ending == Ending::Cancelled,
+            );
+            assert_eq!((calls, agent, summary), (2, 1, 1), "{ending:?}");
+            total += calls;
+        }
+        assert_eq!(total, 6);
+    }
+}

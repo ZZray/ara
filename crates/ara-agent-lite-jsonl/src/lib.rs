@@ -13,8 +13,10 @@ mod transport;
 use std::{io::BufReader, sync::Arc};
 
 use ara_agent_lite_harness::{
-    self as harness, BudgetStopReviewPolicy, FencePresence, TaskOptions, TaskOutcome, TaskSpec,
+    self as harness, core::rpi_agent::AgentTool, BudgetStopReviewPolicy, FencePresence, TaskOptions, TaskOutcome,
+    TaskSpec,
 };
+use ara_agent_lite_mcp::{McpConfig, McpSession};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
@@ -46,7 +48,7 @@ fn stdio() -> Result<(), &'static str> {
     let mut reader = BufReader::new(std::io::stdin());
     let bytes = read_frame(&mut reader).map_err(|_| "start_frame_rejected")?.ok_or("start_frame_required")?;
     let start: Start = serde_json::from_slice(&bytes).map_err(|_| "start_config_rejected")?;
-    runtime::validate(&start).map_err(|_| "start_config_rejected")?;
+    let mcp = runtime::validate(&start).map_err(|_| "start_config_rejected")?;
     let token = std::env::var("ARA_AGENT_MODEL_TOKEN").map_err(|_| "model_token_unavailable")?;
     if token.is_empty() || token.len() > 4096 {
         return Err("model_token_rejected");
@@ -57,14 +59,49 @@ fn stdio() -> Result<(), &'static str> {
         .enable_all()
         .build()
         .map_err(|_| "runtime_unavailable")?
-        .block_on(task(start, reader, token))
+        .block_on(task(start, reader, token, mcp))
 }
 
-async fn task(start: Start, reader: BufReader<std::io::Stdin>, token: String) -> Result<(), &'static str> {
+/// Without `mcp_servers` this is exactly the original Task path. With it, the
+/// MCP session is connected before Admission and shut down after the Task.
+async fn task(
+    start: Start,
+    reader: BufReader<std::io::Stdin>,
+    token: String,
+    mcp: Option<McpConfig>,
+) -> Result<(), &'static str> {
+    let session = match mcp {
+        // A failed `required` server rejects the frame before any model request.
+        Some(config) => Some(runtime::connect_mcp(&start, config).await.map_err(|_| "start_config_rejected")?),
+        None => None,
+    };
+    let tools = session.as_ref().map(McpSession::tools).unwrap_or_default();
+    let status = session.as_ref().map(|session| json!({"servers":session.status(),"excluded":session.excluded()}));
+    let result = ordinary(start, reader, token, tools, status).await;
+    if let Some(session) = session {
+        session.shutdown().await;
+    }
+    result
+}
+
+async fn ordinary(
+    start: Start,
+    reader: BufReader<std::io::Stdin>,
+    token: String,
+    mcp_tools: Vec<Arc<dyn AgentTool>>,
+    mcp_status: Option<Value>,
+) -> Result<(), &'static str> {
     let emit_events = start.emit_events;
     let budget_stop_review = start.budget_stop_review;
+    let length_stop_review = start.length_stop_review;
     let output = Output::stdout(token.clone());
     let spec: TaskSpec = start.task.into();
+    if let Some(mut frame) = mcp_status {
+        frame["kind"] = json!("mcp_status");
+        frame["version"] = json!(1);
+        frame["task_id"] = json!(spec.task_id);
+        output.control(frame).await.map_err(|_| "mcp_status_delivery_unknown")?;
+    }
     let bridge = Arc::new(Bridge::new(
         output.clone(),
         spec.task_id.clone(),
@@ -72,14 +109,14 @@ async fn task(start: Start, reader: BufReader<std::io::Stdin>, token: String) ->
         start.run.run_id.clone(),
         start.cancel_grace_ms,
     ));
-    let template = Template::new(start.run, token, bridge.clone());
+    let template = Template::new(start.run, token, bridge.clone(), mcp_tools);
     let initial = template.initial();
     let host = Arc::new(ExternalHost { template, bridge: bridge.clone() });
     let handle = harness::start_with_options(
         spec.clone(),
         initial,
         host,
-        TaskOptions { budget_stop_review, ..TaskOptions::default() },
+        TaskOptions { budget_stop_review, length_stop_review },
     )
     .map_err(|_| "task_admission_rejected")?;
 
@@ -189,7 +226,11 @@ async fn task(start: Start, reader: BufReader<std::io::Stdin>, token: String) ->
         "reconciliation_fence":outcome.reconciliation_fence,"outcome_ref":reference,
         "local_callbacks_finished":true});
     if budget_stop_review != BudgetStopReviewPolicy::Reject && outcome.last_candidate.is_none() {
-        if let Some(receipt) = &outcome.last_receipt {
+        // A reviewed Length stop also has no candidate; it is not a budget review.
+        let stop_subject = |receipt: &harness::ReviewReceipt| {
+            harness::stop_snapshot_path(&spec.evidence_dir, receipt.basis.run_number).exists()
+        };
+        if let Some(receipt) = outcome.last_receipt.as_ref().filter(|receipt| !stop_subject(receipt)) {
             let path = harness::budget_review_index_path(&spec.evidence_dir, receipt.basis.run_number);
             if path.exists() {
                 terminal["budget_review_ref"] = serde_json::to_value(

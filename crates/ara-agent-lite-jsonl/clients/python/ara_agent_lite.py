@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import hashlib
 import inspect
 import json
@@ -28,6 +29,45 @@ class Host(Protocol):
 class BudgetStopHost(Host, Protocol):
     async def verify_budget_snapshot(self, snapshot: dict, cancelled: asyncio.Event) -> dict: ...
     async def prepare_budget_stop_continuation(self, continuation: dict, cancelled: asyncio.Event) -> dict: ...
+
+
+class LengthStopHost(Host, Protocol):
+    async def verify_stop_snapshot(self, snapshot: dict, cancelled: asyncio.Event) -> dict: ...
+    async def prepare_stop_continuation(self, continuation: dict, cancelled: asyncio.Event) -> dict: ...
+
+
+@dataclass(frozen=True)
+class UnknownEffect:
+    """One tool call whose external effects are unknown (outcome.json `unknown_effects`)."""
+    run_id: str
+    native_call_id: str
+    tool: str
+    receipt_ref: dict
+
+
+def parse_unknown_effects(outcome: dict) -> list[UnknownEffect]:
+    """Typed view of `outcome['unknown_effects']` in original order; absent means none.
+
+    An invalid record raises instead of producing an object with default values.
+    """
+    records = outcome.get('unknown_effects', [])
+    if not isinstance(records, list):
+        raise ReconciliationRequired('invalid unknown effect record: unknown_effects')
+    effects = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise ReconciliationRequired('invalid unknown effect record: record')
+        for field in record:
+            if field not in ('run_id', 'native_call_id', 'tool', 'receipt_ref'):
+                raise ReconciliationRequired(f'invalid unknown effect record: {field}')
+        for field in ('run_id', 'native_call_id', 'tool'):
+            if not isinstance(record.get(field), str) or not record[field]:
+                raise ReconciliationRequired(f'invalid unknown effect record: {field}')
+        receipt = record.get('receipt_ref')
+        if not isinstance(receipt, dict) or not isinstance(receipt.get('evidence'), dict) or not receipt['evidence']:
+            raise ReconciliationRequired('invalid unknown effect record: receipt_ref')
+        effects.append(UnknownEffect(record['run_id'], record['native_call_id'], record['tool'], receipt))
+    return effects
 
 
 def _comparison_path(path: Path) -> Path:
@@ -114,11 +154,24 @@ def _checked_snapshot(snapshot, frame, task_spec, evidence):
     return _budget_file(snapshot, evidence, f'run-{number}-budget-snapshot.json')
 
 
-def _checked_budget_continuation(value, frame, task_spec, evidence):
+def _checked_stop_snapshot(snapshot, frame, task_spec, evidence):
+    """A closed Length stop snapshot (16.2); its output is diagnostic only."""
+    if not isinstance(snapshot, dict) or set(snapshot) != {'basis', 'diagnostic_output', 'goal', 'evidence', 'truncated'}:
+        raise ReconciliationRequired('invalid stop snapshot fields')
+    validate_candidate_identity(snapshot, frame, task_spec)
+    number = snapshot['basis'].get('run_number')
+    if (type(number) is not int or number < 1 or not isinstance(snapshot['diagnostic_output'], str)
+            or not isinstance(snapshot['evidence'], dict)):
+        raise ReconciliationRequired('invalid stop snapshot identity, evidence or diagnostic output')
+    return _budget_file(snapshot, evidence, f'run-{number}-stop-snapshot.json')
+
+
+def _checked_budget_continuation(value, frame, task_spec, evidence, check_snapshot=_checked_snapshot,
+                                 prefix='jsonl-budget-continuation'):
     fields = {'previous', 'receipt', 'next_run_number', 'remaining_calls', 'deadline_unix_ms'}
     if not isinstance(value, dict) or set(value) != fields:
         raise ReconciliationRequired('invalid budget continuation fields')
-    snapshot_ref = _checked_snapshot(value['previous'], frame, task_spec, evidence)
+    snapshot_ref = check_snapshot(value['previous'], frame, task_spec, evidence)
     receipt = value['receipt']
     if (not isinstance(receipt, dict) or receipt.get('basis') != value['previous']['basis']
             or receipt.get('committed') is not True or receipt.get('settlement') != 'Settled'
@@ -129,7 +182,7 @@ def _checked_budget_continuation(value, frame, task_spec, evidence):
             or type(value['remaining_calls']) is not int or not 0 < value['remaining_calls'] <= task_spec['max_calls']
             or value['deadline_unix_ms'] != task_spec['deadline_unix_ms']):
         raise ReconciliationRequired('budget continuation changed the original Task bounds')
-    continuation_ref = _budget_file(value, evidence, f'jsonl-budget-continuation-{number}.json')
+    continuation_ref = _budget_file(value, evidence, f'{prefix}-{number}.json')
     return snapshot_ref, continuation_ref
 
 
@@ -178,6 +231,14 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
     if budget_enabled and (config['run'].get('mode') != 'execute' or any(not callable(getattr(host, name, None))
             for name in ('verify_budget_snapshot', 'prepare_budget_stop_continuation'))):
         raise ValueError('Execute budget opt-in requires both dedicated Host callbacks')
+    length_policy = config.get('length_stop_review', 'reject')
+    if length_policy not in ('reject', 'review_closed_length'):
+        raise ValueError('invalid length_stop_review policy')
+    length_enabled = length_policy == 'review_closed_length'
+    if length_enabled and (config['run'].get('mode') != 'execute' or any(not callable(getattr(host, name, None))
+            for name in ('verify_stop_snapshot', 'prepare_stop_continuation'))):
+        raise ValueError('Execute length-stop opt-in requires both dedicated Host callbacks')
+    mcp_enabled = 'mcp_servers' in config
     task_id = config['task']['task_id']
     evidence = Path(config['task']['evidence_dir'])
     first_run = config['run']['run_id']
@@ -201,7 +262,11 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
             os.fsync(stream.fileno())
         return str(path)
     env = {key: value for key, value in os.environ.items()
-           if key.upper() in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'LANG')}
+           # Windows basics that child tools and MCP servers (npx, uvx, Python)
+           # need to resolve profile and ProgramData folders; none are secrets.
+           if key.upper() in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'LANG',
+                              'SYSTEMDRIVE', 'PROGRAMDATA', 'ALLUSERSPROFILE', 'LOCALAPPDATA', 'APPDATA',
+                              'PATHEXT', 'COMSPEC')}
     env['ARA_AGENT_MODEL_TOKEN'] = token
     kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
     proc = await asyncio.create_subprocess_exec(str(executable), stdin=asyncio.subprocess.PIPE,
@@ -269,6 +334,36 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
                     raise ValueError('budget snapshot changed during verification')
                 record(frame, 'budget-snapshot-checked', snapshot_ref=before)
                 reply = {'kind': 'verify_budget_reply', **base, 'receipt': receipt}
+            elif kind == 'verify_stop_request':
+                snapshot = body(frame, 'snapshot')
+                before = _checked_stop_snapshot(snapshot, frame, config['task'], evidence)
+                if 'snapshot_ref' in frame:
+                    _budget_file(snapshot, evidence, f"run-{snapshot['basis']['run_number']}-stop-snapshot.json", frame['snapshot_ref'])
+                receipt = await host.verify_stop_snapshot(snapshot, signal)
+                after = _checked_stop_snapshot(snapshot, frame, config['task'], evidence)
+                if before != after or receipt.get('basis') != snapshot['basis']:
+                    raise ValueError('stop snapshot changed during verification')
+                record(frame, 'stop-snapshot-checked', snapshot_ref=before)
+                reply = {'kind': 'verify_stop_reply', **base, 'receipt': receipt}
+            elif kind == 'prepare_stop_request':
+                continuation = body(frame, 'stop_continuation')
+                check = lambda: _checked_budget_continuation(continuation, frame, config['task'], evidence,
+                                                             _checked_stop_snapshot, 'jsonl-stop-continuation')
+                before = check()
+                if 'stop_continuation_ref' in frame:
+                    _budget_file(continuation, evidence, f"jsonl-stop-continuation-{continuation['next_run_number']}.json", frame['stop_continuation_ref'])
+                prepared = await host.prepare_stop_continuation(continuation, signal)
+                if before != check():
+                    raise ValueError('stop continuation changed during preparation')
+                record(frame, 'stop-continuation-checked', snapshot_ref=before[0], continuation_ref=before[1])
+                if set(prepared) != {'run_id_next', 'objective'}:
+                    raise ValueError('prepare may only change Run ID and objective')
+                if (not isinstance(prepared['run_id_next'], str) or not prepared['run_id_next'].strip()
+                        or prepared['run_id_next'] in allowed_runs or not isinstance(prepared['objective'], str)
+                        or not prepared['objective'].strip()):
+                    raise ValueError('new Run identity and nonempty correction objective are required')
+                allowed_runs.add(prepared['run_id_next'])
+                reply = {'kind': 'prepare_stop_reply', **base, **prepared}
             else:
                 budget = kind == 'prepare_budget_request'
                 continuation = body(frame, 'budget_continuation' if budget else 'continuation')
@@ -337,6 +432,14 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
                 if frame.get('version') != 1 or frame.get('task_id') != task_id:
                     raise ReconciliationRequired('runtime frame version or Task identity mismatch')
                 kind = frame.get('kind')
+                if kind == 'mcp_status':
+                    if not mcp_enabled or set(frame) != {'kind', 'version', 'task_id', 'servers', 'excluded'}:
+                        raise ReconciliationRequired('unsolicited or invalid mcp_status frame')
+                    if on_event is not None and len(ui_tasks) < 16:
+                        item = asyncio.create_task(observe_event(frame))
+                        ui_tasks.add(item)
+                        item.add_done_callback(ui_tasks.discard)
+                    continue
                 if kind == 'event':
                     if on_event is not None and len(ui_tasks) < 16:
                         item = asyncio.create_task(observe_event(frame))
@@ -368,10 +471,13 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
                             stream.flush()
                             os.fsync(stream.fileno())
                     break
-                if kind not in ('tool_call', 'verify_request', 'prepare_request', 'verify_budget_request', 'prepare_budget_request'):
+                if kind not in ('tool_call', 'verify_request', 'prepare_request', 'verify_budget_request', 'prepare_budget_request',
+                                'verify_stop_request', 'prepare_stop_request'):
                     raise ReconciliationRequired('unexpected runtime control frame')
                 if kind in ('verify_budget_request', 'prepare_budget_request') and not budget_enabled:
                     raise ReconciliationRequired('budget callback without explicit opt-in')
+                if kind in ('verify_stop_request', 'prepare_stop_request') and not length_enabled:
+                    raise ReconciliationRequired('stop snapshot callback without explicit opt-in')
                 rpc_id = frame.get('rpc_id')
                 if not isinstance(rpc_id, str) or not rpc_id or rpc_id in seen or frame.get('run_id') not in allowed_runs:
                     raise ReconciliationRequired('duplicate callback or unknown Run identity')
@@ -394,7 +500,6 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
             code = await asyncio.wait_for(proc.wait(), timeout=5)
             if code != 0:
                 raise ReconciliationRequired('runtime exit failed; inspect the persisted Task outcome')
-            return terminal
     except (asyncio.CancelledError, Exception):
         for signal, _ in pending.values():
             signal.set()
@@ -423,3 +528,6 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
             task.cancel()
         if ui_tasks:
             await asyncio.gather(*ui_tasks, return_exceptions=True)
+    # 23.2/23.7: reject an invalid record; the caller still gets the original outcome dict.
+    parse_unknown_effects(terminal)
+    return terminal

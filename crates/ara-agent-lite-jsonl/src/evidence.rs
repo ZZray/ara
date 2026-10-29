@@ -75,6 +75,20 @@ pub fn checked_budget_snapshot(snapshot: &ara_agent_lite_harness::BudgetStopSnap
     Ok(reference)
 }
 
+/// The Harness-persisted `run-N-stop-snapshot.json` still equals the reviewed snapshot.
+pub fn checked_stop_snapshot(snapshot: &ara_agent_lite_harness::StopSnapshot) -> Result<Reference> {
+    let directory = snapshot.basis.events_path.parent().context("stop_snapshot_parent_missing")?;
+    let path = ara_agent_lite_harness::stop_snapshot_path(directory, snapshot.basis.run_number);
+    let (reference, bytes) = bounded_reference(&path)?;
+    let stored: ara_agent_lite_harness::StopSnapshot = serde_json::from_slice(&bytes)?;
+    let expected = serde_json::to_value(snapshot)?;
+    ensure!(
+        serde_json::to_value(stored)? == expected && serde_json::from_slice::<Value>(&bytes)? == expected,
+        "stop_snapshot_content_mismatch"
+    );
+    Ok(reference)
+}
+
 /// A trusted index is correlated with the exact current receipt, never a scan
 /// for an older successful Run. A missing index can represent a rejected review.
 pub fn checked_budget_review(directory: &Path, receipt: &ara_agent_lite_harness::ReviewReceipt) -> Result<Reference> {

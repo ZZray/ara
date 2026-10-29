@@ -34,9 +34,22 @@ struct Expected {
 }
 
 pub enum Reply {
-    Tool(ToolReply),
+    Tool { rpc_id: String, result: ToolReply },
     Verify(Box<ReviewReceipt>),
     Prepare { run_id: String, objective: String },
+}
+
+/// Context attached to every failed callback: the `rpc_id` was allocated
+/// before admission, so the caller can always name its unknown evidence.
+#[derive(Debug)]
+pub struct CallFailure {
+    pub rpc_id: String,
+}
+
+impl std::fmt::Display for CallFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "callback {} failed", self.rpc_id)
+    }
 }
 
 struct Pending {
@@ -111,33 +124,40 @@ impl Bridge {
         // Core may drop its tool wait during cancellation. A separately owned
         // local callback survives that waiter and is joined before task_result.
         self.local_calls.fetch_add(1, Ordering::SeqCst);
+        let rpc = format!("rpc-{}", self.serial.fetch_add(1, Ordering::SeqCst) + 1);
         let bridge = self.clone();
         let (sender, receiver) = oneshot::channel();
+        let call_rpc = rpc.clone();
         tokio::spawn(async move {
             let mut guard = LocalCall { bridge: bridge.clone(), completed: false };
-            let result = bridge.run_call(kind, run_id, request, tool, cancellation).await;
+            let result = bridge.run_call(kind, call_rpc, run_id, request, tool, cancellation).await;
             guard.completed = true;
             let _ = sender.send(result);
         });
-        receiver.await.context("external_callback_unknown")?
+        receiver
+            .await
+            .context("external_callback_unknown")
+            .and_then(|result| result)
+            .map_err(|error| error.context(CallFailure { rpc_id: rpc }))
     }
 
     async fn run_call(
         &self,
         kind: &'static str,
+        rpc: String,
         run_id: String,
         mut request: Value,
         tool: Option<ToolKey>,
         cancellation: CancellationToken,
     ) -> Result<Reply> {
         ensure!(!self.fault.is_cancelled() && !cancellation.is_cancelled(), "callback_not_admitted");
-        let rpc = format!("rpc-{}", self.serial.fetch_add(1, Ordering::SeqCst) + 1);
         let fields = request.as_object_mut().context("callback_request_invalid")?;
         fields.insert("kind".into(), json!(kind));
         fields.insert("version".into(), json!(1));
         fields.insert("rpc_id".into(), json!(rpc));
         fields.insert("task_id".into(), json!(self.task_id));
         fields.insert("run_id".into(), json!(run_id));
+        let tool_fields = tool.clone();
         let expected = Expected { kind, run_id: run_id.clone(), tool };
         let (sender, mut receiver) = oneshot::channel();
         {
@@ -175,13 +195,42 @@ impl Bridge {
         if result.is_err() {
             // Local future completion is NOT remote join or rollback. The
             // caller's original operation receipt remains started/unknown.
-            let _ = evidence::write_new(
-                &evidence::rpc_path(&self.evidence_dir, &rpc, "unknown"),
-                &json!({"rpc_id":rpc,"task_id":self.task_id,"run_id":run_id,
-                    "local_callback":"finished","external_settlement":"unknown","no_replay":true}),
-            );
+            let mut record = json!({"rpc_id":rpc,"task_id":self.task_id,"run_id":run_id,
+                "local_callback":"finished","external_settlement":"unknown","no_replay":true});
+            if let Some(key) = &tool_fields {
+                add_tool_fields(&mut record, key, "callback_unknown");
+            }
+            let _ = evidence::write_new(&evidence::rpc_path(&self.evidence_dir, &rpc, "unknown"), &record);
         }
         result
+    }
+
+    /// The tool call's `rpc-*-unknown` evidence (23.1, 23.5): written by the
+    /// failed callback itself, or here for a Host-declared Unknown settlement
+    /// and for a call refused before any request was sent.
+    pub fn unknown_tool_receipt(
+        &self,
+        rpc: &str,
+        run_id: &str,
+        key: &ToolKey,
+        reason: &'static str,
+    ) -> Result<crate::protocol::Reference> {
+        let path = evidence::rpc_path(&self.evidence_dir, rpc, "unknown");
+        if !path.exists() {
+            let mut record = json!({"rpc_id":rpc,"task_id":self.task_id,"run_id":run_id,
+                "local_callback":"finished","external_settlement":"unknown","no_replay":true});
+            add_tool_fields(&mut record, key, reason);
+            return evidence::write_new(&path, &record);
+        }
+        let (reference, bytes) = evidence::read_reference(&path)?;
+        let stored: Value = serde_json::from_slice(&bytes)?;
+        ensure!(
+            stored["native_call_id"] == key.native_call_id.as_str()
+                && stored["tool_name"] == key.tool_name.as_str()
+                && stored["args_sha256"] == key.args_sha256.as_str(),
+            "unknown_evidence_tool_mismatch"
+        );
+        Ok(reference)
     }
 
     pub fn receive(&self, incoming: Incoming, raw: &Value) -> Result<()> {
@@ -200,12 +249,12 @@ impl Bridge {
                 ensure!(!result.operation_receipt.trim().is_empty(), "operation_receipt_required");
                 (
                     version,
-                    rpc_id,
+                    rpc_id.clone(),
                     task_id,
                     run_id,
                     "tool_call",
                     Some(ToolKey { native_call_id, tool_name, args_sha256 }),
-                    Reply::Tool(result),
+                    Reply::Tool { rpc_id, result },
                 )
             }
             Incoming::VerifyReply { version, rpc_id, task_id, run_id, receipt } => {
@@ -215,6 +264,22 @@ impl Bridge {
             Incoming::VerifyBudgetReply { version, rpc_id, task_id, run_id, receipt } => {
                 strict_receipt(&raw["receipt"])?;
                 (version, rpc_id, task_id, run_id, "verify_budget_request", None, Reply::Verify(Box::new(receipt)))
+            }
+            Incoming::VerifyStopReply { version, rpc_id, task_id, run_id, receipt } => {
+                strict_receipt(&raw["receipt"])?;
+                (version, rpc_id, task_id, run_id, "verify_stop_request", None, Reply::Verify(Box::new(receipt)))
+            }
+            Incoming::PrepareStopReply { version, rpc_id, task_id, run_id, run_id_next, objective } => {
+                ensure!(!run_id_next.trim().is_empty() && !objective.trim().is_empty(), "prepare_fields_required");
+                (
+                    version,
+                    rpc_id,
+                    task_id,
+                    run_id,
+                    "prepare_stop_request",
+                    None,
+                    Reply::Prepare { run_id: run_id_next, objective },
+                )
             }
             Incoming::PrepareReply { version, rpc_id, task_id, run_id, run_id_next, objective } => {
                 ensure!(!run_id_next.trim().is_empty() && !objective.trim().is_empty(), "prepare_fields_required");
@@ -278,6 +343,13 @@ impl Drop for LocalCall {
         self.bridge.local_calls.fetch_sub(1, Ordering::SeqCst);
         self.bridge.local_done.notify_waiters();
     }
+}
+
+fn add_tool_fields(record: &mut Value, key: &ToolKey, reason: &str) {
+    record["native_call_id"] = json!(key.native_call_id);
+    record["tool_name"] = json!(key.tool_name);
+    record["args_sha256"] = json!(key.args_sha256);
+    record["reason"] = json!(reason);
 }
 
 pub fn result_value(result: &ToolReply) -> Value {

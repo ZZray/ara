@@ -94,6 +94,16 @@ OpenAI Chat 路由的主任务请求中发送 `"thinking":{"type":"disabled"}`�
 不会成为新的人类确认。详见
 [Core 长度恢复](../ara-agent-lite-core/docs/evidence/length-recovery-20261025.html)。
 
+## MCP server
+
+start 帧的可选字段 `mcp_servers` 与 Claude Code `.mcp.json` 的 `mcpServers` 结构相同，
+sidecar 用 [ara-agent-lite-mcp](../ara-agent-lite-mcp/README.md) 连接这些 server，
+工具以 `mcp__<server>__<tool>` 加入本次 Task。`mcp_options.required` 中的 server 连不上时
+start 被拒绝。连接结果以 `mcp_status` 帧报告。字段与帧格式见
+[protocol-v1.md](docs/protocol-v1.md) 的“MCP server（可选）”一节。
+
+可选的长度截断停止审查（`length_stop_review`）和未知副作用回执引用见同一文档。
+
 ## 预算停止的显式检查入口
 
 `budget_stop_review` 是 `start_task` **顶层**的可选字段，省略或 `"reject"` 时保持

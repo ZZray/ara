@@ -9,6 +9,7 @@ description = "Versioned cross-language Host sidecar over ARA Lite Harness"
 
 [dependencies]
 ara-agent-lite-harness = { path = "../ara-agent-lite-harness" }
+ara-agent-lite-mcp = { path = "../ara-agent-lite-mcp" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -18,3 +19,14 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
+
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+
+[profile.dev]
+# Line tables keep panic and backtrace line numbers; full debug info made
+# each target dir several GB (mostly .pdb). Dependencies carry none.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

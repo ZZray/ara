@@ -560,3 +560,116 @@ async fn every_refusal_kind_is_typed() {
     assert_eq!(refusal(error), ResumeRefusal::FenceUnreadable);
     assert_eq!(resumer.callbacks.load(Ordering::SeqCst), 2, "only the two receipt cases reached the Host");
 }
+
+/// Settles both open calls as NotExecuted, in the order `order` gives.
+struct OrderResumer {
+    inner: Arc<Host>,
+    order: Mutex<Vec<usize>>,
+    reviews: Mutex<Vec<ResumeReview>>,
+    /// Tool executions seen when each callback ran.
+    executions_at_callback: Mutex<Vec<usize>>,
+    tool: Arc<Hang>,
+}
+#[async_trait]
+impl HarnessHost for OrderResumer {
+    async fn verify(&self, candidate: Candidate, cancel: CancellationToken) -> Result<ReviewReceipt> {
+        self.inner.verify(candidate, cancel).await
+    }
+    async fn prepare_continuation(&self, continuation: Continuation, cancel: CancellationToken) -> Result<RunRequest> {
+        self.inner.prepare_continuation(continuation, cancel).await
+    }
+    async fn reconcile_resume(&self, review: ResumeReview, _: CancellationToken) -> Result<ResumeReceipt> {
+        self.executions_at_callback.lock().unwrap().push(self.tool.executions.load(Ordering::SeqCst));
+        self.reviews.lock().unwrap().push(review.clone());
+        let calls = review.interrupted_run.as_ref().map(|run| run.open_tool_calls.clone()).unwrap_or_default();
+        let tool_calls = self
+            .order
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|index| ToolCallReconciliation {
+                call_id: calls[*index].id.clone(),
+                settlement: ToolCallSettlement::NotExecuted,
+            })
+            .collect();
+        Ok(ResumeReceipt {
+            committed: true,
+            settlement: Settlement::Settled,
+            tool_calls,
+            evidence: vec!["host-deploy-log:sha256:0f00".into()],
+        })
+    }
+}
+
+/// One assistant message with two `deploy_step` calls.
+fn two_calls() -> Value {
+    let call = |index: usize, id: &str| json!({"index":index,"id":id,"type":"function","function":{"name":"deploy_step","arguments":"{}"}});
+    json!({"delta":{"tool_calls":[call(0, "deploy-1"), call(1, "deploy-2")]},"finish":"tool_calls"})
+}
+
+/// Requirements 24.1, 24.4, 24.5 (task 30.3, Harness part): with two open
+/// calls, settlements out of the original order, with one missing, or with
+/// one repeated are refused before take-over with nothing changed; the
+/// in-order settlement resumes, and neither `reconcile_resume` nor `resume`
+/// executes any tool before the continuation Run's first upstream request.
+/// Its model answers without tool calls, so the NotExecuted calls stay at
+/// zero executions and are not re-issued.
+#[tokio::test]
+async fn out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing() {
+    let fixture = crashed(vec![two_calls(), text("Nothing to redo; the Host settled both steps.")], 8);
+    let session = fixture.root.join("session.json");
+    let pending = agent::interrupted_run(&session, &fixture.root).unwrap().unwrap();
+    let ids: Vec<_> = pending.open_tool_calls.iter().map(|call| call.id.as_str()).collect();
+    assert_eq!(ids, ["deploy-1", "deploy-2"]);
+    let pending = serde_json::to_value(pending).unwrap();
+    let fence = fence_of(&fixture.root);
+    let fence_bytes = std::fs::read(&fence).unwrap();
+    let fenced_files = tree(&fixture.root.join("original"));
+    let executed = fixture.tool.executions.load(Ordering::SeqCst);
+    assert!(executed >= 1);
+    let resumer = Arc::new(OrderResumer {
+        inner: fixture.host.clone(),
+        order: Mutex::new(vec![]),
+        reviews: Mutex::default(),
+        executions_at_callback: Mutex::default(),
+        tool: fixture.tool.clone(),
+    });
+
+    for (name, order) in [("reversed", vec![1, 0]), ("missing", vec![0]), ("repeated", vec![0, 0])] {
+        *resumer.order.lock().unwrap() = order;
+        let (s, r) = resumed(&fixture.host, &fixture.spec, name);
+        let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+        assert_eq!(refusal(error), ResumeRefusal::CallMismatch, "{name}");
+        assert_eq!(std::fs::read(&fence).unwrap(), fence_bytes, "{name}");
+        assert!(tree(&fixture.root.join("original")) == fenced_files, "{name}: fenced receipts changed");
+        let now = serde_json::to_value(agent::interrupted_run(&session, &fixture.root).unwrap()).unwrap();
+        assert_eq!(now, pending, "{name}");
+        assert_eq!(fixture.provider.requests.lock().unwrap().len(), 1, "{name}");
+        assert_eq!(fixture.tool.executions.load(Ordering::SeqCst), executed, "{name}");
+    }
+    assert_eq!(resumer.reviews.lock().unwrap().len(), 3);
+
+    *resumer.order.lock().unwrap() = vec![0, 1];
+    let (s, r) = resumed(&fixture.host, &fixture.spec, "settled");
+    let outcome = resume(s, r, resumer.clone(), TaskOptions::default()).await.unwrap().wait().await;
+    assert!(outcome.runs >= 2, "{outcome:?}");
+    assert!(agent::interrupted_run(&session, &fixture.root).unwrap().is_none());
+    // No tool ran during any settlement, nor at any point after it: the
+    // continuation's first response had no tool call.
+    assert_eq!(*resumer.executions_at_callback.lock().unwrap(), vec![executed; 4]);
+    assert_eq!(fixture.tool.executions.load(Ordering::SeqCst), executed);
+    assert_eq!(fixture.host.tool.writes.load(Ordering::SeqCst), 0);
+    // The first continuation request carries both NotExecuted results in order.
+    let requests = fixture.provider.requests.lock().unwrap().clone();
+    assert!(requests.len() >= 2);
+    let body = requests[1].to_string();
+    let first = body.find("deploy-1").expect("deploy-1 result");
+    let second = body.find("deploy-2").expect("deploy-2 result");
+    assert!(first < second);
+    assert_eq!(body.matches("this call was interrupted and did not execute").count(), 2, "{body}");
+    // The resumed Session records both as settled NotExecuted calls.
+    let state: Value = serde_json::from_slice(&std::fs::read(&session).unwrap()).unwrap();
+    let not_executed: Vec<_> =
+        state["not_executed"].as_array().unwrap().iter().map(|call| call["native_call_id"].clone()).collect();
+    assert_eq!(not_executed, [json!("deploy-1"), json!("deploy-2")]);
+}

@@ -99,8 +99,13 @@ def original_reference(body):
     return reference
 
 
+CALL_IDS = iter(range(1, 1_000_000))
+
+
 def call(name, arguments, ordinal):
-    return {'delta': {'tool_calls': [{'index': 0, 'id': f'actual-call-{ordinal}',
+    # Native call IDs must be unique within a Session (requirement 24.7); the
+    # recall provider reopens the same Session, so request ordinals alone repeat.
+    return {'delta': {'tool_calls': [{'index': 0, 'id': f'actual-call-{ordinal}-{next(CALL_IDS)}',
         'type': 'function', 'function': {'name': name, 'arguments': json.dumps(arguments)}}]},
         'finish': 'tool_calls'}
 
@@ -534,7 +539,9 @@ class CompactionProcessTest(unittest.IsolatedAsyncioTestCase):
                     first = json.loads((self.root / 'harness/run-1-admission.json').read_bytes())
                     second = json.loads((self.root / 'harness/run-2-admission.json').read_bytes())
                     self.assertEqual(second['deadline_unix_ms'], config['task']['deadline_unix_ms'])
-                    self.assertLess(second['max_seconds'], first['max_seconds'])
+                    # Floored seconds only drop when Run 1 takes at least the
+                    # sub-second remainder; a fast sidecar can finish it sooner.
+                    self.assertLessEqual(second['max_seconds'], first['max_seconds'])
                     self.assertLessEqual(completed_unix_ms, config['task']['deadline_unix_ms'] + 1000)
                     self.assertFalse(cancellation.is_set(), 'deadline case sends no external cancel')
                     # Core's outer deadline also cancels the same signal. Its

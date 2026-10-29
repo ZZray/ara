@@ -286,7 +286,14 @@ class BudgetSnapshotTest(unittest.IsolatedAsyncioTestCase):
             session = json.loads((self.root / 'session.json').read_text())
             native = [m for m in session['messages'] if m.get('toolCallId') == 'unknown']
             self.assertEqual(len(native), 1)
-            self.assertEqual(native[0]['details'], {'executed': 'unknown', 'source': 'jsonl_external_callback'})
+            # Requirement 23 (task 29.1): the unknown branch also references the
+            # sidecar's unknown-effect evidence file by path and SHA-256.
+            details = dict(native[0]['details'])
+            receipt = details.pop('receipt_ref')
+            self.assertEqual(details, {'executed': 'unknown', 'source': 'jsonl_external_callback'})
+            self.assertEqual(set(receipt), {'path', 'sha256'})
+            self.assertRegex(receipt['sha256'], r'^[0-9a-f]{64}$')
+            self.assertTrue(Path(receipt['path']).is_file())
             terminal = [event for event in self.events() if event['type'] == 'agent_end']
             self.assertEqual(len(terminal), 1)
             # A native closed proof can legitimately exist: it never asserts

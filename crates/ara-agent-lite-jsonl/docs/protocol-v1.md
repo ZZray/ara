@@ -159,3 +159,30 @@ typed source SHA、自动控制 reference ID/SHA 和当时预算。它不是 HTT
 typed `AgentMessage` 后直接 serde 序列化；不能用 checkpoint 字典的 JSON hash 代替。
 固定 rpi 的 `Content` typed 编码包含重复的同值 `type` 标签，`Value` 会将其归一。
 原消息 typed hash、Journal 文件/链 hash、控制正文 UTF-8 hash 分别校验。
+
+## MCP server（可选）
+
+start 帧可带两个可选字段。不带时帧与行为和以前相同。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `mcp_servers` | 对象 | 与 Claude Code `.mcp.json` 的 `mcpServers` 相同：键是 server 名，值是 stdio（`command`、`args`、`env`）或 `{"type":"http","url":..,"headers":..}`。`${VAR}` 与 `${VAR:-default}` 按 sidecar 进程环境展开。解析由 `ara-agent-lite-mcp` 完成，规则见该 crate 的 README。 |
+| `mcp_options` | 对象，可选 | `required`（server 名数组，其中任一连接失败即拒绝 start）、`startup_timeout_ms`、`call_timeout_ms`。没有 `mcp_servers` 时出现此字段视为配置错误。 |
+
+- sidecar 在 Task 准入之前连接全部 server。配置无效、`required` 中有未配置的名字，或 `required` server 连接失败时，stderr 写 `start_config_rejected`，退出码 2，stdout 零帧，不向上游发请求。
+- 连接完成后、任何 Task 帧之前输出一帧 `{"kind":"mcp_status","version":1,"task_id":..,"servers":{<name>:{"status":"connected","tools":n,"instructions":..}|{"status":"failed","reason":..}},"excluded":[{"server":..,"tool":..,"reason":..}]}`。错误与原因中不出现 `env`、`headers` 的取值。
+- MCP 工具以 `mcp__<server>__<tool>` 命名加入本次 Task，与 Host 工具或内置工具重名时拒绝 start。Plan 模式下不提供 MCP 工具。Task 结束后 sidecar 关闭全部 server。
+- stdio server 继承 sidecar 的环境再叠加 `env`。Python 与 Node 客户端只把白名单变量传给 sidecar（含 `PATH`、`SYSTEMROOT`、`SYSTEMDRIVE`、`TEMP`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`PROGRAMDATA` 等 Windows 基础变量），server 需要的其他变量写进它自己的 `env`。
+
+## 长度截断停止审查（可选）
+
+start 帧 `length_stop_review` 与 Harness `TaskOptions.length_stop_review` 相同，只在 Execute 模式可用，默认关闭。开启后 Run 因模型输出达到长度上限停止时，sidecar 依次发出：
+
+1. `verify_stop_request`：body 为 `{"snapshot":..}`，超过帧上限时改为 `{"snapshot_ref":{"path":..,"sha256":..}}`。Host 回 `{"kind":"verify_stop_reply","version":1,"rpc_id":..,"task_id":..,"run_id":..,"receipt":<ReviewReceipt>}`。
+2. receipt 为 `NeedsChanges` 且还有 Run 预算时，发 `prepare_stop_request`：body 为 `{"stop_continuation":{"previous":..,"receipt":..,"next_run_number":..,"remaining_calls":..,"deadline_unix_ms":..}}`，过大时为 `{"stop_continuation_ref":..}`，内容同时写入证据目录 `jsonl-stop-continuation-<n>.json`。Host 回 `{"kind":"prepare_stop_reply","version":1,"rpc_id":..,"task_id":..,"run_id":..,"run_id_next":..,"objective":..}`。
+
+快照或续作文件在 Host 处理期间被改动时，sidecar 以 `stop_snapshot_changed_during_verify` 或 `stop_continuation_changed_during_prepare` 失败。Python 客户端对应 `verify_stop_snapshot` / `prepare_stop_continuation`，Node 客户端对应 `callbacks.verifyStopSnapshot` / `callbacks.prepareStopContinuation`；开启该选项却缺少回调时，客户端在启动 sidecar 之前报错。
+
+## 未知副作用回执引用
+
+外部工具回调失败，或 Host 回复 `settlement=Unknown` 时，该调用的工具结果 details 为 `{"executed":"unknown","source":"jsonl_external_callback","receipt_ref":{"path":..,"sha256":..}}`。`receipt_ref` 指向证据目录中的 `jsonl-rpc-<rpc_id>-unknown.json`，其中记录 `native_call_id`、`tool_name`、`args_sha256` 与 `reason`（`callback_unknown` 或 `host_declared_unknown`）。Task 结束时 `outcome.json` 的 `unknown_effects` 列出这些调用；`task_result` 帧的键集合不变。Python 客户端用 `parse_unknown_effects(outcome)` 读取，Node 客户端在 `wait()` 结果中提供 `unknownEffects`。

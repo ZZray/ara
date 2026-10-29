@@ -16,8 +16,9 @@ use ara_agent_lite_harness::{
         RunMode, RunRequest, RuntimePaths, ToolRegistration,
     },
     BudgetStopContinuation, BudgetStopReviewPolicy, BudgetStopSnapshot, Candidate, Continuation, HarnessHost,
-    ReviewReceipt, Settlement,
+    LengthStopReviewPolicy, ReviewReceipt, Settlement, StopContinuation, StopSnapshot,
 };
+use ara_agent_lite_mcp::{McpConfig, McpOptions, McpSession};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -26,16 +27,22 @@ use url::{Host, Url};
 use crate::{
     evidence,
     protocol::{Resolution, RunConfig, Start},
-    rpc::{Bridge, Reply, ToolKey},
+    rpc::{Bridge, CallFailure, Reply, ToolKey},
 };
 
-pub fn validate(start: &Start) -> Result<()> {
+/// Admission of the start frame. Returns the parsed MCP configuration when
+/// the optional `mcp_servers` field is present (42.9).
+pub fn validate(start: &Start) -> Result<Option<McpConfig>> {
     ensure!(start.kind == "start_task" && start.version == 1, "start_kind_or_version");
     ensure!((1000..=15000).contains(&start.cancel_grace_ms), "cancel_grace_range");
     let run = &start.run;
     ensure!(
         start.budget_stop_review == BudgetStopReviewPolicy::Reject || run.mode == "execute",
         "budget_stop_review_execute_only"
+    );
+    ensure!(
+        start.length_stop_review == LengthStopReviewPolicy::Reject || run.mode == "execute",
+        "length_stop_review_execute_only"
     );
     ensure!(matches!(run.mode.as_str(), "execute" | "plan"), "mode_not_supported");
     ensure!(run.length_recovery == LengthRecoveryPolicy::Stop || run.mode == "execute", "length_recovery_execute_only");
@@ -85,7 +92,45 @@ pub fn validate(start: &Start) -> Result<()> {
             "host_caps_text_only"
         );
     }
-    Ok(())
+    let Some(servers) = &start.mcp_servers else {
+        ensure!(start.mcp_options.is_none(), "mcp_options_without_servers");
+        return Ok(None);
+    };
+    let config = McpConfig::from_servers(servers)?;
+    if let Some(options) = &start.mcp_options {
+        ensure!(options.required.iter().all(|server| config.mcp_servers.contains_key(server)), "mcp_required_unknown");
+        ensure!(
+            options.startup_timeout_ms.is_none_or(|ms| (1..=120_000).contains(&ms))
+                && options.call_timeout_ms.is_none_or(|ms| (1..=3_600_000).contains(&ms)),
+            "mcp_timeout_range"
+        );
+    }
+    Ok(Some(config))
+}
+
+/// Connect the validated MCP servers (42.9). A failed `required` server is a
+/// start rejection; the caller has not admitted the Task or contacted the model.
+pub async fn connect_mcp(start: &Start, config: McpConfig) -> Result<McpSession> {
+    let mut options = McpOptions::default();
+    if let Some(policy) = &start.mcp_options {
+        options.required = policy.required.iter().cloned().collect();
+        if let Some(ms) = policy.startup_timeout_ms {
+            options.startup_timeout = Duration::from_millis(ms);
+        }
+        if let Some(ms) = policy.call_timeout_ms {
+            options.call_timeout = Duration::from_millis(ms);
+        }
+    }
+    let session = McpSession::connect(config, options, CancellationToken::new()).await?;
+    let host_tools: HashSet<&str> = start.run.tools.iter().map(|tool| tool.name.as_str()).collect();
+    if session.tools().iter().any(|tool| {
+        host_tools.contains(tool.schema().name.as_str())
+            || harness::core::agent::BUILTIN_TOOL_NAMES.contains(&tool.schema().name.as_str())
+    }) {
+        session.shutdown().await;
+        anyhow::bail!("mcp_tool_name_collision");
+    }
+    Ok(session)
 }
 
 fn validate_loopback(endpoint: &str) -> Result<()> {
@@ -167,11 +212,13 @@ pub struct Template {
     token: String,
     model_host: Arc<dyn ModelHost>,
     tools: Vec<Arc<dyn AgentTool>>,
+    /// Tools of the Task's MCP session, executed inside the sidecar (42.9).
+    mcp_tools: Vec<Arc<dyn AgentTool>>,
     steering: Arc<Mutex<SteeringBuffer>>,
 }
 
 impl Template {
-    pub fn new(config: RunConfig, token: String, bridge: Arc<Bridge>) -> Self {
+    pub fn new(config: RunConfig, token: String, bridge: Arc<Bridge>, mcp_tools: Vec<Arc<dyn AgentTool>>) -> Self {
         let base: Arc<dyn ModelHost> = match &config.model_resolution {
             Resolution::Catalog => Arc::new(CatalogModelHost),
             Resolution::HostDeclaredLoopback { capabilities } => Arc::new(DeclaredModelHost(capabilities.model_caps())),
@@ -197,7 +244,7 @@ impl Template {
                 }) as Arc<dyn AgentTool>
             })
             .collect();
-        Self { config, token, model_host, tools, steering: Arc::new(Mutex::new(SteeringBuffer::default())) }
+        Self { config, token, model_host, tools, mcp_tools, steering: Arc::new(Mutex::new(SteeringBuffer::default())) }
     }
 
     pub fn initial(&self) -> RunRequest {
@@ -236,6 +283,7 @@ impl Template {
                 tool: tool.clone(),
                 allow_in_plan: declaration.allow_in_plan,
             })
+            .chain(self.mcp_tools.iter().map(|tool| ToolRegistration { tool: tool.clone(), allow_in_plan: false }))
             .collect();
         // These are deliberately never configurable through this protocol.
         request.enable_local_tools = false;
@@ -276,9 +324,9 @@ impl AgentTool for BusinessTool {
         };
         let body = json!({"native_call_id":key.native_call_id,"tool_name":key.tool_name,
             "args_sha256":key.args_sha256,"arguments":arguments});
-        let reply = self.bridge.call("tool_call", run_id, body, Some(key), cancellation.clone()).await;
-        match reply {
-            Ok(Reply::Tool(result)) if result.settlement == Settlement::Settled => {
+        let reply = self.bridge.call("tool_call", run_id.clone(), body, Some(key.clone()), cancellation.clone()).await;
+        let (rpc_id, reason) = match reply {
+            Ok(Reply::Tool { result, .. }) if result.settlement == Settlement::Settled => {
                 let text = serde_json::to_string(&result.value).unwrap_or_default();
                 if result.is_error {
                     return Err(AgentError::Tool(text));
@@ -286,18 +334,27 @@ impl AgentTool for BusinessTool {
                 let mut value = AgentToolResult::text(text);
                 value.details = json!({"host_operation_receipt":result.operation_receipt,
                     "settlement":"host_declared_settled"});
-                Ok(value)
+                return Ok(value);
             }
-            _ => {
-                cancellation.cancel();
-                self.bridge.fail();
-                let mut value = AgentToolResult::text(
-                    "External tool outcome unknown; inspect original Host operation receipt; do not replay.",
-                );
-                value.details = json!({"executed":"unknown","source":"jsonl_external_callback"});
-                Ok(value)
+            Ok(Reply::Tool { rpc_id, .. }) => (Some(rpc_id), "host_declared_unknown"),
+            Ok(_) => (None, "callback_unknown"),
+            Err(error) => {
+                (error.downcast_ref::<CallFailure>().map(|failure| failure.rpc_id.clone()), "callback_unknown")
             }
+        };
+        cancellation.cancel();
+        self.bridge.fail();
+        // 23.1/23.5: the result names its rpc-*-unknown evidence. Without a
+        // readable receipt the call is still unknown, only without the reference.
+        let receipt = rpc_id.and_then(|rpc| self.bridge.unknown_tool_receipt(&rpc, &run_id, &key, reason).ok());
+        let mut value = AgentToolResult::text(
+            "External tool outcome unknown; inspect original Host operation receipt; do not replay.",
+        );
+        value.details = json!({"executed":"unknown","source":"jsonl_external_callback"});
+        if let Some(reference) = receipt {
+            value.details["receipt_ref"] = json!(reference);
         }
+        Ok(value)
     }
 }
 
@@ -374,6 +431,76 @@ impl HarnessHost for ExternalHost {
                 Ok(self.template.request(run_id, objective))
             }
             _ => anyhow::bail!("prepare_budget_reply_kind"),
+        }
+    }
+
+    /// Only reachable with `length_stop_review = review_closed_length` (16.2).
+    async fn verify_stop_snapshot(
+        &self,
+        snapshot: StopSnapshot,
+        cancellation: CancellationToken,
+    ) -> Result<ReviewReceipt> {
+        let reference = evidence::checked_stop_snapshot(&snapshot).inspect_err(|_| self.bridge.fail())?;
+        let run_id = snapshot.basis.run_id.clone();
+        let mut body = json!({"snapshot":snapshot});
+        if self
+            .bridge
+            .output
+            .needs_reference(&with_worst_budget_header(body.clone(), &self.bridge.task_id, &run_id))
+            .inspect_err(|_| self.bridge.fail())?
+        {
+            body = json!({"snapshot_ref":reference});
+        }
+        let reply = self.bridge.call("verify_stop_request", run_id, body, None, cancellation).await;
+        let after = evidence::checked_stop_snapshot(&snapshot).inspect_err(|_| self.bridge.fail())?;
+        ensure!(
+            after.sha256 == reference.sha256 && after.path == reference.path,
+            "stop_snapshot_changed_during_verify"
+        );
+        match reply? {
+            Reply::Verify(receipt) => Ok(*receipt),
+            _ => anyhow::bail!("verify_stop_reply_kind"),
+        }
+    }
+
+    async fn prepare_stop_continuation(
+        &self,
+        continuation: StopContinuation,
+        cancellation: CancellationToken,
+    ) -> Result<RunRequest> {
+        let snapshot_reference =
+            evidence::checked_stop_snapshot(&continuation.previous).inspect_err(|_| self.bridge.fail())?;
+        let run_id = continuation.previous.basis.run_id.clone();
+        let payload = json!({"previous":continuation.previous,"receipt":continuation.receipt,
+            "next_run_number":continuation.next_run_number,"remaining_calls":continuation.remaining_calls,
+            "deadline_unix_ms":continuation.deadline_unix_ms});
+        let path =
+            self.bridge.evidence_dir.join(format!("jsonl-stop-continuation-{}.json", continuation.next_run_number));
+        let reference = evidence::write_new(&path, &payload)?;
+        evidence::checked_value(&path, &payload)?;
+        let mut body = json!({"stop_continuation":payload});
+        if self
+            .bridge
+            .output
+            .needs_reference(&with_worst_budget_header(body.clone(), &self.bridge.task_id, &run_id))
+            .inspect_err(|_| self.bridge.fail())?
+        {
+            body = json!({"stop_continuation_ref":reference});
+        }
+        let reply = self.bridge.call("prepare_stop_request", run_id, body, None, cancellation).await;
+        let after_snapshot =
+            evidence::checked_stop_snapshot(&continuation.previous).inspect_err(|_| self.bridge.fail())?;
+        let after = evidence::checked_value(&path, &payload).inspect_err(|_| self.bridge.fail())?;
+        ensure!(
+            after.sha256 == reference.sha256 && after_snapshot.sha256 == snapshot_reference.sha256,
+            "stop_continuation_changed_during_prepare"
+        );
+        match reply? {
+            Reply::Prepare { run_id, objective } => {
+                *self.bridge.active_run.lock().unwrap() = run_id.clone();
+                Ok(self.template.request(run_id, objective))
+            }
+            _ => anyhow::bail!("prepare_stop_reply_kind"),
         }
     }
 

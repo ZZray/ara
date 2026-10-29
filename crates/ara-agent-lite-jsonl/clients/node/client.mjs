@@ -164,6 +164,52 @@ async function checkedBudgetContinuation(value, frame, task, evidenceDirectory) 
   return { snapshotRef, continuationRef };
 }
 
+/** A closed Length stop snapshot (16.2); its output is diagnostic only. */
+async function checkedStopSnapshot(snapshot, frame, task, evidenceDirectory) {
+  requireValue(exact(snapshot, ['basis','diagnostic_output','goal','evidence','truncated']), 'invalid stop snapshot fields');
+  const basis = snapshot.basis;
+  requireValue(object(basis) && basis.task_id === task.task_id && basis.run_id === frame.run_id
+    && basis.criteria_revision === task.criteria_revision && basis.authorization_revision === task.authorization_revision
+    && Number.isSafeInteger(basis.run_number) && basis.run_number >= 1
+    && typeof snapshot.diagnostic_output === 'string' && object(snapshot.evidence), 'stop snapshot immutable identity mismatch');
+  return budgetFile(snapshot, evidenceDirectory, `run-${basis.run_number}-stop-snapshot.json`);
+}
+
+async function checkedStopContinuation(value, frame, task, evidenceDirectory) {
+  requireValue(exact(value, ['previous','receipt','next_run_number','remaining_calls','deadline_unix_ms']), 'invalid stop continuation fields');
+  const snapshotRef = await checkedStopSnapshot(value.previous, frame, task, evidenceDirectory);
+  budgetReceipt(value.receipt, value.previous);
+  requireValue(value.receipt.committed === true && value.receipt.settlement === 'Settled'
+    && object(value.receipt.verdict) && object(value.receipt.verdict.NeedsChanges), 'stop continuation requires committed rejection');
+  requireValue(value.next_run_number === value.previous.basis.run_number + 1
+    && Number.isSafeInteger(value.remaining_calls) && value.remaining_calls > 0 && value.remaining_calls <= task.max_calls
+    && value.deadline_unix_ms === task.deadline_unix_ms, 'stop continuation changed original Task bounds');
+  const continuationRef = await budgetFile(value, evidenceDirectory, `jsonl-stop-continuation-${value.next_run_number}.json`);
+  return { snapshotRef, continuationRef };
+}
+
+/**
+ * Typed, frozen view of `outcome.unknown_effects` in original order (23.3).
+ * An invalid record throws an Error whose `field` names the bad field.
+ */
+export function parseUnknownEffects(outcome) {
+  const invalid = (field) => Object.assign(new Error(`invalid unknown effect record: ${field}`), { field });
+  if (!object(outcome) || !Object.hasOwn(outcome, 'unknown_effects')) return Object.freeze([]);
+  if (!Array.isArray(outcome.unknown_effects)) throw invalid('unknown_effects');
+  return Object.freeze(outcome.unknown_effects.map((record) => {
+    if (!object(record)) throw invalid('record');
+    const extra = Object.keys(record).find((key) => !['run_id','native_call_id','tool','receipt_ref'].includes(key));
+    if (extra !== undefined) throw invalid(extra);
+    for (const field of ['run_id', 'native_call_id', 'tool']) {
+      if (typeof record[field] !== 'string' || record[field].length === 0) throw invalid(field);
+    }
+    const receipt = record.receipt_ref;
+    if (!object(receipt) || !object(receipt.evidence) || Object.keys(receipt.evidence).length === 0) throw invalid('receipt_ref');
+    return Object.freeze({ run_id: record.run_id, native_call_id: record.native_call_id, tool: record.tool,
+      receipt_ref: structuredClone(receipt) });
+  }));
+}
+
 /** Read the separate committed budget-review index without changing outcome. */
 export async function readBudgetReviewReference(reference, evidenceDirectory, task, outcome) {
   const record = await readCheckedJsonReference(reference, evidenceDirectory);
@@ -211,13 +257,22 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
   requireValue(!budgetEnabled || (start.run.mode === 'execute'
     && ['verify_budget_snapshot','prepare_budget_stop_continuation'].every((key) => typeof callbacks[key] === 'function')),
   'Execute budget opt-in requires both dedicated callbacks');
+  requireValue(!Object.hasOwn(start, 'length_stop_review') || ['reject','review_closed_length'].includes(start.length_stop_review), 'invalid length_stop_review policy');
+  const lengthEnabled = start.length_stop_review === 'review_closed_length';
+  requireValue(!lengthEnabled || (start.run.mode === 'execute'
+    && ['verifyStopSnapshot','prepareStopContinuation'].every((key) => typeof callbacks[key] === 'function')),
+  'Execute length-stop opt-in requires both dedicated callbacks');
+  const mcpEnabled = Object.hasOwn(start, 'mcp_servers');
   requireValue(Buffer.byteLength(`${JSON.stringify(start)}\n`) <= FRAME_BYTES, 'start frame exceeds protocol bound');
   const grace = start.cancel_grace_ms ?? 5000;
   requireValue(Number.isInteger(grace) && grace >= 1000 && grace <= 15000, 'invalid cancellation grace');
   requireValue(Number.isSafeInteger(start.task.deadline_unix_ms), 'integer original deadline required');
   const receipts = await Receipts.create(operationDirectory, start.task.task_id, digest(start));
   const childEnv = {};
-  for (const key of ['PATH', 'SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL']) {
+  // Windows basics that child tools and MCP servers need to resolve profile
+  // and ProgramData folders; none are secrets.
+  for (const key of ['PATH', 'SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL',
+    'SystemDrive', 'ProgramData', 'ALLUSERSPROFILE', 'LOCALAPPDATA', 'APPDATA', 'PATHEXT', 'ComSpec']) {
     const value = env[key] ?? process.env[key]; if (typeof value === 'string') childEnv[key] = value;
   }
   childEnv.ARA_AGENT_MODEL_TOKEN = modelToken;
@@ -297,6 +352,33 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
         await receipts.operation(frame, 'budget-snapshot-checked', { snapshot_ref: before });
         reply = { ...envelope(frame, 'verify_budget_reply'), receipt };
         if (receipt.settlement === 'Unknown') stage = 'unknown';
+      } else if (frame.kind === 'verify_stop_request') {
+        const snapshot = await candidateOf(frame, 'snapshot');
+        const before = await checkedStopSnapshot(snapshot, frame, start.task, start.task.evidence_dir);
+        if (frame.snapshot_ref) await budgetFile(snapshot, start.task.evidence_dir,
+          `run-${snapshot.basis.run_number}-stop-snapshot.json`, frame.snapshot_ref);
+        item.stopSnapshot = snapshot;
+        const receipt = await callbacks.verifyStopSnapshot(snapshot, { signal: item.controller.signal, frame });
+        budgetReceipt(receipt, snapshot);
+        const after = await checkedStopSnapshot(snapshot, frame, start.task, start.task.evidence_dir);
+        requireValue(digest(before) === digest(after), 'stop snapshot changed during verification');
+        await receipts.operation(frame, 'stop-snapshot-checked', { snapshot_ref: before });
+        reply = { ...envelope(frame, 'verify_stop_reply'), receipt };
+        if (receipt.settlement === 'Unknown') stage = 'unknown';
+      } else if (frame.kind === 'prepare_stop_request') {
+        const continuation = await candidateOf(frame, 'stop_continuation');
+        const before = await checkedStopContinuation(continuation, frame, start.task, start.task.evidence_dir);
+        if (frame.stop_continuation_ref) await budgetFile(continuation, start.task.evidence_dir,
+          `jsonl-stop-continuation-${continuation.next_run_number}.json`, frame.stop_continuation_ref);
+        const prepared = await callbacks.prepareStopContinuation(continuation, { signal: item.controller.signal, frame });
+        const after = await checkedStopContinuation(continuation, frame, start.task, start.task.evidence_dir);
+        requireValue(digest(before) === digest(after), 'stop continuation changed during preparation');
+        await receipts.operation(frame, 'stop-continuation-checked', { snapshot_ref: before.snapshotRef,
+          continuation_ref: before.continuationRef });
+        requireValue(exact(prepared, ['run_id_next', 'objective']) && nonempty(prepared.run_id_next)
+          && nonempty(prepared.objective) && !startedRuns.has(prepared.run_id_next), 'invalid continuation or repeated Run ID');
+        reply = { ...envelope(frame, 'prepare_stop_reply'), ...prepared };
+        startedRuns.add(prepared.run_id_next);
       } else {
         const budget = frame.kind === 'prepare_budget_request';
         const continuation = await candidateOf(frame, budget ? 'budget_continuation' : 'continuation');
@@ -328,6 +410,8 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
         receipt: { basis: item.candidate.basis, committed: false, settlement: 'Unknown', verdict: 'Unknown', evidence: [started] } };
       else if (frame.kind === 'verify_budget_request' && item.budgetSnapshot) reply = { ...envelope(frame, 'verify_budget_reply'),
         receipt: { basis: item.budgetSnapshot.basis, committed: false, settlement: 'Unknown', verdict: 'Unknown', evidence: [started] } };
+      else if (frame.kind === 'verify_stop_request' && item.stopSnapshot) reply = { ...envelope(frame, 'verify_stop_reply'),
+        receipt: { basis: item.stopSnapshot.basis, committed: false, settlement: 'Unknown', verdict: 'Unknown', evidence: [started] } };
       else fault('host_callback_unknown');
     }
     item.settled = true;
@@ -339,6 +423,13 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
   };
   const dispatch = (frame) => {
     requireValue(object(frame) && frame.version === VERSION && frame.task_id === start.task.task_id, 'invalid server frame');
+    if (frame.kind === 'mcp_status') {
+      requireValue(mcpEnabled && exact(frame, ['kind','version','task_id','servers','excluded'])
+        && object(frame.servers) && Array.isArray(frame.excluded), 'unsolicited or invalid mcp_status frame');
+      try { void Promise.resolve(onEvent(frame)).catch(() => {}); }
+      catch { /* Connection report only; never controls execution. */ }
+      return;
+    }
     if (frame.kind === 'event') {
       requireValue(exact(frame, ['kind','version','task_id','run_id','seq','event_type','delivery'])
         && frame.delivery === 'best_effort_not_complete_evidence', 'invalid event delivery marker');
@@ -359,16 +450,19 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
       requireValue(item && item.frame.run_id === frame.run_id && !item.replied, 'unsolicited callback cancellation');
       item.controller.abort(); return;
     }
-    requireValue(['tool_call', 'verify_request', 'prepare_request', 'verify_budget_request', 'prepare_budget_request'].includes(frame.kind)
+    requireValue(['tool_call', 'verify_request', 'prepare_request', 'verify_budget_request', 'prepare_budget_request',
+      'verify_stop_request', 'prepare_stop_request'].includes(frame.kind)
       && !state.terminal && !state.fault && active.size < 8, 'unknown or out-of-state callback');
     correlation(frame);
     requireValue(!['verify_budget_request','prepare_budget_request'].includes(frame.kind) || budgetEnabled, 'budget callback without opt-in');
+    requireValue(!['verify_stop_request','prepare_stop_request'].includes(frame.kind) || lengthEnabled, 'stop snapshot callback without opt-in');
     requireValue(!seen.has(frame.rpc_id), 'duplicate RPC request');
     if (frame.kind === 'tool_call') requireValue(exact(frame, ['kind','version','rpc_id','task_id','run_id','native_call_id','tool_name','args_sha256','arguments'])
       && nonempty(frame.native_call_id) && nonempty(frame.tool_name)
       && allowedTools.has(frame.tool_name) && sha(frame.args_sha256) && object(frame.arguments), 'invalid or ungranted tool correlation/arguments');
-    if (['verify_request','prepare_request','verify_budget_request','prepare_budget_request'].includes(frame.kind)) {
-      const payload = ({ verify_request:'candidate',prepare_request:'continuation',verify_budget_request:'snapshot',prepare_budget_request:'budget_continuation' })[frame.kind];
+    if (['verify_request','prepare_request','verify_budget_request','prepare_budget_request','verify_stop_request','prepare_stop_request'].includes(frame.kind)) {
+      const payload = ({ verify_request:'candidate',prepare_request:'continuation',verify_budget_request:'snapshot',prepare_budget_request:'budget_continuation',
+        verify_stop_request:'snapshot',prepare_stop_request:'stop_continuation' })[frame.kind];
       requireValue(exact(frame, ['kind','version','rpc_id','task_id','run_id',payload])
         || exact(frame, ['kind','version','rpc_id','task_id','run_id',`${payload}_ref`]), 'invalid callback payload fields');
     }
@@ -442,9 +536,14 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
         await receipts.write('budget-review', { budget_review_ref: state.terminal.budget_review_ref, record });
       }
     } catch { state.fault ??= 'terminal_reference_unverified'; }
+    let unknownEffects = null;
+    if (outcome) {
+      try { unknownEffects = parseUnknownEffects(outcome); }
+      catch (error) { state.fault ??= `invalid_unknown_effect_record:${error.field}`; }
+    }
     const result = { delivery: state.fault ? 'unknown' : 'validated', reconciliation_required: Boolean(state.fault)
       || outcome?.stop === 'ReconciliationRequired' || outcome?.fence_presence !== 'Released',
-      terminal: state.terminal, outcome, process: { exit_code: state.exit_code, signal: state.exit_signal,
+      terminal: state.terminal, outcome, unknownEffects, process: { exit_code: state.exit_code, signal: state.exit_signal,
         forced: state.forced, closed: state.closed }, callbacks_finished: state.pending_callbacks === 0,
       fault: state.fault, stderr: { bytes: stderrBytes, sha256: stderrHash.digest('hex'),
         preview: redacted(stderrPreview.toString('utf8')) }, operation_directory: operationDirectory };
