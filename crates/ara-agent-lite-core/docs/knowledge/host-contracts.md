@@ -18,6 +18,30 @@ Plan 工具许可是宿主声明，不是操作系统只读保证。内置名称
 HandWave 的 grant、binding header、设备连接和调度留在 HandWave。
 原 route 的四个序列化字段保持不变，以保留旧会话的模型与绑定连续性。
 
+## resume 结算义务
+
+Harness `resume`／`resume_checked`（JSONL 的 `resume` start 字段走同一入口）在接管 fence
+之前调用一次 `HarnessHost::reconcile_resume(ResumeReview)`。Host 只依据自己的操作回执、
+产物和外部系统状态回答，返回的 `ResumeReceipt` 必须满足五项义务：
+
+1. `committed` 为 true：Host 已把这次结算保存到自己的记录。
+2. 每个开放调用的结算为 Settled：`settlement` 为 `Settled`，每个调用都有确定结果
+   （`not_executed`、`completed` 或 `failed`），不能是 `Unknown`。
+3. 证据非空：`evidence` 至少列出一条 Host 自己的操作回执引用。
+4. 回执与开放调用逐一对应：`tool_calls` 与 `ResumeReview.interrupted_run.open_tool_calls`
+   数量相同、顺序一致，`call_id` 逐条等于对应调用的 `id`；没有开放调用时为空数组。
+5. 结算过程中不执行、不重放效果未知的调用：只查收据和状态，不为“确认”而再做一次操作。
+
+违反前四项中任一项时，Harness 拒绝 resume（`ResumeRefusal` 依次为 `ReceiptUncommitted`、
+`SettlementUnknown`、`EvidenceEmpty`、`CallMismatch`），不接管 fence；fence 文件与原有回执
+保持不变，上游 HTTP 请求数为零，Session 的 pending_run 保留。JSONL 在新证据目录写
+`jsonl-resume-rejected.json`，类别与上述四种拒绝同名。第 5 项无法从回执检查，
+由 Host 自己保证；违反时产生的重复外部效果，Core 和 Harness 都无法撤回。
+
+接受的回执作为该调用唯一的 ToolResult（`details.source=host_reconciled_interrupted_run`）
+写入原 Session，工具不再执行；被中断 Run 按准入上限全额计入消耗。真实进程中断与七种拒绝
+条件的验证见 `crates/ara-agent-lite-jsonl/tests/test_resume_process.py`。
+
 ## 后台 Worker
 
 原精简端可重启自身进入 Worker。通用库无法推断任意业务 EXE 是否支持这个入口，

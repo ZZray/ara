@@ -145,6 +145,57 @@ Goal、后台 Job 和历史让出继续使用原有流程。
 由 Host 核查实际产物和操作收据。验证范围见
 [预算停止交接记录](../../ara-agent-lite-jsonl/docs/evidence/closed-budget-snapshot-20261025.html)。
 
+### 3.2 恢复被 fence 的 Task
+
+进程在工具执行中被杀、Task 被取消或以 `ReconciliationRequired` 结束时，Harness 保留 fence。
+恢复只能在原 Task、原 Session 中继续，由 Host 先结算留下的开放调用。帧格式与字段表见
+[JSONL v1 协议](../../ara-agent-lite-jsonl/docs/protocol-v1.md)“恢复被 fence 的 Task”一节，
+Host 义务见 [宿主边界](knowledge/host-contracts.md)“resume 结算义务”一节。
+
+按顺序执行：
+
+1. 确认 Task 处于 fence 状态：Session 所在目录有 `.ara-lite-harness-*.fence.json`
+   （以 `ReconciliationRequired` 结束、`task_result.fence_presence` 为 `Present` 的 Task 也属于此类）。
+   读取 fence 文件字节，计算 SHA-256。
+2. 启动一个新的 JSONL sidecar 进程，发送带 `resume` 的 start 帧。`task` 与原 Task 相同，
+   只把 `evidence_dir` 换成新的、不存在的目录；`run` 只改 `run_id`、`objective`，
+   `max_calls`、`max_seconds` 可以等于或小于原值。`resume.fence_sha256` 填第 1 步的哈希。
+3. 读取 `reconcile_request`。对 `review.interrupted_run.open_tool_calls` 中的每个调用，
+   依据 Host 自己的操作回执判断它是否执行、结果是什么，按原顺序构造 `reconcile_reply`，
+   原样复制 `version`、`rpc_id`、`task_id`、`run_id`。
+4. 在 Task 的 `deadline_unix_ms` 之前把 `reconcile_reply` 写入 stdin。
+5. 读取最终 `task_result` 和它的 `outcome_ref` 指向的 `TaskOutcome`。`task_accepted` 恒为 false，
+   Task 是否验收由 Host 自己决定。
+
+Python 客户端通过 `reconcile_resume(review, cancelled)`、Node 客户端通过
+`callbacks.reconcileResume(review, {signal, frame})` 完成第 3、4 步。
+
+被拒绝时，下列各项的共同状态是：fence 文件与原有回执不变，上游 HTTP 请求数为零，
+Session 中的 pending_run 和开放调用保留，sidecar 以退出码 2 结束。
+前四项在 Harness 调用 Host 之前拒绝，stdout 零帧，不创建新证据目录；
+其余各项已发出 `reconcile_request`，新证据目录写 `jsonl-resume-rejected.json`，类别见表。
+
+| 拒绝原因 | 触发条件 | 拒绝后的状态 | 集成方的下一步 |
+|---|---|---|---|
+| resume 字段格式无效 | `resume` 为 null、不是对象、缺少或多出子字段、`version` 不为 1、`fence_sha256` 不是 64 位小写十六进制 | stderr `start_config_rejected`，零帧 | 修正字段，用新的 sidecar 和新证据目录重试 |
+| Task 条款或 Session 不一致 | `task_id`、`criteria_revision`、`authorization_revision`、`deadline_unix_ms` 或 `session_path` 与 fence 记录不同；fence 哈希与 `fence_sha256` 不同也在此拒绝 | stderr `task_admission_rejected`，零帧 | 按 Host 保存的原 Task 记录和刚读取的 fence 重新填写 |
+| authority 哈希改变 | `run` 中除 `run_id`、`objective`、`max_calls`、`max_seconds` 外的字段改变，如 endpoint、model、tools、cwd | 同上 | 恢复原 `run` 配置；授权确实已变时不能恢复这个 Task，由业务另行处理其开放调用 |
+| 预算或单 Run 上限增大 | `task.max_runs`、`task.max_calls` 与原值不同，或 `run.max_calls`、`run.max_seconds` 大于原 Task 首次准入的值 | 同上 | 使用原预算，单 Run 上限不超过原值 |
+| reconcile_reply 缺失或 stdin 已关闭 | 回复之前 stdin 关闭 | 一帧 `reconcile_request`；类别 `stdin_closed` | 新的 sidecar 与新证据目录，这次在 deadline 前写入回复 |
+| 超过 Task deadline | deadline 到达时仍未回复：sidecar 先发 `callback_cancel`，等 `cancel_grace_ms` 后拒绝；start 时 deadline 已过则在调用 Host 前拒绝、零帧 | 类别 `reconcile_timeout` | deadline 属于原 Task 条款，不能延长；这个 Task 不能再恢复，由 Host 按自己的回执在业务侧结算 |
+| 请求 ID 不匹配 | 回复的 `rpc_id`、`task_id`、`run_id` 或 `version` 与待处理请求不同，或回复是另一种帧 | 回复不交给 Harness；类别 `rpc_mismatch` | 原样复制请求的关联字段后，用新的 sidecar 重试 |
+| reconcile_reply 字段无效 | 不是合法单行 JSON、`kind` 未知、`receipt` 缺少或多出字段、字段类型不符 | 回复不交给 Harness；类别 `invalid_reply_fields` | 按字段表修正后重试 |
+| committed 为 false | `receipt.committed` 为 false | 回复已写盘，Harness 拒绝；类别 `receipt_uncommitted` | 先把结算结果保存到 Host 自己的记录，再重试 |
+| 结算为 Unknown | `receipt.settlement` 为 `Unknown` | 类别 `settlement_unknown` | 继续用 Host 的收据和外部系统状态核查，直到能确定每个调用的结果 |
+| 证据为空 | `receipt.evidence` 为空数组 | 类别 `evidence_empty` | 填入 Host 自己的操作回执引用 |
+| 回执与开放调用不对应 | `receipt.tool_calls` 的数量、顺序或 `call_id` 与 `open_tool_calls` 不同 | 类别 `call_mismatch` | 按 `open_tool_calls` 的顺序为每个调用恰写一条结算 |
+
+回复前收到 Host 的 `cancel` 时类别为 `resume_cancelled`，状态同上。
+
+被拒绝的 resume 不会转为新对话：sidecar 不新建 Task、不新建 Session，也不调用模型。
+它也不会重放任何效果未知的调用；开放调用只能由 Host 的结算关闭。
+重试必须用新的 sidecar 进程和新的证据目录，fence 和原证据目录不要删除或改写。
+
 ## 4. 模型适配
 
 默认 `CatalogModelHost` 读取 `endpoint + /models`，校验具体模型、协议和声明能力。

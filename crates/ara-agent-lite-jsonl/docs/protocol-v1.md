@@ -189,36 +189,50 @@ start 帧 `length_stop_review` 与 Harness `TaskOptions.length_stop_review` 相�
 
 ## 恢复被 fence 的 Task（resume，可选）
 
-start 帧顶层可带 `resume`。省略时 start 帧按原有行为执行，帧序列与以前相同。带 `resume` 时，sidecar 不新建 Task，而是对 `task` 与 `run` 指定的 Session 调用一次 Harness `resume_checked`（`refuse_larger_run_caps=true`）。
+约束：
+
+- `resume` 字段可选。省略时 start 帧按原有行为执行，帧序列与以前相同。
+- 带 `resume` 时，sidecar 不新建 Task，而是对 `task` 与 `run` 指定的 Session 调用一次 Harness `resume_checked`（`refuse_larger_run_caps=true`）。
+- `reconcile_request` 携带请求 ID `rpc_id` 与 Harness `ResumeReview` 内容。
+- `reconcile_reply` 必须携带与对应 `reconcile_request` 相同的请求 ID（`version`、`task_id`、`run_id` 也相同），在 Task 的 `deadline_unix_ms` 之前写入 stdin；其 `receipt` 按 Harness `ResumeReceipt` 解析。
 
 `task` 必须与原 Task 相同，`evidence_dir` 除外，它必须是新的、尚不存在的目录。`run` 中只有 `run_id`、`objective`、`max_calls`、`max_seconds` 可以不同，其余字段进入 Host authority 哈希；`max_calls`、`max_seconds` 不得大于原 Task 首次准入的值。
 
-| 字段 | JSON 类型 | 必填 | 约束 | 含义 |
+start 帧的 `resume` 字段：
+
+| 字段 | JSON 类型 | 必填或可选 | 取值约束 | 含义 |
 |---|---|---|---|---|
-| `resume.version` | 整数 | 是 | 等于 1 | resume 子对象版本 |
-| `resume.fence_sha256` | 字符串 | 是 | 64 位小写十六进制 | Host 检查过的 fence 文件字节的 SHA-256；fence 已变化时拒绝 |
+| `resume` | 对象 | 可选 | 恰含下面两个子字段 | 选择 resume 路径 |
+| `resume.version` | 整数 | 必填 | 等于 1 | resume 子对象版本 |
+| `resume.fence_sha256` | 字符串 | 必填 | 64 位小写十六进制 | Host 检查过的 fence 文件字节的 SHA-256；fence 已变化时拒绝 |
 
 `resume` 为 `null`、类型不符、缺少子字段或含未知子字段时，stderr 写 `start_config_rejected`，退出码 2，stdout 零帧。
 
-sidecar 在 Harness 准入之前启动 stdin 读取，然后发出一帧结算请求：
+sidecar 在 Harness 准入之前启动 stdin 读取，然后发出一帧结算请求 `reconcile_request`：
 
-| 字段 | JSON 类型 | 必填 | 含义 |
-|---|---|---|---|
-| `kind` | 字符串 | 是 | `reconcile_request` |
-| `version`、`rpc_id`、`task_id`、`run_id` | 整数、字符串 | 是 | 与其他回调相同；`run_id` 是 start 帧的 `run.run_id` |
-| `review` | 对象 | 二选一 | Harness `ResumeReview`：`task_id`、`session_path`、`resume_evidence_dir`、`fenced_evidence_dir`、`fence`、`fenced_outcome`、`interrupted_run`、`consumed_runs`、`consumed_calls` |
-| `review_ref` | `{"path","sha256"}` | 二选一 | 帧超过上限时代替 `review`，指向新证据目录下的 `jsonl-resume-review.json` |
+| 字段 | JSON 类型 | 必填或可选 | 取值约束 | 含义 |
+|---|---|---|---|---|
+| `kind` | 字符串 | 必填 | `reconcile_request` | 帧类型 |
+| `version` | 整数 | 必填 | 1 | 协议版本 |
+| `rpc_id` | 字符串 | 必填 | 本进程内唯一 | 请求 ID，回复须原样带回 |
+| `task_id` | 字符串 | 必填 | 等于 start 帧 `task.task_id` | 原 Task |
+| `run_id` | 字符串 | 必填 | 等于 start 帧 `run.run_id` | resume 后新 Run 的 ID |
+| `review` | 对象 | 与 `review_ref` 二选一 | Harness `ResumeReview` | 待结算内容：`task_id`、`session_path`、`resume_evidence_dir`、`fenced_evidence_dir`、`fence`（原 fence 文件 JSON）、`fenced_outcome`（原 `outcome.json` 或 null）、`interrupted_run`（null 或 `{run_id, open_tool_calls:[{id,name,arguments}], raw_count}`）、`consumed_runs`、`consumed_calls`（不退还的累计消耗） |
+| `review_ref` | 对象 `{"path","sha256"}` | 与 `review` 二选一 | 帧超过 262144 字节时使用 | 指向新证据目录下的 `jsonl-resume-review.json` |
 
-Host 在 Task deadline 之前回一帧：
+Host 在 Task deadline 之前回一帧 `reconcile_reply`：
 
-| 字段 | JSON 类型 | 必填 | 约束 |
-|---|---|---|---|
-| `kind` | 字符串 | 是 | `reconcile_reply` |
-| `version`、`rpc_id`、`task_id`、`run_id` | 整数、字符串 | 是 | 与对应 `reconcile_request` 完全相同 |
-| `receipt.committed` | 布尔 | 是 | |
-| `receipt.settlement` | 字符串 | 是 | `Settled` 或 `Unknown` |
-| `receipt.tool_calls` | 数组 | 是 | 每项恰为 `{"call_id","settlement"}`；`settlement` 为 `{"kind":"not_executed"}`，或 `kind` 为 `completed`、`failed` 并带字符串 `output`，与 `interrupted_run.open_tool_calls` 一一对应且顺序相同 |
-| `receipt.evidence` | 字符串数组 | 是 | Host 自己的操作回执引用 |
+| 字段 | JSON 类型 | 必填或可选 | 取值约束 | 含义 |
+|---|---|---|---|---|
+| `kind` | 字符串 | 必填 | `reconcile_reply` | 帧类型 |
+| `version`、`rpc_id`、`task_id`、`run_id` | 整数、字符串 | 必填 | 与对应 `reconcile_request` 完全相同 | 关联到唯一的待处理请求 |
+| `receipt` | 对象 | 必填 | 恰含下面四个字段 | Harness `ResumeReceipt` |
+| `receipt.committed` | 布尔 | 必填 | 为 false 时拒绝 | Host 已保存本次结算 |
+| `receipt.settlement` | 字符串 | 必填 | `Settled` 或 `Unknown`；`Unknown` 时拒绝 | 结算是否完成 |
+| `receipt.tool_calls` | 数组 | 必填 | 与 `interrupted_run.open_tool_calls` 一一对应且顺序相同；没有开放调用时为空数组 | 每个开放调用的结算 |
+| `receipt.tool_calls[].call_id` | 字符串 | 必填 | 等于对应开放调用的 `id` | 被结算的调用 |
+| `receipt.tool_calls[].settlement` | 对象 | 必填 | `{"kind":"not_executed"}`，或 `{"kind":"completed"或"failed","output":字符串}` | Host 依据自己的回执得出的结果，写入该调用唯一的 ToolResult |
+| `receipt.evidence` | 字符串数组 | 必填 | 为空时拒绝 | Host 自己的操作回执引用 |
 
 请求与回复按现有方式写入新证据目录的 `jsonl-rpc-<n>-request.json`、`jsonl-rpc-<n>-reply.json`。回复写盘后才交给 Harness 校验，是否放行以 Harness 结果为准。请求只发一次，从不重发。
 
@@ -237,3 +251,134 @@ Host 在 Task deadline 之前回一帧：
 Python 客户端：Host 提供 `async reconcile_resume(review, cancelled)`。config 含 `resume` 而没有该回调时，在启动 sidecar 之前抛 `ValueError`。回调异常、返回值字段或类型不符、回复帧超过 262144 字节、deadline 前未返回时，不写回复，抛 `ReconciliationRequired`，消息首段为 `reconcile_callback_exception`、`reconcile_receipt_invalid`、`reconcile_frame_too_large` 或 `reconcile_timeout`。不含 `resume` 时收到 `reconcile_request`，或同一次 `run_task` 收到第二个，消息首段为 `reconcile_request_unexpected`。
 
 Node 客户端：`callbacks.reconcileResume(review, {signal, frame})`。`start.resume` 存在而回调缺失时，`startTask` 在 spawn 之前抛 `Error('reconcile_callback_missing')`。失败时不写回复，`wait()` 结果的 `fault` 为 `reconcile_callback_threw`、`reconcile_receipt_invalid`、`reconcile_timeout`、`reconcile_aborted` 或 `reconcile_request_unexpected`，不含回调异常原文和 `modelToken`。`cancel()` 与 deadline 都会中止传给回调的 `signal`。
+
+### resume 示例
+
+下面的代码块由 `tests/test_protocol_doc_examples.py` 直接从本文件读取并在受控 provider 下执行。信息串格式为 `jsonl-example id=<序列>.<序号> from=<host|sidecar> expect=<帧类型,...>`：
+
+- `from=host`：Host 写入 stdin 的一帧。`expect` 列出 sidecar 收到它之后、Host 下一帧之前输出的帧类型及顺序；`none` 表示不再输出任何帧，进程以退出码 2 结束。
+- `from=sidecar`：sidecar 输出的一帧，`expect` 是它自己的类型。路径在实际帧中是 Harness 规范化后的绝对路径（Windows 上为 `\\?\` 形式）；`fence` 与 `candidate.basis` 只列出部分字段，实际帧带原对象的全部字段。
+- 同一序列的块按序号在一个新 sidecar 进程中执行。
+
+示例只使用下列占位符，Host 按表替换后再写入；示例不含凭据，凭据仍只来自子环境 `ARA_AGENT_MODEL_TOKEN`。
+
+| 占位符 | 出现位置 | 替换为 |
+|---|---|---|
+| `<ROOT>` | 字符串开头 | Host 为该 Task 准备的绝对目录（正斜杠写法）；Host 预先创建 `<ROOT>/workspace` 与 `<ROOT>/state` |
+| `<ENDPOINT>` | 整个字符串 | 模型入口 URL；示例声明 loopback 模型 |
+| `"<DEADLINE_UNIX_MS>"` | 整个 JSON 值 | 原 Task 的 `deadline_unix_ms`，写成 JSON 整数 |
+| `<FENCE_SHA256>` | 整个字符串 | Host 读取的 fence 文件字节的 SHA-256 |
+| `"<CANDIDATE_BASIS>"` | 整个 JSON 值 | 前一帧 `verify_request` 的 `candidate.basis` 对象，原样复制 |
+| `<SHA256>` | 整个字符串，仅 sidecar 帧 | 实际文件字节的 SHA-256 |
+
+示例中被 fence 的原 Task 由同一个 start 帧启动，区别只在没有 `resume`、`evidence_dir` 为 `<ROOT>/evidence-first`、`run.run_id` 为 `run-1`、`run.objective` 为原任务目标。它的第一个 Run 在 `deploy` 调用 `call-1`（参数 `{"step":"a"}`）执行期间进程被终止，Session 中留下这个没有结果的开放调用。
+
+成功 resume 的完整帧序列：
+
+```jsonl-example id=resume-ok.1 from=host expect=reconcile_request
+{"kind": "start_task", "version": 1,
+ "task": {"task_id": "task-1", "criteria_revision": "criteria-v1", "authorization_revision": "grant-v1", "kind": "Coding",
+          "evidence_dir": "<ROOT>/evidence-resume", "max_runs": 2, "max_calls": 8, "deadline_unix_ms": "<DEADLINE_UNIX_MS>"},
+ "run": {"run_id": "run-2", "objective": "Continue after the Host settled the interrupted deploy.",
+         "cwd": "<ROOT>/workspace", "session_path": "<ROOT>/state/session.json", "environment_state": "<ROOT>/state/environment",
+         "device_fp": "host-device", "session_key": "host-session", "mode": "execute",
+         "endpoint": "<ENDPOINT>", "model": "host-model-id", "max_calls": 4, "max_seconds": 60, "max_output": 2048,
+         "model_resolution": {"kind": "host_declared_loopback",
+                              "capabilities": {"context_window": null, "max_tokens": 8192, "input": ["text"]}},
+         "tools": [{"name": "deploy", "description": "Host-owned deploy step",
+                    "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"],
+                                   "additionalProperties": false},
+                    "allow_in_plan": false}]},
+ "cancel_grace_ms": 1000,
+ "resume": {"version": 1, "fence_sha256": "<FENCE_SHA256>"}}
+```
+
+```jsonl-example id=resume-ok.2 from=sidecar expect=reconcile_request
+{"kind": "reconcile_request", "version": 1, "rpc_id": "rpc-1", "task_id": "task-1", "run_id": "run-2",
+ "review": {"task_id": "task-1", "session_path": "<ROOT>/state/session.json",
+            "resume_evidence_dir": "<ROOT>/evidence-resume", "fenced_evidence_dir": "<ROOT>/evidence-first",
+            "fence": {"version": 1, "task_id": "task-1", "state": "active_or_unknown"},
+            "fenced_outcome": null,
+            "interrupted_run": {"run_id": "run-1",
+                                "open_tool_calls": [{"id": "call-1", "name": "deploy", "arguments": {"step": "a"}}],
+                                "raw_count": 2},
+            "consumed_runs": 1, "consumed_calls": 4}}
+```
+
+被终止的 Run 没有观测记录，按准入上限 4 全额计入 `consumed_calls`。Host 依据自己的操作回执结算 `call-1`：
+
+```jsonl-example id=resume-ok.3 from=host expect=verify_request
+{"kind": "reconcile_reply", "version": 1, "rpc_id": "rpc-1", "task_id": "task-1", "run_id": "run-2",
+ "receipt": {"committed": true, "settlement": "Settled",
+             "tool_calls": [{"call_id": "call-1",
+                             "settlement": {"kind": "completed", "output": "deploy step a applied once (Host receipt deploy-call-1)"}}],
+             "evidence": ["host-receipt:deploy-call-1"]}}
+```
+
+```jsonl-example id=resume-ok.4 from=sidecar expect=verify_request
+{"kind": "verify_request", "version": 1, "rpc_id": "rpc-2", "task_id": "task-1", "run_id": "run-2",
+ "candidate": {"basis": {"task_id": "task-1", "criteria_revision": "criteria-v1", "authorization_revision": "grant-v1",
+                         "run_id": "run-2", "run_number": 2},
+               "output": "Deployed after the Host settlement.", "goal": null}}
+```
+
+```jsonl-example id=resume-ok.5 from=host expect=task_result
+{"kind": "verify_reply", "version": 1, "rpc_id": "rpc-2", "task_id": "task-1", "run_id": "run-2",
+ "receipt": {"basis": "<CANDIDATE_BASIS>", "committed": true, "settlement": "Settled", "verdict": "Verified",
+             "evidence": ["host-check:after-resume"]}}
+```
+
+```jsonl-example id=resume-ok.6 from=sidecar expect=task_result
+{"kind": "task_result", "version": 1, "task_id": "task-1", "stop": "AwaitingHostAcceptance", "task_accepted": false,
+ "runs": 2, "observed_calls": 5, "fence_presence": "Released", "reconciliation_fence": null,
+ "outcome_ref": {"path": "<ROOT>/evidence-resume/released.json", "sha256": "<SHA256>"},
+ "local_callbacks_finished": true}
+```
+
+`resume` 字段格式无效（含未知子字段 `mode`）的 start 帧：stdout 零帧，stderr `start_config_rejected`，fence 与原有回执不变。
+
+```jsonl-example id=resume-invalid-field.1 from=host expect=none
+{"kind": "start_task", "version": 1,
+ "task": {"task_id": "task-1", "criteria_revision": "criteria-v1", "authorization_revision": "grant-v1", "kind": "Coding",
+          "evidence_dir": "<ROOT>/evidence-resume", "max_runs": 2, "max_calls": 8, "deadline_unix_ms": "<DEADLINE_UNIX_MS>"},
+ "run": {"run_id": "run-2", "objective": "Continue after the Host settled the interrupted deploy.",
+         "cwd": "<ROOT>/workspace", "session_path": "<ROOT>/state/session.json", "environment_state": "<ROOT>/state/environment",
+         "device_fp": "host-device", "session_key": "host-session", "mode": "execute",
+         "endpoint": "<ENDPOINT>", "model": "host-model-id", "max_calls": 4, "max_seconds": 60, "max_output": 2048,
+         "model_resolution": {"kind": "host_declared_loopback",
+                              "capabilities": {"context_window": null, "max_tokens": 8192, "input": ["text"]}},
+         "tools": [{"name": "deploy", "description": "Host-owned deploy step",
+                    "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"],
+                                   "additionalProperties": false},
+                    "allow_in_plan": false}]},
+ "cancel_grace_ms": 1000,
+ "resume": {"version": 1, "fence_sha256": "<FENCE_SHA256>", "mode": "force"}}
+```
+
+请求 ID 与 `reconcile_request` 不匹配的 `reconcile_reply`：sidecar 不把它交给 Harness，不再输出帧，stderr `task_admission_rejected`，新证据目录写 `jsonl-resume-rejected.json`（类别 `rpc_mismatch`），fence 与原有回执不变。
+
+```jsonl-example id=resume-rpc-mismatch.1 from=host expect=reconcile_request
+{"kind": "start_task", "version": 1,
+ "task": {"task_id": "task-1", "criteria_revision": "criteria-v1", "authorization_revision": "grant-v1", "kind": "Coding",
+          "evidence_dir": "<ROOT>/evidence-resume", "max_runs": 2, "max_calls": 8, "deadline_unix_ms": "<DEADLINE_UNIX_MS>"},
+ "run": {"run_id": "run-2", "objective": "Continue after the Host settled the interrupted deploy.",
+         "cwd": "<ROOT>/workspace", "session_path": "<ROOT>/state/session.json", "environment_state": "<ROOT>/state/environment",
+         "device_fp": "host-device", "session_key": "host-session", "mode": "execute",
+         "endpoint": "<ENDPOINT>", "model": "host-model-id", "max_calls": 4, "max_seconds": 60, "max_output": 2048,
+         "model_resolution": {"kind": "host_declared_loopback",
+                              "capabilities": {"context_window": null, "max_tokens": 8192, "input": ["text"]}},
+         "tools": [{"name": "deploy", "description": "Host-owned deploy step",
+                    "parameters": {"type": "object", "properties": {"step": {"type": "string"}}, "required": ["step"],
+                                   "additionalProperties": false},
+                    "allow_in_plan": false}]},
+ "cancel_grace_ms": 1000,
+ "resume": {"version": 1, "fence_sha256": "<FENCE_SHA256>"}}
+```
+
+```jsonl-example id=resume-rpc-mismatch.2 from=host expect=none
+{"kind": "reconcile_reply", "version": 1, "rpc_id": "rpc-9", "task_id": "task-1", "run_id": "run-2",
+ "receipt": {"committed": true, "settlement": "Settled",
+             "tool_calls": [{"call_id": "call-1",
+                             "settlement": {"kind": "completed", "output": "deploy step a applied once (Host receipt deploy-call-1)"}}],
+             "evidence": ["host-receipt:deploy-call-1"]}}
+```

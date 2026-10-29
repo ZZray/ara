@@ -1,0 +1,2419 @@
+{
+  "version": 1,
+  "scenarios": {
+    "completion": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "tools": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "effects_unknown",
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "task_update",
+          "fields": [
+            "detail",
+            "evidence",
+            "output",
+            "status",
+            "step_id",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "task_update",
+          "fields": [
+            "detail",
+            "output",
+            "status",
+            "step_id",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "generation_policy": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "generation_policy",
+          "fields": [
+            "effective_output_tokens",
+            "model",
+            "output_budget_rule",
+            "output_limit_sources",
+            "policy",
+            "protocol",
+            "provider_effect_verified",
+            "requested_output_tokens",
+            "source",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "compaction": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ],
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "content_types",
+            "phase",
+            "provider_error_present",
+            "status",
+            "stop_reason",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "compact",
+          "fields": [
+            "covered_prefix",
+            "index_unit",
+            "raw_messages",
+            "status",
+            "summary_model_calls",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "compaction_refresh": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "task_update",
+          "fields": [
+            "detail",
+            "evidence",
+            "output",
+            "status",
+            "step_id",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ],
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "content_types",
+            "phase",
+            "provider_error_present",
+            "status",
+            "stop_reason",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "compact",
+          "fields": [
+            "covered_prefix",
+            "index_unit",
+            "raw_messages",
+            "status",
+            "summary_model_calls",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "compaction_refresh",
+          "fields": [
+            "bytes",
+            "files",
+            "plan_state",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "length_replan": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "length_recovery",
+          "fields": [
+            "calls_used",
+            "effective_output_tokens",
+            "max_calls",
+            "new_human_authorization",
+            "next_request_reserved",
+            "policy",
+            "reference_id",
+            "reference_sha256",
+            "run_id",
+            "source",
+            "source_call",
+            "source_hash_format",
+            "source_raw_index",
+            "source_sha256",
+            "source_text_utf8_bytes",
+            "source_thinking_utf8_bytes",
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "length_stop_evidence": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "stop_evidence",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "closed_budget": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "termination",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "goal": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "goal_status",
+          "fields": [
+            "goal",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "goal_update",
+          "fields": [
+            "goal",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "goal_update",
+          "fields": [
+            "goal",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ],
+      [
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "goal_update",
+          "fields": [
+            "goal",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "completion_gate": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "completion_gate",
+          "fields": [
+            "calls_used",
+            "check_id",
+            "feedback_ref",
+            "result",
+            "sequence",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "completion_gate",
+          "fields": [
+            "calls_used",
+            "check_id",
+            "feedback_ref",
+            "result",
+            "sequence",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ],
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "completion_gate",
+          "fields": [
+            "calls_used",
+            "check_id",
+            "feedback_ref",
+            "result",
+            "sequence",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "completion_gate",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "stuck_detector": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "stuck_detector",
+          "fields": [
+            "action",
+            "calls_used",
+            "count",
+            "native_call_ids",
+            "rule",
+            "threshold",
+            "type"
+          ]
+        },
+        {
+          "type": "stuck_detector",
+          "fields": [
+            "action",
+            "calls_used",
+            "count",
+            "native_call_ids",
+            "rule",
+            "threshold",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "tool_start",
+          "fields": [
+            "detail",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "tool_end",
+          "fields": [
+            "output",
+            "status",
+            "step_id",
+            "title",
+            "type"
+          ]
+        },
+        {
+          "type": "stuck_detector",
+          "fields": [
+            "action",
+            "calls_used",
+            "count",
+            "native_call_ids",
+            "rule",
+            "threshold",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "stop_evidence",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "output_limit": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ]
+    ],
+    "summary_budget_stop": [
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "type"
+          ]
+        }
+      ],
+      [
+        {
+          "type": "model_capabilities",
+          "fields": [
+            "budget_unit",
+            "declared",
+            "host_input",
+            "model",
+            "source",
+            "text_budget",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_start",
+          "fields": [
+            "status",
+            "type"
+          ]
+        },
+        {
+          "type": "context_status",
+          "fields": [
+            "near_threshold",
+            "projection_json_bytes",
+            "projection_limit_bytes",
+            "source",
+            "status",
+            "type",
+            "unit"
+          ]
+        },
+        {
+          "type": "model_call",
+          "fields": [
+            "call",
+            "context_observation",
+            "output_limit",
+            "phase",
+            "status",
+            "type",
+            "usage"
+          ]
+        },
+        {
+          "type": "text_delta",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "model_result",
+          "fields": [
+            "call",
+            "elapsed_ms",
+            "phase",
+            "status",
+            "stop_reason",
+            "title",
+            "type",
+            "usage",
+            "usage_metrics"
+          ]
+        },
+        {
+          "type": "text",
+          "fields": [
+            "output",
+            "type"
+          ]
+        },
+        {
+          "type": "agent_end",
+          "fields": [
+            "code",
+            "detail",
+            "output",
+            "status",
+            "stop_evidence",
+            "type"
+          ]
+        }
+      ]
+    ]
+  }
+}

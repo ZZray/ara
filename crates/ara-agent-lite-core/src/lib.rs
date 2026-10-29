@@ -7,6 +7,7 @@ pub mod context_memory;
 pub mod effect_status;
 pub mod environment_library;
 pub mod environment_tools;
+pub mod events;
 pub mod execution;
 pub mod experience;
 pub mod file_discovery;
@@ -34,6 +35,7 @@ pub mod termination;
 pub mod web_tools;
 
 pub use agent::{execute, RunRequest, RunResult, RuntimePaths, ToolRegistration};
+pub use events::{LiteEvent, EVENT_SCHEMA_VERSION};
 pub use execution::{GoalState, RunMode};
 pub use rpi_agent;
 pub use rpi_ai;

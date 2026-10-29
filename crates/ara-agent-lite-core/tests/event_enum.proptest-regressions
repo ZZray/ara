@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0dd9b130f9f994970102c20833ac0ca9680307a8f334e65daf26ac7cfb205b6f # shrinks to index = Index(0), added = [("zz_0", Array [Number(-371759650.49602485)])]
+cc 0aedad978ac2070c1401f8b6d271f6a1ee4db4b9678fc68cfb6e76ac1d7a33ca # shrinks to index = Index(0), kind = "_", added = [("zz_a", Array [Array [Number(526991225.72291917)]])]
+cc fb93bc88c2655fb10b4a00591d4ca0c4075660cd931dd899dfb1c45731d47d2b # shrinks to index = Index(0), added = [("zz__", Null), ("zz__", Bool(false))]

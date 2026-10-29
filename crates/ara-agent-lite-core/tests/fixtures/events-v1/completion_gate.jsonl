@@ -1,0 +1,24 @@
+{"type":"model_capabilities","source":"hub_model_directory","model":"core-fixture","declared":{"context_window":1000000,"max_tokens":4096,"input":["text"]},"text_budget":{"projection_bytes":929856,"request_bytes":995392},"budget_unit":"conservative_utf8_json_bytes_not_usage","host_input":["text"]}
+{"type":"agent_start","status":"running"}
+{"type":"context_status","status":"ready","projection_json_bytes":900,"projection_limit_bytes":929856,"unit":"utf8_json_bytes_not_tokens","near_threshold":false,"source":"host_working_projection"}
+{"type":"model_call","phase":"agent","call":1,"usage":"unknown","status":"reserved","context_observation":{"system_utf8_bytes":1759,"system_sha256":"7179c5f6c9467d93b699033a4d01f87cf5934dbeddc09c9feeacca153948991c","projection_messages":3,"unit":"utf8_bytes_not_tokens","cache_policy":"provider_managed_no_hit_guarantee","request_json_bytes":7777,"request_limit_bytes":995392,"budget_source":"host_conservative_text_allocation"},"output_limit":{"effective":512,"sources":["request"]}}
+{"type":"text_delta","output":"done"}
+{"type":"model_result","phase":"agent","call":1,"status":"received","stop_reason":"stop","usage":"unknown_unless_positive_adapter_counts","usage_metrics":{"status":"unknown","source":"provider_adapter","cost":null},"elapsed_ms":2,"title":"模型用量 · 以供应商已报告值为准"}
+{"type":"text","output":"done"}
+{"type":"completion_gate","check_id":"public-checks","sequence":1,"result":"failed","feedback_ref":"ref-2","calls_used":1}
+{"type":"context_status","status":"ready","projection_json_bytes":1747,"projection_limit_bytes":929856,"unit":"utf8_json_bytes_not_tokens","near_threshold":false,"source":"host_working_projection"}
+{"type":"model_call","phase":"agent","call":2,"usage":"unknown","status":"reserved","context_observation":{"system_utf8_bytes":1759,"system_sha256":"7179c5f6c9467d93b699033a4d01f87cf5934dbeddc09c9feeacca153948991c","projection_messages":5,"unit":"utf8_bytes_not_tokens","cache_policy":"provider_managed_no_hit_guarantee","request_json_bytes":8624,"request_limit_bytes":995392,"budget_source":"host_conservative_text_allocation"},"output_limit":{"effective":512,"sources":["request"]}}
+{"type":"model_result","phase":"agent","call":2,"status":"received","stop_reason":"stop","usage":"unknown_unless_positive_adapter_counts","usage_metrics":{"status":"unknown","source":"provider_adapter","cost":null},"elapsed_ms":2,"title":"模型用量 · 以供应商已报告值为准"}
+{"type":"text_delta","output":"fixed"}
+{"type":"text","output":"fixed"}
+{"type":"completion_gate","check_id":"public-checks","sequence":2,"result":"passed","feedback_ref":null,"calls_used":2}
+{"type":"agent_end","status":"completed","output":"fixed","detail":"","code":0}
+{"type":"model_capabilities","source":"hub_model_directory","model":"core-fixture","declared":{"context_window":1000000,"max_tokens":4096,"input":["text"]},"text_budget":{"projection_bytes":929856,"request_bytes":995392},"budget_unit":"conservative_utf8_json_bytes_not_usage","host_input":["text"]}
+{"type":"agent_start","status":"running"}
+{"type":"context_status","status":"ready","projection_json_bytes":2422,"projection_limit_bytes":929856,"unit":"utf8_json_bytes_not_tokens","near_threshold":false,"source":"host_working_projection"}
+{"type":"model_call","phase":"agent","call":1,"usage":"unknown","status":"reserved","context_observation":{"system_utf8_bytes":1759,"system_sha256":"7179c5f6c9467d93b699033a4d01f87cf5934dbeddc09c9feeacca153948991c","projection_messages":7,"unit":"utf8_bytes_not_tokens","cache_policy":"provider_managed_no_hit_guarantee","request_json_bytes":9301,"request_limit_bytes":995392,"budget_source":"host_conservative_text_allocation"},"output_limit":{"effective":512,"sources":["request"]}}
+{"type":"model_result","phase":"agent","call":1,"status":"received","stop_reason":"stop","usage":"unknown_unless_positive_adapter_counts","usage_metrics":{"status":"unknown","source":"provider_adapter","cost":null},"elapsed_ms":2,"title":"模型用量 · 以供应商已报告值为准"}
+{"type":"text_delta","output":"done again"}
+{"type":"text","output":"done again"}
+{"type":"completion_gate","check_id":"public-checks","sequence":1,"result":"failed","feedback_ref":null,"calls_used":1}
+{"type":"agent_end","status":"failed","output":"done again","detail":"model call budget exhausted before a final response","code":-1,"completion_gate":{"check_id":"public-checks","sequence":1,"result":"failed"}}

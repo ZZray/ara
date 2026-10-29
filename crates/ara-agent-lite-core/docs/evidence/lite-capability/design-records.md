@@ -144,11 +144,31 @@
 ## DR-P4-1 事件 `type` 清单与样本采集场景
 
 - 约束：在 Event_Enum 改动之前，对源码与采样语料统计全部事件 `type` 值，并确定样本采集场景（普通完成、工具、压缩、Length 重规划、闭合预算、Goal，以及 P2 各功能开启）。任务 56.2 采集的样本文件 SHA-256 补记于本条，之后不重新生成。阻塞 Event_Enum 实施（任务 56.1、56.2；需求 28.1、28.4）。
-- 核实结论：待核实
-- 来源位置：待核实（候选：design.md 列出 16 种 `agent_start`、`agent_end`、`text_delta`、`text`、`tool_start`、`tool_end`、`model_capabilities`、`generation_policy`、`model_call`、`model_result`、`context_status`、`compact`、`length_recovery`、`goal_status`、`goal_update`、`task_update`，加 P2 新增的 `completion_gate`、`stuck_detector`、`compaction_refresh`；以实施时源码为准）
-- 证据等级：待核实
-- 日期：待填
-- 后续动作：待核实
+- 核实结论：Core 发出 19 种 `type`，与 design.md 的候选清单一致，没有其他值。
+  - 清单：`agent_start`、`agent_end`、`text_delta`、`text`、`tool_start`、`tool_end`、`model_capabilities`、`generation_policy`、`model_call`、`model_result`、`context_status`、`compact`、`length_recovery`、`goal_status`、`goal_update`、`task_update`、`completion_gate`、`stuck_detector`、`compaction_refresh`。源码中所有事件都用 `json!({"type":"<字面量>",…})` 构造，没有动态 `type`，也没有事后改写 `type` 的位置。
+  - 采样场景 13 个，每个场景一个文件，见 `tests/event_scenarios/mod.rs`：`completion`（普通完成）、`tools`（成功、失败和 `effects_unknown` 三类工具结果，加 `task_update` 有无 `evidence` 两种）、`generation_policy`、`compaction`（两次 Run，第二次压缩）、`compaction_refresh`、`length_replan`（`replan_once`）、`length_stop_evidence`、`closed_budget`（`termination`）、`goal`（Goal Run 加 `/goal status` 命令 Run）、`completion_gate`（失败后通过，以及预算用尽时 `agent_end.completion_gate`）、`stuck_detector`（`rule_hit`、`correction`、`no_progress`）、`output_limit`（Host 上限 1024）、`summary_budget_stop`。样本共 221 行，19 种 `type` 各至少 1 行。
+  - 采集方式：在加入 `events.rs` 之前，用当时的代码经 loopback provider 运行，`tests/event_samples.rs` 的 `capture_events_v1`（默认忽略，需 `LITE_EVENTS_V1_CAPTURE=write`，目录已存在时拒绝写入）写出样本与 `execute-golden.json`（每个场景每次 Run 的事件 `type` 与排序后的顶层字段名）。字符串中的临时目录替换为 `%ROOT%`，其他值原样保留；`.gitattributes` 的 `-text` 保证检出后字节不变。
+  - 样本 SHA-256（`tests/event_compat.rs` 的 `SAMPLE_SHA256` 同步核对）：
+    - `closed_budget.jsonl` `cac3a7a0643a4e30445e1ce30594076d975c748b2ce433c779630766b4857ce7`
+    - `compaction.jsonl` `579caa14bb264bb751cfc2185a35ebd99866aa3ecfac70acad51479a9498feb3`
+    - `compaction_refresh.jsonl` `5a24d1821c73d68529664c9dc4ae3cb377c779218d8fc942f2098c10b9f4805a`
+    - `completion.jsonl` `0485de05539718ec993e9cba3bc9168d9d1c9e2182dc9c5616e3ea91e251f6cc`
+    - `completion_gate.jsonl` `b7275859b63628e9166e852ca99c950564da434d2e4cc429e5e627558e56c521`
+    - `execute-golden.json` `20c62425232fdc9387c0d16dc67c221f78614881e6a59f56bdbd087e2abcb7dd`
+    - `generation_policy.jsonl` `1e49a1e42eeee12484b1756a2a0c5e84d1eac70e3da12bd25fd82481071a1f28`
+    - `goal.jsonl` `c307c4ce80cbf0ea5fd4631b9ef15ad23e6496fdcf2b4ad2342916649b0ee978`
+    - `length_replan.jsonl` `14c61b3a6d8428756d548048cb1e868ea420623f52a9d58c957ebaf4cd6896ca`
+    - `length_stop_evidence.jsonl` `30f0fa70edc89a1703cd71662145525ac7f5ec54634fa8699fe8ead40ed30d50`
+    - `output_limit.jsonl` `090b944343e087990ab8d1e66f6e29585d0334615d6fec27395cccacf86dd948`
+    - `stuck_detector.jsonl` `8ac630fb7641e9788e1818fdbf1f69bdf4cd7794fcb62756da592cb5f8051b13`
+    - `summary_budget_stop.jsonl` `4336320e30893a62caae0aebc0b3d703e30153abd85f26026f492b2a8c94544d`
+    - `tools.jsonl` `cf950a8df5f21a168885bc217a9a353fd5a8fcb87fc7971a430f9b163739c379`
+  - 字段规则（取自样本）：顶层字段全部有固定 JSON 类型，没有浮点数；`agent_end.code` 用 `i64`，其余整数用 `u64`。只在部分事件出现的字段（`agent_end` 的 `termination`、`stop_evidence`、`completion_gate`，`tool_end.effects_unknown`，`model_call.context_observation`，`model_result` 的 `elapsed_ms`、`title`、`content_types`、`provider_error_present`，`task_update.evidence`）用 `Option<T>` 加 `skip_serializing_if`，显式 `null` 判为类型错误。唯一“总是出现、可为 `null`”的字段是 `completion_gate.feedback_ref`，用必填的 `Option<String>`；样本中没有“缺省与 `null` 并存”的字段，因此没有用到 `Option<Option<T>>`。Goal、预算、终止证据、遥测等由其他模块定义的嵌套内容保持为 JSON 对象。
+  - 已有的顺序不确定性：同一轮的 `model_result`（provider 任务在流结束时发送）与 `text_delta`（agent 消费流时发送）由两个任务各自发送，相对顺序在采集前的代码中就不固定（两次预览采集在 5 个场景中出现过对调）。黄金对照比较前把每个 `model_result` 移到与之竞争的相邻 `text_delta` 之前，其余顺序原样比较。Event_Enum 不改变这一行为。
+- 来源位置：`src/agent.rs:700-725`（HostEmitter 的 `agent_start`、`text_delta`、`text`、`tool_start`、`tool_end`）、`:940`（`completion_gate`）、`:1171-1173`、`:1204-1205`、`:1304`、`:1310`、`:1347`、`:1488`、`:1499`、`:1615`、`:1629`、`:1815`、`:1853`、`:1946`、`:2487`、`:2490`；`src/model_telemetry.rs:44`、`:54`；`src/compaction_refresh.rs:141`；`src/execution.rs:217`、`:330` @ `3d12d49c7b02a98052a307d8349123c5a7a02cb1`（工作区含未提交改动；Core 源码在采集时无未提交改动）
+- 证据等级：运行确认（样本由实际 `execute` 运行产生；`event_compat` 重新运行 13 个场景并与黄金对照一致）
+- 日期：2026-10-29
+- 后续动作：样本不再重新生成，提交待用户授权。`src/events.rs` 按上述字段规则实现；`tests/event_enum.rs`（Property 38）、`tests/event_enum_errors.rs`（Property 39）、`tests/event_compat.rs` 读取这些样本。新增事件 `type` 或字段时需把 `EVENT_SCHEMA_VERSION` 加 1，并另行补采样本（新文件，不覆盖本组）。
 
 ## DR-X-1 属性测试依赖 proptest 的精确版本
 

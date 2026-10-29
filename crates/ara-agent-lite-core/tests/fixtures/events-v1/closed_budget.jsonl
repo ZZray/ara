@@ -1,0 +1,8 @@
+{"type":"model_capabilities","source":"hub_model_directory","model":"core-fixture","declared":{"context_window":1000000,"max_tokens":4096,"input":["text"]},"text_budget":{"projection_bytes":929856,"request_bytes":995392},"budget_unit":"conservative_utf8_json_bytes_not_usage","host_input":["text"]}
+{"type":"agent_start","status":"running"}
+{"type":"context_status","status":"ready","projection_json_bytes":918,"projection_limit_bytes":929856,"unit":"utf8_json_bytes_not_tokens","near_threshold":false,"source":"host_working_projection"}
+{"type":"model_call","phase":"agent","call":1,"usage":"unknown","status":"reserved","context_observation":{"system_utf8_bytes":1759,"system_sha256":"7179c5f6c9467d93b699033a4d01f87cf5934dbeddc09c9feeacca153948991c","projection_messages":3,"unit":"utf8_bytes_not_tokens","cache_policy":"provider_managed_no_hit_guarantee","request_json_bytes":7920,"request_limit_bytes":995392,"budget_source":"host_conservative_text_allocation"},"output_limit":{"effective":512,"sources":["request"]}}
+{"type":"model_result","phase":"agent","call":1,"status":"received","stop_reason":"toolUse","usage":"unknown_unless_positive_adapter_counts","usage_metrics":{"status":"unknown","source":"provider_adapter","cost":null},"elapsed_ms":4,"title":"模型用量 · 以供应商已报告值为准"}
+{"type":"tool_start","status":"running","step_id":"c1","title":"probe","detail":"{}"}
+{"type":"tool_end","step_id":"c1","title":"probe","status":"completed","output":"probe state"}
+{"type":"agent_end","status":"failed","output":"","detail":"model call budget exhausted before a final response","code":-1,"termination":{"version":1,"cause":"call_budget_exhausted","native_round_closed":true,"model_final_stop":false}}
