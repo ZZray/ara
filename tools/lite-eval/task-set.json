@@ -1,6 +1,10 @@
 {
   "version": 1,
   "digest_rule": "lite-eval-tree-v1",
+  "sealed": {
+    "path": "D:/WorkSpace/tmp/ara-lite-capability/private/task-set.sealed.json",
+    "sha256": "06e46d1cac11e719d2150dc88ff5e64331170d11161a55d6c57ae06e94aef2c1"
+  },
   "tasks": [
     {
       "task_id": "S1",
@@ -156,6 +160,36 @@
           "ws_list_dir",
           "ws_search_files",
           "binary_inspect"
+        ]
+      }
+    },
+    {
+      "task_id": "SH1",
+      "kind": "Coding",
+      "fixture_path": "D:/WorkSpace/tmp/ara-lite-capability/private/sealed/SH1/fixture",
+      "fixture_sha256": "f4bc7eb8aff21b68a4ef86e28d2e9a5e8de60e7ae1b649de070e0bc40375bad6",
+      "oracle": {
+        "type": "sealed_python_cli_hidden_cases",
+        "holdout_cases": 48,
+        "command": []
+      },
+      "holdout": {
+        "status": "new holdout",
+        "registered": "2026-10-29"
+      },
+      "profile": {
+        "mode": "execute",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "ws_write_file",
+          "ws_edit_file",
+          "run_public_checks"
+        ],
+        "public_check": [
+          "python",
+          "tests/run_public.py"
         ]
       }
     }

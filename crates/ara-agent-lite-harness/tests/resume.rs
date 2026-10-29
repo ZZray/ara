@@ -318,3 +318,245 @@ async fn resume_checked_refuses_with_typed_reasons_before_any_callback() {
     assert_eq!(tool.executions.load(Ordering::SeqCst), 1);
     assert!(ResumeRefusal::CallMismatch.to_string().ends_with("fence kept"));
 }
+
+/// Receipt faults of `PropResumer`; `None` is a valid settled receipt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ReceiptFault {
+    None,
+    CallbackError,
+    Uncommitted,
+    Unknown,
+    EmptyEvidence,
+    WrongCall,
+    ExtraCall,
+    MissingCall,
+}
+
+struct PropResumer {
+    inner: Arc<Host>,
+    fault: Mutex<ReceiptFault>,
+    callbacks: AtomicUsize,
+}
+#[async_trait]
+impl HarnessHost for PropResumer {
+    async fn verify(&self, candidate: Candidate, cancel: CancellationToken) -> Result<ReviewReceipt> {
+        self.inner.verify(candidate, cancel).await
+    }
+    async fn prepare_continuation(&self, continuation: Continuation, cancel: CancellationToken) -> Result<RunRequest> {
+        self.inner.prepare_continuation(continuation, cancel).await
+    }
+    async fn reconcile_resume(&self, review: ResumeReview, _: CancellationToken) -> Result<ResumeReceipt> {
+        self.callbacks.fetch_add(1, Ordering::SeqCst);
+        let fault = *self.fault.lock().unwrap();
+        anyhow::ensure!(fault != ReceiptFault::CallbackError, "fixture reconciliation callback failed");
+        let calls = review.interrupted_run.as_ref().map(|run| run.open_tool_calls.clone()).unwrap_or_default();
+        let mut tool_calls: Vec<_> = calls
+            .iter()
+            .map(|call| ToolCallReconciliation {
+                call_id: if fault == ReceiptFault::WrongCall { "invented".into() } else { call.id.clone() },
+                settlement: ToolCallSettlement::Completed { output: "Host deploy log: step finished.".into() },
+            })
+            .collect();
+        match fault {
+            ReceiptFault::ExtraCall => tool_calls.push(tool_calls[0].clone()),
+            ReceiptFault::MissingCall => tool_calls.clear(),
+            _ => {}
+        }
+        Ok(ResumeReceipt {
+            committed: fault != ReceiptFault::Uncommitted,
+            settlement: if fault == ReceiptFault::Unknown { Settlement::Unknown } else { Settlement::Settled },
+            tool_calls,
+            evidence: if fault == ReceiptFault::EmptyEvidence {
+                vec![]
+            } else {
+                vec!["host-deploy-log:sha256:0f00".into()]
+            },
+        })
+    }
+}
+
+/// Every file below `dir`, with its bytes.
+fn tree(dir: &Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    files
+}
+
+/// One crashed owner with one open `deploy_step` call.
+struct Crashed {
+    _directory: tempfile::TempDir,
+    root: std::path::PathBuf,
+    provider: Provider,
+    tool: Arc<Hang>,
+    host: Arc<Host>,
+    spec: TaskSpec,
+}
+
+fn crashed(responses: Vec<Value>, max_calls: usize) -> Crashed {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let provider = Provider::new(responses);
+    let tool = hang();
+    let mut host = Host::new(&root, &provider, Fault::None);
+    host.read_tool = Some(tool.clone());
+    let host = Arc::new(host);
+    let mut spec = host.spec("original");
+    spec.max_calls = max_calls;
+    crash_owner(host.clone(), spec.clone(), tool.clone());
+    Crashed { _directory: directory, root, provider, tool, host, spec }
+}
+
+/// Property 16: a refused resume leaves no side effect (requirements 8.4,
+/// 8.6, 14.4, 24.1). One crashed owner serves every case, because each
+/// refusal must leave it exactly as it was.
+#[test]
+fn resume_refusal_leaves_no_side_effects() {
+    use proptest::test_runner::{Config, TestRunner};
+    let fixture = crashed(vec![call("deploy-1", "deploy_step", json!({}))], 8);
+    let resumer = Arc::new(PropResumer {
+        inner: fixture.host.clone(),
+        fault: Mutex::new(ReceiptFault::None),
+        callbacks: AtomicUsize::new(0),
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let session = fixture.root.join("session.json");
+    let fence = fence_of(&fixture.root);
+    let fence_bytes = std::fs::read(&fence).unwrap();
+    let fenced_files = tree(&fixture.root.join("original"));
+    let pending = serde_json::to_value(agent::interrupted_run(&session, &fixture.root).unwrap()).unwrap();
+    let attempts = AtomicUsize::new(0);
+    // 0..10 change one fence term; 10..17 return an invalid receipt.
+    const TERMS: usize = 10;
+    let faults = [
+        ReceiptFault::CallbackError,
+        ReceiptFault::Uncommitted,
+        ReceiptFault::Unknown,
+        ReceiptFault::EmptyEvidence,
+        ReceiptFault::WrongCall,
+        ReceiptFault::ExtraCall,
+        ReceiptFault::MissingCall,
+    ];
+    let mut runner = TestRunner::new(Config { cases: 32, ..Config::default() });
+    runner
+        .run(&(0..TERMS + faults.len()), |variant| {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            let (mut s, mut r) = resumed(&fixture.host, &fixture.spec, &format!("attempt-{attempt}"));
+            let mut checks = ResumeChecks::default();
+            match variant {
+                0 => s.task_id = "other-task".into(),
+                1 => s.criteria_revision = "other-criteria".into(),
+                2 => s.authorization_revision = "other-authorization".into(),
+                3 => s.deadline_unix_ms += 1_000,
+                4 => s.max_runs += 1,
+                5 => s.max_calls += 1,
+                6 => r.state_path = fixture.root.join("other-session.json"),
+                7 => r.endpoint = "http://127.0.0.1:9/v1".into(),
+                8 => r.model = "other-model".into(),
+                9 => {
+                    r.max_calls += 1;
+                    checks.refuse_larger_run_caps = true;
+                }
+                _ => {}
+            }
+            *resumer.fault.lock().unwrap() = if variant < TERMS { ReceiptFault::None } else { faults[variant - TERMS] };
+            let before = resumer.callbacks.load(Ordering::SeqCst);
+            let result = runtime.block_on(resume_checked(s, r, resumer.clone(), TaskOptions::default(), checks));
+            let error = result.err().unwrap_or_else(|| panic!("variant {variant} was not refused"));
+            proptest::prop_assert!(error.downcast_ref::<ResumeRefusal>().is_some(), "untyped: {error:#}");
+            let called = resumer.callbacks.load(Ordering::SeqCst) - before;
+            proptest::prop_assert_eq!(called, usize::from(variant >= TERMS), "variant {}", variant);
+            proptest::prop_assert_eq!(&std::fs::read(&fence).unwrap(), &fence_bytes);
+            proptest::prop_assert!(tree(&fixture.root.join("original")) == fenced_files, "fenced receipts changed");
+            let now = serde_json::to_value(agent::interrupted_run(&session, &fixture.root).unwrap()).unwrap();
+            proptest::prop_assert_eq!(&now, &pending);
+            proptest::prop_assert_eq!(fixture.provider.requests.lock().unwrap().len(), 1);
+            proptest::prop_assert_eq!(fixture.tool.executions.load(Ordering::SeqCst), 1);
+            Ok(())
+        })
+        .unwrap();
+}
+
+/// `resume` clamps a larger per-Run cap to the original admission, where
+/// `resume_checked` would refuse it (requirement 8.5).
+#[tokio::test]
+async fn resume_clamps_larger_run_caps_to_the_original_admission() {
+    let fixture =
+        crashed(vec![call("deploy-1", "deploy_step", json!({})), write_answer("correct"), text("Submitted.")], 8);
+    let resumer =
+        Arc::new(Resumer { inner: fixture.host.clone(), mode: Mutex::new(Mode::Settled), reviews: Mutex::default() });
+    let (s, mut r) = resumed(&fixture.host, &fixture.spec, "clamped");
+    r.max_calls = 7;
+    let outcome = resume(s, r, resumer, TaskOptions::default()).await.unwrap().wait().await;
+    assert_eq!(outcome.stop, TaskStop::AwaitingHostAcceptance, "{outcome:?}");
+    let admission: Value =
+        serde_json::from_slice(&std::fs::read(fixture.root.join("clamped/run-2-admission.json")).unwrap()).unwrap();
+    // The original first Run was admitted with 4 calls; the request asked for 7.
+    assert_eq!(admission["remaining_calls"], 4, "{admission}");
+    assert_eq!(fixture.tool.executions.load(Ordering::SeqCst), 1);
+}
+
+/// Every remaining refusal kind is typed, and pre-callback refusals never
+/// reach the Host (requirement 8.7).
+#[tokio::test]
+async fn every_refusal_kind_is_typed() {
+    // NoFence: a Session that has never been fenced.
+    let directory = tempfile::tempdir().unwrap();
+    let provider = Provider::new(vec![]);
+    let plain = Arc::new(Host::new(&directory.path().canonicalize().unwrap(), &provider, Fault::None));
+    let error = resume(plain.spec("nothing"), plain.request("resume-nothing"), plain.clone(), TaskOptions::default())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::NoFence);
+
+    let fixture = crashed(vec![call("deploy-1", "deploy_step", json!({}))], 8);
+    let resumer = Arc::new(PropResumer {
+        inner: fixture.host.clone(),
+        fault: Mutex::new(ReceiptFault::None),
+        callbacks: AtomicUsize::new(0),
+    });
+    // DeadlineElapsed and FenceMismatch are decided before any callback.
+    let (mut s, r) = resumed(&fixture.host, &fixture.spec, "late");
+    s.deadline_unix_ms = now_ms() - 1;
+    let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::DeadlineElapsed);
+    let (s, r) = resumed(&fixture.host, &fixture.spec, "sha");
+    let checks = ResumeChecks { expected_fence_sha256: Some("f".repeat(64)), ..ResumeChecks::default() };
+    let error = resume_checked(s, r, resumer.clone(), TaskOptions::default(), checks).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::FenceMismatch);
+    assert_eq!(resumer.callbacks.load(Ordering::SeqCst), 0);
+    // A Host without reconciliation support, and an empty evidence list.
+    let (s, r) = resumed(&fixture.host, &fixture.spec, "unsupported");
+    let error = resume(s, r, fixture.host.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::HostCallbackFailed);
+    *resumer.fault.lock().unwrap() = ReceiptFault::EmptyEvidence;
+    let (s, r) = resumed(&fixture.host, &fixture.spec, "empty");
+    let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::EvidenceEmpty);
+    *resumer.fault.lock().unwrap() = ReceiptFault::CallbackError;
+    let (s, r) = resumed(&fixture.host, &fixture.spec, "callback");
+    let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::HostCallbackFailed);
+
+    // BudgetExhausted: the unobserved Run is charged its whole 4-call limit.
+    let exhausted = crashed(vec![call("deploy-1", "deploy_step", json!({}))], 4);
+    let (s, r) = resumed(&exhausted.host, &exhausted.spec, "spent");
+    let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::BudgetExhausted);
+    // FenceUnreadable: the fence is no longer JSON.
+    std::fs::write(fence_of(&exhausted.root), b"{not json").unwrap();
+    let (s, r) = resumed(&exhausted.host, &exhausted.spec, "unreadable");
+    let error = resume(s, r, resumer.clone(), TaskOptions::default()).await.err().unwrap();
+    assert_eq!(refusal(error), ResumeRefusal::FenceUnreadable);
+    assert_eq!(resumer.callbacks.load(Ordering::SeqCst), 2, "only the two receipt cases reached the Host");
+}

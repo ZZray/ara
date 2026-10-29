@@ -1358,3 +1358,72 @@ mod budget_observation_tests {
         assert!(observation.reviewable_budget_termination(&result(), 1).is_none());
     }
 }
+
+/// Property 17: consumption accumulates and is never refunded (requirement 8.8).
+#[cfg(test)]
+mod consumed_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn write(path: std::path::PathBuf, value: Value) {
+        std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    fn outcome(runs: usize, observed_calls: usize) -> TaskOutcome {
+        TaskOutcome {
+            task_id: "t".into(),
+            stop: TaskStop::ReconciliationRequired,
+            runs,
+            observed_calls,
+            last_candidate: None,
+            last_receipt: None,
+            detail: String::new(),
+            task_accepted: false,
+            reconciliation_fence: None,
+            fence_presence: FencePresence::Present,
+            unknown_effects: Vec::new(),
+            budget_stop: None,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn consumption_counts_every_admitted_run_without_refund(
+            prior in proptest::option::of((0usize..4, 0usize..40)),
+            runs in proptest::collection::vec((1usize..10, proptest::option::of(0usize..10)), 0..6),
+            published in proptest::option::of((0usize..12, 0usize..80)),
+        ) {
+            let directory = tempfile::tempdir().unwrap();
+            let evidence = directory.path();
+            let (prior_runs, prior_calls) = prior.unwrap_or((0, 0));
+            if let Some((consumed_runs, consumed_calls)) = prior {
+                write(evidence.join("resume.json"), json!({"consumed_runs":consumed_runs,"consumed_calls":consumed_calls}));
+            }
+            let mut expected_calls = prior_calls;
+            for (offset, (admitted, observed)) in runs.iter().enumerate() {
+                let number = prior_runs + offset + 1;
+                write(evidence.join(format!("run-{number}-admission.json")), json!({"remaining_calls":admitted}));
+                if let Some(observed) = observed {
+                    write(evidence.join(format!("run-{number}-observation.json")), json!({"observed_calls":observed}));
+                }
+                // An unobserved Run is charged its whole admitted limit.
+                expected_calls += observed.unwrap_or(*admitted);
+            }
+            let mut expected_runs = prior_runs + runs.len();
+            let published = published.map(|(runs, calls)| outcome(runs, calls));
+            if let Some(outcome) = &published {
+                expected_runs = expected_runs.max(outcome.runs);
+                expected_calls = expected_calls.max(outcome.observed_calls);
+            }
+            let (consumed_runs, consumed_calls) = consumed(evidence, published.as_ref()).unwrap();
+            prop_assert_eq!((consumed_runs, consumed_calls), (expected_runs, expected_calls));
+            // Never below any earlier record of the chain.
+            prop_assert!(consumed_runs >= prior_runs && consumed_calls >= prior_calls);
+            if let Some(outcome) = &published {
+                prop_assert!(consumed_runs >= outcome.runs && consumed_calls >= outcome.observed_calls);
+            }
+        }
+    }
+}
