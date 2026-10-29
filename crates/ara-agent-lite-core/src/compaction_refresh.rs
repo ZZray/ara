@@ -318,3 +318,227 @@ mod tests {
         assert_eq!(plan(None, files(), 0).outcomes[0].1, FileOutcome::SkippedByLimit);
     }
 }
+
+/// Property 25 (requirements 19.1–19.3, 19.8, 19.9): candidate selection and
+/// the byte budget of the refresh messages, against reference models.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use rpi_ai::{ToolCall, ToolResultMessage};
+
+    const TOOLS: [&str; 4] = ["read_file", "write_file", "edit_file", "exec"];
+    const PATHS: [&str; 4] = ["a.rs", "b.rs", "dir/c.rs", "d.txt"];
+
+    fn assistant(calls: &[(String, usize, usize)]) -> AgentMessage {
+        let mut message = rpi_ai::AssistantMessage::empty(rpi_ai::Api::OpenaiCompletions, "fixture", "fixture", 0);
+        message.stop_reason = rpi_ai::StopReason::ToolUse;
+        message.content = calls
+            .iter()
+            .map(|(id, tool, path)| {
+                Content::ToolCall(ToolCall {
+                    kind: Default::default(),
+                    id: id.clone(),
+                    name: TOOLS[*tool].into(),
+                    arguments: json!({"path": PATHS[*path]}),
+                    thought_signature: None,
+                    namespace: None,
+                })
+            })
+            .collect();
+        AgentMessage::Assistant(Box::new(message))
+    }
+
+    fn result(id: &str, tool: usize, is_error: bool) -> AgentMessage {
+        AgentMessage::ToolResult(Box::new(ToolResultMessage {
+            role: Default::default(),
+            tool_call_id: id.into(),
+            tool_name: TOOLS[tool].into(),
+            content: vec![Content::text("x")],
+            details: None,
+            usage: None,
+            added_tool_names: vec![],
+            is_error,
+            timestamp: 0,
+        }))
+    }
+
+    /// (tool, path, succeeded, raw index) of each answered call.
+    type Answered = Vec<(usize, usize, bool, usize)>;
+
+    /// Rounds of (tool, path, succeeded) calls, each answered in order.
+    fn history(rounds: &[Vec<(usize, usize, bool)>]) -> (Vec<AgentMessage>, Answered) {
+        let (mut messages, mut answered, mut next) = (Vec::new(), Vec::new(), 0);
+        for round in rounds {
+            let calls: Vec<_> = round
+                .iter()
+                .map(|(tool, path, _)| {
+                    next += 1;
+                    (format!("c{next}"), *tool, *path)
+                })
+                .collect();
+            messages.push(assistant(&calls));
+            for ((id, tool, path), (_, _, ok)) in calls.iter().zip(round) {
+                answered.push((*tool, *path, *ok, messages.len()));
+                messages.push(result(id, *tool, !ok));
+            }
+        }
+        (messages, answered)
+    }
+
+    #[derive(Clone, Debug)]
+    enum Disk {
+        Text(String),
+        Binary(Vec<u8>),
+        Missing,
+        Denied,
+        Broken,
+    }
+
+    fn disk() -> impl Strategy<Value = Disk> {
+        prop_oneof![
+            4 => "[a-z\n中文😀]{0,600}".prop_map(Disk::Text),
+            1 => prop::collection::vec(0x80u8..=0xff, 1..64).prop_map(Disk::Binary),
+            1 => Just(Disk::Missing),
+            1 => Just(Disk::Denied),
+            1 => Just(Disk::Broken),
+        ]
+    }
+
+    fn read(disk: &Disk) -> io::Result<Vec<u8>> {
+        match disk {
+            Disk::Text(text) => Ok(text.clone().into_bytes()),
+            Disk::Binary(bytes) => Ok(bytes.clone()),
+            Disk::Missing => Err(io::Error::from(io::ErrorKind::NotFound)),
+            Disk::Denied => Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            Disk::Broken => Err(io::Error::other("device failed with secret old contents")),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn candidates_are_recent_successful_file_paths_deduplicated(
+            rounds in prop::collection::vec(prop::collection::vec((0..4usize, 0..4usize, any::<bool>()), 1..4), 0..8),
+            max_files in 1usize..5,
+            raw_base in 0usize..50,
+        ) {
+            let cwd = Path::new("/workspace");
+            let (messages, answered) = history(&rounds);
+            let mut expected: Vec<Candidate> = Vec::new();
+            for (tool, path, ok, index) in answered.iter().rev() {
+                let path = cwd.join(PATHS[*path]);
+                if *ok && *tool < 3 && !expected.iter().any(|candidate| candidate.path == path) {
+                    expected.push(Candidate { path, last_raw_index: raw_base + index });
+                }
+            }
+            expected.truncate(max_files);
+            let policy = RefreshPolicy::new(max_files, 1024);
+            prop_assert_eq!(candidates(&messages, raw_base, cwd, &policy), expected);
+        }
+
+        #[test]
+        fn plan_respects_the_byte_budget_and_reports_each_outcome(
+            state in prop::option::of("[a-z ]{0,300}"),
+            files in prop::collection::vec(disk(), 0..5),
+            max_bytes in prop_oneof![1usize..1200, 1200usize..4000, Just(64 * 1024)],
+        ) {
+            let paths: Vec<PathBuf> = (0..files.len()).map(|index| PathBuf::from(format!("f{index}.txt"))).collect();
+            let inputs = paths.iter().cloned().zip(files.iter().map(read)).collect();
+            let plan = plan(state.clone(), inputs, max_bytes);
+            prop_assert_eq!(plan.bytes, plan.messages.iter().map(String::len).sum::<usize>());
+            prop_assert!(plan.bytes <= max_bytes);
+            prop_assert_eq!(plan.outcomes.len(), files.len());
+
+            let mut messages = plan.messages.iter();
+            let mut used = 0;
+            // The plan state is counted first and only when it fits whole.
+            let plan_text = state.as_ref().map(|state| format!("{PLAN_HEADER}\n{state}"));
+            let plan_fits = plan_text.as_ref().is_some_and(|text| text.len() <= max_bytes);
+            prop_assert_eq!(plan.plan_state, plan_fits);
+            if plan_fits {
+                prop_assert_eq!(messages.next(), plan_text.as_ref());
+                used += plan_text.unwrap().len();
+            }
+            for ((path, disk), (outcome_path, outcome, sha256)) in paths.iter().zip(&files).zip(&plan.outcomes) {
+                prop_assert_eq!(outcome_path, path);
+                let remaining = max_bytes - used;
+                let shown = path.display().to_string();
+                let bytes = match read(disk) {
+                    Err(error) => {
+                        let kind = match error.kind() {
+                            io::ErrorKind::NotFound => "not_found",
+                            io::ErrorKind::PermissionDenied => "permission_denied",
+                            _ => "other",
+                        };
+                        let text = format!("{HEADER}\npath={shown}\nerror=\"{kind}\"");
+                        prop_assert!(sha256.is_none());
+                        if text.len() <= remaining {
+                            let read_error = matches!(outcome, FileOutcome::ReadError { .. });
+                            prop_assert!(read_error);
+                            let wire = serde_json::to_value(outcome).unwrap();
+                            prop_assert_eq!(wire["kind"].as_str(), Some(kind));
+                            prop_assert_eq!(messages.next(), Some(&text));
+                            used += text.len();
+                        } else {
+                            prop_assert_eq!(outcome, &FileOutcome::SkippedByLimit);
+                        }
+                        continue;
+                    }
+                    Ok(bytes) => bytes,
+                };
+                let digest = format!("{:x}", Sha256::digest(&bytes));
+                prop_assert_eq!(sha256.as_deref(), Some(digest.as_str()));
+                let reference = format!("{HEADER}\npath={shown}\nsha256={digest}\nbytes={}", bytes.len());
+                let message = match outcome {
+                    FileOutcome::Full => {
+                        let text = std::str::from_utf8(&bytes).unwrap();
+                        prop_assert!(reference.len() + 1 + text.len() <= remaining);
+                        format!("{reference}\n{text}")
+                    }
+                    FileOutcome::Window { start, end } => {
+                        let text = std::str::from_utf8(&bytes).unwrap();
+                        let end = *end as usize;
+                        prop_assert_eq!(*start, 0);
+                        prop_assert!(end > 0 && end < text.len() && text.is_char_boundary(end));
+                        // A window is used only when the whole file does not fit.
+                        prop_assert!(reference.len() + 1 + text.len() > remaining);
+                        format!("{reference}\nwindow=0..{end}\n{}", &text[..end])
+                    }
+                    FileOutcome::ReferenceOnly => {
+                        prop_assert!(
+                            std::str::from_utf8(&bytes).is_err() || reference.len() + 1 + bytes.len() > remaining
+                        );
+                        reference.clone()
+                    }
+                    FileOutcome::SkippedByLimit => {
+                        prop_assert!(reference.len() > remaining);
+                        continue;
+                    }
+                    FileOutcome::ReadError { .. } => {
+                        prop_assert!(false, "readable file reported a read error");
+                        unreachable!()
+                    }
+                };
+                prop_assert_eq!(messages.next(), Some(&message));
+                used += message.len();
+            }
+            prop_assert!(messages.next().is_none());
+            prop_assert_eq!(used, plan.bytes);
+            prop_assert!(plan.messages.iter().all(|message| !message.contains("secret old contents")));
+
+            let event = plan.event();
+            prop_assert_eq!(event["bytes"].as_u64(), Some(plan.bytes as u64));
+            prop_assert_eq!(event["plan_state"].as_bool(), Some(plan.plan_state));
+            let files_event = event["files"].as_array().unwrap();
+            prop_assert_eq!(files_event.len(), plan.outcomes.len());
+            for (row, (path, outcome, sha256)) in files_event.iter().zip(&plan.outcomes) {
+                prop_assert_eq!(row["path"].as_str(), path.to_str());
+                let wire = serde_json::to_value(outcome).unwrap();
+                prop_assert_eq!(&row["result"], &wire);
+                prop_assert_eq!(row["sha256"].as_str(), sha256.as_deref());
+            }
+        }
+    }
+}

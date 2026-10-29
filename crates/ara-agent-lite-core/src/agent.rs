@@ -236,8 +236,20 @@ struct NotExecutedCall {
 const PROVENANCE_LIMIT: usize = 64;
 
 fn arguments_sha256(arguments: &Value) -> String {
-    // serde_json::Value objects compare and serialize independent of input key order.
-    context_memory::hash(&serde_json::to_vec(arguments).unwrap_or_default())
+    // A dependency enables serde_json `preserve_order`, so objects serialize in
+    // input key order; sort keys so equal JSON values hash equally (24.6).
+    fn canonical(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                Value::Object(entries.into_iter().map(|(key, value)| (key.clone(), canonical(value))).collect())
+            }
+            Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+            other => other.clone(),
+        }
+    }
+    context_memory::hash(&serde_json::to_vec(&canonical(arguments)).unwrap_or_default())
 }
 
 /// A native Run whose process ended before Core cleared its durable fence.
@@ -2995,5 +3007,202 @@ mod runtime_observation_tests {
             attach_runtime_observation(&mut Vec::new(), None, Some(json!(["x".repeat(65537)])), usize::MAX).is_err()
         );
         assert!(attach_runtime_observation(&mut Vec::new(), None, Some(json!([])), 8).is_err());
+    }
+}
+
+/// Property 15 (requirements 8.1–8.3, 24.2): settlement of an interrupted Run
+/// matches the open calls exactly; inspection and refusals change no bytes.
+#[cfg(test)]
+mod interrupted_run_property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn tool_call(id: &str, index: usize) -> Content {
+        Content::ToolCall(rpi_ai::ToolCall {
+            kind: rpi_ai::ToolCallType,
+            id: id.into(),
+            name: format!("tool_{}", index % 3),
+            arguments: json!({"path": format!("f{index}.txt"), "n": index}),
+            thought_signature: None,
+            namespace: None,
+        })
+    }
+
+    fn tool_result(id: &str, name: &str) -> AgentMessage {
+        AgentMessage::ToolResult(Box::new(rpi_ai::ToolResultMessage {
+            role: Default::default(),
+            tool_call_id: id.into(),
+            tool_name: name.into(),
+            content: vec![Content::text("done before the crash")],
+            details: None,
+            usage: None,
+            added_tool_names: vec![],
+            is_error: false,
+            timestamp: 0,
+        }))
+    }
+
+    /// Bytes of every file below `root`, by relative path.
+    fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(directory) = stack.pop() {
+            for entry in std::fs::read_dir(&directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    files.push((path.strip_prefix(root).unwrap().to_path_buf(), std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Mutation {
+        Exact,
+        Missing,
+        Extra,
+        Reordered,
+        WrongId,
+    }
+
+    fn settlement(kind: u8) -> ToolCallSettlement {
+        match kind {
+            0 => ToolCallSettlement::NotExecuted,
+            1 => ToolCallSettlement::Completed { output: "receipt matched".into() },
+            _ => ToolCallSettlement::Failed { output: "receipt shows failure".into() },
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence(
+            earlier_turn in any::<bool>(),
+            answered in prop::collection::vec(any::<bool>(), 0..6),
+            kinds in prop::collection::vec(0u8..3, 6),
+            mutation in prop_oneof![
+                3 => Just(Mutation::Exact),
+                1 => Just(Mutation::Missing),
+                1 => Just(Mutation::Extra),
+                1 => Just(Mutation::Reordered),
+                1 => Just(Mutation::WrongId),
+            ],
+            with_evidence in prop::bool::weighted(0.8),
+        ) {
+            let root = std::env::temp_dir().canonicalize().unwrap().join(format!("lite-interrupted-{}", crate::fresh_id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let cwd = root.canonicalize().unwrap();
+            let path = cwd.join("session.json");
+            let mut messages = Vec::new();
+            if earlier_turn {
+                let mut reply = rpi_ai::AssistantMessage::empty(Api::OpenaiCompletions, "fixture", "fixture", 0);
+                reply.stop_reason = StopReason::Stop;
+                reply.content.push(Content::text("earlier answer"));
+                messages.push(context_memory::user("earlier request".into()));
+                messages.push(AgentMessage::Assistant(Box::new(reply)));
+            }
+            messages.push(context_memory::user("interrupted request".into()));
+            let ids: Vec<String> = (0..answered.len()).map(|index| format!("call-{index}")).collect();
+            if !answered.is_empty() {
+                let mut assistant = rpi_ai::AssistantMessage::empty(Api::OpenaiCompletions, "fixture", "fixture", 0);
+                assistant.stop_reason = StopReason::ToolUse;
+                assistant.content = ids.iter().enumerate().map(|(index, id)| tool_call(id, index)).collect();
+                messages.push(AgentMessage::Assistant(Box::new(assistant)));
+                for (index, id) in ids.iter().enumerate().filter(|(index, _)| answered[*index]) {
+                    messages.push(tool_result(id, &format!("tool_{}", index % 3)));
+                }
+            }
+            let state = SessionState {
+                version: 2,
+                cwd: cwd.clone(),
+                messages: messages.clone(),
+                pending_run: Some("crashed-run".into()),
+                completed_runs: vec!["earlier".into()],
+                ..SessionState::default()
+            };
+            state.save(&path).unwrap();
+            let before = snapshot(&cwd);
+
+            // Inspection: the unanswered calls in original order, no byte changed.
+            let inspected = interrupted_run(&path, &cwd).unwrap().unwrap();
+            let open: Vec<usize> = (0..answered.len()).filter(|index| !answered[*index]).collect();
+            prop_assert_eq!(&inspected.run_id, "crashed-run");
+            prop_assert_eq!(inspected.raw_count, messages.len());
+            prop_assert_eq!(
+                inspected.open_tool_calls.iter().map(|call| call.id.clone()).collect::<Vec<_>>(),
+                open.iter().map(|index| ids[*index].clone()).collect::<Vec<_>>()
+            );
+            for (call, index) in inspected.open_tool_calls.iter().zip(&open) {
+                prop_assert_eq!(&call.name, &format!("tool_{}", index % 3));
+                prop_assert_eq!(&call.arguments, &json!({"path": format!("f{index}.txt"), "n": index}));
+            }
+            prop_assert_eq!(&snapshot(&cwd), &before);
+
+            let mut settlements: Vec<ToolCallReconciliation> = inspected
+                .open_tool_calls
+                .iter()
+                .zip(&kinds)
+                .map(|(call, kind)| ToolCallReconciliation { call_id: call.id.clone(), settlement: settlement(*kind) })
+                .collect();
+            match mutation {
+                Mutation::Exact => {}
+                Mutation::Missing => { settlements.pop(); }
+                Mutation::Extra => settlements.push(ToolCallReconciliation {
+                    call_id: "extra-call".into(),
+                    settlement: ToolCallSettlement::NotExecuted,
+                }),
+                Mutation::Reordered if settlements.len() >= 2 => settlements.swap(0, 1),
+                Mutation::Reordered => {}
+                Mutation::WrongId => if let Some(first) = settlements.first_mut() { first.call_id.push_str("-x"); },
+            }
+            let evidence = if with_evidence { vec!["host-receipt:sha256:abc".to_owned()] } else { vec![] };
+            let exact = settlements.len() == inspected.open_tool_calls.len()
+                && settlements.iter().zip(&inspected.open_tool_calls).all(|(settled, call)| settled.call_id == call.id);
+            let outcome = reconcile_interrupted_run(&path, &cwd, &inspected, &settlements, &evidence);
+            prop_assert_eq!(outcome.is_ok(), exact && with_evidence, "{:?}", outcome.as_ref().err());
+            if outcome.is_err() {
+                prop_assert_eq!(&snapshot(&cwd), &before, "a refusal changes no byte");
+                prop_assert!(interrupted_run(&path, &cwd).unwrap().is_some());
+            } else {
+                let restored = SessionState::load(&path, &cwd).unwrap();
+                prop_assert!(restored.pending_run.is_none());
+                prop_assert_eq!(restored.raw_base, 0);
+                let all = &restored.messages;
+                prop_assert_eq!(all.len(), messages.len() + settlements.len());
+                prop_assert_eq!(
+                    serde_json::to_value(&all[..messages.len()]).unwrap(),
+                    serde_json::to_value(&messages).unwrap(),
+                    "original messages are kept"
+                );
+                for (message, settled) in all[messages.len()..].iter().zip(&settlements) {
+                    let AgentMessage::ToolResult(result) = message else { panic!("appended result expected") };
+                    prop_assert_eq!(&result.tool_call_id, &settled.call_id);
+                    let details = result.details.as_ref().unwrap();
+                    prop_assert_eq!(&details["source"], "host_reconciled_interrupted_run");
+                    prop_assert_eq!(&details["run_id"], "crashed-run");
+                    prop_assert_eq!(&details["evidence"], &json!(evidence));
+                    let failed = !matches!(settled.settlement, ToolCallSettlement::Completed { .. });
+                    prop_assert_eq!(result.is_error, failed);
+                }
+                let not_executed: Vec<_> = settlements
+                    .iter()
+                    .filter(|settled| settled.settlement == ToolCallSettlement::NotExecuted)
+                    .map(|settled| settled.call_id.clone())
+                    .collect();
+                prop_assert_eq!(
+                    restored.not_executed.iter().map(|call| call.native_call_id.clone()).collect::<Vec<_>>(),
+                    not_executed
+                );
+                prop_assert!(restored.already_completed(&path, "crashed-run").unwrap(), "Run ID is not reusable");
+                prop_assert!(interrupted_run(&path, &cwd).unwrap().is_none());
+                prop_assert!(reconcile_interrupted_run(&path, &cwd, &inspected, &settlements, &evidence).is_err());
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 }

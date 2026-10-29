@@ -36,3 +36,11 @@ windows-sys = { version = "=0.59.0", features = ["Win32_Foundation", "Win32_Stor
 # Verified in design-records.md DR-X-1.
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 tempfile = "=3.27.0"
+
+[profile.dev]
+# Line tables keep panic and backtrace line numbers; full debug info made
+# each target dir several GB (mostly .pdb). Dependencies carry none.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

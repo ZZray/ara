@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc beb8882a96d77d2ed9152aba1fdcc626823df432b989166345611ba05d2baf6c # shrinks to interrupted = [(1, 1, true)], fresh = [NewCall { tool: 1, value: 1, reordered: true, reuse: None }]

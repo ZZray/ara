@@ -22,3 +22,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 tempfile = "3"
+
+[profile.dev]
+# Line tables keep panic and backtrace line numbers; full debug info made
+# each target dir several GB (mostly .pdb). Dependencies carry none.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

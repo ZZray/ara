@@ -36,3 +36,14 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+
+[profile.dev]
+# Line tables keep panic and backtrace line numbers; full debug info made
+# each target dir several GB (mostly .pdb). Dependencies carry none.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

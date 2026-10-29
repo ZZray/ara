@@ -236,3 +236,162 @@ mod tests {
         assert!(!StuckPolicy::default().is_configured());
     }
 }
+
+/// Property 24 (requirements 18.1–18.5, 18.9): `Detector` matches a
+/// history-scanning reference model and thresholds outside 2..=1000 are refused.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    /// Reference: each rule keeps the plain list of calls since its last firing.
+    struct Reference {
+        policy: StuckPolicy,
+        /// Consecutive identical calls since the last different call or firing.
+        streak: Vec<(String, Value, Vec<u8>, String)>,
+        last: Option<(String, Value, Vec<u8>)>,
+        /// Failed calls since the last repeated_error firing.
+        errors: Vec<(String, Vec<u8>, String)>,
+        /// Every successful observation result ever seen; never cleared.
+        observed: Vec<(String, Vec<u8>)>,
+        repeats: Vec<String>,
+        fired: BTreeSet<StuckRule>,
+    }
+
+    impl Reference {
+        fn signal(&mut self, rule: StuckRule, threshold: u32, call_ids: Vec<String>) -> Signal {
+            let count = call_ids.len() as u32;
+            if self.fired.insert(rule) {
+                Signal::Hit { rule, count, threshold, call_ids }
+            } else {
+                Signal::NoProgress { rule, count, threshold, call_ids }
+            }
+        }
+
+        fn observe(&mut self, call: &ObservedCall) -> Vec<Signal> {
+            let mut signals = Vec::new();
+            if let Some(threshold) = self.policy.repeated_call {
+                let key = (call.tool.clone(), call.arguments.clone(), call.result.clone());
+                if self.last.as_ref() != Some(&key) {
+                    self.streak.clear();
+                }
+                self.last = Some(key.clone());
+                self.streak.push((key.0, key.1, key.2, call.native_call_id.clone()));
+                if self.streak.len() as u32 >= threshold {
+                    let ids = self.streak.drain(..).map(|entry| entry.3).collect();
+                    signals.push(self.signal(StuckRule::RepeatedCall, threshold, ids));
+                }
+            }
+            if let (Some(threshold), true) = (self.policy.repeated_error, call.is_error) {
+                self.errors.push((call.tool.clone(), call.result.clone(), call.native_call_id.clone()));
+                let same: Vec<String> = self
+                    .errors
+                    .iter()
+                    .filter(|(tool, result, _)| tool == &call.tool && result == &call.result)
+                    .map(|entry| entry.2.clone())
+                    .collect();
+                if same.len() as u32 >= threshold {
+                    self.errors.clear();
+                    signals.push(self.signal(StuckRule::RepeatedError, threshold, same));
+                }
+            }
+            if let Some(threshold) = self.policy.repeated_observation {
+                if !call.is_error && self.policy.observation_tools.contains(&call.tool) {
+                    let entry = (call.tool.clone(), call.result.clone());
+                    if self.observed.contains(&entry) {
+                        self.repeats.push(call.native_call_id.clone());
+                        if self.repeats.len() as u32 >= threshold {
+                            let ids = std::mem::take(&mut self.repeats);
+                            signals.push(self.signal(StuckRule::RepeatedObservation, threshold, ids));
+                        }
+                    } else {
+                        self.observed.push(entry);
+                    }
+                }
+            }
+            signals
+        }
+    }
+
+    fn arb_call() -> impl Strategy<Value = (usize, usize, usize, bool)> {
+        (0..3usize, 0..2usize, 0..2usize, any::<bool>())
+    }
+
+    fn calls(rounds: &[Vec<(usize, usize, usize, bool)>]) -> Vec<Vec<ObservedCall>> {
+        let tools = ["read", "list", "exec"];
+        let mut next = 0;
+        rounds
+            .iter()
+            .map(|round| {
+                round
+                    .iter()
+                    .map(|(tool, argument, result, is_error)| {
+                        next += 1;
+                        ObservedCall {
+                            native_call_id: format!("c{next}"),
+                            tool: tools[*tool].into(),
+                            arguments: json!({"path": argument, "limit": 10}),
+                            result: format!("result-{result}").into_bytes(),
+                            is_error: *is_error,
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn threshold() -> impl Strategy<Value = Option<u32>> {
+        prop::option::of(2u32..=4)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn validation_accepts_exactly_thresholds_in_range(
+            values in prop::array::uniform3(prop::option::of(prop_oneof![0u32..=3, 998u32..=1002, Just(u32::MAX)])),
+        ) {
+            let policy = StuckPolicy {
+                repeated_call: values[0],
+                repeated_error: values[1],
+                repeated_observation: values[2],
+                observation_tools: BTreeSet::new(),
+            };
+            let valid = values.iter().flatten().all(|value| (2..=1000).contains(value));
+            prop_assert_eq!(policy.validate().is_ok(), valid);
+            prop_assert_eq!(policy.is_configured(), values.iter().any(Option::is_some));
+        }
+
+        #[test]
+        fn detector_signals_match_the_reference_model(
+            repeated_call in threshold(),
+            repeated_error in threshold(),
+            repeated_observation in threshold(),
+            observation in prop::collection::btree_set(prop_oneof![Just("read"), Just("list"), Just("exec")], 0..3),
+            rounds in prop::collection::vec(prop::collection::vec(arb_call(), 1..4), 1..14),
+        ) {
+            let policy = StuckPolicy {
+                repeated_call,
+                repeated_error,
+                repeated_observation,
+                observation_tools: observation.into_iter().map(str::to_owned).collect(),
+            };
+            prop_assert!(policy.validate().is_ok());
+            let mut detector = Detector::new(&policy);
+            let mut reference = Reference {
+                policy: policy.clone(),
+                streak: Vec::new(),
+                last: None,
+                errors: Vec::new(),
+                observed: Vec::new(),
+                repeats: Vec::new(),
+                fired: BTreeSet::new(),
+            };
+            for round in calls(&rounds) {
+                let expected: Vec<Signal> = round.iter().flat_map(|call| reference.observe(call)).collect();
+                prop_assert_eq!(detector.observe_round(&round), expected);
+            }
+        }
+    }
+}
