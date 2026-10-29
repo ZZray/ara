@@ -29,7 +29,7 @@ use std::{
 use anyhow::{bail, ensure, Context, Result};
 use ara_agent_lite_harness::{
     core::{model::Route, session_journal::Journal},
-    start_with_options, TaskKind, TaskOptions, TaskSpec, TaskStop,
+    start_with_options, TaskKind, TaskSpec, TaskStop,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -242,6 +242,8 @@ pub struct TaskContext {
     pub sealed: Option<SealedTask>,
     /// Path of `task-set.sealed.json` (it holds the feature strings).
     pub sealed_registration: Option<PathBuf>,
+    /// Capability_Test_Host P2 switches of this run.
+    pub features: Features,
 }
 
 /// Runs one task to a terminal state. The production implementation is
@@ -264,6 +266,8 @@ pub struct RunInputs<'a> {
     /// Baseline mode (7.2): the run goes to `<evidence_root>/baseline/` and
     /// an in-repo index with every file's SHA-256 is written after the manifest.
     pub baseline: bool,
+    /// Capability_Test_Host P2 switches; a baseline run must use [`Features::V1`].
+    pub features: Features,
 }
 
 #[derive(Clone, Debug)]
@@ -310,6 +314,11 @@ pub fn is_controlled_endpoint(endpoint: &str) -> bool {
 pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
     let started_at = timestamp_now();
     let root = inputs.repo_root;
+    ensure!(
+        !inputs.baseline || inputs.features == Features::V1,
+        "a baseline run uses the v1 Capability_Test_Host (all P2 switches off), got {:?}",
+        inputs.features.enabled()
+    );
     let (policy, policy_identity) = load_fixed(root)?;
     let task_set_path = root.join(TASK_SET_PATH);
     let set_bytes = fs::read(&task_set_path).with_context(|| format!("cannot read Task_Set {TASK_SET_PATH}"))?;
@@ -369,7 +378,7 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
     } else {
         None
     };
-    let features = Features::V1;
+    let features = inputs.features;
     let mut manifest = RunManifest {
         version: MANIFEST_VERSION,
         manifest_id: manifest_id.clone(),
@@ -513,6 +522,7 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
                         .then(|| set.sealed.as_ref().map(|r| r.path.clone()))
                         .flatten(),
                     sealed,
+                    features: inputs.features,
                 };
                 inputs.executor.execute(&context).await
             }
@@ -740,7 +750,7 @@ impl HarnessExecutor {
         let workspace = prepare(&entry.fixture_path, &context.task_dir)?;
         let (session_path, environment_state) = session_paths(&workspace.private);
         let policy = &context.policy;
-        let features = Features::V1;
+        let features = context.features;
         let route = Route {
             model: policy.model.id.clone(),
             protocol: policy.model.protocol.clone(),
@@ -812,7 +822,7 @@ impl HarnessExecutor {
         };
         let first = host.request(&run_id(&entry.task_id, 1), objective);
         let started = Instant::now();
-        let handle = match start_with_options(spec, first, host.clone(), TaskOptions::default()) {
+        let handle = match start_with_options(spec, first, host.clone(), host.task_options()) {
             Ok(handle) => handle,
             Err(error) => {
                 let mut record =

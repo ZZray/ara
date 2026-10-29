@@ -74,6 +74,10 @@ struct RunArgs {
     /// the run's file SHA-256 list in the repository (requirement 7).
     #[arg(long, conflicts_with = "probe_only")]
     baseline: bool,
+    /// Capability_Test_Host P2 configuration: every sub-item up to and
+    /// including this one on (`P2-a` ... `P2-e`); omitted = v1, all off.
+    #[arg(long, conflicts_with = "baseline")]
+    p2_through: Option<String>,
 }
 
 #[derive(Args)]
@@ -152,6 +156,10 @@ fn run(args: RunArgs) -> Result<ExitCode> {
         env: &env,
         probe_only: args.probe_only,
         baseline: args.baseline,
+        features: match &args.p2_through {
+            Some(item) => lite_eval::host::Features::through(item)?,
+            None => lite_eval::host::Features::V1,
+        },
     }))?;
     let summary = &report.manifest.summary;
     println!("{}", report.manifest_path.display());
@@ -519,11 +527,26 @@ fn deny() -> Result<ExitCode> {
     Ok(if clean { ExitCode::SUCCESS } else { ExitCode::from(1) })
 }
 
+/// Without a part flag the gate runs `--quality` only. Each selected part
+/// writes its own record; the exit code is 0 only when every part passed.
 #[derive(Args)]
 struct GateArgs {
     /// Module the gate record belongs to.
     #[arg(long)]
     module: String,
+    /// The 11 fmt/clippy/test commands of requirement 33.1.
+    #[arg(long)]
+    quality: bool,
+    /// Run every Lite test referenced by support-matrix.json (30.4, 30.5).
+    #[arg(long)]
+    matrix: bool,
+    /// Remove one stable item from a temporary Core copy and require the
+    /// stability test to stop compiling (29.5).
+    #[arg(long)]
+    stability_demo: bool,
+    /// Build, lint and scan tools/lite-consumer-check (31.2, 31.7).
+    #[arg(long)]
+    consumer: bool,
 }
 
 /// Build the JSONL sidecar so the Python tests use this build's binary.
@@ -551,34 +574,125 @@ fn build_jsonl(root: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Target directory cargo uses for `crate_dir`, so the Core copy of the
+/// stability demo reuses already built dependencies.
+fn target_dir(crate_dir: &Path) -> Option<PathBuf> {
+    let metadata = SystemRunner.run(
+        crate_dir,
+        "cargo",
+        &["metadata", "--format-version", "1", "--no-deps", "--offline"].map(str::to_owned),
+        &[],
+    );
+    serde_json::from_slice::<serde_json::Value>(&metadata.stdout)
+        .ok()
+        .and_then(|value| value["target_directory"].as_str().map(PathBuf::from))
+}
+
 fn gate(args: GateArgs) -> Result<ExitCode> {
+    use lite_eval::gate::{
+        consumer::{run_consumer, ConsumerPlan},
+        matrix::{run_matrix, Matrix, MatrixPlan, MATRIX_PATH},
+        save_part,
+        stability::{run_demo, DemoPlan, CORE_DIR},
+    };
     let root = repo_root()?;
     ensure!(lite_eval::ledger::module(&args.module).is_some(), "unknown module `{}`", args.module);
+    let quality = args.quality || !(args.matrix || args.stability_demo || args.consumer);
     let credentials = credentials();
     let start = CodeVersion::current(&root)?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let output_dir = Path::new(EVIDENCE_ROOT).join("gates").join(format!("{}-{stamp}", args.module));
     let python_evidence = output_dir.join("python-evidence");
     std::fs::create_dir_all(&python_evidence)?;
-    let plan = GatePlan {
-        repo_root: &root,
-        module: &args.module,
-        code_version: start.clone(),
-        output_dir,
-        jsonl_binary: build_jsonl(&root),
-        python_evidence,
-    };
-    let record = run_gate(&plan, &SystemRunner, &credentials)?;
-    let path = save_record(&root, &record, &stamp, &credentials)?;
-    println!("{path}");
-    ensure!(CodeVersion::current(&root)? == start, "code changed while the gate ran; record {path} is stale");
-    match record.check_passes() {
-        Ok(()) => Ok(ExitCode::SUCCESS),
-        Err(error) => {
-            eprintln!("lite-eval: {error:#}");
-            Ok(ExitCode::from(1))
+    let needs_jsonl = quality || args.matrix;
+    let jsonl_binary = if needs_jsonl { build_jsonl(&root) } else { Err("not built".to_owned()) };
+    let mut failures = Vec::new();
+    let mut paths = Vec::new();
+
+    if quality {
+        let plan = GatePlan {
+            repo_root: &root,
+            module: &args.module,
+            code_version: start.clone(),
+            output_dir: output_dir.clone(),
+            jsonl_binary: jsonl_binary.clone(),
+            python_evidence: python_evidence.clone(),
+        };
+        let record = run_gate(&plan, &SystemRunner, &credentials)?;
+        paths.push(save_record(&root, &record, &stamp, &credentials)?);
+        failures.extend(record.check_passes().err());
+    }
+    if args.matrix {
+        let bytes = std::fs::read(root.join(MATRIX_PATH)).with_context(|| format!("cannot read {MATRIX_PATH}"))?;
+        let matrix: Matrix = serde_json::from_slice(&bytes).with_context(|| format!("invalid {MATRIX_PATH}"))?;
+        let plan = MatrixPlan {
+            repo_root: &root,
+            module: &args.module,
+            code_version: start.clone(),
+            matrix: &matrix,
+            matrix_sha256: lite_eval::common::sha256_hex(&bytes),
+            output_dir: output_dir.join("matrix"),
+            jsonl_binary: jsonl_binary.clone(),
+            python_evidence: python_evidence.join("matrix"),
+        };
+        let record = run_matrix(&plan, &SystemRunner, &credentials)?;
+        paths.push(save_part(&root, &args.module, "matrix", &start, &stamp, &record, &credentials)?);
+        failures.extend(record.check_passes().err());
+    }
+    if args.stability_demo {
+        let work_dir = std::env::temp_dir().join(format!("lite-eval-stability-{stamp}-{}", std::process::id()));
+        let env = match std::env::var_os("CARGO_TARGET_DIR") {
+            Some(_) => Vec::new(),
+            None => target_dir(&root.join(CORE_DIR))
+                .map(|dir| vec![("CARGO_TARGET_DIR".to_owned(), dir.into_os_string())])
+                .unwrap_or_default(),
+        };
+        let plan = DemoPlan {
+            repo_root: &root,
+            module: &args.module,
+            code_version: start.clone(),
+            work_dir: work_dir.clone(),
+            output_dir: output_dir.join("stability-demo"),
+            env,
+        };
+        let record = run_demo(&plan, &SystemRunner, &credentials);
+        // The copy is scratch space; its outputs are already saved.
+        let _ = std::fs::remove_dir_all(&work_dir);
+        let record = record?;
+        paths.push(save_part(&root, &args.module, "stability-demo", &start, &stamp, &record, &credentials)?);
+        if !record.passed {
+            failures.push(anyhow::anyhow!(
+                "stability demo did not pass: baseline exit {:?}, patched exit {:?}, failure names `{}`: {}",
+                record.baseline.exit_code,
+                record.patched.exit_code,
+                record.patch.item,
+                record.failure_names_item
+            ));
         }
     }
+    if args.consumer {
+        let plan = ConsumerPlan {
+            repo_root: &root,
+            module: &args.module,
+            code_version: start.clone(),
+            output_dir: output_dir.join("consumer"),
+        };
+        let record = run_consumer(&plan, &SystemRunner, &credentials)?;
+        paths.push(save_part(&root, &args.module, "consumer", &start, &stamp, &record, &credentials)?);
+        failures.extend(record.check_passes().err());
+    }
+
+    for path in &paths {
+        println!("{path}");
+    }
+    ensure!(CodeVersion::current(&root)? == start, "code changed while the gate ran; records {paths:?} are stale");
+    if failures.is_empty() {
+        return Ok(ExitCode::SUCCESS);
+    }
+    for error in failures {
+        eprintln!("lite-eval: {error:#}");
+    }
+    Ok(ExitCode::from(1))
 }
 
 fn notify(args: NotifyArgs) -> Result<ExitCode> {

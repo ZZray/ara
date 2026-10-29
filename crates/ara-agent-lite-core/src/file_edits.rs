@@ -247,4 +247,156 @@ mod tests {
         drop(file);
         std::fs::remove_file(&path).unwrap();
     }
+
+    /// Property 26: edit_file all-or-nothing (requirements 20.3, 20.5, 20.6).
+    ///
+    /// The file is built from unique markers `@i#` between fillers without
+    /// `@`, `#` or `%`, plus `%%` twice, so the expected result is known by
+    /// construction (each edited marker replaced by its new text) instead of
+    /// recomputed with the implementation's algorithm.
+    mod property_26 {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Fault {
+            None,
+            StaleSha,
+            NotFound,
+            Multiple,
+            Overlap,
+        }
+
+        #[derive(Debug)]
+        struct Case {
+            fillers: Vec<String>,
+            /// Edited marker indices, in block order, with their new texts.
+            edits: Vec<(usize, String)>,
+            fault: Fault,
+            /// Insertion position of the faulty block (scaled into range).
+            at: usize,
+            send_sha: bool,
+        }
+
+        /// A non-empty subset of the markers in random order, each with a new text.
+        fn edits(markers: usize) -> impl Strategy<Value = Vec<(usize, String)>> {
+            (Just((0..markers).collect::<Vec<_>>()).prop_shuffle(), 1..=markers).prop_flat_map(|(order, count)| {
+                let chosen = order[..count].to_vec();
+                prop::collection::vec("[a-z]{0,6}", count)
+                    .prop_map(move |texts| chosen.iter().copied().zip(texts).collect::<Vec<_>>())
+            })
+        }
+
+        fn case() -> impl Strategy<Value = Case> {
+            (1usize..8).prop_flat_map(|markers| {
+                (
+                    prop::collection::vec("[a-z \n]{0,6}", markers + 1),
+                    edits(markers),
+                    prop_oneof![
+                        Just(Fault::None),
+                        Just(Fault::StaleSha),
+                        Just(Fault::NotFound),
+                        Just(Fault::Multiple),
+                        Just(Fault::Overlap)
+                    ],
+                    0usize..64,
+                    any::<bool>(),
+                )
+                    .prop_map(|(fillers, edits, fault, at, send_sha)| Case {
+                        fillers,
+                        edits,
+                        fault,
+                        at,
+                        send_sha,
+                    })
+            })
+        }
+
+        fn marker(index: usize) -> String {
+            format!("@{index}#")
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(32))]
+
+            #[test]
+            fn edit_applies_every_block_or_none(case in case()) {
+                let markers = case.fillers.len() - 1;
+                let mut original = String::from("%%");
+                let mut expected = String::from("%%");
+                for index in 0..markers {
+                    original.push_str(&case.fillers[index]);
+                    expected.push_str(&case.fillers[index]);
+                    original.push_str(&marker(index));
+                    match case.edits.iter().find(|(edited, _)| *edited == index) {
+                        Some((_, new)) => expected.push_str(new),
+                        None => expected.push_str(&marker(index)),
+                    }
+                }
+                original.push_str(&case.fillers[markers]);
+                expected.push_str(&case.fillers[markers]);
+                original.push_str("%%");
+                expected.push_str("%%");
+
+                let mut blocks: Vec<(String, String)> =
+                    case.edits.iter().map(|(index, new)| (marker(*index), new.clone())).collect();
+                // Position of the faulty block; an overlapping block follows the block it overlaps.
+                let faulty = match case.fault {
+                    Fault::None | Fault::StaleSha => None,
+                    Fault::NotFound | Fault::Multiple => Some(case.at % (blocks.len() + 1)),
+                    Fault::Overlap => Some(1 + case.at % blocks.len()),
+                };
+                if let Some(position) = faulty {
+                    let old = match case.fault {
+                        Fault::NotFound => "@zz#".to_owned(),
+                        Fault::Multiple => "%%".to_owned(),
+                        // `i#` occurs only inside marker `@i#` (fewer than 10 markers).
+                        _ => format!("{}#", case.edits[(case.at / 7) % position].0),
+                    };
+                    blocks.insert(position, (old, "x".into()));
+                }
+                let additional: Vec<Value> =
+                    blocks[1..].iter().map(|(old, new)| json!({"old_text":old,"new_text":new})).collect();
+                let args = json!({"old_text":blocks[0].0,"new_text":blocks[0].1,"additional_edits":additional});
+                let current = sha256(&original);
+                let sent = match case.fault {
+                    Fault::StaleSha => Some("0".repeat(64)),
+                    _ => case.send_sha.then(|| current.clone()),
+                };
+
+                let path = std::env::temp_dir().join(format!("lite-edit-prop-{}", crate::fresh_id()));
+                std::fs::write(&path, original.as_bytes()).unwrap();
+                let result = edit(&path, &args, sent.as_deref(), &CancellationToken::new());
+                let on_disk = std::fs::read(&path).unwrap();
+                std::fs::remove_file(&path).unwrap();
+
+                match (case.fault, faulty) {
+                    (Fault::None, _) => {
+                        let receipt: Value = serde_json::from_str(&result.unwrap()).unwrap();
+                        prop_assert_eq!(on_disk, expected.as_bytes().to_vec());
+                        prop_assert_eq!(&receipt["status"], "applied");
+                        prop_assert_eq!(receipt["committed"].as_bool(), Some(true));
+                        prop_assert_eq!(receipt["before_sha256"].as_str(), Some(current.as_str()));
+                        let edited = sha256(&expected);
+                        prop_assert_eq!(receipt["candidate_sha256"].as_str(), Some(edited.as_str()));
+                        prop_assert_eq!(receipt["observed_after_sha256"].as_str(), Some(edited.as_str()));
+                        prop_assert_eq!(receipt["edit_count"].as_u64(), Some(blocks.len() as u64));
+                    }
+                    (Fault::StaleSha, _) => {
+                        let message = result.unwrap_err().to_string();
+                        prop_assert_eq!(on_disk, original.as_bytes().to_vec());
+                        prop_assert!(message.contains("SHA256 changed"), "{}", message);
+                        prop_assert!(message.contains(&format!("current_sha256={current}")), "{}", message);
+                    }
+                    (_, Some(position)) => {
+                        let message = result.unwrap_err().to_string();
+                        prop_assert_eq!(on_disk, original.as_bytes().to_vec());
+                        prop_assert!(message.contains("no edit committed"), "{}", message);
+                        prop_assert!(message.ends_with(&format!("block={position}")), "{} ({:?})", message, blocks);
+                    }
+                    (_, None) => unreachable!(),
+                }
+            }
+        }
+    }
 }

@@ -31,6 +31,7 @@ fn execute(repo: &TestRepo, name: &str, task: &str, executor: &dyn TaskExecutor)
             executor,
             env: &env,
             probe_only: false,
+            features: lite_eval::host::Features::V1,
             baseline: false,
         }))
         .unwrap()

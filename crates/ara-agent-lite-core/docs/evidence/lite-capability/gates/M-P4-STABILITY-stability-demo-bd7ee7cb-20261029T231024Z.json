@@ -1,0 +1,30 @@
+{
+  "module": "M-P4-STABILITY",
+  "code_version": {
+    "head": "2064354d359d2a7681ab9421ba71a435cf551f9d",
+    "diff_sha256": "bd7ee7cb20f87a1930882d8989bcc1a83387f85d01c5839826ac671e9b068a42",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "patch": {
+    "item": "ara_agent_lite_core::RunRequest.model_host",
+    "field": "model_host",
+    "file": "src/agent.rs",
+    "line": 49,
+    "before": "    pub model_host: Arc<dyn crate::model::ModelHost>,",
+    "after": "    pub(crate) model_host: Arc<dyn crate::model::ModelHost>,"
+  },
+  "baseline": {
+    "command": "cargo check --locked --offline --test stability_surface",
+    "exit_code": 0,
+    "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P4-STABILITY-20261029T231024Z\\stability-demo\\stability-baseline.stdout.txt",
+    "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P4-STABILITY-20261029T231024Z\\stability-demo\\stability-baseline.stderr.txt"
+  },
+  "patched": {
+    "command": "cargo check --locked --offline --test stability_surface",
+    "exit_code": 101,
+    "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P4-STABILITY-20261029T231024Z\\stability-demo\\stability-patched.stdout.txt",
+    "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P4-STABILITY-20261029T231024Z\\stability-demo\\stability-patched.stderr.txt"
+  },
+  "failure_names_item": true,
+  "passed": true
+}

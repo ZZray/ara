@@ -47,6 +47,7 @@ fn execute(repo: &TestRepo, name: &str, baseline: bool, executor: &Judged) -> Ru
             executor,
             env: &env,
             probe_only: false,
+            features: lite_eval::host::Features::V1,
             baseline,
         }))
         .unwrap()

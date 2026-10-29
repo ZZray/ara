@@ -116,11 +116,24 @@
 ## DR-P2e-1 写入工具注册位置与 S3 实际写入次数
 
 - 约束：在修改 Capability_Test_Host 工具集之前完成。写明 Host 注册写入工具的代码位置（文件与行号）、所依据的 S3 运行事件标识（事件文件路径与 SHA-256）、S3 实际调用的每个写入工具名称及调用次数，并逐项标注证据等级（运行确认或推断）。“S3 使用 `write` 3 次”在核对 S3 运行事件之前保持推断等级，不得记为运行确认（任务 53.1；需求 20.1）。
-- 核实结论：待核实
-- 来源位置：待核实（候选：`examples/business_host.rs:159`（`enable_local_tools` 透传），`local_tools.rs:30-31`（`write_file`、`edit_file` 定义）；S3 事件文件位于 `D:/WorkSpace/tmp/ara-core-capability-20261022` 下，具体路径待查）
-- 证据等级：待核实
-- 日期：待填
-- 后续动作：待核实
+- 核实结论：既有 Lite S3 试验经 `enable_local_tools` 拿到内置 `write_file` 与 `edit_file`，两臂都调用过 `edit_file`；“S3 使用 `write` 3 次”只与 Full Core 的 S3 运行相符，那次运行的写入工具名是 `write`，不是 Lite 的 `write_file`。
+  - 注册位置：`examples/business_host.rs:159` `request.enable_local_tools = config.enable_local_tools;`（配置字段在 `:33`），把 Host 配置原样透传给 Core；`local_tools.rs:30` 定义 `write_file`，`local_tools.rs:31` 定义 `edit_file`，两者都由 `local_tools::tools(root)` 返回。
+  - S3 运行事件中写入工具的调用次数（下表路径相对 `B = D:/WorkSpace/tmp/ara-core-capability-20261022`；Lite 统计 `tool_start` 事件，Full Core 统计 session 中 assistant 消息的 `toolCall`）：
+
+    | 运行 | 事件文件（SHA-256） | 写入工具调用次数 |
+    |---|---|---|
+    | Lite S3-base | `B/coding-stream-live-v1/S3-base/host.stdout.native.jsonl`（`d91ad955…308a`） | `write_file` 2，`edit_file` 5（`tool_end` 次数相同） |
+    | Lite S3-symbols | `B/coding-stream-live-v1/S3-symbols/host.stdout.native.jsonl`（`9bb85dce…fcf4`） | `write_file` 4，`edit_file` 6 |
+    | Lite S3-defaultthinking | `B/coding-stream-thinking-v2/S3-defaultthinking/host.stdout.native.jsonl`（`6858e540…41ec`） | 0（只有读取、`exec` 与 `task_update`） |
+    | Full Core S3 stage-v1 | `B/full-core-s3-stage-v1/run/session/2026-10-23T04-51-26-578Z_01a16719-….jsonl`（`91baa3fe…8386`） | `write` 2 |
+    | Full Core S3 stage-v2 | `B/full-core-s3-stage-v2/run/session/2026-10-23T06-12-50-146Z_01a16764-….jsonl`（`1bbd7c2a…b1cf`） | `write` 16 |
+    | Full Core S3 stage-v3 | `B/full-core-s3-stage-v3/run/session/2026-10-23T06-22-29-724Z_01a1676c-db5c-7503-8be4-a2dc3ab2d729.jsonl`（`4bb720eb…0bea`，与 `run/attempt-1/journal-snapshot.jsonl` 字节相同） | `write` 3，`read` 25，`check_project` 1；`run/result.json` 为 `VerifiedArtifact`，1 次 attempt |
+
+  - 三次 Full Core 运行都没有调用 `edit`；本记录没有核对 Full Core Host 是否注册了编辑工具。
+- 来源位置：Lite 源码 @ `2064354d359d2a7681ab9421ba71a435cf551f9d`（两个文件在工作区无改动）；事件文件见上表，表中 SHA-256 取 2026-10-30 本机重新计算值的前 8 位与后 4 位；stage-v3 session 的完整值为 `4bb720ebedffc5b64d2ac5ce50705ec4a829e5a7b94cc562c63f2a9e21d90bea`，Lite S3-base 为 `d91ad955e5db526c6eae6463ade3b13f2efca4d6fb18f80a461d2da39826308a`。
+- 证据等级：注册位置为源码支持；各运行的调用次数为运行确认（读取事件文件计数）。“S3 使用 `write` 3 次”与 Full Core stage-v3 的计数一致，但原说法出自哪一次运行没有记录，它与 stage-v3 的对应关系仍是推断，不能当作 Lite 写入行为的运行确认。
+- 日期：2026-10-30
+- 后续动作：Capability_Test_Host 不开 `enable_local_tools`（DD-03），P2-e 开启后注册 `ws_edit_file`，并在 `ws_write_file` 说明末尾加上“只用于创建尚不存在的文件，修改已有文件请用 ws_edit_file”；`WriteCounters` 按任务统计 `write_existing`、`write_new`、`edit_ok`、`edit_rejected`，P2-e 对比以这些计数为准，不引用上表的既有试验次数。
 
 ## DR-P3-1 NUL 与 Unicode 字节被改写的环节（Diagnosis_Record）
 

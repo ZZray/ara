@@ -7,8 +7,13 @@
 //!   check and declares the candidate verified; only the Oracle decides.
 //! * `prepare_continuation` continues the same Session with the check
 //!   feedback, reusing the same ModelHost, steering and tool `Arc`s.
-//! * The stop-snapshot callbacks keep the Harness default (refuse) until a
-//!   P2 switch in [`features`] turns them on.
+//! * The P2 switches in [`features`] add Core and Harness policies to every
+//!   Run request: the output ceiling and Length stop review (P2-a), the
+//!   [`PublicCheckGate`] (P2-b), Stuck_Detector thresholds (P2-c),
+//!   Compaction_Refresh limits (P2-d) and `ws_edit_file` (P2-e).
+//! * `verify_stop_snapshot` runs the same public check as `verify` on a
+//!   reviewed Length or NoProgress stop; `prepare_stop_continuation`
+//!   continues the same Session after a NeedsChanges stop review.
 
 pub mod features;
 pub mod tools;
@@ -27,13 +32,16 @@ use anyhow::{ensure, Context, Result};
 use ara_agent_lite_harness::{
     core::{
         analysis_tools::{self, AnalysisConfig},
+        completion_gate::{CompletionGate, GateRequest, GateVerdict, Registration},
         model::{CatalogModelHost, GenerationPolicy, LengthRecoveryPolicy, ModelHost, ModelSelection, Route},
         rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial},
         rpi_ai::{Schema, Tool},
         steering::SteeringBuffer,
+        termination::StopEvidence,
         RunMode, RunRequest, RuntimePaths, ToolRegistration,
     },
-    Candidate, Continuation, HarnessHost, ReviewReceipt, Settlement, Verdict,
+    Candidate, Continuation, HarnessHost, ReviewReceipt, Settlement, StopContinuation, StopSnapshot, TaskOptions,
+    Verdict,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -47,7 +55,7 @@ use crate::{
 };
 
 pub use features::Features;
-pub use tools::{WriteCounters, WriteCounts};
+pub use tools::{WriteCounters, WriteCounts, WRITE_NEW_ONLY};
 
 /// Largest feedback returned to the model (design: 8 KiB).
 pub const FEEDBACK_LIMIT: usize = 8 * 1024;
@@ -55,6 +63,8 @@ pub const FEEDBACK_LIMIT: usize = 8 * 1024;
 pub const PUBLIC_CHECK_TIMEOUT: Duration = Duration::from_secs(600);
 /// Tool that runs the Host's fixed public-check command.
 pub const PUBLIC_CHECK_TOOL: &str = "run_public_checks";
+/// `check_id` of the [`PublicCheckGate`] registration (P2-b).
+pub const PUBLIC_CHECK_GATE_ID: &str = "public_check";
 
 /// ModelHost of the Run_Policy: catalog resolution plus the policy's
 /// generation and length-recovery settings. P2-a sets the output ceiling.
@@ -209,6 +219,26 @@ impl AgentTool for PublicCheckTool {
     }
 }
 
+/// P2-b completion gate: after an ordinary model Stop, run the same public
+/// check as `verify` on a fresh copy of the workspace. A failed check sends
+/// its feedback (at most [`FEEDBACK_LIMIT`] bytes) back into the same Run.
+pub struct PublicCheckGate {
+    check: Arc<PublicCheck>,
+}
+
+#[async_trait]
+impl CompletionGate for PublicCheckGate {
+    async fn check(&self, request: GateRequest, cancellation: CancellationToken) -> Result<GateVerdict> {
+        ensure!(!cancellation.is_cancelled(), "completion gate cancelled before it started");
+        let check = self.check.clone();
+        let label = format!("gate-{}-{}", request.run_id, request.sequence);
+        let outcome = tokio::task::spawn_blocking(move || check.run(&label))
+            .await
+            .context("public check task did not finish")??;
+        Ok(if outcome.passed { GateVerdict::Passed } else { GateVerdict::Failed { feedback: outcome.feedback } })
+    }
+}
+
 pub struct CapabilityHost {
     pub task: TaskEntry,
     pub workspace: Workspace,
@@ -224,6 +254,8 @@ pub struct CapabilityHost {
     pub unchecked_tools: Vec<String>,
     template: RunTemplate,
     public_check: Option<Arc<PublicCheck>>,
+    /// P2-b registration; the same gate `Arc` goes into every Run request.
+    gate: Option<Registration>,
     credentials: Credentials,
 }
 
@@ -314,6 +346,20 @@ impl CapabilityHost {
                 skipped.push(format!("{name}: not a Capability_Test_Host tool"));
             }
         }
+        // Without a public check there is nothing for the gate to run; Plan
+        // tasks start no Host process from inside a Run.
+        let gate = match (&public_check, features.completion_gate && !plan) {
+            (Some(check), true) => Some(Registration {
+                check_id: PUBLIC_CHECK_GATE_ID.into(),
+                gate: Arc::new(PublicCheckGate { check: check.clone() }),
+                timeout: None,
+            }),
+            (None, true) => {
+                skipped.push(format!("{PUBLIC_CHECK_GATE_ID} completion gate: no public_check command registered"));
+                None
+            }
+            (_, false) => None,
+        };
         Ok(Self {
             task,
             workspace,
@@ -326,6 +372,7 @@ impl CapabilityHost {
             unchecked_tools: unchecked,
             template,
             public_check,
+            gate,
             credentials,
         })
     }
@@ -356,7 +403,20 @@ impl CapabilityHost {
             .iter()
             .map(|(tool, allow_in_plan)| ToolRegistration { tool: tool.clone(), allow_in_plan: *allow_in_plan })
             .collect();
+        request.policies.completion_gate = self.gate.clone();
+        request.policies.stuck = self.features.stuck_policy();
+        request.policies.compaction_refresh = self.features.refresh_policy();
         request
+    }
+
+    /// Harness options of this Task (P2-a Length stop review).
+    pub fn task_options(&self) -> TaskOptions {
+        self.features.task_options()
+    }
+
+    /// Whether the P2-b completion gate is registered for this Task.
+    pub fn has_completion_gate(&self) -> bool {
+        self.gate.is_some()
     }
 
     /// Texts the model sees besides the workspace: tool descriptions.
@@ -423,6 +483,77 @@ impl HarnessHost for CapabilityHost {
         );
         Ok(self.request(&run_id(&self.task.task_id, continuation.next_run_number), &objective))
     }
+
+    /// A closed Length or NoProgress stop. The stopped output is diagnostic,
+    /// never a final answer, so without a public check the Host asks for a
+    /// continuation instead of declaring the stop verified.
+    async fn verify_stop_snapshot(
+        &self,
+        snapshot: StopSnapshot,
+        cancellation: CancellationToken,
+    ) -> Result<ReviewReceipt> {
+        ensure!(!cancellation.is_cancelled(), "stop review cancelled before it started");
+        let run_number = snapshot.basis.run_number;
+        let label = format!("stop-review-run-{run_number}");
+        let (verdict, evidence) = match &self.public_check {
+            None => {
+                let receipt = self.workspace.private.join(format!("{label}.json"));
+                let record = json!({"public_check": "none_registered", "basis": snapshot.basis,
+                                    "evidence": snapshot.evidence});
+                write_json_new(&receipt, &record, &self.credentials)?;
+                let feedback = "No Host check can confirm the stopped Run; its output is not a final answer.";
+                (Verdict::NeedsChanges { feedback: feedback.into() }, receipt)
+            }
+            Some(check) => {
+                let check = check.clone();
+                let outcome = tokio::task::spawn_blocking(move || check.run(&label))
+                    .await
+                    .context("public check task did not finish")??;
+                let verdict = if outcome.passed {
+                    Verdict::Verified
+                } else {
+                    Verdict::NeedsChanges { feedback: outcome.feedback }
+                };
+                (verdict, outcome.receipt)
+            }
+        };
+        Ok(ReviewReceipt {
+            basis: snapshot.basis,
+            committed: true,
+            settlement: Settlement::Settled,
+            verdict,
+            evidence: vec![evidence.display().to_string()],
+        })
+    }
+
+    async fn prepare_stop_continuation(
+        &self,
+        continuation: StopContinuation,
+        _: CancellationToken,
+    ) -> Result<RunRequest> {
+        ensure!(continuation.receipt.committed, "continuation of an uncommitted stop review");
+        let feedback = match &continuation.receipt.verdict {
+            Verdict::NeedsChanges { feedback } => feedback.clone(),
+            other => anyhow::bail!("stop continuation needs a NeedsChanges review, got {other:?}"),
+        };
+        let stop = match &continuation.previous.evidence {
+            StopEvidence::Length { effective_output_tokens, .. } => format!(
+                "Your previous response ended at the output limit ({effective_output_tokens} tokens) and is \
+                 incomplete; it was not accepted as a final answer. Do not repeat or continue the cut text."
+            ),
+            StopEvidence::NoProgress { rule, count, threshold, .. } => format!(
+                "The previous Run was stopped because the {} rule found no progress ({count} of {threshold}). \
+                 Do not repeat the same calls; change your approach.",
+                serde_json::to_value(rule)?.as_str().unwrap_or("stuck_detector")
+            ),
+            other => anyhow::bail!("stop continuation of unexpected evidence {other:?}"),
+        };
+        let objective = format!(
+            "{stop}\n\nHost review of the current workspace:\n{feedback}\n\n\
+             Continue the task from the current workspace files, then finish with a short summary."
+        );
+        Ok(self.request(&run_id(&self.task.task_id, continuation.next_run_number), &objective))
+    }
 }
 
 /// Run ID of Run `number` (1-based) of `task_id`.
@@ -438,6 +569,126 @@ pub fn session_paths(private: &Path) -> (PathBuf, PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn sh1_host(base: &Path, features: Features, public_check: &[&str]) -> CapabilityHost {
+        let fixture = base.join("fixture");
+        std::fs::create_dir_all(&fixture).unwrap();
+        std::fs::write(fixture.join("a.txt"), b"a\n").unwrap();
+        std::fs::create_dir_all(base.join("run")).unwrap();
+        let workspace = crate::workspace::prepare(&fixture, &base.join("run")).unwrap();
+        let task: TaskEntry = serde_json::from_value(json!({
+            "task_id": "SH1", "kind": "Coding", "fixture_path": fixture, "fixture_sha256": "",
+            "oracle": {"type": "sealed_test", "command": []},
+            "profile": {"mode": "execute", "tools": ["ws_read_file", "ws_write_file", "ws_edit_file"],
+                        "public_check": public_check}
+        }))
+        .unwrap();
+        let (session_path, environment_state) = session_paths(&workspace.private);
+        CapabilityHost::build(HostConfig {
+            task,
+            workspace,
+            features,
+            template: RunTemplate {
+                endpoint: "http://127.0.0.1:9/v1".into(),
+                token: "unit-key".into(),
+                route: Route::default(),
+                max_output: 1024,
+                session_path,
+                environment_state,
+                session_key: "unit".into(),
+                run_max_calls: 4,
+                run_max_seconds: 60,
+            },
+            model_host: Arc::new(CatalogModelHost),
+            credential_env: "LITE_EVAL_UNIT_KEY".into(),
+            credentials: Credentials::new(["unit-key".to_owned()]),
+        })
+        .await
+        .unwrap()
+    }
+
+    fn snapshot(host: &CapabilityHost, evidence: StopEvidence) -> StopSnapshot {
+        serde_json::from_value(json!({
+            "basis": {"task_id": "SH1", "criteria_revision": "c", "authorization_revision": "a", "run_id": "sh1-run-1",
+                      "run_number": 1, "session_path": host.template.session_path, "events_path": "e.jsonl",
+                      "events_sha256": "0", "event_count": 1, "run_calls": 1, "total_calls": 1,
+                      "journal_head_sha256": "0", "raw_start": 0, "raw_end": 1, "raw_proof": "0"},
+            "diagnostic_output": "cut", "goal": null, "evidence": evidence, "truncated": null
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn p2_switches_reach_every_run_request_and_the_stop_callbacks_run_the_public_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = crate::workspace::canonical(dir.path()).unwrap();
+        let failing = ["python", "-c", "import sys; print('2 tests fail'); sys.exit(1)"];
+        let host = sh1_host(&base.join("current"), Features::CURRENT, &failing).await;
+        let (first, second) = (host.request("sh1-run-1", "x"), host.request("sh1-run-2", "y"));
+        let (one, two) = (first.policies.completion_gate.unwrap(), second.policies.completion_gate.unwrap());
+        assert_eq!(one.check_id, PUBLIC_CHECK_GATE_ID);
+        assert!(Arc::ptr_eq(&one.gate, &two.gate), "the Harness authority check compares the gate Arc");
+        assert_eq!(first.policies.stuck, Features::CURRENT.stuck_policy());
+        assert_eq!(first.policies.compaction_refresh, Features::CURRENT.refresh_policy());
+        assert_eq!(host.task_options(), Features::CURRENT.task_options());
+
+        let request = GateRequest {
+            check_id: PUBLIC_CHECK_GATE_ID.into(),
+            run_id: "sh1-run-1".into(),
+            sequence: 1,
+            final_text: "done".into(),
+            calls_used: 1,
+            cwd: host.workspace.root.clone(),
+            session_path: host.template.session_path.clone(),
+        };
+        let verdict = one.gate.check(request, CancellationToken::new()).await.unwrap();
+        assert!(
+            matches!(&verdict, GateVerdict::Failed { feedback } if feedback.contains("2 tests fail")),
+            "{verdict:?}"
+        );
+
+        let length = StopEvidence::Length {
+            version: 1,
+            native_round_closed: true,
+            model_final_stop: false,
+            source_raw_index: 0,
+            source_sha256: "0".into(),
+            effective_output_tokens: 4096,
+        };
+        let receipt =
+            host.verify_stop_snapshot(snapshot(&host, length.clone()), CancellationToken::new()).await.unwrap();
+        assert!(receipt.committed && receipt.settlement == Settlement::Settled);
+        assert!(matches!(&receipt.verdict, Verdict::NeedsChanges { feedback } if feedback.contains("2 tests fail")));
+        let continuation = StopContinuation {
+            previous: snapshot(&host, length),
+            receipt,
+            next_run_number: 2,
+            remaining_calls: 3,
+            deadline_unix_ms: u64::MAX,
+        };
+        let next = host.prepare_stop_continuation(continuation, CancellationToken::new()).await.unwrap();
+        assert_eq!(next.id, "sh1-run-2");
+        assert!(next.objective.contains("output limit (4096 tokens)") && next.objective.contains("2 tests fail"));
+
+        let passing = sh1_host(&base.join("passing"), Features::CURRENT, &["python", "-c", "print('ok')"]).await;
+        let evidence = StopEvidence::NoProgress {
+            version: 1,
+            native_round_closed: true,
+            model_final_stop: false,
+            rule: ara_agent_lite_harness::core::stuck_detector::StuckRule::RepeatedCall,
+            count: 3,
+            threshold: 3,
+            native_call_ids: vec!["c1".into()],
+        };
+        let receipt =
+            passing.verify_stop_snapshot(snapshot(&passing, evidence), CancellationToken::new()).await.unwrap();
+        assert_eq!(receipt.verdict, Verdict::Verified);
+
+        let v1 = sh1_host(&base.join("v1"), Features::V1, &failing).await;
+        assert!(v1.request("sh1-run-1", "x").policies.is_default() && !v1.has_completion_gate());
+        let no_check = sh1_host(&base.join("none"), Features::CURRENT, &[]).await;
+        assert!(!no_check.has_completion_gate());
+    }
 
     #[test]
     fn feedback_tail_keeps_the_end_on_a_char_boundary() {

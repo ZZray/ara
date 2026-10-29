@@ -5,6 +5,7 @@ pub mod baseline;
 pub mod common;
 pub mod compare;
 pub mod deny;
+pub mod deps;
 pub mod digest;
 pub mod failure;
 pub mod gate;

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,13 +18,56 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / 'clients/python'), str(HERE)]
-from ara_agent_lite import run_task
+from ara_agent_lite import encoded, run_task
 from controlled_provider import ControlledProvider, text
 
 TARGET = Path(os.environ.get('CARGO_TARGET_DIR', 'D:/workspace/env/cache/rust-target-c'))
 BINARY = Path(os.environ.get('ARA_JSONL_TEST_BINARY', str(TARGET / 'debug' / ('ara-agent-lite-jsonl' + ('.exe' if os.name == 'nt' else '')))))
 TOKEN = 'controlled-length-no-provider-grant'
-TRUNCATED = {'delta': {'content': 'Partial text cut at the output limit.'}, 'finish': 'length'}
+CUT = 'Partial text cut at the output limit.'
+TRUNCATED = {'delta': {'content': CUT}, 'finish': 'length'}
+# Without the profile and ProgramData variables, Windows shell code in the
+# child writes a literal `%SystemDrive%` folder into its working directory.
+ENV_KEYS = ('PATH', 'SYSTEMROOT', 'SYSTEMDRIVE', 'TEMP', 'TMP', 'PATHEXT', 'COMSPEC', 'PROGRAMDATA',
+            'ALLUSERSPROFILE', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA')
+CORRELATION = ('version', 'rpc_id', 'task_id', 'run_id')
+
+
+def child_env():
+    env = {key: value for key, value in os.environ.items() if key.upper() in ENV_KEYS}
+    env['ARA_AGENT_MODEL_TOKEN'] = TOKEN
+    return env
+
+
+async def drive(config, respond, timeout=60):
+    """Drive one sidecar over raw stdio. `respond(frame)` returns a reply dict or `None`."""
+    proc = await asyncio.create_subprocess_exec(str(BINARY), stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=child_env())
+    proc.stdin.write(encoded(config))
+    await proc.stdin.drain()
+    frames = []
+    async with asyncio.timeout(timeout):
+        while line := await proc.stdout.readline():
+            frame = json.loads(line)
+            frames.append(frame)
+            if frame['kind'] == 'task_result':
+                proc.stdin.close()
+            elif (reply := respond(frame)) is not None:
+                proc.stdin.write(encoded({**{key: frame[key] for key in CORRELATION}, **reply}))
+                await proc.stdin.drain()
+        stderr = await proc.stderr.read()
+        code = await proc.wait()
+    return frames, stderr.decode('utf-8', 'replace').strip(), code
+
+
+def inline_or_ref(frame, inline, ref):
+    """The frame's payload, inline or read back from its checked evidence file."""
+    if inline in frame:
+        return frame[inline]
+    reference = frame[ref]
+    raw = Path(reference['path']).read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == reference['sha256'], reference
+    return json.loads(raw)
 
 
 class StopHost:
@@ -91,6 +135,63 @@ class LengthStopReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((harness / 'run-1-stop-snapshot.json').is_file())
         self.assertTrue((harness / 'jsonl-stop-continuation-2.json').is_file())
         self.assertEqual(len(host.reviews), 1, 'the continued Run ends with an ordinary candidate review')
+
+    async def test_raw_frame_sequence_of_a_reviewed_and_continued_length_stop(self):
+        """16.1/16.3 on the wire: stop review, continuation, then an ordinary candidate review."""
+        seen = {}
+
+        def respond(frame):
+            kind = frame['kind']
+            if kind == 'verify_stop_request':
+                snapshot = inline_or_ref(frame, 'snapshot', 'snapshot_ref')
+                seen['snapshot'] = snapshot
+                return {'kind': 'verify_stop_reply', 'receipt': {'basis': snapshot['basis'], 'committed': True,
+                        'settlement': 'Settled', 'verdict': {'NeedsChanges': {'feedback': 'The answer was cut.'}},
+                        'evidence': ['raw-stop-review']}}
+            if kind == 'prepare_stop_request':
+                seen['continuation'] = inline_or_ref(frame, 'stop_continuation', 'stop_continuation_ref')
+                return {'kind': 'prepare_stop_reply', 'run_id_next': 'run-2', 'objective': 'Finish the cut answer.'}
+            if kind == 'verify_request':
+                seen['candidate'] = frame['candidate']
+                return {'kind': 'verify_reply', 'receipt': {'basis': frame['candidate']['basis'], 'committed': True,
+                        'settlement': 'Settled', 'verdict': 'Verified', 'evidence': ['raw-review']}}
+            return None
+
+        with ControlledProvider([TRUNCATED, text('Complete answer.')]) as provider:
+            config = self.config(provider.endpoint, 'raw')
+            frames, stderr, code = await drive(config, respond)
+            self.assertEqual(len(provider.requests), 2)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual([frame['kind'] for frame in frames],
+                         ['verify_stop_request', 'prepare_stop_request', 'verify_request', 'task_result'])
+        self.assertEqual([frame['run_id'] for frame in frames[:3]], ['run-1', 'run-1', 'run-2'])
+        self.assertEqual(len({frame['rpc_id'] for frame in frames[:3]}), 3)
+        snapshot = seen['snapshot']
+        self.assertEqual(snapshot['diagnostic_output'], CUT)
+        self.assertEqual(snapshot['evidence']['cause'], 'length')
+        truncated = snapshot['truncated']
+        self.assertEqual(set(truncated), {'raw_index', 'typed_sha256', 'journal_proof', 'effective_output_tokens'})
+        self.assertEqual(truncated['effective_output_tokens'], config['run']['max_output'])
+        self.assertTrue(snapshot['basis']['raw_start'] <= truncated['raw_index'] < snapshot['basis']['raw_end'])
+        continuation = seen['continuation']
+        self.assertEqual(continuation['previous'], snapshot, 'the continuation names the reviewed snapshot')
+        self.assertEqual(continuation['next_run_number'], 2)
+        self.assertEqual(continuation['receipt']['verdict'], {'NeedsChanges': {'feedback': 'The answer was cut.'}})
+        candidate = seen['candidate']
+        self.assertEqual(candidate['basis']['run_number'], 2)
+        self.assertNotEqual(candidate['output'], CUT, 'the cut text is never the final answer')
+        self.assertGreaterEqual(candidate['basis']['raw_start'], snapshot['basis']['raw_end'])
+        outcome = json.loads(Path(frames[-1]['outcome_ref']['path']).read_text(encoding='utf-8'))
+        self.assertEqual((outcome['stop'], outcome['runs'], outcome['task_accepted']), ('AwaitingHostAcceptance', 2, False))
+
+    async def test_raw_frames_without_the_policy_have_no_stop_frames(self):
+        with ControlledProvider([TRUNCATED]) as provider:
+            frames, stderr, code = await drive(self.config(provider.endpoint, 'raw-default', policy=None),
+                                               lambda frame: None)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual([frame['kind'] for frame in frames], ['task_result'])
+        outcome = json.loads(Path(frames[-1]['outcome_ref']['path']).read_text(encoding='utf-8'))
+        self.assertEqual((outcome['stop'], outcome['runs']), ('ReconciliationRequired', 1))
 
     async def test_verified_stop_ends_awaiting_host_acceptance(self):
         host = StopHost('Verified')

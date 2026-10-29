@@ -125,8 +125,9 @@ pub fn confine(root: &Path, raw: &str, intent: Intent) -> Result<PathBuf, PathRe
 /// Whole-file write and edit counts of one task (requirement 20.4). A write
 /// is counted once it succeeded, as `write_existing` when its target existed
 /// before the call and `write_new` otherwise. Every `ws_edit_file` call is
-/// either `edit_ok` or `edit_rejected` (path rejection included); v1 has no
-/// edit tool, so both stay 0.
+/// either `edit_ok` or `edit_rejected` (path rejection, a stale SHA or an
+/// inapplicable block included); without the P2-e switch there is no edit
+/// tool, so both stay 0.
 #[derive(Debug, Default)]
 pub struct WriteCounters {
     write_existing: AtomicU64,
@@ -170,6 +171,10 @@ const UNKNOWN_EFFECT_PHRASES: [&str; 4] = [
     "effects may be unknown",
     "do not replay the command without reconciling its effects",
 ];
+
+/// P2-e sentence appended to the `ws_write_file` description (20.2), worded
+/// as in the design.
+pub const WRITE_NEW_ONLY: &str = "只用于创建尚不存在的文件，修改已有文件请用 ws_edit_file";
 
 const WORKSPACE_NOTE: &str = "Paths are relative to the task workspace root; absolute paths are accepted only inside \
                               it, and any path that resolves outside the workspace is rejected with \
@@ -250,9 +255,8 @@ pub fn ws_tool(
         .collect();
     let mut description = format!("{} {WORKSPACE_NOTE}", kept.concat().trim_end());
     if kind == WsKind::Write && edit_file_available {
-        description.push_str(
-            " Use this tool only to create a file that does not exist yet; modify existing files with ws_edit_file.",
-        );
+        description.push(' ');
+        description.push_str(WRITE_NEW_ONLY);
     }
     let schema = Tool {
         name: name.to_owned(),
@@ -312,6 +316,12 @@ impl AgentTool for WsTool {
         let existed = target.exists();
         if let Some(object) = params.as_object_mut() {
             object.insert("path".into(), Value::String(target.to_string_lossy().into_owned()));
+            // Without any versioned option Core takes its legacy edit path,
+            // whose receipt has no SHA; `dry_run=false` selects the versioned
+            // edit (same commit semantics) so every result names the new SHA (20.5).
+            if edit && !["expected_sha256", "additional_edits", "dry_run"].iter().any(|key| object.contains_key(*key)) {
+                object.insert("dry_run".into(), Value::Bool(false));
+            }
         }
         match self.inner.execute(tool_call_id, params, signal, on_update).await {
             Ok(mut result) => {

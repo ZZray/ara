@@ -39,6 +39,7 @@ fn execute_with(
         env: &env,
         probe_only,
         baseline: false,
+        features: lite_eval::host::Features::V1,
     }))
 }
 
