@@ -1,14 +1,14 @@
 # 进度台账摘要
 
-由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 15 条记录。
+由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 16 条记录。
 
 - 总进度：verified 检查点 0/36
-- 模块状态：verified 0，done 8，open 0，未开始 30
+- 模块状态：verified 0，done 8，open 1，未开始 29
 
 | 模块 | 阶段 | 需求 | 状态 | 完成标准 | 更新时间 | 证据 | 未覆盖 |
 |---|---|---|---|---|---|---|---|
 | M-P0-TASKSET | P0 | 1 固定评估任务集 | done | 4/7 | 2026-10-29T15:11:56+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/M-P0-TASKSET-local-20261029T150951.json | SH1 登记见任务 10；6 项完整校验见任务 11.4；1.4 逐任务 fixture SHA 复核与 1.5 Manifest 逐项记录见任务 13；完整 11 命令门禁见任务 61 |
-| M-P0-HOLDOUT | P0 | 2 新增密封 C++ holdout 任务 | 未开始 | 0/8 | — | — | — |
+| M-P0-HOLDOUT | P0 | 2 新增密封 C++ holdout 任务 | open | 7/8 | 2026-10-29T21:47:11+08:00 | tools/lite-eval/tests/isolation_props.rs | 10.6 file symlink case fails: no SeCreateSymbolicLinkPrivilege, Developer Mode off (os error 1314) |
 | M-P0-RUNNER | P0 | 3 一键评估运行器与固定运行策略 | 未开始 | 0/8 | — | — | — |
 | M-P0-METRICS | P0 | 4 结果度量与未知值记录 | 未开始 | 0/8 | — | — | — |
 | M-P0-FAILURE | P0 | 5 失败记录与分类 | 未开始 | 0/7 | — | — | — |
@@ -48,4 +48,5 @@
 
 ## 未解除的阻断
 
-无
+- **M-P0-HOLDOUT**（seq 16）：file symlink privilege unavailable on this machine；需要的决定：run as administrator or enable Developer Mode, then rerun isolation_props
+  - 已尝试：std::os::windows::fs::symlink_file → os error 1314

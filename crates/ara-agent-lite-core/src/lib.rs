@@ -22,6 +22,7 @@ mod process_output;
 pub mod project_rules;
 pub mod run_policies;
 pub mod script_tools;
+pub mod session_fork;
 pub mod session_journal;
 pub mod skill_library;
 pub mod steering;

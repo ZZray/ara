@@ -104,6 +104,12 @@ start 被拒绝。连接结果以 `mcp_status` 帧报告。字段与帧格式见
 
 可选的长度截断停止审查（`length_stop_review`）和未知副作用回执引用见同一文档。
 
+start 帧的可选字段 `resume`（`{"version":1,"fence_sha256":..}`）用新 sidecar 进程恢复一个
+被 fence 的 Task：sidecar 发出 `reconcile_request`，Host 依据自己的操作回执回
+`reconcile_reply`，Harness 核对后在原 Session 中继续，不重放效果未知的调用。Python 客户端
+的回调是 `reconcile_resume`，Node 客户端是 `callbacks.reconcileResume`。帧格式、拒绝类别
+见 [protocol-v1.md](docs/protocol-v1.md) 的“恢复被 fence 的 Task（resume，可选）”一节。
+
 ## 预算停止的显式检查入口
 
 `budget_stop_review` 是 `start_task` **顶层**的可选字段，省略或 `"reject"` 时保持

@@ -16,7 +16,7 @@ use ara_agent_lite_harness::{
         RunMode, RunRequest, RuntimePaths, ToolRegistration,
     },
     BudgetStopContinuation, BudgetStopReviewPolicy, BudgetStopSnapshot, Candidate, Continuation, HarnessHost,
-    LengthStopReviewPolicy, ReviewReceipt, Settlement, StopContinuation, StopSnapshot,
+    LengthStopReviewPolicy, ResumeReceipt, ResumeReview, ReviewReceipt, Settlement, StopContinuation, StopSnapshot,
 };
 use ara_agent_lite_mcp::{McpConfig, McpOptions, McpSession};
 use async_trait::async_trait;
@@ -63,6 +63,14 @@ pub fn validate(start: &Start) -> Result<Option<McpConfig>> {
             && !run.session_key.trim().is_empty(),
         "run_identity_required"
     );
+    if let Some(resume) = &start.resume {
+        ensure!(
+            resume.version == 1
+                && resume.fence_sha256.len() == 64
+                && resume.fence_sha256.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "resume_start_invalid"
+        );
+    }
     ensure!(run.host_output_ceiling != Some(0), "start_config_rejected");
     let bound = ara_agent_lite_harness::core::output_limit::admission_bound(run.host_output_ceiling);
     ensure!(
@@ -501,6 +509,23 @@ impl HarnessHost for ExternalHost {
                 Ok(self.template.request(run_id, objective))
             }
             _ => anyhow::bail!("prepare_stop_reply_kind"),
+        }
+    }
+
+    /// Only reachable with a `resume` start field (10.1). The reply is
+    /// correlated and persisted by the Bridge; Harness decides acceptance.
+    async fn reconcile_resume(&self, review: ResumeReview, cancellation: CancellationToken) -> Result<ResumeReceipt> {
+        let run_id = self.bridge.active_run.lock().unwrap().clone();
+        let mut body = json!({"review":review});
+        let mut worst = with_worst_header(body.clone(), &self.bridge.task_id, &run_id);
+        worst["kind"] = json!("reconcile_request");
+        if self.bridge.output.needs_reference(&worst).inspect_err(|_| self.bridge.fail())? {
+            let path = review.resume_evidence_dir.join("jsonl-resume-review.json");
+            body = json!({"review_ref":evidence::write_new(&path, &serde_json::to_value(&review)?)?});
+        }
+        match self.bridge.call("reconcile_request", run_id, body, None, cancellation).await? {
+            Reply::Reconcile(receipt) => Ok(*receipt),
+            _ => anyhow::bail!("reconcile_reply_kind"),
         }
     }
 

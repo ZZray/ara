@@ -373,6 +373,16 @@ impl Journal {
         to: usize,
         mut callback: impl FnMut(&Record) -> Result<()>,
     ) -> Result<()> {
+        self.visit_raw(head, from, to, |row, _| callback(row))
+    }
+    /// `visit` that also passes each record's exact journal line bytes.
+    fn visit_raw(
+        &self,
+        head: &Head,
+        from: usize,
+        to: usize,
+        mut callback: impl FnMut(&Record, &[u8]) -> Result<()>,
+    ) -> Result<()> {
         ensure!(from <= to && to <= head.raw_count, "history range out of bounds");
         for (number, segment) in head.segments.iter().enumerate() {
             if segment.end <= from || segment.first >= to {
@@ -402,7 +412,7 @@ impl Journal {
                     "journal record integrity mismatch"
                 );
                 if row.index >= from && row.index < to {
-                    callback(&row)?;
+                    callback(&row, &bytes)?;
                 }
                 previous = row.chain;
                 index += 1;
@@ -533,6 +543,120 @@ impl Journal {
             "complete":next==head.raw_count,"coverage":"Current native Session only; watermark-filtered, bounded scan; absence outside scanned range is unknown",
             "boundary":"Receipt data is not authorization or accepted memory"}))
     }
+
+    /// Read-only verified head for forking. Unlike `open`, a leftover legacy
+    /// migration marker is refused instead of removed, so the source is never written.
+    pub(crate) fn inspect(&self) -> Result<Head> {
+        ensure!(
+            !self.directory.join("migration.json").exists(),
+            "legacy journal import interrupted; inspect the Session before forking it"
+        );
+        self.load_head()
+    }
+    /// Verified records `[0, to)` with their exact journal line bytes.
+    pub(crate) fn raw_prefix(&self, head: &Head, to: usize) -> Result<Vec<RawRecord>> {
+        let mut records = Vec::new();
+        self.visit_raw(head, 0, to, |row, bytes| {
+            records.push(RawRecord { bytes: bytes.to_vec(), chain: row.chain.clone(), message: row.message.clone() });
+            Ok(())
+        })?;
+        Ok(records)
+    }
+    /// Every settled Run index entry as `(run, data)`.
+    pub(crate) fn settled_runs(&self, head: &Head) -> Result<Vec<(String, Option<Value>)>> {
+        let runs = self.directory.join("runs");
+        if !runs.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut settled = Vec::new();
+        for entry in std::fs::read_dir(&runs)? {
+            let path = entry?.path();
+            let row: Settled = serde_json::from_slice(&bounded_read(&path, 128 * 1024)?)?;
+            ensure!(
+                row.seq <= head.seq
+                    && path.file_name() == Some(format!("{}.json", digest(row.run.as_bytes())).as_ref()),
+                "unconfirmed completed Run receipt"
+            );
+            settled.push((row.run, row.data));
+        }
+        settled.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(settled)
+    }
+    /// Create a new journal whose raw records are exactly `records` (copied
+    /// bytes, unchanged hash chain) at sequence 1. The directory must be new.
+    /// `pending.json` marks the creation until the head is durable.
+    pub(crate) fn create_fork(
+        &self,
+        records: &[RawRecord],
+        metadata: Value,
+        settled: &[(String, Option<Value>)],
+    ) -> Result<()> {
+        ensure!(!records.is_empty(), "fork journal needs at least one record");
+        std::fs::create_dir(&self.directory).context("fork journal directory must be new")?;
+        let seq = 1;
+        atomic_write(&self.directory.join("pending.json"), &serde_json::to_vec(&Pending { seq })?)?;
+        let mut segments: Vec<(Segment, Vec<u8>)> = Vec::new();
+        let mut tip = ROOT.to_owned();
+        for (index, record) in records.iter().enumerate() {
+            let length = record.bytes.len() as u64;
+            match segments.last_mut() {
+                Some((segment, bytes)) if segment.bytes + length <= SEGMENT_BYTES => {
+                    segment.bytes += length;
+                    segment.end += 1;
+                    segment.tip = record.chain.clone();
+                    bytes.extend_from_slice(&record.bytes);
+                }
+                _ => segments.push((
+                    Segment {
+                        first: index,
+                        end: index + 1,
+                        bytes: length,
+                        previous: tip.clone(),
+                        tip: record.chain.clone(),
+                    },
+                    record.bytes.clone(),
+                )),
+            }
+            tip = record.chain.clone();
+        }
+        ensure!(segments.len() <= 8192, "fork journal exceeds segment index capacity");
+        for (number, (_, bytes)) in segments.iter().enumerate() {
+            let path = self.segment_path(number);
+            let mut file = OpenOptions::new().write(true).create_new(true).open(&path)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            sync_parent(&path)?;
+        }
+        let runs = self.directory.join("runs");
+        std::fs::create_dir(&runs)?;
+        for (run, data) in settled {
+            let row = Settled { run: run.clone(), seq, data: data.clone() };
+            atomic_write(&runs.join(format!("{}.json", digest(run.as_bytes()))), &serde_json::to_vec(&row)?)?;
+        }
+        let head = Head {
+            version: 1,
+            seq,
+            raw_count: records.len(),
+            active_base: 0,
+            metadata,
+            tip,
+            segments: segments.into_iter().map(|(segment, _)| segment).collect(),
+        };
+        let checksum = digest(&serde_json::to_vec(&head)?);
+        let bytes = serde_json::to_vec(&Envelope { head, checksum })?;
+        ensure!(bytes.len() as u64 <= HEAD_BYTES, "fork journal head exceeds capacity");
+        atomic_write(&self.directory.join("head.json"), &bytes)?;
+        std::fs::remove_file(self.directory.join("pending.json"))?;
+        sync_parent(&self.directory.join("pending.json"))?;
+        Ok(())
+    }
+}
+
+/// One committed journal record with its exact line bytes (including `\n`).
+pub(crate) struct RawRecord {
+    pub bytes: Vec<u8>,
+    pub chain: String,
+    pub message: Value,
 }
 
 #[cfg(test)]

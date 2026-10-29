@@ -125,11 +125,21 @@
 ## DR-P3-1 NUL 与 Unicode 字节被改写的环节（Diagnosis_Record）
 
 - 约束：以 `header\u0000中文😀` 为输入，期望 UTF-8 字节为 `68 65 61 64 65 72 00 E4 B8 AD E6 96 87 F0 9F 98 80`（17 字节）。记录 Lite 工具 I/O、JSONL 传输、模型补丁三个环节入口与出口的十六进制字节，判定首次出现 `EF BF BD` 的环节。结论只取三个环节之一、“其他环节（注明具体位置）”或“未复现”；附可重新执行的复现步骤（Lite 提交标识、触发操作、输入内容），并注明原始输入是否含无效 UTF-8 字节序列，含则标注需另立显式编码要求。结论为“未复现”时列出已尝试的步骤与环境（操作系统、Lite 提交标识、客户端类型），状态记待验证。阻塞需求 26 的修复（任务 27.1、32.1；需求 26.1、26.6）。
-- 核实结论：待核实
-- 来源位置：待核实（候选：模型补丁环节回放 `closed-budget-snapshot-20261025` 证据中记录的原始 tool call 参数）
-- 证据等级：待核实
-- 日期：待填
-- 后续动作：待核实
+- 核实结论：模型补丁。`EF BF BD` 首次出现在模型写出的候选代码运行时，Lite 工具 I/O 与 JSONL 传输都没有改写字节。原始输入不含无效 UTF-8（样例严格 UTF-8 解码成功），不需要另立显式编码要求。
+  - 模型补丁：闭合预算快照 live Run 的 `rpc-19` 是模型发出的 `source_replace`（native_call_id `call_00_ywnxAk8yLp1e1nFMug4x7052`），`new` 参数新增 `decode_git_bytes`，末行为 `return text.replace("\x00", "\ufffd") if "\x00" in text else text`。这行在参数里是 ASCII 转义文本（`5C 78 30 30`、`5C 75 66 66 66 64`），帧、Journal 第 34 条记录和磁盘上的 `git_service.py` 都没有原始 `00` 或 `EF BF BD`，三处这一行的字节相同。按帧中 `args_sha256` 重算参数哈希一致（`afbf8912…fb34b`）。在新命名空间执行这段模型代码：入口 `68 65 61 64 65 72 00 E4 B8 AD E6 96 87 F0 9F 98 80`，出口 `68 65 61 64 65 72 EF BF BD E4 B8 AD E6 96 87 F0 9F 98 80`（str 和 bytes 两种输入相同）。快照报告的 `actual: "header�中文😀\nsecond�line\n"` 就是这段代码的运行结果。
+  - Lite 工具 I/O：`local_tools::tools(root)` 的 `write_file` 参数 JSON 为 `{"path":"bytes.txt","content":"header\u0000中文😀"}`；磁盘 `68 65 61 64 65 72 00 E4 B8 AD E6 96 87 F0 9F 98 80`；`read_file` 出口相同。未复现。
+  - JSONL 传输：只做了代码阅读和编解码层核对，没有用真实 sidecar 进程做样例往返（留给任务 32.3）。sidecar `transport.rs:14-32` 按 `\n` 分帧并严格校验 UTF-8，不做替换；Python 客户端 `encoded()`（`ara_agent_lite.py:93`）与 Node 客户端 `JSON.stringify` 编码 `tool_reply` 时把 U+0000 写成 `\u0000`，帧中无原始 `00`；两端解码（`json.loads`、`TextDecoder(fatal)` + `JSON.parse`）出口都是 17 字节样例。另有真实进程证据：`rpc-19` 帧由当时的 sidecar 写出，其参数字节与 Journal、磁盘一致。
+- 复现步骤：
+  1. Lite 提交 `f0a7570036aa9b57cb141057e1bdd1101b66fa08`（分支 `dev`，工作区含未提交改动），本机 Windows，客户端类型：模型补丁环节为闭合预算快照的 Harness（JSONL 帧证据），工具 I/O 环节为 Core 直接调用。
+  2. 模型补丁环节：`python D:/WorkSpace/tmp/ara-dr-p3-1/model_patch_leg.py`（只读快照目录，打印上述哈希、计数与入口/出口十六进制）。仓内回放：`cargo test --test byte_roundtrip dr_p3_1_`，fake upstream 把 `rpc-19` 参数原文作为模型的 `edit_file` 调用回放（夹具 `tests/fixtures/dr-p3-1/jsonl-rpc-19-request.json`，SHA-256 `dc0ad1f1de11ec906e788de49265698dcafc1d77f92dde9423327a195b2cd18c`）。
+  3. 工具 I/O 环节：`cargo test --test byte_roundtrip dr_p3_1_tool_io_leg -- --nocapture`。
+  4. JSONL 编解码层：`python D:/WorkSpace/tmp/ara-dr-p3-1/jsonl_codec_leg.py`。
+- 来源位置：
+  - 快照（仓外 `D:/WorkSpace/tmp/ara-core-capability-20261022/closed-budget-snapshot-v1-20261025/acr-live-snapshot-v1/`）：`harness/jsonl-rpc-19-request.json`（SHA-256 `dc0ad1f1…d18c`）；`state/session.journal/segment-00000000.jsonl` 第 34 行（文件 SHA-256 `cf48224fac8a71e57f58ec2cb29dd7ef40ed870b8b4c51e95a60723733c87f24`）；`host/work/workspace/app/services/git_service.py`；`../root-semantic-preservation-probe.json`
+  - 仓内：`crates/ara-agent-lite-jsonl/docs/evidence/closed-budget-snapshot-20261025.result.json:100-108`、`.content.json:133`；`crates/ara-agent-lite-core/src/local_tools.rs:96`（`read_text_handle` 严格 `String::from_utf8`）、`:666-673`（`write_file` 原样 `std::fs::write`）
+- 证据等级：模型补丁结论为运行确认（执行了快照中的模型代码并比对三处字节）；工具 I/O 为运行确认；JSONL 传输为源码支持加编解码层运行确认，真实 sidecar 进程往返未做。
+- 日期：2026-10-29
+- 后续动作：任务 32.1 按“模型补丁”处理，Lite 代码不改；`tests/byte_roundtrip.rs` 的三个 `dr_p3_1_*` 测试回放补丁原文并断言磁盘字节与补丁目标一致、补丁内已有 `EF BF BD` 原样保留、样例补丁落盘为 17 字节。32.2 的 Property 35 在同一文件。32.3（真实 sidecar 与 Python、Node 进程往返）留给 JSONL 轮次。
 
 ## DR-P4-1 事件 `type` 清单与样本采集场景
 

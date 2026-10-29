@@ -36,6 +36,82 @@ class LengthStopHost(Host, Protocol):
     async def prepare_stop_continuation(self, continuation: dict, cancelled: asyncio.Event) -> dict: ...
 
 
+class ResumeHost(Host, Protocol):
+    async def reconcile_resume(self, review: dict, cancelled: asyncio.Event) -> dict: ...
+
+
+# Failure categories of the `reconcile_resume` callback (11.2); each is the
+# first segment of the ReconciliationRequired message. No reply is written.
+RECONCILE_FAILURES = ('reconcile_callback_exception', 'reconcile_receipt_invalid', 'reconcile_frame_too_large',
+                      'reconcile_timeout')
+
+
+class _ReconcileFailure(ReconciliationRequired):
+    def __init__(self, category: str):
+        super().__init__(f'{category}: Host reconcile_resume gave no valid settlement; no reply was written')
+        self.category = category
+
+
+def valid_resume_receipt(value: Any) -> bool:
+    """Exact `ResumeReceipt` fields and types; Harness still checks the content."""
+    if not isinstance(value, dict) or set(value) != {'committed', 'settlement', 'tool_calls', 'evidence'}:
+        return False
+    if type(value['committed']) is not bool or value['settlement'] not in ('Settled', 'Unknown'):
+        return False
+    if not isinstance(value['evidence'], list) or not all(isinstance(item, str) for item in value['evidence']):
+        return False
+    if not isinstance(value['tool_calls'], list):
+        return False
+    for call in value['tool_calls']:
+        if not isinstance(call, dict) or set(call) != {'call_id', 'settlement'} or not isinstance(call['call_id'], str):
+            return False
+        settlement = call['settlement']
+        if not isinstance(settlement, dict):
+            return False
+        if settlement.get('kind') == 'not_executed':
+            if set(settlement) != {'kind'}:
+                return False
+        elif (settlement.get('kind') not in ('completed', 'failed') or set(settlement) != {'kind', 'output'}
+              or not isinstance(settlement['output'], str)):
+            return False
+    return True
+
+
+async def reconcile_reply(host, frame: dict, review: dict, cancelled: asyncio.Event,
+                          deadline_unix_ms: int, grace_seconds: float) -> dict:
+    """Call `host.reconcile_resume` once and build its `reconcile_reply`.
+
+    At the Task deadline the signal is set and the callback gets the grace to
+    return. Any failure raises `ReconciliationRequired` whose message starts
+    with one of RECONCILE_FAILURES; it never contains the callback's error text.
+    """
+    call = asyncio.ensure_future(host.reconcile_resume(review, cancelled))
+    done, _ = await asyncio.wait({call}, timeout=max(0.0, deadline_unix_ms / 1000 - time.time()))
+    if not done:
+        cancelled.set()
+        done, _ = await asyncio.wait({call}, timeout=grace_seconds)
+        if not done:
+            call.cancel()
+        raise _ReconcileFailure('reconcile_timeout')
+    if cancelled.is_set() or time.time() * 1000 >= deadline_unix_ms:
+        # The sidecar's callback_cancel or the deadline came first; a late reply is never written.
+        raise _ReconcileFailure('reconcile_timeout')
+    if call.cancelled() or call.exception() is not None:
+        raise _ReconcileFailure('reconcile_callback_exception')
+    receipt = call.result()
+    if not valid_resume_receipt(receipt):
+        raise _ReconcileFailure('reconcile_receipt_invalid')
+    reply = {'kind': 'reconcile_reply', **{key: frame[key] for key in ('version', 'rpc_id', 'task_id', 'run_id')},
+             'receipt': receipt}
+    try:
+        size = len(json.dumps(reply, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')) + 1
+    except (TypeError, ValueError):
+        raise _ReconcileFailure('reconcile_receipt_invalid') from None
+    if size > FRAME_BYTES:
+        raise _ReconcileFailure('reconcile_frame_too_large')
+    return reply
+
+
 @dataclass(frozen=True)
 class UnknownEffect:
     """One tool call whose external effects are unknown (outcome.json `unknown_effects`)."""
@@ -239,6 +315,9 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
             for name in ('verify_stop_snapshot', 'prepare_stop_continuation'))):
         raise ValueError('Execute length-stop opt-in requires both dedicated Host callbacks')
     mcp_enabled = 'mcp_servers' in config
+    resume_enabled = 'resume' in config
+    if resume_enabled and not callable(getattr(host, 'reconcile_resume', None)):
+        raise ValueError('resume requires a reconcile_resume callback')
     task_id = config['task']['task_id']
     evidence = Path(config['task']['evidence_dir'])
     first_run = config['run']['run_id']
@@ -275,9 +354,13 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
     send_lock = asyncio.Lock()
     pending: dict[str, tuple[asyncio.Event, asyncio.Task]] = {}
     callback_runs: dict[str, str] = {}
+    callback_kinds: dict[str, str] = {}
     seen: set[str] = set()
     ui_tasks: set[asyncio.Task] = set()
     grace = config.get('cancel_grace_ms', 5000) / 1000
+    # Category of a refused resume settlement; it names the final error (11.2, 11.5).
+    reconcile_failure: list[str] = []
+    reconcile_cancel_sent: list[bool] = []
 
     async def send(value):
         data = encoded(value)
@@ -407,6 +490,23 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
                 pass
             raise ReconciliationRequired('Host callback failed; inspect original operation receipts') from None
 
+    async def reconcile(frame, signal):
+        try:
+            review = body(frame, 'review')
+            reply = await reconcile_reply(host, frame, review, signal, config['task']['deadline_unix_ms'], grace)
+        except Exception as error:
+            reconcile_failure.append(error.category if isinstance(error, _ReconcileFailure) else 'reconcile_request_invalid')
+            record(frame, 'failed-or-unknown', effects='reconcile_not_replied')
+            if not reconcile_cancel_sent:
+                reconcile_cancel_sent.append(True)
+                try:
+                    await send({'kind': 'cancel', 'version': 1, 'task_id': task_id})
+                except Exception:
+                    pass
+            raise _ReconcileFailure(reconcile_failure[0]) from None
+        record(frame, 'host-returned', settlement='HostReceipt', operation_receipt=None)
+        await send(reply)
+
     async def observe_event(frame):
         try:
             result = on_event(frame)
@@ -471,6 +571,24 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
                             stream.flush()
                             os.fsync(stream.fileno())
                     break
+                if kind == 'reconcile_request':
+                    # Only with `resume`, only once per run_task (11.1, 11.5); the callback is not called otherwise.
+                    rpc_id = frame.get('rpc_id')
+                    if not resume_enabled or any(entry_kind == 'reconcile_request' for entry_kind in callback_kinds.values()):
+                        reconcile_failure.append('reconcile_request_unexpected')
+                        raise ReconciliationRequired('reconcile_request_unexpected')
+                    header = {'kind', 'version', 'rpc_id', 'task_id', 'run_id'}
+                    if (set(frame) not in (header | {'review'}, header | {'review_ref'}) or not isinstance(rpc_id, str)
+                            or not rpc_id or rpc_id in seen or frame.get('run_id') != first_run):
+                        reconcile_failure.append('reconcile_request_invalid')
+                        raise ReconciliationRequired('reconcile_request_invalid')
+                    seen.add(rpc_id)
+                    callback_runs[rpc_id] = frame['run_id']
+                    callback_kinds[rpc_id] = kind
+                    record(frame, 'started', external_effects='not_yet_settled')
+                    signal = asyncio.Event()
+                    pending[rpc_id] = (signal, asyncio.create_task(reconcile(frame, signal)))
+                    continue
                 if kind not in ('tool_call', 'verify_request', 'prepare_request', 'verify_budget_request', 'prepare_budget_request',
                                 'verify_stop_request', 'prepare_stop_request'):
                     raise ReconciliationRequired('unexpected runtime control frame')
@@ -503,15 +621,24 @@ async def run_task(binary: str | Path, config: dict, host: Host, *, token: str,
     except (asyncio.CancelledError, Exception):
         for signal, _ in pending.values():
             signal.set()
-        try:
-            await send({'kind': 'cancel', 'version': 1, 'task_id': task_id})
-        except Exception:
-            pass
+        if not reconcile_cancel_sent:
+            # A refused settlement has already asked the sidecar to stop once.
+            reconcile_cancel_sent.append(True)
+            try:
+                await send({'kind': 'cancel', 'version': 1, 'task_id': task_id})
+            except Exception:
+                pass
         # No automatic replay. A process watchdog ending the Rust peer cannot
         # establish that an external Host operation has stopped or rolled back.
         active = {task for _, task in pending.values() if not task.done()}
         if active:
             await asyncio.wait(active, timeout=grace)
+        for _, task in pending.values():
+            if task.done() and not task.cancelled():
+                task.exception()  # Retrieved here; the error below names the failure.
+        if reconcile_failure:
+            raise ReconciliationRequired(f'{reconcile_failure[0]}: resume refused; the fence and original '
+                                         'receipts are unchanged') from None
         raise ReconciliationRequired('Task transport/callback interrupted; query original receipts before continuing') from None
     finally:
         cancel_task.cancel()

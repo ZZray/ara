@@ -1,0 +1,64 @@
+{
+  "exit_code": 0,
+  "provider_requests": 2,
+  "stderr": "",
+  "stdout": [
+    {
+      "args_sha256": "<sha256>",
+      "arguments": {
+        "content": "x"
+      },
+      "kind": "tool_call",
+      "native_call_id": "call-1",
+      "rpc_id": "rpc-1",
+      "run_id": "run-1",
+      "task_id": "golden-task",
+      "tool_name": "write_answer",
+      "version": 1
+    },
+    {
+      "candidate": {
+        "basis": {
+          "authorization_revision": "a1",
+          "criteria_revision": "c1",
+          "event_count": 13,
+          "events_path": "<ROOT>/harness/run-1-events.jsonl",
+          "events_sha256": "<sha256>",
+          "journal_head_sha256": "<sha256>",
+          "raw_end": 4,
+          "raw_proof": "journal-v1:<sha256>",
+          "raw_start": 0,
+          "run_calls": 2,
+          "run_id": "run-1",
+          "run_number": 1,
+          "session_path": "<ROOT>/session.json",
+          "task_id": "golden-task",
+          "total_calls": 2
+        },
+        "goal": null,
+        "output": "Done."
+      },
+      "kind": "verify_request",
+      "rpc_id": "rpc-2",
+      "run_id": "run-1",
+      "task_id": "golden-task",
+      "version": 1
+    },
+    {
+      "fence_presence": "Released",
+      "kind": "task_result",
+      "local_callbacks_finished": true,
+      "observed_calls": 2,
+      "outcome_ref": {
+        "path": "<ROOT>/harness/released.json",
+        "sha256": "<sha256>"
+      },
+      "reconciliation_fence": null,
+      "runs": 1,
+      "stop": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "task_id": "golden-task",
+      "version": 1
+    }
+  ]
+}

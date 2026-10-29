@@ -210,6 +210,40 @@ export function parseUnknownEffects(outcome) {
   }));
 }
 
+const reconcileError = (category) => Object.assign(new Error(category), { category });
+
+/**
+ * Build the `reconcile_reply` for a `reconcileResume` return value (12.1, 12.2).
+ * Exact `ResumeReceipt` fields and types, whole frame within FRAME_BYTES;
+ * otherwise throws an Error whose message and `category` are `reconcile_receipt_invalid`.
+ */
+export function reconcileReplyFor(frame, receipt) {
+  const settlement = (value) => object(value) && (value.kind === 'not_executed' ? exact(value, ['kind'])
+    : ['completed', 'failed'].includes(value.kind) && exact(value, ['kind', 'output']) && typeof value.output === 'string');
+  const valid = exact(receipt, ['committed', 'settlement', 'tool_calls', 'evidence'])
+    && typeof receipt.committed === 'boolean' && ['Settled', 'Unknown'].includes(receipt.settlement)
+    && Array.isArray(receipt.evidence) && receipt.evidence.every((item) => typeof item === 'string')
+    && Array.isArray(receipt.tool_calls) && receipt.tool_calls.every((call) => exact(call, ['call_id', 'settlement'])
+      && typeof call.call_id === 'string' && settlement(call.settlement));
+  if (!valid) throw reconcileError('reconcile_receipt_invalid');
+  const reply = { ...envelope(frame, 'reconcile_reply'), receipt };
+  let bytes;
+  try { bytes = Buffer.byteLength(`${JSON.stringify(reply)}\n`); } catch { throw reconcileError('reconcile_receipt_invalid'); }
+  if (bytes > FRAME_BYTES) throw reconcileError('reconcile_receipt_invalid');
+  return reply;
+}
+
+/**
+ * Call `reconcileResume` once and build its reply. A thrown callback becomes
+ * `reconcile_callback_threw`; the original message is never kept.
+ */
+export async function settleReconcile(reconcileResume, frame, review, signal) {
+  let receipt;
+  try { receipt = await reconcileResume(review, { signal, frame }); }
+  catch { throw reconcileError('reconcile_callback_threw'); }
+  return reconcileReplyFor(frame, receipt);
+}
+
 /** Read the separate committed budget-review index without changing outcome. */
 export async function readBudgetReviewReference(reference, evidenceDirectory, task, outcome) {
   const record = await readCheckedJsonReference(reference, evidenceDirectory);
@@ -234,6 +268,9 @@ export async function readBudgetReviewReference(reference, evidenceDirectory, ta
  * callbacks.tool(frame, {signal}), verify(candidate, {signal,frame}) and
  * prepare(continuation, {signal,frame}) must settle their own external effects.
  * A thrown tool callback is Unknown, not a known no-effect rejection.
+ * With `start.resume`, callbacks.reconcileResume(review, {signal,frame}) is
+ * required (else this throws `reconcile_callback_missing` before spawn) and
+ * is called once; a refused settlement sets `fault` to its category.
  */
 export async function startTask({ binary, start, modelToken, operationDirectory,
   callbacks, onEvent = () => {}, env = {}, binaryArgs = [] }) {
@@ -263,6 +300,10 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
     && ['verifyStopSnapshot','prepareStopContinuation'].every((key) => typeof callbacks[key] === 'function')),
   'Execute length-stop opt-in requires both dedicated callbacks');
   const mcpEnabled = Object.hasOwn(start, 'mcp_servers');
+  // 12.1: `resume` needs the settlement callback; without `resume` it is optional and unused.
+  const resumeEnabled = Object.hasOwn(start, 'resume');
+  if (resumeEnabled && typeof callbacks.reconcileResume !== 'function') throw new Error('reconcile_callback_missing');
+  let reconcileSeen = false;
   requireValue(Buffer.byteLength(`${JSON.stringify(start)}\n`) <= FRAME_BYTES, 'start frame exceeds protocol bound');
   const grace = start.cancel_grace_ms ?? 5000;
   requireValue(Number.isInteger(grace) && grace >= 1000 && grace <= 15000, 'invalid cancellation grace');
@@ -421,8 +462,44 @@ export async function startTask({ binary, start, modelToken, operationDirectory,
       catch { await receipts.operation(frame, 'reply-delivery-unknown'); state.fault ??= 'callback_reply_delivery_unknown'; }
     }
   };
+  const executeReconcile = async (item) => {
+    const frame = item.frame; let reply = null; let category = null;
+    await receipts.operation(frame, 'started');
+    try {
+      const review = await candidateOf(frame, 'review');
+      const built = await settleReconcile(callbacks.reconcileResume, frame, review, item.controller.signal);
+      // An aborted settlement is never written back, even if the callback still returned.
+      if (item.controller.signal.aborted) {
+        category = Date.now() >= start.task.deadline_unix_ms ? 'reconcile_timeout' : 'reconcile_aborted';
+      } else reply = built;
+    } catch (error) { category = error?.category ?? 'reconcile_request_invalid'; }
+    item.settled = true;
+    await receipts.operation(frame, reply ? 'settled' : 'unknown', { reply_sha256: reply ? digest(reply) : null, category });
+    if (!reply) { fault(category); return; }
+    try { await send(reply); item.replied = true; }
+    catch { await receipts.operation(frame, 'reply-delivery-unknown'); state.fault ??= 'callback_reply_delivery_unknown'; }
+  };
   const dispatch = (frame) => {
     requireValue(object(frame) && frame.version === VERSION && frame.task_id === start.task.task_id, 'invalid server frame');
+    if (frame.kind === 'reconcile_request') {
+      requireValue(!state.terminal && !state.fault && active.size < 8, 'out-of-state reconcile request');
+      correlation(frame);
+      requireValue(!seen.has(frame.rpc_id), 'duplicate RPC request');
+      requireValue(exact(frame, ['kind','version','rpc_id','task_id','run_id','review'])
+        || exact(frame, ['kind','version','rpc_id','task_id','run_id','review_ref']), 'invalid reconcile_request fields');
+      seen.add(frame.rpc_id);
+      // Only with `resume` and only once; the callback is not called otherwise.
+      if (typeof callbacks.reconcileResume !== 'function') { fault('reconcile_callback_missing'); return; }
+      if (!resumeEnabled || reconcileSeen) { fault('reconcile_request_unexpected'); return; }
+      reconcileSeen = true;
+      const item = { frame, controller: new AbortController(), settled: false, replied: false };
+      active.set(frame.rpc_id, item); state.pending_callbacks += 1;
+      if (state.cancelled) item.controller.abort();
+      item.promise = executeReconcile(item).catch(() => { fault('callback_receipt_or_transport_failure'); })
+        .finally(() => { active.delete(frame.rpc_id); state.pending_callbacks -= 1; });
+      journalTasks.push(item.promise);
+      return;
+    }
     if (frame.kind === 'mcp_status') {
       requireValue(mcpEnabled && exact(frame, ['kind','version','task_id','servers','excluded'])
         && object(frame.servers) && Array.isArray(frame.excluded), 'unsolicited or invalid mcp_status frame');

@@ -32,7 +32,7 @@ enum Command {
     #[command(subcommand)]
     Holdout(HoldoutCommand),
     /// Fork a Session at a journal prefix into two new Sessions.
-    Fork(Pending),
+    Fork(ForkArgs),
     /// Compare a run against the baseline Run_Manifest.
     Compare(Pending),
     /// Append a manual Failure_Class to a Failure_Record.
@@ -56,6 +56,24 @@ enum Command {
     Stage(StageArgs),
 }
 
+#[derive(Args)]
+struct ForkArgs {
+    /// Source Session state path (its `.journal` directory is read only).
+    #[arg(long)]
+    source: PathBuf,
+    /// Working directory recorded in the source Session.
+    #[arg(long)]
+    cwd: PathBuf,
+    /// Number of leading journal records to copy (1..=source record count).
+    #[arg(long)]
+    k: usize,
+    /// First new Session state path; must not exist.
+    #[arg(long)]
+    target_a: PathBuf,
+    /// Second new Session state path; must not exist.
+    #[arg(long)]
+    target_b: PathBuf,
+}
 /// Arguments of a subcommand whose implementation has not landed yet.
 #[derive(Args)]
 struct Pending {
@@ -481,6 +499,18 @@ fn parse_state(text: &str) -> Result<State, String> {
     }
 }
 
+/// Requirement 6: only creates the two Sessions; never starts a Run on them.
+fn fork(args: ForkArgs) -> Result<ExitCode> {
+    let receipt = ara_agent_lite_harness::core::session_fork::fork_session(
+        &args.source,
+        &args.cwd,
+        args.k,
+        [&args.target_a, &args.target_b],
+    )?;
+    println!("{}", serde_json::to_string(&receipt)?);
+    Ok(ExitCode::SUCCESS)
+}
+
 fn not_implemented(name: &str) -> Result<ExitCode> {
     bail!("subcommand `{name}` is not implemented yet")
 }
@@ -564,7 +594,7 @@ fn main() -> ExitCode {
         Command::Run(_) => not_implemented("run"),
         Command::Validate => validate_task_set(),
         Command::Holdout(command) => holdout(command),
-        Command::Fork(_) => not_implemented("fork"),
+        Command::Fork(args) => fork(args),
         Command::Compare(_) => not_implemented("compare"),
         Command::Classify(_) => not_implemented("classify"),
         Command::Oracle(_) => not_implemented("oracle"),

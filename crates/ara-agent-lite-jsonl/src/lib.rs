@@ -10,11 +10,15 @@ mod rpc;
 mod runtime;
 mod transport;
 
-use std::{io::BufReader, sync::Arc};
+use std::{
+    io::BufReader,
+    sync::{Arc, OnceLock},
+};
 
 use ara_agent_lite_harness::{
-    self as harness, core::rpi_agent::AgentTool, BudgetStopReviewPolicy, FencePresence, TaskOptions, TaskOutcome,
-    TaskSpec,
+    self as harness,
+    core::{rpi_agent::AgentTool, RunRequest},
+    BudgetStopReviewPolicy, FencePresence, ResumeChecks, ResumeRefusal, TaskHandle, TaskOptions, TaskOutcome, TaskSpec,
 };
 use ara_agent_lite_mcp::{McpConfig, McpSession};
 use serde_json::{json, Value};
@@ -64,6 +68,7 @@ fn stdio() -> Result<(), &'static str> {
 
 /// Without `mcp_servers` this is exactly the original Task path. With it, the
 /// MCP session is connected before Admission and shut down after the Task.
+/// A `resume` start field selects the resume path; without it nothing changes.
 async fn task(
     start: Start,
     reader: BufReader<std::io::Stdin>,
@@ -77,20 +82,35 @@ async fn task(
     };
     let tools = session.as_ref().map(McpSession::tools).unwrap_or_default();
     let status = session.as_ref().map(|session| json!({"servers":session.status(),"excluded":session.excluded()}));
-    let result = ordinary(start, reader, token, tools, status).await;
+    let result = if start.resume.is_some() {
+        resumed(start, reader, token, tools, status).await
+    } else {
+        ordinary(start, reader, token, tools, status).await
+    };
     if let Some(session) = session {
         session.shutdown().await;
     }
     result
 }
 
-async fn ordinary(
+/// What the Task keeps after Admission, shared by both start paths.
+struct Prepared {
+    emit_events: bool,
+    budget_stop_review: BudgetStopReviewPolicy,
+    output: Output,
+    spec: TaskSpec,
+    bridge: Arc<Bridge>,
+}
+
+/// Moved into Harness Admission.
+type Admit = (RunRequest, Arc<ExternalHost>, TaskOptions);
+
+async fn prepare(
     start: Start,
-    reader: BufReader<std::io::Stdin>,
     token: String,
     mcp_tools: Vec<Arc<dyn AgentTool>>,
     mcp_status: Option<Value>,
-) -> Result<(), &'static str> {
+) -> Result<(Prepared, Admit), &'static str> {
     let emit_events = start.emit_events;
     let budget_stop_review = start.budget_stop_review;
     let length_stop_review = start.length_stop_review;
@@ -112,63 +132,163 @@ async fn ordinary(
     let template = Template::new(start.run, token, bridge.clone(), mcp_tools);
     let initial = template.initial();
     let host = Arc::new(ExternalHost { template, bridge: bridge.clone() });
-    let handle = harness::start_with_options(
-        spec.clone(),
-        initial,
-        host,
-        TaskOptions { budget_stop_review, length_stop_review },
-    )
-    .map_err(|_| "task_admission_rejected")?;
+    let options = TaskOptions { budget_stop_review, length_stop_review };
+    Ok((Prepared { emit_events, budget_stop_review, output, spec, bridge }, (initial, host, options)))
+}
 
-    // Blocking stdin has its own bounded reader. Do not join a thread which may
-    // wait forever for a client that keeps stdin open after receiving the result.
-    let (input, mut incoming) = mpsc::channel::<Result<(Incoming, Value), ()>>(16);
+async fn ordinary(
+    start: Start,
+    reader: BufReader<std::io::Stdin>,
+    token: String,
+    mcp_tools: Vec<Arc<dyn AgentTool>>,
+    mcp_status: Option<Value>,
+) -> Result<(), &'static str> {
+    let (prepared, (initial, host, options)) = prepare(start, token, mcp_tools, mcp_status).await?;
+    let handle = harness::start_with_options(prepared.spec.clone(), initial, host, options)
+        .map_err(|_| "task_admission_rejected")?;
+    // The reader starts after Admission, as before the resume path existed.
+    let admitted = Arc::new(OnceLock::new());
+    let _ = admitted.set(handle.clone());
+    let input_task = spawn_dispatch(spawn_reader(reader), prepared.bridge.clone(), admitted);
+    finish(prepared, handle, input_task).await
+}
+
+/// 9.1, 10.2: the reader runs before Admission so a `reconcile_reply` written
+/// while Harness waits for the Host settlement is read. Exactly one
+/// `resume_checked`; no new Task is admitted on any path.
+async fn resumed(
+    start: Start,
+    reader: BufReader<std::io::Stdin>,
+    token: String,
+    mcp_tools: Vec<Arc<dyn AgentTool>>,
+    mcp_status: Option<Value>,
+) -> Result<(), &'static str> {
+    let fence_sha256 = start.resume.as_ref().map(|resume| resume.fence_sha256.clone());
+    // 9.4: a refused resume writes zero stdout frames, so the MCP status frame
+    // waits until the resume is admitted.
+    let (prepared, (initial, host, options)) = prepare(start, token, mcp_tools, None).await?;
+    let admitted = Arc::new(OnceLock::new());
+    let input_task = spawn_dispatch(spawn_reader(reader), prepared.bridge.clone(), admitted.clone());
+    let evidence_existed = prepared.spec.evidence_dir.exists();
+    let checks = ResumeChecks { expected_fence_sha256: fence_sha256, refuse_larger_run_caps: true };
+    let result = harness::resume_checked(prepared.spec.clone(), initial, host, options, checks).await;
+    match result {
+        Ok(handle) => {
+            let _ = admitted.set(handle.clone());
+            if let Some(mut frame) = mcp_status {
+                frame["kind"] = json!("mcp_status");
+                frame["version"] = json!(1);
+                frame["task_id"] = json!(prepared.spec.task_id);
+                if prepared.output.control(frame).await.is_err() {
+                    handle.cancel();
+                }
+            }
+            finish(prepared, handle, input_task).await
+        }
+        Err(error) => {
+            input_task.abort();
+            // Harness creates the new evidence directory just before the Host
+            // callback; an earlier refusal has nothing of this attempt to record.
+            if !evidence_existed && prepared.spec.evidence_dir.is_dir() {
+                let category = rejection_category(&error, prepared.bridge.failure_category());
+                let _ = evidence::write_new(
+                    &prepared.spec.evidence_dir.join("jsonl-resume-rejected.json"),
+                    &json!({"category":category,"no_replay":true}),
+                );
+            }
+            Err("task_admission_rejected")
+        }
+    }
+}
+
+/// The typed refusal names the category; a callback-side failure is named by
+/// the Bridge. Error text is never parsed.
+fn rejection_category(error: &anyhow::Error, bridge: Option<&'static str>) -> Value {
+    match error.downcast_ref::<ResumeRefusal>() {
+        Some(ResumeRefusal::DeadlineElapsed) => json!(bridge.unwrap_or("reconcile_timeout")),
+        None | Some(ResumeRefusal::HostCallbackFailed) => json!(bridge.unwrap_or("harness_refused")),
+        Some(refusal) => json!(refusal),
+    }
+}
+
+enum ReadFault {
+    Closed,
+    Invalid,
+}
+
+/// Blocking stdin has its own bounded reader. Do not join a thread which may
+/// wait forever for a client that keeps stdin open after receiving the result.
+fn spawn_reader(reader: BufReader<std::io::Stdin>) -> mpsc::Receiver<Result<(Incoming, Value), ReadFault>> {
+    let (input, incoming) = mpsc::channel(16);
     std::thread::spawn(move || {
         let mut reader = reader;
         loop {
-            let item = read_frame(&mut reader)
-                .ok()
-                .flatten()
-                .and_then(|bytes| {
-                    // Deserialize the typed frame directly as well: deriving
-                    // from Value alone would erase duplicate JSON object keys.
-                    let message: Incoming = serde_json::from_slice(&bytes).ok()?;
-                    let value: Value = serde_json::from_slice(&bytes).ok()?;
-                    Some((message, value))
-                })
-                .ok_or(());
+            let item = match read_frame(&mut reader) {
+                Ok(Some(bytes)) => protocol::decode(&bytes).ok_or(ReadFault::Invalid),
+                Ok(None) => Err(ReadFault::Closed),
+                Err(_) => Err(ReadFault::Invalid),
+            };
             let failed = item.is_err();
             if input.blocking_send(item).is_err() || failed {
                 break;
             }
         }
     });
-    let input_bridge = bridge.clone();
-    let input_handle = handle.clone();
-    let input_task = tokio::spawn(async move {
+    incoming
+}
+
+/// After Admission every fault is `Bridge::fail`, exactly as before. While a
+/// resume is still in Admission the fault is named for the rejection record.
+fn spawn_dispatch(
+    mut incoming: mpsc::Receiver<Result<(Incoming, Value), ReadFault>>,
+    bridge: Arc<Bridge>,
+    admitted: Arc<OnceLock<TaskHandle>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let fail = |category: &'static str| match admitted.get() {
+            Some(_) => bridge.fail(),
+            None => bridge.fail_with(category),
+        };
         while let Some(item) = incoming.recv().await {
             match item {
                 Ok((Incoming::Cancel { version, task_id }, _)) => {
-                    if version == 1 && task_id == input_bridge.task_id {
-                        input_handle.cancel();
+                    if version == 1 && task_id == bridge.task_id {
+                        match admitted.get() {
+                            Some(handle) => handle.cancel(),
+                            None => {
+                                bridge.fail_with("resume_cancelled");
+                                break;
+                            }
+                        }
                     } else {
-                        input_bridge.fail();
+                        fail(rpc::RPC_MISMATCH);
                         break;
                     }
                 }
                 Ok((message, raw)) => {
-                    if input_bridge.receive(message, &raw).is_err() {
-                        input_bridge.fail();
+                    if let Err(category) = bridge.receive(message, &raw) {
+                        fail(category);
                         break;
                     }
                 }
-                Err(()) => {
-                    input_bridge.fail();
+                Err(fault) => {
+                    fail(match fault {
+                        ReadFault::Closed => "stdin_closed",
+                        ReadFault::Invalid => rpc::INVALID_REPLY_FIELDS,
+                    });
                     break;
                 }
             }
         }
-    });
+    })
+}
+
+async fn finish(
+    prepared: Prepared,
+    handle: TaskHandle,
+    input_task: tokio::task::JoinHandle<()>,
+) -> Result<(), &'static str> {
+    let Prepared { emit_events, budget_stop_review, output, spec, bridge } = prepared;
     let fault_bridge = bridge.clone();
     let fault_output = output.clone();
     let fault_handle = handle.clone();

@@ -5,7 +5,7 @@ use ara_agent_lite_harness::{
         model::{GenerationPolicy, LengthRecoveryPolicy},
         model_caps::ModelCaps,
     },
-    BudgetStopReviewPolicy, LengthStopReviewPolicy, ReviewReceipt, Settlement, TaskKind, TaskSpec,
+    BudgetStopReviewPolicy, LengthStopReviewPolicy, ResumeReceipt, ReviewReceipt, Settlement, TaskKind, TaskSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,10 +34,27 @@ pub struct Start {
     pub mcp_servers: Option<Value>,
     #[serde(default)]
     pub mcp_options: Option<McpStartOptions>,
+    /// Resume the fenced Task of this Session (9.1). Absent keeps the
+    /// original start path; `null` is a type error, not an absent field.
+    #[serde(default, deserialize_with = "present")]
+    pub resume: Option<ResumeStart>,
 }
 
 fn grace() -> u64 {
     5000
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<ResumeStart>, D::Error> {
+    ResumeStart::deserialize(deserializer).map(Some)
+}
+
+/// The fence the Host inspected; `validate` requires version 1 and 64
+/// lowercase hex digits (9.3).
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResumeStart {
+    pub version: u32,
+    pub fence_sha256: String,
 }
 
 /// Host connection policy for `mcp_servers`; it grants no other authority.
@@ -210,6 +227,23 @@ pub enum Incoming {
         run_id_next: String,
         objective: String,
     },
+    /// Host settlement of a fenced Task (10.3); only sent after a `reconcile_request`.
+    ReconcileReply {
+        version: u32,
+        rpc_id: String,
+        task_id: String,
+        run_id: String,
+        receipt: ResumeReceipt,
+    },
+}
+
+/// One stdin frame as the typed message and its raw value. Deserializing the
+/// typed frame directly as well: deriving from Value alone would erase
+/// duplicate JSON object keys.
+pub fn decode(bytes: &[u8]) -> Option<(Incoming, Value)> {
+    let message: Incoming = serde_json::from_slice(bytes).ok()?;
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    Some((message, value))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -226,7 +260,7 @@ mod tests {
     use serde_json::{json, Value};
 
     /// Field mutations of an otherwise valid frame, and whether each keeps it admissible.
-    const MUTATIONS: [(&str, bool); 8] = [
+    const MUTATIONS: [(&str, bool); 16] = [
         ("none", true),
         ("unknown_top_field", false),
         ("unknown_run_field", false),
@@ -235,7 +269,16 @@ mod tests {
         ("length_review_in_execute", true),
         ("mcp_options_without_servers", false),
         ("cancel_grace_out_of_range", false),
+        ("resume_valid", true),
+        ("resume_wrong_type", false),
+        ("resume_null", false),
+        ("resume_missing_field", false),
+        ("resume_unknown_field", false),
+        ("resume_version_2", false),
+        ("resume_uppercase_hex", false),
+        ("resume_short_hex", false),
     ];
+    const FENCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn frame(ceiling: Option<u32>, max_output: u64, mutation: &str) -> Value {
         let root = std::env::temp_dir();
@@ -262,6 +305,14 @@ mod tests {
             "length_review_in_execute" => frame["length_stop_review"] = json!("review_closed_length"),
             "mcp_options_without_servers" => frame["mcp_options"] = json!({"required":[]}),
             "cancel_grace_out_of_range" => frame["cancel_grace_ms"] = json!(999),
+            "resume_valid" => frame["resume"] = json!({"version":1,"fence_sha256":FENCE}),
+            "resume_wrong_type" => frame["resume"] = json!(FENCE),
+            "resume_null" => frame["resume"] = Value::Null,
+            "resume_missing_field" => frame["resume"] = json!({"version":1}),
+            "resume_unknown_field" => frame["resume"] = json!({"version":1,"fence_sha256":FENCE,"task_id":"x"}),
+            "resume_version_2" => frame["resume"] = json!({"version":2,"fence_sha256":FENCE}),
+            "resume_uppercase_hex" => frame["resume"] = json!({"version":1,"fence_sha256":FENCE.to_uppercase()}),
+            "resume_short_hex" => frame["resume"] = json!({"version":1,"fence_sha256":&FENCE[1..]}),
             _ => {}
         }
         frame
@@ -296,6 +347,18 @@ mod tests {
                 && max_output <= u64::from(u32::MAX)
                 && (1..=bound).contains(&max_output);
             prop_assert_eq!(admitted(&frame(ceiling, max_output, name)), expected, "{} {:?} {}", name, ceiling, max_output);
+        }
+
+        /// Property 18 (9.3): a `resume` object is admitted iff its version is 1
+        /// and `fence_sha256` is exactly 64 lowercase hex digits.
+        #[test]
+        fn resume_start_admission(version in prop_oneof![Just(1u32), any::<u32>()], fence in prop_oneof!["[0-9a-f]{64}", "[0-9a-fA-Fg]{0,70}"]) {
+            let mut start = frame(None, 512, "none");
+            start["resume"] = json!({"version":version,"fence_sha256":fence});
+            let expected = version == 1
+                && fence.len() == 64
+                && fence.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            prop_assert_eq!(admitted(&start), expected, "{} {}", version, fence);
         }
     }
 

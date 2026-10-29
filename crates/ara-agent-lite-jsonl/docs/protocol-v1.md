@@ -186,3 +186,54 @@ start 帧 `length_stop_review` 与 Harness `TaskOptions.length_stop_review` 相�
 ## 未知副作用回执引用
 
 外部工具回调失败，或 Host 回复 `settlement=Unknown` 时，该调用的工具结果 details 为 `{"executed":"unknown","source":"jsonl_external_callback","receipt_ref":{"path":..,"sha256":..}}`。`receipt_ref` 指向证据目录中的 `jsonl-rpc-<rpc_id>-unknown.json`，其中记录 `native_call_id`、`tool_name`、`args_sha256` 与 `reason`（`callback_unknown` 或 `host_declared_unknown`）。Task 结束时 `outcome.json` 的 `unknown_effects` 列出这些调用；`task_result` 帧的键集合不变。Python 客户端用 `parse_unknown_effects(outcome)` 读取，Node 客户端在 `wait()` 结果中提供 `unknownEffects`。
+
+## 恢复被 fence 的 Task（resume，可选）
+
+start 帧顶层可带 `resume`。省略时 start 帧按原有行为执行，帧序列与以前相同。带 `resume` 时，sidecar 不新建 Task，而是对 `task` 与 `run` 指定的 Session 调用一次 Harness `resume_checked`（`refuse_larger_run_caps=true`）。
+
+`task` 必须与原 Task 相同，`evidence_dir` 除外，它必须是新的、尚不存在的目录。`run` 中只有 `run_id`、`objective`、`max_calls`、`max_seconds` 可以不同，其余字段进入 Host authority 哈希；`max_calls`、`max_seconds` 不得大于原 Task 首次准入的值。
+
+| 字段 | JSON 类型 | 必填 | 约束 | 含义 |
+|---|---|---|---|---|
+| `resume.version` | 整数 | 是 | 等于 1 | resume 子对象版本 |
+| `resume.fence_sha256` | 字符串 | 是 | 64 位小写十六进制 | Host 检查过的 fence 文件字节的 SHA-256；fence 已变化时拒绝 |
+
+`resume` 为 `null`、类型不符、缺少子字段或含未知子字段时，stderr 写 `start_config_rejected`，退出码 2，stdout 零帧。
+
+sidecar 在 Harness 准入之前启动 stdin 读取，然后发出一帧结算请求：
+
+| 字段 | JSON 类型 | 必填 | 含义 |
+|---|---|---|---|
+| `kind` | 字符串 | 是 | `reconcile_request` |
+| `version`、`rpc_id`、`task_id`、`run_id` | 整数、字符串 | 是 | 与其他回调相同；`run_id` 是 start 帧的 `run.run_id` |
+| `review` | 对象 | 二选一 | Harness `ResumeReview`：`task_id`、`session_path`、`resume_evidence_dir`、`fenced_evidence_dir`、`fence`、`fenced_outcome`、`interrupted_run`、`consumed_runs`、`consumed_calls` |
+| `review_ref` | `{"path","sha256"}` | 二选一 | 帧超过上限时代替 `review`，指向新证据目录下的 `jsonl-resume-review.json` |
+
+Host 在 Task deadline 之前回一帧：
+
+| 字段 | JSON 类型 | 必填 | 约束 |
+|---|---|---|---|
+| `kind` | 字符串 | 是 | `reconcile_reply` |
+| `version`、`rpc_id`、`task_id`、`run_id` | 整数、字符串 | 是 | 与对应 `reconcile_request` 完全相同 |
+| `receipt.committed` | 布尔 | 是 | |
+| `receipt.settlement` | 字符串 | 是 | `Settled` 或 `Unknown` |
+| `receipt.tool_calls` | 数组 | 是 | 每项恰为 `{"call_id","settlement"}`；`settlement` 为 `{"kind":"not_executed"}`，或 `kind` 为 `completed`、`failed` 并带字符串 `output`，与 `interrupted_run.open_tool_calls` 一一对应且顺序相同 |
+| `receipt.evidence` | 字符串数组 | 是 | Host 自己的操作回执引用 |
+
+请求与回复按现有方式写入新证据目录的 `jsonl-rpc-<n>-request.json`、`jsonl-rpc-<n>-reply.json`。回复写盘后才交给 Harness 校验，是否放行以 Harness 结果为准。请求只发一次，从不重发。
+
+任一拒绝都发生在首次上游请求之前：stderr 只写 `task_admission_rejected`，退出码 2，fence 文件与原有回执不变。Harness 在调用 Host 前就拒绝时（Task 不存在、没有 fence、fence 哈希不符、Task 条款或 authority 改变、预算改变或单 Run 上限增大），stdout 零帧，也不创建新证据目录。已发出 `reconcile_request` 后被拒绝时，新证据目录中写 `jsonl-resume-rejected.json`：`{"category":<类别>,"no_replay":true}`。类别：
+
+| 类别 | 原因 |
+|---|---|
+| `rpc_mismatch` | 回复的 `rpc_id`、`task_id`、`run_id` 或 `version` 与待处理请求不一致，或它是另一种已知回复 |
+| `invalid_reply_fields` | 回复不是合法的单行 JSON、`kind` 未知，或缺少字段、含未知字段、字段类型不符 |
+| `stdin_closed` | 回复之前 stdin 已关闭 |
+| `reconcile_timeout` | Task deadline 到达：sidecar 发 `callback_cancel`，等待 `cancel_grace_ms` 后拒绝 |
+| `resume_cancelled` | 回复之前收到 `cancel` |
+| `receipt_uncommitted`、`settlement_unknown`、`evidence_empty`、`call_mismatch` | Harness 拒绝了已关联的回执 |
+| `harness_refused` | 其他 Harness 拒绝 |
+
+Python 客户端：Host 提供 `async reconcile_resume(review, cancelled)`。config 含 `resume` 而没有该回调时，在启动 sidecar 之前抛 `ValueError`。回调异常、返回值字段或类型不符、回复帧超过 262144 字节、deadline 前未返回时，不写回复，抛 `ReconciliationRequired`，消息首段为 `reconcile_callback_exception`、`reconcile_receipt_invalid`、`reconcile_frame_too_large` 或 `reconcile_timeout`。不含 `resume` 时收到 `reconcile_request`，或同一次 `run_task` 收到第二个，消息首段为 `reconcile_request_unexpected`。
+
+Node 客户端：`callbacks.reconcileResume(review, {signal, frame})`。`start.resume` 存在而回调缺失时，`startTask` 在 spawn 之前抛 `Error('reconcile_callback_missing')`。失败时不写回复，`wait()` 结果的 `fault` 为 `reconcile_callback_threw`、`reconcile_receipt_invalid`、`reconcile_timeout`、`reconcile_aborted` 或 `reconcile_request_unexpected`，不含回调异常原文和 `modelToken`。`cancel()` 与 deadline 都会中止传给回调的 `signal`。
