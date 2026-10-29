@@ -1,12 +1,13 @@
 # AI 接入 ara-agent-lite-core
 
-适用于把当前精简 Agent 嵌入其他 Rust 业务进程。接口依据 `0.1.0` 当前源码，
+适用于把当前精简 Agent 嵌入其他 Rust 业务进程。接口依据 `0.1.1` 当前源码，
 完整示例见 [business_host.rs](../examples/business_host.rs)。接入前固定已审查的 Git 提交，
 并核对 [验收记录](evidence/extraction-20261021.html) 的适用范围。
 
-本轮已发布的运行库代码提交为 `0e4d81a91682196e9ef8be4a5ffae469ddd99bcc`，
-Core 版本 `0.1.0`，对应 HandWave Node `0.2.9`。部署和新增 GNU Linux 检查见
-[0.2.9 发布记录](../../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)。
+本轮 Core 版本 `0.1.1`，对应 HandWave Node `0.2.10`。源码提交和部署证据见
+[0.2.10 发布记录](../../../apps/handwave-node/docs/evidence/stage-publication-0.2.10-20261022.md)。
+此前 `0.1.0` 的运行库提交为 `0e4d81a91682196e9ef8be4a5ffae469ddd99bcc`，其
+[0.2.9 发布记录](../../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)仅证明当时的版本。
 GitHub 的 `ZZray/ara` 是本库所在仓库；部署 Ray 的 Go 宿主仓库不是本库入口。
 
 ## 1. 代码与业务边界
@@ -83,6 +84,11 @@ ara-agent-lite-core = { git = "https://github.com/ZZray/ara.git", rev = "0e4d81a
 | `endpoint`、`token`、`route.model`、`route.protocol` | 已授权的模型端点、内存中的凭据和具体模型／协议 |
 | `max_calls`、`max_seconds`、`max_output` | 宿主限定的预算；构造器默认值分别为 12、120、4096 |
 
+`business_host` 示例另有自己的输入限制：`max_calls` 默认 8、范围 1..32，
+`max_seconds` 默认 45、范围 1..900，`max_output` 默认 2048、范围 256..8192。
+这些是示例 Host 的限制，不是 Core 构造器的默认值。经示例启动时，请求 40 次调用
+实际只得到 32 次；调用方应核对原生预算观察，不能只按输入配置记录可用额度。
+
 `RunRequest::new` 默认 `RunMode::Plan`、`enable_local_tools = false`，
 没有 Worker、外部快照或业务工具。需要执行时由宿主设置 `RunMode::Execute`；
 需要本机工具时另行设置 `enable_local_tools = true`。仅修改模式不会自动开启本机工具。
@@ -110,6 +116,34 @@ let result = result?;
 遇到 pending 或 effects unknown，保留原 Session 和操作标识，先检查收据、文件与进程；
 不要换 Session、Run ID 或 `op_id` 重放同一操作。继续正常会话还需保持 cwd 和持久化
 `Route { model, protocol, binding, decision }` 一致。
+
+### 3.1 调用预算停止后的原生证据
+
+Execute 在最后一个原生工具轮次完成后耗尽调用预算时，原 Run 继续返回失败，
+`RunResult` 的公开字段及 `code=-1` 不变。只有明确命中该停止原因、原生消息与工具
+结果完整配对、循环已结束且持久化成功时，唯一的 `agent_end` 才可附带：
+
+```json
+{
+  "termination": {
+    "version": 1,
+    "cause": "call_budget_exhausted",
+    "native_round_closed": true,
+    "model_final_stop": false
+  }
+}
+```
+
+公开类型位于 `ara_agent_lite_core::termination`。普通终态省略 `termination`；调用准入
+被拒、长度截断、取消、超时、上下文或持久化故障不能单凭预算已满获得这份证明。
+Goal、后台 Job 和历史让出继续使用原有流程。
+
+`native_round_closed` 只说明原生协议与持久状态闭合。它可以与外部 Host 的未知副作用
+收据同时存在；产物是否正确、外部操作是否结算仍须单独检查。直接使用 Core 的宿主
+不得据此将 Run 或业务 Task 改成成功。需要产物复核与反馈续作时，可显式使用
+[Harness Lite 的预算快照入口](../../ara-agent-lite-harness/README.md#预算停止的可选产物检查)，
+由 Host 核查实际产物和操作收据。验证范围见
+[预算停止交接记录](../../ara-agent-lite-jsonl/docs/evidence/closed-budget-snapshot-20261025.html)。
 
 ## 4. 模型适配
 
@@ -163,6 +197,216 @@ ToolRegistration {
 只需要业务 API 工具的服务应保持关闭。
 本机工具使用宿主 OS 账户权限，允许绝对路径，cwd 不构成文件系统隔离。
 多租户服务需要的账户、容器或其他隔离措施由宿主部署负责。
+
+### 5.1 版本化读取与编辑（0.1.1）
+
+本机工具开启且运行模式允许修改时，建议按下面顺序编辑已有 UTF-8 文件。
+这些是 Agent 工具参数，不是新增的 Rust 公共方法；业务可让模型调用工具，
+或在自有业务工具中实现自己的编辑策略。
+
+```json
+{"path":"src/example.py","snapshot":true}
+```
+
+`read_file` 返回完整 `content`、精确原始字节的 `sha256`、`bytes` 和
+`truncated:false`。文件上限 1 MiB；`snapshot:true` 不与 `offset/limit/tail` 混用。
+不加 `snapshot` 的旧请求仍返回原始文本。BOM、CRLF 和 Unicode 不做规范化。
+
+读取后将返回的哈希传给 `edit_file`，可以先预览，再以相同参数提交：
+
+```json
+{
+  "path":"src/example.py",
+  "old_text":"old_first",
+  "new_text":"new_first",
+  "expected_sha256":"<read_file 返回的 64 位 SHA256>",
+  "additional_edits":[{"old_text":"old_second","new_text":"new_second"}],
+  "dry_run":true
+}
+```
+
+正式提交将 `dry_run` 改为 `false`。所有块在同一份原始文本中匹配，必须唯一且互不重叠；
+最多 64 块，old/new 参数合计不超过 2 MiB，结果文件不超过 1 MiB。
+哈希不符、任一块不匹配、重叠、参数错误或提交前取消，均不执行此次写入。
+
+增强请求返回 JSON 收据：`before_sha256`、`candidate_sha256`、`committed`、
+`observed_after_sha256` 及有界变更预览。预览的 `committed:false`，候选哈希不代表已落盘；
+`no_change` 也不声称发生提交。旧请求不包含任何新增编辑字段时，返回原有文本格式。
+可选字段若传 `null` 会报错，不能用它代替省略。
+
+写入保持同一文件句柄，以保留 inode、ACL 和硬链接语义；这不是文件系统 CAS 或原子事务。
+外部写入者、路径替换仍可能竞争。I/O 或提交后读回失败返回 `effects_unknown`，
+文件可能已部分改变，必须先读取新快照核对，不能自动重放。
+提交成功也只证明文件编辑；宿主仍需运行项目检查并验收业务结果。
+
+受控实际 Host 验收入口为
+[verify_versioned_edits.py](../tests/verify_versioned_edits.py)，真实模型编码基线为
+[verify_coding_live.py](../tests/verify_coding_live.py)。前者验证工具行为，后者使用
+独立隐藏样本检查修复结果；模型表现和 token 节省不能由受控 provider 推断。
+
+### 5.2 可选进程输出归档
+
+本轮工作区为 `exec` 和 `run_script` 增加可选 `capture_dir`，尚未发布新安装包。
+省略该字段保留原返回格式。对于长编译、测试或分析输出，可以保留原件，再按需回读：
+
+```json
+{"language":"python","script":"print('diagnostic')","output_limit":1024,"capture_dir":"build-output-001"}
+```
+
+相对路径基于本次工具的 `cwd`，也接受绝对路径。字段不能为 `null`、空白或超过
+4096 UTF-8 字节；父目录必须存在，最终目录必须全新，准备失败不启动进程。
+不会覆盖、复用或自动删除目录。调用者负责原始日志的访问、留存和清理。
+
+目录内的 `stdout.log`、`stderr.log` 保存精确原字节，各最多 8 MiB。
+超过配额继续排空管道，收据分别给出 `observed_bytes`、`stored_bytes`、
+`quota_exceeded`、`eof`、`complete`、`sha256` 和错误。SHA256 对应收据生成时
+已保存并读回核验的字节，不能证明之后文件不变或断电持久化。
+配额不足保持进程原退出状态；归档 I/O 错误则返回工具错误，同时保留已知进程状态和部分日志。
+
+模型摘要与 Host 工具事件都会保留 `[process output capture]` 后的 JSON 收据。
+进程是否完成、退出码和错误在 `process` 字段中；流的 `complete:true` 只描述输出捕获。
+非零退出、超时和取消仍不代表任务成功，已有副作用不能靠归档撤销或自动重放。
+`run_script` 取消保持原 `Abort` 合同，文本收据可能不再进入模型，但原文件仍在已知目录。
+
+默认 `read_file` 最多读取 1 MiB。更大的 UTF-8 日志用 `offset/limit/tail` 分段读取；
+非 UTF-8 内容需用 `run_script` 显式解码。同步磁盘 I/O 没有独立硬截止保证。
+实际 Host 验证器为 [verify_process_capture.py](../tests/verify_process_capture.py)，
+覆盖长日志中段回读、修复后执行、非零退出、配额、前置拒绝和超时。
+受控 provider 验证工具机制，不证明模型会自主选择归档，也不证明一般逆向能力提升。
+
+### 5.3 可选源码符号与静态二进制分析
+
+工作区新增 `analysis_tools`；宿主按需注册，默认工具集不变，尚未发布。
+宿主先准备专属的现存归档目录，再提供明确的后端可执行文件：
+
+```rust
+request.extra_tools.extend(analysis_tools::register(analysis_tools::AnalysisConfig {
+    cwd: project_dir,
+    artifact_root: analysis_artifacts,
+    ctags: Some(ctags_executable),
+    objdump: Some(objdump_executable),
+    nm: Some(nm_executable),
+}).await?);
+```
+
+路径使用 `PathBuf`。后端可分别省略，但不能全部为空。注册时查询实际版本，
+要求 Universal Ctags 支持 JSON，或使用 GNU objdump/nm；执行前后核对后端 SHA256。
+Windows 的部分 GNU 工具不能处理 `\\?\` 工作目录。宿主应提供后端可访问的
+绝对 `artifact_root`；库保留这一路径表示，并核对其规范路径身份，不自动改用其他目录。
+
+`source_symbols` 接受单个文件的 `path`，可选 `language`。常见扩展名可推断语言；
+其他扩展名需明确指定后端支持的语言。结果包含定义的名称、种类和行号，
+`end/scope/signature` 依解析器而定。它不提供引用图、调用图或 LSP 重构。
+
+`binary_inspect` 接受 `path` 和固定 `action`：`headers`、`symbols`、`disassemble`。
+反汇编还需十六进制字符串 `start_vma/stop_vma`，范围递增且跨度不超过 65536 字节。
+VMA 是链接地址，不能当作文件偏移或运行时 ASLR 地址。结果保留后端文本；
+无符号是可能的正常结果，不据此推断程序没有功能。工具不会执行被分析文件。
+
+两个工具先读取有上限的输入并写入新快照，再从快照目录使用固定 ASCII 文件名分析。
+源码上限 4 MiB，二进制上限 64 MiB；单次后端执行限时 10 秒，随后沿既有流程收尾进程树。
+原始 stdout/stderr 每流最多 8 MiB；解析最多 20000 条记录、单条 64 KiB，最终 JSON 最多 16 KiB。
+注册探测、同步文件 I/O 和进程收尾不由这 10 秒形成统一硬截止。
+
+`offset/limit` 分页，默认每页源码 30 条、二进制文本 40 行，最多 100 条。
+后续页同时提供原结果的 `input.sha256` 为 `expected_sha256`，以及
+`page.page_token` 为 `expected_page_token`。指纹绑定输入、原路径、后端和查询范围；
+每页重新分析，不表示降低了后端总计算量。单条记录无法装入结果预算时明确失败，
+不会返回游标不前进的空页。
+
+`status`、`analysis.complete`、`analysis.backend_complete` 与 `page.complete`
+分别描述工具结果、解析覆盖、后端输出捕获和分页覆盖；`partial` 不能当作完整分析。
+结果包含原路径、输入和后端哈希、快照及双流收据。前后哈希可发现持久变化，
+不提供文件系统事务或对同账号恶意并发替换的隔离保证。
+
+注册项明确允许 Plan 查询：这会运行本机解析器并写宿主归档目录。
+工具许可不等于操作系统沙箱；原始源码、样本和日志的权限、留存及清理由宿主管理。
+受控 Host 合同、真实模型任务和总体能力增益分别验收，见
+[增强进展](evidence/coding-reverse-enhancement-20261022.html)。
+
+### 5.4 宿主显式生成策略
+
+`model::ModelHost::generation_policy(&Route)` 是同步的纯配置入口，默认返回
+`GenerationPolicy::ProviderDefault`，保留原请求行为。Core 在解析实际路由后调用它；
+实现不能做 I/O，也不能依赖并发 Run 共享的“上次解析模型”状态。
+
+宿主确认服务支持相应协议后，可返回 `GenerationPolicy::ThinkingTypeDisabled`。
+该策略仅接受 `openai-completions` 路由，在主任务请求根部发送
+`"thinking":{"type":"disabled"}`。其他协议在模型或工具调用前拒绝；
+接口不接受任意 `extra_body` 或 sampling 参数覆盖。
+
+`business_host` 示例支持可选 JSON 字段
+`"generation_policy":"thinking_type_disabled"`；省略或填写 `provider_default`
+均维持默认行为。非默认策略发出 `generation_policy` 事件，记录实际路由、请求与
+有效输出预算，并明确 `provider_effect_verified:false`。事件证明本地配置，
+服务端是否执行仍需核对实际请求、响应和任务结果。
+
+示例也接受可选字符串 `brief`，原样交给既有 `RunRequest.brief`。
+宿主预取的静态事实可由此传入，但必须保留来源与覆盖状态；这不计为模型自主取证。
+
+输出预算继续取宿主请求、目录解析上限与本地 8192 上限的最小值。
+目录缺少容量时采用本地回退值，不能把 8192 写成服务端声明的能力。
+上下文摘要继续克隆已选模型并应用既有摘要配置，输出预算最多 4096；
+诊断时应按 `model_call.phase` 区分主任务与摘要，分别核对实际请求。
+启用 thinking 的工具历史回放协议未由这一改动补齐；纯思考耗尽预算仍按原规则失败。
+
+8 项受控原生场景已核验默认请求、显式字段、预算裁剪、两轮工具和失败边界。
+这只验收生成策略的请求契约；真实逆向任务和能力收益另行验证。
+
+### 5.5 读取与分析工具的可选 null 参数
+
+当前工作区的 `read_file`、`source_symbols` 和 `binary_inspect` 在 schema 中
+为可选参数增加 `null` 类型，表示未使用该参数。例如：
+
+```json
+{"path":"README.md","snapshot":true,"offset":null,"limit":null,"tail":null}
+```
+
+这个请求返回完整版本化快照。只移除当前工具白名单中的 optional null，
+之后执行原有参数解析；`path/action` 没有 null 分支，未知字段也不会被这一处理移除。
+必填参数的实际失败阶段可能受固定 rpi 的类型转换影响，应核对原生错误回执。
+
+快照与非 null 范围参数冲突、非反汇编动作携带非 null VMA、错误指纹、
+后续页缺少绑定参数等情况仍被拒绝。反汇编的 VMA 若为 null，归为未提供，
+仍因缺少必要范围失败。源码语言为 null 时采用原有扩展名推断；未知扩展名仍需明确语言。
+编辑、下载及其他工具的参数规则不随这一改动扩展。
+
+真实模型曾填入互斥的所有可选参数，且原始服务响应就包含这些值。
+本地 adapter 没有补参，但上游转换与模型自行选参尚未区分。
+本点提供一种明确的未使用参数表示，不能据此认定已修复远端转换或提升模型能力。
+当前受控原生链路与原回归已有执行记录，真实任务另行验收，见
+[增强进展](evidence/coding-reverse-enhancement-20261022.html)。
+
+### 5.6 原始来源检索与分窗读取
+
+`reference_search` 在当前 Session 的 active 来源中查找字面量，每个来源返回第一个
+命中，最多返回 20 个来源。结果包含 `id`、`version`、整篇 `hash`、总 UTF-8
+`bytes`、`match_offset`、`match_bytes` 和命中附近的 `excerpt`。偏移按原文 UTF-8
+字节计数。摘录通常最多 512 字节；较长检索词保留完整命中，摘录最多 1120 字节。
+摘录的实际区间为 `excerpt_offset..excerpt_next_offset`。
+
+`reference_read` 必填 `id`，可选 `offset` 和 `limit`。默认从 0 开始返回最多
+8192 字节，单次最多 16384 字节。可把检索结果的 `match_offset` 传入，直接读取
+有关段落。小来源在默认范围内仍完整返回；较大来源的默认响应改为一个窗口，
+依赖旧版整篇返回的消费者需要处理分页。
+
+```json
+{"id":"ref-2","offset":24576,"limit":4096}
+```
+
+返回值保留来源的原有元数据，`text` 为本次窗口。`offset` 与 `next_offset`
+表示实际返回区间，`bytes` 为整篇长度，`hash_scope` 固定为
+`full_source_text_utf8`。`hash` 始终对应完整原文，不能拿窗口文本重新计算后直接比较。
+任何前缀或后缀未返回时，`truncated` 都为 true，包括尾页和非空来源的 EOF 空窗。
+全文返回需满足 `offset == 0 && next_offset == bytes`；继续读取需满足
+`next_offset < bytes`，不能只看 `truncated`。
+
+偏移必须位于原文的 UTF-8 字符边界内，允许等于整篇长度。窗口末尾向前收齐到
+字符边界，不超出长度上限。如果窗口装不下下一个 Unicode 字符，工具明确报错。
+非法范围、已被更正或撤销的来源 ID 均被拒绝。读取不会修改存储的正文、哈希或采纳记忆。
+
+窗口上限约束原文的字节数；JSON 转义和累积工具历史仍可能超过上下文预算。
+宿主和模型应只读取当前任务需要的段落，Core 的上下文超限检查继续生效。
 
 ## 6. 知识库、Skills 与外部记忆
 

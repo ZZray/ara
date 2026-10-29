@@ -22,12 +22,13 @@ const POWERSHELL_BOOTSTRAP: &str = "param([Parameter(Mandatory=$true)][string]$S
 pub fn tools(root: PathBuf) -> Vec<Arc<dyn AgentTool>> {
     vec![Arc::new(ScriptTool { root, schema: Tool {
         name: "run_script".into(),
-        description: "Run a UTF-8 script with an explicitly selected python, powershell, cmd, or sh interpreter. Pass script source directly; do not wrap it in shell quoting. Uses temporary files removed after execution and the same bounded process-tree lifecycle as exec. No interpreter fallback: Python is python on Windows, python3 elsewhere; PowerShell is powershell.exe on Windows, pwsh elsewhere. Windows PowerShell uses process-local ExecutionPolicy Bypass; it does not change machine policy or override Group Policy. cwd defaults to the working directory. Script maximum 64 KiB, timeout defaults to 60 seconds (maximum 3600), output_limit defaults to 8192 bytes (maximum 131072, split equally between stdout/stderr, retaining head and tail; labels and truncation notices add a small overhead). Nonzero exit, timeout and cancellation are errors; partial filesystem effects may remain. This is not an OS sandbox.".into(),
+        description: "Run a UTF-8 script with an explicitly selected python, powershell, cmd, or sh interpreter. Pass script source directly; do not wrap it in shell quoting. Uses temporary files removed after execution and the same bounded process-tree lifecycle as exec. No interpreter fallback: Python is python on Windows, python3 elsewhere; PowerShell is powershell.exe on Windows, pwsh elsewhere. Windows PowerShell uses process-local ExecutionPolicy Bypass; it does not change machine policy or override Group Policy. cwd defaults to the working directory. Script maximum 64 KiB, timeout defaults to 60 seconds (maximum 3600), output_limit defaults to 8192 bytes (maximum 131072, split equally between stdout/stderr, retaining head and tail; labels and truncation notices add a small overhead). Optional capture_dir creates a NEW directory beneath an existing parent, relative to cwd or absolute: raw stdout.log/stderr.log, maximum 8 MiB EACH, plus output capture receipts. Re-read long UTF-8 logs with read_file offset/limit/tail; decode other encodings explicitly. Logs remain for caller-managed retention. Nonzero exit, timeout and cancellation are errors; partial filesystem effects may remain. This is not an OS sandbox.".into(),
         parameters: Schema(json!({"type":"object","properties":{
             "language":{"type":"string","enum":["python","powershell","cmd","sh"]},
             "script":{"type":"string"},"cwd":{"type":"string"},
             "timeout":{"type":"integer","minimum":1,"maximum":3600},
-            "output_limit":{"type":"integer","minimum":256,"maximum":131072}
+            "output_limit":{"type":"integer","minimum":256,"maximum":131072},
+            "capture_dir":{"type":"string","minLength":1}
         },"required":["language","script"],"additionalProperties":false})), constrained_sampling: None,
     } })]
 }
@@ -121,6 +122,7 @@ struct Request {
     cwd: PathBuf,
     timeout: Duration,
     output_limit: usize,
+    capture_dir: Option<String>,
 }
 impl Request {
     fn parse(root: &Path, args: &Value) -> Result<Self> {
@@ -154,7 +156,15 @@ impl Request {
         }
         let timeout = number(args, "timeout", 60, 1, 3600)?;
         let output_limit = number(args, "output_limit", 8192, 256, 131072)? as usize;
-        Ok(Self { language, source: source.into(), cwd, timeout: Duration::from_secs(timeout), output_limit })
+        let capture_dir = crate::local_tools::capture_argument(args)?.map(str::to_owned);
+        Ok(Self {
+            language,
+            source: source.into(),
+            cwd,
+            timeout: Duration::from_secs(timeout),
+            output_limit,
+            capture_dir,
+        })
     }
 }
 fn number(args: &Value, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
@@ -270,10 +280,23 @@ async fn run_in_temp(
         let interpreter = executable.unwrap_or_else(|| OsStr::new(request.language.executable()));
         let entry = bootstrap.as_ref().map(|script| script.path.as_path()).unwrap_or(&file.path);
         let cmd = command(request.language, entry, &file.path, interpreter)?;
-        let (text, code) =
-            crate::local_tools::run_process(cmd, &request.cwd, signal, request.timeout, request.output_limit / 2, true)
-                .await
-                .with_context(|| format!("run {} script (no interpreter fallback)", request.language.executable()))?;
+        let capture = request
+            .capture_dir
+            .as_deref()
+            .map(|path| crate::process_output::CapturePair::create(&request.cwd, path))
+            .transpose()
+            .context("capture preparation failed; process not_started")?;
+        let (text, code) = crate::local_tools::run_process(
+            cmd,
+            &request.cwd,
+            signal,
+            request.timeout,
+            request.output_limit / 2,
+            true,
+            capture,
+        )
+        .await
+        .with_context(|| format!("run {} script (no interpreter fallback)", request.language.executable()))?;
         if code != 0 {
             bail!("script exited with code {code}\n{text}");
         }

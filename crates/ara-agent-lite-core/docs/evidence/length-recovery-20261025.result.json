@@ -1,0 +1,130 @@
+{
+  "schema": "ara.lite-length-recovery.bounded-result.v1",
+  "date": "2026-10-25",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "worktree": "dirty; unrelated WIP retained",
+  "goal_fully_accepted": "0/7",
+  "decision": "SCOPED_CONTROLLED_RECOVERY_ACCEPTED_REAL_ENCODING_ARTIFACT_NOT_ACCEPTED",
+  "scope": "Windows uncompressed Execute, original Run with explicit Host ReplanOnce; JSONL product tools",
+  "policy": {
+    "default": "stop",
+    "optional": "replan_once",
+    "maximum_admissions_per_run": 1,
+    "same_original_session_and_run": true,
+    "original_budget_and_deadline": true,
+    "task_wide_once_guarantee": false,
+    "human_authorization_added": false
+  },
+  "checks": {
+    "core_library_passed": 208,
+    "core_host_boundary_passed": 3,
+    "core_existing_public_network_ignored": 1,
+    "new_rust_cases_included_in_library": 5,
+    "jsonl_rust_passed": 3,
+    "harness_passed": 14,
+    "length_native_passed": 13,
+    "length_native_seconds": 50.793,
+    "default_native_regression_passed": 16,
+    "default_native_seconds": 56.795,
+    "real_relay_fake_upstream_passed": 1,
+    "relay_seconds": 12.531,
+    "core_clippy": "PASS",
+    "jsonl_clippy": "PASS",
+    "fmt": "PASS",
+    "doc_tests": "PASS; 0 cases in each crate"
+  },
+  "controlled_artifacts": {
+    "correct_file_trials": 5,
+    "successful_new_recovery_trials": 4,
+    "original_truncated_tool_guard_trials": 1,
+    "scheduled_source_and_ref_hashes_checked": 5,
+    "all_business_tasks_accepted": false
+  },
+  "live_trial": {
+    "requested_model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "status": "ENCODING_ARTIFACT_NOT_ACCEPTED",
+    "scope": "new isolated historical Workspace; no product default change",
+    "runs": 1,
+    "reserved_calls": 10,
+    "bounds": {
+      "calls": 24,
+      "runs": 2,
+      "seconds": 180,
+      "output_tokens": 4096
+    },
+    "length_calls": [
+      9,
+      10
+    ],
+    "recovery_admissions": 1,
+    "second_length_still_failed": true,
+    "elapsed_seconds": 109.00890898704529,
+    "source_replacements": 0,
+    "fixed_seven_test_suite_executed": false,
+    "fence_presence": "Present",
+    "task_accepted": false,
+    "backend_weights": "UNKNOWN",
+    "billing": "UNKNOWN"
+  },
+  "retained_failures": [
+    "native-length-v1 deadline fixture expires before first HTTP; 12/13 PASS",
+    "initial Root checkpoint dictionary hash differs from fixed typed serde; exact format verified without code change",
+    "original live-v1/live-v2 and all fences",
+    "new live-v3 repeated output length with no patch"
+  ],
+  "dependency_gate": "OPEN; previous policy audit exit14 bans/licenses/sources FAIL; no dependency/lock changes or audit rerun",
+  "open": [
+    "exact post-scheduled-event cancellation and event-transport-fault execution",
+    "actual managed Job concurrency",
+    "summary and repeated compaction shared-budget execution",
+    "Plan/Goal and broader profiles",
+    "real-model encoding repair success and matched capability comparison",
+    "actual LabSlot SQL/tool acceptance; separate build approval pending",
+    "product defaults/deployment/release/cross-platform"
+  ],
+  "source_count": 89,
+  "source_manifest_sha256": "ea9f085accb7250464383bf4f50a3e8fda292f8782f9f3c0cb1574757fc4f5ec",
+  "binary_sha256": "b68ecea895dc4627baa946a2fece2603f66b354163787933d01f6a7a63b142b6",
+  "reviews": [
+    {
+      "path": "stage\\acr-length-live-hold-resolved.json",
+      "sha256": "cfa5486ec60c9a4df1ceff53386d4d64d2ffb0ba3c57b46bec4a42496b610f61"
+    },
+    {
+      "path": "stage\\acr-length-live-pre-hold.json",
+      "sha256": "441b0f4c49029e26bfcfc564d67d184ba62d02a57293271e9dcdcf8d14450151"
+    },
+    {
+      "path": "stage\\acr-length-live-pre.json",
+      "sha256": "fb39ad679c046ccb670225780aecb5300dcc12c1c7397f3ccae10d3d3c4b4656"
+    },
+    {
+      "path": "stage\\acr-live-v3-source-checks.json",
+      "sha256": "e630b3cfb8fdb739b0bb6ea8993f111bf23f7c6534d161f4babc670c368aa853"
+    },
+    {
+      "path": "stage\\length-execution-post.json",
+      "sha256": "7a4229f0003493515bbf590ba42dbd166bb7cb35bd58df2f6c2db6b68221494b"
+    },
+    {
+      "path": "stage\\length-live-execution-post.json",
+      "sha256": "215d48585ee736a3102c10e93659d0f10e09f603b4329b5c27fb9e5481954bcb"
+    },
+    {
+      "path": "stage\\length-source-post.json",
+      "sha256": "84916d2712ff5660800e777a135805152ef540e64b9c2d884a2d98d8cd3856f8"
+    },
+    {
+      "path": "stage\\length-source-serialization-checks.json",
+      "sha256": "a794b09ce4d9039111169f5e2bc932346bf26ee7bb1a0a608015cd36f2368379"
+    },
+    {
+      "path": "stage\\native-length-v2-artifact-checks.json",
+      "sha256": "3f3ce18a6d5e554be90ca03665f02a447d169e5231cb6f85fbfd0c3c04895b9f"
+    }
+  ],
+  "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\length-recovery-v1-20261025",
+  "commit_push_deployment_device": "NOT_PERFORMED",
+  "generated_at_unix": 1792915086.5769901
+}

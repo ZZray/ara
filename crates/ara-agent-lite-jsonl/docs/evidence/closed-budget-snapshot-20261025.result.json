@@ -1,0 +1,249 @@
+{
+  "status": "POINT_AUDIT_RECORDED; REAL_REPAIR_FULL_OBJECTIVE_NOT_ACCEPTED",
+  "overall_goal": "ACTIVE; 0/7 full requirements accepted",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "branch": "dev; unrelated dirty work preserved; no commit/push/deploy",
+  "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\closed-budget-snapshot-v1-20261025",
+  "source_manifest": {
+    "path": "frozen-final-v3/source-manifest.json",
+    "count": 113,
+    "sha256": "da5e6e449bc96c7eb621cdbd638386e44075549eecab0ad3ae2239af6d375a0a"
+  },
+  "manifest_normalization": {
+    "previous_rows": 116,
+    "previous_unique_files": 113,
+    "current_rows": 113,
+    "current_unique_files": 113,
+    "reason": "three Harness source paths were registered under both Windows backslashes and POSIX slashes; no missing or changed runtime bytes",
+    "previous_manifest_sha256": "feb45d5916c55da5b65851f3958c3f83bf5da859294ae1cd21de66ad12183357",
+    "current_manifest_sha256": "da5e6e449bc96c7eb621cdbd638386e44075549eecab0ad3ae2239af6d375a0a",
+    "runtime_or_test_reexecution_needed": false
+  },
+  "image": {
+    "path": "D:/WorkSpace/tmp/ara-core-capability-20261022/closed-budget-snapshot-v1-20261025/frozen-source-v1/bin/ara-agent-lite-jsonl.exe",
+    "sha256": "5126183f9581f4e7d395e8364fe341530c668f4549b87db6e90c1873ac771916",
+    "source_manifest_sha256": "accde853709e048c098bcf912c48cb47f62d9741c5f503f5df47983a2f98f18a"
+  },
+  "execution_binding": "Runtime, SDK and example bytes match the built freeze; final differences are documentation and the executed amended Python test driver.",
+  "verification": {
+    "core_lib": 216,
+    "core_host_boundary": 3,
+    "core_existing_ignored": 1,
+    "harness_unit": 4,
+    "harness_new_native_integration": 16,
+    "harness_original": 14,
+    "jsonl_rust": 6,
+    "node_sdk": 14,
+    "python_native_budget": 19,
+    "old_generation": 7,
+    "old_process": 16,
+    "old_length": 13,
+    "old_compaction": 6,
+    "fmt_clippy_doc": "PASS across all three standalone manifests",
+    "deny": "PASS offline under unchanged existing Lite policy; advisory cache freshness unknown"
+  },
+  "controlled_workspace": {
+    "result": "PASS",
+    "actual_model": false,
+    "controlled_consumer_closure": true,
+    "model_coding_ability": "NOT_ASSESSED",
+    "native_pid": 24272,
+    "core_terminal": {
+      "status": "failed",
+      "code": -1,
+      "termination": {
+        "version": 1,
+        "cause": "call_budget_exhausted",
+        "native_round_closed": true,
+        "model_final_stop": false
+      }
+    },
+    "task_stop": "AwaitingHostAcceptance",
+    "task_accepted": false,
+    "last_candidate": null,
+    "source_sha256": "df8179a056eccd7185d6bb2dfe8565f4833902a16061726207a07d56e9d49b34",
+    "test_sha256_before": "e88eef7380190d08aa579989e10e98c5503bcdbf3a524fe5c71273e839b31c8c",
+    "test_sha256_after": "e88eef7380190d08aa579989e10e98c5503bcdbf3a524fe5c71273e839b31c8c",
+    "fixture_test_sha256": "cab9634fc95b6f200cf4adaca87843d40142d8520e7b330c4e1f394d38122e29",
+    "test_source_unchanged": true,
+    "tests_passed": 7,
+    "tool_replacements": 5,
+    "http_model_requests": 1,
+    "catalog_requests": 1,
+    "budget_review_ref": {
+      "path": "\\\\?\\D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\closed-budget-snapshot-v1-20261025\\acr-controlled-budget-790b69a928824a12b8a796c14f982f71\\consumer\\harness\\run-1-budget-review-index.json",
+      "sha256": "eb50ecf4533ce5bdeb40775a563c68e1a48ecbf17ff14bf7a5364c18504c75b2"
+    },
+    "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\closed-budget-snapshot-v1-20261025\\acr-controlled-budget-790b69a928824a12b8a796c14f982f71\\consumer",
+    "production_model_review_release": "NOT_RUN"
+  },
+  "real_model": {
+    "requested_model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "generation_policy": "thinking_type_disabled",
+    "max_calls": 24,
+    "max_runs": 2,
+    "task_seconds": 180,
+    "max_output": 4096,
+    "actual_calls": 19,
+    "actual_runs": 1,
+    "elapsed_seconds": 65.80587315559387,
+    "native_pid": 30892,
+    "consumer_launcher_pid": 47484,
+    "native_exit_code": 0,
+    "python_pid_boundary": "Product venv executable is a Windows redirector; Popen records the launcher, not an independently self-reported Python worker PID. Native Rust child PID is directly instrumented.",
+    "ordinary_stop": true,
+    "budget_path_exercised": false,
+    "fixed_seven_tests": "PASS in Host and independent fresh-copy process",
+    "initial_check_failure_then_repair": "rpc-22 code1; rpc-24 code0",
+    "artifact_sha256": "f0032da4bf5b95d40518ce0c68037f5c2b993b68cfa6a07c9014c9f00aa95e0b",
+    "full_objective": "NOT_ACCEPTED: valid NUL input changed",
+    "causal_capability_gain": "NOT_ESTABLISHED",
+    "physical_http_billing_remote_weights": "not independently recorded"
+  },
+  "supplementary_counterexample": {
+    "artifact_sha256": "f0032da4bf5b95d40518ce0c68037f5c2b993b68cfa6a07c9014c9f00aa95e0b",
+    "input": "header\u0000中文😀\nsecond\u0000line\n",
+    "actual": "header�中文😀\nsecond�line\n",
+    "expected": "header\u0000中文😀\nsecond\u0000line\n",
+    "valid_unicode_preserved": false,
+    "original_input_json_http_encodable": true,
+    "criterion": "Original objective: preserve all lines and valid Unicode; supplementary independent check beyond seven fixed tests",
+    "full_real_repair_objective_accepted": false,
+    "probe_boundary": "exact candidate helper AST executed in fresh namespace; source/journal/receipts not modified"
+  },
+  "wired_preservation_probe": {
+    "candidate": {
+      "artifact_sha256": "f0032da4bf5b95d40518ce0c68037f5c2b993b68cfa6a07c9014c9f00aa95e0b",
+      "actual_worker_pid": 49124,
+      "worker_base_executable": "C:\\Users\\loveu\\AppData\\Roaming\\uv\\python\\cpython-3.14-windows-x86_64-none\\python.exe",
+      "diff_text_preserved": false,
+      "source_context_preserved": false,
+      "raw_diff_nuls": 1,
+      "actual_diff_nuls": 0,
+      "expected_context_nuls": 1,
+      "actual_context_nuls": 0,
+      "git_show_api_nuls": 1,
+      "context_comparison": "actual Git show API payload must remain present; no assumed header or terminal-newline framing",
+      "raw_json_http_encodable": true,
+      "raw_blob_preserved": true,
+      "git_source_head": "b4820452b23b2db71bb806e145457f393657e435",
+      "fixture_scope": "owned real Git repository; .gitattributes explicitly enables text diff; NUL after existing 2000-character binary heuristic",
+      "candidate_or_original_task_modified": false
+    },
+    "current_product": {
+      "artifact_sha256": "a6e290850ba73c1e2f8b2bd5736d5178cd0e6e8406c85b7ebfacec84b295f02b",
+      "actual_worker_pid": 51236,
+      "worker_base_executable": "C:\\Users\\loveu\\AppData\\Roaming\\uv\\python\\cpython-3.14-windows-x86_64-none\\python.exe",
+      "diff_text_preserved": true,
+      "source_context_preserved": true,
+      "raw_diff_nuls": 1,
+      "actual_diff_nuls": 1,
+      "expected_context_nuls": 1,
+      "actual_context_nuls": 1,
+      "git_show_api_nuls": 1,
+      "context_comparison": "actual Git show API payload must remain present; no assumed header or terminal-newline framing",
+      "raw_json_http_encodable": true,
+      "raw_blob_preserved": true,
+      "git_source_head": "e7fbed11ee1cc1498b10fc90f3a01c10e9b3e18a",
+      "fixture_scope": "owned real Git repository; .gitattributes explicitly enables text diff; NUL after existing 2000-character binary heuristic",
+      "candidate_or_original_task_modified": false
+    },
+    "driver_sha256": "9786f224cbdaf3b61384aff7ba86e01f3e1e8838f9672a512d4ed2a43c32c591",
+    "first_probe_limitation": "v1 required exact context header/newline framing; v2 compares the actual Git show API payload, avoiding that unrelated expectation. Original v1 is retained."
+  },
+  "independent_evaluation": {
+    "argv": [
+      "E:\\repos\\ai-codereview\\.venv\\Scripts\\python.exe",
+      "-X",
+      "utf8",
+      "-B",
+      "-m",
+      "unittest",
+      "-v",
+      "tests.test_git_diff_chunks"
+    ],
+    "pid": 45248,
+    "python_sha256_before_spawn": "57dab7a1c46824af98488aa369aa7395e84e6cd84a3032ad377bff286b2cb4f9",
+    "exit_code": 0,
+    "elapsed_seconds": 1.7105896472930908,
+    "test_source_sha256": "e88eef7380190d08aa579989e10e98c5503bcdbf3a524fe5c71273e839b31c8c",
+    "artifact_sha256": "f0032da4bf5b95d40518ce0c68037f5c2b993b68cfa6a07c9014c9f00aa95e0b",
+    "copied_without_git": true,
+    "original_receipts_modified": false
+  },
+  "reviews": {
+    "source-post-core.json": {
+      "path": "stage/source-post-core.json",
+      "sha256": "f73ff4c6944b7312d19850b57c1b46fbac59e7f5f16d89b9f98b08c067f44485"
+    },
+    "source-post-harness.json": {
+      "path": "stage/source-post-harness.json",
+      "sha256": "43fd23671c4efbd3a89370f5becc6f578c07b7371fb846228fce5096ddee7649"
+    },
+    "source-post-jsonl-sdk-example.json": {
+      "path": "stage/source-post-jsonl-sdk-example.json",
+      "sha256": "2ccc8224f6eea653e718151e7869124aad4ea56631ee9646eb13f9ecd2cfd4ce"
+    },
+    "source-post-native-driver-v2.json": {
+      "path": "stage/source-post-native-driver-v2.json",
+      "sha256": "422a1c6e538c55b5469dba6816ca27e013288f31f723a23ea36c0e310f8bb65a"
+    },
+    "native-budget-exec-post-safety.json": {
+      "path": "stage/native-budget-exec-post-safety.json",
+      "sha256": "1b8be942fb3369d41d0e37334ef10965d8cbc3155a8252c685355819e029d27f"
+    },
+    "acr-live-exec-post-safety.json": {
+      "path": "stage/acr-live-exec-post-safety.json",
+      "sha256": "6a56a8b2e85ca02add917a5f63f761b5e7db8c44fbe367822a85aee2e5e5223c"
+    },
+    "acr-live-exec-post-pid-boundary.json": {
+      "path": "stage/acr-live-exec-post-pid-boundary.json",
+      "sha256": "828922ac333b3af3707398a8e39a4bd8899bdebe98a1c7f332411d8f4c018f7c"
+    },
+    "model-artifact-counterexample-safety.json": {
+      "path": "stage/model-artifact-counterexample-safety.json",
+      "sha256": "9cc214c31fb5b67dc1a5520d6904447f42771c54fd5c20113cfc844e56e72b26"
+    },
+    "controlled-acr-consumer-exec-post-safety.json": {
+      "path": "stage/controlled-acr-consumer-exec-post-safety.json",
+      "sha256": "da4b09c66842b4d7068f17624c34b68e794e7b4c52ffb451bbaf4e3ff1b86870"
+    },
+    "point-delivery-audit-safety.json": {
+      "path": "stage/point-delivery-audit-safety.json",
+      "sha256": "1301693228971553f77ca4146cd546a3e3ee12bd2842045c43469a5a1ae9a9a9"
+    }
+  },
+  "retained_failures": [
+    "native-budget-v1 wrong single terminal expectation; 14/15 PASS; amended source-defined branch checks pass19",
+    "process/length v1 evidence-parent setup errors; no tests entered; unchanged suites pass after creating fresh parents",
+    "two cargo-deny CLI argument errors before inspecting current help; corrected v3 policy check PASS",
+    "prior real Task24call failure/fence and separate artifact evaluation unchanged"
+  ],
+  "open": [
+    "Strong Host semantic preservation grading and actual feedback repair",
+    "Broader unfamiliar multi-file C++ and sealed holdout acceptance",
+    "C++ object/vtable reverse engineering and matched multiple-model comparisons",
+    "Forced combined fatal/save/deadline races outside the recorded bounded matrix",
+    "Full Core parity, cross-platform/product migration/production release"
+  ],
+  "document_validation": {
+    "scoped_static": "PASS",
+    "visual": "NOT_RUN; prior browser policy refused local observation; no bypass",
+    "global_bootstrap": "NOT_COMPLETED; previously hung verifier not blindly repeated",
+    "independent_addendum": {
+      "path": "stage/final-document-addendum.json",
+      "sha256": "5006fbf3e23dc4d405821f41a9557497677239daba598c6d8854a3066e936037",
+      "reviewed_result_sha256": "87022a783b9eddbe00882922fcfff2413221c14842b59a4b64c70729c70b2eb9",
+      "subsequent_metadata_only": [
+        "root_acceptance_ref",
+        "document_validation.scoped_static and independent_addendum"
+      ]
+    }
+  },
+  "point_audit_decision": "ACCEPT_BOUNDED_BUDGET_MECHANISM_AND_CONTROLLED_CONSUMER_ONLY",
+  "root_acceptance_ref": {
+    "path": "root-point-acceptance.json",
+    "sha256": "7d2f60126990d67106db673625284f0f796993f4eb3b9cab83f5578abdbceada"
+  }
+}

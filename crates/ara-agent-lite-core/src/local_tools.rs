@@ -20,18 +20,18 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const OUTPUT_LIMIT: usize = 128 * 1024;
-const FILE_LIMIT: usize = 1024 * 1024;
+pub(crate) const FILE_LIMIT: usize = 1024 * 1024;
 const DOWNLOAD_LIMIT: u64 = 128 * 1024 * 1024;
 
 pub fn tools(root: PathBuf) -> Vec<Arc<dyn AgentTool>> {
     [
-        ("read_file", "Read UTF-8 text. Path alone returns the original complete text (maximum 1 MiB). Optional offset (1-based) and limit select numbered lines; tail selects last N lines, with line_from_end rather than absolute line numbers. Explicit selections have scan/output limits and report partial coverage. Absolute paths are allowed.", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1,"maximum":2000},"tail":{"type":"integer","minimum":1,"maximum":2000}}), vec!["path"]),
+        ("read_file", "Read UTF-8 text. Path alone returns the original complete text (maximum 1 MiB). snapshot=true returns complete content and SHA256 of exact UTF-8 bytes for versioned edits; snapshot cannot combine with offset/limit/tail. Optional offset (1-based) and limit select numbered lines; tail selects last N lines, with line_from_end rather than absolute line numbers. Null optional values are treated as omitted. Explicit selections have scan/output limits and report partial coverage. Absolute paths are allowed.", json!({"path":{"type":"string"},"snapshot":{"type":["boolean","null"]},"offset":{"type":["integer","null"],"minimum":1},"limit":{"type":["integer","null"],"minimum":1,"maximum":2000},"tail":{"type":["integer","null"],"minimum":1,"maximum":2000}}), vec!["path"]),
         ("search_files", "Search a non-empty single-line literal in UTF-8 files, recursively from path (default cwd). case_sensitive defaults to true; false uses Unicode lowercase matching. Skips generated directories, links and non-text files. Reports bounded matches and partial coverage; zero matches is not proof about skipped files. Absolute paths are allowed.", json!({"query":{"type":"string","minLength":1},"path":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":1000},"case_sensitive":{"type":"boolean"}}), vec!["query"]),
         ("write_file", "Write UTF-8 text. Relative paths use the working directory; absolute paths are allowed. Parent directories are created.", json!({"path":{"type":"string"},"content":{"type":"string"}}), vec!["path", "content"]),
-        ("edit_file", "Replace exactly one matching text occurrence in a file. Absolute paths are allowed.", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}}), vec!["path", "old_text", "new_text"]),
+        ("edit_file", "Replace exactly one matching text occurrence in a file. Absolute paths are allowed. Optional expected_sha256 binds a read_file snapshot. Optional additional_edits (up to 63 old_text/new_text blocks) match the SAME original content and must be unique/non-overlapping; all are checked before writing. dry_run=true previews without writes. Presence of any new option enables a JSON receipt with before/candidate hashes and bounded changes. No filesystem CAS or atomic-write guarantee; IO failure may leave partial effects and must be reconciled, never blindly retried.", json!({"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"expected_sha256":{"type":"string","pattern":"^[a-fA-F0-9]{64}$"},"dry_run":{"type":"boolean"},"additional_edits":{"type":"array","maxItems":63,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1},"new_text":{"type":"string"}},"required":["old_text","new_text"],"additionalProperties":false}}}), vec!["path", "old_text", "new_text"]),
         ("list_dir", "List directory entries; use search_files for bounded recursive text searches. Absolute paths are allowed.", json!({"path":{"type":"string"}}), vec!["path"]),
         ("download_file", "Download an HTTP/HTTPS file, respecting the configured HTTP proxy. Maximum 128 MiB, 300-second deadline. Returns SHA256; optional expected_sha256 must match before replacing the destination. Existing destination is preserved on transfer or checksum failure. Download does not install or execute the file.", json!({"url":{"type":"string"},"path":{"type":"string"},"expected_sha256":{"type":"string","pattern":"^[a-fA-F0-9]{64}$"}}), vec!["url", "path"]),
-        ("exec", "Run a shell command. Windows uses PowerShell; other systems use sh. This is not an OS sandbox. Output is bounded; timeout defaults to 600 seconds, limited by the overall run deadline.", json!({"cmd":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","minimum":1,"maximum":3600}}), vec!["cmd"]),
+        ("exec", "Run a shell command. Windows uses PowerShell; other systems use sh. This is not an OS sandbox. Output is bounded; timeout defaults to 600 seconds, limited by the overall run deadline. For important long logs, set capture_dir to a NEW directory (relative to cwd or absolute; parent must exist). Saves exact stdout.log/stderr.log up to 8 MiB EACH, with hashes and explicit partial/error receipts. Existing directories are rejected before execution. Use read_file offset/limit/tail for UTF-8 logs larger than 1 MiB; other encodings need explicit decoding via run_script. Capturing does not change process errors or roll back effects; logs remain for the caller to manage.", json!({"cmd":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer","minimum":1,"maximum":3600},"capture_dir":{"type":"string","minLength":1}}), vec!["cmd"]),
     ].into_iter().map(|(name, description, properties, required)| {
         Arc::new(LocalTool { root: root.clone(), schema: Tool {
             name: name.into(), description: description.into(),
@@ -50,6 +50,20 @@ fn argument<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
     args.get(name).and_then(Value::as_str).ok_or_else(|| anyhow!("missing string argument: {name}"))
 }
 
+/// Only read_file's optional fields use null as omission. Keep required and
+/// unknown fields for the existing parser/schema checks.
+fn read_arguments(args: &Value) -> Value {
+    let mut normalized = args.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        for key in ["snapshot", "offset", "limit", "tail"] {
+            if object.get(key).is_some_and(Value::is_null) {
+                object.remove(key);
+            }
+        }
+    }
+    normalized
+}
+
 /// Relative paths are based on cwd; this is not a confinement boundary.
 fn rooted(root: &Path, value: &str, new_file: bool) -> Result<PathBuf> {
     let input = Path::new(value);
@@ -66,7 +80,10 @@ fn rooted(root: &Path, value: &str, new_file: bool) -> Result<PathBuf> {
 }
 
 fn read_text(path: &Path) -> Result<String> {
-    let file = std::fs::File::open(path)?;
+    read_text_handle(&mut std::fs::File::open(path)?)
+}
+
+pub(crate) fn read_text_handle(file: &mut std::fs::File) -> Result<String> {
     if file.metadata()?.len() > FILE_LIMIT as u64 {
         bail!("file exceeds 1 MiB text limit");
     }
@@ -610,17 +627,27 @@ impl LocalTool {
                 if !(1..=3600).contains(&seconds) {
                     bail!("timeout must be between 1 and 3600 seconds");
                 }
+                let capture = capture_argument(args)?;
                 let (text, code) =
-                    run_shell(argument(args, "cmd")?, &cwd, signal, Duration::from_secs(seconds)).await?;
+                    run_shell_captured(argument(args, "cmd")?, &cwd, signal, Duration::from_secs(seconds), capture)
+                        .await?;
                 if code != 0 {
                     bail!("command exited with code {code}\n{text}");
                 }
                 Ok(text)
             }
             "read_file" => {
+                let normalized = read_arguments(args);
+                let args = &normalized;
+                let snapshot = crate::file_edits::flag(args, "snapshot")?;
+                if snapshot && ["offset", "limit", "tail"].iter().any(|key| args.get(key).is_some()) {
+                    bail!("snapshot cannot combine with offset, limit or tail");
+                }
                 let selection = ReadSelection::parse(args)?;
                 let path = rooted(&self.root, argument(args, "path")?, false)?;
-                if let Some(selection) = selection {
+                if snapshot {
+                    Ok(crate::file_edits::snapshot(&path, read_text(&path)?))
+                } else if let Some(selection) = selection {
                     read_selection(&path, selection, signal).await
                 } else {
                     read_text(&path)
@@ -647,6 +674,10 @@ impl LocalTool {
             }
             "edit_file" => {
                 let path = rooted(&self.root, argument(args, "path")?, false)?;
+                if ["expected_sha256", "additional_edits", "dry_run"].iter().any(|key| args.get(key).is_some()) {
+                    let expected = expected_sha256(args)?;
+                    return crate::file_edits::edit(&path, args, expected.as_deref(), &signal);
+                }
                 let text = read_text(&path)?;
                 let old = argument(args, "old_text")?;
                 if old.is_empty() || text.matches(old).count() != 1 {
@@ -811,15 +842,50 @@ pub fn bounded(mut text: String, max: usize) -> String {
     text
 }
 
-async fn drain<R: AsyncRead + Unpin>(mut reader: R, limit: usize, keep_tail: bool) -> std::io::Result<(Vec<u8>, bool)> {
+#[cfg(test)]
+async fn drain<R: AsyncRead + Unpin>(reader: R, limit: usize, keep_tail: bool) -> std::io::Result<(Vec<u8>, bool)> {
+    drain_captured(reader, limit, keep_tail, None).await
+}
+
+pub(crate) fn capture_argument(args: &Value) -> Result<Option<&str>> {
+    args.get("capture_dir")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|s| !s.trim().is_empty() && !s.contains('\0'))
+                .context("capture_dir must be a non-empty path string without NUL")
+        })
+        .transpose()
+}
+
+async fn drain_captured<R: AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+    keep_tail: bool,
+    capture: Option<crate::process_output::SinkHandle>,
+) -> std::io::Result<(Vec<u8>, bool)> {
     let mut bytes = Vec::new();
     let mut tail = VecDeque::new();
     let mut buf = [0u8; 8192];
     let mut truncated = false;
     loop {
-        let size = reader.read(&mut buf).await?;
+        let size = match reader.read(&mut buf).await {
+            Ok(size) => size,
+            Err(error) => {
+                if let Some(sink) = &capture {
+                    sink.lock().unwrap().read_error(&error);
+                }
+                return Err(error);
+            }
+        };
         if size == 0 {
+            if let Some(sink) = &capture {
+                sink.lock().unwrap().eof();
+            }
             break;
+        }
+        if let Some(sink) = &capture {
+            sink.lock().unwrap().record(&buf[..size]);
         }
         let head_limit = if keep_tail { limit / 2 } else { limit };
         let keep = size.min(head_limit.saturating_sub(bytes.len()));
@@ -870,6 +936,16 @@ pub async fn run_shell(
     cancel: CancellationToken,
     timeout: Duration,
 ) -> Result<(String, i32)> {
+    run_shell_captured(command, cwd, cancel, timeout, None).await
+}
+
+async fn run_shell_captured(
+    command: &str,
+    cwd: &Path,
+    cancel: CancellationToken,
+    timeout: Duration,
+    capture_dir: Option<&str>,
+) -> Result<(String, i32)> {
     if cancel.is_cancelled() {
         bail!("command canceled before start");
     }
@@ -883,7 +959,11 @@ pub async fn run_shell(
         c.args(["-c", command]);
         c
     };
-    run_process(cmd, cwd, cancel, timeout, OUTPUT_LIMIT, false).await
+    let capture = capture_dir
+        .map(|path| crate::process_output::CapturePair::create(cwd, path))
+        .transpose()
+        .map_err(|error| anyhow!("capture preparation failed; process not_started: {error:#}"))?;
+    run_process(cmd, cwd, cancel, timeout, OUTPUT_LIMIT, false, capture).await
 }
 
 /// Shared process-tree lifecycle for shell commands and explicitly selected scripts.
@@ -895,9 +975,10 @@ pub(crate) async fn run_process(
     timeout: Duration,
     stream_limit: usize,
     compact: bool,
+    capture: Option<crate::process_output::CapturePair>,
 ) -> Result<(String, i32)> {
     if cancel.is_cancelled() {
-        bail!("command canceled before start");
+        return Err(process_capture_error(anyhow!("command canceled before start; process not_started"), &capture));
     }
     cmd.current_dir(cwd)
         .env_remove("HW_TOKEN")
@@ -913,14 +994,19 @@ pub(crate) async fn run_process(
     }
     #[cfg(windows)]
     cmd.creation_flags(0x08000004); // CREATE_SUSPENDED | CREATE_NO_WINDOW
-    let mut child = cmd.spawn().context("start shell")?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| process_capture_error(anyhow!(e).context("start shell; process not_started"), &capture))?;
     let pid = child.id().context("shell PID unavailable")?;
     let tree = match ProcessTree::new(pid) {
         Ok(tree) => tree,
         Err(error) => {
             let _ = child.kill().await;
             let _ = child.wait().await;
-            return Err(error);
+            return Err(process_capture_error(
+                error.context("process started but tree admission failed; partial effects may remain"),
+                &capture,
+            ));
         }
     };
     #[cfg(windows)]
@@ -928,10 +1014,23 @@ pub(crate) async fn run_process(
         tree.terminate();
         let _ = child.kill().await;
         let _ = child.wait().await;
-        return Err(error);
+        return Err(process_capture_error(
+            error.context("process resume failed; partial effects may remain"),
+            &capture,
+        ));
     }
-    let mut stdout = tokio::spawn(drain(child.stdout.take().context("stdout unavailable")?, stream_limit, compact));
-    let mut stderr = tokio::spawn(drain(child.stderr.take().context("stderr unavailable")?, stream_limit, compact));
+    let mut stdout = tokio::spawn(drain_captured(
+        child.stdout.take().context("stdout unavailable")?,
+        stream_limit,
+        compact,
+        capture.as_ref().map(|c| c.stdout()),
+    ));
+    let mut stderr = tokio::spawn(drain_captured(
+        child.stderr.take().context("stderr unavailable")?,
+        stream_limit,
+        compact,
+        capture.as_ref().map(|c| c.stderr()),
+    ));
     let outcome = tokio::select! {
         result = child.wait() => result.map_err(anyhow::Error::from),
         _ = cancel.cancelled() => Err(anyhow!("command canceled; partial effects may remain")),
@@ -944,26 +1043,43 @@ pub(crate) async fn run_process(
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
+    // Settle both readers before returning any failure. A captured stream can
+    // retain useful partial bytes even when the other reader fails or times out.
     let outputs =
         match tokio::time::timeout(Duration::from_secs(5), async { Ok::<_, anyhow::Error>((&mut stdout).await??) })
             .await
         {
-            Ok(result) => result?,
+            Ok(result) => result,
             Err(_) => {
                 stdout.abort();
-                stderr.abort();
-                bail!("shell stdout cleanup timed out");
+                let _ = (&mut stdout).await;
+                Err(anyhow!("shell stdout cleanup timed out"))
             }
         };
     let errors = match tokio::time::timeout(Duration::from_secs(5), &mut stderr).await {
-        Ok(result) => result??,
+        Ok(result) => result.map_err(anyhow::Error::from).and_then(|r| r.map_err(anyhow::Error::from)),
         Err(_) => {
             stderr.abort();
-            bail!("shell stderr cleanup timed out");
+            let _ = (&mut stderr).await;
+            Err(anyhow!("shell stderr cleanup timed out"))
         }
     };
-    let (out, out_cut) = outputs;
-    let (err, err_cut) = errors;
+    if outputs.is_err() || errors.is_err() {
+        let outcome_text = match &outcome {
+            Ok(status) => format!("process exit code {:?}", status.code()),
+            Err(error) => error.to_string(),
+        };
+        return Err(process_capture_error(
+            anyhow!(
+                "{outcome_text}; stdout: {:?}; stderr: {:?}; partial effects may remain",
+                outputs.as_ref().err(),
+                errors.as_ref().err()
+            ),
+            &capture,
+        ));
+    }
+    let (out, out_cut) = outputs?;
+    let (err, err_cut) = errors?;
     let mut text = if compact {
         format!(
             "stdout{}:\n{}\nstderr{}:\n{}",
@@ -982,10 +1098,43 @@ pub(crate) async fn run_process(
     if !compact && (out_cut || err_cut) {
         text.push_str("\n[output truncated]");
     }
-    let text = if compact { text } else { bounded(text, OUTPUT_LIMIT) };
+    let mut text = if compact { text } else { bounded(text, OUTPUT_LIMIT) };
+    if let Some(capture) = &capture {
+        let mut receipt = capture.receipt();
+        receipt["process"] = json!({
+            "wait_completed": outcome.is_ok(),
+            "exit_code": outcome.as_ref().ok().and_then(|status| status.code()),
+            "error": outcome.as_ref().err().map(|error| bounded(error.to_string(), 512)),
+            "effects_not_rolled_back": true,
+        });
+        // The Host event transport has the same 128 KiB limit. Reserve space
+        // for the receipt so both the model and visible tool event retain it.
+        let suffix = format!("\n[process output capture]\n{receipt}");
+        text = compact_stream(text.as_bytes(), OUTPUT_LIMIT.saturating_sub(suffix.len() + 1024));
+        text.push_str(&suffix);
+        if capture.failed() {
+            let settlement =
+                outcome.as_ref().map(|s| format!("exit code {:?}", s.code())).unwrap_or_else(|e| e.to_string());
+            bail!("output capture failed after process settlement ({settlement}); do not replay the command without reconciling its effects\n{text}");
+        }
+    }
     let status = outcome.map_err(|e| anyhow!("{e}\n{text}"))?;
     Ok((text, status.code().unwrap_or(-1)))
 }
+
+fn process_capture_error(error: anyhow::Error, capture: &Option<crate::process_output::CapturePair>) -> anyhow::Error {
+    match capture {
+        Some(capture) => {
+            let suffix = format!("\n[process output capture]\n{}", capture.receipt());
+            anyhow!("{}{}", bounded(format!("{error:#}"), OUTPUT_LIMIT.saturating_sub(suffix.len() + 1024)), suffix)
+        }
+        None => error,
+    }
+}
+
+#[cfg(test)]
+#[path = "process_capture_tests.rs"]
+mod process_capture_tests;
 
 #[cfg(unix)]
 struct ProcessTree(u32, std::sync::atomic::AtomicBool);
@@ -1187,6 +1336,204 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes() {
+        let fixture = Files::new();
+        let source = "\u{feff}alpha beta\r\n中文\r\n";
+        let path = fixture.0.join("source.py");
+        std::fs::write(&path, source).unwrap();
+        assert_eq!(
+            fixture.tool("read_file").run(&json!({"path":"source.py"}), CancellationToken::new()).await.unwrap(),
+            source
+        );
+        let snapshot = fixture.run("read_file", json!({"path":"source.py","snapshot":true})).await;
+        assert_eq!(snapshot["sha256"], data_encoding::HEXLOWER.encode(&Sha256::digest(source.as_bytes())));
+        assert_eq!(snapshot["content"], source);
+        let args = json!({"path":"source.py","old_text":"alpha","new_text":"beta","additional_edits":[{"old_text":"beta","new_text":"gamma"}],"expected_sha256":snapshot["sha256"]});
+        let mut dry = args.clone();
+        dry["dry_run"] = json!(true);
+        let preview = fixture.run("edit_file", dry).await;
+        assert_eq!(preview["status"], "preview");
+        assert_eq!(preview["committed"], false);
+        assert!(preview["observed_after_sha256"].is_null());
+        assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+        let applied = fixture.run("edit_file", args).await;
+        assert_eq!(applied["committed"], true);
+        assert_eq!(applied["candidate_sha256"], applied["observed_after_sha256"]);
+        assert_eq!(std::fs::read(&path).unwrap(), "\u{feff}beta gamma\r\n中文\r\n".as_bytes());
+        let legacy = fixture
+            .tool("edit_file")
+            .run(&json!({"path":"source.py","old_text":"gamma","new_text":"g"}), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(legacy.starts_with("Edited "));
+    }
+
+    #[tokio::test]
+    async fn edit_preflight_failures_and_cancel_do_not_write_or_truncate() {
+        let fixture = Files::new();
+        let path = fixture.0.join("code.txt");
+        let source = "alpha beta aaa";
+        for args in [
+            json!({"old_text":"alpha","new_text":"z","expected_sha256":"0".repeat(64)}),
+            json!({"old_text":"alpha","new_text":"z","additional_edits":[{"old_text":"missing","new_text":"x"}]}),
+            json!({"old_text":"alpha beta","new_text":"z","additional_edits":[{"old_text":"beta","new_text":"x"}]}),
+            json!({"old_text":"aa","new_text":"z","dry_run":false}),
+            json!({"old_text":"alpha","new_text":"z","expected_sha256":null}),
+            json!({"old_text":"alpha","new_text":"z","additional_edits":null}),
+            json!({"old_text":"alpha","new_text":"z","dry_run":"false"}),
+            json!({"old_text":"alpha","new_text":"x".repeat(FILE_LIMIT+1),"dry_run":false}),
+        ] {
+            std::fs::write(&path, source).unwrap();
+            let mut args = args;
+            args["path"] = json!("code.txt");
+            assert!(fixture.tool("edit_file").run(&args, CancellationToken::new()).await.is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+        }
+        let canceled = CancellationToken::new();
+        canceled.cancel();
+        assert!(fixture
+            .tool("edit_file")
+            .run(&json!({"path":"code.txt","old_text":"alpha","new_text":"z","dry_run":false}), canceled)
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), source.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn read_file_optional_nulls_match_omission_and_preserve_conflicts() {
+        let fixture = Files::new();
+        let source = "\u{feff}first\r\n中文\r\nlast\n";
+        std::fs::write(fixture.0.join("code.txt"), source).unwrap();
+        let tool = fixture.tool("read_file");
+        let pairs = [
+            (
+                json!({"path":"code.txt"}),
+                json!({"path":"code.txt","snapshot":null,"offset":null,"limit":null,"tail":null}),
+            ),
+            (
+                json!({"path":"code.txt","snapshot":true}),
+                json!({"path":"code.txt","snapshot":true,"offset":null,"limit":null,"tail":null}),
+            ),
+            (
+                json!({"path":"code.txt","offset":2,"limit":1}),
+                json!({"path":"code.txt","snapshot":null,"offset":2,"limit":1,"tail":null}),
+            ),
+            (
+                json!({"path":"code.txt","tail":1}),
+                json!({"path":"code.txt","snapshot":null,"offset":null,"limit":null,"tail":1}),
+            ),
+        ];
+        for (omitted, nullable) in pairs {
+            let expected = tool.run(&omitted, CancellationToken::new()).await.unwrap();
+            assert_eq!(tool.run(&nullable, CancellationToken::new()).await.unwrap(), expected);
+        }
+        for args in [
+            json!({"path":null,"snapshot":null}),
+            json!({"path":"code.txt","snapshot":true,"offset":1,"limit":null,"tail":null}),
+            json!({"path":"code.txt","snapshot":false,"offset":1,"limit":2000,"tail":1}),
+            json!({"path":"code.txt","snapshot":null,"limit":0}),
+            json!({"path":"code.txt","snapshot":null,"tail":2001}),
+            json!({"path":"code.txt","snapshot":"invalid"}),
+        ] {
+            assert!(tool.run(&args, CancellationToken::new()).await.is_err());
+        }
+        assert_eq!(std::fs::read(fixture.0.join("code.txt")).unwrap(), source.as_bytes());
+    }
+
+    #[test]
+    fn read_file_null_normalization_is_limited_to_its_optional_fields() {
+        let args = json!({"path":null,"snapshot":null,"offset":null,"limit":null,"tail":null,
+                          "unknown":null,"expected_sha256":null});
+        assert_eq!(read_arguments(&args), json!({"path":null,"unknown":null,"expected_sha256":null}));
+        assert!(args.get("snapshot").is_some(), "normalization must not change the original receipt");
+        let nonnull = json!({"path":"code.txt","snapshot":false,"offset":1,"limit":2000,"tail":1});
+        assert_eq!(read_arguments(&nonnull), nonnull);
+        // Other tools keep their existing null contract; do not widen flag().
+        assert!(crate::file_edits::flag(&json!({"snapshot":null}), "snapshot").is_err());
+        let schemas = tools(PathBuf::from("."));
+        let read = schemas.iter().find(|tool| tool.schema().name == "read_file").unwrap().schema();
+        assert_eq!(read.parameters.as_value()["required"], json!(["path"]));
+        assert_eq!(read.parameters.as_value()["properties"]["path"]["type"], "string");
+        assert_eq!(read.parameters.as_value()["properties"]["snapshot"]["type"], json!(["boolean", "null"]));
+        let edit = schemas.iter().find(|tool| tool.schema().name == "edit_file").unwrap().schema();
+        assert_eq!(edit.parameters.as_value()["properties"]["dry_run"]["type"], "boolean");
+    }
+
+    #[tokio::test]
+    async fn snapshot_options_limits_and_invalid_utf8_are_explicit() {
+        let fixture = Files::new();
+        let path = fixture.0.join("code.txt");
+        std::fs::write(&path, b"ok").unwrap();
+        for args in [
+            json!({"path":"code.txt","snapshot":true,"offset":1}),
+            json!({"path":"code.txt","snapshot":true,"tail":1}),
+            json!({"path":"code.txt","snapshot":true,"limit":1}),
+        ] {
+            assert!(fixture.tool("read_file").run(&args, CancellationToken::new()).await.is_err());
+        }
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(fixture.run("read_file", json!({"path":"code.txt","snapshot":true})).await["bytes"], 0);
+        std::fs::write(&path, vec![b'a'; FILE_LIMIT]).unwrap();
+        assert_eq!(fixture.run("read_file", json!({"path":"code.txt","snapshot":true})).await["bytes"], FILE_LIMIT);
+        for bytes in [vec![b'a'; FILE_LIMIT + 1], vec![0xff]] {
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(fixture
+                .tool("read_file")
+                .run(&json!({"path":"code.txt","snapshot":true}), CancellationToken::new())
+                .await
+                .is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    #[tokio::test]
+    async fn edit_in_place_retains_hardlinks_and_truncates_shorter_results() {
+        let fixture = Files::new();
+        let path = fixture.0.join("code.txt");
+        let alias = fixture.0.join("alias.txt");
+        std::fs::write(&path, b"original long tail").unwrap();
+        std::fs::hard_link(&path, &alias).unwrap();
+        let result = fixture
+            .run("edit_file", json!({"path":"code.txt","old_text":"original long tail","new_text":"x","dry_run":false}))
+            .await;
+        assert_eq!(result["status"], "applied");
+        assert_eq!(std::fs::read(&alias).unwrap(), b"x");
+        let unchanged =
+            fixture.run("edit_file", json!({"path":"code.txt","old_text":"x","new_text":"x","dry_run":false})).await;
+        assert_eq!(unchanged["status"], "no_change");
+        assert_eq!(unchanged["committed"], false);
+    }
+
+    #[tokio::test]
+    async fn edit_block_count_and_readonly_preview_are_bounded() {
+        let fixture = Files::new();
+        let path = fixture.0.join("code.txt");
+        let source = (0..64).map(|n| format!("[{n}]\n")).collect::<String>();
+        std::fs::write(&path, &source).unwrap();
+        let blocks =
+            (1..64).map(|n| json!({"old_text":format!("[{n}]"),"new_text":format!("({n})")})).collect::<Vec<_>>();
+        let mut args =
+            json!({"path":"code.txt","old_text":"[0]","new_text":"(0)","additional_edits":blocks,"dry_run":true});
+        let preview = fixture.run("edit_file", args.clone()).await;
+        assert_eq!(preview["edit_count"], 64);
+        assert!(preview.to_string().len() < 32 * 1024);
+        args["additional_edits"].as_array_mut().unwrap().push(json!({"old_text":"bad","new_text":"x"}));
+        assert!(fixture.tool("edit_file").run(&args, CancellationToken::new()).await.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        let permissions = std::fs::metadata(&path).unwrap().permissions();
+        let mut readonly = permissions.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        let preview = fixture
+            .tool("edit_file")
+            .run(&json!({"path":"code.txt","old_text":"[0]","new_text":"(0)","dry_run":true}), CancellationToken::new())
+            .await;
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&preview.unwrap()).unwrap()["committed"], false);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+    }
+
+    #[tokio::test]
     async fn download_checksum_validates_before_effects_and_preserves_destination_on_mismatch() {
         let files = Files::new();
         let tool = files.tool("download_file");
@@ -1259,7 +1606,6 @@ mod tests {
             .to_string()
             .contains("1 MiB"));
         for invalid in [
-            json!({"offset":null}),
             json!({"offset":0}),
             json!({"offset":-1}),
             json!({"limit":"2"}),

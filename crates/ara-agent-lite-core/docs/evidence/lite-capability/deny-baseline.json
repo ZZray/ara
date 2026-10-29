@@ -1,0 +1,1585 @@
+{
+  "version": 1,
+  "kind": "cargo-deny-baseline",
+  "spec": "ara-lite-core-capability",
+  "task": "1.2",
+  "requirements": [
+    "34.1",
+    "34.2",
+    "34.5"
+  ],
+  "recorded_at": "2026-10-26T22:28:08+08:00",
+  "paths": {
+    "canonical": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/deny-baseline.json",
+    "repo_copy": "E:/repos/ara-github/crates/ara-agent-lite-core/docs/evidence/lite-capability/deny-baseline.json",
+    "evidence_dir": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline",
+    "runs_index": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs.jsonl",
+    "note": "Both files are byte-identical; the repo copy is the import point for tasks 5.4 and 6.3."
+  },
+  "baseline_note": "需求 8 的 Core/Harness resume 代码和其余既有 WIP 已存在于工作区且未提交，基线包含它们；这是本规格任何代码改动之前的版本。任务 1.1 新建的证据索引目录按 diff 规则排除，不属于代码改动。",
+  "code_version": {
+    "repo": "E:/repos/ara-github",
+    "branch": "dev",
+    "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "dirty": true,
+    "diff_rule": "lite-eval-worktree-diff-v1, excluding crates/ara-agent-lite-core/docs/evidence/lite-capability/",
+    "diff_rule_steps": [
+      "git diff --binary HEAD -- . \":(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability\" (raw stdout bytes)",
+      "git ls-files --others --exclude-standard -z -- . \":(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability\"; sort by UTF-8 path bytes; append raw stdout of git diff --binary --no-index -- /dev/null <path> for each (exit 1 is normal)",
+      "no index modification; stdout copied as raw bytes via System.Diagnostics.Process (no PowerShell re-encoding)"
+    ],
+    "worktree_diff_path": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/worktree.diff",
+    "worktree_diff_sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+    "worktree_diff_bytes": 78020922,
+    "generated_started_at": "2026-10-26T22:15:04+08:00",
+    "generated_finished_at": "2026-10-26T22:16:05+08:00",
+    "recheck_after_deny": {
+      "sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "started_at": "2026-10-26T22:24:30+08:00",
+      "finished_at": "2026-10-26T22:25:35+08:00",
+      "matches_saved_diff": true
+    },
+    "tracked_changed_files": 289,
+    "untracked_files_included": 878,
+    "diff_file_headers": 1167,
+    "staged_files": 0,
+    "excluded_untracked_files": [
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/baseline/.gitkeep",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/.gitkeep",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/design-records.md",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/.gitkeep",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/req8-start.json",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/.gitkeep"
+    ],
+    "untracked_list": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/untracked-files.txt",
+    "git_stderr_log": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/worktree-diff.stderr.log",
+    "generator_script": {
+      "path": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/make-worktree-diff.ps1",
+      "sha256": "d3906bde2516c5a3853e0656e013871463fc4a88562060e49f3dd2e87afd120b"
+    },
+    "notes": [
+      "The spec text estimates ~692 uncommitted files; the measured worktree has 289 changed tracked files and 878 untracked, non-ignored files outside the excluded dir.",
+      "The untracked set includes .codebase-memory/ (graph.db.zst is 37,326,534 bytes). It is a codebase-memory tool cache that is neither tracked nor ignored; if that tool rewrites it, the diff SHA changes without any source change.",
+      "git stderr contains only 'LF will be replaced by CRLF' warnings (core.autocrlf=true); they are not part of the diff."
+    ]
+  },
+  "tools": {
+    "cargo_deny": "cargo-deny 0.20.2",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "git": "git version 2.55.0.windows.3",
+    "os": "Windows (win32), Windows PowerShell 5.1.26100.9711"
+  },
+  "config": {
+    "path": "E:/repos/ara-github/deny.toml",
+    "sha256": "f0266bbcff5eaaeccb3241f849fee3d7c2cecef380ce7ce57ef38088707e676d",
+    "git_state": "tracked_modified"
+  },
+  "lockfiles": [
+    {
+      "crate": "ara-agent-lite-core",
+      "path": "E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.lock",
+      "sha256_before": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+      "sha256_after": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+      "unchanged": true,
+      "cargo_metadata_locked_exit_code": 0
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "path": "E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.lock",
+      "sha256_before": "a520cea5605d2e7e59465f6cad365c846d07442d06dccc4fed620dbc26961e4c",
+      "sha256_after": "a520cea5605d2e7e59465f6cad365c846d07442d06dccc4fed620dbc26961e4c",
+      "unchanged": true,
+      "cargo_metadata_locked_exit_code": 0
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "path": "E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.lock",
+      "sha256_before": "0e6690d3c8379bcd60011ad0e391511506afb5d395ec4f0ab11b80effd5f76b6",
+      "sha256_after": "0e6690d3c8379bcd60011ad0e391511506afb5d395ec4f0ab11b80effd5f76b6",
+      "unchanged": true,
+      "cargo_metadata_locked_exit_code": 0
+    }
+  ],
+  "advisory_db": {
+    "path": "C:/Users/loveu/.cargo/advisory-dbs/advisory-db-3157b0e258782691",
+    "origin": "https://github.com/RustSec/advisory-db",
+    "head": "a78282a1414d6c28cc228c4eae3570451affb0dc",
+    "head_committed_at": "2026-10-26T14:45:01+01:00",
+    "note": "Fetched by cargo-deny during core.combined (directory mtime 2026-10-26T22:22:47+08:00); advisories completed for all three manifests."
+  },
+  "command_form": {
+    "task_text_form": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml check --config E:/repos/ara-github/deny.toml bans licenses sources advisories",
+    "task_text_form_exit_code": 2,
+    "task_text_form_result": "rejected by cargo-deny 0.20.2 argument parsing: --config is a top-level option, not a `check` option (stderr: \"unexpected argument '--config' found\"). No check ran.",
+    "task_text_form_stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.combined.task-form.stderr.txt",
+    "used_form": "cargo deny --manifest-path <m> --config E:/repos/ara-github/deny.toml check bans licenses sources advisories",
+    "per_check_form": "cargo deny --manifest-path <m> --format json --config E:/repos/ara-github/deny.toml check <check>",
+    "cwd": "E:/repos/ara-github",
+    "note": "Same checks and config as the task text; only the option position differs. Design and task 6.3 should use the used_form."
+  },
+  "status_values": {
+    "passed": "通过",
+    "failed": "失败",
+    "not_executed": "未执行"
+  },
+  "exit_code_bitmask": {
+    "advisories": 1,
+    "bans": 2,
+    "licenses": 4,
+    "sources": 8
+  },
+  "manifests": [
+    {
+      "crate": "ara-agent-lite-core",
+      "manifest": "E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml",
+      "combined": {
+        "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml --config E:/repos/ara-github/deny.toml check bans licenses sources advisories",
+        "exit_code": 14,
+        "started_at": "2026-10-26T22:22:33+08:00",
+        "finished_at": "2026-10-26T22:22:58+08:00",
+        "stdout_summary": "advisories ok, bans FAILED, licenses FAILED, sources FAILED",
+        "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.combined.stdout.txt",
+        "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.combined.stderr.txt",
+        "stderr_sha256": "cd6f50d1a6170c3e26a849a321661cf2f46704bee59ebc5d604ca054abfb24ed",
+        "exit_code_matches_per_check_bitmask": true
+      },
+      "checks": {
+        "bans": {
+          "status": "failed",
+          "exit_code": 2,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check bans",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:16+08:00",
+          "finished_at": "2026-10-26T22:23:18+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "06ec6ba6db55d6c5e2c14ff5c36d3275d607008db468b8c8664b3761e403febf",
+          "summary": {
+            "errors": 1,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 8
+          },
+          "failures": [
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-core",
+              "version": "0.1.1",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 2 wildcard dependencies for crate 'ara-agent-lite-core'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\" }",
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\", features = [\"providers\"] }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 1
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "bans",
+              "crate": "base64",
+              "version": "0.22.1",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'base64'",
+              "detail": {
+                "versions": [
+                  "0.22.1",
+                  "0.23.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "getrandom",
+              "version": "0.2.17",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'getrandom'",
+              "detail": {
+                "versions": [
+                  "0.2.17",
+                  "0.3.4",
+                  "0.4.3"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 3
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "hashbrown",
+              "version": "0.12.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'hashbrown'",
+              "detail": {
+                "versions": [
+                  "0.12.3",
+                  "0.17.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "indexmap",
+              "version": "1.9.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'indexmap'",
+              "detail": {
+                "versions": [
+                  "1.9.3",
+                  "2.14.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 5
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "nom",
+              "version": "7.1.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'nom'",
+              "detail": {
+                "versions": [
+                  "7.1.3",
+                  "8.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 6
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "r-efi",
+              "version": "5.3.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'r-efi'",
+              "detail": {
+                "versions": [
+                  "5.3.0",
+                  "6.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 7
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "syn",
+              "version": "2.0.119",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'syn'",
+              "detail": {
+                "versions": [
+                  "2.0.119",
+                  "3.0.9"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 8
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "windows-sys",
+              "version": "0.52.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'windows-sys'",
+              "detail": {
+                "versions": [
+                  "0.52.0",
+                  "0.59.0",
+                  "0.61.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.bans.json.stderr.txt",
+                "line": 9
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "licenses": {
+          "status": "failed",
+          "exit_code": 4,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check licenses",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:18+08:00",
+          "finished_at": "2026-10-26T22:23:19+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "af1fc27ffc12852e5235587f4588b06505835a0d5610e91d419494b4a3764c4f",
+          "summary": {
+            "errors": 1,
+            "helps": 229,
+            "notes": 0,
+            "warnings": 4
+          },
+          "failures": [
+            {
+              "check": "licenses",
+              "crate": "webpki-roots",
+              "version": "1.0.10",
+              "rule_or_advisory_id": "rejected",
+              "code": "rejected",
+              "severity": "error",
+              "message": "failed to satisfy license requirements",
+              "detail": {
+                "licenses": [
+                  "CDLA-Permissive-2.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+                "line": 1
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser-color"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+                "line": 3
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "arrayref"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "uluru"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.licenses.json.stderr.txt",
+                "line": 5
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "sources": {
+          "status": "failed",
+          "exit_code": 8,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check sources",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:19+08:00",
+          "finished_at": "2026-10-26T22:23:21+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.sources.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.sources.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "b7f2443db2cc14231a7157cc4d880ba7b3de1fdeca93e817749d4f810d478848",
+          "summary": {
+            "errors": 3,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [
+            {
+              "check": "sources",
+              "crate": "rpi-agent",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.sources.json.stderr.txt",
+                "line": 1
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-ai",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.sources.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-telemetry",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.sources.json.stderr.txt",
+                "line": 3
+              }
+            }
+          ],
+          "warnings": [],
+          "unparsed_lines": []
+        },
+        "advisories": {
+          "status": "passed",
+          "exit_code": 0,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-core/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check advisories",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:21+08:00",
+          "finished_at": "2026-10-26T22:23:23+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.advisories.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/core.advisories.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "02d186150402cda84d64b50da1dea4b586274b3afbd3fbaf078a7c4e389920c3",
+          "summary": {
+            "errors": 0,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [],
+          "warnings": [],
+          "unparsed_lines": []
+        }
+      }
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "manifest": "E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml",
+      "combined": {
+        "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml --config E:/repos/ara-github/deny.toml check bans licenses sources advisories",
+        "exit_code": 14,
+        "started_at": "2026-10-26T22:23:23+08:00",
+        "finished_at": "2026-10-26T22:23:26+08:00",
+        "stdout_summary": "advisories ok, bans FAILED, licenses FAILED, sources FAILED",
+        "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.combined.stdout.txt",
+        "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.combined.stderr.txt",
+        "stderr_sha256": "68f76bc620d06da7bd658e96abf8490fbc772b4d22fd45b8d0376e4e113ccdd3",
+        "exit_code_matches_per_check_bitmask": true
+      },
+      "checks": {
+        "bans": {
+          "status": "failed",
+          "exit_code": 2,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check bans",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:26+08:00",
+          "finished_at": "2026-10-26T22:23:27+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "294b8c24ae78ffe6d11b2b4b707534e00234dba1eda6a313435c007441f06e24",
+          "summary": {
+            "errors": 2,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 8
+          },
+          "failures": [
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-core",
+              "version": "0.1.1",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 2 wildcard dependencies for crate 'ara-agent-lite-core'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\" }",
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\", features = [\"providers\"] }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 1
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-harness",
+              "version": "0.1.0",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 1 wildcard dependency for crate 'ara-agent-lite-harness'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ path = \"../ara-agent-lite-core\" }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 2
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "bans",
+              "crate": "base64",
+              "version": "0.22.1",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'base64'",
+              "detail": {
+                "versions": [
+                  "0.22.1",
+                  "0.23.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 3
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "getrandom",
+              "version": "0.2.17",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'getrandom'",
+              "detail": {
+                "versions": [
+                  "0.2.17",
+                  "0.3.4",
+                  "0.4.3"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "hashbrown",
+              "version": "0.12.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'hashbrown'",
+              "detail": {
+                "versions": [
+                  "0.12.3",
+                  "0.17.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 5
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "indexmap",
+              "version": "1.9.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'indexmap'",
+              "detail": {
+                "versions": [
+                  "1.9.3",
+                  "2.14.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 6
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "nom",
+              "version": "7.1.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'nom'",
+              "detail": {
+                "versions": [
+                  "7.1.3",
+                  "8.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 7
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "r-efi",
+              "version": "5.3.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'r-efi'",
+              "detail": {
+                "versions": [
+                  "5.3.0",
+                  "6.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 8
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "syn",
+              "version": "2.0.119",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'syn'",
+              "detail": {
+                "versions": [
+                  "2.0.119",
+                  "3.0.9"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 9
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "windows-sys",
+              "version": "0.52.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'windows-sys'",
+              "detail": {
+                "versions": [
+                  "0.52.0",
+                  "0.59.0",
+                  "0.61.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.bans.json.stderr.txt",
+                "line": 10
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "licenses": {
+          "status": "failed",
+          "exit_code": 4,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check licenses",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:27+08:00",
+          "finished_at": "2026-10-26T22:23:28+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "a4816b4c93b10beb9809d38a32bfc0da9cd088c7699e4a1426d842d69c558573",
+          "summary": {
+            "errors": 1,
+            "helps": 230,
+            "notes": 0,
+            "warnings": 4
+          },
+          "failures": [
+            {
+              "check": "licenses",
+              "crate": "webpki-roots",
+              "version": "1.0.10",
+              "rule_or_advisory_id": "rejected",
+              "code": "rejected",
+              "severity": "error",
+              "message": "failed to satisfy license requirements",
+              "detail": {
+                "licenses": [
+                  "CDLA-Permissive-2.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+                "line": 1
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser-color"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+                "line": 3
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "arrayref"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "uluru"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.licenses.json.stderr.txt",
+                "line": 5
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "sources": {
+          "status": "failed",
+          "exit_code": 8,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check sources",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:28+08:00",
+          "finished_at": "2026-10-26T22:23:29+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.sources.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.sources.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "65b86e89cd3052548d5a45cd02a0c4588ee86df7b6cc7cb743caf527f8f11450",
+          "summary": {
+            "errors": 3,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [
+            {
+              "check": "sources",
+              "crate": "rpi-agent",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.sources.json.stderr.txt",
+                "line": 1
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-ai",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.sources.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-telemetry",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.sources.json.stderr.txt",
+                "line": 3
+              }
+            }
+          ],
+          "warnings": [],
+          "unparsed_lines": []
+        },
+        "advisories": {
+          "status": "passed",
+          "exit_code": 0,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-harness/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check advisories",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:29+08:00",
+          "finished_at": "2026-10-26T22:23:31+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.advisories.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/harness.advisories.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "02d186150402cda84d64b50da1dea4b586274b3afbd3fbaf078a7c4e389920c3",
+          "summary": {
+            "errors": 0,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [],
+          "warnings": [],
+          "unparsed_lines": []
+        }
+      }
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "manifest": "E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml",
+      "combined": {
+        "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml --config E:/repos/ara-github/deny.toml check bans licenses sources advisories",
+        "exit_code": 14,
+        "started_at": "2026-10-26T22:23:31+08:00",
+        "finished_at": "2026-10-26T22:23:34+08:00",
+        "stdout_summary": "advisories ok, bans FAILED, licenses FAILED, sources FAILED",
+        "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.combined.stdout.txt",
+        "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.combined.stderr.txt",
+        "stderr_sha256": "3d31eb997ea7cef06ec0881e3269b66a73b02c025f1017a43c70cb359e68e99d",
+        "exit_code_matches_per_check_bitmask": true
+      },
+      "checks": {
+        "bans": {
+          "status": "failed",
+          "exit_code": 2,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check bans",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:34+08:00",
+          "finished_at": "2026-10-26T22:23:35+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "954acea98eb1f82ccb39742d04b3418316c40329efd1467440b9398c158ccef3",
+          "summary": {
+            "errors": 3,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 8
+          },
+          "failures": [
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-core",
+              "version": "0.1.1",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 2 wildcard dependencies for crate 'ara-agent-lite-core'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\" }",
+                  "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\", features = [\"providers\"] }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 1
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-harness",
+              "version": "0.1.0",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 1 wildcard dependency for crate 'ara-agent-lite-harness'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ path = \"../ara-agent-lite-core\" }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "ara-agent-lite-jsonl",
+              "version": "0.1.0",
+              "rule_or_advisory_id": "wildcard",
+              "code": "wildcard",
+              "severity": "error",
+              "message": "found 1 wildcard dependency for crate 'ara-agent-lite-jsonl'. allow-wildcard-paths is enabled, but does not apply to public crates as crates.io disallows path dependencies.",
+              "detail": {
+                "spans": [
+                  "{ path = \"../ara-agent-lite-harness\" }"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 3
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "bans",
+              "crate": "base64",
+              "version": "0.22.1",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'base64'",
+              "detail": {
+                "versions": [
+                  "0.22.1",
+                  "0.23.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "getrandom",
+              "version": "0.2.17",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'getrandom'",
+              "detail": {
+                "versions": [
+                  "0.2.17",
+                  "0.3.4",
+                  "0.4.3"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 5
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "hashbrown",
+              "version": "0.12.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'hashbrown'",
+              "detail": {
+                "versions": [
+                  "0.12.3",
+                  "0.17.1"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 6
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "indexmap",
+              "version": "1.9.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'indexmap'",
+              "detail": {
+                "versions": [
+                  "1.9.3",
+                  "2.14.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 7
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "nom",
+              "version": "7.1.3",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'nom'",
+              "detail": {
+                "versions": [
+                  "7.1.3",
+                  "8.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 8
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "r-efi",
+              "version": "5.3.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'r-efi'",
+              "detail": {
+                "versions": [
+                  "5.3.0",
+                  "6.0.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 9
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "syn",
+              "version": "2.0.119",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 2 duplicate entries for crate 'syn'",
+              "detail": {
+                "versions": [
+                  "2.0.119",
+                  "3.0.9"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 10
+              }
+            },
+            {
+              "check": "bans",
+              "crate": "windows-sys",
+              "version": "0.52.0",
+              "rule_or_advisory_id": "duplicate",
+              "code": "duplicate",
+              "severity": "warning",
+              "message": "found 3 duplicate entries for crate 'windows-sys'",
+              "detail": {
+                "versions": [
+                  "0.52.0",
+                  "0.59.0",
+                  "0.61.2"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.bans.json.stderr.txt",
+                "line": 11
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "licenses": {
+          "status": "failed",
+          "exit_code": 4,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check licenses",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:35+08:00",
+          "finished_at": "2026-10-26T22:23:36+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "9eeb83555dc0b5b92e93778655ddf41eb2d75d49c751310ab09c9bb06b9c6894",
+          "summary": {
+            "errors": 1,
+            "helps": 231,
+            "notes": 0,
+            "warnings": 4
+          },
+          "failures": [
+            {
+              "check": "licenses",
+              "crate": "webpki-roots",
+              "version": "1.0.10",
+              "rule_or_advisory_id": "rejected",
+              "code": "rejected",
+              "severity": "error",
+              "message": "failed to satisfy license requirements",
+              "detail": {
+                "licenses": [
+                  "CDLA-Permissive-2.0"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+                "line": 1
+              }
+            }
+          ],
+          "warnings": [
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "cssparser-color"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+                "line": 3
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "arrayref"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+                "line": 4
+              }
+            },
+            {
+              "check": "licenses",
+              "crate": null,
+              "version": null,
+              "rule_or_advisory_id": "license-exception-not-encountered",
+              "code": "license-exception-not-encountered",
+              "severity": "warning",
+              "message": "license exception was not encountered",
+              "detail": {
+                "licenses": [
+                  "uluru"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.licenses.json.stderr.txt",
+                "line": 5
+              }
+            }
+          ],
+          "unparsed_lines": []
+        },
+        "sources": {
+          "status": "failed",
+          "exit_code": 8,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check sources",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:36+08:00",
+          "finished_at": "2026-10-26T22:23:37+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.sources.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.sources.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "4c94106805d9c4d7dff8da10bc070769d53bc1e98ec676a10556725a3cb013ee",
+          "summary": {
+            "errors": 3,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [
+            {
+              "check": "sources",
+              "crate": "rpi-agent",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.sources.json.stderr.txt",
+                "line": 1
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-ai",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.sources.json.stderr.txt",
+                "line": 2
+              }
+            },
+            {
+              "check": "sources",
+              "crate": "rpi-telemetry",
+              "version": "0.3.23",
+              "rule_or_advisory_id": "source-not-allowed",
+              "code": "source-not-allowed",
+              "severity": "error",
+              "message": "detected 'git' source not explicitly allowed",
+              "detail": {
+                "sources": [
+                  "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+                ]
+              },
+              "evidence": {
+                "file": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.sources.json.stderr.txt",
+                "line": 3
+              }
+            }
+          ],
+          "warnings": [],
+          "unparsed_lines": []
+        },
+        "advisories": {
+          "status": "passed",
+          "exit_code": 0,
+          "command": "cargo deny --manifest-path E:/repos/ara-github/crates/ara-agent-lite-jsonl/Cargo.toml --format json --config E:/repos/ara-github/deny.toml check advisories",
+          "cwd": "E:/repos/ara-github",
+          "started_at": "2026-10-26T22:23:37+08:00",
+          "finished_at": "2026-10-26T22:23:39+08:00",
+          "stdout": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.advisories.json.stdout.txt",
+          "stderr": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/runs/jsonl.advisories.json.stderr.txt",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "02d186150402cda84d64b50da1dea4b586274b3afbd3fbaf078a7c4e389920c3",
+          "summary": {
+            "errors": 0,
+            "helps": 0,
+            "notes": 0,
+            "warnings": 0
+          },
+          "failures": [],
+          "warnings": [],
+          "unparsed_lines": []
+        }
+      }
+    }
+  ],
+  "known_failures": [
+    {
+      "check": "bans",
+      "crate": "ara-agent-lite-core",
+      "version": "0.1.1",
+      "rule_or_advisory_id": "wildcard",
+      "detail": {
+        "spans": [
+          "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\" }",
+          "{ git = \"https://github.com/bigfish1913/pi-rust.git\", rev = \"8ec462672d90e62712d96074638efef89436cebe\", features = [\"providers\"] }"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-core",
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "licenses",
+      "crate": "webpki-roots",
+      "version": "1.0.10",
+      "rule_or_advisory_id": "rejected",
+      "detail": {
+        "licenses": [
+          "CDLA-Permissive-2.0"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-core",
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "sources",
+      "crate": "rpi-agent",
+      "version": "0.3.23",
+      "rule_or_advisory_id": "source-not-allowed",
+      "detail": {
+        "sources": [
+          "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-core",
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "sources",
+      "crate": "rpi-ai",
+      "version": "0.3.23",
+      "rule_or_advisory_id": "source-not-allowed",
+      "detail": {
+        "sources": [
+          "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-core",
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "sources",
+      "crate": "rpi-telemetry",
+      "version": "0.3.23",
+      "rule_or_advisory_id": "source-not-allowed",
+      "detail": {
+        "sources": [
+          "git+https://github.com/bigfish1913/pi-rust.git?rev=8ec462672d90e62712d96074638efef89436cebe"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-core",
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "bans",
+      "crate": "ara-agent-lite-harness",
+      "version": "0.1.0",
+      "rule_or_advisory_id": "wildcard",
+      "detail": {
+        "spans": [
+          "{ path = \"../ara-agent-lite-core\" }"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-harness",
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    },
+    {
+      "check": "bans",
+      "crate": "ara-agent-lite-jsonl",
+      "version": "0.1.0",
+      "rule_or_advisory_id": "wildcard",
+      "detail": {
+        "spans": [
+          "{ path = \"../ara-agent-lite-harness\" }"
+        ]
+      },
+      "baseline_code_version": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + worktree diff sha256 8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "manifests": [
+        "ara-agent-lite-jsonl"
+      ],
+      "disposition": "known item, not fixed by this spec (requirement 34.2)"
+    }
+  ],
+  "advisory_failures": [],
+  "not_executed": []
+}

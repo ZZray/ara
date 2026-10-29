@@ -1,0 +1,130 @@
+{
+  "schema": "ara.shared-lite-jsonl.bounded-result.v1",
+  "date": "2026-10-25",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "worktree": "dirty; unrelated WIP preserved; frozen source manifest identifies scope",
+  "decision": "NATIVE_AND_CONTROLLED_PRODUCT_TOOL_PROFILE_ACCEPTED_REAL_MODEL_GATE_OPEN",
+  "goal_fully_accepted": "0/7",
+  "core_version": "0.1.1",
+  "harness_version": "0.1.0",
+  "jsonl_version": "0.1.0",
+  "scope": "Windows uncompressed execute; Python and Node public callbacks; controlled ACR Workspace and ModelRelay",
+  "checks": {
+    "rust_file_artifact_tests": 3,
+    "core_generation_policy_tests": 5,
+    "current_python_native_tests": 16,
+    "node_contract_tests": 10,
+    "extra_native_protocol_tests": 5,
+    "real_product_relay_tests": 1,
+    "clippy": "PASS",
+    "fmt": "PASS",
+    "doc_tests": "PASS; 0 tests"
+  },
+  "controlled_acr": {
+    "runs": 2,
+    "logical_calls": 8,
+    "fixed_test_count": 7,
+    "first_review": "failed",
+    "last_review": "passed",
+    "test_source_unchanged": true,
+    "only_writable_source": "app/services/git_service.py"
+  },
+  "relay": {
+    "core_logical_calls": 4,
+    "actual_upstream_attempts": 5,
+    "failed_attempts_charged": 1,
+    "ordinals": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "same_relay_context": true,
+    "sixth_attempt_refused": true,
+    "real_model": false
+  },
+  "live_acr": {
+    "status": "NOT_ACCEPTED",
+    "first_trial": "Cancelled; callback classified Unknown before scoped preflight repair",
+    "second_trial": "ReconciliationRequired; final output length",
+    "runs": 1,
+    "logical_calls": 10,
+    "output_tokens": 4096,
+    "elapsed_seconds": 88.5038628578186,
+    "fence": "Present",
+    "remote_weights": "UNKNOWN",
+    "billing": "UNKNOWN"
+  },
+  "labslot": "candidate injection and stand-in contract only; true TodoService/PostgreSQL OPEN; build approval pending",
+  "dependency_audit": {
+    "exit": 14,
+    "advisories": "cached PASS; freshness not established",
+    "bans": "FAIL",
+    "licenses": "FAIL",
+    "sources": "FAIL",
+    "release": "OPEN"
+  },
+  "source_count": 87,
+  "source_manifest_sha256": "fa3915968fc312d6bd3fd5ac87d4e5c7544b3dd6dbd0b7f21a2b9b2566895771",
+  "binary_sha256": "3ce9b773314ed34d905555c89622063d6d4d3f0fc0d157120db4285d08f461b7",
+  "root_checks_sha256": "30088ee11a4432a10dbad4337eee5bc5a8920c2604cf2fec9094a1e9f7e8bbc9",
+  "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025",
+  "reviews": [
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\acr-live-pre-review.json",
+      "sha256": "e23bf726c0f70cf6cc442517478961a615c830784302f3391e4c626aa0c80445"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\acr-live-v1-review.json",
+      "sha256": "f87e8509a80fa9cc160f90986437d60fad36a2804e222f82ed8d27787a8efc26"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\acr-live-v2-review.json",
+      "sha256": "16859421929288d85917b9c2b846e37dbc4f4bc8be2b169dae07897ab4cad5ff"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\acr-preflight-fix-review.json",
+      "sha256": "a8fc55c06255e5e6ddb10fa953672f4e6da7baf416b6aa7198f19a6707629fba"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\ai-codereview-current-audit.json",
+      "sha256": "7a1fc6895c942724bd21dbf844c7ab0e130ae72a49b836a831008c0eded46ea3"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\final-execution-review.json",
+      "sha256": "153cb20f7dcc2fd95beaee1794fb464fdab9a31fd6b362a67fbfdc4145090e29"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\client-source-post.json",
+      "sha256": "56c014bd4ed0d84f569c30c509e719e9cf71e62a75bfcc6ca8c33cc273094e61"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\final-client-execution-post.json",
+      "sha256": "5df796fbadfc230324c978dc7380a90bd774010d0a209c6dae8d2fb80251bfc4"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\node-client-post-fixes.json",
+      "sha256": "7f7bafb38f57be9529453862fd2a2f46ad5aafc83ef350a483b82a2d731b9921"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\shared-jsonl-execution-post.json",
+      "sha256": "2ed4b6025c179b8a5b65cedf1be5678348f2f16e65d103dcd0194d2ca4fb9547"
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\product-host-adapters-v1-20261025\\stage\\shared-jsonl-source-post.json",
+      "sha256": "469c4cc1e1218db4635990aac33119c225c1260b43eac75a12997b5c3f8f8c29"
+    }
+  ],
+  "open": [
+    "safe Core output-length recovery",
+    "real summary/agent shared budget execution",
+    "all callback cancellation/fault matrix",
+    "actual LabSlot SQL/tool acceptance",
+    "product default migrations and deployment",
+    "C ABI and cross-platform",
+    "unfamiliar-task matched capability comparison",
+    "dependency and release policy"
+  ],
+  "no_commit_push_deployment_device_operation": true
+}

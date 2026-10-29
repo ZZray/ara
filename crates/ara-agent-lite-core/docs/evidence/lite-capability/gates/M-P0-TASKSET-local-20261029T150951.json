@@ -1,0 +1,74 @@
+﻿{
+    "kind":  "module_local_checks",
+    "modules":  [
+                    "M-P0-TASKSET"
+                ],
+    "workspace":  "tools/lite-eval",
+    "head":  "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "started_at":  "2026-10-29T15:05:45+08:00",
+    "finished_at":  "2026-10-29T15:09:51+08:00",
+    "scope":  "module tests only (user 2026-10-29): lib + registry_props, holdout_props, oracle adapter replay; other suites untouched and not rerun",
+    "commands":  [
+                     {
+                         "command":  "cargo fmt --check",
+                         "exit_code":  0,
+                         "tests":  "涓嶉€傜敤"
+                     },
+                     {
+                         "command":  "cargo clippy --all-targets -- -D warnings",
+                         "exit_code":  0,
+                         "tests":  "涓嶉€傜敤"
+                     },
+                     {
+                         "command":  "cargo test --lib",
+                         "exit_code":  0,
+                         "passed":  49,
+                         "failed":  0
+                     },
+                     {
+                         "command":  "cargo test --test registry_props --test holdout_props",
+                         "exit_code":  0,
+                         "passed":  4,
+                         "failed":  0
+                     },
+                     {
+                         "command":  "python -m unittest discover -s tools/lite-eval/oracles -p test_*.py",
+                         "exit_code":  0,
+                         "passed":  5,
+                         "failed":  0
+                     }
+                 ],
+    "real_runs":  [
+                      {
+                          "command":  "lite-eval holdout mark \u003cS1|S2|S3|R1|H2\u003e --date 2026-10-23 --change ...",
+                          "exit_code":  0,
+                          "result":  "holdout-log.jsonl seq 1-5 marked_not_new"
+                      },
+                      {
+                          "command":  "lite-eval holdout mark S3 --date 2026-10-24 --change again",
+                          "exit_code":  2,
+                          "result":  "refused: already not new holdout since 2026-10-23; log unchanged"
+                      },
+                      {
+                          "command":  "lite-eval validate",
+                          "exit_code":  4,
+                          "result":  "only violation task_count expected 6 actual 5 (SH1 is task 10)"
+                      }
+                  ],
+    "raw_logs":  {
+                     "dir":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\module-p0-taskset",
+                     "sha256":  {
+                                    "fmt":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                    "clippy":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                    "test-lib":  "7d9c4a43d0a8e19c81ba807b2b79da47bc18ec527a4ffba4faded7daf707ed16",
+                                    "test-module":  "650b08787a5ed864685f806d1c27a1f6d7e1c6cd9182f78d1a080f8312f201bc",
+                                    "oracles":  "7d0c8cae1f77bdf6223ba0f6993c90312c591745c0c5ab5cfbbd5f8ca7a7b8c8",
+                                    "validate":  "f4a88aaf3c109c2e1229124a3dc4c6c18ff49ca6240825d07a3948979a24cbf9"
+                                }
+                 },
+    "not_covered":  [
+                        "SH1 registration (task 10); complete 6-task validate (task 11.4)",
+                        "runner refusal before upstream requests, per-task fixture SHA recheck, Run_Manifest task list (requirements 1.3 runner part, 1.4, 1.5; task 13)",
+                        "real 11-command gate run (final delivery, task 61)"
+                    ]
+}

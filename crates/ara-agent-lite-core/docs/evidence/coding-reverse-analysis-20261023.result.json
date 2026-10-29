@@ -1,0 +1,379 @@
+{
+  "schema": "ara-analysis-enhancement-v1",
+  "date": "2026-10-23",
+  "base_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "decision": "TOOLS_TESTED_REAL_REVERSE_TASK_OPEN",
+  "scope": "independent Lite optional analysis adapters; no full OMP acceptance or release",
+  "goal_complete": false,
+  "compiler_inputs": {
+    "Cargo.toml": "04021c0c7001d29318cf6ae2fbfe857392d4951ac24fa90ec597fa8089596e3a",
+    "Cargo.lock": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+    "src/agent.rs": "c540e63c6f25ae4bb7cf5e13d475be5c180d6b3cef9844b99c8213cdd17ee624",
+    "src/analysis_tools.rs": "07f445743952125aa39c745ed9f6509088c8b3270c8912edb5eda17f3bf2bb4e",
+    "src/context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "src/environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "src/environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "src/environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "src/execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "src/experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src/file_edits.rs": "0a940f3bb767b5d30159bc489543e9821fd1d131853c6b41e012ba1665d5fb23",
+    "src/goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "src/lib.rs": "db5d20c7a9e289c66b61a4d68082d70295f9e070044baabb936a961b86edc70a",
+    "src/local_tools.rs": "c56c66edefcf670853aadfd3f51d8011dd2a89292c6b0614b18ddcf8ab9cae7c",
+    "src/managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "src/model.rs": "a63864118846e955e61e4bfc6c81d30da1a178c0c90b4a958ff0d98b0b9149a7",
+    "src/model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "src/model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "src/process_capture_tests.rs": "332eacc4a7daa0b7f315c290c55998d46dce279a889dafdf7a8dff620ab55a6e",
+    "src/process_output.rs": "c2ca62c6ab9732a1817f0d584dc7387ca943db0ceff9195b869fe8fd4d0691f7",
+    "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src/script_tools.rs": "5391e73c3236ad538c977a25384b0419853d4883fafac3edfe83116beb500f37",
+    "src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "src/skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "src/skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "src/steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "src/system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "src/terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "src/terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "src/web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "src/web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "src/builtin_skills/skill-creator/SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "src/builtin_skills/skill-installer/SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "src/environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "src/web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "examples/business_host.rs": "4fa7a8c410d8b11123be06656140188e450c5e554359642bd465b85be0c1ec4e"
+  },
+  "compiler_inputs_unchanged": true,
+  "binary_sha256": "e6bb1036bb3337adc272d68447b673000ba0c34a4c2d1c547e8b3994995295f3",
+  "checks": [
+    {
+      "check": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.566
+    },
+    {
+      "check": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 41.307
+    },
+    {
+      "check": "test",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--workspace",
+        "--all-targets"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 117.061
+    },
+    {
+      "check": "doc",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--doc"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 17.172
+    },
+    {
+      "check": "host",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--example",
+        "business_host"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 15.582
+    },
+    {
+      "check": "deny",
+      "command": [
+        "cargo",
+        "deny",
+        "--offline",
+        "check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 32.68
+    }
+  ],
+  "unit_tests": {
+    "passed": 193,
+    "failed": 0,
+    "ignored_original_network_test": 1
+  },
+  "public_api_tests": {
+    "passed": 3
+  },
+  "doc_tests": {
+    "passed": 0
+  },
+  "deny": "PASS_WITH_EXISTING_WARNINGS; offline advisory DB freshness unconfirmed",
+  "native": {
+    "passed": 23,
+    "total": 23,
+    "elapsed_seconds": 46.147,
+    "result_sha256": "61073e42455fc3b21d490244b4a6dc7387c2a6a6b2ddcb0333e8864da2b8b15a",
+    "backends": {
+      "gcc": {
+        "version": "gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.1.0",
+        "sha256": "547d8bb31c8835c993c863168ead8f9647eeb65c10b1b0ce7220a39c582d6c6a"
+      },
+      "ctags": {
+        "version": "Universal Ctags 6.2.1, Copyright (C) 2015-2025 Universal Ctags Team",
+        "sha256": "628dec46230b7b6603894a7601c2c0f996f3ae697a2c63f8f624951d45cadaf6"
+      },
+      "objdump": {
+        "version": "GNU objdump (Binutils for MinGW-W64 x86_64, built by Brecht Sanders, r3) 2.46.1",
+        "sha256": "2754df932fc9766cf6debd5355d5528345a96a724756bf1c1a9bcd798f8a13c8"
+      },
+      "nm": {
+        "version": "GNU nm (Binutils for MinGW-W64 x86_64, built by Brecht Sanders, r3) 2.46.1",
+        "sha256": "846b0a886fc3c37733aa269641f3b65258e6ccd4de325074af18704f340e8e68"
+      },
+      "strip": {
+        "version": "GNU strip (Binutils for MinGW-W64 x86_64, built by Brecht Sanders, r3) 2.46.1",
+        "sha256": "9ac5cca4d0b20d2ee3604de39120964b6332de915f3b7ba383f93f83e507d368"
+      }
+    }
+  },
+  "retained_failures": {
+    "native_v1": {
+      "passed": 15,
+      "total": 23
+    },
+    "v2": "CANCELLED after independent reproduction of GNU operational cwd failure"
+  },
+  "regressions": {
+    "process_capture": "6/6 PASS",
+    "versioned_edits": "4/4 PASS"
+  },
+  "model": "deepseek-v4.1-flash",
+  "protocol": "openai-completions",
+  "model_trials": [
+    {
+      "task": "S1",
+      "variant": "base",
+      "fixed_harness_status": "PASS",
+      "host_code": 0,
+      "host_error": "",
+      "task_artifact_verified": true,
+      "oracle_status": "PASS",
+      "fixed_case_count": 13,
+      "oracle_executed": true,
+      "failure_class": null,
+      "new_tool_advertised": false,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 12,
+      "elapsed_seconds": 66.836,
+      "prompt_tokens": 141004,
+      "completion_tokens": 7399,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "67fa129328f089bcacdcab51f36204e72d33255823e8cf75354cccbdab690599",
+      "transcript_sha256": "64cff764d789c726194f3bbff231039722f21c14c32bfeb711dfcb7702189033"
+    },
+    {
+      "task": "S1",
+      "variant": "new",
+      "fixed_harness_status": "FAIL",
+      "host_code": 0,
+      "host_error": "",
+      "task_artifact_verified": true,
+      "oracle_status": "PASS",
+      "fixed_case_count": 13,
+      "oracle_executed": true,
+      "failure_class": null,
+      "new_tool_advertised": true,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 15,
+      "elapsed_seconds": 67.771,
+      "prompt_tokens": 173292,
+      "completion_tokens": 7890,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "66b9f75bc078ed679d6416dbd9183f3823213b00e74ef945b1da095c491b4c8b",
+      "transcript_sha256": "015bceb1865746ec6f20fc5bd5333a761fad5141d7aeefebf7f6e82df71f7302"
+    },
+    {
+      "task": "S2",
+      "variant": "base",
+      "fixed_harness_status": "PASS",
+      "host_code": 0,
+      "host_error": "",
+      "task_artifact_verified": true,
+      "oracle_status": "PASS",
+      "fixed_case_count": 35,
+      "oracle_executed": true,
+      "failure_class": null,
+      "new_tool_advertised": false,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 14,
+      "elapsed_seconds": 43.451,
+      "prompt_tokens": 146101,
+      "completion_tokens": 3831,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "af6eaecbab0deea9224c3c3df5168f60026bbf379eaa7805dd5018b361a31701",
+      "transcript_sha256": "0b196af4a34463f2c08ff9fd0667cce2ab4de0cf4770d83936315fbe0c3990a2"
+    },
+    {
+      "task": "S2",
+      "variant": "new",
+      "fixed_harness_status": "FAIL",
+      "host_code": 0,
+      "host_error": "",
+      "task_artifact_verified": true,
+      "oracle_status": "PASS",
+      "fixed_case_count": 35,
+      "oracle_executed": true,
+      "failure_class": null,
+      "new_tool_advertised": true,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 16,
+      "elapsed_seconds": 91.119,
+      "prompt_tokens": 227176,
+      "completion_tokens": 8238,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "81a4ba40d852ad928bcfb011b7b4936be06a60077a83cfe0ab1632001ac78f28",
+      "transcript_sha256": "62561b41f4b74c716c74a70095f1b19fc1b572dd8c1151d610a619b150022f9c"
+    },
+    {
+      "task": "R1",
+      "variant": "base",
+      "fixed_harness_status": "FAIL",
+      "host_code": -1,
+      "host_error": "assistant stopped with length",
+      "task_artifact_verified": false,
+      "oracle_status": "NOT_RUN",
+      "fixed_case_count": 28,
+      "oracle_executed": false,
+      "failure_class": "OUTPUT_LIMIT_BEFORE_SUBMISSION",
+      "new_tool_advertised": false,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 4,
+      "elapsed_seconds": 31.038,
+      "prompt_tokens": 25454,
+      "completion_tokens": 4580,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "ed25a73dd7957f8068cb85e6c874037c838cf52bec24f5cbb7668c836675783f",
+      "transcript_sha256": "14be39f3a2a8115e1e3660a0ef4a81830b158494f331fe5b8c512ebf5d0b7b4d"
+    },
+    {
+      "task": "R1",
+      "variant": "new",
+      "fixed_harness_status": "FAIL",
+      "host_code": -1,
+      "host_error": "assistant stopped with length",
+      "task_artifact_verified": false,
+      "oracle_status": "NOT_RUN",
+      "fixed_case_count": 28,
+      "oracle_executed": false,
+      "failure_class": "OUTPUT_LIMIT_BEFORE_SUBMISSION",
+      "new_tool_advertised": true,
+      "new_tool_verified": false,
+      "source_symbols_calls": 0,
+      "binary_inspect_calls": 0,
+      "model_calls": 3,
+      "elapsed_seconds": 25.051,
+      "prompt_tokens": 21231,
+      "completion_tokens": 4358,
+      "usage_missing_calls": 0,
+      "secret_scan": "CLEAN",
+      "source_pins_unchanged": true,
+      "binary_unchanged": true,
+      "effects_unknown": false,
+      "result_sha256": "a47d72026ab091ed1ba1acd4a3b6575c24a2f0f71ebf6395e7cb98ec1960badc",
+      "transcript_sha256": "d1ac7402d8799faea2f0f59e5a3558a261dc228f44e70e8f267f7daac0b176f6"
+    }
+  ],
+  "r1_budget_observation": {
+    "last_request_max_tokens": 4096,
+    "last_completion_tokens": 4096,
+    "last_reasoning_tokens": 4096,
+    "last_final_text_characters": 0,
+    "applies_to": [
+      "R1/base",
+      "R1/new"
+    ],
+    "request_thinking_field_present": false,
+    "private_reasoning_text_published": false
+  },
+  "supplemental_contract": {
+    "scope": "three malformed six-character hex fields; separate from original fixed oracle",
+    "passed": {
+      "S1/base": 0,
+      "S1/new": 3,
+      "S2/base": 0,
+      "S2/new": 0
+    },
+    "result_sha256": "57c65351052bbd0f7e9b473e90f7d4bbc88c0d9b56cbc4afc67152b2fa671d09",
+    "caused_by_new_tool": "NOT_PROVEN; analysis tools were not called"
+  },
+  "review": {
+    "source_and_native": "/root/ara_capability_audit; SOURCE_POST_APPROVE + EXEC_APPROVE",
+    "trial_pre": "/root/agent_landscape; APPROVE_SCOPED_PRE_EXEC",
+    "trial_post": "S1 pair and S2 base reviewed; complete six-run POST pending"
+  },
+  "limits": [
+    "three fixed small tasks, six Runs; no statistical improvement claim",
+    "S1/S2 fixed oracles pass but supplemental parser debt remains",
+    "analysis adapters not called by any live trial",
+    "R1 no final submission, hidden reconstruction oracle NOT_RUN",
+    "Windows backends tested; Linux/macOS/dynamic debugging not accepted",
+    "tool allowlists and hashing are not OS sandbox/transaction guarantees"
+  ]
+}

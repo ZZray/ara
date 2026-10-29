@@ -1,0 +1,126 @@
+{
+  "record": "code-version-rule-update",
+  "spec": "ara-lite-core-capability",
+  "task": "3.2",
+  "requirements": [
+    "1.4",
+    "3.5",
+    "7.5"
+  ],
+  "created_at": "2026-10-26T23:00:00+08:00",
+  "kind": "supplementary record; deny-baseline.json (task 1.2) and gates/req8-start.json (task 1.3) are left unchanged",
+  "user_decision": [
+    "lite-eval-worktree-diff-v1 also excludes .codebase-memory/ (untracked tool cache whose rewrites would change the diff SHA without a source change), in addition to crates/ara-agent-lite-core/docs/evidence/lite-capability/; the exclusions apply to both the tracked diff and the untracked file list",
+    "every git diff call adds --no-textconv --no-ext-diff (system gitconfig sets diff.astextplain.textconv; the rule needs raw bytes)",
+    "the rule id stays lite-eval-worktree-diff-v1; records state the exact exclusions and flags (diff_rule below, from lite_eval::digest::DiffRule::current())"
+  ],
+  "old": {
+    "used_by": [
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/deny-baseline.json (task 1.2)",
+      "crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/req8-start.json (task 1.3)"
+    ],
+    "diff_rule": {
+      "id": "lite-eval-worktree-diff-v1",
+      "exclusions": [
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/"
+      ],
+      "diff_flags": [
+        "--binary"
+      ],
+      "tracked_diff": "git diff --binary HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability",
+      "untracked_list": "git ls-files --others --exclude-standard -z -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability",
+      "untracked_diff": "git diff --binary --no-index -- /dev/null <path>  (exit 1 treated as normal)",
+      "generator": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/make-worktree-diff.ps1"
+    },
+    "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "worktree_diff_sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+    "total_bytes": 78020922,
+    "tracked_diff_bytes": 6746773,
+    "untracked_files_included": 878,
+    "diff_path": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/worktree.diff",
+    "recorded_at": "2026-10-26T22:16:05+08:00"
+  },
+  "new": {
+    "diff_rule": {
+      "id": "lite-eval-worktree-diff-v1",
+      "exclusions": [
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability",
+        ".codebase-memory"
+      ],
+      "diff_flags": [
+        "--binary",
+        "--no-textconv",
+        "--no-ext-diff"
+      ],
+      "environment": "GIT_OPTIONAL_LOCKS=0",
+      "tracked_diff": "git diff --binary --no-textconv --no-ext-diff HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory",
+      "untracked_list": "git ls-files --others --exclude-standard -z -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory",
+      "untracked_diff": "git diff --binary --no-textconv --no-ext-diff --no-index -- /dev/null <path>",
+      "description": "lite-eval-worktree-diff-v1: raw stdout of `git diff --binary --no-textconv --no-ext-diff HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory`, followed for every path listed by `git ls-files --others --exclude-standard -z -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory` in ascending path-byte order by the raw stdout of `git diff --binary --no-textconv --no-ext-diff --no-index -- /dev/null <path>` (exit code 1 is normal); excluded from both parts: crates/ara-agent-lite-core/docs/evidence/lite-capability/, .codebase-memory/; git diff flags: --binary --no-textconv --no-ext-diff; run from the repository root with GIT_OPTIONAL_LOCKS=0; the index is never modified; an empty result is recorded as dirty=false with no SHA-256"
+    },
+    "implementation": "tools/lite-eval/src/digest.rs (lite_eval::digest::worktree_diff), run once via tools/lite-eval/examples/worktree_diff.rs",
+    "command": "cargo run --quiet --example worktree_diff -- E:/repos/ara-github D:/WorkSpace/tmp/ara-lite-capability/code-version-rule-update/worktree.diff  (cwd tools/lite-eval)",
+    "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "dirty": true,
+    "worktree_diff_sha256": "bde0fd272ae61382e451d85bc4e15868c06d66854e10e4bd340b4e3e58a9c94d",
+    "total_bytes": 30537343,
+    "tracked_diff_bytes": 6746773,
+    "untracked_files_included": 883,
+    "diff_path": "D:/WorkSpace/tmp/ara-lite-capability/code-version-rule-update/worktree.diff",
+    "diff_file_sha256_check": "Get-FileHash of the saved file = bde0fd272ae61382e451d85bc4e15868c06d66854e10e4bd340b4e3e58a9c94d (30537343 bytes)",
+    "summary_path": "D:/WorkSpace/tmp/ara-lite-capability/code-version-rule-update/worktree-diff.summary.json",
+    "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability/code-version-rule-update/worktree-diff.stderr.log (empty)",
+    "started_at": "2026-10-26T22:56:49+08:00",
+    "finished_at": "2026-10-26T22:58:27+08:00"
+  },
+  "difference_between_old_and_new_sha": {
+    "removed_by_new_exclusion": [
+      ".codebase-memory/.gitattributes",
+      ".codebase-memory/artifact.json",
+      ".codebase-memory/graph.db.zst"
+    ],
+    "added_untracked_files_of_this_spec": [
+      "tools/lite-eval/.gitignore",
+      "tools/lite-eval/Cargo.lock",
+      "tools/lite-eval/Cargo.toml",
+      "tools/lite-eval/examples/worktree_diff.rs",
+      "tools/lite-eval/src/common.rs",
+      "tools/lite-eval/src/digest.rs",
+      "tools/lite-eval/src/lib.rs",
+      "tools/lite-eval/src/main.rs"
+    ],
+    "untracked_count_check": "878 - 3 (.codebase-memory) + 8 (tools/lite-eval) = 883",
+    "note": "tools/lite-eval/ is untracked and is therefore part of the new diff: the new SHA covers the pre-existing WIP plus the new lite-eval crate as written by tasks 3.1 and 3.2. It is not a pre-spec code version."
+  },
+  "same_worktree_state_check": {
+    "claim": "Apart from tools/lite-eval/ and the excluded evidence index, the worktree is byte-identical to the state recorded by tasks 1.2 and 1.3 (cargo-deny baseline and req8-start were taken at that state; no source change since).",
+    "method_old_rule_reproduction": {
+      "script": "D:/WorkSpace/tmp/ara-lite-capability/code-version-rule-update/old-rule-check.ps1",
+      "script_sha256": "0a29d10725f281ec1cf2ec0817c07366c56c5756f4884d1f6e56f5d50b14e1f3",
+      "rule": "old rule (git diff --binary, no --no-textconv/--no-ext-diff, .codebase-memory included) with exclusions crates/ara-agent-lite-core/docs/evidence/lite-capability and tools/lite-eval",
+      "sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+      "untracked_files_included": 878,
+      "equals_old_sha": true,
+      "finished_before": "2026-10-26T22:56:33+08:00"
+    },
+    "method_flag_effect_on_tracked_part": {
+      "old_flags_command": "git diff --binary HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability",
+      "old_flags_sha256": "95f4beac0306cfdb257c707dc9669f0d897ebc80c130cc47ea931d5927412907",
+      "old_flags_bytes": 6746773,
+      "new_rule_tracked_part_sha256": "95f4beac0306cfdb257c707dc9669f0d897ebc80c130cc47ea931d5927412907",
+      "new_rule_tracked_part_bytes": 6746773,
+      "result": "--no-textconv --no-ext-diff do not change the tracked part for the current WIP"
+    },
+    ".codebase-memory_last_write": "graph.db.zst and artifact.json 2026-10-23T14:32:49+08:00, before both records",
+    "evidence_level": "运行确认"
+  },
+  "consequence": [
+    "deny-baseline.json and req8-start.json keep 8f5d434b... under the old rule; the reproduction above shows both describe the same worktree state as the new-rule record, minus tools/lite-eval/.",
+    "Later code-version records (Run_Manifest, gate, review and ledger) use the new rule, so their SHAs are not comparable with 8f5d434b...; compare against bde0fd27... only while tools/lite-eval/ is unchanged."
+  ],
+  "toolchain": {
+    "git": "git version 2.55.0.windows.3",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "CARGO_TARGET_DIR": "D:\\workspace\\env\\cache\\rust-target"
+  }
+}

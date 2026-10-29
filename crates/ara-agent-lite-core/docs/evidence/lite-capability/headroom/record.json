@@ -1,0 +1,421 @@
+{
+  "schema": "ara.headroom.h0.record.v1",
+  "recorded_at": "2026-10-27T02:38:37.059633+00:00",
+  "upstream_sha": "17d38e5699b7d7c69ac6addcd762f39e42dd7f00",
+  "ara_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "ara_dirty": true,
+  "state": "open",
+  "task_ids": [
+    "63.1",
+    "63.2",
+    "63.3",
+    "63.4",
+    "63.5"
+  ],
+  "executed_subtasks": [
+    "63.1",
+    "63.2",
+    "63.3",
+    "63.4"
+  ],
+  "full_integration_accepted": false,
+  "model_calls": 0,
+  "commands": [
+    {
+      "command": "cargo build --manifest-path <probe>/Cargo.toml --message-format json",
+      "exit": 0,
+      "seconds_reported": 175,
+      "logs": "build.jsonl,build.stderr.log"
+    },
+    {
+      "command": "cargo build --manifest-path <probe>/Cargo.toml --locked --message-format json",
+      "exit": 0,
+      "seconds_reported": 12.73,
+      "logs": "build-v2.jsonl,build-v2.stderr.log"
+    },
+    {
+      "command": "cargo fmt --manifest-path <probe>/Cargo.toml -- --check",
+      "exit": 0,
+      "logs": "fmt-final.log"
+    },
+    {
+      "command": "cargo clippy --manifest-path <probe>/Cargo.toml --locked --all-targets --all-features -- -D warnings",
+      "exit": 0,
+      "seconds_reported": 22.78,
+      "logs": "clippy-final.stdout.log,clippy-final.stderr.log"
+    },
+    {
+      "command": "cargo test --manifest-path <probe>/Cargo.toml --locked --all-targets -- --nocapture",
+      "exit": 0,
+      "passed": 2,
+      "failed": 0,
+      "warning": "LNK4098 LIBCMT conflict",
+      "logs": "test.stdout.log,test.stderr.log"
+    },
+    {
+      "command": "ara-headroom-h0 <new-evidence-dir>",
+      "exit": 0,
+      "cases": 6,
+      "logs": "run-v2.stdout.json,run-v2.stderr.log,run-v2/"
+    },
+    {
+      "command": "cargo deny --manifest-path <probe>/Cargo.toml --config <repo>/deny.toml --format json check",
+      "exit": 5,
+      "logs": "deny-v2.stdout.jsonl,deny-v2.stderr.jsonl"
+    },
+    {
+      "command": "python <task>/verify_spec.py",
+      "exit": 0,
+      "logs": "spec-check.json"
+    },
+    {
+      "command": "python scripts/verify_bootstrap.py",
+      "exit": 1,
+      "scope": "whole dirty repository",
+      "failures": 47,
+      "new_headroom_links_pass": true,
+      "logs": "bootstrap.stderr.log,links.json"
+    }
+  ],
+  "dependency_summary": {
+    "packages": 289,
+    "selected_core_features": [],
+    "ml_packages": [],
+    "errors": [
+      {
+        "code": "rejected",
+        "message": "failed to satisfy license requirements",
+        "crates": [
+          {
+            "name": "option-ext",
+            "version": "0.2.0",
+            "exact_version_in_existing_locks": [],
+            "existing_versions": {
+              "Cargo.lock": [],
+              "crates/ara-agent-lite-core/Cargo.lock": [],
+              "crates/ara-agent-lite-harness/Cargo.lock": [],
+              "crates/ara-agent-lite-jsonl/Cargo.lock": []
+            }
+          }
+        ],
+        "notes": [
+          "MPL-2.0 - Mozilla Public License 2.0:",
+          "  - OSI approved",
+          "  - FSF Free/Libre",
+          "  - Copyleft"
+        ]
+      },
+      {
+        "code": "rejected",
+        "message": "failed to satisfy license requirements",
+        "crates": [
+          {
+            "name": "webpki-roots",
+            "version": "1.0.11",
+            "exact_version_in_existing_locks": [],
+            "existing_versions": {
+              "Cargo.lock": [],
+              "crates/ara-agent-lite-core/Cargo.lock": [
+                "1.0.10"
+              ],
+              "crates/ara-agent-lite-harness/Cargo.lock": [
+                "1.0.10"
+              ],
+              "crates/ara-agent-lite-jsonl/Cargo.lock": [
+                "1.0.10"
+              ]
+            }
+          }
+        ],
+        "notes": [
+          "CDLA-Permissive-2.0 - Community Data License Agreement Permissive 2.0:",
+          "  - No additional metadata available for license"
+        ]
+      },
+      {
+        "code": "unmaintained",
+        "message": "paste - no longer maintained",
+        "crates": [
+          {
+            "name": "paste",
+            "version": "1.0.15",
+            "exact_version_in_existing_locks": [
+              "Cargo.lock"
+            ],
+            "existing_versions": {
+              "Cargo.lock": [
+                "1.0.15"
+              ],
+              "crates/ara-agent-lite-core/Cargo.lock": [],
+              "crates/ara-agent-lite-harness/Cargo.lock": [],
+              "crates/ara-agent-lite-jsonl/Cargo.lock": []
+            }
+          }
+        ],
+        "notes": [
+          "ID: RUSTSEC-2024-0436",
+          "Advisory: https://rustsec.org/advisories/RUSTSEC-2024-0436",
+          "The creator of the crate `paste` has stated in the [`README.md`](https://github.com/dtolnay/paste/blob/master/README.md) \r\nthat this project is not longer maintained as well as archived the repository\r\n\r\n## Possible Alternative(s)\r\n\r\n- [`pastey`]: a fork of paste and is aimed to be a drop-in replacement with additional features for paste crate\r\n- [`with_builtin_macros`]: crate providing a [superset of `paste`'s functionality including general `macro_rules!` eager expansions](https://docs.rs/with_builtin_macros/0.1.0/with_builtin_macros/macro.with_eager_expansions.html)  and `concat!`/`concat_idents!` macros\r\n\r\n[`pastey`]: https://crates.io/crates/pastey\r\n[`with_builtin_macros`]: https://crates.io/crates/with_builtin_macros",
+          "Announcement: https://github.com/dtolnay/paste",
+          "Solution: No safe upgrade is available!"
+        ]
+      }
+    ],
+    "license_counts": {
+      "0BSD OR MIT OR Apache-2.0": 1,
+      "MIT OR Apache-2.0": 146,
+      "Unlicense OR MIT": 2,
+      "MIT": 59,
+      "Apache-2.0 OR MIT": 14,
+      "MIT/Apache-2.0": 10,
+      "CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception": 1,
+      "CC0-1.0 OR MIT-0 OR Apache-2.0": 1,
+      "(Apache-2.0 OR MIT) AND BSD-3-Clause": 1,
+      "Apache-2.0": 6,
+      "Apache-2.0 / MIT": 1,
+      "Zlib": 2,
+      "Apache-2.0 OR ISC OR MIT": 2,
+      "Unicode-3.0": 22,
+      "MIT OR Apache-2.0 OR Zlib": 1,
+      "Apache-2.0 OR MIT OR Zlib": 2,
+      "MIT OR Zlib OR Apache-2.0": 1,
+      "MPL-2.0": 1,
+      "MIT OR Apache-2.0 OR LGPL-2.1-or-later": 2,
+      "Apache-2.0/MIT": 1,
+      "Apache-2.0 AND ISC": 1,
+      "ISC": 2,
+      "Apache-2.0 OR BSL-1.0": 1,
+      "BSD-3-Clause": 1,
+      "Zlib OR Apache-2.0 OR MIT": 1,
+      "(MIT OR Apache-2.0) AND Unicode-3.0": 1,
+      "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT": 3,
+      "CDLA-Permissive-2.0": 1,
+      "BSD-2-Clause OR Apache-2.0 OR MIT": 2
+    }
+  },
+  "fixtures": {
+    "schema": "ara.headroom.h0.v1",
+    "upstream_sha": "17d38e5699b7d7c69ac6addcd762f39e42dd7f00",
+    "default_features": false,
+    "storage": "upstream in-memory; no restart claim",
+    "model_calls": 0,
+    "missing_retrieval": "None; tool caller must turn into an explicit error",
+    "cases": [
+      {
+        "case": "json-repeated",
+        "input_bytes": 30152,
+        "output_bytes": 16479,
+        "strategy": "lossless:table(250->len=16226)",
+        "source_key": "b046ef7c799e853645c46d79",
+        "upstream_log_ccr_key": null,
+        "protected": "UNIQUE_JSON_EVIDENCE",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      },
+      {
+        "case": "json-sampled",
+        "input_bytes": 39153,
+        "output_bytes": 1878,
+        "strategy": "smart_sample(250->15)",
+        "source_key": "6b907ff01129a95a5795c0e0",
+        "upstream_log_ccr_key": null,
+        "protected": "UNIQUE_JSON_EVIDENCE",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [
+          "69e35f6de7e3"
+        ],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      },
+      {
+        "case": "log-middle-error",
+        "input_bytes": 102906,
+        "output_bytes": 480,
+        "strategy": "log:Generic",
+        "source_key": "7c0fc3c40be5364e735b4e77",
+        "upstream_log_ccr_key": "67484e8c6304dddc7084ae92",
+        "protected": "UNIQUE_MIDDLE_ERROR",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      },
+      {
+        "case": "json-short",
+        "input_bytes": 11,
+        "output_bytes": 11,
+        "strategy": "passthrough",
+        "source_key": "acdf50775134edc905342394",
+        "upstream_log_ccr_key": null,
+        "protected": "",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      },
+      {
+        "case": "log-short-unicode",
+        "input_bytes": 22,
+        "output_bytes": 22,
+        "strategy": "log:Generic",
+        "source_key": "e02b3d121d3bb0faf603b8fb",
+        "upstream_log_ccr_key": null,
+        "protected": "",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      },
+      {
+        "case": "json-invalid",
+        "input_bytes": 27,
+        "output_bytes": 27,
+        "strategy": "passthrough",
+        "source_key": "f8cc4dc1e9d94ecd8ffc9d5c",
+        "upstream_log_ccr_key": null,
+        "protected": "",
+        "host_input_byte_recovery": true,
+        "deterministic": true,
+        "upstream_json_ccr_keys": [],
+        "upstream_json_ccr_check": "semantic equality; upstream canonicalizes JSON",
+        "provider_usage": "unknown (no provider called)"
+      }
+    ]
+  },
+  "hashes": {
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\requirements.md": {
+      "sha256": "ca3c0f9d46e480bda7d5eeb44c21b610d268ac416ae668b1b2f70b3c0df633dd",
+      "bytes": 114218
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\design.md": {
+      "sha256": "d730730436bd8f13d62bc15512431f9e92fac5af6f49644d7b8960b643042082",
+      "bytes": 158408
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\tasks.md": {
+      "sha256": "6f6c2235dca3051b47c2ded6c966f9476b370873dd55db07a508862e7ae96630",
+      "bytes": 116388
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\tasks.meta.json": {
+      "sha256": "90ee8bc5ce506076d83c479d02e6022b33d845965c96a7d51da27ff89e2e8e2b",
+      "bytes": 60920
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.toml": {
+      "sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+      "bytes": 244
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.lock": {
+      "sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+      "bytes": 69881
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\src\\main.rs": {
+      "sha256": "1ffed257650b0ca599098fd8780af695353be9677b870ffdab2baf15a0a2554d",
+      "bytes": 6879
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\tests\\process.rs": {
+      "sha256": "5e32ab1af9b5fe41e403c5a955119047ae73ec499134ea4c70e82e2a50b7fcd1",
+      "bytes": 2281
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\LICENSE": {
+      "sha256": "50b9e890f4afb0a500696cdb6cde3dae08468225a1699317d23e81a1e2703a46",
+      "bytes": 10960
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\crates\\headroom-core\\Cargo.toml": {
+      "sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+      "bytes": 11845
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\metadata.json": {
+      "sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+      "bytes": 1435139
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\dependency-summary.json": {
+      "sha256": "23b8d1fae0fd390d2ee5b603dc7bce44b7fcc76661b5e2d8b8e7be64f278bba1",
+      "bytes": 4194
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\run-v2\\results.json": {
+      "sha256": "fe99d8dc4db0ae9581c51c7233dfe1301c0577e22e29996e3e7940582d06bc81",
+      "bytes": 3320
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stdout.log": {
+      "sha256": "d8ac812a715f3e84cf55447e72314f1df575fade45ab4d3360d74e05c2d88a73",
+      "bytes": 363
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stderr.log": {
+      "sha256": "79ef73cb24e86a50b360675f8a4508457841a5c7e3e160c5724965131212e10b",
+      "bytes": 931
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\clippy-final.stderr.log": {
+      "sha256": "b602b08d43578fb2ca68ed799a57aefdf88e13e899c58a5ca280eaa9dcd2acfe",
+      "bytes": 158
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\spec-check.json": {
+      "sha256": "3e8987499779cfd13bcd2a3d814dc923a72511b91c3243eeb4822f556e977a59",
+      "bytes": 599
+    },
+    "D:\\workspace\\env\\cache\\rust-target-headroom-h0\\debug\\ara-headroom-h0.exe": {
+      "sha256": "e9b23863c6c03d37faedef85554871f38583db4744decaa4cfbf973035a00d5d",
+      "bytes": 18207744
+    },
+    "E:\\repos\\ara-github\\docs\\knowledge\\INDEX.md": {
+      "sha256": "9d3e744616050f206707c5da435019f2778ef795d0ed7cd6fba9bf94efc20f14",
+      "bytes": 25051
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\knowledge\\INDEX.md": {
+      "sha256": "418b6deddf32bf2e9ccefe5ea9e13f0e6a6c66840d067375e7472c065b8498d6",
+      "bytes": 3053
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\headroom\\README.md": {
+      "sha256": "f6b14aae439ba13bf5624f248ff0006a963f3c46d7a8aca6128f263d28e1c21c",
+      "bytes": 7358
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\links.json": {
+      "sha256": "9393f423490f5e3b47f3f25efda239f3abfa77aa6cec9d229d33096874390312",
+      "bytes": 908
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\fmt-final.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\spec-check-final.json": {
+      "sha256": "e185033a494805f47c7697f84add0e3c16bd1f173572fe05a4ad451d401aeb3d",
+      "bytes": 675
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\p0-digest-readonly.md": {
+      "sha256": "8a4bfd07a14c7c391a20ce11881dd32952716ce0c6ae424b82453d5d03a156c4",
+      "bytes": 4133
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\p0-digest-record.json": {
+      "sha256": "e4f5a249ebc8ae262acc24cf94ff9bcc94089357cb14d6f8e2076607d942eb8e",
+      "bytes": 4511
+    }
+  },
+  "uncovered": [
+    "dependency gate acceptance",
+    "LNK4098 cause",
+    "Lite runtime adapter",
+    "durable scoped original retrieval",
+    "cross-process Session recovery",
+    "P2-e prerequisites",
+    "paired real-model tasks",
+    "Full Core"
+  ],
+  "notification": {
+    "timestamp": "2026-10-27T10:34:08+08:00",
+    "sender": "Codex / ARA Headroom / 01a17b06",
+    "delivered": true,
+    "errcode": 0,
+    "elapsed_seconds": 1302
+  },
+  "spec_schedule": {
+    "main_waves": 154,
+    "independent_h0_waves": 5,
+    "H0_failure_blocks_only": "64"
+  },
+  "follow_on_p0": "original task 3.3 completed separately; H0 still open, no Lite adapter or real-model acceptance"
+}

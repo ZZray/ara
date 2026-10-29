@@ -1,0 +1,1004 @@
+{
+  "title": "Agent Core 编码与逆向能力研究",
+  "subtitle": "模型、运行框架、工具、环境与验收的分工；精简 Rust Core 的增强顺序。",
+  "brand": "ARA · Agent Lite Core",
+  "eyebrow": "RESEARCH · SOURCE REVIEW",
+  "date": "2026-10-22",
+  "sections": [
+    {
+      "id": "recommendation",
+      "title": "建议先增强哪些能力",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "建议保留精简 Rust Core，优先做“定位代码 → 可靠修改 → 执行验证 → 根据失败继续修复”的完整闭环，再加外置逆向分析后端。让模型看见准确证据、能采取有效行动、能判断结果，是本轮研究的共同方向。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "层次",
+            "实际负责什么",
+            "对我们的含义"
+          ],
+          "rows": [
+            [
+              "模型",
+              "理解需求、生成代码、推理不完整证据、选择下一实验",
+              "框架能帮助模型发挥，但不能把较弱模型变成同等能力的强模型"
+            ],
+            [
+              "Agent运行框架",
+              "循环、上下文选择、权限、恢复、预算和终止",
+              "减少漏步骤、上下文污染、无效重试和错误完结"
+            ],
+            [
+              "工具",
+              "找定义/引用、修改、编译、测试、反编译、调试",
+              "给模型可用且可检验的观察和动作"
+            ],
+            [
+              "环境",
+              "源码、编译器、依赖、调试权限、持久工作目录",
+              "同一个工具接口在环境缺失时仍无法完成任务"
+            ],
+            [
+              "验证与经验",
+              "独立结果检查、来源追踪、跨任务复用",
+              "成功必须由产物证明；经验需要验证与范围，不能自动改成事实"
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "title": "研究结论，不是新版本验收",
+          "text": "已核对源码与官方资料；本轮没有改变运行时代码、安装外部工具、调用真实模型或部署。下面的新增接口、阶段和门槛都是建议，尚未实现。",
+          "tone": "note"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Claude Code 官方运行机制",
+              "href": "https://code.claude.com/docs/en/how-claude-code-works"
+            },
+            {
+              "label": "Anthropic 工具设计",
+              "href": "https://www.anthropic.com/engineering/writing-tools-for-agents"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "title": "研究范围和本地基线",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "日期为2026-10-22。本地目标是 crates/ara-agent-lite-core，HEAD为56d55d209ecea00e80dfefecdd3e9d47fb62c47a；运行时来自0e4d81a，Core0.1.0。源码与文档范围分开核对，既有完整版ARA/OMP和HandWave观察验收WIP保留。"
+        },
+        {
+          "type": "paragraph",
+          "text": "根知识图谱的旧索引没有覆盖新提取库，不能据此判断缺能力。本轮为Core建立不写持久图文件的fast索引（1495节点、7348边），再直接读取工具注册、执行、脚本、环境知识和遥测源码。覆盖工具仍报告metadata_changed，关键结论以实际源码为准。docs/examples不在这个fast索引内，已按需直接读。"
+        },
+        {
+          "type": "paragraph",
+          "text": "外部研究覆盖官方Claude文档、公开编码Agent源码、长任务与上下文论文、缓存协议、逆向工具及调试桥。比较的是具体机制，不按星数或不同模型的榜单排强弱。前轮已有长任务研究作为线索，新的版本快照与旧结论分别记录。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Core接入说明",
+              "href": "../ai-integration.md"
+            },
+            {
+              "label": "0.2.9实际发布记录",
+              "href": "../../../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md"
+            },
+            {
+              "label": "既有长任务研究",
+              "href": "../../../../apps/handwave-node/docs/knowledge/long-task-research.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "title": "Claude Code公开了什么，强在哪里",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "用户给出的anthropics/claude-code仓库公开了插件、示例、变更等资料。当前LICENSE.md为保留所有权利并引用商业条款；它不能作为整套运行时可自由移植的开源基线。本轮没有对全部历史版本作法律或源码完整性审计，不能声称历史上从未公开过源码；意外泄露或可下载源码也不等于授予开源许可。"
+        },
+        {
+          "type": "paragraph",
+          "text": "官方可观察机制是：工具结果回到模型循环，按任务查文件、修改并跑测试；MCP、Skills与子Agent扩展能力，上下文按需加载并压缩。它同时依赖模型的编程与工具使用能力。仅凭官方文章，无法给模型、训练、提示词、框架分别分配贡献百分比。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "可参考机制",
+            "如何帮助完成工作",
+            "应避免的误读"
+          ],
+          "rows": [
+            [
+              "任务直接面对真实环境",
+              "读源码、运行测试，再根据反馈决策",
+              "会写解释文本不代表修改已落地"
+            ],
+            [
+              "工具接口清楚且输出有用",
+              "减少参数误用和无关输出",
+              "工具越多不必然越强"
+            ],
+            [
+              "搜索与按需上下文",
+              "当前步骤拿相关证据",
+              "1M窗口不意味着应一次塞入1M内容"
+            ],
+            [
+              "可恢复会话与工作产物",
+              "跨上下文接续、保留结果",
+              "会话恢复不能重放结果未知的副作用"
+            ],
+            [
+              "独立验证",
+              "让验收观察运行系统",
+              "模型自评和任务清单勾选不等于通过"
+            ]
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "当前仓库",
+              "href": "https://github.com/anthropics/claude-code"
+            },
+            {
+              "label": "当前许可证",
+              "href": "https://raw.githubusercontent.com/anthropics/claude-code/main/LICENSE.md"
+            },
+            {
+              "label": "长任务工程示例",
+              "href": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents"
+            }
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "本次固定Claude仓库许可证",
+              "href": "https://github.com/anthropics/claude-code/blob/1132b8a98e93300bb3822197fb7eee12ce4fb906/LICENSE.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "coding",
+      "title": "实际编码能力由什么组成",
+      "blocks": [
+        {
+          "type": "flow",
+          "items": [
+            {
+              "title": "确认任务和约束",
+              "text": "理解已有行为、范围、用户WIP及结果标准"
+            },
+            {
+              "title": "定位与理解",
+              "text": "目录、文本搜索、符号定义/引用、相关规则和失败日志"
+            },
+            {
+              "title": "设计并修改",
+              "text": "生成小范围修改，绑定读取版本，检查差异"
+            },
+            {
+              "title": "运行与观察",
+              "text": "语法/类型检查、编译、测试或实际程序行为"
+            },
+            {
+              "title": "修复并接受",
+              "text": "按错误归因修正，独立检查产物，保留未覆盖事项"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "模型真正生成的是代码、补丁或脚本；文件工具把它写入环境，执行工具运行它，编译器/测试/运行结果提供反馈。Python、PowerShell、cmd、sh不是四套“智能”，主要是执行器、转义、编码、退出码和环境差异。语言知识与算法判断仍在模型一侧。"
+        },
+        {
+          "type": "paragraph",
+          "text": "因此下一步应同时改善定位、修改和验证，而非只扩充Shell指令。增加LSP或AST能让定位更准确；有版本检查的补丁能减少改错文件；诊断和完整日志能帮助模型继续修复。对当前库，这些比重做聊天UI或叠加通用规划角色更直接。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "LSP3.17规范",
+              "href": "https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "title": "我们的Core已有什么，差距在哪里",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "能力",
+            "当前源码支持",
+            "增强方向"
+          ],
+          "rows": [
+            [
+              "循环与宿主扩展",
+              "RunRequest.extra_tools、ModelHost；身份与调度归宿主",
+              "复用这些接口，不复制Core进业务，也不引入产品状态"
+            ],
+            [
+              "文件定位",
+              "find_files路径子串，search_files内容检索，read_file分段/tail",
+              "加可选符号/引用/诊断，不把文本搜索升级为语义完整保证"
+            ],
+            [
+              "编辑",
+              "edit_file要求old_text唯一匹配，替换后直接写文件；write_file整份写",
+              "增补版本绑定、可审diff、多文件补丁与中途失败收据"
+            ],
+            [
+              "脚本执行",
+              "run_script明确Python/PowerShell/cmd/sh，进程树取消、输出限额",
+              "复用运行器，补编译/测试结果结构化和日志产物"
+            ],
+            [
+              "持久进程",
+              "受lease约束的Worker、PTY/ConPTY、输入去重",
+              "可承载侧车生命周期；仍需工具专属会话授权"
+            ],
+            [
+              "知识与Skills",
+              "环境/项目索引+正文，create/install/verify和来源收据",
+              "继续验证新会话实际取正文；安装不自动执行和晋升"
+            ],
+            [
+              "上下文",
+              "原生Journal、闭合旧轮摘要、保守字节预算",
+              "保留检索入口，避免重复装载；字节不能当准确token"
+            ],
+            [
+              "模型缓存遥测",
+              "只报告适配器可辨识的正数，缺失/零值保持未知",
+              "补各供应商原始字段存在性和链路实测，不虚报命中率"
+            ],
+            [
+              "逆向",
+              "注册内置工具中无专门反编译/xref/debug会话接口；Shell可外调工具",
+              "增加按需外置分析适配器，不宣称目前完全不能逆向"
+            ],
+            [
+              "桌面操控",
+              "提示和工具均明确不提供桌面观察/动作；当前请求为文本",
+              "GUI任务需要独立宿主适配与图像输入链，不能靠能力标志打开"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "普通exec/run_script的当前实现保留有界输出，超出部分可能丢弃；原始会话日志保存的是已返回内容，不能补回从未保存的中段stdout。后续应按任务保存带配额的完整输出产物，模型只读摘要与局部范围。managed Job日志是另一路径，不能用它证明所有普通执行都已保留全文。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "工具注册与默认权限",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/agent.rs#L45"
+            },
+            {
+              "label": "编辑实现",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/local_tools.rs#L639"
+            },
+            {
+              "label": "普通进程输出",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/local_tools.rs#L891"
+            },
+            {
+              "label": "四种脚本语言",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/script_tools.rs#L71"
+            },
+            {
+              "label": "缓存遥测",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/model_telemetry.rs#L1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "open-source",
+      "title": "编码开源实现的固定版本对照",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "项目/固定提交前缀",
+            "本次读到的实际机制",
+            "借鉴时的限制"
+          ],
+          "rows": [
+            [
+              "Pi 58c0b02ce552",
+              "单文件多块精确匹配、mutation queue、BOM/行尾处理、返回diff",
+              "队列不等于跨进程锁，单文件编辑不等于跨文件事务；当前官方仓库由pi-mono迁到earendil-works/pi"
+            ],
+            [
+              "OMP 3a2758b68f7c",
+              "Rust pi-edit、hashline快照错配诊断、LSP工具",
+              "仅参考协议和失败语义；不整体引入，不修改项目固定OMP同步标记"
+            ],
+            [
+              "OpenCode 9496ff842cc8",
+              "长输出保存全文，回传短前缀与截断元数据；结构化压缩交接",
+              "当前edit/file-mutation仍列LSP通知、snapshot/undo等TODO；不能套用旧版实现结论"
+            ],
+            [
+              "Aider 5dc9490bb35f",
+              "定义/引用图排序、受token预算约束的repo map、lint/test失败反馈",
+              "自动测试不是默认开启；编辑可部分成功且可能换文件搜索，不照搬其目标推断策略"
+            ],
+            [
+              "mini-SWE 04d809ceab9d",
+              "简单模型/环境循环，步数/费用/时间限制与轨迹保存",
+              "小框架可完成编码，不证明任何模型只靠Shell都足够"
+            ],
+            [
+              "SWE-agent 3ea751c087f3",
+              "可配置旧文件窗口与观测历史处理，专门考虑缓存失效",
+              "频繁重写旧消息会影响缓存；选择性省略须保留回读路径"
+            ],
+            [
+              "Codex 09ec2451bf9a",
+              "patch解析与环境验证、进程启动/后续输入、来源化压缩",
+              "仅抽样相关文件；完整运行时和依赖很大，不作为lite直接替换包"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "一个较强的因果证据来自SWE-agent论文v3：同样的GPT-4 Turbo，在300项SWE-bench Lite上，设计过的操作接口相对默认Linux shell报告提高10.7个百分点。这联合改变了搜索、查看、编辑与反馈，不能给单个工具独立归因，也不能照搬为现代模型或本项目的预期收益。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Pi 多块精确编辑 / MIT",
+              "href": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/coding-agent/src/core/tools/edit.ts"
+            },
+            {
+              "label": "OMP hashline版本错配诊断 / MIT",
+              "href": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/crates/pi-edit/src/modes/hashline/mismatch.rs"
+            },
+            {
+              "label": "OpenCode 输出归档 / MIT",
+              "href": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/tool-output.ts"
+            },
+            {
+              "label": "OpenCode 当前编辑TODO",
+              "href": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/tool/plugin/edit.ts#L203"
+            },
+            {
+              "label": "Aider 仓库图 / Apache-2.0",
+              "href": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py"
+            },
+            {
+              "label": "mini-SWE-agent 简单循环",
+              "href": "https://github.com/SWE-agent/mini-swe-agent/blob/04d809ceab9df28f9adaed044884180159172930/src/minisweagent/agents/default.py"
+            },
+            {
+              "label": "SWE-agent 观测历史处理",
+              "href": "https://github.com/SWE-agent/SWE-agent/blob/3ea751c087f32b16e039a2233dd6eefecef325d5/sweagent/agent/history_processors.py"
+            },
+            {
+              "label": "Codex patch执行",
+              "href": "https://github.com/openai/codex/blob/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/codex-rs/core/src/tools/handlers/apply_patch.rs"
+            },
+            {
+              "label": "SWE-agent同模型实验",
+              "href": "https://arxiv.org/html/2405.15793v3#S5.SS1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reverse",
+      "title": "逆向能力需要工具，也需要推理与验证",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "逆向通常从缺少源码的产物出发：先确定格式/架构/依赖/字符串，再找关键函数与引用，推断数据结构和控制流，最后通过受控输入或调试观察区分假设。反编译工具提供近似表示，模型负责组织证据、提出可验证推断。反编译伪代码不是恢复出的原始源码。"
+        },
+        {
+          "type": "steps",
+          "items": [
+            {
+              "title": "固定分析对象",
+              "detail": "文件SHA、大小、架构、编译/加载信息；动态地址用模块+RVA/加载基址关联，处理ASLR"
+            },
+            {
+              "title": "静态缩小范围",
+              "detail": "导入导出、字符串引用、函数列表、xref、反汇编和按函数反编译；分页而非全程序dump"
+            },
+            {
+              "title": "形成行为假设",
+              "detail": "记录推断、依据、未知类型和能区分正反例的输入；允许“不知道”"
+            },
+            {
+              "title": "动态取证",
+              "detail": "在授权目标/隔离环境中运行、断点或插桩；保留事件、输出和样本输入"
+            },
+            {
+              "title": "验证与沉淀",
+              "detail": "用未见输入验证恢复的算法/格式；笔记绑定样本hash、工具版本和证据，不能只抄模型结论"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "逆向工具输出中的地址、函数名和类型会随重分析变化。接口应带样本hash、项目revision、函数地址、分析选项与工具版本。缓存能复用分析，但不能跨不同文件或版本静默复用。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Ghidra官方项目",
+              "href": "https://github.com/NationalSecurityAgency/ghidra"
+            },
+            {
+              "label": "Frida动态观察接口",
+              "href": "https://frida.re/docs/javascript-api/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reverse-tools",
+      "title": "逆向工具选型和真实接口差异",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "工具/证据版本",
+            "推荐用途",
+            "接入重点"
+          ],
+          "rows": [
+            [
+              "Ghidra b8e9917e4c01 / PyGhidra",
+              "第一阶段静态反编译、类型、xref与项目数据库",
+              "JVM/CPython放外置worker，一次导入后查询局部；不是小EXE内嵌依赖"
+            ],
+            [
+              "LaurieWired GhidraMCP 1e980252087b",
+              "现有headless桥候选，函数/字符串/xref分页",
+              "--project可保存；默认临时项目不等于持久。loopback/Origin限制不等于ARA身份授权"
+            ],
+            [
+              "radare2 56ff29d20ed2 / Rizin 47f2f447decd",
+              "快速格式、函数、引用、指令JSON查询",
+              "二选一先验收，分别固定命令/字段；不要默认每轮全量aaa，也不开放任意命令字符串"
+            ],
+            [
+              "GDB/MI 官方规范",
+              "Linux可持久动态调试",
+              "关联请求token，等待真实running/stopped/exited事件；返回成功不代表目标暂停"
+            ],
+            [
+              "LLDB 416f328b939f 的lldb-mcp",
+              "新官方MCP候选与DAP/原生API比较",
+              "创建路径源码设同步，与文档默认async描述冲突；外部会话需核实际状态，目标stdout独立捕获"
+            ],
+            [
+              "WinDbg/DbgEng 官方文档",
+              "Windows dump/异常、模块符号、线程栈",
+              "先离线dump；有限对象查询与引擎侧聚合；记实际版本/PDB匹配状态"
+            ],
+            [
+              "Frida引擎6cb6b64bbd82，文档f4afe3648e5f",
+              "指定函数/API动态观察",
+              "高频send需要batch/采样/配额，记录丢样；hook会改变时序"
+            ],
+            [
+              "x64dbg c44297200731",
+              "Windows专用交互/事件插件",
+              "DbgCmdExec只表示入队，需状态事件确认；GUI截图不是唯一入口"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "LLDB该主线文档明确：MCP会发现同机其他会话，对close有ownership限制，但command可驱动发现的其他会话。因此不能把自动发现作为授权。若选择它，宿主须只接自有会话并隔离运行账户/注册目录；这不是原桥已经实现ARA多业务隔离的证明。"
+        },
+        {
+          "type": "paragraph",
+          "text": "同一LLDB提交存在文档/实现漂移：mcp.md称新会话async，但Tool.cpp的DebuggerCreateTool::Call明确SetAsyncExecution(false)，要求resume等待停止。当前创建路径应以源码为准；发现的外部会话和目标输出仍须分别观察，不能把一个默认值外推到全部会话。主线源码存在也不代表本机发行版已含此入口。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "LLDB创建路径实际同步设置",
+              "href": "https://github.com/llvm/llvm-project/blob/416f328b939fe1373ddc9060f6773ad4c5039f59/lldb/source/Plugins/Protocol/MCP/Tool.cpp#L186"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "建议的动态状态合同为Loaded → Running → Stopped → Exited/Detached/Lost，stack/locals绑定stop epoch。取消等待不代表目标已终止；step/resume结果未知先观察原会话，不静默新建后重放。静态注释/重命名也会修改分析项目，须单独写入授权与revision。"
+        },
+        {
+          "type": "paragraph",
+          "text": "许可与体积要一起考虑：Ghidra为Apache-2.0，radare2/Rizin主要LGPL（组件另核），Frida引擎使用wxWindows许可而非文档的MIT，x64dbg的GPL正文含插件例外，LLDB为Apache-2.0附LLVM例外；WinDbg按Microsoft条款。实际复制/分发需再次核选定版本完整依赖。本轮仅研究，不打包这些项目。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Ghidra/PyGhidra固定源码",
+              "href": "https://github.com/NationalSecurityAgency/ghidra/blob/b8e9917e4c01959fe97ba94954731ed8cf2d201c/Ghidra/Features/PyGhidra/src/main/py/README.md"
+            },
+            {
+              "label": "GhidraMCP headless与持久项目",
+              "href": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/src/ghidra_mcp/headless.py"
+            },
+            {
+              "label": "GhidraMCP分页接口与HTTP边界",
+              "href": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/extension/src/main/java/com/lauriewired/ghidramcp/http/BackendHttpServer.java"
+            },
+            {
+              "label": "radare2固定源码",
+              "href": "https://github.com/radareorg/radare2/tree/56ff29d20ed22982ca8185093a6012de2e3574de"
+            },
+            {
+              "label": "Rizin管道JSON接口",
+              "href": "https://github.com/rizinorg/rz-pipe/tree/b2fa2dfd2b579b47b709f80e13b9f45d88060702"
+            },
+            {
+              "label": "GDB/MI规范",
+              "href": "https://sourceware.org/gdb/current/onlinedocs/gdb.html/GDB_002fMI.html"
+            },
+            {
+              "label": "LLDB官方MCP主线源码",
+              "href": "https://github.com/llvm/llvm-project/blob/416f328b939fe1373ddc9060f6773ad4c5039f59/lldb/docs/use/mcp.md"
+            },
+            {
+              "label": "WinDbg对象模型与LINQ",
+              "href": "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/using-linq-with-the-debugger-objects"
+            },
+            {
+              "label": "Frida官方性能与API",
+              "href": "https://github.com/frida/frida-website/blob/f4afe3648e5fdeb950616aed98a2b2cf5467f35d/_i18n/en/_docs/javascript-api.md"
+            },
+            {
+              "label": "x64dbg同步/异步执行声明",
+              "href": "https://github.com/x64dbg/x64dbg/blob/c44297200731995c51dbc75ab3098e2f0094b282/src/bridge/bridgemain.h"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "control",
+      "title": "操控能力的优先级",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "控制方式",
+            "适合的任务",
+            "限制与选择"
+          ],
+          "rows": [
+            [
+              "结构化API/LSP/调试接口",
+              "定义引用、诊断、分析函数、调试会话状态",
+              "优先使用；绑定文档/会话版本，避免拿过期结果修改"
+            ],
+            [
+              "CLI与显式脚本",
+              "构建、测试、批量数据转换、安装环境、工具组合",
+              "当前Core已具备；复用它，输出应可检索，命令成功不代表业务成功"
+            ],
+            [
+              "DOM/可访问性树",
+              "网页交互、运行应用验收",
+              "可外置Playwright；权限和用户登录态由宿主控制"
+            ],
+            [
+              "截图/坐标/键鼠",
+              "无API的桌面软件、图形交互验证",
+              "单独补视觉输入与操作反馈；分辨率、焦点与误触有额外成本"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "编码和静态逆向通常不需要先做完整桌面computer use。GUI编辑器和逆向界面可以留给人看；Agent优先走headless、CLI或结构化接口。遇到图形专有流程再补桌面适配，避免用逐次截图点击替代本来已有的API。"
+        },
+        {
+          "type": "paragraph",
+          "text": "Playwright MCP官方README已同时讨论CLI+Skills与MCP的取舍：简短CLI适合常见编码流程，持续状态与结构观察适合MCP。不能把“全部改成MCP”当统一效率优化。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Playwright MCP与CLI取舍",
+              "href": "https://github.com/microsoft/playwright-mcp"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "context",
+      "title": "长上下文、记忆和前沿研究",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "机制",
+            "值得借鉴的部分",
+            "适用边界"
+          ],
+          "rows": [
+            [
+              "检索优先",
+              "索引/目录先载入，按函数、日志窗口、历史事件取证",
+              "这是选择证据，不要求默认引入向量数据库或整仓图谱"
+            ],
+            [
+              "长期任务产物",
+              "目标、验收项、已测修改、未知效果和下一动作在宿主中持久化",
+              "需要在真实多轮任务中验收，不能只有continuation提示"
+            ],
+            [
+              "RLM",
+              "把长输入放到外部环境，程序化切片，需要时分解查询",
+              "论文长上下文任务有证据；不等于已证明一般编码/逆向更省token"
+            ],
+            [
+              "ACE",
+              "经验按条目增量生成、反思和整理，减少反复重写丢细节",
+              "上下文适应不是权重训练；需范围、撤销、冲突和独立迁移验证"
+            ],
+            [
+              "结构化交接",
+              "保留当前源码/产物版本、假设与反证、完成/未完成的验收",
+              "摘要不能替代原始收据，不能把推断压缩成确定事实"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "本项目已有知识索引和Skills，不另建平行记忆系统。优先修正“已写知识但新会话不真正取正文”的验收场景：让下一任务的必要事实只存在于已保存笔记，检查实际knowledge_read/search回执及任务结果；不能把同一事实同时写进Skill和提示后声称记忆有效。"
+        },
+        {
+          "type": "paragraph",
+          "text": "自我进化建议定义为可审的适配循环：观察失败 → 形成带来源候选 → 在隔离用例及留出任务验证 → 宿主/审查采纳 → 可回滚版本。自动下载工具、保存经验、修改自身源码分别是不同权限和验收，不应合并成“已能自我进化”。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "RLM论文v3",
+              "href": "https://arxiv.org/abs/2512.24601v3"
+            },
+            {
+              "label": "ACE论文v3",
+              "href": "https://arxiv.org/abs/2510.04618v3"
+            },
+            {
+              "label": "上下文工程",
+              "href": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "概念与实现也应分开：ACE本次固定源码的apply_curator_operations只执行ADD，UPDATE/MERGE/DELETE等仍列TODO；不能按论文流程图说其全部整理操作已实现。RLM的受限Python namespace也不等于OS沙箱。我们参考可验证机制，不直接复制整个运行环境。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "ACE当前条目操作",
+              "href": "https://github.com/ace-agent/ace/blob/82709de050e1db6e6ef2f07bcb0393560b94992a/playbook_utils.py"
+            },
+            {
+              "label": "RLM受预算递归实现",
+              "href": "https://github.com/alexzhang13/rlm/blob/d04208afbad29ca675ab13478c40ee8bebc84bfe/rlm/core/rlm.py"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tokens",
+      "title": "省token与缓存应如何做",
+      "blocks": [
+        {
+          "type": "list",
+          "items": [
+            "少读：按目录/符号/引用定位，再读相关片段；搜索要报告范围与截断，不能以零结果证明全局不存在。",
+            "少传：编译、调试和批处理在工具端运行，返回差异、失败诊断和证据句柄；完整原件留在受控存储。",
+            "少往返：独立只读操作可并行，批量处理用脚本/API组合；有依赖和副作用的步骤保持有序。",
+            "稳定复用：稳定规则与schema放在稳定前缀，动态进度放后部；历史压缩前先确认必要，不为命中率保留无关材料。",
+            "少重试：区分参数错误、环境缺失、真实编译错误、模型/网络失败；相同证据下不无限重跑，未知效果先核对。"
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "DeepSeek官方Context Caching默认启用，按可复用前缀尽力命中，usage提供prompt_cache_hit_tokens和prompt_cache_miss_tokens；当前文档已具体说明前缀单元的复用条件。本项目经CAS、B.AI或OpenRouter等链路时，字段是否透传、模型是否同一上游、缓存是否保持都需分别实测。官方直连行为不能直接替代理解中转商。"
+        },
+        {
+          "type": "paragraph",
+          "text": "缓存命中可降低重复输入的计算/计费，不代表输入token在语义上消失，也不提高算法理解能力。当前Core从适配器拿不到零与缺失的区别，故不能可靠计算全量命中率或真实账单。保留这条边界，先补原始usage字段存在性，再按具体provider验证。"
+        },
+        {
+          "type": "paragraph",
+          "text": "模型选择仍由宿主控制。本研究不改变用户已选择的Auto随机策略；能力对照实验单独固定模型、路由、参数和预算。生产随机模型的两次结果不能直接比较成框架优劣；跨模型缓存也不能假定共享。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "DeepSeek当前缓存协议",
+              "href": "https://api-docs.deepseek.com/guides/kv_cache/"
+            },
+            {
+              "label": "MCP代码执行与结果过滤",
+              "href": "https://www.anthropic.com/engineering/code-execution-with-mcp"
+            },
+            {
+              "label": "现有遥测边界",
+              "href": "https://github.com/ZZray/ara/blob/56d55d209ecea00e80dfefecdd3e9d47fb62c47a/crates/ara-agent-lite-core/src/model_telemetry.rs#L5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "保持精简Core的接入方案",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "方案",
+            "收益",
+            "代价与判断"
+          ],
+          "rows": [
+            [
+              "直接引入完整ARA/OMP",
+              "可能复用更多开发中组件",
+              "耦合、体积、验收范围扩大；本轮不选"
+            ],
+            [
+              "仅增加提示与Skills",
+              "改动小，能先验证工作流",
+              "无法补可靠patch、结构化诊断和侧车生命周期；作为试验层使用"
+            ],
+            [
+              "稳定Core + 宿主注入工具 + 外置后端",
+              "沿extra_tools接线，可按业务启用，不打包JVM/语言服务",
+              "推荐；先固定小合同，再由真实任务决定哪些稳定能力进入Core"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "Core负责循环、事件、预算、会话原件和工具结果关联。业务宿主负责身份、执行授权、路径、模型凭据、进程/会话的归属与调度。能力包负责LSP、Ghidra、调试器或浏览器适配，按需发现与启动。MCP/ACP/RPC是连接协议，不等于推理能力或OS沙箱；优先选择现有工具最稳定的接口。"
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\n  \"proposed_tool_result\": {\n    \"artifact_sha256\": \"<分析对象或源码版本>\",\n    \"tool_version\": \"<固定版本>\",\n    \"session_id\": \"<宿主授权会话>\",\n    \"status\": \"completed|partial|failed|effects_unknown\",\n    \"summary\": \"<当前步骤所需观察>\",\n    \"evidence_ref\": \"<可分页检索原件>\",\n    \"truncated\": false,\n    \"next_cursor\": null\n  }\n}"
+        },
+        {
+          "type": "paragraph",
+          "text": "上面仅是建议结果合同，不是当前API。工具安装先发现已有环境，再取得固定来源、版本、校验值和许可证的能力包，按宿主授权自测后登记；安装与运行分开，不因Skill或网页指令自动改全局环境。侧车与分析数据库需要磁盘/内存配额和退出策略。"
+        },
+        {
+          "type": "paragraph",
+          "text": "多角色不默认常驻。主Agent独占修改，按需要派只读探索、专门分析或独立验收，返回有来源的简短结论；发生多写者需求才引入隔离与合并。更多Agent会增加协调token，也可能复制同一个错误假设。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "现有宿主合同",
+              "href": "../knowledge/host-contracts.md"
+            },
+            {
+              "label": "现有业务工具入口",
+              "href": "../ai-integration.md#5-注册业务工具与开启本机工具"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "roadmap",
+      "title": "实施顺序与交付门槛",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "阶段",
+            "本阶段交付",
+            "必须观察到的结果"
+          ],
+          "rows": [
+            [
+              "R0 基线",
+              "固定任务/模型/预算/环境，先测当前0.1.0",
+              "保存失败类型、工具收据、实际产物、耗时与原始usage；不知道的保持未知"
+            ],
+            [
+              "C1 编码闭环",
+              "版本绑定patch/diff、普通执行日志产物、测试诊断",
+              "真实缺陷先复现再修复；并发修改拒绝覆盖；失败中段日志可找回"
+            ],
+            [
+              "C2 结构定位",
+              "先选一种语言服务或轻量符号索引，按需外置",
+              "跨文件definition/references命中预期；索引过期明确刷新；没有服务仍可文本回退"
+            ],
+            [
+              "R1 静态逆向",
+              "文件/符号/字符串metadata，再接Ghidra按函数查询",
+              "自有PE/ELF样本找到算法与引用，用留出输入证明行为；不运行未知样本"
+            ],
+            [
+              "R2 动态验证",
+              "先接一个调试后端，持久会话与事件；再按需Frida",
+              "断点/退出/取消/断连状态准确，目标归属正确，未知命令效果不重放"
+            ],
+            [
+              "M1 记忆与效率",
+              "必要事实正文召回、稳定前缀、按需schema、候选经验迁移",
+              "新的Session真读取事实并完成任务，留出任务收益；token/费用/时延分别比较"
+            ],
+            [
+              "U1 按需操控",
+              "网页先DOM/CLI，桌面后做图像与动作链",
+              "实际控件动作和可见状态验收；模型声明图像能力不计作图像链路已通"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "保持不动：HandWave登录/设备授权/调度/UI、生产Auto策略、完整版WIP、固定上游同步标记。研究不自动升级上游或改变已发布Session格式。优先验证C1与R1，依赖C2/R2的任务不能用C1/R1通过代替完成。"
+        },
+        {
+          "type": "paragraph",
+          "text": "不为通过而缩范围：编码仍要覆盖多文件修复、脚本与环境问题；逆向仍要覆盖静态推断和动态反证。可按阶段交付，但每一阶段仅宣称其实际通过的行为，完整提升目标在真实对照和回归完成前保持未完成。"
+        }
+      ]
+    },
+    {
+      "id": "evaluation",
+      "title": "如何证明能力真的提升",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "建议首批24个任务：12个编码、8个逆向、4个长任务/记忆/异常任务；同类模板只占一个任务族。它们是起始评测，不足以证明通用能力；随后按真实使用中失败扩展留出集。不得把工具名是否调用或解释文字好看作为唯一成功标准。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "任务组",
+            "建议任务",
+            "独立判据"
+          ],
+          "rows": [
+            [
+              "12编码",
+              "4个Python多文件/边界修复；4个PowerShell/cmd/sh环境、中文路径及退出码；4个Rust/C++跨文件/构建失败",
+              "固定原缺陷先失败，隐藏/留出测试后通过，diff范围合理，无关WIP与状态不变"
+            ],
+            [
+              "8逆向",
+              "4个自有PE/ELF格式或校验算法；2个优化/去符号样本；2个崩溃或动态行为任务",
+              "分析Agent不看源码；验收端保留源码/输入输出oracle，检查地址证据、行为预测和可重复结果"
+            ],
+            [
+              "4长期与异常",
+              "1个跨压缩继续修复；1个跨Session知识正文；1个调试/构建取消；1个断线未知效果",
+              "关键事实与未完任务保留，正文确实读取，进程归属正确，未知效果不盲重放"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "每个候选只改一个机制，先在同模型、同路由、同任务与同预算下对照；随后测试另一模型的可迁移性。对有随机性的关键任务建议多次成对运行，保留全部失败与预算耗尽，不只选最好一次。报告成功率、无效工具调用、时延分位、输入/输出/缓存tokens、外部工具启动/分析成本和人工介入。"
+        },
+        {
+          "type": "paragraph",
+          "text": "公开SWE/Terminal评测可补难度，必须固定数据版本、镜像、harness、执行预算和资源条件。本轮没有运行这些基准，不引用排行榜证明我们已接近Claude。模型对比和框架消融分开，缓存冷/热也分开；评测中Auto改用固定路由只是实验设置，不改变线上产品策略。"
+        },
+        {
+          "type": "callout",
+          "title": "接受条件",
+          "text": "必须检查实际补丁、编译/测试报告、运行产物或逆向留出输入结果；Run成功、清单全勾选、HTTP200与工具执行成功都不足以独立接受任务。",
+          "tone": "warning"
+        },
+        {
+          "type": "paragraph",
+          "text": "版本核查：SWE-bench Pro此次固定66f92766为V2，731题属于V1口径；Terminal-Bench官网此次为4.0.0/Harbor并含GPU任务。选CPU或旧版本子集须明确列出筛选和题目ID。不能套用旧版规模或只凭名字认为同一难度。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "SWE-bench Verified说明",
+              "href": "https://www.swebench.com/verified.html"
+            },
+            {
+              "label": "SWE-bench Pro固定V2说明",
+              "href": "https://github.com/scaleapi/SWE-bench_Pro-os/blob/66f92766bba642462d4bbe5479e83f91f9211862/v2/README.md"
+            },
+            {
+              "label": "Terminal-Bench当前运行文档",
+              "href": "https://www.tbench.ai/run"
+            },
+            {
+              "label": "SWE-rebench方法",
+              "href": "https://swe-rebench.com/about"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "limits",
+      "title": "本轮结论和未验证事项",
+      "blocks": [
+        {
+          "type": "list",
+          "items": [
+            "源码支持：当前Core工具、宿主边界和有限遥测已回源；外部关键机制以固定commit/规范或带日期官方文档为依据。",
+            "工程推断：可靠编辑、结构定位、可检索输出、分析侧车会提高当前任务可完成性；收益大小需我们的同模型对照证明。",
+            "未执行：没有安装/运行Ghidra、Frida、LLDB或新LSP，没有新的模型任务、编码/逆向基准、性能/包体比较、生产部署。",
+            "既有缺口：新会话自主读取沉淀知识正文仍FAIL/OPEN，通用自我进化、图像请求链路和完整桌面操控未因研究变成已交付。",
+            "证据边界：网页会变动，固定版本源码链接与本地源hash见随附收据；一手资料的功能声明不等于本项目已集成和验收。"
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "报告使用既有手绘模板；本次浏览器安全策略拒绝本地file协议预览，因此仅做结构、链接、JSON和内容检查，未完成实际渲染、窄屏或视觉验收；没有改协议或重托管绕过限制。根文档bootstrap扫描在20秒有界等待后超时，保持NOT_COMPLETED；限定范围检查不能替代全仓检查。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读研究来源与本地源码hash",
+              "href": "coding-reverse-research-20261022.sources.json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

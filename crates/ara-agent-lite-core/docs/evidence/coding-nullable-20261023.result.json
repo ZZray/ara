@@ -1,0 +1,221 @@
+{
+  "schema": "ara-nullable-optional-contract-progress-v1",
+  "date": "2026-10-23",
+  "decision": "NULLABLE_CONTRACT_TESTED_REAL_MODEL_ADOPTION_OPEN",
+  "goal_complete": false,
+  "scope": "read_file/source_symbols/binary_inspect optional-null representation; no other tool parser changes",
+  "source_pins": {
+    "Cargo.toml": "04021c0c7001d29318cf6ae2fbfe857392d4951ac24fa90ec597fa8089596e3a",
+    "Cargo.lock": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+    "src/agent.rs": "318ab13ae336dd38e276ed5bc188f32f783c3d9e5c2396ad26f198abfad731b7",
+    "src/analysis_tools.rs": "5ba3cd7b652e28cfa358b7e9aaa3336403e282b1a5f488b782f147faa58966ae",
+    "src/context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "src/environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "src/environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "src/environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "src/execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "src/experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src/file_edits.rs": "0a940f3bb767b5d30159bc489543e9821fd1d131853c6b41e012ba1665d5fb23",
+    "src/goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "src/lib.rs": "db5d20c7a9e289c66b61a4d68082d70295f9e070044baabb936a961b86edc70a",
+    "src/local_tools.rs": "18e9e0632549fef3e27010bc3715d07d01ad3d07bfc09268d1388b6867583620",
+    "src/managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "src/model.rs": "79a294c0eb1c7f58b3c9d1fb9815182db98cfa17807bef1436619bbd0f217283",
+    "src/model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "src/model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "src/process_capture_tests.rs": "332eacc4a7daa0b7f315c290c55998d46dce279a889dafdf7a8dff620ab55a6e",
+    "src/process_output.rs": "c2ca62c6ab9732a1817f0d584dc7387ca943db0ceff9195b869fe8fd4d0691f7",
+    "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src/script_tools.rs": "5391e73c3236ad538c977a25384b0419853d4883fafac3edfe83116beb500f37",
+    "src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "src/skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "src/skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "src/steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "src/system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "src/terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "src/terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "src/web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "src/web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "src/builtin_skills/skill-creator/SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "src/builtin_skills/skill-installer/SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "src/environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "src/web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "examples/business_host.rs": "4ea7efae1fbc130f7ec32287771e458118b12cac3c5c35fd00c824b0fee205ec"
+  },
+  "binary_sha256": "ff527818486911969f3afacf0f71099c2911e433930a910b0e8a6a7ceb5c505f",
+  "checks": [
+    {
+      "check": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.528
+    },
+    {
+      "check": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 2.58
+    },
+    {
+      "check": "test",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--workspace",
+        "--all-targets"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 14.102
+    },
+    {
+      "check": "doc",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--doc"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.846
+    },
+    {
+      "check": "host",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--example",
+        "business_host"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.268
+    },
+    {
+      "check": "deny",
+      "command": [
+        "cargo",
+        "deny",
+        "--offline",
+        "check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.891
+    }
+  ],
+  "unit_passed": 203,
+  "unit_ignored": 1,
+  "public_host_tests_passed": 3,
+  "freeze_sha256": "e62ca46e7dab5e8ca2d5f85c4a9f4e1f3f5dbc679a5425a89f528ed2e104e405",
+  "original_native_batch": {
+    "status": "FAIL",
+    "passed_groups": 5,
+    "groups": 6,
+    "result_sha256": "15340e54bfc53182af7a802e1d53eda5fe8911b3947eb885420ee4f852500f71",
+    "actual_counts": {
+      "native_reserved_calls": 40,
+      "scripted_provider_posts": 39,
+      "tool_ends": 34,
+      "checked_feedback": 33
+    },
+    "failure": "fourth local HTTP call failed before reaching scripted provider; root cause unknown"
+  },
+  "scoped_recovery": {
+    "status": "PASS",
+    "groups": 1,
+    "tools": 4,
+    "elapsed_seconds": 4.12,
+    "result_sha256": "d8d341489ad055471e3c85daa78353e339d7da5f15b8d33cdd02f1d113ea6666",
+    "plan_sha256": "11c1659d45115e5e2747bf35c8e8026f9b933f58a1d2fb266dcbed52c5704b7c",
+    "actual_counts": {
+      "native_reserved_calls": 5,
+      "scripted_provider_posts": 5,
+      "tool_ends": 4,
+      "checked_feedback": 4
+    },
+    "same_runtime_harness_fixtures_backends": true
+  },
+  "accepted_bridge": {
+    "groups": 6,
+    "logical_tool_checks": 35,
+    "counts": {
+      "native_reserved_calls": 41,
+      "scripted_provider_posts": 41,
+      "tool_ends": 35,
+      "checked_feedback": 35
+    },
+    "composition": "5 successful original groups plus 1 fresh isolated recovery; original failed attempt retained"
+  },
+  "all_attempt_counts": {
+    "native_reserved_calls": 45,
+    "scripted_provider_posts": 44,
+    "tool_ends": 38,
+    "checked_feedback": 37
+  },
+  "regressions": [
+    {
+      "name": "analysis-native-v6",
+      "passed": 23,
+      "result_sha256": "c3437eba31a4a57b14d99bd0b90ef6b03dad072333a5bce8cc87564255af7d5c"
+    },
+    {
+      "name": "nullable-policy-regression-v6",
+      "passed": 8,
+      "result_sha256": "72481ed2fb1e5de0d08c899d0d81dc1f820595dd51ce94739358f02a38de3fd9"
+    },
+    {
+      "name": "nullable-capture-regression-v6",
+      "passed": 6,
+      "result_sha256": "6ea289b48b06c47ea5355b065ed23e154e5d1328d51fae515966ad2986cc2de4"
+    },
+    {
+      "name": "nullable-edit-regression-v6",
+      "passed": 4,
+      "result_sha256": "ab82fa1ee2810fd73850228b7018a889dcd0b44b2f0579344e73921c36a0391b"
+    }
+  ],
+  "reviews": {
+    "source": {
+      "reviewer": "independent Codex agent_landscape; native-harness author",
+      "sha256": "5b6a64f296912a0310c46cf162a9476cae399813e3427eddcdc61395996d1300"
+    },
+    "harness_receipts": {
+      "reviewer": "independent Codex claude_source; runtime author, not self-reviewing runtime",
+      "sha256": "52cb1f7512f76436fd3c9fcb2a15ab4ad0259cb103615b64d9c5fc6f75f64f9a"
+    },
+    "primary": "separately checked source diff, build pins, harness and native artifacts"
+  },
+  "invalidated_build_attempt": {
+    "label": "v5",
+    "result_sha256": "9d8ff61233ba1e4f4a89e2d54296526ce624550c78d9062c7829cae9e6cb79ef",
+    "reason": "one old null-rejection unit expectation changed during checks; inputs_unchanged false; v6 rerun accepted"
+  },
+  "external_model_calls": 0,
+  "limits": [
+    "H2-G root cause remains unknown: model choice versus server conversion",
+    "fixed rpi previously dropped optional nulls rejected by old schemas; nullable schema now retains them, requiring local normalization",
+    "required fields are not made nullable; rejection stage can include existing rpi coercion",
+    "nonnull conflicts, bad hash/token, missing page guards and VMA/Plan rules retain original checks",
+    "edit_file parser unchanged; unsupported optional null may be dropped by fixed rpi before execution",
+    "controlled scripted provider is not real-model adoption or an OS sandbox",
+    "offline dependency check retains known warnings; advisory database freshness not confirmed"
+  ]
+}

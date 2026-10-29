@@ -1,0 +1,264 @@
+{
+  "title": "JSONL 生成策略与 AI Code Review 修复验证",
+  "brand": "ARA",
+  "date": "2026-10-25",
+  "subtitle": "公共策略和空补丁反馈已接通；真实最终补丁通过七项测试，原任务仍因预算停止而未验收。",
+  "sections": [
+    {
+      "id": "result",
+      "title": "本轮结果",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Core 已有的显式生成策略现在可以从公共 JSONL 入口配置，并在反馈后的 Run 与长度恢复中保持一致。AI Code Review 示例对空补丁保存明确的失败反馈，继续遵守原 Task 预算。"
+        },
+        {
+          "type": "callout",
+          "title": "正确产物与任务交接分别记录",
+          "text": "真实模型最后修改的源码，在全新目录独立通过七项固定测试。原任务在第 24 次调用的工具完成后耗尽预算，没有普通最终答复，也没有进入 Host 审查，因此仍为 FAIL，原 fence 保留。",
+          "tone": "warning"
+        },
+        {
+          "type": "paragraph",
+          "text": "完整七项目标仍为 0/7。产品当前代码已修复该历史编码问题，本次只检验固定历史副本的修复任务，没有修改产品或部署。"
+        }
+      ]
+    },
+    {
+      "id": "contract",
+      "title": "公共配置与职责",
+      "blocks": [
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\"generation_policy\":\"thinking_type_disabled\",\"length_recovery\":\"replan_once\"}"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "字段或边界",
+            "行为"
+          ],
+          "rows": [
+            [
+              "run.generation_policy 省略／provider_default",
+              "保留原请求，不增加 thinking 字段或策略事件"
+            ],
+            [
+              "thinking_type_disabled",
+              "Core 在实际 OpenAI Chat 主任务请求中发送固定 thinking.type=disabled；Host 确认服务支持"
+            ],
+            [
+              "策略寿命",
+              "固定于整个 Task；prepare 不能更换模型 Host 或策略"
+            ],
+            [
+              "非法值",
+              "未知字符串、null、对象在初始帧拒绝；不开放任意 provider body"
+            ],
+            [
+              "Core／Harness／Host",
+              "Core 执行策略与原生循环；Harness 管任务预算和反馈；Host 判断实际产物"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "旧程序会拒绝新字段，接入须固定源码或镜像。字段存在不能证明远端执行了配置，也不保证任务正确。当前产品 ModelRelay 的白名单仍会丢弃 thinking，因此公共接线通过不能代表产品已接通。"
+        }
+      ]
+    },
+    {
+      "id": "feedback",
+      "title": "空补丁反馈的实际前后对照",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "产品 Workspace.checks 在没有源码补丁时，先拒绝前提再启动测试。旧公共示例直接调用它，导致 verify 回调失败。当前示例先核对 diff，只对这一已知前提保存 NeedsChanges；意外异常、取消和未知结果继续按原规则阻断。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "相同两次错误提交",
+            "旧示例",
+            "当前示例"
+          ],
+          "rows": [
+            [
+              "实际模型请求／Run",
+              "1／1",
+              "2／2"
+            ],
+            [
+              "已保存的检查反馈",
+              "无 committed review，回调中断",
+              "两份绑定候选的 committed NeedsChanges"
+            ],
+            [
+              "测试执行",
+              "未启动",
+              "明确 test_count=null、test_subprocess_started=false"
+            ],
+            [
+              "Task 终态",
+              "ReconciliationRequired，fence Present",
+              "原预算耗尽，BudgetExhausted，Released，task_accepted=false"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "这两个受控候选故意都没有修改代码，不能算修复成功。它们证明已知拒绝能进入反馈续作，且错误候选不会被接受。旧 driver 对内部错误文案的断言过窄，原 exit1 与回调中断原件均保留，另做离线核查，没有重跑旧例。"
+        }
+      ]
+    },
+    {
+      "id": "live",
+      "title": "真实历史修复与独立产物检查",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "使用固定 d5d5a8bc 历史故障副本，保持旧任务的目标、模型、24 次调用、最多 2 Run、180 秒和 4096 输出上限。模型只获准修改 app/services/git_service.py，测试文件不能修改。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "观察",
+            "实际结果"
+          ],
+          "rows": [
+            [
+              "模型运行",
+              "1 Run／24 次逻辑调用／69.890 秒；无 Length 响应"
+            ],
+            [
+              "业务工具",
+              "12 次检索、10 次读取、8 次替换；2 次实际测试、1 次无补丁前提拒绝"
+            ],
+            [
+              "两次测试反馈",
+              "先出现 1 个 failure 与 1 个 error，随后只剩 1 个 error"
+            ],
+            [
+              "最后一次调用",
+              "模型再次修改源码，预算随即耗尽，无普通 Stop"
+            ],
+            [
+              "原 Task",
+              "ReconciliationRequired，未形成候选或复审收据，fence 保留"
+            ],
+            [
+              "独立最终产物",
+              "复制内容至新目录，排除指向原 worktree 的 .git；原件不变；7 项全部通过"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "独立检查没有重新调用模型或重放原工具，也没有改写原 Workspace 的失败验证记录。最终补丁通过七项固定回归；原公共任务闭环仍未完成。新镜像还包含此前已接受的改动，不能把所有差异单独归因于生成策略。"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "title": "回归、依赖与产品边界",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "结果"
+          ],
+          "rows": [
+            [
+              "新策略原生用例",
+              "7 通过／7 进程／11 次 chat HTTP／5 次目录 HTTP；199 份产物"
+            ],
+            [
+              "JSONL Rust／clippy／doc",
+              "3 项通过；all-targets clippy 通过；doc-tests 为 0"
+            ],
+            [
+              "压缩／长度／客户端回归",
+              "6／13／16 项通过，使用当前普通程序"
+            ],
+            [
+              "依赖",
+              "显式使用既有 Lite 政策，离线四项通过；公告库时效未知"
+            ],
+            [
+              "产品现状",
+              "已有旧 pin 的原生 Agent 工具循环；普通审查与一次 Markdown 生成另有入口"
+            ],
+            [
+              "本轮排除",
+              "未迁移产品 pin 或 Relay，未接生产队列／数据库，未独立模型复审或发布"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "原生终态、测试通过、Host 检查和业务接受各有边界。当前实现只接通策略与空补丁反馈，没有将任意错误返回码转换为成功。"
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "title": "预算停止的后续设计",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "当前 Core 会在闭合的工具轮次耗尽调用额度后明确报预算停止，但公共结果只暴露通用错误码。Harness 在检查原生快照前要求普通 Stop，因而本例的正确最终产物没有进入 Host 验收。"
+        },
+        {
+          "type": "callout",
+          "title": "方案评审中，尚未实现",
+          "text": "下一点评估由 Core 提供机器可读终因和原生轮次闭合证据，再由显式选择该能力的 Host 验证预算停止快照。取消、超时、持久化失败、未知效果或未闭合工具轮次继续阻断；预算不得刷新，旧失败 fence 不自动清除。",
+          "tone": "warning"
+        },
+        {
+          "type": "facts",
+          "items": [
+            {
+              "label": "源码清单 SHA256",
+              "value": "8122e2fa8343296bb52f38c2853c1ddec8ea12cddcdafdf57f70be545524579b"
+            },
+            {
+              "label": "普通 sidecar SHA256",
+              "value": "3633f5be7ea32b7cd0b4b0550ed397f6fac2b1e3bd9bbc6511d07560c7c2b815"
+            },
+            {
+              "label": "最终补丁 SHA256",
+              "value": "19ceb2f49cfd37784b70bdafd55de9a634dd337115180db06409853fdc7e3689"
+            },
+            {
+              "label": "本机原件",
+              "value": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\jsonl-generation-policy-v1-20261025"
+            }
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读结果",
+              "href": "generation-policy-20261025.result.json"
+            },
+            {
+              "label": "公共协议",
+              "href": "../protocol-v1.md"
+            },
+            {
+              "label": "接入 README",
+              "href": "../../README.md"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "报告使用离线模板；本地浏览此前被策略拒绝，未绕过，视觉未验收。未提交、推送或部署。"
+        }
+      ]
+    }
+  ]
+}

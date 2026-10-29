@@ -1,0 +1,20 @@
+[package]
+name = "ara-agent-lite-jsonl"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Versioned cross-language Host sidecar over ARA Lite Harness"
+
+[workspace]
+
+[dependencies]
+ara-agent-lite-harness = { path = "../ara-agent-lite-harness" }
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"

@@ -1,0 +1,144 @@
+{
+  "schema": "ara.headroom.h0.review.v1",
+  "reviewer": "/root/estimate_review",
+  "reviewer_native_session_uuid": null,
+  "reviewer_identity_limit": "runtime supplied only the canonical independent agent name",
+  "implementation_thread": "01a17b06-eee9-7bc2-8353-7982bba2281c",
+  "skills": [
+    "ara-git-review",
+    "ara-rust-core-review"
+  ],
+  "scope": "named spec files against before snapshots, external H0 Rust source and actual saved execution evidence",
+  "findings": [
+    {
+      "issue": "JSON upstream marker retrieval not tested",
+      "disposition": "fixed and independently re-reviewed; run-v2 and process tests"
+    },
+    {
+      "issue": "default-off and configured A/B-off contracts mixed",
+      "disposition": "fixed in requirement 40.1 and design"
+    },
+    {
+      "issue": "ambiguous in-repository evidence path",
+      "disposition": "fixed to full repository-relative path"
+    }
+  ],
+  "source_verdict": "no remaining actionable H0 source finding",
+  "acceptance_verdict": "OPEN: dependency gate fails; LNK4098 warning retained; no Lite or real-model acceptance",
+  "evidence": {
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\requirements.md": {
+      "sha256": "ca3c0f9d46e480bda7d5eeb44c21b610d268ac416ae668b1b2f70b3c0df633dd",
+      "bytes": 114218
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\design.md": {
+      "sha256": "d730730436bd8f13d62bc15512431f9e92fac5af6f49644d7b8960b643042082",
+      "bytes": 158408
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\tasks.md": {
+      "sha256": "6f6c2235dca3051b47c2ded6c966f9476b370873dd55db07a508862e7ae96630",
+      "bytes": 116388
+    },
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\tasks.meta.json": {
+      "sha256": "90ee8bc5ce506076d83c479d02e6022b33d845965c96a7d51da27ff89e2e8e2b",
+      "bytes": 60920
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.toml": {
+      "sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+      "bytes": 244
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.lock": {
+      "sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+      "bytes": 69881
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\src\\main.rs": {
+      "sha256": "1ffed257650b0ca599098fd8780af695353be9677b870ffdab2baf15a0a2554d",
+      "bytes": 6879
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\tests\\process.rs": {
+      "sha256": "5e32ab1af9b5fe41e403c5a955119047ae73ec499134ea4c70e82e2a50b7fcd1",
+      "bytes": 2281
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\LICENSE": {
+      "sha256": "50b9e890f4afb0a500696cdb6cde3dae08468225a1699317d23e81a1e2703a46",
+      "bytes": 10960
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\crates\\headroom-core\\Cargo.toml": {
+      "sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+      "bytes": 11845
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\metadata.json": {
+      "sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+      "bytes": 1435139
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\dependency-summary.json": {
+      "sha256": "23b8d1fae0fd390d2ee5b603dc7bce44b7fcc76661b5e2d8b8e7be64f278bba1",
+      "bytes": 4194
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\run-v2\\results.json": {
+      "sha256": "fe99d8dc4db0ae9581c51c7233dfe1301c0577e22e29996e3e7940582d06bc81",
+      "bytes": 3320
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stdout.log": {
+      "sha256": "d8ac812a715f3e84cf55447e72314f1df575fade45ab4d3360d74e05c2d88a73",
+      "bytes": 363
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stderr.log": {
+      "sha256": "79ef73cb24e86a50b360675f8a4508457841a5c7e3e160c5724965131212e10b",
+      "bytes": 931
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\clippy-final.stderr.log": {
+      "sha256": "b602b08d43578fb2ca68ed799a57aefdf88e13e899c58a5ca280eaa9dcd2acfe",
+      "bytes": 158
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\spec-check.json": {
+      "sha256": "3e8987499779cfd13bcd2a3d814dc923a72511b91c3243eeb4822f556e977a59",
+      "bytes": 599
+    },
+    "D:\\workspace\\env\\cache\\rust-target-headroom-h0\\debug\\ara-headroom-h0.exe": {
+      "sha256": "e9b23863c6c03d37faedef85554871f38583db4744decaa4cfbf973035a00d5d",
+      "bytes": 18207744
+    },
+    "E:\\repos\\ara-github\\docs\\knowledge\\INDEX.md": {
+      "sha256": "9d3e744616050f206707c5da435019f2778ef795d0ed7cd6fba9bf94efc20f14",
+      "bytes": 25051
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\knowledge\\INDEX.md": {
+      "sha256": "418b6deddf32bf2e9ccefe5ea9e13f0e6a6c66840d067375e7472c065b8498d6",
+      "bytes": 3053
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\headroom\\README.md": {
+      "sha256": "f6b14aae439ba13bf5624f248ff0006a963f3c46d7a8aca6128f263d28e1c21c",
+      "bytes": 7358
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\links.json": {
+      "sha256": "9393f423490f5e3b47f3f25efda239f3abfa77aa6cec9d229d33096874390312",
+      "bytes": 908
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\fmt-final.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\spec-check-final.json": {
+      "sha256": "e185033a494805f47c7697f84add0e3c16bd1f173572fe05a4ad451d401aeb3d",
+      "bytes": 675
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\p0-digest-readonly.md": {
+      "sha256": "8a4bfd07a14c7c391a20ce11881dd32952716ce0c6ae424b82453d5d03a156c4",
+      "bytes": 4133
+    },
+    "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\p0-digest-record.json": {
+      "sha256": "e4f5a249ebc8ae262acc24cf94ff9bcc94089357cb14d6f8e2076607d942eb8e",
+      "bytes": 4511
+    }
+  },
+  "reviewer_did_not_execute_tests": true,
+  "not_applicable": [
+    "Lite implementation diff",
+    "provider wire changes",
+    "production deployment"
+  ],
+  "review_limits": [
+    "runtime supplied canonical independent reviewer identity, no native UUID; no original tasks.meta.json snapshot"
+  ],
+  "final_document_review": "reviewer confirmed independent H0 scheduling, 154+5 waves, final indices and bootstrap limits; no new finding"
+}

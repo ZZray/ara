@@ -1,0 +1,405 @@
+{
+  "schema": "ara-lite-generation-policy-progress-v1",
+  "date": "2026-10-23",
+  "decision": "GENERATION_CONTRACT_TESTED_REAL_REVERSE_TASK_FAILED",
+  "goal_complete": false,
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "branch": "dev",
+  "scope": "uncommitted independent Lite workspace; no release or deployment",
+  "source_pins": {
+    "Cargo.lock": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+    "Cargo.toml": "04021c0c7001d29318cf6ae2fbfe857392d4951ac24fa90ec597fa8089596e3a",
+    "examples\\business_host.rs": "4ea7efae1fbc130f7ec32287771e458118b12cac3c5c35fd00c824b0fee205ec",
+    "src\\agent.rs": "318ab13ae336dd38e276ed5bc188f32f783c3d9e5c2396ad26f198abfad731b7",
+    "src\\analysis_tools.rs": "07f445743952125aa39c745ed9f6509088c8b3270c8912edb5eda17f3bf2bb4e",
+    "src\\builtin_skills\\skill-creator\\SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "src\\builtin_skills\\skill-installer\\SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "src\\context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "src\\environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "src\\environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "src\\environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "src\\environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "src\\execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "src\\experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "src\\experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src\\file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src\\file_edits.rs": "0a940f3bb767b5d30159bc489543e9821fd1d131853c6b41e012ba1665d5fb23",
+    "src\\goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "src\\lib.rs": "db5d20c7a9e289c66b61a4d68082d70295f9e070044baabb936a961b86edc70a",
+    "src\\local_tools.rs": "c56c66edefcf670853aadfd3f51d8011dd2a89292c6b0614b18ddcf8ab9cae7c",
+    "src\\managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "src\\model.rs": "79a294c0eb1c7f58b3c9d1fb9815182db98cfa17807bef1436619bbd0f217283",
+    "src\\model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "src\\model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "src\\process_capture_tests.rs": "332eacc4a7daa0b7f315c290c55998d46dce279a889dafdf7a8dff620ab55a6e",
+    "src\\process_output.rs": "c2ca62c6ab9732a1817f0d584dc7387ca943db0ceff9195b869fe8fd4d0691f7",
+    "src\\project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src\\script_tools.rs": "5391e73c3236ad538c977a25384b0419853d4883fafac3edfe83116beb500f37",
+    "src\\session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "src\\skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "src\\skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "src\\steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "src\\system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "src\\terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "src\\terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "src\\web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "src\\web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "src\\web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "tests\\verify_analysis_live.py": "67dfd052ce2f6fdc6d44d73ae786f5bc59ffda75e9940bc5351e48e4cd0ecbd0",
+    "tests\\verify_coding_live.py": "e90f22f4fcb9e7046a04b3e5d187f76dcfd54e9a51af78a50300669603793161",
+    "tests/verify_reverse_policy_live.py": "3139e6ee6c61408d16f860d75d10956dd588a5d94722ea680d355c20e523df4c"
+  },
+  "binary_sha256": "1b79888b0598aa6c42b9e90a4310df4d93f5dbd49f730fbd292eb94c1d9a67eb",
+  "plan_sha256": "8567baa1e5fb1b6d0f9e2027a97c29d3c49c977f984d7d58ce38abf6268526ce",
+  "native_policy": {
+    "status": "PASS",
+    "passed": 8,
+    "planned": 8,
+    "result_sha256": "2dcb704c85255430f632fa1286054e2f5f5709de10b8f3cd05957dc1aa1a2652"
+  },
+  "checks": [
+    {
+      "check": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.418
+    },
+    {
+      "check": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 23.149
+    },
+    {
+      "check": "test",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--workspace",
+        "--all-targets"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 116.701
+    },
+    {
+      "check": "doc",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--doc"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.388
+    },
+    {
+      "check": "host",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--example",
+        "business_host"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 9.154
+    },
+    {
+      "check": "deny",
+      "command": [
+        "cargo",
+        "deny",
+        "--offline",
+        "check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 9.402
+    }
+  ],
+  "analysis_regression": {
+    "status": "PASS",
+    "passed": 23,
+    "planned": 23,
+    "result_sha256": "676e5224b3916707c9a92c1f531a3b54fb615d17c17bc2c311f891a4937d3e92"
+  },
+  "phase_validator": {
+    "status": "PASS",
+    "checks": 30,
+    "model_calls": 0,
+    "amendment_sha256": "4060626c44043667b7a92f9021ac72b01ac394d66c81d2b706bc7de738803953"
+  },
+  "real_model_trials": [
+    {
+      "arm": "A",
+      "condition": {
+        "arm": "A",
+        "policy": "provider_default",
+        "output": 4096,
+        "host_facts": false
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "NOT_RUN",
+      "conditions_realized": true,
+      "host_facts": {
+        "status": "NOT_APPLICABLE",
+        "seconds": 0
+      },
+      "host_exit": 1,
+      "native_result_code": -1,
+      "native_error": "assistant stopped with length",
+      "effects_unknown": false,
+      "model_calls": 5,
+      "autonomous_binary_tool_ends": 2,
+      "total_wall_seconds": 23.268,
+      "final_finish_reasons": [
+        "length"
+      ],
+      "final_content_bytes": 0,
+      "final_reasoning_bytes": 8704,
+      "requested_model_id": "deepseek-v4.1-flash",
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "remote_backend_identity": "UNVERIFIED: response model alias is not proof of exact weights",
+      "oracle_planned_cases": 28,
+      "oracle_executed": false,
+      "sealed_code_sha256": null,
+      "predictions_correct": null,
+      "hidden_outputs_correct": null,
+      "oracle_process_exit": null,
+      "secret_scan": "CLEAN",
+      "result_sha256": "a7ed9e53aa5371d94ecc695a39d7f28ea16331a8f77d5f8a5fd391130594b96c",
+      "provider_receipts_sha256": "6a330d6f7d1d0f3d5319b22a946414448b54d4ffaf3d17ec6dc06518a3e87372",
+      "oracle_sha256": "d6f9f178a8b4594072f85427d1c49ac6b88705b6ae8096c20be2d87230861ab6"
+    },
+    {
+      "arm": "B",
+      "condition": {
+        "arm": "B",
+        "policy": "thinking_type_disabled",
+        "output": 4096,
+        "host_facts": false
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "FAIL",
+      "conditions_realized": true,
+      "host_facts": {
+        "status": "NOT_APPLICABLE",
+        "seconds": 0
+      },
+      "host_exit": 0,
+      "native_result_code": 0,
+      "native_error": "",
+      "effects_unknown": false,
+      "model_calls": 5,
+      "autonomous_binary_tool_ends": 4,
+      "total_wall_seconds": 19.918,
+      "final_finish_reasons": [
+        "stop"
+      ],
+      "final_content_bytes": 4417,
+      "final_reasoning_bytes": 0,
+      "requested_model_id": "deepseek-v4.1-flash",
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "remote_backend_identity": "UNVERIFIED: response model alias is not proof of exact weights",
+      "oracle_planned_cases": 28,
+      "oracle_executed": true,
+      "sealed_code_sha256": "6debf24c4188b6589419c3b0da7abafd11c8cdd406333d8b2b6f20d17be94c3e",
+      "predictions_correct": false,
+      "hidden_outputs_correct": false,
+      "oracle_process_exit": 1,
+      "secret_scan": "CLEAN",
+      "result_sha256": "6addd18f61500fa2fb9b498e98480f6ec42812bfe1cef7b2710fd7905f257f77",
+      "provider_receipts_sha256": "fcc7f3b428b4a96d952958b5e15af81f60dd30de46a3713cd406b720e1e9bae7",
+      "oracle_sha256": "5c731aa1c01a6b67fd8a548919977de273f741c07259aa3ec2705d5705a3446a"
+    },
+    {
+      "arm": "C",
+      "condition": {
+        "arm": "C",
+        "policy": "provider_default",
+        "output": 4096,
+        "host_facts": true
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "NOT_RUN",
+      "conditions_realized": false,
+      "host_facts": {
+        "status": "PARTIAL",
+        "queries": 3,
+        "errors": [],
+        "effects_unknown": false,
+        "brief_sha256": "ecadc4ba58aa1e033f52d68e28f735dd5e83d808a7914fda2b62e49b72a586c5",
+        "brief_bytes": 17233,
+        "seconds": 1.821
+      },
+      "host_exit": 1,
+      "native_result_code": -1,
+      "native_error": "assistant stopped with length",
+      "effects_unknown": false,
+      "model_calls": 3,
+      "autonomous_binary_tool_ends": 0,
+      "total_wall_seconds": 22.647,
+      "final_finish_reasons": [
+        "length"
+      ],
+      "final_content_bytes": 0,
+      "final_reasoning_bytes": 8832,
+      "requested_model_id": "deepseek-v4.1-flash",
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "remote_backend_identity": "UNVERIFIED: response model alias is not proof of exact weights",
+      "oracle_planned_cases": 28,
+      "oracle_executed": false,
+      "sealed_code_sha256": null,
+      "predictions_correct": null,
+      "hidden_outputs_correct": null,
+      "oracle_process_exit": null,
+      "secret_scan": "CLEAN",
+      "result_sha256": "81fe80afb69100b85fb6d8830d331e467d8ecac8a37b78f63259539c935d386e",
+      "provider_receipts_sha256": "911304858f4c76767d47a4baefe55650bdc60023cfd55470d378aea44d361259",
+      "oracle_sha256": "d6f9f178a8b4594072f85427d1c49ac6b88705b6ae8096c20be2d87230861ab6"
+    },
+    {
+      "arm": "D",
+      "condition": {
+        "arm": "D",
+        "policy": "thinking_type_disabled",
+        "output": 4096,
+        "host_facts": true
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "NOT_RUN",
+      "conditions_realized": false,
+      "host_facts": {
+        "status": "PARTIAL",
+        "queries": 3,
+        "errors": [],
+        "effects_unknown": false,
+        "brief_sha256": "aa65402920838fffd7d67c8e4b2446089751fce1489b749a6019e9e513cce88b",
+        "brief_bytes": 17233,
+        "seconds": 1.651
+      },
+      "host_exit": 1,
+      "native_result_code": -1,
+      "native_error": "assistant stopped with length",
+      "effects_unknown": false,
+      "model_calls": 5,
+      "autonomous_binary_tool_ends": 2,
+      "total_wall_seconds": 25.927,
+      "final_finish_reasons": [
+        "length"
+      ],
+      "final_content_bytes": 9668,
+      "final_reasoning_bytes": 0,
+      "requested_model_id": "deepseek-v4.1-flash",
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "remote_backend_identity": "UNVERIFIED: response model alias is not proof of exact weights",
+      "oracle_planned_cases": 28,
+      "oracle_executed": false,
+      "sealed_code_sha256": null,
+      "predictions_correct": null,
+      "hidden_outputs_correct": null,
+      "oracle_process_exit": null,
+      "secret_scan": "CLEAN",
+      "result_sha256": "42719aae1b15d6839373a7c9b0a304e029794fa71c4a34635b03417e6bfe6f3c",
+      "provider_receipts_sha256": "3e754bf2bb28a935d19b071b34e2a40d5a8bf8dbe8039b9222ea66aaf1a46a8d",
+      "oracle_sha256": "d6f9f178a8b4594072f85427d1c49ac6b88705b6ae8096c20be2d87230861ab6"
+    },
+    {
+      "arm": "E",
+      "condition": {
+        "arm": "E",
+        "policy": "provider_default",
+        "output": 8192,
+        "host_facts": false
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "NOT_RUN",
+      "conditions_realized": true,
+      "host_facts": {
+        "status": "NOT_APPLICABLE",
+        "seconds": 0
+      },
+      "host_exit": 1,
+      "native_result_code": -1,
+      "native_error": "assistant stopped with length",
+      "effects_unknown": false,
+      "model_calls": 4,
+      "autonomous_binary_tool_ends": 4,
+      "total_wall_seconds": 40.042,
+      "final_finish_reasons": [
+        "length"
+      ],
+      "final_content_bytes": 0,
+      "final_reasoning_bytes": 17830,
+      "requested_model_id": "deepseek-v4.1-flash",
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "remote_backend_identity": "UNVERIFIED: response model alias is not proof of exact weights",
+      "oracle_planned_cases": 28,
+      "oracle_executed": false,
+      "sealed_code_sha256": null,
+      "predictions_correct": null,
+      "hidden_outputs_correct": null,
+      "oracle_process_exit": null,
+      "secret_scan": "CLEAN",
+      "result_sha256": "42f792cdc35f83f95ea9ee5124e39e4633e460d1fbf790775122fc5bc084fae3",
+      "provider_receipts_sha256": "cacee050367cdeb7b9aeb6e3610e1a5786bf6651090e1766475d150d52d06361",
+      "oracle_sha256": "d6f9f178a8b4594072f85427d1c49ac6b88705b6ae8096c20be2d87230861ab6"
+    }
+  ],
+  "real_reverse_successes": 0,
+  "trial_count": 5,
+  "review": {
+    "source_and_native": "independent Codex APPROVE scoped to contract",
+    "matrix_pre": "independent Codex APPROVE_SCOPED_PRE_EXEC",
+    "matrix_post": "APPROVE_SCOPED_EVIDENCE",
+    "matrix_post_sha256": "f849e9339cacb9ee3f16ea105a9003dbe41011c51327619f547fa792a2f1fc8d"
+  },
+  "supplemental_diagnostics": {
+    "B": "original batch oracle FAIL; separate isolated cases: 3 correct returns, 15 ValueError, 10 IndexError",
+    "D": "original oracle NOT_RUN and no seal; separately checked complete Python block returns 28/28 expected values; missing JSON prevents formal acceptance",
+    "formal_status_changed": false
+  },
+  "limits": [
+    "same original R1 specimen: mechanism diagnosis, not a new generalization benchmark",
+    "C/D Host facts are PARTIAL, so full-prefetch intervention was not realized",
+    "B Host success includes a complete but incorrect candidate; original batch oracle FAIL retained",
+    "request thinking field and measured reasoning bytes do not prove remote internal computation",
+    "requested catalog model ID and response alias are recorded separately; exact remote weights unverified",
+    "summary and agent calls share the budget but have separately checked wire contracts",
+    "raw provider/session evidence remains private; no reasoning text published",
+    "no OS sandbox, product, installation or general capability gain accepted"
+  ],
+  "documentation_bootstrap": "NOT_COMPLETED: scoped traversal manually stopped after about 97 seconds without a result",
+  "visual_acceptance": "NOT_COMPLETED: local file protocol previously denied; no workaround"
+}

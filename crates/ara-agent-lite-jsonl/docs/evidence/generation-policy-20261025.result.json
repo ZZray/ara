@@ -1,0 +1,217 @@
+{
+  "status": "BOUNDED_PUBLIC_POLICY_AND_EMPTY_REVIEW_MECHANISM_VERIFIED",
+  "overall_goal": "ACTIVE; 0/7 full requirements accepted",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "branch": "dev; preserved unrelated WIP",
+  "changes": [
+    "JSONL typed optional generation_policy; immutable model Host shared by all Task Runs",
+    "AI Code Review consumer example rejects empty patches with committed NeedsChanges rather than callback failure"
+  ],
+  "source": {
+    "source_inputs": 103,
+    "source_manifest_sha256": "8122e2fa8343296bb52f38c2853c1ddec8ea12cddcdafdf57f70be545524579b",
+    "image_sha256": "3633f5be7ea32b7cd0b4b0550ed397f6fac2b1e3bd9bbc6511d07560c7c2b815",
+    "previous_runtime_changes": [
+      "protocol.rs",
+      "runtime.rs",
+      "examples/ai_codereview_host.py"
+    ],
+    "core_runtime_unchanged": true,
+    "freeze_directory": "frozen-final-v2"
+  },
+  "controlled_policy": {
+    "passed": 7,
+    "elapsed_seconds": 22.421,
+    "artifact_count": 199,
+    "chat_http_requests": 11,
+    "catalog_http_requests": 5,
+    "native_processes": 7,
+    "driver_sha256": "e7ffa6c2b5e5fb4efdd94baf30dd1088547554fc617177823fa360cade0ed832"
+  },
+  "controlled_empty_patch": {
+    "baseline": "1 Run/1 call; no committed review; ReconciliationRequired/Present",
+    "fixed": "2 Runs/2 calls; two committed NeedsChanges; BudgetExhausted/Released; task_accepted false",
+    "checks_test_subprocesses": 0,
+    "baseline_driver_issue": "Inner callback message assertion was too specific; original exit1/log retained and original outcome independently checked, no baseline rerun."
+  },
+  "regressions": {
+    "compaction": {
+      "passed": 6,
+      "elapsed_seconds": 45.912
+    },
+    "length": {
+      "passed": 13,
+      "elapsed_seconds": 58.887
+    },
+    "native": {
+      "passed": 16,
+      "elapsed_seconds": 53.247
+    }
+  },
+  "rust": {
+    "jsonl-tests": {
+      "exit_code": 0,
+      "elapsed_seconds": 53.8841349
+    },
+    "jsonl-clippy": {
+      "exit_code": 0,
+      "elapsed_seconds": 17.1009195
+    },
+    "jsonl-doc": {
+      "exit_code": 0,
+      "elapsed_seconds": 1.3874981
+    },
+    "jsonl-build": {
+      "exit_code": 0,
+      "elapsed_seconds": 3.1763567
+    }
+  },
+  "dependencies": {
+    "policy": "existing standalone Core Lite deny.toml; unchanged, explicitly selected for this composed Lite stack",
+    "result": {
+      "policy": "existing standalone Lite policy",
+      "exit_code": 0,
+      "advisory_freshness": "unknown offline cache",
+      "policy_sha256": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+      "lock_sha256": "0e6690d3c8379bcd60011ad0e391511506afb5d395ec4f0ab11b80effd5f76b6"
+    },
+    "advisory_freshness": "UNKNOWN_OFFLINE_CACHE"
+  },
+  "actual_model": {
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "generation_policy": "thinking_type_disabled",
+    "elapsed_seconds": 69.88961601257324,
+    "fixture_head": "d5d5a8bc97f74fecfa6776bad2d2e0690389cb40",
+    "task_outcome": {
+      "task_id": "acr-historical-encoding-generation-disabled-v1",
+      "stop": "ReconciliationRequired",
+      "runs": 1,
+      "observed_calls": 24,
+      "last_candidate": null,
+      "last_receipt": null,
+      "detail": "Core/event completion cannot establish a settled ordinary candidate",
+      "task_accepted": false,
+      "reconciliation_fence": "\\\\?\\D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\jsonl-generation-policy-v1-20261025\\acr-live-policy-v1\\state\\.ara-lite-harness-59c637b9f5f0b5ccf3230df91157a427be4af9be37050ed8b3630c7c88d56886.fence.json",
+      "fence_presence": "Present"
+    },
+    "business_operations": {
+      "source_search": 12,
+      "source_read": 10,
+      "source_replace": 8,
+      "run_checks_executed": 2,
+      "run_checks_known_not_started": 1
+    },
+    "length_responses": 0,
+    "retries": 0,
+    "budget_enlarged": false,
+    "final_artifact_independent_evaluation": {
+      "exit_code": 0,
+      "test_count": 7,
+      "elapsed_seconds": 1.3642141819000244,
+      "source_sha256": "df8179a056eccd7185d6bb2dfe8565f4833902a16061726207a07d56e9d49b34",
+      "test_sha256": "e88eef7380190d08aa579989e10e98c5503bcdbf3a524fe5c71273e839b31c8c",
+      "patch_sha256": "19ceb2f49cfd37784b70bdafd55de9a634dd337115180db06409853fdc7e3689",
+      "files": [
+        "app/services/git_service.py"
+      ],
+      "original_artifacts_unchanged": true,
+      "original_task_status": "FAIL_RECONCILIATION_REQUIRED_BUDGET_EXHAUSTED_NO_CANDIDATE",
+      "evaluation_scope": "Independent evaluation of frozen final source, not a rerun of the model or original tool operation."
+    },
+    "interpretation": "Final code passes all seven fixed tests; original Task remains failed because last tool round exhausted call budget before an ordinary final Stop and Host review.",
+    "causality_limit": "Current image also includes earlier accepted points. This is not a single-variable ablation or a general capability success-rate comparison.",
+    "final_evaluation_provenance": {
+      "path": "acr-final-artifact-evaluation-v1/execution-provenance.json",
+      "sha256": "cc58af147b697d3f5711969f488badd7a32d5fac7b3f13f84fae3d8ff5c23f96",
+      "original_test_pid": "not captured",
+      "runtime_exe_hash": "current snapshot after evaluation; not pre-execution pin"
+    },
+    "usage_observation": {
+      "logical_results": 24,
+      "source": "provider_adapter_not_raw_presence_or_billing",
+      "cost": null,
+      "cost_status": "unknown",
+      "physical_upstream_attempts": "not captured by this direct route",
+      "input_uncached_tokens": {
+        "positive_report_count": 24,
+        "known_positive_sum": 41235,
+        "all_result_total": 41235,
+        "missing_or_zero": "unknown_or_reported_zero_not_distinguishable"
+      },
+      "output_tokens": {
+        "positive_report_count": 24,
+        "known_positive_sum": 4612,
+        "all_result_total": 4612,
+        "missing_or_zero": "unknown_or_reported_zero_not_distinguishable"
+      },
+      "adapter_total_tokens": {
+        "positive_report_count": 24,
+        "known_positive_sum": 523543,
+        "all_result_total": 523543,
+        "missing_or_zero": "unknown_or_reported_zero_not_distinguishable"
+      },
+      "cache_read_tokens": {
+        "positive_report_count": 24,
+        "known_positive_sum": 477696,
+        "all_result_total": 477696,
+        "missing_or_zero": "unknown_or_reported_zero_not_distinguishable"
+      },
+      "cache_write_tokens": {
+        "positive_report_count": 0,
+        "known_positive_sum": 0,
+        "all_result_total": null,
+        "missing_or_zero": "unknown_or_reported_zero_not_distinguishable"
+      }
+    }
+  },
+  "product_boundary": {
+    "current_local_head": "46b4c3844e6d22db3452d05ec5a6f17578c44dfb",
+    "current_head_already_fixes_historical_bug": true,
+    "product_source_modified": false,
+    "product_has_native_agent_tool_loop": true,
+    "current_relay_drops_thinking_field": true,
+    "current_pin_migrated": false,
+    "production_database_queue_review_release": "NOT_RUN",
+    "source_audit": "stage/ai-codereview-integration-audit.json"
+  },
+  "reviews": {
+    "source_execution": {
+      "decision": "ACCEPT_SCOPED_JSONL_GENERATION_POLICY_AND_KNOWN_EMPTY_PATCH_FEEDBACK",
+      "path": "stage/source-execution-post-review.json",
+      "sha256": "c1cd0fe6ae6205b65b48f6b37537e9073f97bec30085dde6672ada65490136ee"
+    },
+    "live_pre": {
+      "path": "stage/acr-live-policy-pre.json",
+      "sha256": "a4ae9a3fe48fcc0159c981aba2192f411320ae3362d7ce7d0d87a3ff0b67dc64"
+    },
+    "live_post": {
+      "path": "stage/acr-live-policy-execution-post.json",
+      "sha256": "5c343ddecbbba93c1ba70be6de946c4bfcf6ab91bbfffe08b3d4788b1de1ebbb",
+      "decision": "ACCEPT_OBSERVED_TASK_FAILURE_AND_SEPARATE_FROZEN_ARTIFACT_7_TEST_PASS",
+      "independently_hashed_artifacts": 954
+    },
+    "point_audit": {
+      "path": "stage/point-delivery-audit.json",
+      "sha256": "5fef96a282552084e1eff7a0ee0373de3e23acb45cdd9f7e8cc3ca7bce500c4a",
+      "decision": "ACCEPT_SCOPED_JSONL_GENERATION_POLICY_AND_KNOWN_EMPTY_PATCH_FEEDBACK",
+      "reviewer": "Independent Codex public_context_maintenance",
+      "reviewed_result_before_pointer_sha256": "d510758bce809a6407a331baa14f2dd6bb29163fc270fe64f79f1aaa4d255831"
+    }
+  },
+  "next_point": "Independent design review of typed Core terminal cause plus explicit Host review of a closed call-budget snapshot. No implementation yet; do not classify arbitrary code -1 or error strings as success.",
+  "limits": [
+    "Windows executed profile only",
+    "Current product Relay and pinned runtime not migrated",
+    "Source-only coding task: no independent model review or release acceptance",
+    "Original Task fences retained; no failed Session resumed/replayed",
+    "Visual acceptance NOT_RUN after earlier explicit browser policy refusal",
+    "No commit, push or deployment"
+  ],
+  "private_evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\jsonl-generation-policy-v1-20261025",
+  "scoped_static_checks": {
+    "root_receipt": "root-final-checks.json",
+    "status": "PASS",
+    "visual": "NOT_RUN"
+  }
+}

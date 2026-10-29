@@ -1,0 +1,1173 @@
+{
+  "title": "Agent Core 编码与逆向能力增强",
+  "subtitle": "Full公共入口已完成原多文件C++及同58项独立重编；逆向、稳定收益与发布仍未验收。",
+  "brand": "ARA · Agent Core",
+  "date": "2026-10-23",
+  "sections": [
+    {
+      "id": "conclusion",
+      "title": "增强方向",
+      "blocks": [
+        {
+          "type": "callout",
+          "title": "整体目标仍在进行",
+          "tone": "warning",
+          "text": "整体目标继续。原Full公共入口S3多文件C++任务已限定通过原58项与独立重编；公共层已有显式有界长度续作，该阶段39项检查通过。本轮再完成文本连续性消费示例：当前包52项通过，真实模型双进程累计8次调用、两进程合计18.56秒。新长度功能的真实模型恢复尚未执行。此前Lite失败、Full首轮Length与第二轮off预算失败全部保留；真实逆向、通用稳定收益、产品和依赖审计仍未验收。"
+        },
+        {
+          "type": "paragraph",
+          "text": "Core 本身用 Rust 实现。当前编码验收题用 C++，检查跨文件修改、真实编译和测试反馈；静态逆向题使用自有 C 程序编译的去符号样本，尚未验证 C++ 对象模型、虚表或异常处理的逆向。"
+        },
+        {
+          "type": "paragraph",
+          "text": "编码能力需要模型理解需求、定位代码、生成修改并解释执行反馈；运行框架负责把这些步骤连起来。操控能力提供观察和行动入口，其价值取决于能否拿到足够证据、准确修改目标，以及检查实际结果。强模型、可靠工具、适当上下文和验证环境共同决定表现，公开资料不足以把 Claude 的优势归因到某一个组件。"
+        },
+        {
+          "type": "paragraph",
+          "text": "逆向分为源码理解、黑盒行为或协议推导、二进制分析。前两类可以大量复用编码工具；二进制分析还需要反汇编、反编译和调试后端。工具给出观察，模型提出假设并选择区分实验，留出输入和运行结果检查推断是否成立。安装了分析工具，不能直接认定 Agent 已具备可靠逆向能力。"
+        },
+        {
+          "type": "callout",
+          "title": "本次交付范围",
+          "text": "保留现有编辑、Run/Job、权限及完整版 OMP 基线。独立 Lite 依次增加普通进程输出归档、可选源码定义和 GNU 静态观察，以及宿主显式生成策略。接口、模型采用、任务产物和稳定收益分别验收。",
+          "tone": "note"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "今天已有的完整研究",
+              "href": "coding-reverse-research-20261022.html"
+            },
+            {
+              "label": "已有 0.1.1 版本化编辑验证",
+              "href": "coding-edits-20261022.md"
+            },
+            {
+              "label": "Anthropic：Claude Code 的工作方式",
+              "href": "https://code.claude.com/docs/en/how-claude-code-works"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "seven-goals",
+      "title": "七项目标的当前验收状态",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "按用户新设总目标推进。七项均尚未整体验收；已有实现、单个任务通过和模块机制验证分别保留，不换算总进度百分比。先补公共入口、上下文续作、自主纠错和模型预算协同，再集中扩展陌生编码与逆向样本。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "目标",
+            "已有证据",
+            "剩余验收"
+          ],
+          "rows": [
+            [
+              "1 公共入口",
+              "Full公共工作流与外部消费者已执行",
+              "完整支持面与Native Graph接线，明确Full/Lite支持范围"
+            ],
+            [
+              "2 上下文与知识召回",
+              "真实模型：压缩后由新进程恢复同Session，回读原纠正及知识正文，产物通过；8次调用/18.56秒",
+              "通用公共恢复接口、上下文选择、广泛知识检索、长历史与Full/Lite支持"
+            ],
+            [
+              "3 自主推进与纠错",
+              "原S3第二轮真实有来源反馈续作",
+              "不同陌生任务中的无进展识别、假设修正及有效换路"
+            ],
+            [
+              "4 模型、工具、预算协同",
+              "参数合同与本轮有界长度机制已测",
+              "真实模型长度恢复及多模型任务验证"
+            ],
+            [
+              "5 可泛化编码",
+              "一个多文件C++样本原58项通过",
+              "多类陌生工程与新留出检查"
+            ],
+            [
+              "6 静态逆向",
+              "可运行的有界静态观察；旧语义失败保留",
+              "反编译、xref、正确重建与C++对象/虚表样本"
+            ],
+            [
+              "7 增强收益证明",
+              "固定版本、预算和独立oracle已有",
+              "同模型同任务同预算成对结果；具备条件再做Claude对照"
+            ]
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "上一轮长度续作阶段39项记录",
+              "href": "../../../../docs/evidence/core-workflow-20261023.html#length-continuation"
+            },
+            {
+              "label": "本轮连续性13项与当前包52项检查",
+              "href": "../../../../docs/evidence/core-workflow-20261023.html#continuity"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "continuity-stage",
+      "title": "文本压缩后的双进程续作",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "真实模型已完成一次有界连续性试验：新进程和新Agent恢复同一Session的受检文本上下文，回读原用户纠正、读取索引及知识正文，生成正确文件。两个进程累计8次逻辑调用、18.56秒，沿用原16次/600秒预算。受控双进程与13项故障/来源检查也通过；当前包共52项通过。"
+        },
+        {
+          "type": "paragraph",
+          "text": "该试验使用两份预先授予的知识文件，证明已有公共接口可以组合完成这一场景。通用知识检索、长任务稳定性、公共通用恢复入口、原Agent原生恢复、编码和逆向收益仍未验收。真实模型使用了原始纠正回读，摘要保真与原文回读分别记录。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "双进程原件、审核和范围",
+              "href": "../../../../docs/evidence/core-workflow-20261023.html#continuity"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "analysis-stage",
+      "title": "第二批：源码导航与静态分析实测",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "宿主显式注册 source_symbols 和 binary_inspect，默认工具集不变。前者使用 Ctags 查询单文件定义；后者使用 GNU objdump/nm 获取 headers、symbols 和指定 VMA 范围的反汇编，不执行样本。输入写入独立快照，结果绑定输入和后端哈希，并保留原始双流和分页覆盖。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "验证",
+            "实际结果",
+            "边界"
+          ],
+          "rows": [
+            [
+              "编译与检查",
+              "fmt、Clippy -D warnings、193 单测、3 公开接口检查通过",
+              "原公网测试 1 项 ignored；doc 0 项；offline deny 通过且保留已有 warnings"
+            ],
+            [
+              "真实 Host 与后端",
+              "修正版 23/23，通过时间 46.147 秒",
+              "原批 15/23 与 8 项失败保留；只接受当前 Windows 后端和自有样本"
+            ],
+            [
+              "既有行为回归",
+              "输出归档 6/6；版本化编辑 4/4",
+              "分别核原件、哈希、进程和修改产物；不代表产品发布验收"
+            ],
+            [
+              "独立复审",
+              "Codex 源码 POST 与原生 EXEC 通过",
+              "模型任务的完整 POST 和实施点总验收仍需单独判断"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "真实测试暴露了 Windows 路径兼容问题：Ctags 对同一份 verbatim 路径可能退出 0 却没有定义，GNU 工具则报文件不存在。独立同对象对照定位后，修复保留宿主提供的可用目录表示、核对 canonical 身份，并在该目录使用固定 ASCII 快照名。另一个已修问题是单条记录在 JSON 转义后超出整页预算，导致空页游标不前进；现在明确失败并保留收据。"
+        },
+        {
+          "type": "subheading",
+          "text": "六次固定真实模型试验"
+        },
+        {
+          "type": "paragraph",
+          "text": "模型均为当前同一 CAS 路由的 deepseek-v4.1-flash、openai-completions，每侧独立 Session，相同任务字节、基础工具和输出预算。源码任务各最多 24 次调用／600 秒，逆向各最多 28 次／720 秒，输出上限均为 4096。旧失败不重放，也不改写固定 oracle。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "任务／条件",
+            "固定检查与状态",
+            "调用／秒",
+            "新增工具采用"
+          ],
+          "rows": [
+            [
+              "S1／base",
+              "13/13 固定用例通过",
+              "12／66.836",
+              "基线未注册"
+            ],
+            [
+              "S1／new",
+              "13/13 固定用例通过",
+              "15／67.771",
+              "未调用"
+            ],
+            [
+              "S2／base",
+              "35/35 固定用例通过",
+              "14／43.451",
+              "基线未注册"
+            ],
+            [
+              "S2／new",
+              "35/35 固定用例通过",
+              "16／91.119",
+              "未调用"
+            ],
+            [
+              "R1／base",
+              "输出 length；无完整提交；28 例未执行",
+              "4／31.038",
+              "基线未注册"
+            ],
+            [
+              "R1／new",
+              "输出 length；无完整提交；28 例未执行",
+              "3／25.051",
+              "未调用"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "两个源码任务的新工具版本都未调用 source_symbols，因而工具采用判据未通过，不能把任务通过归因为新增接口。补充的三项非法六位字段检查还发现：只有 S1 新方案正确拒绝，其他三侧沿用了原解析器缺口。补充检查与原 13／35 项结果分账；它反映自发修改和测试差异，也不证明工具收益。"
+        },
+        {
+          "type": "paragraph",
+          "text": "R1 两侧的最后一次响应都没有最终正文，4096 completion tokens 全部计入 reasoning，finish_reason 为 length。28 个重建用例因此尚未执行。当前普通 Run 的 ThinkingLevel::Off 在固定 rpi adapter 中只意味着省略 reasoning_effort，wire 没有显式关闭 thinking。现有摘要调用有单独处理，不能据此认定普通调用也已关闭。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "第二批安全摘要与源码／镜像指纹",
+              "href": "coding-reverse-analysis-20261023.result.json"
+            },
+            {
+              "label": "宿主分析接口",
+              "href": "../ai-integration.md#53-可选源码符号与静态二进制分析"
+            },
+            {
+              "label": "DeepSeek 官方 thinking 协议",
+              "href": "https://api-docs.deepseek.com/guides/thinking_mode/"
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "title": "后续诊断",
+          "tone": "warning",
+          "text": "显式生成策略已完成受控原生测试，五个新的单次真实试验均未通过重建验收，详见第三批记录。旧六次源码与逆向试验保持原样。thinking-enabled 工具历史回放仍未验收。"
+        }
+      ]
+    },
+    {
+      "id": "generation-policy-stage",
+      "title": "第三批：生成策略与五条件逆向诊断",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "宿主可通过 ModelHost 的纯配置入口显式发送 thinking.type=disabled。默认请求不变，不透传任意 JSON，不按模型名自动套用。有效输出仍取宿主请求、目录解析上限和本地 8192 上限的最小值；摘要保留既有配置与最多 4096 的预算，按 phase 单独核对。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "实际结果",
+            "覆盖范围"
+          ],
+          "rows": [
+            [
+              "构建与回归",
+              "198 单测、3 公开接口检查、fmt、Clippy 和 Host 构建通过",
+              "原公网测试 1 项 ignored；doc 0 项；offline deny 保留已有 warnings"
+            ],
+            [
+              "受控原生策略",
+              "8/8 PASS；静态分析回归 23/23 PASS",
+              "默认兼容、两轮工具、预算裁剪、length 与未知策略拒绝；不证明模型能力"
+            ],
+            [
+              "试验判定器",
+              "30 项正反检查 PASS；零调用前修订计划并重封",
+              "区分主任务／摘要，首个 Agent 请求核 brief；条件和 28 例 oracle 不变"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "五组使用同一原样本、同一工具集和同一目录请求 ID deepseek-v4.1-flash，服务响应回显为 deepseek-flash；已分别记录，远端权重身份未核实。每组一个全新 Session，各运行一次，最多 28 次调用、720 秒；宿主取证耗时从这一预算扣除。所有终态均保留，未重放失败。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "条件",
+            "实际结果",
+            "调用／秒",
+            "分析工具"
+          ],
+          "rows": [
+            [
+              "A／默认 4096",
+              "length；无完整提交；28 例未执行",
+              "5／23.268",
+              "2 次结束回执"
+            ],
+            [
+              "B／关闭思考 4096",
+              "完整提交；28 例执行失败",
+              "5／19.918",
+              "4 次结束回执"
+            ],
+            [
+              "C／默认 4096＋宿主事实",
+              "length；无完整提交；28 例未执行",
+              "3／22.647",
+              "0 次结束回执"
+            ],
+            [
+              "D／关闭思考 4096＋宿主事实",
+              "length；无完整提交；28 例未执行",
+              "5／25.927",
+              "2 次结束回执"
+            ],
+            [
+              "E／默认 8192",
+              "length；无完整提交；28 例未执行",
+              "4／40.042",
+              "4 次结束回执"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "C/D 的反汇编首份材料超过单页，宿主三次查询仅形成 PARTIAL 事实，精确 brief 已实际进入请求。因此这两组没有验收完整事实预取。B 的普通 Host 返回成功，但候选对错误输入抛异常，且把机器指令中的相邻字节偏移读错，实际隐藏检查失败。框架完成和重建正确必须分别判断。"
+        },
+        {
+          "type": "paragraph",
+          "text": "独立复核对 B 的现成候选另做逐例诊断，得到 3 项正确返回、15 项 ValueError、10 项 IndexError；原批量检查仍为 FAIL。D 的完整 Python 块另行诊断符合 28 项，但没有完整预测 JSON、没有正式封存，原 oracle 仍为 NOT_RUN。这些补充观察用于定位失败，不改变任务状态。"
+        },
+        {
+          "type": "callout",
+          "title": "当前结论与下一步",
+          "tone": "warning",
+          "text": "B/D 的响应中可见 reasoning 均为 0 字节，reported reasoning tokens 缺失时保留未知。B 形成完整但错误的提交，D 缺少完整预测 JSON。默认策略增加到 8192 仍在提交前 length。继续使用已封存的不同算法留出样本，核对模型、证据覆盖与交付长度，不从同题单次结果推导通用增益。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "第三批安全摘要与指纹",
+              "href": "coding-reverse-policy-20261023.result.json"
+            },
+            {
+              "label": "宿主显式生成策略接口",
+              "href": "../ai-integration.md#54-宿主显式生成策略"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "holdout-stage",
+      "title": "不同算法的 128 例静态留出题",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "新样本采用不同的 CRC、16 位运算和字节混合算法，公共材料仍只有 README、去符号样本及完整 hex 镜像。80 个有效输入、48 个非法输入预先封存；独立 C/Python 参考和非作者实现均重算一致，7 个错误变体被拒绝。样本 2560 字节、实际含指令的反汇编为 138 行；不把这一小题视为复杂程序逆向。"
+        },
+        {
+          "type": "paragraph",
+          "text": "两组使用同一工具集与任务要求，优先交付完整代码和预测，再给不超过 1200 字符的指令解释。每组最多 28 次调用、720 秒、8192 输出额度。模型和策略同时变化，结果只说明各自配置下的观察；四个公开预测输入也在 128 个评估输入中，不另计四个独立样例。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "请求配置",
+            "实际结果",
+            "调用／秒",
+            "任务状态"
+          ],
+          "rows": [
+            [
+              "H2-D／deepseek-v4.1-flash／disabled",
+              "完整提交；48/128，四预测错误",
+              "11／28.676",
+              "FAIL；有效输入 0/80"
+            ],
+            [
+              "H2-G／gpt-6.1-sol／默认",
+              "第三次请求服务过载；无提交",
+              "3／49.73",
+              "NOT_RUN；不判断算法能力"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "H2-D 的 7 份成功分析回执绑定了实际样本，取得的地址覆盖全部保留反汇编行。候选却把 CRC 覆盖范围读错，并误译了状态与结果计算。工具成功和证据取全仍不能证明理解正确；该组解释也超过规定长度。"
+        },
+        {
+          "type": "paragraph",
+          "text": "H2-G 终止于服务端过载，前两轮另有四次工具错误：读文件同时填入互斥的快照、范围和尾部参数，分析 headers/symbols 又填入不适用的 VMA 与虚构指纹。正在核对 schema、参数解析和上游转换；当前只确认现象，尚未将根因归给模型或服务。旧失败不重放，也不放宽冲突参数的保护。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "留出题安全摘要与固定指纹",
+              "href": "coding-reverse-holdout-20261023.result.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nullable-stage",
+      "title": "可选 null 参数的原生调用契约",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "read_file、source_symbols 和 binary_inspect 的可选字段可用 null 表示未使用。每个工具只移除自己的可选字段白名单，随后执行原解析。必填字段和未知字段不被这一处理吞掉；非空冲突、错误指纹和分页保护仍在。编辑及其他工具不变。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "验证",
+            "结果",
+            "边界"
+          ],
+          "rows": [
+            [
+              "最终源码检查",
+              "203 单测、3 公开接口测试及 fmt／Clippy／构建通过",
+              "1 原公网测试 ignored；offline deny 保留既有 warnings"
+            ],
+            [
+              "真实 Host 契约",
+              "6 个逻辑组、35 项工具检查已覆盖",
+              "由首批 5 个 PASS 组与单独 1 个恢复组组成；首批 FAIL 保留"
+            ],
+            [
+              "既有原生回归",
+              "分析 23／策略 8／归档 6／编辑 4 全通过",
+              "同一固定 v6 Host 和最终源码指纹；均为受控 provider"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "首批的非空冲突组在第四次本地 HTTP 请求时连接失败，provider 未收到该请求。没有改运行时或测试期望，只用新目录、会话和端口补验这一组，4 项工具检查通过。旧整批结果仍为 FAIL，不将其改写为一次全通过。源码期间还修正了一条旧单测期望；输入漂移的 v5 构建未接受，重新固定的 v6 检查通过。"
+        },
+        {
+          "type": "paragraph",
+          "text": "固定 rpi 会移除旧 schema 不接受的 optional null；schema 改成 nullable 后，它会保留 null，所以必须同时处理工具局部解析。当前仅证明这条调用契约。实际模型是否选择 null、上游是否进行了 strict 转换，以及是否改善真实任务，都另行验证。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "nullable 契约证据与边界",
+              "href": "coding-nullable-20261023.result.json"
+            },
+            {
+              "label": "接入参数说明",
+              "href": "../ai-integration.md#55-读取与分析工具的可选-null-参数"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stream-cpp-stage",
+      "title": "C++ 多文件修复：两组均未通过",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "题目是 14 个源码和头文件、428 行的 C++17 CSV 流式导入器。report 的有限 EOF 应提交合法尾记录；follow 的暂时 idle 必须保留半行、引号及 CRLF 状态，CLOSE 才最终收尾。公开 10 项与留出 48 项检查已经独立审查，初始代码分别通过 7 项和 10 项。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "条件",
+            "实际模型调用 / Host 耗时",
+            "干净重编译后的公开测试",
+            "留出检查",
+            "符号工具采用"
+          ],
+          "rows": [
+            [
+              "基础工具",
+              "32 次 / 109.037 秒",
+              "5/10",
+              "4/48",
+              "未注册"
+            ],
+            [
+              "增加 source_symbols",
+              "31 次 / 118.303 秒",
+              "0/10",
+              "0/48",
+              "0 次"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "两组均请求 deepseek-v4.1-flash、disabled 思考策略及 8192 输出预算。请求和原计划写 40 次调用，但示例 Host 将其限制为 32；实际请求中的预算观察也明确显示 32。此处是 harness 与 PRE 漏核的条件声明偏差，按请求值和实际值分别记录；不覆盖旧计划，也不重放两臂。响应别名和远端权重仍未确认。"
+        },
+        {
+          "type": "paragraph",
+          "text": "基础组过度改写解码状态机，破坏了引号内容、最终未闭合引号和带加号金额。符号工具组把负号移除后交给 from_chars，导致最小 int64 的 CLI 参数变成越界正数；44 项留出检查在参数解析阶段失败，其余 4 项也未通过行为检查。独立评估从封存源码复制到新目录重新编译，复现了这些失败；旧对象文件不能解释交付源码的结果。"
+        },
+        {
+          "type": "paragraph",
+          "text": "63 次实际调用均为 agent 调用，没有 summary。两组都收到了真实编译或测试反馈，并明确报告未完成。Host 和 Run 返回 0，只说明调用正常结束。两组均未调用 source_symbols，也未观察到可选 null 参数，因此本轮不能证明这两项增强的实际收益。"
+        },
+        {
+          "type": "paragraph",
+          "text": "独立 PRE 先后发现仅凭 Host 终态可能漏掉进程未知副作用及全局取消，修复后 44 项受控自测通过。原两个阻断版本和零调用修订记录均保留。当前门禁覆盖五类本地副作用工具与已知原生未知状态，不证明任意外部副作用可观察或具备操作系统隔离。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "C++ 任务结果、版本指纹与验证边界",
+              "href": "coding-stream-cpp-20261023.result.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core-workflow-stage",
+      "title": "Core 上层公共库：限定实测通过，审计开放",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "按用户明确的边界，增强主体是 Agent Core。新增 ara-workflow 公共 Rust library，直接复用 Full Core 的同一个 Agent；外部程序通过库入口启动、等待和取消工作流。测试 harness 只提供验收证据。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "模块",
+            "当前进度",
+            "可观察完成标准"
+          ],
+          "rows": [
+            [
+              "公共库",
+              "已实现；15 项机制检查通过，含来源落盘补测",
+              "真实 Agent、受控 HTTP、WriteTool、SessionJournal 和普通进程完成失败反馈后修复"
+            ],
+            [
+              "对外接入",
+              "库外 Rust package 编译通过；真实模型小题 4 请求、1 轮、29/29",
+              "只覆盖该调用与产物，不替代原多文件任务"
+            ],
+            [
+              "终态与恢复",
+              "真实 Length 共享消息攻击先红后绿；丢等待者后保留控制句柄可恢复 fence",
+              "Host 仍负责结算真实性、Session 独占与最终 Task 审核"
+            ],
+            [
+              "审计缺口",
+              "带依赖 Clippy 与依赖审计仍失败",
+              "新包范围 Clippy 通过；保留既有 ara-rpc / rustls / Wasmtime 等诊断，不发布"
+            ],
+            [
+              "后续接线",
+              "CLI Native Graph、Full/Lite 统一、跨进程恢复开放",
+              "各自需要实现和独立验收"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "只有 Run Completed、真实末次 assistant 为 Stop，且 Host 回执已结算、已提交并匹配工作流、Session 代次、attempt、验收条件和产物证据，才允许 NeedsChanges 反馈进入下一 Run。Length、Error、Unknown 和过期回执停止续作。Verified 表示产物检查通过，Task 仍等待 Host 审核。"
+        },
+        {
+          "type": "paragraph",
+          "text": "已结束的供应商默认思考诊断共 11 次模型调用，末次 length；Host exit 1、native code -1。18 个原始文件均未变化，独立重编译仍为公开 7/10、留出 10/48。响应显式报告 reasoning_tokens 合计 19,879，观察到 reasoning 文本 77,240 UTF-8 bytes；32 次根调用和 900 秒额度未耗尽。此结果只支持该次诊断失败，不能据此断言默认思考普遍无效。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "公共库进度与默认策略诊断回执",
+              "href": "core-workflow-20261023.progress.json"
+            }
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Full Core 公共库的完整实现与验收",
+              "href": "../../../../docs/evidence/core-workflow-20261023.html"
+            },
+            {
+              "label": "公共库调用说明",
+              "href": "../../../ara-workflow/README.md"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "s3_progress": true,
+          "text": "原S3已通过公共入口正常提交与Host完整验收，默认思考18请求/1candidate；同58项独立重编也通过。真实同Session失败反馈在第二轮已实际验证，但该轮最终预算失败，不能合并称成功修复轮。Core、公共workflow、Host策略与harness证据继续分层记录。"
+        },
+        {
+          "type": "paragraph",
+          "length_progress": true,
+          "text": "上一轮公共typed工作流增加可选Length结算续作，该阶段39项检查通过，外部workspace消费者实际运行；这是公共层机制证据，不是新真实编码题或逆向通过，也不构成Full/Lite统一。"
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "title": "Claude 与开源 Agent 的可借鉴设计",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Anthropic 官方文档把 Claude Code 描述为模型之外的运行框架：收集上下文、采取行动、验证结果，再根据观察继续。上下文工程文章强调按需取证和清晰工具，长期任务文章讨论增量产物和跨会话延续，评估文章要求区分轨迹与最终环境结果。这些资料支持闭环设计，不能证明任何特定提示词或工具数量是能力优势的唯一原因。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "参考",
+            "本次固定版本或检索日期",
+            "采用内容",
+            "限制"
+          ],
+          "rows": [
+            [
+              "Claude Code / Agent SDK 官方文档",
+              "2026-10-22",
+              "动作、观察、验证循环；会话、工具、上下文和权限配合",
+              "未取得闭源引擎或训练实现，不能复刻模型能力"
+            ],
+            [
+              "mini-SWE-agent",
+              "04d809ceab9df28f9adaed044884180159172930",
+              "少工具的完整循环、预算、错误和轨迹，作为复杂增强的基线",
+              "bash-only 不代表足以处理所有 Windows/GUI/调试任务"
+            ],
+            [
+              "Aider",
+              "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+              "有 token 预算的 repo map；把 lint/test 反馈交回模型",
+              "依赖图摘要与源码事实不同，必须保留回读入口"
+            ],
+            [
+              "OpenHands software-agent-sdk",
+              "4b8cb431a66c1f4b813d6c9c0181ce63a4e30d0a",
+              "SDK、执行服务和宿主分层，类型化工具和工作区",
+              "本次未运行其完整产品，不做性能排名"
+            ],
+            [
+              "Codex",
+              "2a77e82f09212c9e1bbf02656afca5d8172c5f9e",
+              "apply_patch 的效果记录及失败后的部分变更处理",
+              "单个工具源码观察不能外推全部工具行为"
+            ],
+            [
+              "Gemini CLI",
+              "09d81bf116b6f0ef084731dc996aa9d56438bb70",
+              "工作区与会话 checkpoint 的可恢复思路",
+              "恢复文件不能撤销任意进程、网络和硬件副作用"
+            ],
+            [
+              "OpenCode",
+              "248bfbe1117da1e7cc23bd41273188318afec3a5",
+              "LSP/MCP/自定义工具及按 Agent 配置能力",
+              "工具许可不是 OS 沙箱，更多工具不等于更高成功率"
+            ],
+            [
+              "pi / OMP",
+              "pi 58c0b02ce552adab76014e7ed712ab7981359aa8；OMP 调研快照 3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+              "小 Core、扩展接口、原始日志与模型投影分离、可靠编辑",
+              "调研 HEAD 不推进本仓库 omp.lock；不引用营销倍率作为 ARA 收据"
+            ]
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "官方上下文工程",
+              "href": "https://www.anthropic.com/research/effective-context-engineering-for-ai-agents"
+            },
+            {
+              "label": "官方长期任务运行框架",
+              "href": "https://www.anthropic.com/research/effective-harnesses-for-long-running-agents"
+            },
+            {
+              "label": "官方 Agent 评估方法",
+              "href": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents"
+            },
+            {
+              "label": "mini 固定执行循环",
+              "href": "https://github.com/SWE-agent/mini-swe-agent/blob/04d809ceab9df28f9adaed044884180159172930/src/minisweagent/agents/default.py"
+            },
+            {
+              "label": "Aider repo map",
+              "href": "https://aider.chat/docs/repomap.html"
+            },
+            {
+              "label": "OpenHands 固定 README",
+              "href": "https://github.com/OpenHands/software-agent-sdk/blob/4b8cb431a66c1f4b813d6c9c0181ce63a4e30d0a/README.md"
+            },
+            {
+              "label": "Codex 固定 patch runtime",
+              "href": "https://github.com/openai/codex/blob/2a77e82f09212c9e1bbf02656afca5d8172c5f9e/codex-rs/core/src/tools/runtimes/apply_patch.rs"
+            },
+            {
+              "label": "OpenCode 工具文档",
+              "href": "https://opencode.ai/docs/tools/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "local-reference",
+      "title": "本地 Claude Code 恢复项目的来源边界",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "用户提供的 D:/Download/claude-code-main/claude-code-main 是 claude-code-best 2.8.4，README_EN 自称逆向或反编译恢复；目录没有 .git，无法给提交 SHA，根目录也未发现可覆盖整仓的许可证。AGENTS.md 说明有 stub 和受 feature flag 关闭的模块。本次只研究可核验行为，不执行其安装脚本、不调用 Claude、不复制恢复代码。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "源码位置",
+            "观察",
+            "ARA 取舍"
+          ],
+          "rows": [
+            [
+              "src/services/tools/toolOrchestration.ts:39-130",
+              "按实际输入判断并发安全，安全调用成批，其他调用串行",
+              "先明确效果与资源冲突，再优化并行；不改当前 Lite 单写者循环"
+            ],
+            [
+              "packages/builtin-tools/src/tools/FileEditTool/FileEditTool.ts:283-337,438-480",
+              "读取失效检查、唯一匹配、写前再检查、编码换行保留",
+              "复用本仓库 0.1.1 哈希绑定与多块编辑，不另建编辑引擎"
+            ],
+            [
+              "src/services/compact/compact.ts:1467-1586",
+              "压缩后从磁盘重读最近文件，并恢复对应 Agent 的已用 Skill",
+              "保留原始证据与版本，重新观察当前文件，不把旧摘要当当前源码"
+            ],
+            [
+              "src/query.ts:1298-1338；AgentTool/resumeAgent.ts:64-82",
+              "取消后的调用配对；缺原 transcript 时拒绝；另有 cwd 回退注释",
+              "保留原身份与未知效果；不采用会改变目标身份的静默回退"
+            ],
+            [
+              "verificationAgent.ts:42-90,139-145",
+              "独立验证角色要求命令、输出与预期对比",
+              "可借鉴审查职责；提示词和工具 denylist 不能证明 OS 只读或验收通过"
+            ]
+          ]
+        },
+        {
+          "type": "facts",
+          "items": [
+            {
+              "label": "package.json SHA256",
+              "value": "af4e76703f3b79ec17a23b15569974af8037f75cf4564041938b289d73980a0b"
+            },
+            {
+              "label": "src/query.ts SHA256",
+              "value": "6e06e02885411a93af15096a2cba949c0a273e3ae9ccdaed17cb97b16fd9a9db"
+            },
+            {
+              "label": "FileEditTool.ts SHA256",
+              "value": "420f9793b9af722659b6ace7930dd52701afac85898c4e3c30723e3b4438be27"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capabilities",
+      "title": "24 项能力采用清单",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Full 指根 workspace 的 ARA/OMP；Lite 指 crates/ara-agent-lite-core 独立 workspace。两套 AgentTool、schema 和消息类型不同，复用算法、DTO 或薄适配，不把完整版 CLI 整体引入 Lite。表中“已有”只说明当前源码可见，本次执行范围以验证记录为准。原研究的 0.1.0 缺口保留为历史基线，不能覆盖今天已有的 0.1.1 编辑实现。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "能力",
+            "当前状态",
+            "采用方式与可观察验收"
+          ],
+          "rows": [
+            [
+              "01 行动循环和宿主能力注入",
+              "Full/Lite 已有；Lite extra_tools、ModelHost",
+              "沿当前接口注入工具；两个宿主的身份、路径、能力不得串用"
+            ],
+            [
+              "02 路径、搜索和局部读取",
+              "Lite 已有 find_files/search_files/read_file",
+              "复用分页与覆盖声明；中文、大文件、跳过目录和空结果不能造成错误的全局结论"
+            ],
+            [
+              "03 符号摘要与 repo map",
+              "Full 有文件摘要；Lite 新增可选单文件 Ctags 定义，机制已测",
+              "不替代 repo map；真实源码试验尚未证明采用或节省"
+            ],
+            [
+              "04 AST 搜索和编辑",
+              "Full 有执行实现；Lite 未接",
+              "先接可选结构搜索；区分代码、注释、字符串，错误语言明确失败"
+            ],
+            [
+              "05 定义、引用和调用导航",
+              "Full 有 LSP owner/request；Lite 可选定义查询已测，引用与调用未补齐",
+              "复用文档版本与进程池，补受限查询；跨文件位置必须匹配当前磁盘版本"
+            ],
+            [
+              "06 版本绑定、多块编辑和 diff",
+              "Lite 0.1.1 已有；Full 有多编辑模式",
+              "复用当前实现；旧 SHA、重叠、后块失败不误写，I/O 部分效果保持 unknown"
+            ],
+            [
+              "07 写后诊断与格式化",
+              "Full 有；Lite 未接",
+              "可选后端返回当前文件版本的诊断；延迟结果不得归到后续修改"
+            ],
+            [
+              "08 显式脚本、构建和测试",
+              "Lite 已有四种解释器和真实进程生命周期",
+              "复用执行器；缺解释器、非零退出、取消保持失败，检查真实产物"
+            ],
+            [
+              "09 长输出原件和有界摘要",
+              "本次实现并通过 6 项原生 Host 验证",
+              "按流保留原字节、配额和收据；中段诊断必须真实回读并用于修复"
+            ],
+            [
+              "10 持久进程和交互终端",
+              "Lite 已有 leased Jobs、PTY/ConPTY",
+              "复用 op_id/input_id 与 owner；丢 ACK 后查询原收据，不重复输入"
+            ],
+            [
+              "11 MCP 与按需工具 schema",
+              "Full 有分页发现与调用；Lite 可注入但未见原生 bridge",
+              "沿 Host bridge 接外部能力；断连保留未知效果，不因 HTTP 成功接受 Task"
+            ],
+            [
+              "12 联网资料与环境发现",
+              "Lite 已有搜索、fetch、下载和 system_info",
+              "固定官方来源与版本；检出工具不等于运行成功，下载 hash 要核验"
+            ],
+            [
+              "13 按需 Skills 与工具 recipes",
+              "Lite 已有发现、创建、安装和验证",
+              "编码、静态逆向、调试分别打小包；包变更后旧验证不能继续有效"
+            ],
+            [
+              "14 知识正文召回",
+              "Lite 有工具；新会话自主正文召回仍 FAIL/OPEN",
+              "必要事实只放笔记正文，观察是否实际读取并完成任务，不能把答案同时塞入提示"
+            ],
+            [
+              "15 带来源经验与采纳撤销",
+              "Lite 已有提案、采纳和检索边界",
+              "验证留出任务迁移效果；来源撤销后不能返回，不能从单次成功自动晋升"
+            ],
+            [
+              "16 原始 Journal、压缩和回读",
+              "Full/Lite 有相关实现",
+              "压缩后保留目标、未完动作、unknown 收据和引用；按 hash 重取原证据"
+            ],
+            [
+              "17 预算、usage 与缓存观察",
+              "Lite 有调用/时间和字节预算；usage presence 有局限",
+              "固定路由做实验；字节不冒充 tokens，缺字段保持 unknown，冷热缓存分别记录"
+            ],
+            [
+              "18 分解、并行探索和独立验收",
+              "Lite 有 Goal/checklist，当前 Sequential；Full Task 为 WIP",
+              "先让 Host 提供只读探索和独立验收；主写者合并核证，Run 不自动接受 Task"
+            ],
+            [
+              "19 二进制 metadata、导入、字符串",
+              "Lite 新增可选 GNU headers/symbols 静态观察，23 项 Host 案覆盖",
+              "导入等原始 headers 文本可回读；未提供独立字符串提取，真实逆向产物未验收"
+            ],
+            [
+              "20 按函数反编译与 xref",
+              "Lite 已有有界 VMA 反汇编；反编译与 xref 未接入",
+              "外置 Ghidra/PyGhidra，按函数分页；留出输入验证算法或格式重建"
+            ],
+            [
+              "21 持久动态调试",
+              "Full 有 schema 但 DEBUG_UNAVAILABLE；Lite 无专用会话",
+              "选一个平台后端，绑定目标和 stop epoch；真实 Running/Stopped/Exited 与 locals"
+            ],
+            [
+              "22 离线 dump 与符号归因",
+              "可外调；暂无核见专门对象接口",
+              "先封装 dump/模块/PDB/线程栈；自制崩溃样本证明责任帧，符号错配明确"
+            ],
+            [
+              "23 动态 hook 和协议观察",
+              "暂无核见专用适配；Jobs 可承载进程",
+              "后续 Frida 能力包设采样和配额；记录丢样及对时序的影响，取消后卸载 hook"
+            ],
+            [
+              "24 浏览器和桌面可见状态验证",
+              "Lite 明确不提供桌面观察动作",
+              "按真实任务外置 DOM/可访问性或键鼠图像链；真实控件与可见状态验收"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "implementation",
+      "title": "首批增强：长输出归档与回读",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "原 exec/run_script 为控制模型上下文而保留限额片段，其余字节从管道读走后丢弃。编译错误或分析结果如果位于被删中段，后续只能重新执行或改命令取证；对有副作用的命令，重跑可能不合适。新 capture_dir 将原始输出和模型摘要分开。"
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\"language\":\"python\",\"script\":\"import subprocess\\nraise SystemExit(subprocess.call(['python', 'check.py']))\",\"output_limit\":4096,\"capture_dir\":\"build-output-001\"}"
+        },
+        {
+          "type": "list",
+          "items": [
+            "只在调用者显式提供 capture_dir 时启用。最终目录必须全新，父目录必须已存在；准备失败不启动命令，不覆盖、复用或递归删除已有目录。",
+            "stdout.log 和 stderr.log 保存精确原字节，每流最多 8 MiB；超额继续排空并记录 observed_bytes，收据明确 quota_exceeded 和 complete:false。配额不足不把 exit 0 改成进程失败。",
+            "收据包含实际保存字节数、观察量、EOF、SHA256 和错误。哈希按实际成功写入更新，并在收据生成时读回核验；归档 I/O 错误保留已知进程状态，不得盲目重放命令。",
+            "模型摘要和 Host 事件都预留收据空间，避免 Host 再次截断丢失归档位置。省略新字段保留原工具格式；公共 run_shell 签名不变。",
+            "超过 1 MiB 的 UTF-8 日志使用 read_file offset/limit/tail；其他编码由 run_script 显式解码。raw log 未做自动脱敏，留存和清理由调用者管理。",
+            "取消沿既有 AgentError::Abort 语义，工具文本收据不保证继续送给模型，已写原文件仍在已知目录。同步磁盘 I/O 没有独立硬截止保证，慢盘、路径替换和之后的文件修改不受此机制消除。"
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "原始输出捕获实现",
+              "href": "../../src/process_output.rs"
+            },
+            {
+              "label": "进程与工具接线",
+              "href": "../../src/local_tools.rs"
+            },
+            {
+              "label": "显式脚本接线",
+              "href": "../../src/script_tools.rs"
+            },
+            {
+              "label": "真实 Host 验证器",
+              "href": "../../tests/verify_process_capture.py"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "预览上限与当前 Run 的上下文预算是不同约束。128 KiB 预览可能超过较小模型目录分配的保守字节预算；输出归档不会放宽该预算。长任务仍需选择适当的 run_script output_limit，后续应单独评估按 Run 预算控制摘要的接线。"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "title": "第一批：输出归档验证",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "当前源码与普通 business_host.exe 已绑定到同一构建收据，37 个本地编译输入在最终构建和运行后保持一致。独立 Codex 审查覆盖本次精确差异与实际事件、Journal、请求、文件和 PID；未把其他 WIP 或历史结果计为本点通过。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "实际结果",
+            "覆盖与限制"
+          ],
+          "rows": [
+            [
+              "库与公开接口测试",
+              "189 + 3 PASS；1 ignored",
+              "跳过项为既有公网探测；本次 Windows 执行"
+            ],
+            [
+              "fmt / clippy / doctests",
+              "PASS",
+              "clippy all targets/all features，warnings as errors；doctests 0 项"
+            ],
+            [
+              "依赖审计",
+              "离线 PASS",
+              "advisories/bans/licenses/sources；审计库新鲜度未重新确认"
+            ],
+            [
+              "新归档真实 Host",
+              "6/6 PASS，13.685 秒",
+              "中段回读与修复、非零、配额、前置拒绝、超时；受控 provider 声明 1M"
+            ],
+            [
+              "既有版本化编辑 Host 回归",
+              "4/4 PASS",
+              "快照/预览/提交、旧哈希、后块失败、Plan 拒绝"
+            ],
+            [
+              "真实模型自主编码基线",
+              "2/2 PASS",
+              "Python 多文件与 PowerShell 中文路径；隐藏检查均 FAIL→PASS，实际执行反馈可回溯"
+            ],
+            [
+              "真实模型受引导归档链",
+              "1/1 PASS，5 次模型调用",
+              "实际 capture→分页诊断→修改→执行；独立留出断言通过，保护文件未变；非自主发现或 A/B"
+            ],
+            [
+              "独立审查",
+              "源码与原生执行通过",
+              "验收器两个 P2 已修复复审；真实编码原始产物独立抽核"
+            ],
+            [
+              "根文档 bootstrap",
+              "NOT_COMPLETED",
+              "20 秒有界遍历超时；本报告另做局部链接与脚本静态检查"
+            ],
+            [
+              "报告浏览器视觉验收",
+              "NOT_COMPLETED",
+              "浏览器策略拒绝 file 协议，未换协议或 renderer 绕过"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "真实模型试验固定当前已核验的 deepseek-v4.1-flash / openai-completions 路由，每任务最多 8 次调用、45 秒 Host 时间；凭据只从已配置环境变量读取。原始 Session、模型请求与本机路由不写入仓库。两个自主编码任务分别使用 8 次/32.772 秒、6 次/36.931 秒；受引导归档任务原离线验收器在运行完成后报错，后续只核原证据及纯函数 oracle，没有重放模型或原命令，未恢复到完整墙钟收据，因此耗时为 unknown。"
+        },
+        {
+          "type": "paragraph",
+          "text": "保留的失败包括首次 Windows clippy unused_mut、第一批 Host 的临时 Python 导入与 Windows 路径比较前置错误、第二批最大预览触发既有上下文预算保护，以及受引导任务离线验收器的数据类型/编码假设错误。修正前置后重新验证受影响边界，运行时代码没有为让 fixture 通过而放宽预算或状态判断。"
+        },
+        {
+          "type": "callout",
+          "title": "可接受的结论",
+          "text": "首批可选输出归档机制与声明的正常/失败行为已验证，真实模型走通了一次明确引导的归档回读修复。没有同模型旧版/新版的成对统计，不能给成功率提升百分比、不能接受一般逆向能力，也不能据三个有限任务宣称追平 Claude。",
+          "tone": "note"
+        },
+        {
+          "type": "paragraph",
+          "text": "受引导任务的初次 Python wrapper 打印了检查子进程的 exit 7，但 wrapper 自身返回 0；本次只据实际归档诊断、分页结果与独立最终 oracle 验收修复链，不用它证明工具能自动传播任意子进程退出码。独立 Codex 已核对其原始 Journal、后续模型输入、日志 hash 和修改顺序。"
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "title": "后续实施顺序与验收",
+      "blocks": [
+        {
+          "type": "steps",
+          "items": [
+            {
+              "title": "1. 公共入口的上下文与模型续作",
+              "detail": "先复用现有Session严格投影，验证压缩、重开和新Run后的来源与知识正文召回；再对有界长度入口做真实多模型试验。原S3与旧失败保留，之后扩展新陌生C++工程及去符号样本。"
+            },
+            {
+              "title": "2. 静态证据与重建正确性",
+              "detail": "保留已接通的 GNU 观察，先区分工具参数、分页覆盖、模型语义和交付截断。函数反编译、xref 与动态调试尚未接入，各自需要明确后端与独立任务验证。"
+            },
+            {
+              "title": "3. 知识正文和跨压缩续作",
+              "detail": "关闭已记录的自主正文召回缺口，再检查原始证据、目标和未知动作能否跨压缩与新 Run 使用；复用现有索引、Journal 和经验机制。"
+            },
+            {
+              "title": "4. 动态调试与离线 dump",
+              "detail": "先选单平台，明确目标 owner、进程及 stop epoch、事件和取消。离线 dump 可先做；在线 attach/continue/hook 作为独立完整交付点。"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "每个增强固定模型 ID、协议、路由、源码/样本版本和总预算，保留失败与耗尽结果；再做同任务、同模型、单项改动的成对多次试验。比较隐藏检查通过率、轮次、误操作、延迟和可辨识 usage。不能只比较回答长度、工具调用数量或不同条件下的排行榜。"
+        },
+        {
+          "type": "paragraph",
+          "text": "本轮已有输出归档、静态分析和生成策略的机制证据；专用反编译、动态调试、通用逆向能力、24 项完整采用计划与产品部署仍未验收。少量任务通过只说明那些任务，不能据此宣称已追平 Claude。"
+        }
+      ]
+    },
+    {
+      "id": "ownership",
+      "title": "Core、宿主和版本边界",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "归属",
+            "职责"
+          ],
+          "rows": [
+            [
+              "共享 Core",
+              "行动循环、消息/工具契约、上下文投影、收据引用、预算及取消/恢复语义"
+            ],
+            [
+              "宿主与工具适配",
+              "身份、授权、路径与留存、编译/调试/分析器环境、持久服务和用户可见传输"
+            ],
+            [
+              "任务验收",
+              "独立检查产物、行为和失败条件；成功 Run 作为证据，不自动接受 Task"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "工作区基线为 dev / 56d55d209ecea00e80dfefecdd3e9d47fb62c47a，包含大量既有 WIP。早期增强位于独立 Lite；当前新增的公共 ara-workflow 直接复用 Full Core，承载 Host 反馈与有界长度续作，不代表 Full/Lite 已统一。共享 Core、公共策略和工具宿主分别归属。未提交、推送、部署或改变 OMP marker；固定 baseline 596f2da7101178214aa27a753529d15e6b7ad91d、sync target b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c 与 ported_through_commit:null 保持原值。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "本次机器可读收据",
+              "href": "coding-reverse-enhancement-20261022.result.json"
+            },
+            {
+              "label": "接入说明",
+              "href": "../ai-integration.md"
+            },
+            {
+              "label": "Core/Host 约定",
+              "href": "../knowledge/host-contracts.md"
+            },
+            {
+              "label": "原研究的来源与版本收据",
+              "href": "coding-reverse-research-20261022.sources.json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

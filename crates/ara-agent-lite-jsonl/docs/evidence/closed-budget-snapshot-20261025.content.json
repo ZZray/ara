@@ -1,0 +1,273 @@
+{
+  "title": "预算停止后的产物复核",
+  "subtitle": "Lite Core、Harness 与跨语言 Host 的接线、执行结果和验收缺口。",
+  "brand": "ARA Agent Core Lite",
+  "eyebrow": "ENGINEERING EVIDENCE",
+  "date": "2026-10-25",
+  "sections": [
+    {
+      "id": "conclusion",
+      "title": "当前结论",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "预算停止后的专用产物复核已在真实 Rust 进程和 AI Code Review Workspace 中跑通。Core 原 Run 保留失败；Host 明确启用后核查实际产物，公共层仍把最终业务验收交给产品。"
+        },
+        {
+          "type": "callout",
+          "tone": "warning",
+          "title": "真实修复尚未完整验收",
+          "text": "真实模型在19次调用内通过七项固定回归，独立新目录复测也通过；补充检查发现它改写了合法 NUL 字符。固定测试缺少该保真条件，完整修复目标仍未通过。总体七项目标保持0/7整体验收。"
+        },
+        {
+          "type": "paragraph",
+          "text": "本点改变的是公共运行与交接机制。AI Code Review 当前产品的 Core pin、Relay、队列、数据库、服务与发布均未修改。原先24次调用耗尽的失败 Task 和 fence 保留。"
+        }
+      ]
+    },
+    {
+      "id": "boundary",
+      "title": "Core 与上层的职责",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "层",
+            "负责内容"
+          ],
+          "rows": [
+            [
+              "Core Lite",
+              "在原生闭合工具轮次、预算原因获胜、循环结束且持久化成功后，向唯一 agent_end 附带有限证明。原 RunResult 字段、失败 code=-1 不变。"
+            ],
+            [
+              "Harness Lite",
+              "默认拒绝。显式 Task 选项启用后验证 Journal、事件、未知副作用和快照原件，再调用专用验证或 typed continuation；预算与截止时间不重置。"
+            ],
+            [
+              "产品 Host",
+              "保存外部操作收据，运行业务检查，决定 Verified、NeedsChanges 或 Unknown，并最终接受业务 Task。"
+            ],
+            [
+              "JSONL 与 SDK",
+              "透出独立请求/回复，校验原件及当前审核索引；Python/Node 保留原 outcome，另存预算审核账本。"
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\n  \"termination\": {\n    \"version\": 1,\n    \"cause\": \"call_budget_exhausted\",\n    \"native_round_closed\": true,\n    \"model_final_stop\": false\n  }\n}"
+        },
+        {
+          "type": "paragraph",
+          "text": "原生闭合不代表外部结算。实际未知效果用例可以带有这份证明，Harness 仍根据取消或原生未知标记阻断：保留 fence，不调用验证，也不重放。长度截断带工具调用会进入固定 rpi 的轮次钩子，因此必须额外要求 typed ToolUse，不能只读 budget_hit。"
+        }
+      ]
+    },
+    {
+      "id": "execution",
+      "title": "实际执行结果",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "范围",
+            "结果",
+            "证明边界"
+          ],
+          "rows": [
+            [
+              "Core Rust",
+              "216库测试＋3 Host边界通过；1项既有公网测试忽略",
+              "本轮原生终态类型和相关Core回归"
+            ],
+            [
+              "Harness Rust",
+              "4单元＋16预算集成＋14原回归通过",
+              "实际Core/受控HTTP/文件与回调；修后源码执行"
+            ],
+            [
+              "JSONL与Node",
+              "6 Rust＋14 Node检查通过",
+              "协议原件、SDK回调和既有候选接入合同"
+            ],
+            [
+              "预算实际进程",
+              "19项通过",
+              "默认拒绝、typed续作、旧候选清理、篡改、未知效果、Length/503/上下文负例"
+            ],
+            [
+              "旧跨语言回归",
+              "生成7、进程16、长度13、压缩6通过",
+              "同一固定新镜像；独立新证据目录"
+            ],
+            [
+              "实际Workspace预算路径",
+              "1次受控模型HTTP，5次实际替换，原7测试通过",
+              "脚本提供已知补丁；只证明消费者交接，不评估模型编码能力"
+            ],
+            [
+              "真实模型历史任务",
+              "1 Run、19调用、65.806秒；原7测试通过",
+              "普通最终Stop；未触发预算快照；补充保真检查失败"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "真实任务先出现一次实际测试错误，模型继续修改后通过。Host 原件和独立新目录均保持原测试源码。该任务请求 deepseek-v4.1-flash，使用 openai-completions、显式 thinking_type_disabled，最大预算仍为24调用、2 Runs、180秒、4096输出；没有自动重试或预算扩张。"
+        },
+        {
+          "type": "paragraph",
+          "text": "受控Workspace用例的 Core 保持 failed/-1；专用快照验证检查了实际补丁与七项测试，写入当前可信索引后得到 AwaitingHostAcceptance、task_accepted=false、last_candidate=null。真实模型任务得到普通候选；这两份结果分别记录，不能互相代替。"
+        }
+      ]
+    },
+    {
+      "id": "counterexample",
+      "title": "七项回归之外的反例",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "任务要求保留合法 Unicode。补丁的 decode_git_bytes 在末尾把 NUL 改成 U+FFFD；NUL 本身可由 JSON 正常转义。Root 和独立 reviewer 分别执行候选原函数，观察到输入发生变化；当前产品的既有 helper 在同一输入下保持不变。"
+        },
+        {
+          "type": "paragraph",
+          "text": "另建真实Git仓库，用.gitattributes显式启用文本diff，并将NUL放在既有源码上下文前2000字符检测范围之外。候选实际diff和source-context入口均丢失NUL；当前产品两入口保留Git API返回文本，原blob均未改变。第二版比较实际Git show正文，避免把第一版对页头和末尾换行的假设当作产品要求。"
+        },
+        {
+          "type": "code",
+          "language": "json",
+          "text": "{\n  \"input\": \"header\\u0000中文😀\\nsecond\\u0000line\\n\",\n  \"actual\": \"header�中文😀\\nsecond�line\\n\",\n  \"expected\": \"header\\u0000中文😀\\nsecond\\u0000line\\n\",\n  \"valid_unicode_preserved\": false\n}"
+        },
+        {
+          "type": "paragraph",
+          "text": "原七项测试、Host Verified 收据与普通候选保留。它们证明指定回归通过，不足以接受完整修复目标。后续需要增加独立的合法文本保真与异常字节传输检查，让验证失败形成真实反馈，再检验模型是否修复。此处未修改生产代码，也未重新运行同一单次试验。"
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "title": "外部接入与兼容",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Rust 使用 start_with_options 和 TaskOptions.budget_stop_review；JSONL 使用顶层 budget_stop_review=review_closed_tool_round。默认仍为 reject，SDK 在进程启动前要求 Execute 及两个专用异步回调。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "回调/原件",
+            "要求"
+          ],
+          "rows": [
+            [
+              "verify_budget_snapshot",
+              "收到basis、diagnostic_output、goal与termination；核验实际产物和结算，返回完整basis绑定的收据。"
+            ],
+            [
+              "prepare_budget_stop_continuation",
+              "收到完整previous快照、收据、下一Run号、原剩余调用与绝对截止时间；不得降级调用普通prepare。"
+            ],
+            [
+              "run-N-budget-review-index.json",
+              "只引用当前已提交、已结算且非Unknown的收据及快照哈希；不扫描旧Run找成功记录。"
+            ],
+            [
+              "原公开类型",
+              "TaskSpec、Candidate、ReviewBasis、Continuation、TaskOutcome、RunResult公开字段保持不变；旧Host默认拒绝新路径。"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "快照检查采用一次有界读取，使用同一份bytes检查大小、哈希与JSON内容；验证及准备续作前后均重查。坏产物在原Task预算已用尽时返回BudgetExhausted，不准备新Run，也不补发最终模型调用。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "Core终态接入说明",
+              "href": "../../../ara-agent-lite-core/docs/ai-integration.md#31-调用预算停止后的原生证据"
+            },
+            {
+              "label": "Harness接入",
+              "href": "../../../ara-agent-lite-harness/README.md"
+            },
+            {
+              "label": "JSONL及Python接入",
+              "href": "../../README.md"
+            },
+            {
+              "label": "Node接入",
+              "href": "../../clients/node/README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "title": "版本、复审与保留失败",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "目标为dev上的dirty工作区，HEAD为56d55d209ecea00e80dfefecdd3e9d47fb62c47a。最终冻结113个唯一来源与文档文件；旧清单有三条Harness路径以两种分隔符重复登记，已规范化去重，字节未变。运行时、SDK和示例与执行镜像对应。镜像SHA256为5126183f9581f4e7d395e8364fe341530c668f4549b87db6e90c1873ac771916。"
+        },
+        {
+          "type": "paragraph",
+          "text": "独立Codex reviewer完成实施前、Core/Harness/JSONL/SDK源码审查、新负例审查及真实/受控Workspace原件复核。完整point audit状态与各审核哈希见机器可读结果。主代理另核原件、源码、进程身份与新目录测试。"
+        },
+        {
+          "type": "paragraph",
+          "text": "三份独立manifest的fmt、Clippy和doc检查通过。依赖检查按未修改的既有Lite政策离线通过advisories/bans/licenses/sources；公告缓存时效未知，历史Full政策失败和产品发布门禁保留。"
+        },
+        {
+          "type": "paragraph",
+          "text": "真实Rust子进程在启动前核验镜像并记录实际PID。产品venv的Python入口是Windows redirector；外层consumer及独立七测记录的是Popen启动器PID，未独立采集Python worker自报PID，不将二者混称。"
+        },
+        {
+          "type": "paragraph",
+          "text": "首轮15项测试中有1项因终态预期过窄失败。回源确认两条调度路径后，修订测试逐条校验精确detail、观察位和原始未知收据，并新增四项负例，最终19项通过。旧进程/长度测试首轮缺少证据父目录的setup错误、两次cargo-deny参数错误均保留，随后按实际入口修正环境或参数。"
+        },
+        {
+          "type": "paragraph",
+          "text": "本报告做静态结构和本地链接检查。既有浏览策略拒绝本地观察，未换协议或重托管绕过，视觉未验收。全局bootstrap验证器此前挂起，保持NOT_COMPLETED。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读结果",
+              "href": "closed-budget-snapshot-20261025.result.json"
+            },
+            {
+              "label": "前一阶段与原失败任务",
+              "href": "generation-policy-20261025.html"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "title": "下一步验收",
+      "blocks": [
+        {
+          "type": "list",
+          "items": [
+            "补强实际Host的文本保真与异常字节传输检查，保留原七项测试；验证模型接收反例反馈后的实际修复。",
+            "推进陌生多文件C++工程：把模型期间可查的检查与封存后的保留集分开，覆盖实际编译失败和跨文件反馈修复。",
+            "继续C++对象、虚表及去符号样本恢复，并开展固定模型、任务与预算的对照。",
+            "跨平台、Full Core、更多模型、产品默认迁移及生产上线单列验收；不由本点继承。"
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "原生终态中组合出现fatal、保存失败或deadline竞争的完整强制矩阵仍未穷举。本点只接受实际执行与明确源码约束支持的范围；工具白名单和同账户文件检查不构成OS沙箱。总体目标继续推进。"
+        }
+      ]
+    }
+  ]
+}

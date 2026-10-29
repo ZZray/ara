@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "digest_rule": "lite-eval-tree-v1",
+  "tasks": [
+    {
+      "task_id": "S1",
+      "kind": "Coding",
+      "fixture_path": "D:/WorkSpace/tmp/ara-core-capability-20261022/analysis-private/S1-seed",
+      "fixture_sha256": "c029f925a93fbdfcd6770149d0b7ed50ee561c7997e8c3233c6319a30ba5b3bf",
+      "oracle": {
+        "type": "gxx_cli_hidden_cases",
+        "hidden_cases": 13,
+        "command": [
+          "python",
+          "tools/lite-eval/oracles/s1.py"
+        ]
+      },
+      "holdout": {
+        "status": "not new holdout",
+        "first_adaptive_use": "2026-10-23",
+        "changes": [
+          "coding-reverse-analysis-20261023.result.json supplemental_contract: 3 malformed-hex cases added after observing S1/S2 Run output"
+        ]
+      },
+      "profile": {
+        "mode": "execute",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "ws_write_file",
+          "ws_edit_file",
+          "run_public_checks"
+        ]
+      }
+    },
+    {
+      "task_id": "S2",
+      "kind": "Coding",
+      "fixture_path": "D:/WorkSpace/tmp/ara-core-capability-20261022/analysis-private/S2-seed",
+      "fixture_sha256": "4d56867c12edb85e9486cd787b0c2e9d6e86fe4b351fab7e3cc4917153debfd9",
+      "oracle": {
+        "type": "gxx_cli_hidden_cases",
+        "hidden_cases": 35,
+        "command": [
+          "python",
+          "tools/lite-eval/oracles/s2.py"
+        ]
+      },
+      "holdout": {
+        "status": "not new holdout",
+        "first_adaptive_use": "2026-10-23",
+        "changes": [
+          "coding-reverse-analysis-20261023.result.json supplemental_contract: 3 malformed-hex cases added after observing S1/S2 Run output"
+        ]
+      },
+      "profile": {
+        "mode": "execute",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "ws_write_file",
+          "ws_edit_file",
+          "run_public_checks"
+        ]
+      }
+    },
+    {
+      "task_id": "S3",
+      "kind": "Coding",
+      "fixture_path": "D:/WorkSpace/tmp/ara-core-capability-20261022/coding-stream-stage/public-template",
+      "fixture_sha256": "25bd9fb28286bad97bc5253246357deea4a01a8c58a1bc46080114509b2fabe4",
+      "oracle": {
+        "type": "cmake_ctest_plus_private_cli",
+        "public_cases": 10,
+        "hidden_cases": 48,
+        "command": [
+          "python",
+          "tools/lite-eval/oracles/s3.py"
+        ]
+      },
+      "holdout": {
+        "status": "not new holdout",
+        "first_adaptive_use": "2026-10-23",
+        "changes": [
+          "core-workflow-20261023.progress.json oracle_scope: original48 reused adaptively; restored read windows and public-PASS submission instruction"
+        ]
+      },
+      "profile": {
+        "mode": "execute",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "ws_write_file",
+          "ws_edit_file",
+          "run_public_checks"
+        ]
+      }
+    },
+    {
+      "task_id": "R1",
+      "kind": "ReverseAnalysis",
+      "fixture_path": "D:/WorkSpace/tmp/ara-core-capability-20261022/analysis-live/R1/base/project",
+      "fixture_sha256": "5b1bf110fac7761408ff7a0ac1f14178459e68d29a3aa8322a9ce4a0d982f7f9",
+      "oracle": {
+        "type": "python_reconstruction_hidden_cases",
+        "hidden_cases": 28,
+        "command": [
+          "python",
+          "tools/lite-eval/oracles/r1.py"
+        ]
+      },
+      "holdout": {
+        "status": "not new holdout",
+        "first_adaptive_use": "2026-10-23",
+        "changes": [
+          "reverse-policy-live-v1: same specimen/oracle rerun with policy/output arms after R1 length failures; thinking_type_disabled and max_output 8192 chosen; H2 objective wording added"
+        ]
+      },
+      "profile": {
+        "mode": "plan",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "binary_inspect"
+        ]
+      }
+    },
+    {
+      "task_id": "H2",
+      "kind": "ReverseAnalysis",
+      "fixture_path": "D:/WorkSpace/tmp/ara-core-capability-20261022/reverse-holdout-stage/public-template",
+      "fixture_sha256": "b14062ad9f44e9d28d18b70f523acfa708b6b707e66a5a30d2f51c77836f0a3f",
+      "oracle": {
+        "type": "python_reconstruction_hidden_cases",
+        "hidden_cases": 128,
+        "command": [
+          "python",
+          "tools/lite-eval/oracles/h2.py"
+        ]
+      },
+      "holdout": {
+        "status": "not new holdout",
+        "first_adaptive_use": "2026-10-23",
+        "changes": [
+          "coding-nullable-20261023.result.json and host-contracts.md CASE-20261023: nullable schema change after H2-G tool-argument errors"
+        ]
+      },
+      "profile": {
+        "mode": "plan",
+        "tools": [
+          "ws_read_file",
+          "ws_list_dir",
+          "ws_search_files",
+          "binary_inspect"
+        ]
+      }
+    }
+  ]
+}

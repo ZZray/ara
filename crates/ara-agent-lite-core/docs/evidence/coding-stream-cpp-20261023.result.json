@@ -1,0 +1,150 @@
+{
+  "schema": "ara-stream-cpp-coding-progress-v1",
+  "date": "2026-10-23",
+  "decision": "TASKS_NOT_ACCEPTED",
+  "goal_complete": false,
+  "scope": "two single-run authored C++17 stream-CSV tasks; not a large-project or general C++ acceptance",
+  "host_sha256": "ff527818486911969f3afacf0f71099c2911e433930a910b0e8a6a7ceb5c505f",
+  "plan_sha256": "74224311b4a2e6f978879813bffa0cfc9e4e75da160a04f6d834563b40114e19",
+  "harness_sha256": "8b12a8ec6cb9e0baedd38035099b8877af91cde655b022dd17710c62d9a725e5",
+  "fixture_manifest_sha256": "5741d99282a74770003f7c8c81e5ebf2e7061c726b878f0eec621b0fa2ee9bf8",
+  "private_oracle_sha256": "ffb69746282bfc86a00db971861c4b36e8614f67774a42a97e4f852d17341c2c",
+  "source_files": 14,
+  "seed_source_lines": 428,
+  "seed_public_passed": 7,
+  "seed_private_passed": 10,
+  "public_tests": 10,
+  "private_cases": 48,
+  "controlled_harness_checks": 44,
+  "actual_model_calls": 63,
+  "arms": [
+    {
+      "arm": "S3-base",
+      "status": "FAIL",
+      "task_success": false,
+      "requested_model": "deepseek-v4.1-flash",
+      "response_models": [
+        "deepseek-flash"
+      ],
+      "backend_weight_identity": "UNKNOWN",
+      "generation_policy": "thinking_type_disabled",
+      "requested_call_limit": 40,
+      "effective_host_call_limit": 32,
+      "actual_model_calls": 32,
+      "summary_calls": 0,
+      "last_native_budget": {
+        "scope": "current_run",
+        "reserved_calls": 31,
+        "call_limit": 32,
+        "calls_remaining_including_next": 1,
+        "milliseconds_remaining": 797412,
+        "phase": "last_call"
+      },
+      "host_exit": 0,
+      "native_result_code": 0,
+      "host_seconds": 109.037,
+      "total_seconds_with_fresh_evaluation": 114.984,
+      "public_passed": 5,
+      "public_total": 10,
+      "private_passed": 4,
+      "private_total": 48,
+      "changed_original_files": [
+        "include/csv/decoder.hpp",
+        "src/decoder.cpp",
+        "src/follow.cpp",
+        "src/ledger.cpp",
+        "src/pump.cpp",
+        "src/source.cpp"
+      ],
+      "protected_files_unchanged": true,
+      "source_navigation_status": "NOT_OBSERVED",
+      "null_argument_calls_observed": 0,
+      "process_feedback_returned_to_model": true,
+      "tool_starts": 54,
+      "tool_ends": 54,
+      "effects_unknown": false,
+      "all_frozen_inputs_unchanged": true,
+      "secret_scan_status": "CLEAN",
+      "model_submission": "explicitly incomplete; native Run completion is not Task acceptance",
+      "result_sha256": "844d079bd61846bc3f07f9914bc50ce1929d9159df8458f3e063c641fd7c7265",
+      "source_seal_sha256": "5076b5d63cd66ed01673a6888cab6e71389a2523131446b0c91aee3ee45d3189",
+      "evaluation_sha256": "fbb00a2e757f0071400950978526dab43aed3e0b52d741ee0d48a750a63eecdb",
+      "final_submission_sha256": "f9b51f4a5d8cedddf3d66b2fbad82d84ea08c9188a38ea5be3e09c73b30c80d6"
+    },
+    {
+      "arm": "S3-symbols",
+      "status": "FAIL",
+      "task_success": false,
+      "requested_model": "deepseek-v4.1-flash",
+      "response_models": [
+        "deepseek-flash"
+      ],
+      "backend_weight_identity": "UNKNOWN",
+      "generation_policy": "thinking_type_disabled",
+      "requested_call_limit": 40,
+      "effective_host_call_limit": 32,
+      "actual_model_calls": 31,
+      "summary_calls": 0,
+      "last_native_budget": {
+        "scope": "current_run",
+        "reserved_calls": 30,
+        "call_limit": 32,
+        "calls_remaining_including_next": 2,
+        "milliseconds_remaining": 787910,
+        "phase": "closing"
+      },
+      "host_exit": 0,
+      "native_result_code": 0,
+      "host_seconds": 118.303,
+      "total_seconds_with_fresh_evaluation": 123.986,
+      "public_passed": 0,
+      "public_total": 10,
+      "private_passed": 0,
+      "private_total": 48,
+      "changed_original_files": [
+        "include/stream/source.hpp",
+        "src/decoder.cpp",
+        "src/follow.cpp",
+        "src/ledger.cpp",
+        "src/main.cpp",
+        "src/pump.cpp",
+        "src/source.cpp"
+      ],
+      "protected_files_unchanged": true,
+      "source_navigation_status": "NOT_OBSERVED",
+      "null_argument_calls_observed": 0,
+      "process_feedback_returned_to_model": true,
+      "tool_starts": 47,
+      "tool_ends": 47,
+      "effects_unknown": false,
+      "all_frozen_inputs_unchanged": true,
+      "secret_scan_status": "CLEAN",
+      "model_submission": "explicitly incomplete; native Run completion is not Task acceptance",
+      "result_sha256": "f62906bdbb6dadb50aa22a3492a1e45d906fc1c47e18e54a1b4634925d0a6688",
+      "source_seal_sha256": "d33524236bbdfd58c5a54e99f78328809aad62dfdb5b785369c6fd3e700ff11e",
+      "evaluation_sha256": "0545576723fcb84570d72ff9b8ae41924ff1db86a056471a9edc3ec386c11d11",
+      "final_submission_sha256": "dd2fdeb71c8bb41c604b5fb8279ae0b3c1d2f36fce69e8cac27648375a5be3ca"
+    }
+  ],
+  "review_gap": "PRE and harness declared requested40 without checking business_host clamp32; native wire reports effective32 in both arms. Original plans and failed trials are retained.",
+  "observed_failures": [
+    "base decoder rewrite breaks quoted content and final unterminated-quote handling; plus-sign amount also regresses",
+    "symbols ledger strips the minus sign before from_chars; minimum int64 CLI argument becomes out-of-range positive:44 private cases fail at argument parsing, while the other4 also fail behavior checks",
+    "independent fresh compilation reproduces failures; stale build objects do not explain the delivered candidate behavior"
+  ],
+  "limits": [
+    "no source_symbols call and no optional-null tool arguments observed; neither feature has demonstrated a benefit in S3",
+    "both models received actual failed process/test feedback; receiving feedback did not produce a correct repair",
+    "model submissions explicitly report incomplete work; Host0 and Run0 do not establish Task success",
+    "five local effect lifecycles and known native unknown envelopes are checked, not arbitrary external side effects or OS isolation",
+    "two one-shot trials do not estimate stable comparative benefit; aliases do not identify backend weights"
+  ],
+  "reviews": {
+    "pre_sha256": "f21d5cdd2324724b361c6d8c9b0217ba7cf0708f0b845c62e44f6c2a2485bacb",
+    "post": {
+      "sha256": "5b7ea83c8014c66f74b0e0b4c98507b9e5270dab7a8b46d3311fffe9c60fe4ee",
+      "decision": "APPROVE_SCOPED_EVIDENCE_WITH_BUDGET_DEVIATION_TASKS_NOT_ACCEPTED"
+    },
+    "primary": "directly checked sealed source diffs, final submissions, native budgets, process events, fresh JUnit and CLI result artifacts"
+  }
+}

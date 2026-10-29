@@ -1,0 +1,140 @@
+{
+  "record": "req8-start",
+  "spec": "ara-lite-core-capability",
+  "task": "1.3",
+  "requirement": "8.5",
+  "created_at": "2026-10-26T22:17:14+08:00",
+  "code_version": {
+    "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "dirty": true,
+    "worktree_diff_sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+    "diff_path": "D:/WorkSpace/tmp/ara-lite-capability/req8-start/worktree.diff",
+    "diff_rule": {
+      "id": "lite-eval-worktree-diff-v1",
+      "exclusions": [
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/"
+      ],
+      "exclusion_reason": "in-repo evidence index (ledger, gate and review records) is excluded so appending records does not change the code-version SHA (tasks.md execution conventions)",
+      "tracked_diff_command": "git diff --binary HEAD -- :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability/",
+      "tracked_diff_bytes": 6746773,
+      "untracked_list_command": "git ls-files --others --exclude-standard -z",
+      "untracked_diff_command": "git diff --binary --no-index -- /dev/null <path>  (exit 1 treated as normal)",
+      "untracked_files_included": 878,
+      "untracked_files_excluded": [
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/baseline/.gitkeep",
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/.gitkeep",
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/design-records.md",
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/.gitkeep",
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/.gitkeep"
+      ],
+      "total_bytes": 78020922
+    },
+    "post_run_worktree_diff_sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+    "unchanged_during_run": true,
+    "post_run_diff_path": null,
+    "note": "HEAD plus pre-existing uncommitted WIP, including the uncommitted requirement 8 Core/Harness resume code; recorded before any code change of this spec"
+  },
+  "deny_baseline_diff_comparison": {
+    "path": "D:/WorkSpace/tmp/ara-lite-capability/deny-baseline/worktree.diff",
+    "exists": true,
+    "sha256": "8f5d434b96fdb3028981cc25172d37ac81ed3be2a41bb5aa1fc9f037069aa0bb",
+    "equal_to_req8_start_diff": true
+  },
+  "toolchain": {
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "git": "git version 2.55.0.windows.3",
+    "CARGO_TARGET_DIR": "D:\\workspace\\env\\cache\\rust-target"
+  },
+  "commands": [
+    {
+      "crate": "ara-agent-lite-core",
+      "cwd": "e:\\repos\\ara-github\\crates\\ara-agent-lite-core",
+      "command_line": "cargo test",
+      "exit_code": 0,
+      "timed_out": false,
+      "passed": 220,
+      "failed": 0,
+      "ignored": 1,
+      "measured": 0,
+      "filtered_out": 0,
+      "suites_reported": 3,
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 217,
+          "failed": 0,
+          "ignored": 1,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ],
+      "running_lines": [
+        218,
+        3,
+        0
+      ],
+      "started_at": "2026-10-26T22:16:00+08:00",
+      "finished_at": "2026-10-26T22:16:20+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability/req8-start/core-cargo-test.stdout.log",
+      "stdout_sha256": "5297334a5acb71aa25b62aa4ae0aa984e2dedf7e97ec9262c90188d382590450",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability/req8-start/core-cargo-test.stderr.log",
+      "stderr_sha256": "7eeab5a38ab10086b8d0fe6757eaff917b8de47314e9f2ff61862e3337262beb"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "cwd": "e:\\repos\\ara-github\\crates\\ara-agent-lite-harness",
+      "command_line": "cargo test --test resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered_out": 0,
+      "suites_reported": 1,
+      "suites": [
+        {
+          "status": "ok",
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ],
+      "running_lines": [
+        2
+      ],
+      "started_at": "2026-10-26T22:16:20+08:00",
+      "finished_at": "2026-10-26T22:16:21+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability/req8-start/harness-cargo-test-resume.stdout.log",
+      "stdout_sha256": "86d49258b2509023442fcb17a4833983160f89837d37f014a08798c63d74f9e4",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability/req8-start/harness-cargo-test-resume.stderr.log",
+      "stderr_sha256": "13521b6eb54e706922c767c7d96bd10aff3c7cfd91b70f92b43a634f8d2396ce"
+    }
+  ],
+  "previously_reported": {
+    "core_tests_passed": 217,
+    "harness_tests_passed": "4+16+2+14 (resume.rs: 2)",
+    "source": "requirements.md, section 已实现基线"
+  },
+  "all_pass": false,
+  "all_pass_rule": "every command exit_code 0, not timed out, failed == 0, ignored == 0 (requirement 8.5: no skipped tests), at least one 'test result:' line, all suites ok, and code version unchanged between start and end"
+}

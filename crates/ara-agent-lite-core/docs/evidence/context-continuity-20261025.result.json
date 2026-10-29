@@ -1,0 +1,206 @@
+{
+  "date": "2026-10-25",
+  "repository_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "worktree": "dev with preserved unrelated staged/unstaged/untracked WIP; no commit/push/deploy",
+  "status": "PARTIAL_MECHANISM_VERIFIED_REAL_MODEL_TASK_FAILED",
+  "overall_goal": "ACTIVE; 0/7 requirements fully accepted",
+  "runtime_scope": [
+    "crates/ara-agent-lite-core/src/context_memory.rs"
+  ],
+  "runtime_source_sha256": "3573a4958212c23a2c7901f6f01332b6e760408e57f79feb3c4816ec64481447",
+  "unit_tests_sha256": "ed29f66ea125957d18f7c9851d8c2f11475cd88ac4e7824ac37e0f9dbf419c3a",
+  "images": {
+    "ara-agent-lite-jsonl.exe": {
+      "sha256": "a7719e7f80dee71e5e8b67320b09531ace603504f14198bc258f3ed2e05373ff",
+      "bytes": 22125568
+    },
+    "business_host.exe": {
+      "sha256": "2ddca3e7075e187aec87f4d98dfb8b913a768846474d3ddab396a20f117a8148",
+      "bytes": 22067712
+    }
+  },
+  "mechanism_checks": {
+    "core_library": {
+      "passed": 214,
+      "failed": 0,
+      "ignored": 1,
+      "new_tests": 6
+    },
+    "public_host_boundary": {
+      "passed": 3
+    },
+    "harness": {
+      "passed": 14
+    },
+    "jsonl": {
+      "passed": 3
+    },
+    "clippy": "PASS all Core targets/all features, -D warnings",
+    "doc_tests": "PASS; zero examples",
+    "reference_baseline": {
+      "profile": "baseline",
+      "observable_result": "whole-reference-baseline-task-failed",
+      "read_exit": 1,
+      "read_code": -1,
+      "read_reserved_calls": 2,
+      "actual_http_requests_all_runs": 3,
+      "source_bytes": 49152,
+      "source_sha256": "25e79a304432939d88110bd05792701682e6eccc56151d1d6e31dc5f8f48d447",
+      "native_pids": [
+        57176,
+        24804,
+        45844
+      ],
+      "artifact_owner": "Host persisted actual native result; no Agent file-write tool",
+      "actual_model": false,
+      "original_session_preserved": true
+    },
+    "reference_windows": {
+      "profile": "windows",
+      "observable_result": "selected-original-window-native-answer-verified",
+      "read_exit": 0,
+      "read_code": 0,
+      "read_reserved_calls": 3,
+      "actual_http_requests_all_runs": 4,
+      "source_bytes": 49152,
+      "source_sha256": "25e79a304432939d88110bd05792701682e6eccc56151d1d6e31dc5f8f48d447",
+      "native_pids": [
+        81852,
+        71688,
+        38396
+      ],
+      "artifact_owner": "Host persisted actual native result; no Agent file-write tool",
+      "actual_model": false,
+      "original_session_preserved": true
+    },
+    "reference_faults": {
+      "passed": 7,
+      "artifact_count": 215,
+      "native_pids": 22,
+      "http_requests": 23,
+      "elapsed_seconds": 50.615067
+    },
+    "patched_compaction": {
+      "passed": 6,
+      "elapsed_seconds": 46.42,
+      "positive": {
+        "first_task_runs": 3,
+        "first_task_calls": 9,
+        "first_task_summaries": 2,
+        "reopened_task_runs": 1,
+        "reopened_task_calls": 6,
+        "reopened_task_summaries": 1,
+        "two_tasks_total_calls": 15,
+        "business_task_accepted": false
+      }
+    },
+    "length_regression": {
+      "passed": 13,
+      "elapsed_seconds": 38.653
+    },
+    "native_client_regression": {
+      "passed": 16,
+      "elapsed_seconds": 61.037
+    }
+  },
+  "real_model_trial": {
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "status": "FAIL",
+    "elapsed_seconds": 31.896235199994408,
+    "seed_calls": 1,
+    "read_calls": 5,
+    "read_limit": 6,
+    "source_bytes": 49152,
+    "value_field_offset": 26646,
+    "read_windows": [
+      [
+        24482,
+        25506
+      ],
+      [
+        30000,
+        34096
+      ],
+      [
+        25506,
+        26050
+      ]
+    ],
+    "native_code": 0,
+    "answer": {
+      "calibration_code": null,
+      "source_id": null,
+      "source_sha256": null
+    },
+    "tool_failures": 0,
+    "retry_count": 0,
+    "source_unchanged": true,
+    "inference": "Tool mechanism worked; model did not retrieve the value-bearing interval and stopped early. Native Stop is not business acceptance.",
+    "usage": "adapter positive counts retained in raw evidence; zero cache fields unknown; billing unavailable"
+  },
+  "dependency_gate": {
+    "status": "PASS_WITH_EXISTING_LITE_POLICY_OFFLINE_CACHE",
+    "policy": "crates/ara-agent-lite-core/deny.toml",
+    "policy_sha256": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+    "history_proof": "extraction-20261021.json policy SHA; policy tracked and unchanged",
+    "advisory_freshness": "NOT_ESTABLISHED",
+    "correction": "Earlier root-policy exit14 remains recorded; root Full policy is distinct from the existing standalone Lite policy. No policy, dependency or lockfile changed."
+  },
+  "retained_failures": [
+    "Original whole-source baseline task failed after a successful tool read.",
+    "Original JSONL management precondition failed; switched to a new direct Core case, original fence retained.",
+    "patched-length-v1: 13 setup errors because Root omitted the evidence parent directory; zero native execution. Corrected setup ran in fresh v2.",
+    "Broad docs bootstrap verifier did not finish and was stopped after observation; scoped changed-doc checks are separate.",
+    "Real model task FAIL; no retry or changed original budget."
+  ],
+  "reviews": {
+    "source": "APPROVE frozen runtime source, independent Codex public_context_safety",
+    "execution": {
+      "decision": "ACCEPT_SCOPED_CONTROLLED_REFERENCE_WINDOWS_AND_COMPACTION; REAL_MODEL_TASK_FAIL",
+      "reviewer": "Independent Codex public_context_safety",
+      "evidence": "stage/source-post-review-patched-execution.json",
+      "sha256": "0505236ac271a5e0b7167970353563214194da2f88b414d5651cb954d0f16a34",
+      "artifacts_independently_hashed": 723
+    },
+    "point_audit": {
+      "decision": "ACCEPT_SCOPED_REFERENCE_WINDOWS_AND_CONTROLLED_CONTINUITY; real model task FAIL; overall goal OPEN",
+      "reviewer": "Independent Codex public_context_maintenance",
+      "evidence": "stage/point-audit-context-windows.json",
+      "sha256": "a252daf44af208f72161c5efdb04497709fdb3b1d137d19c05487e2d86994cc0",
+      "reviewed_result_before_metadata_pointer_sha256": "4d8c8ff72aa1d69d6bd8501175250fdfa20c95daa2d15671ca7e743f915eac12",
+      "pointer_update_authorized_by_reviewer": true
+    }
+  },
+  "limits": [
+    "Windows ordinary programs only for this point; no other-platform execution",
+    "Controlled provider tests do not prove general model competence or Claude parity",
+    "Default long-reference response changes from full text to 8KiB window",
+    "Window size bounds original UTF-8 bytes, not all JSON expansion or accumulated context",
+    "No actual product database, AI Code Review deployment or full OMP acceptance",
+    "Report visual observation unavailable after earlier explicit browser policy refusal",
+    "Live model_call counts are logical native reservations; catalog and uncaptured transport retries are not included."
+  ],
+  "next_action": "Add independent Task completion feedback through existing public Harness; preserve this direct-Core failure and original budget.",
+  "private_evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-context-continuity-v1-20261025",
+  "frozen_delivery": {
+    "source_count": 99,
+    "source_manifest_sha256": "abfa35c12fbe37e86592a293b28087c6e1ebc6bc9a7458d9fa410f9a9275112c",
+    "images": {
+      "ara-agent-lite-jsonl.exe": {
+        "sha256": "a7719e7f80dee71e5e8b67320b09531ace603504f14198bc258f3ed2e05373ff",
+        "bytes": 22125568
+      },
+      "business_host.exe": {
+        "sha256": "2ddca3e7075e187aec87f4d98dfb8b913a768846474d3ddab396a20f117a8148",
+        "bytes": 22067712
+      }
+    }
+  },
+  "scoped_document_verification": {
+    "root_evidence": "root-context-final-checks.json",
+    "static_links_and_structure": "PASS",
+    "global_bootstrap": "NOT_COMPLETED",
+    "visual": "NOT_RUN"
+  }
+}

@@ -1,0 +1,274 @@
+{
+  "title": "Core Lite 来源读取与压缩续作验证",
+  "brand": "ARA",
+  "date": "2026-10-25",
+  "subtitle": "分窗读取的机制验证通过；单次真实模型取源任务失败，总目标继续。",
+  "sections": [
+    {
+      "id": "result",
+      "title": "本轮结果",
+      "blocks": [
+        {
+          "type": "callout",
+          "title": "整体目标仍未完成",
+          "text": "七项总目标完整验收仍为 0/7。本轮只修改 Core 的来源读取与检索；AI Code Review 实战维护和产品上线尚未验收。",
+          "tone": "warning"
+        },
+        {
+          "type": "paragraph",
+          "text": "49,152 字节来源在旧程序中整篇读回后触发当前 Run 上下文超限。新程序通过检索定位和 4 KiB 原文窗口，在相同读取调用额度内生成正确结果。7 项真实进程错误路径及压缩、长度恢复和客户端回归通过。"
+        },
+        {
+          "type": "paragraph",
+          "text": "真实模型成功调用检索与读取工具，但没有读到包含目标值的区间，最后返回三个 null。原生 Run 正常结束，独立任务检查判定失败；没有扩大预算或重跑。"
+        }
+      ]
+    },
+    {
+      "id": "source-window",
+      "title": "来源窗口与兼容变化",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Core 保存整篇原文和来源版本。reference_search 返回命中位置，reference_read 返回选定区间；读取不修改来源、采纳记忆或改变预算。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "字段或行为",
+            "当前契约"
+          ],
+          "rows": [
+            [
+              "默认／最大窗口",
+              "8192／16384 个原文 UTF-8 字节"
+            ],
+            [
+              "offset / next_offset / bytes",
+              "实际窗口起点／终点／整篇字节数"
+            ],
+            [
+              "hash / hash_scope",
+              "完整原文哈希／full_source_text_utf8"
+            ],
+            [
+              "truncated",
+              "任何前缀或后缀未返回即 true；尾页与非空来源 EOF 也为 true"
+            ],
+            [
+              "继续取页",
+              "next_offset < bytes；不能只看 truncated"
+            ],
+            [
+              "搜索",
+              "每个 active 来源的首个字面命中，最多 20 个来源；摘录保留完整命中"
+            ],
+            [
+              "UTF-8",
+              "偏移须为字符边界；窗口装不下下一个字符时明确报错"
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "title": "大来源的默认返回范围改变",
+          "text": "旧版省略范围时返回全文；当前默认返回 8 KiB。需要全文的消费者必须按窗口元数据读取，并区分全文哈希与当前页。JSON 转义或累计历史仍可能超过上下文预算。",
+          "tone": "warning"
+        }
+      ]
+    },
+    {
+      "id": "before-after",
+      "title": "实际进程前后对照",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "使用公共 business_host，先建立 Session，再通过 /reference correct 保存更正原文，最后由新进程取源。管理操作没有模型调用，也没有把大正文伪造成原生历史消息。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "条件",
+            "旧程序",
+            "新程序"
+          ],
+          "rows": [
+            [
+              "相同原文",
+              "49,152 字节；SHA 25e79a30…8d447",
+              "相同"
+            ],
+            [
+              "目录与预算",
+              "context 32,768；输出 512；projection 14,080 字节",
+              "相同"
+            ],
+            [
+              "读取 Run 调用上限",
+              "3",
+              "3"
+            ],
+            [
+              "实际读取 Run 调用",
+              "2；下一投影超限前停止",
+              "3；定位→4 KiB 原文→答案"
+            ],
+            [
+              "最终结果",
+              "任务失败，无答案产物",
+              "答案与独立原文 oracle 一致，Host 原样落盘核验"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "受控 provider 从实际工具正文提取值，证明公开机制可运行。该对照不证明模型自主决策，也没有调用 Agent 文件写工具。"
+        }
+      ]
+    },
+    {
+      "id": "continuity",
+      "title": "压缩续作与错误路径",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "结果与覆盖"
+          ],
+          "rows": [
+            [
+              "Core 库／Host 边界",
+              "214 通过、1 原公网项忽略；Host 3 通过；新增窗口单测 6 项"
+            ],
+            [
+              "来源故障",
+              "7 通过；22 个进程、23 次 HTTP；非法 UTF-8 偏移、非法长度、EOF、更正和撤销"
+            ],
+            [
+              "压缩续作",
+              "6 通过；正例两个 Task 共 15 次调用、三次 summary、两个进程、同 Session 原文恢复"
+            ],
+            [
+              "长度恢复／原生客户端",
+              "13／16 通过"
+            ],
+            [
+              "Harness／JSONL",
+              "14／3 通过"
+            ],
+            [
+              "静态与文档",
+              "Core clippy 通过；doc-tests 为 0；广域 bootstrap 未完成，限定文档检查单独记录"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "压缩候选仍未被采纳，成功 Run 仍不自动接受 Task。默认窗口变化后，压缩回归按公开 schema 显式请求较大窗口，并核对完整原文和全文哈希；原 b68 程序及 c54 测试版本保留。"
+        }
+      ]
+    },
+    {
+      "id": "real-model",
+      "title": "真实模型失败与下一步",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "当前目录核实 deepseek-v4.1-flash 和 openai-completions。一次实际试验使用随机目标值和 49 KiB 原文，值位于 26,646 字节，距离块标签超过 2 KiB。仅提供上下文工具；凭据只在进程环境传递。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "观察",
+            "实际结果"
+          ],
+          "rows": [
+            [
+              "检索",
+              "成功定位 ref-2 的 calibration_block"
+            ],
+            [
+              "三个原文窗口",
+              "[24482,25506)、[30000,34096)、[25506,26050)；均成功"
+            ],
+            [
+              "目标值区间",
+              "未覆盖 26646；不是工具错误或上下文超限"
+            ],
+            [
+              "调用与答案",
+              "读取 Run 用 5/6 次调用；返回三个 null；Task FAIL"
+            ],
+            [
+              "保留与影响",
+              "原来源不变，pending_run 为空；未重试、未换 Session、未执行产品操作"
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "title": "下一步验收归属",
+          "text": "现有 Harness 支持 Host 拒绝候选、反馈后继续同一 Session。下一阶段应验证这条任务闭环能纠正不完整取证；Core 保留原生执行与来源机制，业务正确性仍由 Host 独立判断。",
+          "tone": "warning"
+        }
+      ]
+    },
+    {
+      "id": "evidence",
+      "title": "审查、依赖与证据",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "独立源码审查已关闭尾页完整性标记、长检索词截断和搜索版本元数据三项问题。执行原件与最终点审查单独记录，未完成前不扩大接受范围。"
+        },
+        {
+          "type": "paragraph",
+          "text": "依赖检查按 tracked Lite 独立政策通过，政策哈希与提取记录一致，未改政策或依赖。先前根目录 Full 政策的失败日志保留；本地离线漏洞库的时效性未确认。"
+        },
+        {
+          "type": "facts",
+          "items": [
+            {
+              "label": "Core runtime SHA256",
+              "value": "3573a4958212c23a2c7901f6f01332b6e760408e57f79feb3c4816ec64481447"
+            },
+            {
+              "label": "business_host SHA256",
+              "value": "2ddca3e7075e187aec87f4d98dfb8b913a768846474d3ddab396a20f117a8148"
+            },
+            {
+              "label": "JSONL sidecar SHA256",
+              "value": "a7719e7f80dee71e5e8b67320b09531ace603504f14198bc258f3ed2e05373ff"
+            },
+            {
+              "label": "本机原始证据",
+              "value": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-context-continuity-v1-20261025"
+            }
+          ]
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读结果",
+              "href": "context-continuity-20261025.result.json"
+            },
+            {
+              "label": "来源读取接口",
+              "href": "../ai-integration.md#56-原始来源检索与分窗读取"
+            },
+            {
+              "label": "宿主案例",
+              "href": "../knowledge/host-contracts.md"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "Windows 以外平台、任意大上下文、通用编码与逆向能力增益、完整 OMP、AI Code Review 生产和报告视觉均未由本点验收。"
+        }
+      ]
+    }
+  ]
+}

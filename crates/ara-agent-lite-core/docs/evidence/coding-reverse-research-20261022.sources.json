@@ -1,0 +1,645 @@
+{
+  "schema": "ara-lite-research-sources-v1",
+  "date": "2026-10-22",
+  "scope": "coding/reverse/context/control/evaluation research; no runtime changes or external code execution",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "local_source_sha256": {
+    "crates/ara-agent-lite-core/src/agent.rs": "d68e96d6cafed4f3bc2066f742a584bc6c9f3c734e97376c3653bbfc34b3b35a",
+    "crates/ara-agent-lite-core/src/context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "crates/ara-agent-lite-core/src/environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "crates/ara-agent-lite-core/src/environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "crates/ara-agent-lite-core/src/environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "crates/ara-agent-lite-core/src/environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "crates/ara-agent-lite-core/src/execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "crates/ara-agent-lite-core/src/experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "crates/ara-agent-lite-core/src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "crates/ara-agent-lite-core/src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "crates/ara-agent-lite-core/src/goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "crates/ara-agent-lite-core/src/lib.rs": "15f05f7b914aec1810f6012851656c13979746651e6dcc6cc36759ef6a2e4a8c",
+    "crates/ara-agent-lite-core/src/local_tools.rs": "8f633d534f4e71d4c40fedc9af2bfbbb267cbae1a8006b71e3494b14bf6f3102",
+    "crates/ara-agent-lite-core/src/managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "crates/ara-agent-lite-core/src/model.rs": "a63864118846e955e61e4bfc6c81d30da1a178c0c90b4a958ff0d98b0b9149a7",
+    "crates/ara-agent-lite-core/src/model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "crates/ara-agent-lite-core/src/model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "crates/ara-agent-lite-core/src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "crates/ara-agent-lite-core/src/script_tools.rs": "69df7db6b58eeeb88b47b26defb58cd1ad73a769cb69ba9e6ee513252a924d33",
+    "crates/ara-agent-lite-core/src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "crates/ara-agent-lite-core/src/skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "crates/ara-agent-lite-core/src/skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "crates/ara-agent-lite-core/src/steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "crates/ara-agent-lite-core/src/system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "crates/ara-agent-lite-core/src/terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "crates/ara-agent-lite-core/src/terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "crates/ara-agent-lite-core/src/web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "crates/ara-agent-lite-core/src/web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "crates/ara-agent-lite-core/src/web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3"
+  },
+  "source_evidence": [
+    {
+      "id": "claude-code-license",
+      "url": "https://raw.githubusercontent.com/anthropics/claude-code/main/LICENSE.md",
+      "final_url": "https://raw.githubusercontent.com/anthropics/claude-code/main/LICENSE.md",
+      "bytes": 150,
+      "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-code-repository",
+      "url": "https://api.github.com/repos/anthropics/claude-code/commits/main",
+      "status": "unavailable",
+      "error": "HTTP Error 403: rate limit exceeded",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-how",
+      "url": "https://code.claude.com/docs/en/how-claude-code-works",
+      "final_url": "https://code.claude.com/docs/en/how-claude-code-works",
+      "bytes": 552450,
+      "sha256": "4e14fa7867dfdf4aa0c8a933b46173222fd99359c742ade3973de74fbdff8a2e",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-context",
+      "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+      "final_url": "https://www.anthropic.com/research/effective-context-engineering-for-ai-agents",
+      "bytes": 240108,
+      "sha256": "5b7fe638fa5c6f06922921607344efa0cacd51d57750a46a1f459ccb8e52b32a",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-long-task",
+      "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+      "final_url": "https://www.anthropic.com/research/effective-harnesses-for-long-running-agents",
+      "bytes": 227708,
+      "sha256": "3971ae219cbb030489fde0b25aa037660332109caa34c61682aa23e24ccddc88",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-mcp-code",
+      "url": "https://www.anthropic.com/engineering/code-execution-with-mcp",
+      "final_url": "https://www.anthropic.com/research/code-execution-with-mcp",
+      "bytes": 246543,
+      "sha256": "7e767b78888abb1f91c183e0fe96b1e803dcce3c1774409e66cda3ca2d26c828",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "claude-tools",
+      "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+      "final_url": "https://www.anthropic.com/research/writing-tools-for-agents",
+      "bytes": 268405,
+      "sha256": "646a54d9f822e6474b4910a478da0fbd6e72e2637e3a7a14ed83683c56564563",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "deepseek-cache",
+      "url": "https://api-docs.deepseek.com/guides/kv_cache/",
+      "final_url": "https://api-docs.deepseek.com/guides/kv_cache/",
+      "bytes": 34082,
+      "sha256": "2d738124f30f07c768ade795cf5157c8584b705aaa0ef036383abad746185fb6",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "id": "deepseek-tool-calls",
+      "url": "https://api-docs.deepseek.com/guides/tool_calls",
+      "final_url": "https://api-docs.deepseek.com/guides/tool_calls/",
+      "bytes": 73651,
+      "sha256": "75e870459ba551f018193f65dfe769eb95ec1d7b72523b319370fbecd26faf30",
+      "status": "retrieved",
+      "collector": "primary"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anthropics/claude-code/blob/1132b8a98e93300bb3822197fb7eee12ce4fb906/LICENSE.md",
+      "commit": "1132b8a98e93300bb3822197fb7eee12ce4fb906",
+      "repo": "anthropics/claude-code",
+      "source_path": "LICENSE.md",
+      "sha256": "35d6c8cd15586b0e1b7fd2d4b7a76761bb592c326cfa8a1311a68977ae58861c",
+      "bytes": 151,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anthropics__claude-code__LICENSE.md.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/LICENSE",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "LICENSE",
+      "sha256": "4f6a1985796db5225e3b1e59972bd47e07a27a0748427cb3d3c8fbf39f9311f0",
+      "bytes": 1070,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__LICENSE.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/coding-agent/src/core/tools/edit.ts",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "packages/coding-agent/src/core/tools/edit.ts",
+      "sha256": "86088bcf10735396e036e817b62d977674fe136e4bec81d46c3ba58d84ce61f1",
+      "bytes": 8565,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__packages__coding-agent__src__core__tools__edit.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/coding-agent/src/core/tools/read.ts",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "packages/coding-agent/src/core/tools/read.ts",
+      "sha256": "0b2907299296f7ff8e247f44a2d6392e2096c6ae16a33d69021c44c4d2fe3d13",
+      "bytes": 10551,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__packages__coding-agent__src__core__tools__read.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/coding-agent/src/core/tools/truncate.ts",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "packages/coding-agent/src/core/tools/truncate.ts",
+      "sha256": "67f63a372e7df66b131fcf6389a58ce67e2ac0c75657b6d2fe662c81e12a6a4e",
+      "bytes": 9256,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__packages__coding-agent__src__core__tools__truncate.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/agent/src/agent-loop.ts",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "packages/agent/src/agent-loop.ts",
+      "sha256": "0f9bc4908d59418e4a2109a4c06f7cf2fe4acd885974b6c3b7c2bec5c020c9b3",
+      "bytes": 29890,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__packages__agent__src__agent-loop.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/earendil-works/pi/blob/58c0b02ce552adab76014e7ed712ab7981359aa8/packages/coding-agent/src/core/compaction/compaction.ts",
+      "commit": "58c0b02ce552adab76014e7ed712ab7981359aa8",
+      "repo": "earendil-works/pi",
+      "source_path": "packages/coding-agent/src/core/compaction/compaction.ts",
+      "sha256": "2e6b304b34c6d77b654dd19b610c16868b997f28cb7de7b480f836fdb798705d",
+      "bytes": 35402,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/earendil-works__pi__packages__coding-agent__src__core__compaction__compaction.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/LICENSE",
+      "commit": "3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+      "repo": "can1357/oh-my-pi",
+      "source_path": "LICENSE",
+      "sha256": "dd35e2718bfe5ce24ca2a192ecd46b7783c849d556956a52dd37e8746189f4d0",
+      "bytes": 1145,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/can1357__oh-my-pi__LICENSE.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/packages/coding-agent/src/edit/index.ts",
+      "commit": "3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+      "repo": "can1357/oh-my-pi",
+      "source_path": "packages/coding-agent/src/edit/index.ts",
+      "sha256": "2706303448afddcbf86e8e527d3d7e26afd74f9a6a8b3463d2ab16fddaa713bc",
+      "bytes": 29242,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/can1357__oh-my-pi__packages__coding-agent__src__edit__index.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/packages/coding-agent/src/lsp/tool.ts",
+      "commit": "3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+      "repo": "can1357/oh-my-pi",
+      "source_path": "packages/coding-agent/src/lsp/tool.ts",
+      "sha256": "3dff449ee3adbd9087af3b6e3ddd855965c274d783285a40ec555e6eb4690814",
+      "bytes": 54819,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/can1357__oh-my-pi__packages__coding-agent__src__lsp__tool.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/crates/pi-edit/src/modes/hashline/mismatch.rs",
+      "commit": "3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+      "repo": "can1357/oh-my-pi",
+      "source_path": "crates/pi-edit/src/modes/hashline/mismatch.rs",
+      "sha256": "59f60220b5f0e44bc04e20342f88b7e035d64ed33b697aa352fbc0fae404684f",
+      "bytes": 5057,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/can1357__oh-my-pi__crates__pi-edit__src__modes__hashline__mismatch.rs.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/can1357/oh-my-pi/blob/3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e/crates/pi-edit/src/session.rs",
+      "commit": "3a2758b68f7c8e6bdf22c3a76b86c8675e5e0c9e",
+      "repo": "can1357/oh-my-pi",
+      "source_path": "crates/pi-edit/src/session.rs",
+      "sha256": "e4126fd5bea3c21a31c1eddc29a6dabd037ee0370492fa91215d44eae9e641e7",
+      "bytes": 20329,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/can1357__oh-my-pi__crates__pi-edit__src__session.rs.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/LICENSE",
+      "commit": "9496ff842cc8ed3bb3db7d8e7d946c6262d9be72",
+      "repo": "anomalyco/opencode",
+      "source_path": "LICENSE",
+      "sha256": "d1a549bbb600032e0184f9e874d4d96cd951f26dcce6dbf1e1313c819a231dac",
+      "bytes": 1066,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anomalyco__opencode__LICENSE.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/tool/plugin/edit.ts",
+      "commit": "9496ff842cc8ed3bb3db7d8e7d946c6262d9be72",
+      "repo": "anomalyco/opencode",
+      "source_path": "packages/core/src/tool/plugin/edit.ts",
+      "sha256": "0740edc349a4d18a9a69008e199014f72dc00ff720ee45f905f07d52c6951213",
+      "bytes": 15191,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anomalyco__opencode__packages__core__src__tool__plugin__edit.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/file-mutation.ts",
+      "commit": "9496ff842cc8ed3bb3db7d8e7d946c6262d9be72",
+      "repo": "anomalyco/opencode",
+      "source_path": "packages/core/src/file-mutation.ts",
+      "sha256": "c1410e826587a1092aedbef517e8ba7e9af2d6a10636e8381ffa881f54037d7c",
+      "bytes": 5112,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anomalyco__opencode__packages__core__src__file-mutation.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/tool-output.ts",
+      "commit": "9496ff842cc8ed3bb3db7d8e7d946c6262d9be72",
+      "repo": "anomalyco/opencode",
+      "source_path": "packages/core/src/tool-output.ts",
+      "sha256": "afbc6ba4a979e8b778464df9f73ab093b5879391c0f3bf92cb23b49fd750d1a0",
+      "bytes": 5493,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anomalyco__opencode__packages__core__src__tool-output.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/anomalyco/opencode/blob/9496ff842cc8ed3bb3db7d8e7d946c6262d9be72/packages/core/src/session/compaction.ts",
+      "commit": "9496ff842cc8ed3bb3db7d8e7d946c6262d9be72",
+      "repo": "anomalyco/opencode",
+      "source_path": "packages/core/src/session/compaction.ts",
+      "sha256": "bc59a87eeea9560e838bd69b765e605c540effdc76b0b96ee5efd7f772efaa91",
+      "bytes": 44135,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/anomalyco__opencode__packages__core__src__session__compaction.ts.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/LICENSE.txt",
+      "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "repo": "Aider-AI/aider",
+      "source_path": "LICENSE.txt",
+      "sha256": "8c6db340475136df3c1201d458fa5755698eace76e510471ecc9d857d6083dac",
+      "bytes": 11359,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/Aider-AI__aider__LICENSE.txt.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/repomap.py",
+      "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "repo": "Aider-AI/aider",
+      "source_path": "aider/repomap.py",
+      "sha256": "c48efcaeb19168fdc2bcca6663d08510fe4bb2aa97af04c6550ac98a162fd5ca",
+      "bytes": 27307,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/Aider-AI__aider__aider__repomap.py.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/editblock_coder.py",
+      "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "repo": "Aider-AI/aider",
+      "source_path": "aider/coders/editblock_coder.py",
+      "sha256": "3a19d9d789f6ce4f9ffac49443ac56b0e160a09c7b8594fa5328f93611e63570",
+      "bytes": 19617,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/Aider-AI__aider__aider__coders__editblock_coder.py.txt"
+    },
+    {
+      "collector": "coding",
+      "url": "https://github.com/Aider-AI/aider/blob/5dc9490bb35f9729ef2c95d00a19ccd30c26339c/aider/coders/base_coder.py",
+      "commit": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "repo": "Aider-AI/aider",
+      "source_path": "aider/coders/base_coder.py",
+      "sha256": "be3aad6de19789112b5a1615572fe6329ec28e969e8aa9d843efb61f56bbb12c",
+      "bytes": 86303,
+      "status": "retrieved",
+      "local_snapshot": "coding-sources/Aider-AI__aider__aider__coders__base_coder.py.txt"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/mini-swe-agent/04d809ceab9df28f9adaed044884180159172930/README.md",
+      "sha256": "9982d90b7566f2f3fa5e9811b475d5e8e2a84e2df80cf3f1e4be6e820b129835",
+      "bytes": 11106,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/mini-README.md"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/mini-swe-agent/04d809ceab9df28f9adaed044884180159172930/src/minisweagent/agents/default.py",
+      "sha256": "e8ef8aa365942d739c2ec5cb0879f60f377d2dc2de8ec670aaedf3bafb45a4c2",
+      "bytes": 8043,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/mini-src__minisweagent__agents__default.py"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/mini-swe-agent/04d809ceab9df28f9adaed044884180159172930/src/minisweagent/config/default.yaml",
+      "sha256": "112aa58328f478a41cc2630702a4b89ef459e912870e05065157ed221f56701f",
+      "bytes": 5829,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/mini-src__minisweagent__config__default.yaml"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/mini-swe-agent/04d809ceab9df28f9adaed044884180159172930/src/minisweagent/environments/local.py",
+      "sha256": "01dd33ae6be897458611911cc0eee1389092ea9fc6788c7eb24773e7c6342b1c",
+      "bytes": 3617,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/mini-src__minisweagent__environments__local.py"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/SWE-agent/3ea751c087f32b16e039a2233dd6eefecef325d5/README.md",
+      "sha256": "dcd880557720efbab0f5c0e68f2bc742309efecfce83244c9e670ec1f1adf76f",
+      "bytes": 8158,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-README.md"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/SWE-agent/3ea751c087f32b16e039a2233dd6eefecef325d5/sweagent/agent/agents.py",
+      "sha256": "d6cdf7ac66a6509ceba08e3541b856f0734acf79f9a485ed8a6e2c72f0d211a8",
+      "bytes": 55804,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-sweagent__agent__agents.py"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/SWE-agent/3ea751c087f32b16e039a2233dd6eefecef325d5/sweagent/agent/history_processors.py",
+      "sha256": "8e3621a9b7d94761d184c57dc2ab1028f7eb04b01fdfcbe8ba122977d19e477a",
+      "bytes": 14869,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-sweagent__agent__history_processors.py"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/SWE-agent/SWE-agent/3ea751c087f32b16e039a2233dd6eefecef325d5/config/default.yaml",
+      "sha256": "96aeb863cbfaa768044527155f8555c9b401c6644e937b5b6b0bba5538b6eee4",
+      "bytes": 3242,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-config__default.yaml"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/openai/codex/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/README.md",
+      "sha256": "ba4e1f69ff48386e72a9c5e1edaf76aad64a475c2d51af79ccba6d1128261ba7",
+      "bytes": 3334,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/codex-README.md"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/openai/codex/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/codex-rs/core/src/compact.rs",
+      "sha256": "8fdc85c3ccfb66cc41855622cd3219c43d3d55930c7a0e2595f29caaa74f895d",
+      "bytes": 33612,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/codex-codex-rs__core__src__compact.rs"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/openai/codex/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/codex-rs/core/src/truncate.rs",
+      "status": "unavailable",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/openai/codex/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/codex-rs/core/src/tools/handlers/unified_exec.rs",
+      "sha256": "65e868bed63826d78f37c9ffd1c79f2a133d5356e5908630f1ee49b788723353",
+      "bytes": 3605,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/codex-codex-rs__core__src__tools__handlers__unified_exec.rs"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://raw.githubusercontent.com/openai/codex/09ec2451bf9a6750a19f334e9bd0fd9ebe6494b5/codex-rs/core/src/tools/handlers/apply_patch.rs",
+      "sha256": "5d223af8b6aa967db3131e90225a8df6710e33c6afc49d9a02df750d6e83683f",
+      "bytes": 21088,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/codex-codex-rs__core__src__tools__handlers__apply_patch.rs"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+      "sha256": "f8103d1339a033beb9eece5b0e265c8c94f65f42844a73992a7d7de630526892",
+      "bytes": 227731,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/anthropic-harness.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+      "sha256": "5b7fe638fa5c6f06922921607344efa0cacd51d57750a46a1f459ccb8e52b32a",
+      "bytes": 240108,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/anthropic-context.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+      "sha256": "49f2492bc140d002813f5f7664efd221da7412e6743671d8d9ed4207eb93d19e",
+      "bytes": 313608,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/anthropic-tools.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://www.anthropic.com/engineering/code-execution-with-mcp",
+      "sha256": "a025c8377b9e891e90503b7a003313bc79e1c3a8c6d4351166b6bccca9ae0e4e",
+      "bytes": 246648,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/anthropic-code-exec.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching",
+      "sha256": "53d38549e69a174559c44d78f751834088d707ee9b13fba3d9f966f063cf32f4",
+      "bytes": 1999737,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/anthropic-cache.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://api-docs.deepseek.com/guides/kv_cache",
+      "sha256": "18812fe9005281f7276a085972f7ca9ecc5d7faf9cb172a8fdd459a99fa84f86",
+      "bytes": 34151,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/deepseek-cache.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://openai.com/index/introducing-swe-bench-verified/",
+      "status": "unavailable",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://scale.com/research/swe_bench_pro",
+      "sha256": "a54bb826f76eaad8aecca97e0924062840dd10cb13064a465ababe19c8d2670a",
+      "bytes": 57539,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-pro.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://swe-rebench.com/",
+      "sha256": "6e3f8ccfce4d369a8504f0fe4d98514fef2d00fe7415e3ba218621aebdbcfc25",
+      "bytes": 7790037,
+      "status": "retrieved",
+      "local_snapshot": "efficiency-sources/swe-rebench.html"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://www.tbench.ai/docs/task-structure",
+      "status": "unavailable",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "collector": "efficiency",
+      "url": "https://arxiv.org/html/2405.15793v3",
+      "status": "unavailable",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)>"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/README.md",
+      "repo": "LaurieWired/GhidraMCP",
+      "commit": "1e980252087b2479a21b9ca6d82d5829538651a7",
+      "source_path": "README.md",
+      "sha256": "b82f32e9e36d55c9a7b0d7578a650312b5f319551e2d4a0870552e4895e61850",
+      "bytes": 5151,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/src/ghidra_mcp/server.py",
+      "repo": "LaurieWired/GhidraMCP",
+      "commit": "1e980252087b2479a21b9ca6d82d5829538651a7",
+      "source_path": "src/ghidra_mcp/server.py",
+      "sha256": "69b6f06e892190a4ba5cd95b2300b7bf5114bfc4adf55010a2d428253c1d7d59",
+      "bytes": 11111,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/src/ghidra_mcp/headless.py",
+      "repo": "LaurieWired/GhidraMCP",
+      "commit": "1e980252087b2479a21b9ca6d82d5829538651a7",
+      "source_path": "src/ghidra_mcp/headless.py",
+      "sha256": "c86123440b7c950a99c431e44c8e423d2dd313fa52097048f3f1720cb2400d7a",
+      "bytes": 9931,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/LaurieWired/GhidraMCP/blob/1e980252087b2479a21b9ca6d82d5829538651a7/extension/src/main/java/com/lauriewired/ghidramcp/http/BackendHttpServer.java",
+      "repo": "LaurieWired/GhidraMCP",
+      "commit": "1e980252087b2479a21b9ca6d82d5829538651a7",
+      "source_path": "extension/src/main/java/com/lauriewired/ghidramcp/http/BackendHttpServer.java",
+      "sha256": "36a162d69ef7e948cbb14bbc5d617cf66e7235a680ecfe26eaee949d8377a21f",
+      "bytes": 9008,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/llvm/llvm-project/blob/416f328b939fe1373ddc9060f6773ad4c5039f59/lldb/docs/use/mcp.md",
+      "repo": "llvm/llvm-project",
+      "commit": "416f328b939fe1373ddc9060f6773ad4c5039f59",
+      "source_path": "lldb/docs/use/mcp.md",
+      "sha256": "ef0f36b6ad2b1fed2a038cd8ad484efff94cbb96014f4a487f92bcf31af77fc7",
+      "bytes": 11776,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/llvm/llvm-project/blob/416f328b939fe1373ddc9060f6773ad4c5039f59/lldb/source/Plugins/Protocol/MCP/Tool.cpp",
+      "repo": "llvm/llvm-project",
+      "commit": "416f328b939fe1373ddc9060f6773ad4c5039f59",
+      "source_path": "lldb/source/Plugins/Protocol/MCP/Tool.cpp",
+      "sha256": "56105bf1129c24f5338f24e09f2d6fcc88889f4d95e571fd2724bd9c274f9dd4",
+      "bytes": 7892,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/x64dbg/x64dbg/blob/c44297200731995c51dbc75ab3098e2f0094b282/src/bridge/bridgemain.h",
+      "repo": "x64dbg/x64dbg",
+      "commit": "c44297200731995c51dbc75ab3098e2f0094b282",
+      "source_path": "src/bridge/bridgemain.h",
+      "sha256": "bf688747fc85402a9c10fb66d7246a37aa8819956d2f970cf997463fae530c38",
+      "bytes": 56527,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    },
+    {
+      "collector": "reverse",
+      "url": "https://github.com/bethington/ghidra-mcp/blob/c008651b1068f9344caf170fc94cfda23b206fb5/python/bridge_mcp_ghidra/config.py",
+      "repo": "bethington/ghidra-mcp",
+      "commit": "c008651b1068f9344caf170fc94cfda23b206fb5",
+      "source_path": "python/bridge_mcp_ghidra/config.py",
+      "sha256": "61c9d4edfe8810876788814fe6c131a366370389d015ada38009e5db435b7cb2",
+      "bytes": 8689,
+      "status": "retrieved",
+      "hash_unit": "UTF8 text returned by connector",
+      "local_snapshot": "reverse-source-evidence.json"
+    }
+  ],
+  "research_note_sha256": {
+    "coding-research.md": "3e93876e8a3f1acc62371318349ed36bf83c711fd9c8c4e667970ef6dc808611",
+    "reverse-research.md": "bdd9853451e0a42c4b287493e08f6c7c1221a685fe8ac511e2da00080d6df9f7",
+    "efficiency-research.md": "23fe2cb4983f1bde37d337234df562365903a130a5cb081ebf4ebe34e6296cc1"
+  },
+  "local_evidence_id": "ara-core-research-20261022",
+  "limitations": [
+    "Source and official-document inspection only, not runtime verification",
+    "GitHub unauthenticated API rate limit failure retained; pinned files obtained through available read-only sources",
+    "Graph freshness reported metadata_changed; material local statements checked against source",
+    "Different collectors can hash different representations of the same URL"
+  ],
+  "implemented_in_this_turn": false,
+  "model_trials_run": false,
+  "deployment_run": false,
+  "report_content_sha256": "d3e1673491413beb26cdf8b4c1aa2f42f6f528d68d628432abc2c5cfbde0b6f8"
+}

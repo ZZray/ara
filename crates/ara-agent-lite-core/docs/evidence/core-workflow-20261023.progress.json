@@ -1,0 +1,785 @@
+{
+  "schema": "ara-core-workflow-progress-v1",
+  "date": "2026-10-23",
+  "goal_complete": false,
+  "public_library": {
+    "name": "ara-workflow",
+    "backend": "actual Full Core Arc<ara_agent::Agent>",
+    "status": "SCOPED_ORIGINAL_S3_ARTIFACT_AND_HOST_PATH_ACCEPTED_AUDITS_OPEN",
+    "acceptance": "ACCEPT_SCOPED_ORIGINAL_S3_ARTIFACT_AND_PUBLIC_API_INTEGRATION",
+    "native_cli_integration": "OPEN",
+    "cross_process_recovery": "ACCEPT_SCOPED_HOST_CONSUMER_TEXT_CONTINUITY_TWO_PROCESS_AND_TWO_FILE_RETRIEVAL; checked text example only",
+    "checks": {
+      "integration_and_examples": {
+        "passed": 15,
+        "failed": 0,
+        "ignored": 0,
+        "coverage_basis": "14 unchanged checks from test-final.log plus 1 fresh controlled-final-test.log after provenance-only example repair"
+      },
+      "fmt_exit": 0,
+      "doc_tests": {
+        "exit": 0,
+        "cases": 0
+      },
+      "clippy_new_package_no_deps_exit": 0,
+      "clippy_with_dependencies": {
+        "exit": 101,
+        "scope": "existing ara-rpc",
+        "errors": 7
+      },
+      "external_consumer_check_exit": 0,
+      "deny_full": {
+        "exit": 5,
+        "advisories": "FAILED",
+        "licenses": "FAILED",
+        "bans": "PASS",
+        "sources": "PASS"
+      },
+      "deny_runtime": {
+        "exit": 1,
+        "advisories": "FAILED",
+        "existing_rustls_diagnostics": 5,
+        "licenses": "PASS",
+        "bans": "PASS",
+        "sources": "PASS"
+      },
+      "project_current": {
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "includes": "real file tools, failure paths, actual default/off HTTP bodies",
+        "fresh": true
+      },
+      "distinct_rust_checks": {
+        "total": 27,
+        "historical_unchanged": 15,
+        "current_fresh": 12,
+        "not_coding_tasks": true
+      },
+      "latest_current_package_tests": {
+        "passed": 52,
+        "failed": 0,
+        "ignored": 0,
+        "fresh": true,
+        "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\continuity-v1"
+      }
+    },
+    "real_cpp": {
+      "scope": "Earlier small decimal-parser integration smoke; original multi-file S3 now separately scoped accepted",
+      "requested_model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "wire_model_echo": "NOT_CAPTURED",
+      "backend_weights": "UNKNOWN",
+      "attempts": 1,
+      "logical_requests": 4,
+      "bounds": {
+        "logical_requests": 16,
+        "attempts": 3,
+        "seconds": 300,
+        "max_tokens_per_response": 16384
+      },
+      "reasoning": "ProviderDefault; no override",
+      "seed_passed": 14,
+      "total_cases": 29,
+      "public_examples": 5,
+      "additional_host_cases": 24,
+      "host_passed": 29,
+      "independent_recompile_passed": 29,
+      "same_oracle_not_new_holdout": true,
+      "real_model_feedback_continuation_exercised": false,
+      "tools": [
+        "read_source",
+        "replace_source",
+        "check_cpp"
+      ],
+      "source_sha256": "1464cda2fb9646fc2b006902ab564719a06ae6c834e2e7a388661d68d757d317",
+      "binary_sha256": "df2d812cbafe367d8394aa6713979eb4904334145b3412e902119b61b2a72975",
+      "normalized_session_usage": [
+        {
+          "input": 531,
+          "output": 30,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 561
+        },
+        {
+          "input": 256,
+          "output": 1733,
+          "cacheRead": 384,
+          "cacheWrite": 0,
+          "totalTokens": 2373,
+          "reasoningTokens": 991
+        },
+        {
+          "input": 249,
+          "output": 25,
+          "cacheRead": 2176,
+          "cacheWrite": 0,
+          "totalTokens": 2450,
+          "reasoningTokens": 2
+        },
+        {
+          "input": 162,
+          "output": 1729,
+          "cacheRead": 2304,
+          "cacheWrite": 0,
+          "totalTokens": 4195,
+          "reasoningTokens": 1595
+        }
+      ],
+      "reasoning_tokens_missing_turns": 1,
+      "reasoning_tokens_reported_subtotal": 2588,
+      "complete_reasoning_total": "UNKNOWN",
+      "cost": "UNKNOWN"
+    },
+    "length_continuation": {
+      "status": "ACCEPT_SCOPED_PUBLIC_TYPED_LENGTH_SETTLEMENT_CONTINUATION",
+      "current_package_checks": 39,
+      "new_fault_functions": 11,
+      "new_native_example_functions": 1,
+      "real_model_recovery": "NOT_RUN",
+      "goal_complete": false,
+      "independent_review_sha256": "a60cc7e2a55662e17af31cd47188e19ae17ee51be8b56d7d49c1b338c0155939"
+    },
+    "continuity": {
+      "schema": "ara-core-continuity-scoped-evidence-v1",
+      "date": "2026-10-23",
+      "status": "ACCEPT_SCOPED_HOST_CONSUMER_TEXT_CONTINUITY_TWO_PROCESS_AND_TWO_FILE_RETRIEVAL",
+      "goal_complete": false,
+      "scope": "new process/new Agent restores checked text context of same persistent Session; actual linked-note retrieval; not original Agent native resume",
+      "requested_model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "wire_model_echo": "NOT_CAPTURED",
+      "remote_weights": "UNKNOWN",
+      "reasoning_policy": "ProviderDefault; catalog reasoning=false does not disable remote thinking",
+      "tests": {
+        "current_package": 52,
+        "continuity_functions": 13,
+        "failed": 0,
+        "ignored": 0,
+        "scoped_clippy_no_deps_exit": 0,
+        "fmt_exit": 0,
+        "doctest_exit": 0,
+        "doctest_cases": 0,
+        "workspace_checks": "NOT_RUN; unrelated dirty WIP preserved",
+        "dependency_audit": "existing failed advisories/licenses retained; not accepted"
+      },
+      "controlled": {
+        "schema": "ara-continuity-execution-check-v1",
+        "mode": "controlled",
+        "passed": true,
+        "checks": {
+          "both_original_processes_exited_zero": true,
+          "separate_process_ids": true,
+          "process_receipts_match_host_pids": true,
+          "same_persistent_session": true,
+          "prepared_snapshot_matches_original_pin": true,
+          "original_entries_unchanged": true,
+          "all_original_parent_links_exist": true,
+          "summary_sources_are_original": true,
+          "retained_context_source_identity": true,
+          "correction_is_original_user_reference": true,
+          "random_fact_absent_from_prepare_and_summary": true,
+          "latest_correction_and_fact_in_actual_file": true,
+          "protected_project_files_unchanged": true,
+          "original_input_sidecars_unchanged": true,
+          "original_deadline_and_limit_preserved": true,
+          "contiguous_cumulative_reservation_ledger": true,
+          "summary_reached_normal_stop": true,
+          "verified_artifact_with_known_settlement": true,
+          "marker_matches_resumed_process": true,
+          "visible_index_link_and_note_fact_before_write": true,
+          "source_read_claim_matches_actual_receipts": true,
+          "review_sealed_exact_actual_bytes": true,
+          "final_package_checks": true,
+          "frozen_sources_and_image_unchanged": true
+        },
+        "session_id": "01a167c6-9bed-7574-8529-261897eb842a",
+        "process_ids": [
+          20384,
+          4884
+        ],
+        "seconds": 2.4895972,
+        "logical_reservations": 7,
+        "prepare_reservations": 3,
+        "resume_reservations": 4,
+        "summary_invocations": 1,
+        "source_entry_count": 4,
+        "original_correction_read": false,
+        "controlled_or_real": "controlled HTTP upstream",
+        "task_accepted": false,
+        "goal_complete": false,
+        "binary_sha256": "ed55a9c455a736fb729cfc973b2bde2dda5d790455418d8bf22db776bf125c0e",
+        "raw_before_sha256": "f6c3645558af2d49854644322695ad633fd82db10bbcb3609446be6c016d09fb",
+        "raw_after_sha256": "128f9ebb8cdd4af881e499689dbf04a911c5dc5020bef521c71679cbda3a7e75",
+        "artifact_sha256": "679f79151a2a38017bd633d454edf02f5ff256f530a924b3fc2393688867f820",
+        "limits": [
+          "checked ordinary text/plain-soft restore; not original Agent native resume",
+          "two preselected knowledge files; no broad retrieval benchmark",
+          "same model/task/budget comparative gains not established",
+          "wire model echo NOT_CAPTURED; remote weights UNKNOWN"
+        ]
+      },
+      "real_model": {
+        "schema": "ara-continuity-execution-check-v1",
+        "mode": "live",
+        "passed": true,
+        "checks": {
+          "both_original_processes_exited_zero": true,
+          "separate_process_ids": true,
+          "process_receipts_match_host_pids": true,
+          "same_persistent_session": true,
+          "prepared_snapshot_matches_original_pin": true,
+          "original_entries_unchanged": true,
+          "all_original_parent_links_exist": true,
+          "summary_sources_are_original": true,
+          "retained_context_source_identity": true,
+          "correction_is_original_user_reference": true,
+          "random_fact_absent_from_prepare_and_summary": true,
+          "latest_correction_and_fact_in_actual_file": true,
+          "protected_project_files_unchanged": true,
+          "original_input_sidecars_unchanged": true,
+          "original_deadline_and_limit_preserved": true,
+          "contiguous_cumulative_reservation_ledger": true,
+          "summary_reached_normal_stop": true,
+          "verified_artifact_with_known_settlement": true,
+          "marker_matches_resumed_process": true,
+          "visible_index_link_and_note_fact_before_write": true,
+          "source_read_claim_matches_actual_receipts": true,
+          "review_sealed_exact_actual_bytes": true,
+          "final_package_checks": true,
+          "frozen_sources_and_image_unchanged": true
+        },
+        "session_id": "01a167c6-d929-763c-bb8d-0dc75a5a8749",
+        "process_ids": [
+          69324,
+          32716
+        ],
+        "seconds": 18.5642384,
+        "logical_reservations": 8,
+        "prepare_reservations": 3,
+        "resume_reservations": 5,
+        "summary_invocations": 1,
+        "source_entry_count": 4,
+        "original_correction_read": true,
+        "controlled_or_real": "real model route",
+        "task_accepted": false,
+        "goal_complete": false,
+        "binary_sha256": "ed55a9c455a736fb729cfc973b2bde2dda5d790455418d8bf22db776bf125c0e",
+        "raw_before_sha256": "d059171efd4f4017e96c25cb9d704ec5aa2a986606a31b4103e220fa64aa4436",
+        "raw_after_sha256": "cefde436b9c240df6d3add9697296ac3a818457c6648205f0c3c4758712ea212",
+        "artifact_sha256": "f8a2dbc03ae4218fa7fbbe288b03fa01d1ab327b326a510036349dc11c8d1493",
+        "limits": [
+          "checked ordinary text/plain-soft restore; not original Agent native resume",
+          "two preselected knowledge files; no broad retrieval benchmark",
+          "same model/task/budget comparative gains not established",
+          "wire model echo NOT_CAPTURED; remote weights UNKNOWN"
+        ]
+      },
+      "bounds": {
+        "logical_calls_including_summary": 16,
+        "original_seconds": 600,
+        "max_output_tokens_each": 16384
+      },
+      "source_pins": {
+        "crates/ara-workflow/examples/continuity.rs": "d49e9ad44c8a888dd5e9ed8bf8dc0a81a2bc8277127cd83bad903ee7de30fe09",
+        "crates/ara-workflow/examples/continuity/host.rs": "892f3af215d8f01fdb3584d8a07c75c058d0beb210d83421c724efcf4acca542",
+        "crates/ara-workflow/examples/continuity/session_bridge.rs": "a4c02d290a4aa1df3d8789057fb1c3b75f8ed597edb4a7429430420f000a371f"
+      },
+      "input_count": 1172,
+      "binary_sha256": "ed55a9c455a736fb729cfc973b2bde2dda5d790455418d8bf22db776bf125c0e",
+      "independent_review": {
+        "reviewer": "Codex /root/s3_post_review",
+        "pre_sha256": "6586010a7f4b5345b99c0dfd7c8900d2693cd99a414cbf7be6267e912d9448fc",
+        "post_sha256": "9072b7e8cae0168478aa78bcff1592ac64f995f7dc3513bcef869754d9be9d70",
+        "decision": "ACCEPT_SCOPED_HOST_CONSUMER_TEXT_CONTINUITY_TWO_PROCESS_AND_TWO_FILE_RETRIEVAL",
+        "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\continuity-v1\\post-review.json"
+      },
+      "preserved_failures": [
+        "test-attempt-1: BUILD_FAILED, local ReviewError conversion",
+        "test-attempt-2: 10 PASS / 3 FAIL, ordinary persisted Wire source misclassified as unsupported Live Graph",
+        "test-attempt-3: BUILD_FAILED, model context_window required f64",
+        "test-attempt-4: 12 PASS / 1 FAIL, negative fixture ignored real ReadTool trailing context of three lines; note fact moved beyond actual heading window without relaxing assertions",
+        "clippy.log: first scoped lint failure; equivalent let-chain fixed, final checks rerun"
+      ],
+      "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\continuity-v1",
+      "open": [
+        "general context selection and broad knowledge retrieval",
+        "long histories and further compaction chains",
+        "generic public restoration API and Full/Lite support",
+        "live Graph/provider-native/archives and original Agent native resume",
+        "real-model Length recovery",
+        "general coding/reverse gains and paired evaluation",
+        "products, release and dependency audit"
+      ],
+      "timing_basis": "sum of the two ordinary-process elapsed times; parent launch gap excluded",
+      "reported_usage": {
+        "total_tokens_sum": 10636,
+        "known_reasoning_tokens_subtotal": 650,
+        "reasoning_fields_missing": 1,
+        "complete_reasoning_total": "UNKNOWN",
+        "cost": "UNKNOWN"
+      },
+      "documentation": {
+        "scoped_html_and_markdown": "PASS",
+        "full_bootstrap": "NOT_COMPLETED_CANCELLED_AFTER_MORE_THAN_THREE_MINUTES",
+        "visual": "NOT_COMPLETED",
+        "reason": "Unbounded full-worktree rglob; original checker PID terminated, recorded separately. Earlier local-file browser refusal retained."
+      },
+      "root_acceptance_sha256": "19aeba45fff3f9eba33316f46caaf1dd992eeed45e22407ad0db771329982c78"
+    }
+  },
+  "diagnostic": {
+    "decision": "APPROVE_SCOPED_FAILED_RUN_EVIDENCE_TASK_NOT_ACCEPTED",
+    "agent_calls": 11,
+    "summary_calls": 0,
+    "host_exit": 1,
+    "native_result_code": -1,
+    "native_agent_end_status": "failed",
+    "native_detail": "assistant stopped with length",
+    "last_finish_reason": "length",
+    "last_content_bytes": 0,
+    "last_reasoning_bytes": 31982,
+    "last_reported_reasoning_tokens": 8192,
+    "last_calls_remaining_including_next": 22,
+    "last_budget_milliseconds_remaining": 799837,
+    "provider_protocol_admission": "ELIGIBLE",
+    "effects_unknown": false,
+    "total_wall_seconds_with_evaluation": 156.356,
+    "conclusion": "The settled Run stopped at the per-response output limit before changing any original source. Shared32-call and900-second allowances were not exhausted. ProviderDefault did expose substantial reasoning, but this task did not complete.",
+    "visible_reasoning_utf8_bytes": 77240,
+    "reported_reasoning_tokens": 19879,
+    "fresh_evaluation": {
+      "configure_exit": 0,
+      "build_exit": 0,
+      "ctest_exit": 8,
+      "public_passed": 7,
+      "public_total": 10,
+      "private_passed": 10,
+      "private_total": 48,
+      "effects_unknown": false,
+      "source_integrity": true,
+      "oracle_integrity": true,
+      "conclusion": "Fresh executable still contains the unchanged seed. Its failing oracle is partial correctness evidence of that seed, not a newly introduced algorithm regression or successful repair."
+    },
+    "result_sha256": "c762643d75af5e1845c8a82ab1c0c4ec14a763c49674f140fead6895be4f3dde",
+    "post_sha256": "6596fd86920ccd4cabcf6a9f3c3c9ce3c687b5eaf063ca9bcdeb2f17ea72516c"
+  },
+  "limits": [
+    "Controlled tests do not establish model coding gains.",
+    "Full/Lite unification is not implemented.",
+    "Original two S3 failures remain; this reused-task diagnostic is not a fresh holdout."
+  ],
+  "updated_at": "2026-10-23T08:09:46.871611+00:00",
+  "original_s3_full_v3": {
+    "schema": "full-core-original-s3-trial-result-v1",
+    "goal_complete": false,
+    "outcome": {
+      "stop": "VerifiedArtifact",
+      "attempts": 1,
+      "logical_prepared_requests": 18,
+      "effects_unknown": false,
+      "reconciliation_required": false,
+      "wire_model_echo": "UNKNOWN",
+      "task_accepted": false
+    },
+    "completed": {
+      "descendant_settlement": "SEE_HOST_RECEIPTS",
+      "original_host_settlement": "EXITED",
+      "exit_code": 0,
+      "seconds": 141.2083209,
+      "ended_at": "2026-10-23T14:24:50.8223381+08:00",
+      "replay_allowed": false,
+      "pid": 74868,
+      "started_at": "2026-10-23T14:22:29.6140172+08:00"
+    },
+    "requested_model": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "wire_model_echo": "NOT_CAPTURED",
+    "remote_weights": "UNKNOWN",
+    "generation_policy": "ProviderDefault, no override",
+    "source_example_sha256": "34efc75064ee99a0ae1b53e437a2d9dd34b6207e37f63ce5365df249635a9a3e",
+    "native_host_sha256": "9f3bfc2b9dd58ba1f217b975c3d16a86f9ef66cdb28ab9c56b40d17b0c1aaa22",
+    "frozen_inputs_unchanged": true,
+    "seed": {
+      "public_passed": 7,
+      "public_total": 10,
+      "hidden_passed": 10,
+      "hidden_total": 48
+    },
+    "assistant_records": 18,
+    "stop_reasons": {
+      "toolUse": 17,
+      "stop": 1
+    },
+    "tools": {
+      "read": 25,
+      "write": 3,
+      "check_project": 1
+    },
+    "usage": {
+      "input": {
+        "reported_subtotal": 18293,
+        "missing_messages": 0,
+        "complete_total": 18293
+      },
+      "output": {
+        "reported_subtotal": 18488,
+        "missing_messages": 0,
+        "complete_total": 18488
+      },
+      "cacheRead": {
+        "reported_subtotal": 283008,
+        "missing_messages": 0,
+        "complete_total": 283008
+      },
+      "cacheWrite": {
+        "reported_subtotal": 0,
+        "missing_messages": 0,
+        "complete_total": 0
+      },
+      "totalTokens": {
+        "reported_subtotal": 319789,
+        "missing_messages": 0,
+        "complete_total": 319789
+      },
+      "reasoningTokens": {
+        "reported_subtotal": 14870,
+        "missing_messages": 6,
+        "complete_total": null
+      }
+    },
+    "raw_normalized_message_usage": [
+      {
+        "input": 1177,
+        "output": 79,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 1256
+      },
+      {
+        "input": 1950,
+        "output": 72,
+        "cacheRead": 1152,
+        "cacheWrite": 0,
+        "totalTokens": 3174
+      },
+      {
+        "input": 1770,
+        "output": 91,
+        "cacheRead": 3072,
+        "cacheWrite": 0,
+        "totalTokens": 4933,
+        "reasoningTokens": 13
+      },
+      {
+        "input": 1395,
+        "output": 44,
+        "cacheRead": 4864,
+        "cacheWrite": 0,
+        "totalTokens": 6303
+      },
+      {
+        "input": 1819,
+        "output": 209,
+        "cacheRead": 6272,
+        "cacheWrite": 0,
+        "totalTokens": 8300,
+        "reasoningTokens": 165
+      },
+      {
+        "input": 2085,
+        "output": 82,
+        "cacheRead": 8192,
+        "cacheWrite": 0,
+        "totalTokens": 10359,
+        "reasoningTokens": 8
+      },
+      {
+        "input": 1466,
+        "output": 2476,
+        "cacheRead": 10240,
+        "cacheWrite": 0,
+        "totalTokens": 14182,
+        "reasoningTokens": 2402
+      },
+      {
+        "input": 995,
+        "output": 1140,
+        "cacheRead": 14080,
+        "cacheWrite": 0,
+        "totalTokens": 16215,
+        "reasoningTokens": 1068
+      },
+      {
+        "input": 546,
+        "output": 185,
+        "cacheRead": 16128,
+        "cacheWrite": 0,
+        "totalTokens": 16859,
+        "reasoningTokens": 113
+      },
+      {
+        "input": 541,
+        "output": 277,
+        "cacheRead": 16768,
+        "cacheWrite": 0,
+        "totalTokens": 17586,
+        "reasoningTokens": 207
+      },
+      {
+        "input": 671,
+        "output": 70,
+        "cacheRead": 17536,
+        "cacheWrite": 0,
+        "totalTokens": 18277
+      },
+      {
+        "input": 545,
+        "output": 71,
+        "cacheRead": 18176,
+        "cacheWrite": 0,
+        "totalTokens": 18792
+      },
+      {
+        "input": 753,
+        "output": 4766,
+        "cacheRead": 18688,
+        "cacheWrite": 0,
+        "totalTokens": 24207,
+        "reasoningTokens": 4688
+      },
+      {
+        "input": 911,
+        "output": 3682,
+        "cacheRead": 24192,
+        "cacheWrite": 0,
+        "totalTokens": 28785,
+        "reasoningTokens": 3624
+      },
+      {
+        "input": 253,
+        "output": 1399,
+        "cacheRead": 28672,
+        "cacheWrite": 0,
+        "totalTokens": 30324,
+        "reasoningTokens": 34
+      },
+      {
+        "input": 180,
+        "output": 907,
+        "cacheRead": 30208,
+        "cacheWrite": 0,
+        "totalTokens": 31295,
+        "reasoningTokens": 174
+      },
+      {
+        "input": 225,
+        "output": 2396,
+        "cacheRead": 31104,
+        "cacheWrite": 0,
+        "totalTokens": 33725,
+        "reasoningTokens": 2374
+      },
+      {
+        "input": 1011,
+        "output": 542,
+        "cacheRead": 33664,
+        "cacheWrite": 0,
+        "totalTokens": 35217
+      }
+    ],
+    "cost": "UNKNOWN",
+    "changed_source_files": [
+      "src/decoder.cpp",
+      "src/ledger.cpp",
+      "src/pump.cpp"
+    ],
+    "final_source_pins": {
+      "CMakeLists.txt": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+      "include/app/commands.hpp": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+      "include/app/format.hpp": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+      "include/csv/decoder.hpp": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+      "include/import/ledger.hpp": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+      "include/import/pump.hpp": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+      "include/stream/source.hpp": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+      "README.md": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+      "src/decoder.cpp": "b66a74a335730961630dda31636723f2d74069f94bdec0ee2c270f58c7d6ae20",
+      "src/follow.cpp": "f35114d62e75002da31311aaad68cfd749d4c52866021ea2939bb54060e4ac54",
+      "src/format.cpp": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+      "src/ledger.cpp": "6bdd8a4ac8ae8d0f6e9dcc289b4041e98073e11c7c1244f0ba10613bc5254cc8",
+      "src/main.cpp": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+      "src/pump.cpp": "c83fe1e5de9e5a5b7e6991a1b2b1cd1a0c98c0f4dee242816c13d5afdb53e8c7",
+      "src/report.cpp": "340ce3582bf0a323896c2f0da7f3add18e3f80c95dc727d3f6427588279bdf74",
+      "src/source.cpp": "e3225793d6272a504c9a5eb46b001adbb5f84cd1f2501f27dd383df301d90ea3",
+      "tests/cases.json": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+      "tests/check_cli.py": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719"
+    },
+    "reviews": [
+      {
+        "attempt": "attempt-1",
+        "public": {
+          "executed": 10,
+          "passed": 10,
+          "planned": 10
+        },
+        "hidden_passed": 48,
+        "hidden_total": 48,
+        "status": "PASS",
+        "effects_unknown": false,
+        "host_known": true,
+        "full_binding": {
+          "manifest_sha256": "ff34f80c470d70b61338ee452049a93b209450c405d9fd745fe2e7a38046d30e",
+          "pins": {
+            "full-core-attempt.json": "1eef2391b4e2e8c82ef6927c98a8270e11f60289d00de5f18e39c4bff32ab4a0",
+            "journal-snapshot.jsonl": "4bb720ebedffc5b64d2ac5ce50705ec4a829e5a7b94cc562c63f2a9e21d90bea"
+          },
+          "basis": {
+            "workflow": {
+              "workflow_id": "project-b41e0c98-d932-4fa1-950f-1a8f6727d110",
+              "session_id": "01a1676c-db5c-7503-8be4-a2dc3ab2d729",
+              "session_generation": "1",
+              "criteria_revision": "9837366768e83dbbbe8f6f1a5f485dbe84c7690c58a3f85a383d426149b85764",
+              "artifact_evidence_basis": "166968d479d03c0ef88070e35c47cfc3ce0f174a75b68ea0ed8b1841488ba72f"
+            },
+            "attempt": 1
+          },
+          "records": 48
+        },
+        "host_review_sha256": "e671e958cf0759f9fe73846420035280d67d36aff30499aa81c7ba918c240ea3",
+        "source_manifest": {
+          "CMakeLists.txt": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+          "README.md": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+          "include/app/commands.hpp": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+          "include/app/format.hpp": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+          "include/csv/decoder.hpp": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+          "include/import/ledger.hpp": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+          "include/import/pump.hpp": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+          "include/stream/source.hpp": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+          "src/decoder.cpp": "b66a74a335730961630dda31636723f2d74069f94bdec0ee2c270f58c7d6ae20",
+          "src/follow.cpp": "f35114d62e75002da31311aaad68cfd749d4c52866021ea2939bb54060e4ac54",
+          "src/format.cpp": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+          "src/ledger.cpp": "6bdd8a4ac8ae8d0f6e9dcc289b4041e98073e11c7c1244f0ba10613bc5254cc8",
+          "src/main.cpp": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+          "src/pump.cpp": "c83fe1e5de9e5a5b7e6991a1b2b1cd1a0c98c0f4dee242816c13d5afdb53e8c7",
+          "src/report.cpp": "340ce3582bf0a323896c2f0da7f3add18e3f80c95dc727d3f6427588279bdf74",
+          "src/source.cpp": "e3225793d6272a504c9a5eb46b001adbb5f84cd1f2501f27dd383df301d90ea3",
+          "tests/cases.json": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+          "tests/check_cli.py": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719"
+        },
+        "verdict": "Verified"
+      }
+    ],
+    "independent_final": {
+      "public": {
+        "executed": 10,
+        "passed": 10,
+        "planned": 10
+      },
+      "hidden_passed": 48,
+      "hidden_total": 48,
+      "status": "PASS",
+      "effects_unknown": false,
+      "result_sha256": "d0688d27365936d4da4f09535a737d108460bd4a4370f94cd73113be49c1927a",
+      "binary_sha256": "ea766831c6d52957d40de7ca0c050a2cfc23f95cd67836e5054d2baa4fa7ca00",
+      "same_oracle_not_new_holdout": true
+    },
+    "journal_sha256": "4bb720ebedffc5b64d2ac5ce50705ec4a829e5a7b94cc562c63f2a9e21d90bea",
+    "original_lite_two_arms": "0/2 retained unchanged",
+    "comparison": "Full Core/runtime/output/feedback changed; no controlled causal comparison",
+    "oracle_scope": "original48 reused adaptively, independent compile is not a new holdout",
+    "feedback_source_receipts": [],
+    "real_feedback_continuation_exercised": false,
+    "release_accepted": false,
+    "reverse_acceptance": "OPEN",
+    "root_acceptance": {
+      "schema": "ara-original-s3-root-scoped-acceptance-v1",
+      "at": "2026-10-23T06:34:10.180Z",
+      "status": "ACCEPT_SCOPED_ORIGINAL_S3_ARTIFACT_AND_PUBLIC_API_INTEGRATION",
+      "scope": "Current original18-file C++ fixture through public Full Core Workflow and same48-case independent recompile",
+      "source_sha256": "34efc75064ee99a0ae1b53e437a2d9dd34b6207e37f63ce5365df249635a9a3e",
+      "host_sha256": "9f3bfc2b9dd58ba1f217b975c3d16a86f9ef66cdb28ab9c56b40d17b0c1aaa22",
+      "trial_result_sha256": "479a8a5567ea9336ee2c170d8385d6c82fa66a05ad05c9aa136a1d246e157a74",
+      "independent_post_sha256": "5c5e704b72fbda071f2b6b8d17055bcdcd837d0a07c7803092f7bd9f6e4c6531",
+      "original_example_task_flag": "false retained; library Run does not change product Task state",
+      "current_artifact": "public10/private48 pass in original Host and separate fresh compile",
+      "model": "deepseek-v4.1-flash",
+      "policy": "ProviderDefault with restored read windows and public-PASS submission instruction",
+      "original_failures_retained": true,
+      "old_fences_released": false,
+      "new_holdout": false,
+      "goal_complete": false,
+      "release_accepted": false,
+      "open": [
+        "general coding stability and causal benefit",
+        "reverse-engineering acceptance",
+        "Native Graph/Full-Lite/product integration",
+        "dependency audit findings"
+      ]
+    }
+  },
+  "real_feedback_continuation": {
+    "exercised": true,
+    "trial": "full-core-s3-stage-v2",
+    "final_trial_has_one_candidate": true,
+    "prior_trial_remains_budget_failed": true
+  },
+  "module_progress": {
+    "core": "Workflow terminal protection and bound execution verified; full integration remains open",
+    "public_layer": "ara-workflow actual Full Core consumer verified on original S3",
+    "host": "finite read windows and submission policy verified",
+    "reverse": "OPEN; no real-model reverse acceptance",
+    "general_stability": "OPEN; fresh unfamiliar tasks and held-out samples required",
+    "release": "OPEN; dependency audit failures retained",
+    "context_continuity": "Scoped real two-process sourced-text/knowledge-body trial accepted; generic policy/API, long histories and Full/Lite remain OPEN"
+  },
+  "seven_goal_contract": {
+    "fully_accepted": 0,
+    "total_goals": 7,
+    "not_a_workload_percentage": true,
+    "goals": [
+      {
+        "id": 1,
+        "status": "PARTIAL",
+        "evidence": "public Full Core workflow and external consumers executed",
+        "open": "Native Graph and supported Full/Lite surface completion"
+      },
+      {
+        "id": 2,
+        "status": "PARTIAL",
+        "evidence": "real sourced summary + new process/Agent + same Session + original correction retrieval + actual note body + unchanged original budget",
+        "open": "generic public restoration and context selection, broader knowledge retrieval, long histories, further modalities and Full/Lite support"
+      },
+      {
+        "id": 3,
+        "status": "PARTIAL",
+        "evidence": "real sourced NeedsChanges on original S3 v2",
+        "open": "general progress detection and strategy correction across unfamiliar tasks"
+      },
+      {
+        "id": 4,
+        "status": "PARTIAL",
+        "evidence": "provider contract checks and new bounded Length mechanism",
+        "open": "real-model Length recovery and multi-model task acceptance"
+      },
+      {
+        "id": 5,
+        "status": "PARTIAL",
+        "evidence": "original unfamiliar multi-file C++ sample passed original58",
+        "open": "multiple unfamiliar projects and fresh held-out cases"
+      },
+      {
+        "id": 6,
+        "status": "PARTIAL",
+        "evidence": "bounded static inspection tools; retained failed semantic trials",
+        "open": "function decompile/xref and successful C++ object/vtable reconstruction"
+      },
+      {
+        "id": 7,
+        "status": "PARTIAL",
+        "evidence": "versioned task budgets and independent oracles retained",
+        "open": "paired same-model/task/budget improvements and comparable Claude trial when available"
+      }
+    ]
+  }
+}

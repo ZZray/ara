@@ -1,0 +1,51 @@
+{
+  "tool": "ara-rust-core-review",
+  "scope": {
+    "base": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "target": "worktree",
+    "files": [
+      "tools/lite-eval/src/common.rs",
+      "tools/lite-eval/src/ledger.rs",
+      "tools/lite-eval/src/records.rs",
+      "tools/lite-eval/src/notify.rs",
+      "tools/lite-eval/src/gate.rs",
+      "tools/lite-eval/src/deny.rs",
+      "tools/lite-eval/src/stage.rs",
+      "tools/lite-eval/src/main.rs",
+      "tools/lite-eval/src/lib.rs",
+      "tools/lite-eval/tests/ledger_props.rs",
+      "tools/lite-eval/tests/notify_props.rs",
+      "tools/lite-eval/tests/notify_process.rs",
+      "tools/lite-eval/tests/gate_records.rs",
+      "tools/lite-eval/tests/deny_props.rs",
+      "tools/lite-eval/tests/stage_props.rs",
+      "tools/lite-eval/tests/stage_records.rs"
+    ]
+  },
+  "diff_sha256": "c3f6c9ec6813cd8e0aff8435c4b762eb0a7d7183e656b923d773e849337ed6b4",
+  "session_id": null,
+  "implementation_session_id": "sess_edfef3ce-44b0-4b79-b575-69104e464721",
+  "findings": [
+    {
+      "location": "tools/lite-eval/src/notify.rs:Notifier::send",
+      "description": "脚本已投递、记录尚未追加时进程崩溃，下次 on_ledger_change 找不到记录会再发同一通知（重复消息）。",
+      "disposition": "deferred",
+      "reason": "影响只是重复通知；先写记录再发送会把未发生的投递记成已发生，违背 38.4–38.7；作为已知风险保留"
+    },
+    {
+      "location": "tools/lite-eval/src/ledger.rs:Ledger::append",
+      "description": "写入一行时崩溃会留下不完整末行，entries() 随后拒绝整个台账，需要人工修复。",
+      "disposition": "deferred",
+      "reason": "按设计失败即关闭：不静默丢弃或修补记录；单写者工具，人工修复可接受"
+    },
+    {
+      "location": "tools/lite-eval/src/gate.rs:SystemRunner",
+      "description": "门禁命令无超时，测试套件挂起会使 gate 无限等待。",
+      "disposition": "deferred",
+      "reason": "规格未给各套件上限；门禁只在最终交付有人值守时运行，挂起可人工终止"
+    }
+  ],
+  "gap": null,
+  "started_at": "2026-10-29T14:02:00+08:00",
+  "finished_at": "2026-10-29T14:10:28+08:00"
+}

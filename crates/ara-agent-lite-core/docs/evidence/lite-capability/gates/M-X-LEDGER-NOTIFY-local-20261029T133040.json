@@ -1,0 +1,45 @@
+{
+    "kind":  "module_local_checks",
+    "modules":  [
+                    "M-X-LEDGER",
+                    "M-X-NOTIFY"
+                ],
+    "workspace":  "tools/lite-eval",
+    "head":  "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "started_at":  "2026-10-29T13:27:30+08:00",
+    "finished_at":  "2026-10-29T13:30:40+08:00",
+    "commands":  [
+                     {
+                         "command":  "cargo fmt --check",
+                         "exit_code":  0,
+                         "tests":  "不适用"
+                     },
+                     {
+                         "command":  "cargo clippy --all-targets -- -D warnings",
+                         "exit_code":  0,
+                         "tests":  "不适用"
+                     },
+                     {
+                         "command":  "cargo test",
+                         "exit_code":  0,
+                         "passed":  41,
+                         "failed":  0,
+                         "suites":  "lib 35, digest_props 3, ledger_props 1 (256 cases), notify_props 1 (256 cases), notify_process 1 (real powershell.exe, substitute script)"
+                     }
+                 ],
+    "raw_logs":  {
+                     "test":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\module-x-ledger-notify\\test.log",
+                     "sha256":  {
+                                    "test":  "531473fcbe549646f60c397f7f8ceb9a62d1ae5a0192091a377bca445e808735",
+                                    "fmt":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                    "clippy":  "1a68f14e3d32c165a95e84570f3e3ff029e8d9eab8c2e0852ddabf4a50ff40a3"
+                                },
+                     "fmt":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\module-x-ledger-notify\\fmt.log",
+                     "clippy":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\module-x-ledger-notify\\clippy.log"
+                 },
+    "not_covered":  [
+                        "formal 11-command delivery gate (lite-eval gate, task 6.1)",
+                        "independent reviews (task 7)",
+                        "real DingTalk send through lite-eval notify (task 5.4)"
+                    ]
+}

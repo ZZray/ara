@@ -1,0 +1,123 @@
+{
+  "schema": "ara.lite-eval.digest-point.v1",
+  "ara_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "dirty": true,
+  "requirements": [
+    "1.4",
+    "3.5",
+    "7.5"
+  ],
+  "task": "3.3",
+  "state": "tested; not a phase or module verified gate",
+  "initial_failure": {
+    "exit": 101,
+    "tests_seconds": 464.6,
+    "log": "D:/WorkSpace/tmp/ara-headroom-20261027/evidence/p0-digest.stderr.log"
+  },
+  "actual_checks": {
+    "fmt": 0,
+    "clippy_all_targets_all_features_warnings_denied": 0,
+    "final_properties": {
+      "exit": 0,
+      "functions_passed": 3,
+      "cases_per_property": 256,
+      "property_count": 2,
+      "seconds": 383.24
+    },
+    "library_tests": {
+      "exit": 0,
+      "passed": 27,
+      "seconds": 5.79
+    },
+    "diagnostic": {
+      "exit": 0,
+      "passed": 1,
+      "seconds": 12.55,
+      "acceptance_limit": "diagnostic observations only; helper does not validate git exits"
+    },
+    "native_git_controls": {
+      "default_index_changed": 3,
+      "default_cases": 3,
+      "no_auto_refresh_index_changed": 0,
+      "no_auto_refresh_cases": 3
+    }
+  },
+  "review": {
+    "reviewer": "/root/estimate_review",
+    "native_session_uuid": null,
+    "skills": [
+      "ara-git-review",
+      "ara-rust-core-review"
+    ],
+    "source_findings": [],
+    "scope": "named pre-change snapshots and delivered source; no Lite/provider behavior changed",
+    "full_final_execution_confirmed_by": "primary agent",
+    "limits": "canonical independent reviewer identity available; native reviewer UUID unavailable; no phase-wide gate"
+  },
+  "hashes": {
+    "E:\\repos\\ara-github\\tools\\lite-eval\\src\\digest.rs": {
+      "sha256": "04ae3ff40a87533bdc9360e42b1e8dfd98062e664fc1fe59675a7ac34d116e7d",
+      "bytes": 23953
+    },
+    "E:\\repos\\ara-github\\tools\\lite-eval\\tests\\digest_props.rs": {
+      "sha256": "0a9517297d22a905e31cf6f1dd10a18d04a57397872c7fed36c94fd8f4a5e6f1",
+      "bytes": 28810
+    },
+    "E:\\repos\\ara-github\\tools\\lite-eval\\tests\\zz_diag_tmp.rs": {
+      "sha256": "32793a26d932da075e235ff7a6e3828b8c46e85ec97b3c725d0df85dee543249",
+      "bytes": 3509
+    },
+    "E:\\repos\\ara-github\\tools\\lite-eval\\Cargo.toml": {
+      "sha256": "c48609b99d6faee6f85cfa18301fcde0ae2aae6362ab5ba5325aec2b22383c0a",
+      "bytes": 1327
+    },
+    "E:\\repos\\ara-github\\tools\\lite-eval\\Cargo.lock": {
+      "sha256": "acbadce206b477a9afabf2e9590e4d8760920180b996f901f5c6f58fe573763c",
+      "bytes": 63009
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-digest-final.stdout.log": {
+      "sha256": "7d129946ae4cf953659a2b250a5763b44d60a08141a331d5129f05f85fa59c5b",
+      "bytes": 467
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-digest-final.stderr.log": {
+      "sha256": "7c06527d168f719d7b5c8a17c7a5d4de77f52ba0167e1394914ba4dd97b34dc4",
+      "bytes": 261
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-other-tests.stdout.log": {
+      "sha256": "7003de2904f927912ff52ec65eba3495c2de2343c199897d73049d0d231052c1",
+      "bytes": 4055
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-other-tests.stderr.log": {
+      "sha256": "091c9869469131d48eae3d8b9729bcb0769022bea5f989371c84ada2b29342dc",
+      "bytes": 626
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-clippy.stderr.log": {
+      "sha256": "c1dc337665b54792138898fcefd920a77b7912f3022ff2abc7de720dfaebde10",
+      "bytes": 143
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\p0-fmt-final.stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\p0-index-repro\\results.json": {
+      "sha256": "a844bbf749d398d0c07a75397323acf0583d7b72d24cb2b107b62d1a61aa07af",
+      "bytes": 15243
+    },
+    "D:\\workspace\\env\\cache\\rust-target\\debug\\deps\\digest_props-93de2f1fa939358b.exe": {
+      "sha256": "dad2a328baffcf6929cd9a0a875329d4964a7f93113e2dc192f0d673cc2ead1a",
+      "bytes": 2515456
+    }
+  },
+  "uncovered": [
+    "B0 model task baseline",
+    "whole P0 stage gates",
+    "Lite or Headroom production integration"
+  ],
+  "preserved_failures": [
+    "p0-digest.*",
+    "p0-digest-fixed.* (intentionally terminated before final formatting)",
+    "p0-fmt.*",
+    "p0-fmt-v2.*"
+  ],
+  "no_model_calls": true
+}

@@ -1,0 +1,224 @@
+{
+  "schema": "ara-coding-reverse-enhancement-v1",
+  "date": "2026-10-22",
+  "base_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "branch": "dev",
+  "decision": "ACCEPT_BOUNDED_PROCESS_CAPTURE",
+  "scope": "optional raw process-output retention in independent ara-agent-lite-core; existing WIP preserved; no release or complete reverse capability claim",
+  "compiler_input_pins": {
+    "Cargo.toml": "04021c0c7001d29318cf6ae2fbfe857392d4951ac24fa90ec597fa8089596e3a",
+    "Cargo.lock": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+    "src/agent.rs": "c540e63c6f25ae4bb7cf5e13d475be5c180d6b3cef9844b99c8213cdd17ee624",
+    "src/context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "src/environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "src/environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "src/environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "src/environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "src/execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "src/experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "src/experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src/file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src/file_edits.rs": "0a940f3bb767b5d30159bc489543e9821fd1d131853c6b41e012ba1665d5fb23",
+    "src/goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "src/lib.rs": "79648949dc1172bcbf017e894276d92b16f4391f2d9e0cc13fbe91b4d842c9de",
+    "src/local_tools.rs": "c56c66edefcf670853aadfd3f51d8011dd2a89292c6b0614b18ddcf8ab9cae7c",
+    "src/managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "src/model.rs": "a63864118846e955e61e4bfc6c81d30da1a178c0c90b4a958ff0d98b0b9149a7",
+    "src/model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "src/model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "src/process_capture_tests.rs": "332eacc4a7daa0b7f315c290c55998d46dce279a889dafdf7a8dff620ab55a6e",
+    "src/process_output.rs": "d2ad9798fe56f6b093c90855402961316cf1e8c8e006ae91f57079b0b5646508",
+    "src/project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src/script_tools.rs": "5391e73c3236ad538c977a25384b0419853d4883fafac3edfe83116beb500f37",
+    "src/session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "src/skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "src/skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "src/steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "src/system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "src/terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "src/terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "src/web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "src/web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "src/web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "src/builtin_skills/skill-creator/SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "src/builtin_skills/skill-installer/SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "examples/business_host.rs": "f450c0583175e459f76334b33cf5090b29889f6f7d7a007c1639817b48871df8"
+  },
+  "compiler_inputs_unchanged": true,
+  "binary_sha256": "aa1886a0f7e19a4230eb72cab4d8ac8cdb516f5ba5dd22ced9eab7296636b3e7",
+  "checks": {
+    "fmt": "PASS",
+    "unit_tests": {
+      "passed": 189,
+      "ignored": 1,
+      "ignored_scope": "existing live public web probe"
+    },
+    "public_api_tests": {
+      "passed": 3
+    },
+    "clippy": "PASS all targets/all features warnings-as-errors on Windows",
+    "doc_tests": {
+      "status": "PASS",
+      "count": 0
+    },
+    "dependency_audit": "PASS offline advisories/bans/licenses/sources; advisory freshness not revalidated",
+    "native_capture": {
+      "status": "PASS",
+      "fixture_context_window": 1000000,
+      "cases": [
+        {
+          "name": "middle-diagnostic-repair",
+          "status": "PASS",
+          "provider_calls": 6,
+          "tool_ends": 5
+        },
+        {
+          "name": "exec-nonzero",
+          "status": "PASS",
+          "provider_calls": 2,
+          "tool_ends": 1
+        },
+        {
+          "name": "quota",
+          "status": "PASS",
+          "provider_calls": 2,
+          "tool_ends": 1
+        },
+        {
+          "name": "existing-directory",
+          "status": "PASS",
+          "provider_calls": 2,
+          "tool_ends": 1
+        },
+        {
+          "name": "missing-parent",
+          "status": "PASS",
+          "provider_calls": 2,
+          "tool_ends": 1
+        },
+        {
+          "name": "timeout",
+          "status": "PASS",
+          "provider_calls": 2,
+          "tool_ends": 1
+        }
+      ],
+      "elapsed_seconds": 13.685,
+      "maximum_observed_event_utf8_bytes": 130086
+    },
+    "versioned_edit_regression": {
+      "status": "PASS",
+      "cases": 4
+    },
+    "real_coding_tasks": [
+      {
+        "name": "python-multifile",
+        "status": "PASS",
+        "before_oracle": "FAIL",
+        "after_oracle": "PASS",
+        "execution_feedback_verified": true,
+        "model_calls": 8,
+        "elapsed_seconds": 32.772
+      },
+      {
+        "name": "powershell-unicode-path",
+        "status": "PASS",
+        "before_oracle": "FAIL",
+        "after_oracle": "PASS",
+        "execution_feedback_verified": true,
+        "model_calls": 6,
+        "elapsed_seconds": 36.931
+      }
+    ],
+    "directed_capture_real_model": {
+      "status": "PASS",
+      "model": "deepseek-v4.1-flash",
+      "protocol": "openai-completions",
+      "native_model_calls": 5,
+      "ordered_capture_read_edit": true,
+      "native_page_contains_diagnostic": true,
+      "protected_inputs_unchanged": true,
+      "after_oracle": "PASS",
+      "elapsed_seconds": null,
+      "child_exit_propagation_limit": "wrapper printed child exit 7 but returned 0; diagnostic and independent final oracle verified, not automatic child-exit propagation"
+    },
+    "real_model_scope": "two autonomous scoped coding tasks plus one explicitly directed capture/read/edit integration; not A/B or general reverse evaluation",
+    "secret_scan": "CLEAN for exact supplied token in original private raw evidence; no broader secret-detection claim",
+    "bootstrap": "NOT_COMPLETED bounded 20s timeout",
+    "report_visual": "NOT_COMPLETED browser file protocol policy denied; no workaround used",
+    "report_static": {
+      "status": "PASS_STATIC_ONLY",
+      "sections": 8,
+      "capability_rows": 24,
+      "html_ids": 16,
+      "local_links": 10,
+      "total_links": 38,
+      "inline_scripts_syntax_checked": 2,
+      "visual": "NOT_COMPLETED file protocol denied by browser policy; no alternate protocol/renderer used",
+      "html_sha256": "5d5519121ad2d74a27da9528b9cfe1b0e973efe83f9ff9a2fa66d21702a53516"
+    }
+  },
+  "review": {
+    "runtime": "Independent Codex /root/agent_landscape: APPROVE_SOURCE_SCOPED and native EXEC APPROVE, 0 confirmed defects",
+    "harness": "Independent Codex /root/claude_source: 2 P2 acceptance gaps fixed and re-reviewed; fixture fixes reviewed; current 0 confirmed defects",
+    "directed_task": "Independent Codex /root/agent_landscape: raw journal, subsequent provider input, real file hashes and actual capture/read/edit/verify chain checked; APPROVE scoped directed integration"
+  },
+  "retained_failures": [
+    {
+      "phase": "first clippy",
+      "status": "FAIL",
+      "reason": "Windows-only unused_mut DirBuilder binding; corrected with cfg declarations"
+    },
+    {
+      "phase": "native v1",
+      "status": "FAIL",
+      "cases_passed": 2,
+      "cases_total": 6,
+      "reason": "fixture Python import path and canonical Windows path identity"
+    },
+    {
+      "phase": "native v2",
+      "status": "FAIL",
+      "cases_passed": 5,
+      "cases_total": 6,
+      "reason": "maximum preview correctly exceeded fixture context budget; fixture declaration corrected, production budget unchanged"
+    },
+    {
+      "phase": "directed offline result verifier",
+      "status": "FAIL",
+      "reason": "serialized event.detail and explicit UTF-8 assumptions corrected offline; settled model run and command were not replayed"
+    }
+  ],
+  "raw_receipt_sha256": {
+    "native-capture": "181a25870377603b7c945b82263e4b2a9c4c5a47aaa020b7bdd5cba57e2e955b",
+    "native-capture-v2": "59fffe4d1531b70f0a74e205c06f2e446fb48abc5c11d9c8c43be577dc832b10",
+    "native-capture-v3": "c0eb1b37f2ccf1a9d71ab6891bdc8f834ab615462ab2b403531946f65c087f72",
+    "versioned-regression": "d5512b1932009a3acd63976d8d7ea2bd6d4dca6ccff1ef49496b653fb989f82a",
+    "live-coding": "c50dea6f1b481cef9252185f7842c4c86ef5a5e8f83c7c23be2c337f74fa0d77",
+    "live-directed-capture": "7e720d3c0967569102ed589a98e2010575d03ef89d0943b45648b16e54b45c75"
+  },
+  "build_receipt_sha256": "fddbf0f87ad6b143e0ba7491e0124bc615ec25a951f7eb5a67c881181bb5f74b",
+  "log_sha256": {
+    "core-tests.log": "34e87e2cc1beaed779b8c5da5ce42940c3470c0c9d1690eae253528483261ddb",
+    "core-tests-final.log": "0b85585bcd72cd1129367bafcbb9a1baf1e630318bb80d57aabafa6a440f9b77",
+    "core-clippy.log": "587cd861c9fa2ff251a429a1954918cb15896c43f616a5226f9bb8b407392e6e",
+    "core-clippy-v2.log": "449d88ef79d30e7f3e0d0364f907ee4b2f47d3f9305f8fe138607b7a791c8dd2",
+    "core-doc.log": "025a04f72aa79d36b48045177e988ba7043e876b6944e485dbddcb0631c74c27",
+    "core-deny.log": "8ccd546977e384e8705e83ce6bec225fc746282c716dec8a597805ab22a389a2",
+    "host-build.log": "3f64b6a3b477803a7a352332bc90b54582e790149301e97823025e98ce5f7e33",
+    "host-build-pinned.log": "7f487e4469b34561c19a755a3add5116dd0b6aa890511e6bd28266b209c9729f",
+    "bootstrap.log": "c441f53b498cfb4b9f75c45d39effd5a7cd31b90b198aadeb1a873ac91ff0c75"
+  },
+  "limits": [
+    "capture is opt-in; ordinary calls without capture retain their previous truncation behavior",
+    "8 MiB per stream prefix quota; raw logs are not automatically redacted",
+    "receipt-time hash is not immutability or fsync/crash-durability proof",
+    "synchronous disk IO has no separate hard timeout",
+    "script Abort may suppress textual receipt; known raw paths remain",
+    "Windows execution only for this implementation; no current Linux delivery acceptance",
+    "specialized decompiler/debugger backend, generic reverse performance and autonomous log-archive selection remain unaccepted",
+    "no commit, push, deployment or upstream-marker change"
+  ],
+  "report_content_sha256": "6dab91d3fead329bf482354c76cca158060b5ee54e098ee5149a0d6de1ca0250",
+  "report_html_sha256": "5d5519121ad2d74a27da9528b9cfe1b0e973efe83f9ff9a2fa66d21702a53516"
+}

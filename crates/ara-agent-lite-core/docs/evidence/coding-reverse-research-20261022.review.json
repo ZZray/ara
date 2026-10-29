@@ -1,0 +1,30 @@
+{
+  "schema": "ara-lite-research-review-v1",
+  "date": "2026-10-22",
+  "decision": "ACCEPT_SCOPED_RESEARCH",
+  "reviewer": "/root/coding_harness_research",
+  "reviewer_tool": "Independent Codex",
+  "runtime_enhancement_accepted": false,
+  "content_sha256": "d3e1673491413beb26cdf8b4c1aa2f42f6f528d68d628432abc2c5cfbde0b6f8",
+  "html_sha256": "2d49fb4073e748ae7a5cb3ce7c3d64aa639ffe5994871f4ac099521be694443b",
+  "source_receipt_sha256": "3b79077360a7bf798701880ceb9e1ec84e75ab8c12855264ffb15de12745eb80",
+  "review_note_sha256": "97d21296acbeaec9a54b76d732683e23d70d03302c578ec527c816065fb358ea",
+  "closed_finding": "P2: same-version LLDB MCP documentation says async, but DebuggerCreateTool::Call sets synchronous execution; report corrected to implementation and distinguishes external sessions",
+  "static_checks": {
+    "status": "PASS_STATIC_ONLY",
+    "sections": 15,
+    "html_ids": 23,
+    "local_links": 39,
+    "total_links": 86,
+    "inline_scripts_syntax_checked": 2,
+    "runtime_hashes_unchanged": 29,
+    "html_sha256": "2d49fb4073e748ae7a5cb3ce7c3d64aa639ffe5994871f4ac099521be694443b",
+    "content_sha256": "d3e1673491413beb26cdf8b4c1aa2f42f6f528d68d628432abc2c5cfbde0b6f8",
+    "visual_acceptance": "NOT_COMPLETED: browser policy denied local file protocol; no workaround attempted"
+  },
+  "root_bootstrap": "NOT_COMPLETED: bounded 20s traversal timeout",
+  "model_trials_run": false,
+  "external_tools_executed": false,
+  "deployment_run": false,
+  "local_evidence_id": "ara-core-research-20261022"
+}

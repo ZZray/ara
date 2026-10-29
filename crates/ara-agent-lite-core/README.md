@@ -1,6 +1,6 @@
 # ara-agent-lite-core
 
-供业务进程嵌入的 Rust Agent 运行库，版本 `0.1.0`。代码从 HandWave
+供业务进程嵌入的 Rust Agent 运行库，版本 `0.1.1`。代码从 HandWave
 精简被控端提取，HandWave 已改用这个库。完整版 ARA／OMP Core 继续在原目录开发，
 两者不互相依赖，也不共用验收结论。
 
@@ -16,6 +16,28 @@
 以及成功 Run 的任务验收。库不会自动连接 HandWave、注册设备、申请授权或安排定时任务。
 当前模型调用支持 OpenAI-compatible completions／OpenRouter chat；
 不包含完整版 Core 的全部协议和 OMP 能力。模型声明的图像能力不等于本库已有图像传输。
+
+## 输出长度恢复
+
+Host 可通过 `ModelHost::length_recovery_policy` 显式选择
+`model::LengthRecoveryPolicy::ReplanOnce`。默认值是 `Stop`，既有消费者保持原行为。
+该策略属于 Host 执行配置；它不表示模型目录支持某项能力，也不修改生成参数。
+显式启用只支持 Execute，Plan / Goal 会拒绝该配置。
+
+Core 仅在当前 Run 的完整 `Length` 消息不含工具调用、原工具轮次闭合、没有检测到
+未知效果且仍有原调用和时间预算时，最多安排一次重规划。它沿用原循环、Run ID、
+Session、模型和授权。原截断消息保留，不拼接正文、工具参数或私有 thinking。
+带工具调用的截断消息仍由固定 rpi 的原有保护整批拒绝执行。
+
+自动控制引用先保存到 context，标明原消息索引、typed SHA 和非人类来源，再交给原
+循环。`length_recovery` 事件的 `scheduled` 只表示已安排，下一请求仍由原预算入口
+准入。取消、截止、未知效果或保存失败会阻止继续。Host 仍负责实际外部效果结算。
+再次出现无工具调用的 `Length` 仍失败；该策略不保证任意模型一定完成任务。
+
+JSONL 产品可设置 `run.length_recovery = "replan_once"`；省略或 `"stop"` 保持默认。
+每个 Run 最多一次，Harness 的多个 Run 继续共用原 Task 调用预算与绝对截止。
+当前受控回归及真实模型结果见
+[长度恢复验证](docs/evidence/length-recovery-20261025.html)。
 
 ## Cargo 依赖
 
@@ -119,6 +141,12 @@ fn main() -> anyhow::Result<()> {
 
 ## 兼容与示例
 
+Execute 在调用预算耗尽时仍保留原 Run 失败。满足严格原生工具轮次闭合与持久化条件时，
+唯一的 `agent_end` 可附带版本化 `termination`；它不证明外部副作用已结算或业务 Task
+完成。公开 `RunResult` 字段保持不变。需要检查最后一次工具操作的实际产物时，宿主可
+选择上层 Harness Lite 的独立预算快照回调，详见
+[终态接入说明](docs/ai-integration.md#31-调用预算停止后的原生证据)。
+
 Session、Journal、Goal、知识索引和 Skill 的既有磁盘格式保持不变。
 `.handwave/skills`、`handwave-knowledge-v1` 等名称是保留的格式标识，
 不代表新业务会接入 HandWave。环境知识默认位于宿主给定状态目录，
@@ -138,7 +166,7 @@ python crates/ara-agent-lite-core/tests/verify_embedding.py --binary PATH_TO_BUS
 当前执行结果与未覆盖项见仓库交付记录。既有“新会话自主读取已沉淀知识正文”验收仍未通过，
 不会因为改为共享库而自动变成已完成；本库也不宣称通用自我进化已经验收。
 
-代码已随 HandWave Node 0.2.9 发布，运行库源码提交为
-`0e4d81a91682196e9ef8be4a5ffae469ddd99bcc`。
-[发布验证与部署范围](../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)
-另行记录，包含后续 GNU Linux 检查；提取报告保留提取时点的原始边界。
+0.1.1 增加精确 SHA256 快照、多块原文编辑和只读预览，参数与兼容规则见
+[AI 接入说明](docs/ai-integration.md#51-版本化读取与编辑011)。
+[发布验证与部署范围](../../apps/handwave-node/docs/evidence/stage-publication-0.2.10-20261022.md)
+另行记录；此前提取报告保留原时点的验收边界。

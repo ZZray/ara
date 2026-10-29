@@ -1,0 +1,118 @@
+{
+  "title": "公共 Agent 跨语言接入：执行结果与剩余门禁",
+  "subtitle": "JSONL、Python/Node 客户端，以及 AI Code Review 和 LabSlot 的限定接入候选。",
+  "brand": "ARA · Agent Core Lite",
+  "eyebrow": "ENGINEERING RECORD",
+  "date": "2026-10-25",
+  "sections": [
+    {
+      "id": "conclusion",
+      "title": "当前结论",
+      "blocks": [
+        {"type": "paragraph", "text": "公共 JSONL 子进程和 Python/Node 客户端已实现。它们直接调用公共 Harness，由 Harness 使用 Lite Core；产品注入自己的工具、权限和检查器。两个客户端均实际完成同 Session 的两 Run 文件纠错。"},
+        {"type": "callout", "title": "限定进程与受控产品工具验收通过", "tone": "success", "text": "独立 Codex 接受当前 Windows、未触发压缩的 native 与受控产品工具 profile。16 项当前客户端/原生检查、10 项 Node 合同、5 项额外协议检查及 1 项真实产品 Relay 账本检查通过。这些测试类型分别计数，不代表能力任务数量。"},
+        {"type": "callout", "title": "真实模型与整体目标尚未通过", "tone": "warning", "text": "第二次 AI Code Review 真实模型试验未形成补丁，最后一次调用触发 length；原 fence 保留。原七项目标仍为 0/7 整体验收。LabSlot 真实数据库、产品默认迁移和发布门禁均保持 OPEN。"},
+        {"type": "facts", "items": [
+          {"label": "版本", "value": "Lite Core 0.1.1 / Harness 0.1.0 / JSONL 0.1.0"},
+          {"label": "源码身份", "value": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + dirty WIP；冻结 87 项源码与锁文件"},
+          {"label": "程序 SHA256", "value": "3ce9b773314ed34d905555c89622063d6d4d3f0fc0d157120db4285d08f461b7"},
+          {"label": "证据目录", "value": "D:/WorkSpace/tmp/ara-core-capability-20261022/product-host-adapters-v1-20261025"}
+        ]}
+      ]
+    },
+    {
+      "id": "integration",
+      "title": "产品怎样使用公共层",
+      "blocks": [
+        {"type": "flow", "title": "共享执行链路", "items": [
+          {"title": "产品 Host", "text": "创建工作区、工具和模型授权；接收工具请求并保存实际操作收据。"},
+          {"title": "JSONL 与客户端", "text": "转发严格关联的回调、检查原件引用；保留传输状态和原终态。"},
+          {"title": "Harness 与 Lite Core", "text": "执行模型/工具循环，调用 Host 验证器，按有效反馈在原 Session 续作。"}
+        ]},
+        {"type": "paragraph", "text": "Rust 产品可直接依赖 Harness；Python、Node 和其他语言通过子进程协议接入。产品继续管理身份、权限、业务数据、调度与最终 Task 验收。公共层不会接受业务 Task，task_accepted 始终为 false。"},
+        {"type": "table", "columns": ["接口", "输入与输出", "约束"], "rows": [
+          ["tool_call", "原参数、原 native call ID 与结果收据", "完整 RPC/Task/Run/tool/args hash 关联，禁止重放"],
+          ["verify", "实际 Candidate 与已提交 ReviewReceipt", "核原任务、Run、criteria/authorization revision，再检查实际产物"],
+          ["prepare", "原检查反馈与剩余预算；返回新 Run ID 和 objective", "固定 Session、模型、工具、授权与绝对截止时间"],
+          ["cancel", "通知原回调并等待同一 RPC 的原结算", "本地等待结束不能证明外部已 join 或回滚"]
+        ]}
+      ]
+    },
+    {
+      "id": "native",
+      "title": "当前执行覆盖",
+      "blocks": [
+        {"type": "table", "columns": ["验证", "结果", "实际覆盖"], "rows": [
+          ["Rust 文件原件检查", "3/3 PASS", "完整 typed/raw Candidate、字节 hash 和篡改拒绝"],
+          ["Core generation policy", "5/5 PASS", "现有生成策略回归；首次错误 filter 的零测试结果不计"],
+          ["最终 Python/Node native suite", "16/16 PASS，84.379 秒", "真实 Rust、HTTP provider 与文件效果；两客户端各两 Run/四调用"],
+          ["最终 Node 合同", "10/10 PASS", "进程异常保留原 outcome、异步观察异常、身份版本拒绝等；使用协议替身"],
+          ["额外原生协议", "5/5 PASS，20.308 秒", "262144 字节通过、262145 字节拒绝、重复回复、不完整帧及 EOF"],
+          ["真实产品 Relay", "1/1 PASS，9.136 秒", "单 Relay 两 Run，四逻辑调用与五上游 attempts；第六次被拒"],
+          ["构建 / fmt / clippy", "PASS", "最终 JSONL 源码及 Core 小接口修改；doc test 成功但零用例"]
+        ]},
+        {"type": "paragraph", "text": "四类协议故障都发生在一次实际 Host 文件写入后。原效果、收据和 fence 保留，没有第二次工具效果或验收；四次同 Session 准入探针均被真实进程拒绝。重复回复可能在首回复已被结算后才到达，不能据此声称从未预留第二次模型调用。"},
+        {"type": "paragraph", "text": "慢 stdout 试验不读取输出，原 Core 仍保存 103 条事件并有界退出。这证明观察通道不能阻塞原账本；该试验是保守失败，不能计为 Task 成功。"}
+      ]
+    },
+    {
+      "id": "acr",
+      "title": "AI Code Review 历史故障回放",
+      "blocks": [
+        {"type": "paragraph", "text": "当前产品已有工具、受限代码修复和检查流程。本候选复用其真实 Workspace 与工具 schema，在独立历史源码中修复 Git 非 UTF-8 文本导致的 JSON/HTTP 构造失败。允许修改一个源码文件，固定七项测试；未改产品源码、旧 Core pin、生产队列或发布路径。"},
+        {"type": "table", "columns": ["试验", "实际结果", "结论"], "rows": [
+          ["历史负基线", "七测试有一次 failure、一次 error，并复现 UnicodeEncodeError", "本地请求构造故障成立"],
+          ["controlled-v3", "两 Run/八调用；首次检查失败，后续七测试通过，测试字节未变", "受控 provider 验证真实产品工具纠错路径"],
+          ["live-v1", "无补丁时调用检查，未处理前置拒绝形成 Unknown，原 fence 保留", "已修工具 preflight 的窄分类；原失败不重试"],
+          ["live-v2", "88.504 秒，一 Run/十调用；六 read、七 search、一次已知未启动 checks，零 replace", "真实模型未形成补丁；模型能力验收未通过"],
+          ["live-v2 最后调用", "length，4096 output tokens，最终回答为空；请求约 99 KB，输入分配约 992 KB", "输出长度耗尽；不能归因输入窗口满"]
+        ]},
+        {"type": "paragraph", "text": "Host 仅在同一锁内确认实际 diff 为空时，记录 known_not_started 和 subprocess_started=false，并返回已结算工具错误。调用后的异常仍按未知处理。候选 verify 收到零补丁时的保守 Unknown 仍是明确边界。"},
+        {"type": "paragraph", "text": "没有增加预算、切换模型或清理 fence 来取得成功。下一点在 Core 研究有界长度恢复，保留原 length 消息、调用计数和截止时间；不执行半截工具，不把截断输出当最终结果。"}
+      ]
+    },
+    {
+      "id": "labslot",
+      "title": "LabSlot 当前范围",
+      "blocks": [
+        {"type": "paragraph", "text": "现有 LabSlot 已有业务工具和逐次授权检查。Node 候选绑定要求注入真实工具实例、原 schema 转换、权限闭包、数据库回读及持久操作收据；仅开放 Todo 查询和选定 Todo 的优先级更新。"},
+        {"type": "paragraph", "text": "反馈 Run 保持原用户、会话、真实人类消息序号和确认版本。自动续作不能产生新的人类确认。工具返回中文成功或错误文字不足以证明 SQL 效果，必须使用原业务收据和数据库回读。"},
+        {"type": "callout", "title": "真实产品验收仍待执行", "tone": "warning", "text": "普通 Node 测试使用注入替身，未证明 TodoService/PostgreSQL。qspin2 项目要求当轮明确编译授权，已有问题仍待用户答复。本轮未构建 API、连接数据库、启动产品或操作设备。线上制品状态未查询。"}
+      ]
+    },
+    {
+      "id": "review",
+      "title": "独立审查与版本证据",
+      "blocks": [
+        {"type": "paragraph", "text": "独立 Codex 先审范围与协议，后检查最终源码、原事件、Journal、文件效果、检查收据、RPC 字节、进程退出和 Relay 实际请求。Root 再核终态、事件 hash/条数、review hash、原 Session completed/pending、协议效果及冻结程序。"},
+        {"type": "facts", "items": [
+          {"label": "最终执行审查", "value": "stage/final-execution-review.json · 153cb20f7dcc2fd95beaee1794fb464fdab9a31fd6b362a67fbfdc4145090e29"},
+          {"label": "真实模型失败核查", "value": "stage/acr-live-v2-review.json · 16859421929288d85917b9c2b846e37dbc4f4bc8be2b169dae07897ab4cad5ff"},
+          {"label": "冻结源码清单", "value": "frozen/source-manifest.json · fa3915968fc312d6bd3fd5ac87d4e5c7544b3dd6dbd0b7f21a2b9b2566895771"},
+          {"label": "Root 原件核验", "value": "root-artifact-checks-v2.json；87 项源码/锁文件与实际程序留副本"}
+        ]},
+        {"type": "paragraph", "text": "初次构建、Clippy、Windows 引用比较、CRLF 测试快照、真实模型和文档 finalizer 的失败均保留。文档 finalizer 首次缺少输出父目录；补目录后只重做原件核验和封存，没有重跑模型或工具。"},
+        {"type": "links", "items": [
+          {"label": "机器可读结果", "href": "product-host-adapters-20261025.result.json"},
+          {"label": "公共接入说明", "href": "../../README.md"},
+          {"label": "JSONL v1 协议", "href": "../protocol-v1.md"},
+          {"label": "上一 Harness 限定验收", "href": "../../../ara-agent-lite-harness/docs/evidence/lite-harness-20261025.html"}
+        ]}
+      ]
+    },
+    {
+      "id": "open",
+      "title": "下一阶段与未覆盖项",
+      "blocks": [
+        {"type": "list", "items": [
+          "Core 输出长度的安全有界恢复；本轮 length 失败原件不自动重放。",
+          "实际 summary/agent 共享预算、多次压缩、完整 Goal/Job 和全部回调取消矩阵。",
+          "LabSlot 真实 TodoService/PostgreSQL；AI Code Review 独立模型复审、产品默认迁移和发布。",
+          "更多陌生 C++/逻辑/逆向任务及同模型、同任务、同预算对照；目前不能报告泛化提升比例。",
+          "跨平台、C ABI 与供应链发布政策。cargo deny exit14，cached advisories 通过，bans/licenses/sources 失败，未作豁免。"
+        ]},
+        {"type": "paragraph", "text": "报告使用现有本地手绘模板与 humanizer 编辑。静态文档、链接和原件检查单列；此前本地浏览被策略拒绝，本报告不绕过限制，视觉和真实浏览交互仍未验收。未提交、推送、部署或操作设备。"}
+      ]
+    }
+  ]
+}

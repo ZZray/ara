@@ -1,0 +1,194 @@
+{
+  "schema": "ara-lite-reverse-holdout-progress-v1",
+  "date": "2026-10-23",
+  "decision": "HOLDOUT_NOT_ACCEPTED",
+  "goal_complete": false,
+  "binary_sha256": "1b79888b0598aa6c42b9e90a4310df4d93f5dbd49f730fbd292eb94c1d9a67eb",
+  "plan_sha256": "a0a032986d4d73129c0dbf2d213ed0cc8a5eb8aed43fa62bb356cb73986d9a13",
+  "harness_helper_pins": {
+    "verify_analysis_live.py": "67dfd052ce2f6fdc6d44d73ae786f5bc59ffda75e9940bc5351e48e4cd0ecbd0",
+    "verify_coding_live.py": "e90f22f4fcb9e7046a04b3e5d187f76dcfd54e9a51af78a50300669603793161",
+    "verify_reverse_policy_live.py": "3139e6ee6c61408d16f860d75d10956dd588a5d94722ea680d355c20e523df4c",
+    "verify_reverse_holdout_live.py": "113b2a7ded24435dd4c6977958f36193e2fcc94342b3ffd26c23ee2ee36f1682"
+  },
+  "runtime_source_pins": {
+    "Cargo.lock": "2427586268a589acaea1f9c4a0d09c0b3c11f2c1a25e9a7fd824f5c7df9e985a",
+    "Cargo.toml": "04021c0c7001d29318cf6ae2fbfe857392d4951ac24fa90ec597fa8089596e3a",
+    "examples\\business_host.rs": "4ea7efae1fbc130f7ec32287771e458118b12cac3c5c35fd00c824b0fee205ec",
+    "src\\agent.rs": "318ab13ae336dd38e276ed5bc188f32f783c3d9e5c2396ad26f198abfad731b7",
+    "src\\analysis_tools.rs": "07f445743952125aa39c745ed9f6509088c8b3270c8912edb5eda17f3bf2bb4e",
+    "src\\builtin_skills\\skill-creator\\SKILL.md": "cf7043858b9fb470d90da317650b4806546a5181229ed87a3c0aa371b6bb5343",
+    "src\\builtin_skills\\skill-installer\\SKILL.md": "f558421906f02ffa310b0e6f290f0bb59c320100aa6a197d5e1102f42adb22bd",
+    "src\\context_memory.rs": "fcb3dc5ce0c9125971689a690a28c4695b180e11714d3ba9b0b196bfc9f6f0c7",
+    "src\\environment_library.rs": "0cac59c818f16a3c9f559164c8acb2d3966fa666aff58ef18bb0cc67a9b2876f",
+    "src\\environment_library_tests.rs": "2e14cad857021d55f7a37c84bbf33fdf372187ba34712fe4143110921109c676",
+    "src\\environment_prompt.md": "f25a0c964d3f58a30834ba8c3de08b66f074917fd89d51dd03749c68ae52e509",
+    "src\\environment_tools.rs": "1ef67040df5880e53cf6550217ac36975ffe493d742266563f78eb888cb102b0",
+    "src\\execution.rs": "4e611ee10a1bd0269da32e5b372c12d930096860d653d4d969b88d69e62ce69b",
+    "src\\experience.rs": "ddbab5072325068bc442b54b05c98adde717a3c248ed3f73aede6d50ea0232ac",
+    "src\\experience_memory_tests.rs": "8cdfb2be450dae87914765da2deddc75500b1626db91bbe519cb5d7c271c6dda",
+    "src\\file_discovery.rs": "e893f4131bd9eb11666383f17b45d93f3f0ce1182d94d6d8284312aa824cb900",
+    "src\\file_edits.rs": "0a940f3bb767b5d30159bc489543e9821fd1d131853c6b41e012ba1665d5fb23",
+    "src\\goal_runtime.rs": "e2b4049aecdf11c667c1e255c1821c875617a48ef6e6968dd39683d086e287ed",
+    "src\\lib.rs": "db5d20c7a9e289c66b61a4d68082d70295f9e070044baabb936a961b86edc70a",
+    "src\\local_tools.rs": "c56c66edefcf670853aadfd3f51d8011dd2a89292c6b0614b18ddcf8ab9cae7c",
+    "src\\managed_jobs.rs": "c7c7b8329bd8800b0a6516b4614ba647b68a58f48ad87afd7bf43e1e69c5ae8d",
+    "src\\model.rs": "79a294c0eb1c7f58b3c9d1fb9815182db98cfa17807bef1436619bbd0f217283",
+    "src\\model_caps.rs": "2dfc6c2d11f4d29083f22fb426fbecabe4ab7e6a7f7674c0147fb0ce2630ba7e",
+    "src\\model_telemetry.rs": "e37bc58593cf4c534cdacd274cf82a4695fcc3e947877639d8fb93cd7735760a",
+    "src\\process_capture_tests.rs": "332eacc4a7daa0b7f315c290c55998d46dce279a889dafdf7a8dff620ab55a6e",
+    "src\\process_output.rs": "c2ca62c6ab9732a1817f0d584dc7387ca943db0ceff9195b869fe8fd4d0691f7",
+    "src\\project_rules.rs": "8cdc8b73ceb59e09cb0ff7e960cde89e4ec9b28855b198981be61a24f94ca6ce",
+    "src\\script_tools.rs": "5391e73c3236ad538c977a25384b0419853d4883fafac3edfe83116beb500f37",
+    "src\\session_journal.rs": "0c4f6920f57568dc3ee12b636651d61c2078a8628716af2dbcd9c2570941ea26",
+    "src\\skill_library.rs": "e44a0029096dcb7e3b006d33de8908eaeeb5feea89e45e19d5f157c55e69d6f0",
+    "src\\skill_library_tests.rs": "a8f74dfc045198ce3c5626b7c5aef97d828cb6650d27345ce499c914d0d8a0a5",
+    "src\\steering.rs": "ab80079d1cb13e7d5d02d4686ded75f54ba60ffd44c86ce743536f5555ea6ec3",
+    "src\\system_capabilities.rs": "d780c6ff3f46b16bbd9888fb413e0aa13baa8d83b9533fc93d2df88ba32ef074",
+    "src\\terminal_emulator.rs": "c123fcb699beaa2b671c8d0ead2e6c18fc50e378ab1ee6951da31c6eeeb42962",
+    "src\\terminal_process.rs": "e2970dcf26d9d46d5408d29f4b29bf9aa23569ec348e49f3a2361ef082e8791b",
+    "src\\web_research_prompt.md": "17304805ee5d6f9e67d5ca7d66277b0a3b0687b53e48afc0c30a1eafb33cd5e6",
+    "src\\web_tools.rs": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "src\\web_tools_tests.rs": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "tests\\verify_analysis_tools.py": "3ccac3901af0e65ef2da28384077201169fccc121cdc13e8cdb5f5d339e7a46e",
+    "tests\\verify_process_capture.py": "96c734e42a392a1b5161dada8cd983a8d81dab6fcd41491d359962744a156d4c",
+    "tests\\verify_versioned_edits.py": "eaa076b69f3df20868cf20d16dc1dc9f5a4e67a889283ce705f0cc38b8c50698"
+  },
+  "stage_manifest_sha256": "fd0b82e51f5fa16f95ab64082f81d21cafc7f1c2e75290cabf3e27d40e0d6dbb",
+  "public_pins": {
+    "README.md": {
+      "bytes": 998,
+      "sha256": "751ed577aa4678785fadc77d29d3e644a2ee65b9127df8d5aec457132cdbbfa7"
+    },
+    "sample.hex": {
+      "bytes": 5121,
+      "sha256": "c6b4d9cd4ba318b448c099576876e8475b3c15fcaf0255238607a168a7c98811"
+    },
+    "specimen.exe": {
+      "bytes": 2560,
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e"
+    }
+  },
+  "oracle_sha256": "7a234ff0baba04e9f1108fddcdf7cbe3290579fda8c8291c2457793ab2eef49f",
+  "selftest": {
+    "checks": 33,
+    "status": "PASS",
+    "independent_sha256": "42043af724efdb3cde06b611911a969ca78a7c7dc9311cb9528f89956677a7a4"
+  },
+  "independent_pre_sha256": "3129650734f9f4cf50ca7944b27061d0fbae2346a43328bb02c8f89ffd4e93e7",
+  "independent_post": "APPROVE_SCOPED_EVIDENCE_TASK_NOT_ACCEPTED",
+  "independent_post_sha256": "a2b43acd2bda55aef478a497fe678f6bc5060352f74665df7da533bfc40080cc",
+  "trials": [
+    {
+      "arm": "H2-D",
+      "condition": {
+        "arm": "H2-D",
+        "model": "deepseek-v4.1-flash",
+        "policy": "thinking_type_disabled",
+        "output": 8192
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "FAIL",
+      "host_exit": 0,
+      "native_code": 0,
+      "native_error": "",
+      "harness_error": null,
+      "model_calls": 11,
+      "wall_seconds": 28.676,
+      "effects_unknown": false,
+      "response_model_ids": [
+        "deepseek-flash"
+      ],
+      "exact_remote_weights": "UNKNOWN",
+      "hidden_case_count": 128,
+      "hidden_outputs_matched": 48,
+      "predictions_correct": false,
+      "prediction_count": 4,
+      "predictions_are_additional_independent_cases": false,
+      "seal_integrity": true,
+      "sealed_code_sha256": "1447caff59ca5644b775ca58e900fdb6385cfaace1870d707e37f899cf541e47",
+      "completed_binary_tools": 7,
+      "failed_tool_ends": [
+        {
+          "tool": "binary_inspect",
+          "status": "failed"
+        }
+      ],
+      "explanation_characters": 2014,
+      "explanation_within_1200": false,
+      "secret_scan": "CLEAN",
+      "frozen_inputs_unchanged": true,
+      "result_sha256": "5935fb3e0b4092f1bc9f53a50f01f14fd19928e8a57dfb97957e7faf0bdf1173",
+      "provider_receipts_sha256": "9218f69943d12af66306c1f5106a7e50512160026f93714d0cb37cbaf5a0fc15",
+      "oracle_result_sha256": "ffd1cd08e5de1be01e018776d59f9c9c41de1a5b1fbe7585567efaa171e61eea"
+    },
+    {
+      "arm": "H2-G",
+      "condition": {
+        "arm": "H2-G",
+        "model": "gpt-6.1-sol",
+        "policy": "provider_default",
+        "output": 8192
+      },
+      "status": "FAIL",
+      "task_success": false,
+      "oracle_status": "NOT_RUN",
+      "host_exit": 1,
+      "native_code": -1,
+      "native_error": "Our servers are currently overloaded. Please try again later.",
+      "harness_error": "AssertionError: provider/relay call did not settle successfully; retain receipts",
+      "model_calls": 3,
+      "wall_seconds": 49.73,
+      "effects_unknown": false,
+      "response_model_ids": [
+        "gpt-6.1-sol"
+      ],
+      "exact_remote_weights": "UNKNOWN",
+      "hidden_case_count": 128,
+      "hidden_outputs_matched": null,
+      "predictions_correct": null,
+      "prediction_count": 4,
+      "predictions_are_additional_independent_cases": false,
+      "seal_integrity": null,
+      "sealed_code_sha256": null,
+      "completed_binary_tools": 0,
+      "failed_tool_ends": [
+        {
+          "tool": "read_file",
+          "status": "failed"
+        },
+        {
+          "tool": "read_file",
+          "status": "failed"
+        },
+        {
+          "tool": "binary_inspect",
+          "status": "failed"
+        },
+        {
+          "tool": "binary_inspect",
+          "status": "failed"
+        }
+      ],
+      "explanation_characters": null,
+      "explanation_within_1200": null,
+      "secret_scan": "CLEAN",
+      "frozen_inputs_unchanged": true,
+      "result_sha256": "b9cbf361910c5b49b7947041d1776c47ad33c1238885d15b5be141e2b34a73b8",
+      "provider_receipts_sha256": "36cc69817aa5762d2856bafca2303ee180603a2f478ea6c4c34a8c08c52cb7f2",
+      "oracle_result_sha256": null
+    }
+  ],
+  "limits": [
+    "different algorithm than R1; a small self-owned static specimen, not complex real-program generalization",
+    "models and policies both differ; no pure causal attribution",
+    "four prediction inputs are also present among the 128 hidden-evaluation inputs",
+    "H2-D completed but only 48 invalid cases passed; valid algorithm reconstruction not accepted",
+    "H2-G terminated on provider overload before submission; solver capability not measured",
+    "H2-G also made four invalid optional-argument combinations before the provider failure",
+    "response echo aliases and exact remote model weights remain separately recorded and unverified",
+    "no specimen execution, hidden-answer feedback or replayed failed arm",
+    "raw session/response/author evidence stays private; no OS sandbox or product release acceptance"
+  ]
+}

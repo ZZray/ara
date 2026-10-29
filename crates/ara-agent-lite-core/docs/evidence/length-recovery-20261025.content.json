@@ -1,0 +1,94 @@
+{
+  "title": "Agent Core Lite 输出长度恢复：实现与验证",
+  "subtitle": "原 Run 内最多一次有界重规划；真实恢复机制与编码产物验收分别记录。",
+  "brand": "ARA · Agent Core Lite",
+  "eyebrow": "ENGINEERING RECORD",
+  "date": "2026-10-25",
+  "sections": [
+    {"id": "conclusion", "title": "当前结论", "blocks": [
+      {"type": "paragraph", "text": "Core 已新增默认关闭的 Host 长度恢复策略。显式启用后，对完整返回且不含工具调用的 Length 消息，在原 Run 内最多安排一次重规划。原 Session、模型、工具、输出上限、调用计数和截止时间保持原值。"},
+      {"type": "callout", "tone": "success", "title": "限定机制验收通过", "text": "独立 Codex 接受当前 Windows、未触发压缩的受控 Execute profile。13 项实际进程检查、现有 16 项进程回归、14 项 Harness 回归和真实 Relay 预算检查通过。真实模型也观察到第 9 次 Length 后在同一 Run 内继续一次。"},
+      {"type": "callout", "tone": "warning", "title": "真实编码任务仍未通过", "text": "新 ACR 实任务第 10 次调用再次 Length，随后按单次上限停止。没有源码修改，七项测试未执行，原 fence 保留。恢复机制已执行，实际编码修复仍未验收。原七项目标保持 0/7 整体验收。"},
+      {"type": "facts", "items": [
+        {"label": "版本与范围", "value": "Lite Core 0.1.1 / Harness 0.1.0 / JSONL 0.1.0；HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + dirty WIP"},
+        {"label": "当前程序 SHA256", "value": "b68ecea895dc4627baa946a2fece2603f66b354163787933d01f6a7a63b142b6"},
+        {"label": "冻结源码清单", "value": "89 项；ea9f085accb7250464383bf4f50a3e8fda292f8782f9f3c0cb1574757fc4f5ec"},
+        {"label": "证据目录", "value": "D:/WorkSpace/tmp/ara-core-capability-20261022/length-recovery-v1-20261025"}
+      ]}
+    ]},
+    {"id": "design", "title": "Core 与产品接入范围", "blocks": [
+      {"type": "paragraph", "text": "三个独立视角分别检查实现、维护与性能安全，最终选择固定 rpi 已有的 get_follow_up_messages 接缝。Core 实现恢复准入，JSONL 只转发固定 Host 配置；产品保留业务权限和效果结算。没有新建 Agent 循环，也没有把该能力复制到各产品。"},
+      {"type": "table", "columns": ["配置或行为", "合同"], "rows": [
+        ["Rust Host", "ModelHost::length_recovery_policy 在已解析 Route 上返回 Stop 或 ReplanOnce；默认 Stop"],
+        ["JSONL", "run.length_recovery 可省略，或填 stop / replan_once；prepare 不能改变它"],
+        ["执行模式", "仅 Execute 可显式启用；Plan / Goal 拒绝该配置"],
+        ["次数与预算", "每个 Run 最多一次；多个 Run 继续共享原 Task 总调用数及绝对截止"],
+        ["已有截断工具保护", "Length 带 ToolCall 时仍由固定 rpi 整批拒绝执行，再走原有循环"],
+        ["默认行为", "Stop 不扫描恢复来源或保存恢复引用，既有失败语义保留"]
+      ]},
+      {"type": "code", "language": "json", "text": "{\n  \"run\": {\n    \"length_recovery\": \"replan_once\"\n  }\n}"},
+      {"type": "paragraph", "text": "上面只展示新增字段，不能代替完整 start_task。Host 执行策略与模型目录能力、GenerationPolicy 生成参数分开。它不会恢复供应商未投回的私有 thinking，也不保证下一次相同输出上限一定完成任务。"}
+    ]},
+    {"id": "admission", "title": "准入、持久化和停止", "blocks": [
+      {"type": "flow", "items": [
+        {"title": "检查原消息与状态", "text": "当前 Run 的最后完整消息为 Length；没有 ToolCall、provider error、未闭合工具轮次、检测到的未知效果或阻断状态。"},
+        {"title": "提交自动控制来源", "text": "clone context、增加 length_recovery 引用、save，再替换内存状态。记录 typed source 索引/哈希和非人类来源。"},
+        {"title": "发送 scheduled 记录", "text": "事件标明尚未预留下一请求。发送后再核取消、原截止、调用数、持久化状态和待处理 Job。"},
+        {"title": "回到原预算入口", "text": "原 stream_fn 决定是否预留下一模型调用。再次无工具 Length 仍失败；只有真正完整候选才进入 Host 实物检查。"}
+      ]},
+      {"type": "paragraph", "text": "保存失败、取消、截止、未知效果、待处理 Job 和预算不足都会阻止继续。一个已配对的工具结果不能证明任意外部操作已结算，Host 仍负责其原收据。已知执行前拒绝可被明确结算，不因 is_error=true 一概当成未知。"},
+      {"type": "paragraph", "text": "User-role 只是供应商消息载体。原始 context 引用和事件明确标为自动 Host 控制，不产生新的人类消息序号、授权或确认。公共层始终保持 task_accepted=false。"}
+    ]},
+    {"id": "tests", "title": "当前代码的执行结果", "blocks": [
+      {"type": "table", "columns": ["检查", "结果", "边界"], "rows": [
+        ["Core 全量", "208 项库测试 + 3 项 Host 边界 PASS", "新增 5 项包含在库测试内；既有公网 1 项 ignored"],
+        ["Harness 回归", "14/14 PASS", "新 Core 依赖下的现有 Task 约束"],
+        ["JSONL Rust", "3/3 PASS", "原件完整比较与 hash 约束"],
+        ["长度进程矩阵", "13/13 PASS，50.793 秒", "真实 Rust、HTTP、文件、context 保存故障、取消、截止及预算"],
+        ["默认客户端/进程回归", "16/16 PASS，56.795 秒", "Python/Node 原路径、反馈两 Run、取消、未知、相关身份和慢 stdout"],
+        ["真实产品 Relay + 受控上游", "1/1 PASS，12.531 秒", "两 Run/四逻辑调用/五次实际尝试；失败计费，第六次被拒"],
+        ["构建 / 两 crate Clippy / fmt", "PASS", "源码与交付程序均冻结"],
+        ["两 crate doc tests", "成功，均 0 用例", "不计行为检查数量"]
+      ]},
+      {"type": "paragraph", "text": "五项文件正例中，四项使用新恢复策略；另一项使用原截断工具保护，没有额外调度。每项均实际写入一次并由 Host 回读检查。全矩阵共五条 scheduled 记录，另一次出现在重复 Length 的失败案例中。"},
+      {"type": "paragraph", "text": "首轮为 12/13：1 秒 deadline 在首次 HTTP 前耗尽，未达到所需的在途状态。只调整测试时序，使上游实际响应晚于原 Run 截止，并保持恰好一次 HTTP 的断言；Core 没有为此修改。原失败保留。"}
+    ]},
+    {"id": "live", "title": "真实模型任务结果", "blocks": [
+      {"type": "table", "columns": ["项", "实际观察"], "rows": [
+        ["请求模型 / 协议", "deepseek-v4.1-flash / openai-completions；远端权重与结算账单 UNKNOWN"],
+        ["预设预算", "24 次调用、2 Runs、180 秒、每次输出最多 4096 tokens"],
+        ["实际执行", "1 Run、10 次调用、109.009 秒；调用序号连续 1 至 10"],
+        ["第一次 Length", "第 9 次调用，4096 output tokens，纯 thinking；记录原 source 并安排一次重规划"],
+        ["第二次 Length", "第 10 次调用仍为 4096 output tokens；没有再安排重规划，原 Run 失败"],
+        ["业务操作", "15 项回调：6 read、8 search、1 次 known_not_started checks；均已结算"],
+        ["实际产物", "0 source_replace，工作区 clean，源码及测试字节未变，无 validation"],
+        ["终态", "ReconciliationRequired / fence Present / task_accepted=false；七项测试未执行"]
+      ]},
+      {"type": "paragraph", "text": "本次是新目录的新 Task，旧 live-v1/v2 没有恢复或重放，三个 fence 均保留。没有增加原输出预算或恢复次数来取得成功。后续需要将已有 Host 生成策略接到公共接入层，并在相同模型、任务和预算下验证任务收敛；不能由这次结果推导普遍编码能力提升。"}
+    ]},
+    {"id": "provenance", "title": "来源哈希与独立审查", "blocks": [
+      {"type": "paragraph", "text": "Root 最初从 checkpoint 字典重算得到不同的 source SHA。固定 rpi 的 Content enum 标签和 payload 各序列化一次同值 type，typed serde 字节保留重复键，Session 的 Value 会归一它。确认该格式后，受控五条以及真实模型一条 source/ref 哈希均独立匹配，没有修改运行时来消除差异。"},
+      {"type": "paragraph", "text": "复核 source 应将原 Journal/checkpoint 记录解析为固定版本的 AgentMessage 后直接 serde 序列化。typed source hash、Journal 文件/链 hash、控制正文 UTF-8 hash 是三个不同校验域。报告不展示私有 thinking 正文。"},
+      {"type": "facts", "items": [
+        {"label": "源码 POST", "value": "stage/length-source-post.json · 84916d2712ff5660800e777a135805152ef540e64b9c2d884a2d98d8cd3856f8"},
+        {"label": "真实模型执行 POST", "value": "stage/length-live-execution-post.json · 215d48585ee736a3102c10e93659d0f10e09f603b4329b5c27fb9e5481954bcb"},
+        {"label": "真实来源 proof", "value": "stage/acr-live-v3-source-checks.json · e630b3cfb8fdb739b0bb6ea8993f111bf23f7c6534d161f4babc670c368aa853"}
+      ]},
+      {"type": "links", "items": [
+        {"label": "机器可读结果", "href": "length-recovery-20261025.result.json"},
+        {"label": "Core 接入说明", "href": "../../README.md"},
+        {"label": "公共跨语言接入报告", "href": "../../../ara-agent-lite-jsonl/docs/evidence/product-host-adapters-20261025.html"}
+      ]}
+    ]},
+    {"id": "open", "title": "未覆盖的门禁", "blocks": [
+      {"type": "list", "items": [
+        "scheduled 事件后的精确取消交错、事件传输故障，以及真实 managed Job 并发，当前为源码审查；未单独执行。",
+        "实际 summary/agent 共享预算、多次压缩、Plan/Goal、签名模态及跨平台不在本次范围。",
+        "AI Code Review 实际编码修复尚未通过，产品默认迁移和独立模型复审未执行。",
+        "LabSlot 真实 TodoService/PostgreSQL 仍等待独立编译门禁；本轮只完成公共合同候选。",
+        "依赖/锁文件未变；继承的 cargo deny 政策审计仍失败，本点未重跑或作发布豁免。"
+      ]},
+      {"type": "paragraph", "text": "交付文档经过 humanizer 编辑并使用既有手绘模板。新增链接可解析；更广检查保留三条既有缺失引用：Core README 中未交付的 0.2.10 发布记录，以及 roadmap/feature ledger 的两个旧 C:/Temp 引用，均未修改。本地浏览此前被策略拒绝，视觉和真实浏览交互未验收。本轮未提交、推送、部署、连接数据库或操作设备。"}
+    ]}
+  ]
+}

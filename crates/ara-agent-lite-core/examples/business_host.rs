@@ -2,8 +2,8 @@
 //! Usage: business_host request.json. Credentials come from the named environment variable.
 use anyhow::{ensure, Context, Result};
 use ara_agent_lite_core::{
-    execute, goal_runtime, managed_jobs,
-    rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial},
+    analysis_tools, execute, goal_runtime, managed_jobs, model,
+    rpi_agent::{AgentError, AgentTool, AgentToolResult, TextContentOrImage, ToolResultPartial},
     rpi_ai::{Schema, Tool},
     RunMode, RunRequest, RuntimePaths, ToolRegistration,
 };
@@ -43,6 +43,62 @@ struct Request {
     cancel_after_ms: Option<u64>,
     #[serde(default)]
     close_events: bool,
+    #[serde(default)]
+    analysis_config: Option<AnalysisBackends>,
+    #[serde(default)]
+    analysis_tool: String,
+    #[serde(default)]
+    analysis_args: Value,
+    #[serde(default)]
+    max_calls: Option<usize>,
+    #[serde(default)]
+    max_seconds: Option<u64>,
+    #[serde(default)]
+    max_output: Option<u32>,
+    #[serde(default)]
+    generation_policy: model::GenerationPolicy,
+    #[serde(default)]
+    brief: String,
+}
+
+struct ConfiguredModelHost(model::GenerationPolicy);
+
+#[async_trait]
+impl model::ModelHost for ConfiguredModelHost {
+    async fn resolve(
+        &self,
+        route: model::Route,
+        endpoint: &str,
+        token: &str,
+        run: &str,
+    ) -> Result<model::ModelSelection> {
+        model::ModelHost::resolve(&model::CatalogModelHost, route, endpoint, token, run).await
+    }
+
+    fn generation_policy(&self, _: &model::Route) -> Result<model::GenerationPolicy> {
+        Ok(self.0)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnalysisBackends {
+    artifact_root: PathBuf,
+    ctags: Option<PathBuf>,
+    objdump: Option<PathBuf>,
+    nm: Option<PathBuf>,
+}
+
+impl AnalysisBackends {
+    fn into_config(self, cwd: PathBuf) -> analysis_tools::AnalysisConfig {
+        analysis_tools::AnalysisConfig {
+            cwd,
+            artifact_root: self.artifact_root,
+            ctags: self.ctags,
+            objdump: self.objdump,
+            nm: self.nm,
+        }
+    }
 }
 
 struct BusinessLookup {
@@ -88,6 +144,9 @@ fn main() -> Result<()> {
 }
 
 async fn run(config: Request) -> Result<()> {
+    if config.action == "analysis_query" {
+        return analysis_query(config).await;
+    }
     if matches!(config.action.as_str(), "job_smoke" | "pty_smoke") {
         return job_smoke(&config).await;
     }
@@ -98,17 +157,24 @@ async fn run(config: Request) -> Result<()> {
     );
     request.mode = if config.mode.is_empty() { RunMode::Plan } else { RunMode::parse(&config.mode)? };
     request.enable_local_tools = config.enable_local_tools;
+    request.brief = config.brief;
+    if config.generation_policy != model::GenerationPolicy::ProviderDefault {
+        request.model_host = Arc::new(ConfiguredModelHost(config.generation_policy));
+    }
     request.worker_executable = config.enable_worker.then(std::env::current_exe).transpose()?;
     request.endpoint = config.endpoint;
     request.model = config.model.clone();
     request.route.model = config.model;
     request.route.protocol = "openai-completions".into();
     request.token = std::env::var(&config.token_env).context("set the configured model-token environment variable")?;
-    request.max_calls = 8;
-    request.max_seconds = 45;
-    request.max_output = 2048;
+    request.max_calls = config.max_calls.unwrap_or(8).clamp(1, 32);
+    request.max_seconds = config.max_seconds.unwrap_or(45).clamp(1, 900);
+    request.max_output = config.max_output.unwrap_or(2048).clamp(256, 8192);
     request.device_fp = "business-example".into();
     request.session_key = "business/session".into();
+    if let Some(backends) = config.analysis_config {
+        request.extra_tools.extend(analysis_tools::register(backends.into_config(config.cwd.clone())).await?);
+    }
     if !config.extension_name.is_empty() {
         request.extra_tools.push(ToolRegistration {
             tool: Arc::new(BusinessLookup {
@@ -154,6 +220,61 @@ async fn run(config: Request) -> Result<()> {
     let result = result?;
     println!("{}", json!({"kind":"result","code":result.code,"text":result.text,"error":result.error}));
     ensure!(result.code == 0, "Run did not complete successfully");
+    Ok(())
+}
+
+async fn analysis_query(config: Request) -> Result<()> {
+    let backends = config.analysis_config.context("analysis_query requires analysis_config")?;
+    let tools = match analysis_tools::register(backends.into_config(config.cwd)).await {
+        Ok(tools) => tools,
+        Err(error) => {
+            println!(
+                "{}",
+                json!({"kind":"analysis_result","tool":config.analysis_tool,
+                "status":"failed","output":null,"error":format!("{error:#}")})
+            );
+            return Ok(());
+        }
+    };
+    let tool = tools
+        .iter()
+        .find(|entry| entry.tool.schema().name == config.analysis_tool)
+        .context("requested analysis tool is not configured")?;
+    let cancellation = CancellationToken::new();
+    let timer = config.cancel_after_ms.map(|millis| {
+        let signal = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(millis)).await;
+            signal.cancel();
+        })
+    });
+    let outcome = tool.tool.execute("analysis-query", config.analysis_args, cancellation, Arc::new(|_| {})).await;
+    if let Some(timer) = timer {
+        timer.abort();
+    }
+    match outcome {
+        Ok(result) => {
+            let output = result
+                .content
+                .into_iter()
+                .filter_map(|part| match part {
+                    TextContentOrImage::Text(text) => Some(text.text),
+                    TextContentOrImage::Image(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            println!(
+                "{}",
+                json!({"kind":"analysis_result","tool":config.analysis_tool,
+                "status":"completed","output":output,"error":null})
+            );
+        }
+        Err(error) => println!(
+            "{}",
+            json!({"kind":"analysis_result","tool":config.analysis_tool,
+            "status":"failed","output":null,"error":error.to_string()})
+        ),
+    }
     Ok(())
 }
 

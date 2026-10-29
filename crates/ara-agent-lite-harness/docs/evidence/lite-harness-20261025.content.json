@@ -1,0 +1,477 @@
+{
+  "title": "Agent Core Lite 与公共 Harness：接入和限定验证",
+  "subtitle": "多个产品共用任务执行能力；产品保留自己的工具、权限和验收。",
+  "brand": "ARA · Agent 能力增强",
+  "eyebrow": "ENGINEERING RECORD",
+  "date": "2026-10-25",
+  "sections": [
+    {
+      "id": "conclusion",
+      "title": "当前结论",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "已新增独立的 ara-agent-lite-harness 公共包，通过现有 Lite Core 的 execute 推进任务。实际验证覆盖文件修改、工具调用、检查反馈、同 Session 续作，以及取消和故障后的保守停止。"
+        },
+        {
+          "type": "callout",
+          "title": "限定执行验收通过",
+          "text": "独立 Codex 接受本地、未触发压缩的 Execute 行为。14 项回归、三类真实模型任务和一个独立消费者均有实际产物证据。三类受控试验另验证首次失败后的两 Run 纠错。",
+          "tone": "success"
+        },
+        {
+          "type": "callout",
+          "title": "总目标和发布状态",
+          "text": "原七项目标仍为 0/7 整体验收；本点关闭的是公共 Lite 上层的限定执行检查点。泛化能力提升、真实压缩续作、产品接入和发布仍未完成。依赖政策审计失败，没有发布豁免。",
+          "tone": "warning"
+        },
+        {
+          "type": "facts",
+          "items": [
+            {
+              "label": "当前版本",
+              "value": "Lite Core 0.1.1 / Harness 0.1.0"
+            },
+            {
+              "label": "源码身份",
+              "value": "HEAD 56d55d209ecea00e80dfefecdd3e9d47fb62c47a + 保留的 dirty WIP；按 53 项源码/镜像清单定位"
+            },
+            {
+              "label": "实际输出状态",
+              "value": "AwaitingHostAcceptance；task_accepted 始终 false"
+            },
+            {
+              "label": "本点证据",
+              "value": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "layers",
+      "title": "公共能力和产品职责",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "需求是让 AI Code Review、HandWave、ReWork Station 和其他工具复用同一套 Agent 执行能力。业务产品接入自己的工具与验收器；公共层不引入产品账号、设备、队列或发布状态。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "层",
+            "负责的行为",
+            "接入时的边界"
+          ],
+          "rows": [
+            [
+              "模型",
+              "推理、生成代码、选择工具、修正假设",
+              "模型差距不能靠新增工具名称消除"
+            ],
+            [
+              "Agent Core Lite",
+              "模型/工具循环、原生 Session、上下文维护、Run 预算和取消",
+              "保持共享引擎，无产品依赖"
+            ],
+            [
+              "Harness Lite",
+              "候选准入、Host 检查、反馈续作、Task 总预算、Session 独占与证据",
+              "只调用 Core 公共入口，不复制循环"
+            ],
+            [
+              "产品 Host",
+              "身份、授权、模型入口、工作区、实际产物检查和 Task 接受",
+              "验收依据须绑定本次候选与实际结果"
+            ],
+            [
+              "工具后端",
+              "源码查询、编译测试、反汇编或具体业务操作",
+              "产品决定工具可操作的范围"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "TaskKind 的 Coding、Reasoning、ReverseAnalysis 是任务分类，不授予工具权限，也不单独证明三类能力。当前结果来自模型实际选择工具、修改产物和独立检查。"
+        },
+        {
+          "type": "flow",
+          "title": "一次受控纠错",
+          "items": [
+            {
+              "title": "产品提交目标",
+              "text": "固定工作区、模型、工具、检查条件和总预算"
+            },
+            {
+              "title": "Core 执行 Run",
+              "text": "模型实际读文件、调工具和提交产物"
+            },
+            {
+              "title": "Host 检查产物",
+              "text": "检查真实文件、编译/测试或业务回执，并保存证据"
+            },
+            {
+              "title": "Harness 按反馈续作",
+              "text": "有效 NeedsChanges 才在原 Session 内开始新 Run；原预算和截止不重置"
+            },
+            {
+              "title": "产品决定接受",
+              "text": "Verified 形成 AwaitingHostAcceptance；产品保留最终 Task 验收权"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capabilities",
+      "title": "三类能力的实际执行结果",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "今天重新核验了选定模型目录和 OpenAI-completions 协议。每次试验预设最多 24 次调用、2 个 Run、240 秒；单进程操作最多 30 秒，每次输出请求为 4096。模型使用独立的新试验目录；没有向模型开放 oracle 文件。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "试验",
+            "模式",
+            "Run / 调用",
+            "耗时（秒）",
+            "实际检查"
+          ],
+          "rows": [
+            [
+              "controlled-coding-v1",
+              "controlled",
+              "2 / 6",
+              22.476,
+              "60 项独立输入"
+            ],
+            [
+              "controlled-reasoning-v1",
+              "controlled",
+              "2 / 5",
+              16.52,
+              "穷举最优 makespan = 5"
+            ],
+            [
+              "controlled-reverse-v1",
+              "controlled",
+              "2 / 6",
+              22.992,
+              "64 项独立输入"
+            ],
+            [
+              "live-coding-v1",
+              "live",
+              "1 / 6",
+              30.688,
+              "60 项独立输入"
+            ],
+            [
+              "live-reasoning-v1",
+              "live",
+              "1 / 4",
+              19.368,
+              "穷举最优 makespan = 5"
+            ],
+            [
+              "live-reverse-v1",
+              "live",
+              "1 / 4",
+              21.988,
+              "64 项独立输入"
+            ],
+            [
+              "external-live-coding-v1",
+              "live",
+              "1 / 5",
+              17.584,
+              "60 项独立输入"
+            ]
+          ]
+        },
+        {
+          "type": "table",
+          "columns": [
+            "任务",
+            "模型可用的工具与输入",
+            "验证边界"
+          ],
+          "rows": [
+            [
+              "C++ 编码",
+              "读取接口、实现和独立调用者；只改 window.cpp；真实编译与运行检查",
+              "圆周半开窗口和负数归一化的小型任务；没有覆盖大型跨文件重构"
+            ],
+            [
+              "逻辑处理",
+              "读取依赖与工人约束，写 plan.json，调用实际约束检查",
+              "4 个任务 / 2 个工人的严格 JSON 排程；Host 独立穷举最优值"
+            ],
+            [
+              "逆向分析",
+              "自有对象编译并去符号，实际 GNU objdump，写 recovery.cpp 后编译",
+              "恢复一个 u32 变换并比较 64 个输入；C++ 对象、虚表、复杂调用图仍未覆盖"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "三类 controlled 试验使用脚本化错答和改正，只证明流程与反馈约束。live 试验选定 deepseek-v4.1-flash，内部三项分别消耗 6、4、4 次调用；独立消费者另用 5 次调用。远端权重身份与实际账单费用未知，适配器提供的正用量不等于原始计费收据。"
+        },
+        {
+          "type": "paragraph",
+          "text": "没有同模型、同任务、同预算的增强前后对照。本轮不能计算能力提升比例，也不能据此宣称达到 Claude Code 的整体水平。"
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "title": "其他产品如何接入",
+      "blocks": [
+        {
+          "type": "steps",
+          "items": [
+            {
+              "title": "依赖公共包",
+              "detail": "Rust Host 依赖 ara-agent-lite-harness，通过其 core re-export 使用同源 RunRequest。固定交付提交或源码清单。"
+            },
+            {
+              "title": "注册业务工具",
+              "detail": "按产品授权实现 AgentTool；源码、设备、API 操作由 Host 决定。根据场景关闭通用本地工具和 Worker。"
+            },
+            {
+              "title": "实现两项 Host 回调",
+              "detail": "verify 先保存实际检查结果，再返回当前 basis 的收据；prepare_continuation 使用有效反馈沿原 Session 构造新 Run。"
+            },
+            {
+              "title": "启动并观察任务",
+              "detail": "创建 TaskSpec 和初始 RunRequest，调用 start；订阅事件、cancel 或 wait。慢 UI 不阻塞引擎。"
+            },
+            {
+              "title": "处理结果",
+              "detail": "产品决定业务接受；遇到未知效果先查原收据，不清 fence 后自动重跑。"
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "columns": [
+            "产品",
+            "可以提供的业务能力",
+            "本轮状态"
+          ],
+          "rows": [
+            [
+              "AI Code Review",
+              "源码查询、受控替换、项目检查、独立复审",
+              "已回源确认现产品具备这些入口；新 Harness 尚未接入或部署"
+            ],
+            [
+              "HandWave / 远程协助",
+              "经过产品授权的设备或远端操作、实际操作回执",
+              "本轮未运行设备或远程产品验收"
+            ],
+            [
+              "ReWork Station / 其他个人应用",
+              "业务 API、工作区、检查条件和用户事件传输",
+              "按公共 Host 合同接入；本轮未检查其产品代码"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "AI Code Review 当前已有工具调用与受控修复通道，不能概括为只能输出审核文本。现有代码中的修复权限主要针对平台自身明确授权的文件；自动修复任意被审核仓库需要另外实现对应工作区与授权接线。其固定 Core 为 0.1.0，本点为 0.1.1；不能混用两套 Rust 类型冒充兼容。"
+        },
+        {
+          "type": "paragraph",
+          "text": "独立 workspace 消费者没有复制 Core 或 Harness，只复制示例业务 Host，并通过公共依赖运行真实模型 C++ 任务。它有自己的 Cargo.lock，tokio 为 1.54.0；包内验证锁定 1.53.3，各自的程序与依赖图均保留。Python、C++ 产品可保留消息适配进程；当前尚未提供统一 JSONL 服务或 C ABI。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "接入说明与完整示例入口",
+              "href": "../../README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "failures",
+      "title": "失败修复与生命周期验证",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "观察",
+            "原因或判定",
+            "本轮验证"
+          ],
+          "rows": [
+            [
+              "首次两 Run 文件测试失败，8/9 通过",
+              "Windows 普通路径与 verbatim 路径指向同文件，但 Core 的原生上下文身份还依赖实际路径字符串",
+              "每轮规范实际执行路径；最终 14 项通过，原失败保留"
+            ],
+            [
+              "成功工具正文含 effects_unknown 术语",
+              "源码内容和结构化工具状态需要分别解释",
+              "成功正文可正常验收；native executed:unknown 仍拒绝"
+            ],
+            [
+              "Core 工具进行中取消",
+              "取消后原工具仍需结算",
+              "release 屏障前 wait 不结束、新 Task 不准入，结算后保留原收据与 fence，无重放"
+            ],
+            [
+              "文件已写、observation 保存失败",
+              "试验内实际目录占用目标文件路径，使 write_new 失败",
+              "ReconciliationRequired；实际文件、events 和 Journal 保留，Host 不复审/续作"
+            ],
+            [
+              "跨进程竞争与崩溃",
+              "同 Session 需要整 Task 所有权",
+              "实际不同 PID contender 0 模型请求；取消和精确 crash 后 fence 均阻止再次准入"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "Clippy 首次因私有函数参数过多失败。修订只把原只读参数收拢到 TaskContext，独立 reviewer 在内存逆向重建原文件，SHA256 与先前固定值一致。controlled/native 的旧普通镜像执行通过这一明确源码等价桥复用；当前镜像另完成三项 live 和最终回归。没有把旧执行写成当前镜像的新执行。"
+        },
+        {
+          "type": "paragraph",
+          "text": "取消采用合作式等待。Host 回调若不响应取消，任务可能继续等待。工具白名单、私有目录和 advisory lock 也不构成 OS 沙箱；Host 必须另外限制不可信代码的账户或容器权限。"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "title": "独立审核与发布门禁",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "结果",
+            "覆盖"
+          ],
+          "rows": [
+            [
+              "cargo test --all-targets",
+              "14 PASS / 0 FAIL / 0 ignored",
+              "实际 Lite + 受控 HTTP；含取消、磁盘证据失败和禁止重放"
+            ],
+            [
+              "fmt / scoped Clippy",
+              "PASS",
+              "当前新包与全部目标；Clippy --no-deps -D warnings"
+            ],
+            [
+              "doc tests",
+              "成功，0 tests",
+              "不把它算成文档示例行为覆盖"
+            ],
+            [
+              "独立 Codex POST",
+              "接受限定本地未压缩 Execute profile",
+              "实际 events、Journal hash/proof、候选与检查文件、原生进程流和外部消费者"
+            ],
+            [
+              "cargo deny --frozen",
+              "exit 14；bans / licenses / sources FAIL",
+              "固定 pi-rust Git 来源、git/path wildcard 政策及 CDLA-Permissive-2.0；未改政策或豁免"
+            ],
+            [
+              "离线 advisories",
+              "cached PASS",
+              "未核数据库实时性，不代表当前所有依赖无漏洞"
+            ],
+            [
+              "提交 / 推送 / 产品部署",
+              "未执行",
+              "既有 staged / unstaged / untracked WIP 保留"
+            ]
+          ]
+        },
+        {
+          "type": "facts",
+          "items": [
+            {
+              "label": "独立 POST SHA256",
+              "value": "8c369a94b6fe8b30044247b42ba277dd189bf084fb2aba469c51dc8240cb52c2"
+            },
+            {
+              "label": "53 项最终清单 SHA256",
+              "value": "90e03dff23d879fcace8ed20b46aeeffa8463fd4ff4db1ed6ca05fb8c89f3c2e"
+            },
+            {
+              "label": "独立 POST decision",
+              "value": "ACCEPT_SCOPED_LOCAL_UNCOMPACTED_EXECUTE_BEHAVIOR_PROFILE"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "remaining",
+      "title": "后续必须完成的验证",
+      "blocks": [
+        {
+          "type": "list",
+          "items": [
+            "真实 summary 与 agent 共用 Task 预算、压缩后的纠错依据保留；本轮所有任务都未触发 summary。",
+            "Lite 的 length 续作。今天目录声明输出 16384，Core 本地上限仍为 8192，本轮请求 4096；这三个数不能混用。当前 Harness 遇到 length 保守停止。",
+            "完整 Goal/Job 恢复、prepare 回调取消与更多持久化故障，以及 Windows 之外的平台验收。",
+            "更多陌生 C++ 工程、编译失败后自主修复、C++ 对象与虚表逆向、复杂调用图。",
+            "同模型、同任务、同预算的增强前后对照，记录成功率、耗时、用量和失败类型。",
+            "AI Code Review 等产品的真实 Host 适配、隔离验收和依赖政策审查；产品发布另走各自流程。"
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "本轮没有继续实现 Full Core 文本恢复接口。原 OMP 固定提交、迁移计数和其他产品状态保持原口径。"
+        }
+      ]
+    },
+    {
+      "id": "evidence",
+      "title": "结果与源码入口",
+      "blocks": [
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读结果与原始证据索引",
+              "href": "lite-harness-20261025.result.json"
+            },
+            {
+              "label": "公共 Harness 接入说明",
+              "href": "../../README.md"
+            },
+            {
+              "label": "可运行消费者入口",
+              "href": "../../examples/capability_host.rs"
+            },
+            {
+              "label": "实际生命周期探针",
+              "href": "../../examples/lifecycle_probe.rs"
+            },
+            {
+              "label": "早期能力调研与差距清单",
+              "href": "../../../ara-agent-lite-core/docs/evidence/coding-reverse-enhancement-20261022.html"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "报告使用现有手绘模板生成，正文经过 humanizer 审读。静态结构、链接和数据会在交付前检查；本地 HTML 浏览此前受到策略限制，未换协议或重托管，视觉验收仍未完成。"
+        }
+      ]
+    }
+  ]
+}

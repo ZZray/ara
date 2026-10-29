@@ -1,0 +1,57 @@
+{
+  "tool": "ara-git-review",
+  "scope": {
+    "base": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "target": "worktree",
+    "files": [
+      "tools/lite-eval/src/common.rs",
+      "tools/lite-eval/src/ledger.rs",
+      "tools/lite-eval/src/records.rs",
+      "tools/lite-eval/src/notify.rs",
+      "tools/lite-eval/src/gate.rs",
+      "tools/lite-eval/src/deny.rs",
+      "tools/lite-eval/src/stage.rs",
+      "tools/lite-eval/src/main.rs",
+      "tools/lite-eval/src/lib.rs",
+      "tools/lite-eval/tests/ledger_props.rs",
+      "tools/lite-eval/tests/notify_props.rs",
+      "tools/lite-eval/tests/notify_process.rs",
+      "tools/lite-eval/tests/gate_records.rs",
+      "tools/lite-eval/tests/deny_props.rs",
+      "tools/lite-eval/tests/stage_props.rs",
+      "tools/lite-eval/tests/stage_records.rs"
+    ]
+  },
+  "diff_sha256": "c3f6c9ec6813cd8e0aff8435c4b762eb0a7d7183e656b923d773e849337ed6b4",
+  "session_id": null,
+  "implementation_session_id": "sess_edfef3ce-44b0-4b79-b575-69104e464721",
+  "findings": [
+    {
+      "location": "tools/lite-eval/src/main.rs:review_record",
+      "description": "审查缺口写台账时固定追加 open 条目，把已 done 的模块降回 open；tasks.md 约定缺口时模块保持 done。触发：任一审查记 gap。后果：台账状态被错误降级。",
+      "disposition": "fixed",
+      "reason": "保留原 open/done 状态，仅阻止 verified"
+    },
+    {
+      "location": "tools/lite-eval/src/ledger.rs:short",
+      "description": "用 &sha[..8] 截取 diff 前缀；记录文件中 diff_sha256 少于 8 字符时 check_verified 生成错误信息过程 panic。",
+      "disposition": "fixed",
+      "reason": "改为 sha.get(..8)，新增畸形记录单测"
+    },
+    {
+      "location": "tools/lite-eval/src/gate.rs:run_gate;tools/lite-eval/src/deny.rs:run_checks",
+      "description": "命令输出经 from_utf8_lossy 后写盘，非 UTF-8（GBK 等代码页）字节被替换，违反需求 33.3 完整保留输出。",
+      "disposition": "fixed",
+      "reason": "新增 common::write_output_new：无凭据时原样写字节；回归测试 gate_records 断言字节一致"
+    },
+    {
+      "location": "tools/lite-eval/src/main.rs:review_record",
+      "description": "审查记录文件名不含时间戳；同一 diff 上先记缺口再补审查时 create_new 冲突，无法写入第二份记录。",
+      "disposition": "fixed",
+      "reason": "文件名加 UTC 时间戳"
+    }
+  ],
+  "gap": null,
+  "started_at": "2026-10-29T14:02:00+08:00",
+  "finished_at": "2026-10-29T14:09:44+08:00"
+}

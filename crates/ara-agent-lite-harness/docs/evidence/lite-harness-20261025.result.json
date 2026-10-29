@@ -1,0 +1,1029 @@
+{
+  "schema": "ara.lite-harness.bounded-result.v1",
+  "date": "2026-10-25",
+  "head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "worktree": "dirty; scoped source pins retained",
+  "behavior_scope": "Windows uncompressed Execute profile only",
+  "goal_fully_accepted": "0/7",
+  "core_version": "0.1.1",
+  "harness_version": "0.1.0",
+  "tests": {
+    "pass": 14,
+    "fail": 0,
+    "ignored": 0
+  },
+  "clippy": "PASS",
+  "fmt": "PASS",
+  "doc_tests": "PASS; 0 tests",
+  "native_lifecycle": "PASS; review owner contention, joined cancellation, crash fence, normal release",
+  "trials": [
+    {
+      "trial": "controlled-coding-v1",
+      "mode": "controlled",
+      "kind": "coding",
+      "runs": 2,
+      "calls": 6,
+      "elapsed_seconds": 22.476,
+      "checks": 60,
+      "actual_tools": [
+        "read_task",
+        "read_task",
+        "write_task",
+        "write_task"
+      ],
+      "process_receipts": 6,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\controlled-coding-v1",
+      "candidate_sha256": "9038a679b4ca20cf3fd39a1e3028d25eb8f7464f408d4e0d4821b6e7c7240629",
+      "requested_model": "capability-controlled",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "controlled-reasoning-v1",
+      "mode": "controlled",
+      "kind": "reasoning",
+      "runs": 2,
+      "calls": 5,
+      "elapsed_seconds": 16.52,
+      "checks": {
+        "exhaustive_optimum": 5
+      },
+      "actual_tools": [
+        "read_task",
+        "write_task",
+        "write_task"
+      ],
+      "process_receipts": 0,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\controlled-reasoning-v1",
+      "candidate_sha256": "c08ac75fc920594d984acbc7bd203b4e73e75d7d433ea315b2316eefdb0fbcc1",
+      "requested_model": "capability-controlled",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "controlled-reverse-v1",
+      "mode": "controlled",
+      "kind": "reverse",
+      "runs": 2,
+      "calls": 6,
+      "elapsed_seconds": 22.992,
+      "checks": 64,
+      "actual_tools": [
+        "read_task",
+        "inspect_binary",
+        "write_task",
+        "write_task"
+      ],
+      "process_receipts": 9,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\controlled-reverse-v1",
+      "candidate_sha256": "6d2c7e041ee6c9ee89b99f76a16040d33002b79fd9fe5a12dbac5eefca5abfc1",
+      "requested_model": "capability-controlled",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "live-coding-v1",
+      "mode": "live",
+      "kind": "coding",
+      "runs": 1,
+      "calls": 6,
+      "elapsed_seconds": 30.688,
+      "checks": 60,
+      "actual_tools": [
+        "read_task",
+        "read_task",
+        "read_task",
+        "read_task",
+        "task_update",
+        "task_update",
+        "write_task",
+        "check_candidate",
+        "task_update",
+        "task_update"
+      ],
+      "process_receipts": 6,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\live-coding-v1",
+      "candidate_sha256": "abf9634dc340f2547e4f421faa5b94a2874dbed2d53fb9b31e8128170a382cb8",
+      "requested_model": "deepseek-v4.1-flash",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "live-reasoning-v1",
+      "mode": "live",
+      "kind": "reasoning",
+      "runs": 1,
+      "calls": 4,
+      "elapsed_seconds": 19.368,
+      "checks": {
+        "exhaustive_optimum": 5
+      },
+      "actual_tools": [
+        "read_task",
+        "write_task",
+        "check_candidate"
+      ],
+      "process_receipts": 0,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\live-reasoning-v1",
+      "candidate_sha256": "868528e93a4071a8052ff62e319200bd7bfe18371aeb33293347b5e6bef92cc0",
+      "requested_model": "deepseek-v4.1-flash",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "live-reverse-v1",
+      "mode": "live",
+      "kind": "reverse",
+      "runs": 1,
+      "calls": 4,
+      "elapsed_seconds": 21.988,
+      "checks": 64,
+      "actual_tools": [
+        "read_task",
+        "inspect_binary",
+        "write_task",
+        "check_candidate"
+      ],
+      "process_receipts": 9,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\live-reverse-v1",
+      "candidate_sha256": "bab6beeef0bd0c97e25ac27c7aee0b989cccd9cff5cc8db2e2b7f7db5aa3e06a",
+      "requested_model": "deepseek-v4.1-flash",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    },
+    {
+      "trial": "external-live-coding-v1",
+      "mode": "live",
+      "kind": "coding",
+      "runs": 1,
+      "calls": 5,
+      "elapsed_seconds": 17.584,
+      "checks": 60,
+      "actual_tools": [
+        "read_task",
+        "read_task",
+        "read_task",
+        "read_task",
+        "write_task",
+        "check_candidate"
+      ],
+      "process_receipts": 6,
+      "outcome": "AwaitingHostAcceptance",
+      "task_accepted": false,
+      "effects_unknown": false,
+      "evidence": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\external-live-coding-v1",
+      "candidate_sha256": "bdba680689e6a5ae129c665df4746c193e3e511328d28efedfa8d7903d7f5454",
+      "requested_model": "deepseek-v4.1-flash",
+      "remote_weights_identity": "unknown",
+      "provider_billing": "unknown"
+    }
+  ],
+  "source_pins": {
+    "file": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\native-execution-pins-v2.json",
+    "sha256": "90e03dff23d879fcace8ed20b46aeeffa8463fd4ff4db1ed6ca05fb8c89f3c2e",
+    "records": 53
+  },
+  "independent_review": {
+    "path": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025\\stage\\post-execution-review.json",
+    "sha256": "8c369a94b6fe8b30044247b42ba277dd189bf084fb2aba469c51dc8240cb52c2",
+    "result": {
+      "schema": "ara.lite-harness.post-execution-review.v1",
+      "reviewer": "independent Codex safety/performance",
+      "decision": "ACCEPT_SCOPED_LOCAL_UNCOMPACTED_EXECUTE_BEHAVIOR_PROFILE",
+      "release_status": "NOT_ACCEPTED_DEPENDENCY_POLICY_GATE_FAILED",
+      "source_findings": [],
+      "reviewer_actions": "只读当前源码、原始日志/JSON/进程流字节/候选文件；本review以只读Python重新计算哈希、Journal链、proof、模型/工具事件配对与独立oracle。未运行Cargo、模型、编译器、候选EXE或产品；未修改src/examples/tests。",
+      "accepted_scope": [
+        "public Lite Harness通过实际Lite execute编排可信Host的有限Execute任务；正常Stop与完整事件/native收据后才验收，NeedsChanges在原Session/原calls/deadline内修正，Verified仍AwaitingHostAcceptance，task_accepted=false。",
+        "14项实际受控HTTP/Lite测试及普通进程独占/取消/崩溃fence；一例Core工具in-flight取消等待原future结算；一例真实observation文件路径冲突后保留原效果并拒绝重放。",
+        "三类自有小样本controlled文件反馈纠错与live实际产物：coding60项、reasoning独立枚举最优5、reverse64项及实际GNU objdump正文。",
+        "一个独立Cargo workspace以public Harness路径依赖和Core re-export运行真实live coding，自己的Cargo.lock；没有复制Agent引擎。"
+      ],
+      "snapshot": {
+        "runner_sha256": "eb1ae6a8d2b21bbd140a857de9928964334b776620dfaaba3fd9c811d0e499b2",
+        "storage_sha256": "17c377220ef07677c9a3233c2dae822c08dea6301c561100945d749cc70098ce",
+        "v2_files": 53,
+        "v2_mismatches": [],
+        "v2_sha256": "90e03dff23d879fcace8ed20b46aeeffa8463fd4ff4db1ed6ca05fb8c89f3c2e",
+        "logs": {
+          "all-targets-attempt-3": {
+            "sha256": "f2d33ad7ca8fefddd9ac5eafc76ca85193125408caf95656a4a63a08746f8ad9",
+            "exit": 0
+          },
+          "clippy-final": {
+            "sha256": "79df1f6ac3ba9a5d961d77c29328556e4a9ea99270edd7c6a25deecca85db077",
+            "exit": 0
+          },
+          "doc-tests-v1": {
+            "sha256": "04645485bcc7b8e94de597261677909b1e0f77942989e6e05ab5be575374ce77",
+            "exit": 0
+          },
+          "dependency-audit-v2": {
+            "sha256": "109ac3abeb8d0ec70806fd8f0a72117621f0653ef240cdea2b7124d149f3e203",
+            "exit": 14
+          },
+          "examples-build-attempt-2": {
+            "sha256": "aaa0cef54e3b14f9eb2d370dd4e109acf01710b359589c9fab8b47dc80148420",
+            "exit": 0
+          },
+          "external-build-attempt-1": {
+            "sha256": "5892f08126c270b3f1ee1321b797a2fd2c9504b6b3a4fab95e0c0c44fb48244e",
+            "exit": 0
+          }
+        },
+        "test_source_hash": "f850054e64f16d97049e863776fabc485be0eca545769375b20f3ea67472de53",
+        "common_source_hash": "c0e5c1fd1fad6e38ce587163b38c4313ca5fe259b3d83fd08fa63d7826993290",
+        "test_image_hash": "c4ce091663a53a493d65a5014bd31c49645c2fa6b0ffb23893b3fedf47d7c924"
+      },
+      "source_equivalence_bridge": {
+        "decision": "ACCEPT_FOR_CONTROLLED_AND_NATIVE_V1_HISTORY_ONLY",
+        "old_source_sha256": "79a73c583e3ec65acf5bf376274cb9396f5b8f3cfc788b015484bf6f9bd6eca3",
+        "new_source_sha256": "eb1ae6a8d2b21bbd140a857de9928964334b776620dfaaba3fd9c811d0e499b2",
+        "proof": "只逆向当前TaskContext结构、run_task参数签名与调用参数打包，在内存重建旧runner全文；LF字节SHA256与此前独立POST固定旧79a73c值完全一致。除此以外的全文字节未改。",
+        "reason": "TaskContext只保存原先相同的只读引用和相同Instant，并在run_task开头原样解构。锁、持久化、取消、预算、状态与异步调用次序没有变化。",
+        "old_capability_exe": "378135cc4be2fe0a9b3775ea005fb2e24fecf179873aca0e7f0e70de2fadfd71",
+        "old_lifecycle_exe": "2f9f2c290dde3df7cccb82e18d85cf1643029d23c948cdee5cad5f97bb86a793",
+        "current_capability_exe": "3f4b14f4c72de5d6e1f4ea9c9fd5282e48c43611137f2748ded69bd0b13249d8",
+        "limit": "controlled/native-v1明确为旧普通镜像的历史实际执行加源码等价桥；不写成当前镜像fresh执行。当前源码另有14tests、clippy、普通examples构建与live三项。"
+      },
+      "checks": {
+        "all_targets": {
+          "log": "all-targets-attempt-3.log",
+          "exit": 0,
+          "tests": 14,
+          "failed": 0,
+          "ignored": 0,
+          "build_seconds": 3.03,
+          "test_seconds": 0.36
+        },
+        "clippy": {
+          "log": "clippy-final.log",
+          "exit": 0,
+          "elapsed_seconds": 1.15
+        },
+        "doc_tests": {
+          "log": "doc-tests-v1.log",
+          "exit": 0,
+          "tests": 0,
+          "note": "0tests不是文档示例行为覆盖。"
+        },
+        "format": {
+          "status": "Root已报告先前fmt PASS；本review未另执行格式工具"
+        },
+        "ordinary_examples": {
+          "log": "examples-build-attempt-2.log",
+          "exit": 0,
+          "note": "普通镜像构建与example unit-target 0tests分开，实际native/live执行原件另核。"
+        },
+        "external_build": {
+          "log": "external-build-attempt-1.log",
+          "exit": 0,
+          "workspace": "external-consumer",
+          "core_type": "通过Harness public Core re-export复用同一Rust类型",
+          "tokio": "外部lock1.54.0，包lock1.53.3；不冒充同锁执行。"
+        }
+      },
+      "retained_failures": [
+        "test-attempt-1：编译成功，8PASS/1FAIL，第二Run的普通Windows路径与首Run verbatim路径造成Core context scope mismatch；后续每轮实际canonical修复，12/13/14项依次通过，原FAIL保留。",
+        "clippy-attempt-1：too_many_arguments触发-D warnings，TaskContext私有参数收拢修复；原FAIL保留。",
+        "native-execution-pins-v1保持历史原件，其两个tests文件随后增量变化；v2当前53/53文件hash直接核对一致。"
+      ],
+      "execution_cases": [
+        {
+          "case": "controlled-coding",
+          "runs": 2,
+          "calls": 6,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 4,
+              "events": 23,
+              "raw_range": [
+                0,
+                8
+              ],
+              "head_check": "historical raw proof; old head body not retained"
+            },
+            {
+              "run": 2,
+              "calls": 2,
+              "events": 13,
+              "raw_range": [
+                8,
+                12
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "controlled-coding-v1\\host\\check-1\\report.json",
+              "passed": false,
+              "cases": 60,
+              "optimum": null
+            },
+            {
+              "path": "controlled-coding-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": 60,
+              "optimum": null
+            }
+          ],
+          "process_receipts_checked": 6,
+          "elapsed": 22.476269960403442,
+          "executable_sha256": "378135cc4be2fe0a9b3775ea005fb2e24fecf179873aca0e7f0e70de2fadfd71"
+        },
+        {
+          "case": "controlled-reasoning",
+          "runs": 2,
+          "calls": 5,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 3,
+              "events": 18,
+              "raw_range": [
+                0,
+                6
+              ],
+              "head_check": "historical raw proof; old head body not retained"
+            },
+            {
+              "run": 2,
+              "calls": 2,
+              "events": 13,
+              "raw_range": [
+                6,
+                10
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "controlled-reasoning-v1\\host\\check-1\\report.json",
+              "passed": false,
+              "cases": null,
+              "optimum": null
+            },
+            {
+              "path": "controlled-reasoning-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": null,
+              "optimum": 5
+            }
+          ],
+          "process_receipts_checked": 0,
+          "elapsed": 16.51950454711914,
+          "executable_sha256": "378135cc4be2fe0a9b3775ea005fb2e24fecf179873aca0e7f0e70de2fadfd71"
+        },
+        {
+          "case": "controlled-reverse",
+          "runs": 2,
+          "calls": 6,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 4,
+              "events": 23,
+              "raw_range": [
+                0,
+                8
+              ],
+              "head_check": "historical raw proof; old head body not retained"
+            },
+            {
+              "run": 2,
+              "calls": 2,
+              "events": 13,
+              "raw_range": [
+                8,
+                12
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "controlled-reverse-v1\\host\\check-1\\report.json",
+              "passed": false,
+              "cases": 64,
+              "optimum": null
+            },
+            {
+              "path": "controlled-reverse-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": 64,
+              "optimum": null
+            }
+          ],
+          "process_receipts_checked": 6,
+          "elapsed": 22.99234366416931,
+          "executable_sha256": "378135cc4be2fe0a9b3775ea005fb2e24fecf179873aca0e7f0e70de2fadfd71"
+        },
+        {
+          "case": "live-coding",
+          "runs": 1,
+          "calls": 6,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 6,
+              "events": 117,
+              "raw_range": [
+                0,
+                17
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "live-coding-v1\\host\\check-1\\report.json",
+              "passed": true,
+              "cases": 60,
+              "optimum": null
+            },
+            {
+              "path": "live-coding-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": 60,
+              "optimum": null
+            }
+          ],
+          "process_receipts_checked": 6,
+          "elapsed": 30.687690258026123,
+          "executable_sha256": "3f4b14f4c72de5d6e1f4ea9c9fd5282e48c43611137f2748ded69bd0b13249d8"
+        },
+        {
+          "case": "live-reasoning",
+          "runs": 1,
+          "calls": 4,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 4,
+              "events": 59,
+              "raw_range": [
+                0,
+                8
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "live-reasoning-v1\\host\\check-1\\report.json",
+              "passed": true,
+              "cases": null,
+              "optimum": 5
+            },
+            {
+              "path": "live-reasoning-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": null,
+              "optimum": 5
+            }
+          ],
+          "process_receipts_checked": 0,
+          "elapsed": 19.367960691452026,
+          "executable_sha256": "3f4b14f4c72de5d6e1f4ea9c9fd5282e48c43611137f2748ded69bd0b13249d8"
+        },
+        {
+          "case": "live-reverse",
+          "runs": 1,
+          "calls": 4,
+          "per_run": [
+            {
+              "run": 1,
+              "calls": 4,
+              "events": 74,
+              "raw_range": [
+                0,
+                9
+              ],
+              "head_check": "final exact"
+            }
+          ],
+          "reports": [
+            {
+              "path": "live-reverse-v1\\host\\check-1\\report.json",
+              "passed": true,
+              "cases": 64,
+              "optimum": null
+            },
+            {
+              "path": "live-reverse-v1\\host\\check-2\\report.json",
+              "passed": true,
+              "cases": 64,
+              "optimum": null
+            }
+          ],
+          "process_receipts_checked": 6,
+          "elapsed": 21.988285779953003,
+          "executable_sha256": "3f4b14f4c72de5d6e1f4ea9c9fd5282e48c43611137f2748ded69bd0b13249d8"
+        }
+      ],
+      "additional_native_audit": [
+        {
+          "case": "controlled-coding",
+          "independent_oracle_recomputed": true,
+          "all_processes": [
+            {
+              "sequence": 1,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 2,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 3,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 722,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 4,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 5,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 6,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 674,
+              "stderr_bytes": 0
+            }
+          ]
+        },
+        {
+          "case": "controlled-reasoning",
+          "independent_oracle_recomputed": true,
+          "all_processes": []
+        },
+        {
+          "case": "controlled-reverse",
+          "independent_oracle_recomputed": true,
+          "all_processes": [
+            {
+              "sequence": 1,
+              "label": "build-self-owned-reverse-object",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 2,
+              "label": "strip-self-owned-object",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 3,
+              "label": "inspect-granted-object",
+              "stdout_bytes": 860,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 4,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 5,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 6,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 1376,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 7,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 8,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 9,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 1504,
+              "stderr_bytes": 0
+            }
+          ]
+        },
+        {
+          "case": "live-coding",
+          "independent_oracle_recomputed": true,
+          "all_processes": [
+            {
+              "sequence": 1,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 2,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 3,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 674,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 4,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 5,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 6,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 674,
+              "stderr_bytes": 0
+            }
+          ]
+        },
+        {
+          "case": "live-reasoning",
+          "independent_oracle_recomputed": true,
+          "all_processes": []
+        },
+        {
+          "case": "live-reverse",
+          "independent_oracle_recomputed": true,
+          "all_processes": [
+            {
+              "sequence": 1,
+              "label": "build-self-owned-reverse-object",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 2,
+              "label": "strip-self-owned-object",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 3,
+              "label": "inspect-granted-object",
+              "stdout_bytes": 848,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 4,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 5,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 6,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 1504,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 7,
+              "label": "compile-candidate",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 8,
+              "label": "link-independent-probe",
+              "stdout_bytes": 0,
+              "stderr_bytes": 0
+            },
+            {
+              "sequence": 9,
+              "label": "execute-independent-probe",
+              "stdout_bytes": 1504,
+              "stderr_bytes": 0
+            }
+          ]
+        }
+      ],
+      "native_process_lifecycle": [
+        {
+          "mode": "cancel",
+          "owner_pid": 80192,
+          "exit_code": 0,
+          "fence_sha256": "fdfb030bae432f9f802d14b18327f5db1c7ea6e3069d1837cdfb9fc062e6fac4",
+          "owner_binary": "2f9f2c290dde3df7cccb82e18d85cf1643029d23c948cdee5cad5f97bb86a793",
+          "contenders": "active/post rejected 0 requests"
+        },
+        {
+          "mode": "crash",
+          "owner_pid": 38640,
+          "exit_code": 1,
+          "fence_sha256": "488f5bfd0222d115b7a6b56a88a453642242826bc92e08ad227838c12166a849",
+          "owner_binary": "2f9f2c290dde3df7cccb82e18d85cf1643029d23c948cdee5cad5f97bb86a793",
+          "contenders": "active/post rejected 0 requests"
+        },
+        {
+          "mode": "normal",
+          "outcome": "AwaitingHostAcceptance",
+          "calls": 2
+        }
+      ],
+      "external_consumer": {
+        "consumer_files_exact": 5,
+        "runs": 1,
+        "calls": 5,
+        "live_success": true,
+        "current_lock_sha256": "54b1743ba3f6430338f63ec63d72bc4f9cb420b67ca70ca612a49fe582792a52",
+        "executable": "b0673fa1343cf6db54a7bc30922fdcf3c541d5bcae0c24c65d9db9e38ce9d3c4",
+        "elapsed": 17.583966970443726
+      },
+      "actual_tool_pairs": [
+        {
+          "case": "controlled-coding",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 3,
+              "phases": [
+                "agent"
+              ]
+            },
+            {
+              "run": 2,
+              "tool_pairs": 1,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "controlled-reasoning",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 2,
+              "phases": [
+                "agent"
+              ]
+            },
+            {
+              "run": 2,
+              "tool_pairs": 1,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "controlled-reverse",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 3,
+              "phases": [
+                "agent"
+              ]
+            },
+            {
+              "run": 2,
+              "tool_pairs": 1,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "live-coding",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 10,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "live-reasoning",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 3,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "live-reverse",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 4,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        },
+        {
+          "case": "external-live-coding",
+          "tool_pairs": [
+            {
+              "run": 1,
+              "tool_pairs": 6,
+              "phases": [
+                "agent"
+              ]
+            }
+          ]
+        }
+      ],
+      "context_and_body_checks": {
+        "controlled_context_checks": [
+          {
+            "controlled_kind": "coding",
+            "request_count": 6,
+            "second_run_first_request": 5,
+            "actual_feedback_in_request": true,
+            "prior_tool_history_present": true
+          },
+          {
+            "controlled_kind": "reasoning",
+            "request_count": 5,
+            "second_run_first_request": 4,
+            "actual_feedback_in_request": true,
+            "prior_tool_history_present": true
+          },
+          {
+            "controlled_kind": "reverse",
+            "request_count": 6,
+            "second_run_first_request": 5,
+            "actual_feedback_in_request": true,
+            "prior_tool_history_present": true
+          }
+        ],
+        "returned_body_checks": [
+          {
+            "live_kind": "coding",
+            "actual_read_bodies": 4,
+            "actual_objdump_bodies": 0
+          },
+          {
+            "live_kind": "reasoning",
+            "actual_read_bodies": 1,
+            "actual_objdump_bodies": 0
+          },
+          {
+            "live_kind": "reverse",
+            "actual_read_bodies": 1,
+            "actual_objdump_bodies": 1
+          }
+        ],
+        "external_head_raw_proof_verified": true,
+        "external_raw_messages": 12
+      },
+      "receipt_audit": {
+        "events": "每Run重算events原字节sha256、seq连续、task/run归属、所有model call/result ordinal与phase一一对应、最终agent Stop、单个正常agent_end及output==Candidate.output；另核所有tool_start/end的id/name配对。",
+        "reviews": "每Run ReviewReceipt.basis==Candidate.basis，committed=true、Settled，controlled第一Run NeedsChanges和最终Verified；Host committed文件的receipt内容一致。",
+        "journals": "每个segment原始message字节hash、index/previous/chain以及最终raw_count/tip逐条核对；重新计算每Run raw范围proof；最终Head原字节checksum==最后candidate Head hash。",
+        "historical_head_limit": "controlled两Run的第一Run旧Head完整body没有独立保存，不能从最终Head反向重算其全部metadata；该历史候选以当时basis/事件/Host回执及现在可复算raw proof核对，最后Head可以精确重算。未把这一缺口隐去。",
+        "processes": "内部6组共30个实际compiler/link/probe/build/strip/objdump receipt逐个核program/stdout/stderr/control_output现存字节及hash，exit=0、exited、Core process future joined；外部coding另核6个进程收据。",
+        "independent_oracle": "分别重新生成60个circular-window输入的Python期望、64个u32 rotate/xor/add期望，与真实probe stdout完全匹配；排程独立枚举9^4起点，最优5且critical_path依赖与时长成立。",
+        "returned_body": "live实际read_task不可变正文与源文件/hash一致；reverse inspect_binary返回的完整disassembly与真实objdump stdout逐字相同，object/receipt sha匹配。controlled第二Run真实请求包含Host失败反馈与原tool history。",
+        "artifacts": "每check candidate快照hash及最终workspace candidate hash一致；最终独立report passed，effects_unknown=false，outcome均task_accepted=false且released记录存在。"
+      },
+      "gate_dispositions": [
+        {
+          "id": "E1",
+          "status": "ACCEPT_SCOPED",
+          "reason": "三controlled+三live及独立external coding原件已核。"
+        },
+        {
+          "id": "E2",
+          "status": "ACCEPT_SCOPED_WITH_SOURCE_BRIDGE",
+          "reason": "真实owner/contender不同PID，active/post均0requests拒绝；cancel join和精确自创owner crash后物理fence保持；fresh normal正确释放。"
+        },
+        {
+          "id": "E3",
+          "status": "ACCEPT_CORE_FUTURE_JOIN",
+          "reason": "新增实际Core工具延迟取消测试已读源码/断言与14项日志；结算前waiter超时且同Session拒绝，release后原tool写joined、Cancelled且fence保持、只执行1次。不是任意OS子进程取消的穷尽证明。"
+        },
+        {
+          "id": "E4",
+          "status": "OPEN",
+          "reason": "核验所有7组实际模型阶段仅agent，未执行summary，故只接受未压缩Execute profile。"
+        },
+        {
+          "id": "E5",
+          "status": "ACCEPT_OBSERVATION_COMMIT_FAILURE",
+          "reason": "第14项真实FS目录占据run-1-observation.json导致write_new失败；已写实际candidate和正常Core终态仍不review/prepare，原Journal/events/文件不变、物理fence和重复start拒绝。逐事件fsync/断电/任意FS损坏仍OPEN。"
+        }
+      ],
+      "dependency_audit": {
+        "log": "dependency-audit-v2.log",
+        "exit": 14,
+        "status": "FAILED",
+        "advisories": "日志为advisories ok；按Root执行来源为cached advisory DB，没有实时更新安全结论。",
+        "bans": "FAILED：固定rev的Core rpi git依赖无version、Harness的Core path依赖被当前根policy wildcard规则拒绝；不能据此说未固定上游rev。",
+        "licenses": "FAILED：webpki-roots的CDLA-Permissive-2.0未在当前policy允许。",
+        "sources": "FAILED：rpi-agent/rpi-ai/rpi-telemetry固定git source不在根policy允许列表。",
+        "effect": "本review不授予policy豁免，不接受正式依赖/发布门禁，不声明安全无问题或已发布。限定本地行为验收与release pending分开。"
+      },
+      "remaining_open": [
+        "summary跨phase预算实际执行、任意长历史/多次压缩泛化。",
+        "完整Goal/Job/leased yield/wait调度、prepare取消独立矩阵和其他native恢复入口。",
+        "逐事件fsync/断电/所有磁盘故障、任意外部副作用与后代进程取消穷尽矩阵。",
+        "完整远程产品RPC/设备授权/网络重连、OS沙箱、恶意同账号代码隔离。",
+        "供应链policy/依赖release gate；cached advisory ok不等于实时安全通过。",
+        "三类任务的一般成功率提升、匹配模型对照、生产AI-CodeReview上线与其他产品发布。"
+      ],
+      "final_assessment": "可接受当前有证据的本地未压缩Execute行为点及所列具体样本。不能称整个公共运行框架/完整Goal/全部故障边界已完成，也不能把行为验收改成Task自动接受或正式发布。"
+    }
+  },
+  "dependency_audit": {
+    "exit": 14,
+    "advisories": "cached/offline PASS; freshness not established",
+    "bans": "FAIL; git/path wildcard policy",
+    "licenses": "FAIL; CDLA-Permissive-2.0 not allowed",
+    "sources": "FAIL; fixed pi-rust git source not in root allowlist",
+    "release": "OPEN"
+  },
+  "open": [
+    "real summary and agent shared budget execution",
+    "complete Goal/Job/native recovery",
+    "prepare-callback cancellation matrix",
+    "Lite length continuation",
+    "broader unfamiliar tasks and C++ object/vtable samples",
+    "matched before/after gain measurement",
+    "product integration and production release",
+    "cross-platform execution"
+  ],
+  "original_failures_preserved": [
+    "initial Windows path representation mismatch",
+    "first Clippy too-many-arguments",
+    "dependency audit command syntax attempt",
+    "actual dependency audit policy failures"
+  ],
+  "ai_codereview": "existing code already exposes tools and gated repair; new Harness not integrated/deployed",
+  "evidence_root": "D:\\WorkSpace\\tmp\\ara-core-capability-20261022\\lite-harness-v1-20261025",
+  "generated_at_unix": 1792908953.1176207
+}

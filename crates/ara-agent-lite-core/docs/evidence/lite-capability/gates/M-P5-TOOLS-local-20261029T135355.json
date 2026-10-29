@@ -1,0 +1,60 @@
+{
+    "kind":  "module_local_checks",
+    "modules":  [
+                    "M-P5-QUALITY",
+                    "M-P5-REVIEW",
+                    "M-P5-DENY",
+                    "M-P5-STAGE"
+                ],
+    "workspace":  "tools/lite-eval",
+    "head":  "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+    "started_at":  "2026-10-29T13:53:37+08:00",
+    "finished_at":  "2026-10-29T13:53:55+08:00",
+    "scope":  "module tests only (user 2026-10-29): lib + gate_records, deny_props, stage_props, stage_records, ledger_props, notify_props; digest_props and notify_process not rerun (untouched)",
+    "commands":  [
+                     {
+                         "command":  "cargo fmt --check",
+                         "exit_code":  0,
+                         "tests":  "不适用"
+                     },
+                     {
+                         "command":  "cargo clippy --all-targets -- -D warnings",
+                         "exit_code":  0,
+                         "tests":  "不适用"
+                     },
+                     {
+                         "command":  "cargo test --lib",
+                         "exit_code":  0,
+                         "passed":  43,
+                         "failed":  0
+                     },
+                     {
+                         "command":  "cargo test --test gate_records --test deny_props --test stage_props --test stage_records --test ledger_props --test notify_props",
+                         "exit_code":  0,
+                         "passed":  8,
+                         "failed":  0
+                     }
+                 ],
+    "real_runs":  [
+                      {
+                          "command":  "lite-eval deny",
+                          "exit_code":  0,
+                          "record":  "crates/ara-agent-lite-core/docs/evidence/lite-capability/deny/57ba905a-20261029T055134Z.json",
+                          "result":  "known 7, new 0, new dependencies 0, not executed 0"
+                      }
+                  ],
+    "raw_logs":  {
+                     "sha256":  {
+                                    "test-lib":  "98f7a22aaaca08e10581b4a9b552bb6eeb98197ca002e483f891013f6755f02b",
+                                    "test-module":  "796233161550e2a62fe877e1ec8fd24473d05b7859bbc8c740ffe742985e12ea",
+                                    "fmt":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                    "clippy":  "da26f61c6e00d91e50798e28fd0fcb3ee52204b5e74b3b37891b7f769168ebf3"
+                                },
+                     "dir":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\module-p5-tools"
+                 },
+    "not_covered":  [
+                        "real 11-command gate run (final delivery, task 61)",
+                        "review-record gap path only exercised through CLI code, no automated test",
+                        "independent reviews (task 7)"
+                    ]
+}
