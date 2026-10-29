@@ -79,9 +79,15 @@ const fn module_row(id: &'static str, phase: Phase, requirement: u8, title: &'st
     Module { id, phase, requirement, title, criteria }
 }
 
-/// The 38 modules of the design, in requirement order. Criteria counts are
+/// The modules of the design, in requirement order. Criteria counts are
 /// the numbered acceptance criteria of each requirement in requirements.md.
-pub const MODULES: [Module; 38] = [
+///
+/// Rows 1–38 are the original module table. The rows after them were added
+/// later (requirement 41.6 for H0/P2-f, spec tasks 67/68 for MCP) and carry
+/// [`Phase::Cross`] so the overall progress keeps its original 36-checkpoint
+/// basis ([`CHECKPOINTS`]). `M-MCP-CORE` counts all 9 criteria of
+/// requirement 42; `M-MCP-JSONL` counts only criterion 42.9, the JSONL part.
+pub const MODULES: [Module; 43] = [
     module_row("M-P0-TASKSET", Phase::P0, 1, "固定评估任务集", 7),
     module_row("M-P0-HOLDOUT", Phase::P0, 2, "新增密封 C++ holdout 任务", 8),
     module_row("M-P0-RUNNER", Phase::P0, 3, "一键评估运行器与固定运行策略", 8),
@@ -120,6 +126,11 @@ pub const MODULES: [Module; 38] = [
     module_row("M-P5-STAGE", Phase::P5, 36, "证据保留与阶段验收记录", 7),
     module_row("M-X-LEDGER", Phase::Cross, 37, "进度台账", 5),
     module_row("M-X-NOTIFY", Phase::Cross, 38, "钉钉进度通知", 9),
+    module_row("M-H0-HEADROOM", Phase::Cross, 39, "固定版本 Headroom Rust 可行性", 6),
+    module_row("M-P2F-COMPRESS", Phase::Cross, 40, "Lite 模型投影压缩与原文回读", 10),
+    module_row("M-P2F-COMPARE", Phase::Cross, 41, "独立 A/B 与交付", 6),
+    module_row("M-MCP-CORE", Phase::Cross, 42, "Lite 的 MCP 工具来源", 9),
+    module_row("M-MCP-JSONL", Phase::Cross, 42, "JSONL 暴露 MCP（42.9）", 1),
 ];
 
 /// Checkpoints counted by the overall progress (`verified checkpoints / 36`):
@@ -643,12 +654,13 @@ mod tests {
 
     #[test]
     fn module_table_follows_the_design() {
-        assert_eq!(MODULES.len(), 38);
+        assert_eq!(MODULES.len(), 43);
         let mut ids: Vec<_> = MODULES.iter().map(|module| module.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 38, "module ids must be unique");
-        for (module, requirement) in MODULES.iter().zip(1u8..) {
+        assert_eq!(ids.len(), 43, "module ids must be unique");
+        let requirements: Vec<u8> = (1..=42).chain([42]).collect();
+        for (module, &requirement) in MODULES.iter().zip(&requirements) {
             assert_eq!(module.requirement, requirement, "{}", module.id);
             let phase = match requirement {
                 1..=7 => Phase::P0,
@@ -663,7 +675,9 @@ mod tests {
             assert!(module.criteria > 0 && !module.title.is_empty(), "{}", module.id);
         }
         assert_eq!(MODULES.iter().filter(|module| module.phase != Phase::Cross).count(), CHECKPOINTS);
-        assert_eq!(MODULES.iter().map(|module| module.criteria).sum::<u32>(), 256);
+        assert_eq!(MODULES.iter().take(38).map(|module| module.criteria).sum::<u32>(), 256);
+        assert_eq!(MODULES.iter().map(|module| module.criteria).sum::<u32>(), 256 + 6 + 10 + 6 + 9 + 1);
+        assert_eq!(module("M-MCP-JSONL").map(|module| (module.requirement, module.criteria)), Some((42, 1)));
         assert_eq!(module("M-X-LEDGER").map(|module| (module.phase, module.criteria)), Some((Phase::Cross, 5)));
         assert_eq!(module("M-P2B-GATE").map(|module| (module.requirement, module.criteria)), Some((17, 10)));
         assert!(module("M-P9-NOPE").is_none());

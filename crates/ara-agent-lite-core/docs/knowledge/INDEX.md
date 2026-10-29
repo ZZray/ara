@@ -16,6 +16,8 @@
 - [AI 接入说明](../ai-integration.md)：给其他 AI 的实施步骤、字段清单、公开接口和受控验收。
 - [0.2.9 发布记录](../../../../apps/handwave-node/docs/evidence/stage-publication-0.2.9-20261021.md)：固定源码提交、Windows 与 GNU Linux 检查、下载和部署边界。
 - [业务接入](../../README.md)：公共接口、默认权限、路径、模型和 Worker 入口。
-- [宿主边界与兼容](host-contracts.md)：身份和授权归属、存储兼容、未知副作用；包含 Windows 分析路径、空分页、本地 Off 与实际 thinking 请求、rpi 的 optional null 处理，以及请求预算与示例 Host 实际额度的区别。
+- [公共接口稳定性规则](../stability.md)（初稿）：`RunRequest` 字段、`rpi_*` 重导出与 Harness 入口的 stable／experimental 分级和变更规则；P0–P4 新增项暂为 experimental，待任务 57.1 定稿。
+- [Full/Lite 支持矩阵](../support-matrix.md)（初稿）：7 个类别 35 项能力的两侧状态与依据，机器可读副本供交付门禁运行引用测试；本阶段不合并 Full 与 Lite。
+- [宿主边界与兼容](host-contracts.md)：Core、Harness、JSONL 与 Host 四方职责和依赖方向，身份和授权归属、存储兼容、未知副作用；包含 Windows 分析路径、空分页、本地 Off 与实际 thinking 请求、rpi 的 optional null 处理，以及请求预算与示例 Host 实际额度的区别。
 - [2026-10-21 提取与验收](../evidence/extraction-20261021.html)：实际检查、镜像身份、失败记录与未覆盖项。
 - [机器可读收据](../evidence/extraction-20261021.json)：源文件与运行证据哈希。

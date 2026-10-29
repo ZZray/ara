@@ -18,6 +18,64 @@ Plan 工具许可是宿主声明，不是操作系统只读保证。内置名称
 HandWave 的 grant、binding header、设备连接和调度留在 HandWave。
 原 route 的四个序列化字段保持不变，以保留旧会话的模型与绑定连续性。
 
+## 四方职责与依赖方向
+
+下面四节按需求 27.4 划分 Lite_Core、Harness_Lite、JSONL_Sidecar 与 Host 的职责，每个事项只归一方负责。agent loop 只在 Lite_Core 中实现；Harness_Lite、JSONL_Sidecar 和 Host 都通过 Core 的 `execute` 运行它，不各自实现“模型调用—工具执行—结果回填”循环。哪些接口可长期依赖见 [稳定性规则](../stability.md)。
+
+依赖方向（需求 27.1、27.2）：
+
+```text
+Rust Host ──Cargo──> Harness_Lite ──path──> Lite_Core
+跨语言 Host ══v1 帧══> JSONL_Sidecar ──path──> Harness_Lite
+JSONL_Sidecar ──path──> ara-agent-lite-mcp ──path──> Lite_Core
+```
+
+`ara-agent-lite-mcp`（需求 42）是可选的工具来源库，它把 MCP server 的工具包装成普通 `AgentTool`，不构成第五方。经 JSONL 的 `mcp_servers` 使用时，连接与转发归 JSONL_Sidecar；Rust Host 直接调用 `McpSession::connect` 时，配置、连接生命周期与关闭归 Host。
+
+- Lite_Core 只依赖 crates.io 包和固定提交的 `rpi-ai`、`rpi-agent`（同一 rev 带入 `rpi-telemetry`）。它的 normal、build、dev 依赖中都没有 Harness_Lite、JSONL_Sidecar、`ara-agent-lite-mcp`、产品 crate，也没有 Core 工作区之外的 path 依赖。
+- Harness_Lite 以 path 依赖引用 `crates/ara-agent-lite-core`，只使用其公共 API。它的依赖图中只有这一个 Core 实例，不存在 git 或 crates.io 来源的副本。JSONL_Sidecar 与 `ara-agent-lite-mcp` 同样只有一个 path 来源的 Core 实例。
+- 2026-10-29 在 `dev` @ `c061062`（含未提交改动）上，对 Core、Harness、JSONL、MCP 四个工作区分别运行 `cargo metadata --locked --offline --format-version 1`，四个都成功，结果符合以上两条：Core 图有 253 个包，ARA 包只有 Core 自身，git 包只有上述三个固定 rev；Harness、JSONL、MCP 图中的 Core 都是 `crates/ara-agent-lite-core` 的单一 path 实例。这是一次手工核对，不能代替任务 34.2 的 Dependency_Check_Test（`tools/lite-eval/tests/dependency_direction.rs`，尚未实现）。
+
+### Lite_Core
+
+- 运行 agent loop：模型请求、流式解析、工具调度与结果回填、Length 恢复、上下文压缩与摘要。
+- Run 准入：模式（Plan／Execute／Goal）对应的工具许可、内置工具名保留、自定义工具名校验、单 Run 调用与时间预算、输出上限。
+- 原生 Session 与 Journal 的持久化、未完成 Run 的 fence 标记、按 Host 结算关闭中断 Run。
+- 可选的内置本机工具、后台 Job、知识与 Skills 工具；默认关闭，只在 Host 授权时启用。
+- 事件发送（JSON 值与 `LiteEvent` 类型）、工具结果中结构化未知副作用的标注、闭合预算与停止证据。
+- P2 的可选 Run 策略（Completion_Gate、Stuck_Detector、Compaction_Refresh）在 Core 循环内执行，由 Host 注册与配置。
+
+### Harness_Lite
+
+- 把一个业务 Task 拆成有界的多个 Run：Task 调用预算与绝对截止时间跨 Run 累计，不退还。
+- 每个 Run 的准入记录、事件文件与观察记录；候选产物交 Host 复核，按复核结论续写或停止。
+- 续写时核对 authority 不变：同一 Session、ModelHost、steering、工具 Arc 与授权字段；拒绝重复 Run ID。
+- 跨 Run 的 Session 所有权、fence 文件与 `ReconciliationRequired` 停止；`resume`／`resume_checked` 在调用 Host 前做的条款、哈希与预算检查。
+- 可选的预算停止快照、Length／NoProgress 停止快照复核流程，以及 `TaskOutcome` 中的未知副作用记录。
+- 不执行模型调用或工具，不判定业务 Task 是否验收（`task_accepted` 恒为 false）。
+
+### JSONL_Sidecar
+
+- v1 协议帧的读写、帧大小与 UTF-8 校验、请求关联字段（`rpc_id`、`task_id`、`run_id`）核对。
+- 把 Host 进程的工具调用、复核、续写、停止复核与 resume 结算转发为帧，并把回复交给 Harness_Lite。
+- start 帧配置的准入校验（含 `generation_policy`、`length_recovery`、`mcp_servers`、`resume`），拒绝时不发上游请求。
+- 证据目录中的 sidecar 记录（`jsonl-resume-rejected.json`、未知分支的 `receipt_ref` 等）。
+- 按 start 帧的 `mcp_servers` 建立 MCP 连接、报告 `mcp_status`，并把连接得到的工具作为普通工具交给 Harness_Lite。
+- Python 与 Node 客户端只是帧的编解码与回调封装，同样属于这一方。
+
+### Host
+
+Host 集成时必须自行实现以下事项，Lite 不代为完成：
+
+- 用户、设备与租户身份，业务授权判断，以及据此选择的 `session_key`、`device_fp`、模式与工具授权。
+- 模型凭据的获取与保管、端点与模型选择；需要非目录模型时自行实现 `ModelHost`。
+- 所有路径的选择与隔离：工作目录、Session 文件、环境状态、证据目录、知识根目录；多租户的账户或容器隔离。
+- 业务工具的实现与授权（经 `rpi_agent::AgentTool` 注册），包括参数在执行端的校验和取消处理；内置工具的允许名单不是 OS 沙箱。
+- 产物复核：`HarnessHost::verify` 依据实际文件、测试或外部系统状态给出回执，不以模型自述为依据；续写目标与反馈的内容。
+- 外部副作用结算：效果未知的调用由 Host 依据自己的操作回执判断，结算期间不重放；resume 前提交结算回执（见下一节）。
+- 业务 Task 的最终验收、事件展示、队列与调度、跨进程的 Session 串行。
+- 选用 MCP 时提供 `mcpServers` 配置及其中的凭据环境变量，决定哪些 server 为 `required`；Rust Host 直接使用 `ara-agent-lite-mcp` 时还要负责连接与关闭。
+
 ## resume 结算义务
 
 Harness `resume`／`resume_checked`（JSONL 的 `resume` start 字段走同一入口）在接管 fence

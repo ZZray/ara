@@ -27,6 +27,12 @@ clap = { version = "=4.6.7", default-features = false, features = ["std", "deriv
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
+# Runner, Capability_Test_Host and probe (tasks 11–13). All four are already in
+# this crate's lock through ara-agent-lite-harness/-core; pinned to those versions.
+async-trait = "=0.1.92"
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "=1.53.3", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio-util = { version = "=0.7.20", features = ["rt"] }
 
 # Hard-link counts for workspace isolation (GetFileInformationByHandle).
 [target.'cfg(windows)'.dependencies]

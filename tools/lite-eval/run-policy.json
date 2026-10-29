@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "policy_id": "lite-eval-policy-v1",
+  "model": {
+    "id": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "route": {
+      "endpoint": "https://cas.ciqtek.com/v1",
+      "binding": "cas-direct",
+      "decision": "OMP 18799 未监听，CAS 直连（DR-P0-3，2026-10-29）"
+    },
+    "resolution": "catalog",
+    "credential_env": "CAS_API_KEY",
+    "accepted_echo": [
+      "deepseek-flash"
+    ]
+  },
+  "probe": {
+    "timeout_ms": 20000
+  },
+  "budgets": {
+    "S1": { "max_runs": 2, "max_calls": 48, "deadline_seconds": 1800, "run_max_calls": 24, "run_max_seconds": 600 },
+    "S2": { "max_runs": 2, "max_calls": 48, "deadline_seconds": 1800, "run_max_calls": 24, "run_max_seconds": 600 },
+    "R1": { "max_runs": 2, "max_calls": 56, "deadline_seconds": 1800, "run_max_calls": 28, "run_max_seconds": 720 },
+    "H2": { "max_runs": 2, "max_calls": 56, "deadline_seconds": 1800, "run_max_calls": 28, "run_max_seconds": 720 },
+    "S3": { "max_runs": 3, "max_calls": 120, "deadline_seconds": 3600, "run_max_calls": 40, "run_max_seconds": 900 },
+    "SH1": { "max_runs": 3, "max_calls": 120, "deadline_seconds": 3600, "run_max_calls": 40, "run_max_seconds": 900 },
+    "LONG-COMPACT": { "max_runs": 2, "max_calls": 80, "deadline_seconds": 3600, "run_max_calls": 60, "run_max_seconds": 1800 },
+    "LONG-TRIAL": { "max_runs": 6, "max_calls": 160, "deadline_seconds": 5400, "run_max_calls": 40, "run_max_seconds": 1800, "max_output": 2048 }
+  },
+  "generation": {
+    "max_output": 32768,
+    "generation_policy": "thinking_type_disabled",
+    "length_recovery": "stop"
+  },
+  "price": {
+    "currency": null,
+    "input_per_million": null,
+    "output_per_million": null
+  },
+  "oracle_timeout_seconds": 600,
+  "consumer_task": "S1"
+}

@@ -25,7 +25,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run Task_Set tasks under the fixed Run_Policy and write a Run_Manifest.
-    Run(Pending),
+    Run(RunArgs),
     /// Validate the Task_Set and Run_Policy without sending any request.
     Validate,
     /// Record adaptive use of a task's Oracle (holdout status changes).
@@ -54,6 +54,47 @@ enum Command {
     LongTrial(Pending),
     /// Write the Stage_Acceptance_Record for a phase.
     Stage(StageArgs),
+}
+
+/// Only task selection and the output location; no Run_Policy item can be
+/// overridden here or through the environment (requirement 3.2).
+#[derive(Args)]
+struct RunArgs {
+    /// `all` (ascending task ID) or a comma-separated list run in that order.
+    #[arg(long, default_value = "all")]
+    tasks: String,
+    /// Raw outputs go to `<dir>/runs/<manifest_id>/`.
+    #[arg(long, default_value = EVIDENCE_ROOT)]
+    evidence_root: PathBuf,
+    /// Run every pre-task check and the probe, then stop without starting a
+    /// task (manifest status `probe_only`; re-check before real trials).
+    #[arg(long)]
+    probe_only: bool,
+}
+
+/// Exit 0 all passed, 1 a task failed or was refused, 2 start failure (no
+/// manifest), 3 environment unavailable, 4 Task_Set invalid.
+fn run(args: RunArgs) -> Result<ExitCode> {
+    use lite_eval::runner::{run, HarnessExecutor, RunInputs, Selection};
+    let root = repo_root()?;
+    let selection = Selection::parse(&args.tasks)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let env = |name: &str| std::env::var(name).ok();
+    let report = runtime.block_on(run(RunInputs {
+        repo_root: &root,
+        evidence_root: &args.evidence_root,
+        selection: &selection,
+        executor: &HarnessExecutor,
+        env: &env,
+        probe_only: args.probe_only,
+    }))?;
+    let summary = &report.manifest.summary;
+    println!("{}", report.manifest_path.display());
+    println!(
+        "status {:?}, passed {}, failed {}, refused {}, exit {}",
+        report.manifest.status, summary.passed, summary.failed, summary.refused, report.exit
+    );
+    Ok(ExitCode::from(report.exit))
 }
 
 #[derive(Args)]
@@ -123,6 +164,8 @@ fn validate_task_set() -> Result<ExitCode> {
         println!("{}", serde_json::to_string(violation)?);
     }
     eprintln!("lite-eval: {} tasks, {} violations", set.tasks.len(), violations.len());
+    let (_, identity) = lite_eval::policy::load_fixed(&root)?;
+    eprintln!("lite-eval: Run_Policy {} sha256 {} ({:?})", identity.path, identity.sha256, identity.git_state);
     Ok(if violations.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(4) })
 }
 
@@ -591,7 +634,7 @@ fn ledger(command: LedgerCommand) -> Result<ExitCode> {
 
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
-        Command::Run(_) => not_implemented("run"),
+        Command::Run(args) => run(args),
         Command::Validate => validate_task_set(),
         Command::Holdout(command) => holdout(command),
         Command::Fork(args) => fork(args),

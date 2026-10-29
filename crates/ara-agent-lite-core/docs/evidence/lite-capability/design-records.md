@@ -183,3 +183,17 @@
 - 证据等级：运行确认
 - 日期：2026-10-26
 - 后续动作：任务 19.1、20.2 在 Core、Harness、JSONL 的 `[dev-dependencies]` 加入同一行。这些 crate 的 lockfile 会新增上述包中尚未锁定的部分，任务 61.1 的 cargo-deny 比对把它们列为新增依赖。
+
+## DR-P4-2 公共接口初始稳定级别审查
+
+- 约束：审查 design.md 给出的初始分级（身份、路径、模型路由、预算、模式、工具注册为 stable；`policies`、`goal_lease`、`resume_job_lease`、`context_snapshot`、`knowledge_roots`、`worker_executable` 为 experimental；`rpi_agent`、`rpi_ai` 重导出为 stable），结论写入 `docs/stability.md`。阻塞 Stability_Doc 与 Stability_Test_Crate（任务 35.1、35.2；需求 29.1–29.5），以及树外消费者只用 stable 项的检查（任务 58.1；需求 31.1、31.7）。
+- 核实结论：初始分级成立，按以下方式落实；全部结论在任务 57.1 定稿前为初稿。
+  - `RunRequest` 共 31 个 `pub` 字段，与 crate 根 `rpi_agent`、`rpi_ai` 合计 33 项，逐项只标一个级别：25 个字段为 stable，design 列出的 6 个为 experimental。design 未点名的字段按所属类别归入 stable：`goal_criteria`、`goal_id`、`expected_revision`、`reviewed_run_id` 属于 Goal 模式与 Goal 命令，`brief`、`steering`、`global_knowledge` 分别属于任务输入、运行中插话与路径。
+  - 字段之外又补了三类行，原因是外部 Host 只靠字段和重导出写不出集成：构造与运行入口（`RunRequest::new`、`RuntimePaths`、`RuntimePaths::new`、`ToolRegistration`、`RunMode`、`RunResult`、`execute`）定为 stable；stable 字段的类型 `model::Route`、`model::ModelHost`、`steering::SteeringBuffer` 定为 stable；Harness 的最小入口（`start`、`TaskHandle`、`TaskSpec`、`TaskKind`、`HarnessHost` 的两个必需方法、`Candidate`、`ReviewBasis`、`ReviewReceipt`、`Settlement`、`Verdict`、`Continuation`、`TaskOutcome`、`TaskStop`、`FencePresence`、`EventEnvelope`）定为 stable。Core 共 37 项 stable，Harness 共 15 项 stable。
+  - P0–P4 新增的公开项全部记为 experimental：Core 的 `events`、`session_fork`、`effect_status`、`stuck_detector`、`completion_gate`、`compaction_refresh`、`output_limit`、`run_policies`、`termination`（含 `StopEvidence`）模块，crate 根的 `LiteEvent`、`EVENT_SCHEMA_VERSION`；Harness 的 `resume`、`resume_checked` 及其类型，停止复核类型，未知副作用记录，`TaskOutcome.unknown_effects`、`TaskOutcome.budget_stop`；`ara-agent-lite-mcp` 整个 crate；JSONL 的 Rust 入口 `main_entry`（跨语言契约是 v1 帧，不在本文分级范围）。
+  - 本文另定了四条判定规则：按最长路径匹配；未列出的项按 internal 处理；stable 字段的类型属于字段契约；Host 以字面量构造的类型（`TaskSpec`、`ReviewReceipt` 等）新增字段或 stable 枚举新增变体时升级主版本。
+  - 已发现的接口缺口：Run_Policy 的生成策略 `thinking_type_disabled` 需要实现 `ModelHost::generation_policy`，而该默认方法、`model::ModelSelection`、`model::CatalogModelHost`、`model::GenerationPolicy` 目前是 experimental，只用 stable 项的消费者无法按 Run_Policy 运行 `consumer_task`。按任务 58.1，这是需要用户决定提升哪些项为 stable 的阻断，不能用 experimental 引用冒充通过。
+- 来源位置：`crates/ara-agent-lite-core/src/agent.rs:28-124`（`ToolRegistration`、`RuntimePaths`、`RunRequest` 与 `RunRequest::new`）、`src/lib.rs:37-41`（根重导出）、`src/model.rs:8-14`、`:61-91`（`Route`、`ModelSelection`、`ModelHost`）、`crates/ara-agent-lite-harness/src/lib.rs:17-21`、`src/types.rs`、`src/runner.rs:71-73`、`:408-415`（续写时 ModelHost、steering 与工具 Arc 的身份核对）@ `c061062` 加工作区。
+- 证据等级：分级为审查决定；项数与可用性为运行确认：`crates/ara-agent-lite-core/tests/stability_surface.rs` 3 项、`crates/ara-agent-lite-harness/tests/stability_surface.rs` 2 项通过（2026-10-29），`tools/lite-consumer-check` 只引用 stable 项，`cargo build`、`cargo clippy -- -D warnings` 退出码 0 且无诊断，受控 loopback 测试 2 项通过。
+- 日期：2026-10-29
+- 后续动作：任务 57.1 复核 experimental 项，并由用户决定是否把生成策略相关的 `model` 项提升为 stable（58.1 阻断）。任务 35.3 在 `lite-eval gate` 中加入“删除一个 stable 项后 `cargo check` 失败”的演示。任务 58.2 的引用扫描以 `stability.md` 表格第一列的完整路径为准。

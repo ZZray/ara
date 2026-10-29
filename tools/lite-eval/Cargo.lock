@@ -967,13 +967,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ara-agent-lite-harness",
+ "async-trait",
  "chrono",
  "clap",
  "proptest",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
+ "tokio-util",
  "windows-sys 0.59.0",
 ]
 

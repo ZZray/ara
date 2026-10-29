@@ -1,0 +1,532 @@
+{
+  "version": 1,
+  "document": "crates/ara-agent-lite-core/docs/support-matrix.md",
+  "basis": {
+    "branch": "dev",
+    "commit": "c061062",
+    "worktree": "includes uncommitted changes",
+    "date": "2026-10-29"
+  },
+  "merge": "not merged in this phase; one side's evidence never supports the other side",
+  "full_scope": ["crates/ara-agent", "crates/ara-workflow"],
+  "lite_scope": [
+    "crates/ara-agent-lite-core",
+    "crates/ara-agent-lite-harness",
+    "crates/ara-agent-lite-jsonl",
+    "crates/ara-agent-lite-mcp"
+  ],
+  "statuses": ["supported", "partial", "unsupported"],
+  "categories": [
+    {
+      "category": "tools",
+      "items": [
+        {
+          "id": "tools.host-registered",
+          "capability": "Host-registered tools through AgentTool",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/lib.rs", "symbol": "tool::AgentTool"},
+              {"kind": "test", "file": "crates/ara-agent/tests/live_tools.rs", "name": "standalone_tool_execution_reads_fresh_snapshot_once_without_provider_call"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "host_boundary", "name": "invalid_custom_names_are_rejected_before_model_state_or_tool_effects"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "tasks", "name": "actual_file_feedback_repair_reuses_session_and_original_call_budget"}
+            ]
+          }
+        },
+        {
+          "id": "tools.builtin-files",
+          "capability": "Built-in file read, search, write and versioned edit tools",
+          "full": {"status": "unsupported", "note": "no built-in file tools in ara-agent or ara-workflow; crates/ara-tools is outside the Full scope of this matrix"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "file_edits::tests::rejections_name_the_current_hash_and_the_failing_block"}
+            ]
+          }
+        },
+        {
+          "id": "tools.shell-script",
+          "capability": "Shell command and script execution with cancellation",
+          "full": {"status": "unsupported", "note": "outside ara-agent and ara-workflow"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "local_tools::tests::real_shell_captures_output_and_exit"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "script_tools::tests::real_python_utf8_quoting_exit_cancel_timeout_cleanup"}
+            ]
+          }
+        },
+        {
+          "id": "tools.web",
+          "capability": "Web search and URL fetch",
+          "full": {"status": "unsupported", "note": "outside ara-agent and ara-workflow"},
+          "lite": {
+            "status": "partial",
+            "gap": "only the two read-only tools web_search and fetch_url; no browser automation or computer use",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "web_tools::tests::tool_contract_has_only_two_read_only_tools"}
+            ]
+          }
+        },
+        {
+          "id": "tools.jobs-terminal",
+          "capability": "Background jobs and interactive terminal",
+          "full": {"status": "unsupported", "note": "outside ara-agent and ara-workflow"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "managed_jobs::tests::repeated_intent_never_replays_and_input_conflict_is_rejected"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "terminal_process::tests::terminal_is_tty_input_environment_and_resize"}
+            ]
+          }
+        },
+        {
+          "id": "tools.analysis",
+          "capability": "Source symbol and static binary analysis tools",
+          "full": {"status": "unsupported", "note": "outside ara-agent and ara-workflow"},
+          "lite": {
+            "status": "partial",
+            "gap": "depends on local ctags, objdump and nm backends; no decompiler or dynamic debugging",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "analysis_tools::tests::parses_definitions_and_rejects_malformed_records"}
+            ]
+          }
+        },
+        {
+          "id": "tools.call-hooks",
+          "capability": "Host hooks before and after each tool call",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/lib.rs", "symbol": "agent_loop::LoopHooks"},
+              {"kind": "test", "file": "crates/ara-agent/tests/core_hooks.rs", "name": "group_g_request_boundary_one_preparation_provenance_stop_errors_and_abort"}
+            ]
+          },
+          "lite": {"status": "unsupported", "note": "Core has no Host per-call hook API; only the run-level Completion_Gate is registrable"}
+        },
+        {
+          "id": "tools.mcp",
+          "capability": "MCP servers as a tool source (Claude Code mcpServers format)",
+          "full": {"status": "unsupported", "note": "crates/ara-mcp is outside the Full scope of this matrix"},
+          "lite": {
+            "status": "partial",
+            "gap": "stdio and Streamable HTTP only; sse, ws, OAuth, headersHelper, prompts, sampling and listChanged are refused or out of scope; Unix process paths compiled but not run",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-mcp/Cargo.toml", "target": "stdio", "name": "handshake_paginates_and_names_tools"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-mcp/Cargo.toml", "target": "http", "name": "session_headers_json_and_sse_replies"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-mcp/Cargo.toml", "target": "harness_mcp", "name": "mcp_tool_succeeds_inside_a_task"}
+            ]
+          }
+        },
+        {
+          "id": "tools.unknown-effects",
+          "capability": "Structured unknown tool effects in tool results",
+          "full": {
+            "status": "partial",
+            "gap": "the referenced evidence covers unknown effects in summary input only; structured unknown fields on tool results were not confirmed in this review",
+            "evidence": [
+              {"kind": "test", "file": "crates/ara-agent/tests/compaction.rs", "name": "unknown_tool_effect_is_explicit_even_when_receipt_text_is_empty"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "run_policies", "name": "structured_unknown_details_mark_tool_end"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "effect_status::tests::builtin_phrases_on_the_first_line_of_effect_tool_errors_are_typed"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "unknown_effects", "name": "unknown_iff_structured_details"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "category": "session",
+      "items": [
+        {
+          "id": "session.persist-reopen",
+          "capability": "Durable native Session and reopen after restart",
+          "full": {"status": "unsupported", "note": "Session persistence is not in ara-agent or ara-workflow; crates/ara-session is outside the Full scope of this matrix"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "agent::tests::actual_tool_and_text_history_survives_checkpoint_and_restart"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "session_journal::tests::torn_or_unconfirmed_tail_is_preserved_and_fenced"}
+            ]
+          }
+        },
+        {
+          "id": "session.fence-settlement",
+          "capability": "Fence after an interrupted Run and continuation only after Host settlement",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-workflow/src/driver.rs", "symbol": "ReconciliationFence"},
+              {"kind": "test", "file": "crates/ara-workflow/tests/independent_faults.rs", "name": "unknown_fence_is_recoverable_from_clone_and_release_restores_same_agent"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "agent::interrupted_run_property_tests::reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "crashed_owner_resumes_only_after_host_settlement_without_replay_or_budget_refund"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_resume_process.py", "case": "ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt"}
+            ]
+          }
+        },
+        {
+          "id": "session.fork",
+          "capability": "Fork a Session at a committed prefix",
+          "full": {"status": "unsupported", "note": "no fork in ara-agent or ara-workflow (search for 'fork': 0 hits)"},
+          "lite": {
+            "status": "partial",
+            "gap": "a Session with an archived summary prefix (active_base > 0) is refused",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "property_14_fork_keeps_prefix_and_source"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "run_on_one_fork_isolates_other_fork_and_source"}
+            ]
+          }
+        },
+        {
+          "id": "session.replay-provenance",
+          "capability": "Re-issued calls after a NotExecuted settlement keep replay provenance and run once",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "replay_preconditions", "name": "same_call_after_not_executed_runs_once_under_the_new_native_id"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "replay_provenance", "name": "replay_of_names_the_latest_matching_not_executed_call"}
+            ]
+          }
+        },
+        {
+          "id": "session.steering",
+          "capability": "Host messages injected into a running Run (steering)",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/lib.rs", "symbol": "agent_loop::SteeringSource"},
+              {"kind": "test", "file": "crates/ara-agent/tests/agent_loop.rs", "name": "owned_idle_continue_skips_the_second_steer_until_the_next_model_turn"}
+            ]
+          },
+          "lite": {
+            "status": "partial",
+            "gap": "the referenced test covers the steering buffer and its receipts only; no end-to-end injection test through execute is referenced",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "steering::tests::object_receipts_preserve_metadata_for_complete_and_finish"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "category": "compaction",
+      "items": [
+        {
+          "id": "compaction.summary",
+          "capability": "Summary compaction that keeps tool receipts and the current turn",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/compaction.rs", "symbol": "summarize_compaction_cut"},
+              {"kind": "test", "file": "crates/ara-agent/tests/compaction_cut.rs", "name": "never_cuts_between_tool_call_receipt_and_final_assistant"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_compaction_process.py", "case": "CompactionProcessTest.test_two_summaries_three_runs_and_new_process_reopens_released_session"}
+            ]
+          }
+        },
+        {
+          "id": "compaction.budget",
+          "capability": "Summary calls reserved from the same call budget; typed stop when no call is left",
+          "full": {"status": "unsupported", "note": "no summary-call reservation found in ara-agent or ara-workflow (search for 'reserv' matched only 'preserve')"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "summary_reservation", "name": "summary_needed_with_no_call_left_is_a_summary_budget_stop"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "summary_budget", "name": "task_budget_exhausted_before_summary_is_a_typed_budget_stop"}
+            ]
+          }
+        },
+        {
+          "id": "compaction.refresh",
+          "capability": "Re-read recently used files after compaction (Compaction_Refresh, opt-in)",
+          "full": {"status": "unsupported", "note": "search for 'refresh' in ara-agent and ara-workflow: 0 hits"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "compaction_refresh", "name": "refresh_follows_the_summary_with_current_disk_and_session_plan_state"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "compaction_refresh", "name": "without_the_policy_no_refresh_message_or_event_appears"}
+            ]
+          }
+        },
+        {
+          "id": "compaction.remote",
+          "capability": "Provider-side remote compaction",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/compaction.rs", "symbol": "select_native_remote_compaction_cut"}
+            ]
+          },
+          "lite": {"status": "unsupported", "note": "Lite compacts only with its own summary call"}
+        }
+      ]
+    },
+    {
+      "category": "goal",
+      "items": [
+        {
+          "id": "goal.mode",
+          "capability": "Goal mode with bounded steps and explicit review",
+          "full": {"status": "unsupported", "note": "search for 'goal' in ara-agent and ara-workflow: 0 hits"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "execution::tests::goal_review_is_explicit_and_bounded"}
+            ]
+          }
+        },
+        {
+          "id": "goal.completion-gate",
+          "capability": "Host Completion_Gate at ordinary stops (opt-in)",
+          "full": {
+            "status": "partial",
+            "gap": "a final provider gate exists; per-stop continuation with sourced feedback inside the same Run was not confirmed",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/lib.rs", "symbol": "final_provider_gate::FinalProviderGate"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "run_policies", "name": "failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "completion_gate", "name": "gate_runs_once_per_ordinary_stop_and_continues_only_within_budget"}
+            ]
+          }
+        },
+        {
+          "id": "goal.stuck",
+          "capability": "Stuck_Detector: correction then NoProgress stop on repeated calls or errors (opt-in)",
+          "full": {"status": "unsupported", "note": "search for stuck or no_progress in ara-agent and ara-workflow: 0 hits"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "stuck", "name": "repeated_errors_hit_correct_then_stop_with_no_progress"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "stuck", "name": "unconfigured_detector_emits_nothing_and_injects_nothing"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "category": "harness",
+      "items": [
+        {
+          "id": "harness.bounded-review",
+          "capability": "Bounded multi-Run Task with Host review and same-Session continuation",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-workflow/src/types.rs", "symbol": "WorkflowHost"},
+              {"kind": "test", "file": "crates/ara-workflow/tests/workflow.rs", "name": "prepared_request_budget_accumulates_across_runs"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "tasks", "name": "cumulative_budget_is_not_refilled_after_needs_changes"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "tasks", "name": "wrong_uncommitted_and_unknown_receipts_stop_without_second_run"}
+            ]
+          }
+        },
+        {
+          "id": "harness.length",
+          "capability": "Length stop handling: replan once and Host stop review (opt-in)",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-workflow/src/types.rs", "symbol": "LengthRecoveryPolicy"},
+              {"kind": "test", "file": "crates/ara-workflow/tests/length_faults.rs", "name": "ordinary_start_never_calls_opt_in_length_settlement"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stop_review", "name": "closed_length_stop_is_reviewed_and_verified_without_a_new_run"}
+            ]
+          }
+        },
+        {
+          "id": "harness.budget-snapshot",
+          "capability": "Closed-budget snapshot review (opt-in)",
+          "full": {"status": "unsupported", "note": "no budget-stop snapshot in ara-workflow (its only budget stop is 'workflow prepared-request budget exhausted', driver.rs)"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "budget_snapshots", "name": "actual_file_can_be_verified_without_synthesizing_a_model_stop"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "budget_snapshots", "name": "default_start_keeps_closed_budget_stop_out_of_ordinary_review"}
+            ]
+          }
+        },
+        {
+          "id": "harness.resume",
+          "capability": "Resume a fenced Task with typed refusals",
+          "full": {"status": "unsupported", "note": "ara-workflow restores a fence from a clone in-process; resuming a fenced Task in a new process was not confirmed"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "resume_checked_refuses_with_typed_reasons_before_any_callback"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing"}
+            ]
+          }
+        },
+        {
+          "id": "harness.unknown-effect-records",
+          "capability": "TaskOutcome lists unknown-effect calls with receipt references",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "unknown_effect_list", "name": "records_are_unique_ordered_and_locatable"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "unknown_effects_examples", "name": "builtin_exec_timeout_is_unknown_through_structured_status_only"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "category": "jsonl",
+      "items": [
+        {
+          "id": "jsonl.sidecar",
+          "capability": "Cross-language sidecar with Python and Node clients",
+          "full": {"status": "unsupported", "note": "no sidecar in ara-agent or ara-workflow"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_python_real_file_feedback_and_same_task_budget"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget"}
+            ]
+          }
+        },
+        {
+          "id": "jsonl.resume",
+          "capability": "resume start field and reconcile_request/reconcile_reply frames",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "partial",
+            "gap": "refusals for changed authority or larger budgets/caps are reported only as start_config_rejected or task_admission_rejected with zero frames, so the Host cannot tell which rule was hit (task 25.2 open)",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_jsonl_resume.py", "case": "JsonlResumeTest.test_valid_resume_settles_once_and_continues_in_the_original_task"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_protocol_doc_examples.py", "case": "ProtocolDocExamplesTest.test_successful_resume_sequence"}
+            ]
+          }
+        },
+        {
+          "id": "jsonl.stop-review",
+          "capability": "Length stop review frames (verify_stop_request, prepare_stop_request)",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_length_stop_review.py", "case": "LengthStopReviewTest.test_needs_changes_continues_in_the_same_session_then_verifies"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_length_stop_review.py", "case": "LengthStopReviewTest.test_default_policy_sends_no_stop_frames"}
+            ]
+          }
+        },
+        {
+          "id": "jsonl.unknown-effects",
+          "capability": "Unknown-effect records and receipt_ref in task results",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_jsonl_unknown.py", "case": "JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence"}
+            ]
+          }
+        },
+        {
+          "id": "jsonl.mcp",
+          "capability": "mcp_servers start field and mcp_status event",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_mcp_servers.py", "case": "McpServersTest.test_connected_tools_join_the_task_and_status_is_reported"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_mcp_servers.py", "case": "McpServersTest.test_without_the_field_frames_and_tools_are_unchanged"}
+            ]
+          }
+        },
+        {
+          "id": "jsonl.bytes",
+          "capability": "Exact byte round trip of NUL and non-BMP text through the clients",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_byte_roundtrip.py", "case": "ByteRoundTripTest.test_sample_round_trips_through_real_python_and_node_client_processes"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "byte_roundtrip", "name": "dr_p3_1_tool_io_leg_preserves_sample"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "category": "events",
+      "items": [
+        {
+          "id": "events.typed",
+          "capability": "Typed event model",
+          "full": {
+            "status": "supported",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/event.rs", "symbol": "AgentEvent"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "event_enum", "name": "every_sample_line_round_trips_through_its_named_variant"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "event_enum_errors", "name": "missing_required_field_is_rejected"}
+            ]
+          }
+        },
+        {
+          "id": "events.versioned-json",
+          "capability": "Versioned JSON events: EVENT_SCHEMA_VERSION, unknown types and fields kept",
+          "full": {"status": "unsupported", "note": "AgentEvent has no Deserialize impl (search: 0 hits) and no schema version constant was found"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "event_enum", "name": "an_unknown_type_keeps_the_complete_original_json"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "event_compat", "name": "value_execute_matches_the_golden_event_shapes"}
+            ]
+          }
+        },
+        {
+          "id": "events.policy-events",
+          "capability": "Events for output limit, Completion_Gate, Stuck_Detector and Compaction_Refresh",
+          "full": {"status": "unsupported"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "event_compat", "name": "every_event_type_has_samples_and_a_named_variant"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "output_limit_wire", "name": "provider_receives_the_recorded_effective_limit"}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
