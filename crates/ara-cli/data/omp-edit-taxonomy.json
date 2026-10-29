@@ -1,0 +1,3366 @@
+{
+  "classes": [
+    {
+      "id": "ai21",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "jamba"
+        },
+        {
+          "kind": "namespace",
+          "token": "ai21"
+        }
+      ],
+      "families": [
+        {
+          "id": "jamba",
+          "glob": "*jamba*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "amazon",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "nova"
+        },
+        {
+          "kind": "bounded",
+          "token": "titan"
+        },
+        {
+          "kind": "namespace",
+          "token": "amazon",
+          "bounded": true
+        }
+      ],
+      "families": [
+        {
+          "id": "nova",
+          "glob": "*nova*",
+          "priority": 0
+        },
+        {
+          "id": "titan",
+          "glob": "*titan*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "anthropic",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "anthropic",
+          "bounded": true
+        },
+        {
+          "kind": "bounded",
+          "token": "anthropic"
+        },
+        {
+          "kind": "bounded",
+          "token": "claude"
+        }
+      ],
+      "families": [
+        {
+          "id": "opus",
+          "glob": "*opus*",
+          "priority": 0
+        },
+        {
+          "id": "sonnet",
+          "glob": "*sonnet*",
+          "priority": 0
+        },
+        {
+          "id": "haiku",
+          "glob": "*haiku*",
+          "priority": 0
+        },
+        {
+          "id": "fable",
+          "glob": "*fable*",
+          "priority": 0
+        },
+        {
+          "id": "mythos",
+          "glob": "*mythos*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "claude-",
+          "anywhere": true
+        }
+      ],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "nanogpt-gemma-claude-opus-distill-family",
+          "rationale": "The reviewed distillation lineage follows its Claude Opus teacher rather than the student architecture",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "Gemma-4-31B-Claude-4.6-Opus-Reasoning-Distilled",
+          "provider": "nanogpt",
+          "logical": "Gemma-4-31B-Claude-4.6-Opus-Reasoning-Distilled",
+          "class": "anthropic",
+          "family": "opus"
+        },
+        {
+          "id": "nanogpt-qwen-claude-opus-distill-family",
+          "rationale": "The reviewed distillation lineage follows its Claude Opus teacher rather than the student architecture",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-Derestricted",
+          "provider": "nanogpt",
+          "logical": "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-Derestricted",
+          "class": "anthropic",
+          "family": "opus"
+        },
+        {
+          "id": "nanogpt-qwen-claude-opus-distill-lite-family",
+          "rationale": "The reviewed lite distillation lineage follows its Claude Opus teacher rather than the student architecture",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-Derestricted-Lite",
+          "provider": "nanogpt",
+          "logical": "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-Derestricted-Lite",
+          "class": "anthropic",
+          "family": "opus"
+        }
+      ]
+    },
+    {
+      "id": "baidu",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "ernie"
+        }
+      ],
+      "families": [
+        {
+          "id": "ernie",
+          "glob": "*ernie*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "bytedance",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "doubao"
+        }
+      ],
+      "families": [
+        {
+          "id": "doubao",
+          "glob": "*doubao*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "cohere",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "command"
+        },
+        {
+          "kind": "namespace",
+          "token": "cohere"
+        }
+      ],
+      "families": [
+        {
+          "id": "command",
+          "glob": "*command*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "deepseek",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "deepseek",
+          "bounded": true
+        },
+        {
+          "kind": "bounded",
+          "token": "deepseek"
+        }
+      ],
+      "families": [
+        {
+          "id": "r1",
+          "glob": "*deepseek-r1*",
+          "priority": 0
+        },
+        {
+          "id": "reasoner",
+          "glob": "*deepseek-reasoner*",
+          "priority": 0
+        },
+        {
+          "id": "flash",
+          "glob": "*deepseek*v4*flash*",
+          "priority": 0
+        },
+        {
+          "id": "flash",
+          "glob": "*deepseek-flash",
+          "priority": 0
+        },
+        {
+          "id": "pro",
+          "glob": "*deepseek*v4*pro*",
+          "priority": 0
+        },
+        {
+          "id": "v4",
+          "glob": "*deepseek-v4*",
+          "priority": 0
+        },
+        {
+          "id": "v3",
+          "glob": "*deepseek-v3*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "deepseek-v",
+          "anywhere": true
+        }
+      ],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "deepseek-bare-flash-v4-1",
+          "rationale": "The first-party bare Flash alias serves DeepSeek V4.1 Flash, not V4 Flash",
+          "provenance": "providers/deepseek.kdl",
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "class": "deepseek",
+          "family": "flash",
+          "revision": "4.1.0"
+        },
+        {
+          "id": "opencode-go-bare-flash-v4-1",
+          "rationale": "OpenCode Go's bare Flash lane shares the reviewed V4.1 Flash deployment contract",
+          "provenance": "providers/opencode-go.kdl",
+          "model": "deepseek-flash",
+          "provider": "opencode-go",
+          "class": "deepseek",
+          "family": "flash",
+          "revision": "4.1.0"
+        },
+        {
+          "id": "vercel-deepseek-v3-2-thinking-product",
+          "rationale": "Oracle exposes this independently priced product rather than an effort route",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "deepseek-v3.2-thinking",
+          "provider": "vercel-ai-gateway",
+          "logical": "deepseek/deepseek-v3.2-thinking",
+          "class": "deepseek"
+        },
+        {
+          "id": "opencode-zen-big-pickle-family",
+          "rationale": "OpenCode Zen's big-pickle is a DeepSeek reasoning alias whose upstream 400s require exact reasoning_content replay",
+          "provenance": "models.json census",
+          "model": "big-pickle",
+          "provider": "opencode-zen",
+          "class": "deepseek"
+        },
+        {
+          "id": "umans-deepseek-v4-flash-family",
+          "rationale": "The opaque Umans product identifier is backed by the reviewed DeepSeek V4 Flash family",
+          "provenance": "fixtures/llm-oracle/catalog-policy/compat-profiles.json:compat-04",
+          "model": "umans-deepseek-v4-flash-0731",
+          "provider": "umans",
+          "logical": "umans-deepseek-v4-flash-0731",
+          "class": "deepseek"
+        },
+        {
+          "id": "umans-deepseek-v4-flash-lab-family",
+          "rationale": "The opaque Umans lab product identifier is backed by the reviewed DeepSeek V4 Flash family",
+          "provenance": "fixtures/llm-oracle/catalog-policy/compat-profiles.json:compat-04",
+          "model": "umans-deepseek-v4-flash-0731-lab",
+          "provider": "umans",
+          "logical": "umans-deepseek-v4-flash-0731-lab",
+          "class": "deepseek"
+        },
+        {
+          "id": "venice-e2ee-deepseek-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed DeepSeek family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-deepseek-v4-flash",
+          "provider": "venice",
+          "logical": "e2ee-deepseek-v4-flash",
+          "class": "deepseek"
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "gemini"
+        }
+      ],
+      "families": [
+        {
+          "id": "lite",
+          "glob": "*flash-lite*",
+          "priority": 10
+        },
+        {
+          "id": "flash",
+          "glob": "*flash*",
+          "priority": 0
+        },
+        {
+          "id": "pro",
+          "glob": "*pro*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "gemini-"
+        }
+      ],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "gemma",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "gemma"
+        }
+      ],
+      "families": [],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "glm",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "glm"
+        },
+        {
+          "kind": "bounded",
+          "token": "zai-glm"
+        }
+      ],
+      "families": [
+        {
+          "id": "flash",
+          "glob": "*flash*",
+          "priority": 0
+        },
+        {
+          "id": "air",
+          "glob": "*air*",
+          "priority": 0
+        },
+        {
+          "id": "turbo",
+          "glob": "*turbo*",
+          "priority": 0
+        },
+        {
+          "id": "vision",
+          "glob": "*glm-5v*",
+          "priority": 20
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "glm-",
+          "anywhere": true
+        }
+      ],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "umans-glm-5-3-flash-lab-family",
+          "rationale": "The opaque Umans lab deployment is backed by the reviewed GLM 5.3 Flash family",
+          "provenance": "models.json census",
+          "model": "umans-glm-5.3-flash-lab",
+          "provider": "umans",
+          "class": "glm"
+        },
+        {
+          "id": "abliteration-glm-5-3-family",
+          "rationale": "Abliteration's Large V2 is an abliterated GLM 5.3 deployment",
+          "provenance": "docs.abliteration.ai/models (2026-09)",
+          "model": "abliterated-model-large-v2",
+          "provider": "abliteration",
+          "class": "glm",
+          "revision": "5.3.0"
+        },
+        {
+          "id": "abliteration-glm-5-2-family",
+          "rationale": "Abliteration's Large is an abliterated GLM 5.2 deployment",
+          "provenance": "docs.abliteration.ai/models (2026-09)",
+          "model": "abliterated-model-large",
+          "provider": "abliteration",
+          "class": "glm",
+          "revision": "5.2.0"
+        },
+        {
+          "id": "abliteration-glm-base-family",
+          "rationale": "Abliteration's base deployment is GLM-derived; the docs do not pin the revision",
+          "provenance": "docs.abliteration.ai/models (2026-09)",
+          "model": "abliterated-model",
+          "provider": "abliteration",
+          "class": "glm"
+        }
+      ]
+    },
+    {
+      "id": "gpt-oss",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "gpt-oss",
+          "bounded": true
+        },
+        {
+          "kind": "bounded",
+          "token": "gpt-oss"
+        }
+      ],
+      "families": [
+        {
+          "id": "120b",
+          "glob": "*gpt-oss-120b*",
+          "priority": 0
+        },
+        {
+          "id": "20b",
+          "glob": "*gpt-oss-20b*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "venice-e2ee-gpt-oss-120b-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed GPT OSS family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-gpt-oss-120b-p",
+          "provider": "venice",
+          "logical": "e2ee-gpt-oss-120b-p",
+          "class": "gpt-oss"
+        },
+        {
+          "id": "venice-e2ee-gpt-oss-20b-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed GPT OSS family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-gpt-oss-20b-p",
+          "provider": "venice",
+          "logical": "e2ee-gpt-oss-20b-p",
+          "class": "gpt-oss"
+        },
+        {
+          "id": "venice-openai-gpt-oss-family",
+          "rationale": "The reviewed Venice deployment belongs to the GPT OSS family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "openai-gpt-oss-120b",
+          "provider": "venice",
+          "logical": "openai-gpt-oss-120b",
+          "class": "gpt-oss"
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "moonshotai"
+        },
+        {
+          "kind": "bounded",
+          "token": "kimi"
+        },
+        {
+          "kind": "exact",
+          "token": "k3"
+        },
+        {
+          "kind": "exact",
+          "token": "k3-256k"
+        }
+      ],
+      "families": [
+        {
+          "id": "k2",
+          "glob": "*kimi-k2*",
+          "priority": 0
+        },
+        {
+          "id": "k2.5",
+          "glob": "*kimi-k2.5*",
+          "priority": 10
+        },
+        {
+          "id": "k2.6",
+          "glob": "*kimi-k2.6*",
+          "priority": 10
+        },
+        {
+          "id": "k2.6",
+          "glob": "*kimi-k2p6*",
+          "priority": 10
+        },
+        {
+          "id": "k2.7-code",
+          "glob": "*kimi-k2.7-code*",
+          "priority": 10
+        },
+        {
+          "id": "k2.7-code",
+          "glob": "*kimi-k2-7-code*",
+          "priority": 10
+        },
+        {
+          "id": "k2.7-code",
+          "glob": "*kimi-k2p7*code*",
+          "priority": 10
+        },
+        {
+          "id": "k2-thinking",
+          "glob": "*kimi-k2-thinking*",
+          "priority": 20
+        },
+        {
+          "id": "k3",
+          "glob": "*kimi-k3*",
+          "priority": 0
+        },
+        {
+          "id": "k3",
+          "glob": "k3",
+          "priority": 0
+        },
+        {
+          "id": "k3",
+          "glob": "k3-256k",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "kilo-kimi-k2-thinking-product",
+          "rationale": "Oracle exposes this independently priced product rather than an effort route",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "kimi-k2-thinking",
+          "provider": "kilo",
+          "logical": "moonshotai/kimi-k2-thinking",
+          "class": "kimi"
+        },
+        {
+          "id": "openrouter-kimi-k2-thinking-product",
+          "rationale": "Oracle exposes this independently priced product rather than an effort route",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "kimi-k2-thinking",
+          "provider": "openrouter",
+          "logical": "moonshotai/kimi-k2-thinking",
+          "class": "kimi"
+        },
+        {
+          "id": "vercel-kimi-k2-thinking-product",
+          "rationale": "Oracle exposes this independently priced product rather than an effort route",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "kimi-k2-thinking",
+          "provider": "vercel-ai-gateway",
+          "logical": "moonshotai/kimi-k2-thinking",
+          "class": "kimi"
+        }
+      ]
+    },
+    {
+      "id": "meta",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "muse-spark"
+        },
+        {
+          "kind": "bounded",
+          "token": "muse-wonder"
+        },
+        {
+          "kind": "bounded",
+          "token": "llama"
+        },
+        {
+          "kind": "namespace",
+          "token": "meta-llama"
+        }
+      ],
+      "families": [
+        {
+          "id": "llama",
+          "glob": "*llama*",
+          "priority": 0
+        },
+        {
+          "id": "muse-spark",
+          "glob": "*muse-spark*",
+          "priority": 0
+        },
+        {
+          "id": "muse-wonder",
+          "glob": "*muse-wonder*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "muse-spark-"
+        },
+        {
+          "prefix": "muse-wonder-"
+        }
+      ],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "mimo",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "mimo"
+        }
+      ],
+      "families": [
+        {
+          "id": "v2",
+          "glob": "*mimo-v2*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "venice-xiaomi-mimo-family",
+          "rationale": "The reviewed Venice deployment belongs to the Xiaomi MiMo family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "xiaomi-mimo-v2-5",
+          "provider": "venice",
+          "logical": "xiaomi-mimo-v2-5",
+          "class": "mimo"
+        }
+      ]
+    },
+    {
+      "id": "minimax",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "minimax"
+        },
+        {
+          "kind": "bounded",
+          "token": "minimax"
+        },
+        {
+          "kind": "bounded",
+          "token": "hailuo"
+        }
+      ],
+      "families": [
+        {
+          "id": "m1",
+          "glob": "*minimax-m1*",
+          "priority": 0
+        },
+        {
+          "id": "m2",
+          "glob": "*minimax-m2*",
+          "priority": 0
+        },
+        {
+          "id": "m3",
+          "glob": "*minimax-m3*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "mistral",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "mistral"
+        },
+        {
+          "kind": "bounded",
+          "token": "mixtral"
+        }
+      ],
+      "families": [
+        {
+          "id": "mistral",
+          "glob": "*mistral*",
+          "priority": 0
+        },
+        {
+          "id": "mixtral",
+          "glob": "*mixtral*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "openai",
+      "matchers": [
+        {
+          "kind": "namespace",
+          "token": "openai"
+        },
+        {
+          "kind": "namespace",
+          "token": "openai",
+          "bounded": true
+        },
+        {
+          "kind": "prefix",
+          "token": "gpt-"
+        },
+        {
+          "kind": "prefix",
+          "token": "chatgpt-"
+        },
+        {
+          "kind": "prefix",
+          "token": "codex-"
+        },
+        {
+          "kind": "exact",
+          "token": "o1"
+        },
+        {
+          "kind": "prefix",
+          "token": "o1-"
+        },
+        {
+          "kind": "prefix",
+          "token": "o1."
+        },
+        {
+          "kind": "exact",
+          "token": "o3"
+        },
+        {
+          "kind": "prefix",
+          "token": "o3-"
+        },
+        {
+          "kind": "prefix",
+          "token": "o3."
+        },
+        {
+          "kind": "exact",
+          "token": "o4"
+        },
+        {
+          "kind": "prefix",
+          "token": "o4-"
+        },
+        {
+          "kind": "prefix",
+          "token": "o4."
+        }
+      ],
+      "families": [
+        {
+          "id": "gpt",
+          "glob": "gpt-*",
+          "priority": 0
+        },
+        {
+          "id": "chatgpt",
+          "glob": "chatgpt-*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o1",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o1-*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o1.*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o3",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o3-*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o3.*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o4",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o4-*",
+          "priority": 0
+        },
+        {
+          "id": "o-series",
+          "glob": "o4.*",
+          "priority": 0
+        },
+        {
+          "id": "codex",
+          "glob": "*codex*",
+          "priority": 10
+        },
+        {
+          "id": "codex-spark",
+          "glob": "*codex-spark*",
+          "priority": 20
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "chatgpt-"
+        },
+        {
+          "prefix": "gpt-",
+          "anywhere": true
+        },
+        {
+          "prefix": "o"
+        }
+      ],
+      "skipBare": [
+        "o1",
+        "o3",
+        "o4"
+      ],
+      "overrides": [
+        {
+          "id": "openai-daybreak-blue-2026-08",
+          "rationale": "OpenAI rolling alias pins only the documented generation; its opaque product name supplies no family evidence",
+          "provenance": "catalog-oracle:identity/daybreak-aliases",
+          "model": "daybreak-blue-latest",
+          "logical": "daybreak-blue-latest",
+          "class": "unknown",
+          "revision": "5.6.0",
+          "expiresAtMs": 1799712000000
+        },
+        {
+          "id": "openai-daybreak-red-2026-08",
+          "rationale": "OpenAI rolling alias pins only the documented generation; its opaque product name supplies no family evidence",
+          "provenance": "catalog-oracle:identity/daybreak-aliases",
+          "model": "daybreak-red-latest",
+          "logical": "daybreak-red-latest",
+          "class": "unknown",
+          "revision": "5.6.0",
+          "expiresAtMs": 1799712000000
+        },
+        {
+          "id": "openai-gpt-daybreak-blue-2026-08",
+          "rationale": "OpenAI rolling alias pinned to the generation declared by the source snapshot",
+          "provenance": "catalog-oracle:identity/daybreak-aliases",
+          "model": "gpt-daybreak-blue-latest",
+          "logical": "gpt-daybreak-blue-latest",
+          "class": "openai",
+          "revision": "5.6.0",
+          "expiresAtMs": 1799712000000
+        },
+        {
+          "id": "openai-gpt-daybreak-red-2026-08",
+          "rationale": "OpenAI rolling alias pinned to the generation declared by the source snapshot",
+          "provenance": "catalog-oracle:identity/daybreak-aliases",
+          "model": "gpt-daybreak-red-latest",
+          "logical": "gpt-daybreak-red-latest",
+          "class": "openai",
+          "revision": "5.6.0",
+          "expiresAtMs": 1799712000000
+        }
+      ]
+    },
+    {
+      "id": "qwen",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "qwen"
+        },
+        {
+          "kind": "bounded",
+          "token": "deepseek-r1-distill-qwen"
+        },
+        {
+          "kind": "glob",
+          "token": "*distill-qwen*"
+        }
+      ],
+      "families": [
+        {
+          "id": "qwq",
+          "glob": "*qwq*",
+          "priority": 0
+        },
+        {
+          "id": "coder",
+          "glob": "*qwen3-coder*",
+          "priority": 0
+        },
+        {
+          "id": "next",
+          "glob": "*qwen3-next*",
+          "priority": 0
+        },
+        {
+          "id": "omni",
+          "glob": "*qwen3-omni*",
+          "priority": 0
+        },
+        {
+          "id": "vl",
+          "glob": "*qwen3-vl*",
+          "priority": 0
+        },
+        {
+          "id": "qwenlong",
+          "glob": "*qwenlong*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "qwen"
+        }
+      ],
+      "skipBare": [],
+      "overrides": [
+        {
+          "id": "yolo-auto-yolo-flash-identity",
+          "rationale": "Yolo-Auto's paid yolo route is initially backed by the same Qwen3.8 Flash deployment as qwen3.8-flash; the opaque alias carries no lineage tokens",
+          "provenance": "yolo-auto.com/models (2026-09)",
+          "model": "yolo",
+          "provider": "yolo-auto",
+          "class": "qwen",
+          "revision": "3.8.0"
+        },
+        {
+          "id": "prismml-bonsai-27b-qwen-3-6",
+          "rationale": "Reviewed PrismML Bonsai and Ternary-Bonsai 27B lineage is Qwen3.6-27B; the wire basename may carry a prefix or GGUF quantization suffix",
+          "provenance": "packages/coding-agent/src/config/model-discovery.ts; original reviewed alias e3aa6594e5",
+          "glob": "*bonsai-27b*",
+          "class": "qwen",
+          "revision": "3.6.0"
+        },
+        {
+          "id": "prismml-bonsai-2-27b-qwen-3-8",
+          "rationale": "Reviewed PrismML Bonsai 2 27B lineage is Qwen3.8-27B; the wire basename may carry a prefix or GGUF quantization suffix",
+          "provenance": "packages/coding-agent/src/config/model-discovery.ts",
+          "glob": "*bonsai-2-27b*",
+          "class": "qwen",
+          "revision": "3.8.0"
+        },
+        {
+          "id": "kilo-qwq-32b-family",
+          "rationale": "The reviewed Kilo QwQ deployment belongs to the Qwen family despite its opaque product spelling",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "qwq-32b",
+          "provider": "kilo",
+          "logical": "qwen/qwq-32b",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-eva-qwen-2-5-family",
+          "rationale": "The reviewed EVA deployment is a Qwen 2.5 derivative despite its opaque product namespace",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "EVA-Qwen2.5-32B-v0.2",
+          "provider": "nanogpt",
+          "logical": "EVA-UNIT-01/EVA-Qwen2.5-32B-v0.2",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-eva-qwen-2-5-72b-family",
+          "rationale": "The reviewed EVA 72B deployment is a Qwen 2.5 derivative despite its opaque product namespace",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "EVA-Qwen2.5-72B-v0.2",
+          "provider": "nanogpt",
+          "logical": "EVA-UNIT-01/EVA-Qwen2.5-72B-v0.2",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-qwenlong-l1-family",
+          "rationale": "The reviewed Tongyi Zhiwen QwenLong deployment belongs to the Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "QwenLong-L1-32B",
+          "provider": "nanogpt",
+          "logical": "Tongyi-Zhiwen/QwenLong-L1-32B",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-dolphin-qwen-family",
+          "rationale": "The reviewed Dolphin deployment is a Qwen derivative",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "dolphin-2.9.2-qwen2-72b",
+          "provider": "nanogpt",
+          "logical": "cognitivecomputations/dolphin-2.9.2-qwen2-72b",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-cogito-qwen-family",
+          "rationale": "The reviewed Cogito deployment is a Qwen derivative",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "cogito-v1-preview-qwen-32B",
+          "provider": "nanogpt",
+          "logical": "deepcogito/cogito-v1-preview-qwen-32B",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-qwq-preview-family",
+          "rationale": "The reviewed QwQ preview belongs to the Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "qwq-32b-preview",
+          "provider": "nanogpt",
+          "logical": "qwen/qwq-32b-preview",
+          "class": "qwen"
+        },
+        {
+          "id": "nanogpt-grayline-qwen-family",
+          "rationale": "The reviewed GrayLine deployment is a Qwen derivative",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "GrayLine-Qwen3-8B",
+          "provider": "nanogpt",
+          "logical": "soob3123/GrayLine-Qwen3-8B",
+          "class": "qwen"
+        },
+        {
+          "id": "novita-r1-qwen-family",
+          "rationale": "The reviewed distillation lineage follows the Qwen student architecture",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "deepseek-r1-0528-qwen3-8b",
+          "provider": "novita",
+          "logical": "deepseek/deepseek-r1-0528-qwen3-8b",
+          "class": "qwen"
+        },
+        {
+          "id": "openrouter-qwq-family",
+          "rationale": "The reviewed QwQ deployment belongs to the Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "qwq-32b",
+          "provider": "openrouter",
+          "logical": "qwen/qwq-32b",
+          "class": "qwen"
+        },
+        {
+          "id": "umans-qwen-3-6-family",
+          "rationale": "The opaque Umans deployment is backed by the reviewed Qwen 3.6 family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "umans-qwen3.6-35b-a3b",
+          "provider": "umans",
+          "logical": "umans-qwen3.6-35b-a3b",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-2-5-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen-2-5-7b-p",
+          "provider": "venice",
+          "logical": "e2ee-qwen-2-5-7b-p",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-3-30b-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-30b-a3b-p",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-30b-a3b-p",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-3-5-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-5-122b-a10b",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-5-122b-a10b",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-3-6-27b-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-6-27b",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-6-27b",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-3-6-35b-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-6-35b-a3b",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-6-35b-a3b",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-3-6-uncensored-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-6-35b-a3b-uncensored-p",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-6-35b-a3b-uncensored-p",
+          "class": "qwen"
+        },
+        {
+          "id": "venice-e2ee-qwen-vl-family",
+          "rationale": "The opaque Venice E2EE deployment is backed by the reviewed Qwen family",
+          "provenance": "fixtures/llm-oracle/catalog/models.normalized.json",
+          "model": "e2ee-qwen3-vl-30b-a3b-p",
+          "provider": "venice",
+          "logical": "e2ee-qwen3-vl-30b-a3b-p",
+          "class": "qwen"
+        }
+      ]
+    },
+    {
+      "id": "stepfun",
+      "matchers": [
+        {
+          "kind": "bounded",
+          "token": "step"
+        }
+      ],
+      "families": [
+        {
+          "id": "step",
+          "glob": "*step*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "unknown",
+      "matchers": [],
+      "families": [],
+      "revisionPrefixes": [],
+      "skipBare": [],
+      "overrides": []
+    },
+    {
+      "id": "xai",
+      "matchers": [
+        {
+          "kind": "prefix",
+          "token": "cursor-grok-"
+        },
+        {
+          "kind": "bounded",
+          "token": "grok"
+        },
+        {
+          "kind": "namespace",
+          "token": "x-ai"
+        },
+        {
+          "kind": "namespace",
+          "token": "xai",
+          "bounded": true
+        }
+      ],
+      "families": [
+        {
+          "id": "grok",
+          "glob": "*grok*",
+          "priority": 0
+        }
+      ],
+      "revisionPrefixes": [
+        {
+          "prefix": "cursor-grok-"
+        },
+        {
+          "prefix": "grok-",
+          "anywhere": true
+        }
+      ],
+      "skipBare": [],
+      "overrides": []
+    }
+  ],
+  "collapse": {
+    "suffixes": [
+      {
+        "suffix": "-thinking",
+        "thinking": true
+      },
+      {
+        "suffix": "-extra-high",
+        "effort": "xhigh"
+      },
+      {
+        "suffix": "-none",
+        "effort": "off"
+      },
+      {
+        "suffix": "-minimal",
+        "effort": "minimal"
+      },
+      {
+        "suffix": "-medium",
+        "effort": "medium"
+      },
+      {
+        "suffix": "-xhigh",
+        "effort": "xhigh"
+      },
+      {
+        "suffix": "-high",
+        "effort": "high"
+      },
+      {
+        "suffix": "-low",
+        "effort": "low"
+      },
+      {
+        "suffix": "-max",
+        "effort": "max",
+        "exceptBarePrefix": "qwen"
+      }
+    ],
+    "pairTokens": [
+      "thinking",
+      "reasoning",
+      "reasoner"
+    ],
+    "lanes": [
+      {
+        "suffix": "-fast",
+        "providers": [
+          "cursor"
+        ]
+      }
+    ],
+    "routingVariants": [
+      {
+        "suffix": "-wm",
+        "providers": [
+          "openai-codex",
+          "openai-codex-device"
+        ]
+      }
+    ],
+    "effortFamilies": [
+      {
+        "provider": "cursor",
+        "logical": "gpt-5.6-luna",
+        "aliases": []
+      },
+      {
+        "provider": "cursor",
+        "logical": "gpt-5.6-sol",
+        "aliases": []
+      },
+      {
+        "provider": "cursor",
+        "logical": "gpt-5.6-terra",
+        "aliases": []
+      }
+    ],
+    "variantFamilies": [
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-{rev}-flash",
+        "name": "Gemini {rev} Flash",
+        "members": [
+          "gemini-{rev}-flash-low",
+          "gemini-{rev}-flash-medium",
+          "gemini-{rev}-flash-high",
+          "gemini-{rev}-flash-tiered"
+        ],
+        "routing": {
+          "minimal": "gemini-{rev}-flash-low",
+          "low": "gemini-{rev}-flash-low",
+          "medium": "gemini-{rev}-flash-medium",
+          "high": "gemini-{rev}-flash-high"
+        },
+        "revision": ">=3.6",
+        "mode": "google-level",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-4-argon",
+        "name": "Gemini 4 Argon",
+        "members": [
+          "gemini-4-argon-low",
+          "gemini-4-argon-medium",
+          "gemini-4-argon-high"
+        ],
+        "routing": {
+          "low": "gemini-4-argon-low",
+          "medium": "gemini-4-argon-medium",
+          "high": "gemini-4-argon-high"
+        },
+        "mode": "google-level",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-3.5-flash",
+        "name": "Gemini 3.5 Flash",
+        "members": [
+          "gemini-3.5-flash-extra-low",
+          "gemini-3.5-flash-low",
+          "gemini-3-flash-agent"
+        ],
+        "routing": {
+          "off": "gemini-3.5-flash-extra-low",
+          "minimal": "gemini-3.5-flash-extra-low",
+          "low": "gemini-3.5-flash-extra-low",
+          "medium": "gemini-3.5-flash-low",
+          "high": "gemini-3-flash-agent"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "effortBudgets": {
+          "minimal": 1000,
+          "low": 1000,
+          "medium": 4000,
+          "high": 10000
+        },
+        "extraAliases": [
+          "gemini-3-flash"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-3.1-pro",
+        "name": "Gemini 3.1 Pro",
+        "members": [
+          "gemini-3.1-pro-low",
+          "gemini-pro-agent",
+          "gemini-3.1-pro-high"
+        ],
+        "routing": {
+          "off": "gemini-3.1-pro-low",
+          "low": "gemini-3.1-pro-low",
+          "high": "gemini-pro-agent"
+        },
+        "mode": "budget",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "effortBudgets": {
+          "low": 1001,
+          "high": 10001
+        },
+        "retiredMembers": [
+          "gemini-3.1-pro-high"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-3-pro",
+        "name": "Gemini 3 Pro",
+        "members": [
+          "gemini-3-pro-low",
+          "gemini-3-pro-high"
+        ],
+        "routing": {
+          "off": "gemini-3-pro-low",
+          "low": "gemini-3-pro-low",
+          "high": "gemini-3-pro-high"
+        },
+        "mode": "google-level",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gpt-oss-120b",
+        "name": "GPT-OSS 120B",
+        "members": [
+          "gpt-oss-120b-medium"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-opus-5-5",
+        "name": "Claude Opus 5.5",
+        "members": [
+          "claude-opus-5-5-low",
+          "claude-opus-5-5-medium",
+          "claude-opus-5-5-high"
+        ],
+        "routing": {
+          "low": "claude-opus-5-5-low",
+          "medium": "claude-opus-5-5-medium",
+          "high": "claude-opus-5-5-high"
+        },
+        "mode": "budget",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
+        "members": [
+          "claude-sonnet-5-5-low",
+          "claude-sonnet-5-5-medium",
+          "claude-sonnet-5-5-high"
+        ],
+        "routing": {
+          "low": "claude-sonnet-5-5-low",
+          "medium": "claude-sonnet-5-5-medium",
+          "high": "claude-sonnet-5-5-high"
+        },
+        "mode": "budget",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6",
+        "members": [
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-6-thinking"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "retiredMembers": [
+          "claude-sonnet-4-6-thinking"
+        ]
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "members": [
+          "claude-opus-4-6-thinking",
+          "claude-opus-4-6"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "retiredMembers": [
+          "claude-opus-4-6"
+        ]
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-sonnet-4-5",
+        "name": "Claude Sonnet 4.5",
+        "members": [
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-5-thinking"
+        ],
+        "routing": {
+          "off": "claude-sonnet-4-5",
+          "minimal": "claude-sonnet-4-5-thinking",
+          "low": "claude-sonnet-4-5-thinking",
+          "medium": "claude-sonnet-4-5-thinking",
+          "high": "claude-sonnet-4-5-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "claude-opus-4-5",
+        "name": "Claude Opus 4.5",
+        "members": [
+          "claude-opus-4-5",
+          "claude-opus-4-5-thinking"
+        ],
+        "routing": {
+          "off": "claude-opus-4-5",
+          "minimal": "claude-opus-4-5-thinking",
+          "low": "claude-opus-4-5-thinking",
+          "medium": "claude-opus-4-5-thinking",
+          "high": "claude-opus-4-5-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "google-antigravity",
+        "id": "gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "members": [
+          "gemini-2.5-flash",
+          "gemini-2.5-flash-thinking"
+        ],
+        "routing": {
+          "off": "gemini-2.5-flash",
+          "minimal": "gemini-2.5-flash-thinking",
+          "low": "gemini-2.5-flash-thinking",
+          "medium": "gemini-2.5-flash-thinking",
+          "high": "gemini-2.5-flash-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gemini-{rev}-flash",
+        "name": "Gemini {rev} Flash",
+        "members": [
+          "gemini-{rev}-flash-low",
+          "gemini-{rev}-flash-medium",
+          "gemini-{rev}-flash-high",
+          "gemini-{rev}-flash-tiered"
+        ],
+        "routing": {
+          "minimal": "gemini-{rev}-flash-low",
+          "low": "gemini-{rev}-flash-low",
+          "medium": "gemini-{rev}-flash-medium",
+          "high": "gemini-{rev}-flash-high"
+        },
+        "revision": ">=3.6",
+        "mode": "google-level",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gemini-3.5-flash",
+        "name": "Gemini 3.5 Flash",
+        "members": [
+          "gemini-3.5-flash-extra-low",
+          "gemini-3.5-flash-low",
+          "gemini-3-flash-agent"
+        ],
+        "routing": {
+          "off": "gemini-3.5-flash-extra-low",
+          "minimal": "gemini-3-flash-agent",
+          "low": "gemini-3.5-flash-extra-low",
+          "medium": "gemini-3.5-flash-extra-low",
+          "high": "gemini-3.5-flash-low"
+        },
+        "mode": "google-level",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "extraAliases": [
+          "gemini-3-flash"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gemini-3.1-pro",
+        "name": "Gemini 3.1 Pro",
+        "members": [
+          "gemini-3.1-pro-low",
+          "gemini-pro-agent",
+          "gemini-3.1-pro-high"
+        ],
+        "routing": {
+          "off": "gemini-3.1-pro-low",
+          "low": "gemini-3.1-pro-low",
+          "high": "gemini-pro-agent"
+        },
+        "mode": "google-level",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "retiredMembers": [
+          "gemini-3.1-pro-high"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gemini-3-pro",
+        "name": "Gemini 3 Pro",
+        "members": [
+          "gemini-3-pro-low",
+          "gemini-3-pro-high"
+        ],
+        "routing": {
+          "off": "gemini-3-pro-low",
+          "low": "gemini-3-pro-low",
+          "high": "gemini-3-pro-high"
+        },
+        "mode": "google-level",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "suppressWhenOff": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gpt-oss-120b",
+        "name": "GPT-OSS 120B",
+        "members": [
+          "gpt-oss-120b-medium"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6",
+        "members": [
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-6-thinking"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "retiredMembers": [
+          "claude-sonnet-4-6-thinking"
+        ]
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "members": [
+          "claude-opus-4-6-thinking",
+          "claude-opus-4-6"
+        ],
+        "routing": {},
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "retiredMembers": [
+          "claude-opus-4-6"
+        ]
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "claude-sonnet-4-5",
+        "name": "Claude Sonnet 4.5",
+        "members": [
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-5-thinking"
+        ],
+        "routing": {
+          "off": "claude-sonnet-4-5",
+          "minimal": "claude-sonnet-4-5-thinking",
+          "low": "claude-sonnet-4-5-thinking",
+          "medium": "claude-sonnet-4-5-thinking",
+          "high": "claude-sonnet-4-5-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "claude-opus-4-5",
+        "name": "Claude Opus 4.5",
+        "members": [
+          "claude-opus-4-5",
+          "claude-opus-4-5-thinking"
+        ],
+        "routing": {
+          "off": "claude-opus-4-5",
+          "minimal": "claude-opus-4-5-thinking",
+          "low": "claude-opus-4-5-thinking",
+          "medium": "claude-opus-4-5-thinking",
+          "high": "claude-opus-4-5-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "google-gemini-cli",
+        "id": "gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "members": [
+          "gemini-2.5-flash",
+          "gemini-2.5-flash-thinking"
+        ],
+        "routing": {
+          "off": "gemini-2.5-flash",
+          "minimal": "gemini-2.5-flash-thinking",
+          "low": "gemini-2.5-flash-thinking",
+          "medium": "gemini-2.5-flash-thinking",
+          "high": "gemini-2.5-flash-thinking"
+        },
+        "mode": "budget",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "preserveAbsentEffortRoutes": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-5",
+        "name": "Claude Opus 5",
+        "members": [
+          "claude-opus-5-low",
+          "claude-opus-5-medium",
+          "claude-opus-5-high",
+          "claude-opus-5-xhigh",
+          "claude-opus-5-max"
+        ],
+        "routing": {
+          "low": "claude-opus-5-low",
+          "medium": "claude-opus-5-medium",
+          "high": "claude-opus-5-high",
+          "xhigh": "claude-opus-5-xhigh",
+          "max": "claude-opus-5-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-5-fast",
+        "name": "Claude Opus 5 Fast",
+        "members": [
+          "claude-opus-5-low-fast",
+          "claude-opus-5-medium-fast",
+          "claude-opus-5-high-fast",
+          "claude-opus-5-xhigh-fast",
+          "claude-opus-5-max-fast"
+        ],
+        "routing": {
+          "low": "claude-opus-5-low-fast",
+          "medium": "claude-opus-5-medium-fast",
+          "high": "claude-opus-5-high-fast",
+          "xhigh": "claude-opus-5-xhigh-fast",
+          "max": "claude-opus-5-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-fable-5",
+        "name": "Claude Fable 5",
+        "members": [
+          "claude-5-fable-low",
+          "claude-5-fable-medium",
+          "claude-5-fable-high",
+          "claude-5-fable-xhigh",
+          "claude-5-fable-max"
+        ],
+        "routing": {
+          "low": "claude-5-fable-low",
+          "medium": "claude-5-fable-medium",
+          "high": "claude-5-fable-high",
+          "xhigh": "claude-5-fable-xhigh",
+          "max": "claude-5-fable-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-sonnet-5",
+        "name": "Claude Sonnet 5",
+        "members": [
+          "claude-sonnet-5-low",
+          "claude-sonnet-5-medium",
+          "claude-sonnet-5-high",
+          "claude-sonnet-5-xhigh",
+          "claude-sonnet-5-max"
+        ],
+        "routing": {
+          "low": "claude-sonnet-5-low",
+          "medium": "claude-sonnet-5-medium",
+          "high": "claude-sonnet-5-high",
+          "xhigh": "claude-sonnet-5-xhigh",
+          "max": "claude-sonnet-5-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-4-7",
+        "name": "Claude Opus 4.7",
+        "members": [
+          "claude-opus-4-7-low",
+          "claude-opus-4-7-medium",
+          "claude-opus-4-7-high",
+          "claude-opus-4-7-xhigh",
+          "claude-opus-4-7-max"
+        ],
+        "routing": {
+          "low": "claude-opus-4-7-low",
+          "medium": "claude-opus-4-7-medium",
+          "high": "claude-opus-4-7-high",
+          "xhigh": "claude-opus-4-7-xhigh",
+          "max": "claude-opus-4-7-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-4-7-fast",
+        "name": "Claude Opus 4.7 Fast",
+        "members": [
+          "claude-opus-4-7-low-fast",
+          "claude-opus-4-7-medium-fast",
+          "claude-opus-4-7-high-fast",
+          "claude-opus-4-7-xhigh-fast",
+          "claude-opus-4-7-max-fast"
+        ],
+        "routing": {
+          "low": "claude-opus-4-7-low-fast",
+          "medium": "claude-opus-4-7-medium-fast",
+          "high": "claude-opus-4-7-high-fast",
+          "xhigh": "claude-opus-4-7-xhigh-fast",
+          "max": "claude-opus-4-7-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-4-8",
+        "name": "Claude Opus 4.8",
+        "members": [
+          "claude-opus-4-8-low",
+          "claude-opus-4-8-medium",
+          "claude-opus-4-8-high",
+          "claude-opus-4-8-xhigh",
+          "claude-opus-4-8-max"
+        ],
+        "routing": {
+          "low": "claude-opus-4-8-low",
+          "medium": "claude-opus-4-8-medium",
+          "high": "claude-opus-4-8-high",
+          "xhigh": "claude-opus-4-8-xhigh",
+          "max": "claude-opus-4-8-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "claude-opus-4-8-fast",
+        "name": "Claude Opus 4.8 Fast",
+        "members": [
+          "claude-opus-4-8-low-fast",
+          "claude-opus-4-8-medium-fast",
+          "claude-opus-4-8-high-fast",
+          "claude-opus-4-8-xhigh-fast",
+          "claude-opus-4-8-max-fast"
+        ],
+        "routing": {
+          "low": "claude-opus-4-8-low-fast",
+          "medium": "claude-opus-4-8-medium-fast",
+          "high": "claude-opus-4-8-high-fast",
+          "xhigh": "claude-opus-4-8-xhigh-fast",
+          "max": "claude-opus-4-8-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-2",
+        "name": "GPT-5.2",
+        "members": [
+          "MODEL_GPT_5_2_NONE",
+          "MODEL_GPT_5_2_LOW",
+          "MODEL_GPT_5_2_MEDIUM",
+          "MODEL_GPT_5_2_HIGH",
+          "MODEL_GPT_5_2_XHIGH"
+        ],
+        "routing": {
+          "off": "MODEL_GPT_5_2_NONE",
+          "low": "MODEL_GPT_5_2_LOW",
+          "medium": "MODEL_GPT_5_2_MEDIUM",
+          "high": "MODEL_GPT_5_2_HIGH",
+          "xhigh": "MODEL_GPT_5_2_XHIGH"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-3-codex",
+        "name": "GPT-5.3 Codex",
+        "members": [
+          "gpt-5-3-codex-low",
+          "gpt-5-3-codex-medium",
+          "gpt-5-3-codex-high",
+          "gpt-5-3-codex-xhigh"
+        ],
+        "routing": {
+          "low": "gpt-5-3-codex-low",
+          "medium": "gpt-5-3-codex-medium",
+          "high": "gpt-5-3-codex-high",
+          "xhigh": "gpt-5-3-codex-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-3-codex-fast",
+        "name": "GPT-5.3 Codex Fast",
+        "members": [
+          "gpt-5-3-codex-low-priority",
+          "gpt-5-3-codex-medium-priority",
+          "gpt-5-3-codex-high-priority",
+          "gpt-5-3-codex-xhigh-priority"
+        ],
+        "routing": {
+          "low": "gpt-5-3-codex-low-priority",
+          "medium": "gpt-5-3-codex-medium-priority",
+          "high": "gpt-5-3-codex-high-priority",
+          "xhigh": "gpt-5-3-codex-xhigh-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-4",
+        "name": "GPT-5.4",
+        "members": [
+          "gpt-5-4-none",
+          "gpt-5-4-low",
+          "gpt-5-4-medium",
+          "gpt-5-4-high",
+          "gpt-5-4-xhigh"
+        ],
+        "routing": {
+          "off": "gpt-5-4-none",
+          "low": "gpt-5-4-low",
+          "medium": "gpt-5-4-medium",
+          "high": "gpt-5-4-high",
+          "xhigh": "gpt-5-4-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-4-fast",
+        "name": "GPT-5.4 Fast",
+        "members": [
+          "gpt-5-4-none-priority",
+          "gpt-5-4-low-priority",
+          "gpt-5-4-medium-priority",
+          "gpt-5-4-high-priority",
+          "gpt-5-4-xhigh-priority"
+        ],
+        "routing": {
+          "off": "gpt-5-4-none-priority",
+          "low": "gpt-5-4-low-priority",
+          "medium": "gpt-5-4-medium-priority",
+          "high": "gpt-5-4-high-priority",
+          "xhigh": "gpt-5-4-xhigh-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-4-mini",
+        "name": "GPT-5.4 Mini",
+        "members": [
+          "gpt-5-4-mini-low",
+          "gpt-5-4-mini-medium",
+          "gpt-5-4-mini-high",
+          "gpt-5-4-mini-xhigh"
+        ],
+        "routing": {
+          "low": "gpt-5-4-mini-low",
+          "medium": "gpt-5-4-mini-medium",
+          "high": "gpt-5-4-mini-high",
+          "xhigh": "gpt-5-4-mini-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-5",
+        "name": "GPT-5.5",
+        "members": [
+          "gpt-5-5-none",
+          "gpt-5-5-low",
+          "gpt-5-5-medium",
+          "gpt-5-5-high",
+          "gpt-5-5-xhigh"
+        ],
+        "routing": {
+          "off": "gpt-5-5-none",
+          "low": "gpt-5-5-low",
+          "medium": "gpt-5-5-medium",
+          "high": "gpt-5-5-high",
+          "xhigh": "gpt-5-5-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-5-fast",
+        "name": "GPT-5.5 Fast",
+        "members": [
+          "gpt-5-5-none-priority",
+          "gpt-5-5-low-priority",
+          "gpt-5-5-medium-priority",
+          "gpt-5-5-high-priority",
+          "gpt-5-5-xhigh-priority"
+        ],
+        "routing": {
+          "off": "gpt-5-5-none-priority",
+          "low": "gpt-5-5-low-priority",
+          "medium": "gpt-5-5-medium-priority",
+          "high": "gpt-5-5-high-priority",
+          "xhigh": "gpt-5-5-xhigh-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-luna",
+        "name": "GPT-5.6 Luna",
+        "members": [
+          "gpt-5-6-luna-none",
+          "gpt-5-6-luna-low",
+          "gpt-5-6-luna-medium",
+          "gpt-5-6-luna-high",
+          "gpt-5-6-luna-xhigh",
+          "gpt-5-6-luna-max"
+        ],
+        "routing": {
+          "off": "gpt-5-6-luna-none",
+          "low": "gpt-5-6-luna-low",
+          "medium": "gpt-5-6-luna-medium",
+          "high": "gpt-5-6-luna-high",
+          "xhigh": "gpt-5-6-luna-xhigh",
+          "max": "gpt-5-6-luna-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-luna-fast",
+        "name": "GPT-5.6 Luna Fast",
+        "members": [
+          "gpt-5-6-luna-none-priority",
+          "gpt-5-6-luna-low-priority",
+          "gpt-5-6-luna-medium-priority",
+          "gpt-5-6-luna-high-priority",
+          "gpt-5-6-luna-xhigh-priority",
+          "gpt-5-6-luna-max-priority"
+        ],
+        "routing": {
+          "off": "gpt-5-6-luna-none-priority",
+          "low": "gpt-5-6-luna-low-priority",
+          "medium": "gpt-5-6-luna-medium-priority",
+          "high": "gpt-5-6-luna-high-priority",
+          "xhigh": "gpt-5-6-luna-xhigh-priority",
+          "max": "gpt-5-6-luna-max-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-sol",
+        "name": "GPT-5.6 Sol",
+        "members": [
+          "gpt-5-6-sol-none",
+          "gpt-5-6-sol-low",
+          "gpt-5-6-sol-medium",
+          "gpt-5-6-sol-high",
+          "gpt-5-6-sol-xhigh",
+          "gpt-5-6-sol-max"
+        ],
+        "routing": {
+          "off": "gpt-5-6-sol-none",
+          "low": "gpt-5-6-sol-low",
+          "medium": "gpt-5-6-sol-medium",
+          "high": "gpt-5-6-sol-high",
+          "xhigh": "gpt-5-6-sol-xhigh",
+          "max": "gpt-5-6-sol-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-sol-fast",
+        "name": "GPT-5.6 Sol Fast",
+        "members": [
+          "gpt-5-6-sol-none-priority",
+          "gpt-5-6-sol-low-priority",
+          "gpt-5-6-sol-medium-priority",
+          "gpt-5-6-sol-high-priority",
+          "gpt-5-6-sol-xhigh-priority",
+          "gpt-5-6-sol-max-priority"
+        ],
+        "routing": {
+          "off": "gpt-5-6-sol-none-priority",
+          "low": "gpt-5-6-sol-low-priority",
+          "medium": "gpt-5-6-sol-medium-priority",
+          "high": "gpt-5-6-sol-high-priority",
+          "xhigh": "gpt-5-6-sol-xhigh-priority",
+          "max": "gpt-5-6-sol-max-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-terra",
+        "name": "GPT-5.6 Terra",
+        "members": [
+          "gpt-5-6-terra-none",
+          "gpt-5-6-terra-low",
+          "gpt-5-6-terra-medium",
+          "gpt-5-6-terra-high",
+          "gpt-5-6-terra-xhigh",
+          "gpt-5-6-terra-max"
+        ],
+        "routing": {
+          "off": "gpt-5-6-terra-none",
+          "low": "gpt-5-6-terra-low",
+          "medium": "gpt-5-6-terra-medium",
+          "high": "gpt-5-6-terra-high",
+          "xhigh": "gpt-5-6-terra-xhigh",
+          "max": "gpt-5-6-terra-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gpt-5-6-terra-fast",
+        "name": "GPT-5.6 Terra Fast",
+        "members": [
+          "gpt-5-6-terra-none-priority",
+          "gpt-5-6-terra-low-priority",
+          "gpt-5-6-terra-medium-priority",
+          "gpt-5-6-terra-high-priority",
+          "gpt-5-6-terra-xhigh-priority",
+          "gpt-5-6-terra-max-priority"
+        ],
+        "routing": {
+          "off": "gpt-5-6-terra-none-priority",
+          "low": "gpt-5-6-terra-low-priority",
+          "medium": "gpt-5-6-terra-medium-priority",
+          "high": "gpt-5-6-terra-high-priority",
+          "xhigh": "gpt-5-6-terra-xhigh-priority",
+          "max": "gpt-5-6-terra-max-priority"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "kimi-k3",
+        "name": "Kimi K3",
+        "members": [
+          "kimi-k3-low",
+          "kimi-k3-high",
+          "kimi-k3-max"
+        ],
+        "routing": {
+          "low": "kimi-k3-low",
+          "high": "kimi-k3-high",
+          "max": "kimi-k3-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "swe-1-7",
+        "name": "SWE-1.7",
+        "members": [
+          "swe-1-7-medium",
+          "swe-1-7"
+        ],
+        "routing": {
+          "medium": "swe-1-7-medium",
+          "max": "swe-1-7"
+        },
+        "mode": "effort",
+        "efforts": [
+          "medium",
+          "max"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "grok-4-5",
+        "name": "Grok 4.5",
+        "members": [
+          "grok-4-5-low",
+          "grok-4-5-medium",
+          "grok-4-5-high"
+        ],
+        "routing": {
+          "low": "grok-4-5-low",
+          "medium": "grok-4-5-medium",
+          "high": "grok-4-5-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "inkling",
+        "name": "Inkling",
+        "members": [
+          "inkling-none",
+          "inkling-low",
+          "inkling-medium",
+          "inkling-high",
+          "inkling-xhigh",
+          "inkling-max"
+        ],
+        "routing": {
+          "off": "inkling-none",
+          "low": "inkling-low",
+          "medium": "inkling-medium",
+          "high": "inkling-high",
+          "xhigh": "inkling-xhigh",
+          "max": "inkling-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gemini-3-1-pro",
+        "name": "Gemini 3.1 Pro",
+        "members": [
+          "gemini-3-1-pro-low",
+          "gemini-3-1-pro-high"
+        ],
+        "routing": {
+          "low": "gemini-3-1-pro-low",
+          "high": "gemini-3-1-pro-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gemini-3-5-flash",
+        "name": "Gemini 3.5 Flash",
+        "members": [
+          "gemini-3-5-flash-minimal",
+          "gemini-3-5-flash-low",
+          "gemini-3-5-flash-medium",
+          "gemini-3-5-flash-high"
+        ],
+        "routing": {
+          "minimal": "gemini-3-5-flash-minimal",
+          "low": "gemini-3-5-flash-low",
+          "medium": "gemini-3-5-flash-medium",
+          "high": "gemini-3-5-flash-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gemini-3-6-flash",
+        "name": "Gemini 3.6 Flash",
+        "members": [
+          "gemini-3-6-flash-minimal",
+          "gemini-3-6-flash-low",
+          "gemini-3-6-flash-medium",
+          "gemini-3-6-flash-high"
+        ],
+        "routing": {
+          "minimal": "gemini-3-6-flash-minimal",
+          "low": "gemini-3-6-flash-low",
+          "medium": "gemini-3-6-flash-medium",
+          "high": "gemini-3-6-flash-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "gemini-3-flash",
+        "name": "Gemini 3 Flash",
+        "members": [
+          "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
+          "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
+          "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+          "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH"
+        ],
+        "routing": {
+          "minimal": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
+          "low": "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
+          "medium": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
+          "high": "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH"
+        },
+        "mode": "effort",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "glm-5-2",
+        "name": "GLM-5.2",
+        "members": [
+          "glm-5-2",
+          "glm-5-2-none",
+          "glm-5-2-max"
+        ],
+        "routing": {
+          "high": "glm-5-2",
+          "xhigh": "glm-5-2"
+        },
+        "mode": "effort",
+        "efforts": [
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true
+      },
+      {
+        "provider": "devin",
+        "id": "glm-5-2-1m",
+        "name": "GLM-5.2 1M",
+        "members": [
+          "glm-5-2-none-1m",
+          "glm-5-2-1m",
+          "glm-5-2-max-1m"
+        ],
+        "routing": {
+          "off": "glm-5-2-none-1m",
+          "high": "glm-5-2-1m",
+          "xhigh": "glm-5-2-max-1m"
+        },
+        "mode": "effort",
+        "efforts": [
+          "high",
+          "xhigh"
+        ]
+      },
+      {
+        "provider": "devin",
+        "id": "gemini-3-7-flash",
+        "name": "Gemini 3.7 Flash",
+        "members": [
+          "gemini-3-7-flash-medium",
+          "gemini-3-7-flash-minimal",
+          "gemini-3-7-flash-low",
+          "gemini-3-7-flash-high"
+        ],
+        "routing": {
+          "minimal": "gemini-3-7-flash-minimal",
+          "low": "gemini-3-7-flash-low",
+          "medium": "gemini-3-7-flash-medium",
+          "high": "gemini-3-7-flash-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "defaultLevel": "medium",
+        "requiresEffort": true,
+        "defaultMember": "gemini-3-7-flash-medium"
+      },
+      {
+        "provider": "devin",
+        "id": "swe-1-7-lightning",
+        "name": "SWE-1.7 Lightning",
+        "members": [
+          "swe-1-7-lightning-medium",
+          "swe-1-7-lightning"
+        ],
+        "routing": {
+          "medium": "swe-1-7-lightning-medium",
+          "max": "swe-1-7-lightning"
+        },
+        "mode": "effort",
+        "efforts": [
+          "medium",
+          "max"
+        ],
+        "defaultLevel": "medium",
+        "requiresEffort": true,
+        "defaultMember": "swe-1-7-lightning-medium"
+      },
+      {
+        "provider": "devin",
+        "id": "grok-4-6",
+        "name": "Grok 4.6",
+        "members": [
+          "grok-4-6-medium",
+          "grok-4-6-low",
+          "grok-4-6-high",
+          "grok-4-6-xhigh"
+        ],
+        "routing": {
+          "low": "grok-4-6-low",
+          "medium": "grok-4-6-medium",
+          "high": "grok-4-6-high",
+          "xhigh": "grok-4-6-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "defaultLevel": "medium",
+        "requiresEffort": true,
+        "defaultMember": "grok-4-6-medium"
+      },
+      {
+        "provider": "devin",
+        "id": "deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash",
+        "members": [
+          "deepseek-v4-flash-high",
+          "deepseek-v4-flash-low",
+          "deepseek-v4-flash-max"
+        ],
+        "routing": {
+          "low": "deepseek-v4-flash-low",
+          "high": "deepseek-v4-flash-high",
+          "max": "deepseek-v4-flash-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultLevel": "high",
+        "requiresEffort": true,
+        "defaultMember": "deepseek-v4-flash-high"
+      },
+      {
+        "provider": "devin",
+        "id": "deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro",
+        "members": [
+          "deepseek-v4-pro-high",
+          "deepseek-v4-pro-low",
+          "deepseek-v4-pro-max"
+        ],
+        "routing": {
+          "low": "deepseek-v4-pro-low",
+          "high": "deepseek-v4-pro-high",
+          "max": "deepseek-v4-pro-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "defaultLevel": "high",
+        "requiresEffort": true,
+        "defaultMember": "deepseek-v4-pro-high"
+      },
+      {
+        "provider": "devin",
+        "id": "nemotron-3-ultra",
+        "name": "Nemotron 3 Ultra",
+        "members": [
+          "nemotron-3-ultra-high",
+          "nemotron-3-ultra-none",
+          "nemotron-3-ultra-medium"
+        ],
+        "routing": {
+          "off": "nemotron-3-ultra-none",
+          "medium": "nemotron-3-ultra-medium",
+          "high": "nemotron-3-ultra-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "medium",
+          "high"
+        ],
+        "defaultLevel": "high",
+        "defaultMember": "nemotron-3-ultra-high"
+      },
+      {
+        "provider": "devin",
+        "id": "claude-haiku-4-5",
+        "name": "Claude Haiku 4.5",
+        "members": [
+          "MODEL_PRIVATE_11"
+        ],
+        "routing": {},
+        "noThinking": true
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-4.5",
+        "name": "Grok 4.5",
+        "members": [
+          "cursor-grok-4.5-low",
+          "cursor-grok-4.5-medium",
+          "cursor-grok-4.5-high"
+        ],
+        "routing": {
+          "low": "cursor-grok-4.5-low",
+          "medium": "cursor-grok-4.5-medium",
+          "high": "cursor-grok-4.5-high"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-4.5-medium",
+        "extraAliases": [
+          "grok-4.5"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-4.5-fast",
+        "name": "Grok 4.5 Fast",
+        "members": [
+          "cursor-grok-4.5-low-fast",
+          "cursor-grok-4.5-medium-fast",
+          "cursor-grok-4.5-high-fast"
+        ],
+        "routing": {
+          "low": "cursor-grok-4.5-low-fast",
+          "medium": "cursor-grok-4.5-medium-fast",
+          "high": "cursor-grok-4.5-high-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-4.5-medium-fast",
+        "extraAliases": [
+          "grok-4.5-fast"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-4.6",
+        "name": "Grok 4.6",
+        "members": [
+          "cursor-grok-4.6-low",
+          "cursor-grok-4.6-medium",
+          "cursor-grok-4.6-high",
+          "cursor-grok-4.6-xhigh"
+        ],
+        "routing": {
+          "low": "cursor-grok-4.6-low",
+          "medium": "cursor-grok-4.6-medium",
+          "high": "cursor-grok-4.6-high",
+          "xhigh": "cursor-grok-4.6-xhigh"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-4.6-medium",
+        "extraAliases": [
+          "grok-4.6"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-4.6-fast",
+        "name": "Grok 4.6 Fast",
+        "members": [
+          "cursor-grok-4.6-low-fast",
+          "cursor-grok-4.6-medium-fast",
+          "cursor-grok-4.6-high-fast",
+          "cursor-grok-4.6-xhigh-fast"
+        ],
+        "routing": {
+          "low": "cursor-grok-4.6-low-fast",
+          "medium": "cursor-grok-4.6-medium-fast",
+          "high": "cursor-grok-4.6-high-fast",
+          "xhigh": "cursor-grok-4.6-xhigh-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-4.6-medium-fast",
+        "extraAliases": [
+          "grok-4.6-fast"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-{rev}",
+        "name": "Grok {rev}",
+        "members": [
+          "cursor-grok-{rev}-low",
+          "cursor-grok-{rev}-medium",
+          "cursor-grok-{rev}-high",
+          "cursor-grok-{rev}-xhigh"
+        ],
+        "routing": {
+          "low": "cursor-grok-{rev}-low",
+          "medium": "cursor-grok-{rev}-medium",
+          "high": "cursor-grok-{rev}-high",
+          "xhigh": "cursor-grok-{rev}-xhigh"
+        },
+        "revision": ">=4.7",
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-{rev}-medium"
+      },
+      {
+        "provider": "cursor",
+        "id": "cursor-grok-{rev}-fast",
+        "name": "Grok {rev} Fast",
+        "members": [
+          "cursor-grok-{rev}-low-fast",
+          "cursor-grok-{rev}-medium-fast",
+          "cursor-grok-{rev}-high-fast",
+          "cursor-grok-{rev}-xhigh-fast"
+        ],
+        "routing": {
+          "low": "cursor-grok-{rev}-low-fast",
+          "medium": "cursor-grok-{rev}-medium-fast",
+          "high": "cursor-grok-{rev}-high-fast",
+          "xhigh": "cursor-grok-{rev}-xhigh-fast"
+        },
+        "revision": ">=4.7",
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "cursor-grok-{rev}-medium-fast"
+      },
+      {
+        "provider": "cursor",
+        "id": "grok-{rev}",
+        "name": "Grok {rev}",
+        "members": [
+          "grok-{rev}-low",
+          "grok-{rev}-medium",
+          "grok-{rev}-high",
+          "grok-{rev}-xhigh"
+        ],
+        "routing": {
+          "low": "grok-{rev}-low",
+          "medium": "grok-{rev}-medium",
+          "high": "grok-{rev}-high",
+          "xhigh": "grok-{rev}-xhigh"
+        },
+        "revision": ">=4.7",
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "grok-{rev}-medium"
+      },
+      {
+        "provider": "cursor",
+        "id": "grok-{rev}-fast",
+        "name": "Grok {rev} Fast",
+        "members": [
+          "grok-{rev}-low-fast",
+          "grok-{rev}-medium-fast",
+          "grok-{rev}-high-fast",
+          "grok-{rev}-xhigh-fast"
+        ],
+        "routing": {
+          "low": "grok-{rev}-low-fast",
+          "medium": "grok-{rev}-medium-fast",
+          "high": "grok-{rev}-high-fast",
+          "xhigh": "grok-{rev}-xhigh-fast"
+        },
+        "revision": ">=4.7",
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "requiresEffort": true,
+        "defaultMember": "grok-{rev}-medium-fast"
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-luna",
+        "name": "GPT-5.6 Luna",
+        "members": [
+          "gpt-5.6-luna-none",
+          "gpt-5.6-luna-low",
+          "gpt-5.6-luna-medium",
+          "gpt-5.6-luna-high",
+          "gpt-5.6-luna-xhigh",
+          "gpt-5.6-luna-max"
+        ],
+        "routing": {
+          "off": "gpt-5.6-luna-none",
+          "low": "gpt-5.6-luna-low",
+          "medium": "gpt-5.6-luna-medium",
+          "high": "gpt-5.6-luna-high",
+          "xhigh": "gpt-5.6-luna-xhigh",
+          "max": "gpt-5.6-luna-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-luna-fast",
+        "name": "GPT-5.6 Luna Fast",
+        "members": [
+          "gpt-5.6-luna-none-fast",
+          "gpt-5.6-luna-low-fast",
+          "gpt-5.6-luna-medium-fast",
+          "gpt-5.6-luna-high-fast",
+          "gpt-5.6-luna-xhigh-fast",
+          "gpt-5.6-luna-max-fast"
+        ],
+        "routing": {
+          "off": "gpt-5.6-luna-none-fast",
+          "low": "gpt-5.6-luna-low-fast",
+          "medium": "gpt-5.6-luna-medium-fast",
+          "high": "gpt-5.6-luna-high-fast",
+          "xhigh": "gpt-5.6-luna-xhigh-fast",
+          "max": "gpt-5.6-luna-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-sol",
+        "name": "GPT-5.6 Sol",
+        "members": [
+          "gpt-5.6-sol-none",
+          "gpt-5.6-sol-low",
+          "gpt-5.6-sol-medium",
+          "gpt-5.6-sol-high",
+          "gpt-5.6-sol-xhigh",
+          "gpt-5.6-sol-max"
+        ],
+        "routing": {
+          "off": "gpt-5.6-sol-none",
+          "low": "gpt-5.6-sol-low",
+          "medium": "gpt-5.6-sol-medium",
+          "high": "gpt-5.6-sol-high",
+          "xhigh": "gpt-5.6-sol-xhigh",
+          "max": "gpt-5.6-sol-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-sol-fast",
+        "name": "GPT-5.6 Sol Fast",
+        "members": [
+          "gpt-5.6-sol-none-fast",
+          "gpt-5.6-sol-low-fast",
+          "gpt-5.6-sol-medium-fast",
+          "gpt-5.6-sol-high-fast",
+          "gpt-5.6-sol-xhigh-fast",
+          "gpt-5.6-sol-max-fast"
+        ],
+        "routing": {
+          "off": "gpt-5.6-sol-none-fast",
+          "low": "gpt-5.6-sol-low-fast",
+          "medium": "gpt-5.6-sol-medium-fast",
+          "high": "gpt-5.6-sol-high-fast",
+          "xhigh": "gpt-5.6-sol-xhigh-fast",
+          "max": "gpt-5.6-sol-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-terra",
+        "name": "GPT-5.6 Terra",
+        "members": [
+          "gpt-5.6-terra-none",
+          "gpt-5.6-terra-low",
+          "gpt-5.6-terra-medium",
+          "gpt-5.6-terra-high",
+          "gpt-5.6-terra-xhigh",
+          "gpt-5.6-terra-max"
+        ],
+        "routing": {
+          "off": "gpt-5.6-terra-none",
+          "low": "gpt-5.6-terra-low",
+          "medium": "gpt-5.6-terra-medium",
+          "high": "gpt-5.6-terra-high",
+          "xhigh": "gpt-5.6-terra-xhigh",
+          "max": "gpt-5.6-terra-max"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "id": "gpt-5.6-terra-fast",
+        "name": "GPT-5.6 Terra Fast",
+        "members": [
+          "gpt-5.6-terra-none-fast",
+          "gpt-5.6-terra-low-fast",
+          "gpt-5.6-terra-medium-fast",
+          "gpt-5.6-terra-high-fast",
+          "gpt-5.6-terra-xhigh-fast",
+          "gpt-5.6-terra-max-fast"
+        ],
+        "routing": {
+          "off": "gpt-5.6-terra-none-fast",
+          "low": "gpt-5.6-terra-low-fast",
+          "medium": "gpt-5.6-terra-medium-fast",
+          "high": "gpt-5.6-terra-high-fast",
+          "xhigh": "gpt-5.6-terra-xhigh-fast",
+          "max": "gpt-5.6-terra-max-fast"
+        },
+        "mode": "effort",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      }
+    ],
+    "providerAliases": {
+      "devin": {
+        "claude": "claude-sonnet-5",
+        "codex": "gpt-5-3-codex",
+        "gemini": "gemini-3-7-flash",
+        "gpt": "gpt-5-6-terra",
+        "haiku": "claude-haiku-4-5",
+        "opus": "claude-opus-5",
+        "sonnet": "claude-sonnet-5",
+        "swe": "swe-1-7-lightning",
+        "claude-haiku-4.5": "claude-haiku-4-5",
+        "gemini-3.7-flash": "gemini-3-7-flash",
+        "glm-5.2": "glm-5-2",
+        "gpt-5.6-luna": "gpt-5-6-luna",
+        "gpt-5.6-sol": "gpt-5-6-sol",
+        "gpt-5.6-terra": "gpt-5-6-terra",
+        "grok-4.6": "grok-4-6",
+        "swe-1.7": "swe-1-7",
+        "swe-1.7-lightning": "swe-1-7-lightning"
+      },
+      "openai-codex": {
+        "gpt-image-1": "gpt-image-2"
+      }
+    }
+  },
+  "discovery": {
+    "canonicalRecovery": [
+      "gmi-cloud",
+      "opencode-go",
+      "yolo-auto"
+    ],
+    "responsesHintGroups": [
+      [
+        "opencode-go",
+        "opencode-zen"
+      ]
+    ],
+    "responsesRouteModels": {
+      "opencode-go": [
+        "deepseek-v4-flash",
+        "muse-spark-1.2",
+        "muse-spark-1.3"
+      ]
+    },
+    "billingVariantSuffixes": [
+      "-free",
+      "-contributor"
+    ],
+    "trailingMarkers": [
+      "customtools",
+      "cloud",
+      "exacto",
+      "nitro",
+      "original",
+      "optimized",
+      "nvfp4",
+      "fp8",
+      "fp4",
+      "bf16",
+      "int8",
+      "int4",
+      "thinking",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "free"
+    ],
+    "referenceOnlyTrailingMarkers": [
+      "search"
+    ],
+    "proReasoningAliases": {
+      "openai": [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra"
+      ]
+    },
+    "proReasoningSweep": [
+      "openai",
+      "openai-codex"
+    ],
+    "canonicalFamilyTokens": [
+      "claude",
+      "gemini",
+      "gpt",
+      "grok",
+      "glm",
+      "qwen",
+      "minimax",
+      "kimi",
+      "deepseek",
+      "llama",
+      "gemma",
+      "nova",
+      "mistral",
+      "ministral",
+      "pixtral",
+      "codestral",
+      "devstral",
+      "magistral",
+      "ernie",
+      "doubao",
+      "seed",
+      "aion",
+      "olmo",
+      "molmo",
+      "nemotron",
+      "palmyra",
+      "command",
+      "codex",
+      "coder"
+    ],
+    "wrapperPrefixes": [
+      "duo-chat-"
+    ],
+    "syntheticPrefixes": [
+      "hf:"
+    ]
+  }
+}

@@ -83,13 +83,14 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x
 
 
 class Pty:
-    def __init__(self, cmdline, cwd, env):
+    def __init__(self, cmdline, cwd, env, columns=160, rows=50):
         in_r, self.in_w, out_r, out_w = wt.HANDLE(), wt.HANDLE(), wt.HANDLE(), wt.HANDLE()
         assert k32.CreatePipe(ctypes.byref(in_r), ctypes.byref(self.in_w), None, 0)
         assert k32.CreatePipe(ctypes.byref(out_r), ctypes.byref(out_w), None, 0)
         self.out_r = out_r
         self.hpc = ctypes.c_void_p()
-        hr = k32.CreatePseudoConsole(COORD(160, 50), in_r, out_w, 0, ctypes.byref(self.hpc))
+        assert 1 <= columns <= 32767 and 1 <= rows <= 32767
+        hr = k32.CreatePseudoConsole(COORD(columns, rows), in_r, out_w, 0, ctypes.byref(self.hpc))
         assert hr == 0, f"CreatePseudoConsole hr={hr:#x}"
         # The pseudoconsole owns duplicates now.
         k32.CloseHandle(in_r)
@@ -193,7 +194,8 @@ def main() -> int:
         if not exe.exists():
             print(f"FAIL: missing {exe}")
             return 2
-    shutil.rmtree(out, ignore_errors=True)
+    if out.exists():
+        raise SystemExit("FAIL: --out must be a fresh evidence directory")
     for d in ("sessions", "work", "home"):
         (out / d).mkdir(parents=True)
     script = out / "script.json"
@@ -237,12 +239,17 @@ def main() -> int:
 
         # Turn 1: type a line; the fake model calls bash `sleep 30`.
         pty.send(b"run something slow\r")
-        mark = pty.wait_text("ara: tool bash", 20)
-        results["tool_started"] = mark >= 0
+        mark = pty.wait_text("bash: running", 20)
+        # Require actual child output as well as the terminal running card.
+        # Ctrl+C then interrupts a dispatched process, not a display placeholder.
+        started = pty.wait_text("started", 20, max(mark, 0))
+        results["tool_started"] = mark >= 0 and started >= 0
         time.sleep(1.0)
         t_int = time.monotonic()
         pty.send(b"\x03")  # Ctrl+C as Windows Terminal sends it
-        results["interrupt_seen"] = pty.wait_text("interrupt received", 10, max(mark, 0)) >= 0
+        # Raw console Ctrl+C is handled by the terminal input owner; the
+        # cancelled tool result is its visible receipt, not the signal fallback.
+        results["interrupt_seen"] = pty.wait_text("[Command aborted]", 10, max(mark, 0)) >= 0
         i = pty.wait_text("turn 1 cancelled; session kept", 15, max(mark, 0))
         results["turn_cancelled"] = i >= 0
         results["cancel_latency_s"] = round(time.monotonic() - t_int, 2)
@@ -297,7 +304,7 @@ def main() -> int:
         "next turn answered": results.get("second_turn_answered") and results.get("prompt_after_second_turn"),
         "idle Ctrl+C exits 130": results.get("idle_exit_code") == 130,
         "two model calls": results.get("model_calls") == 2,
-        "journal roles": results.get("journal_roles") == ["session", "model_change", "user", "assistant",
+        "journal roles": results.get("journal_roles") == ["session", "model_change", "thinking_level_change", "user", "assistant",
                                                           "toolResult", "assistant", "user", "assistant"],
         "aborted assistant recorded": results.get("stop_reasons") == ["toolUse", "aborted", "stop"],
         "tool result says aborted": str(results.get("tool_result_tail", "")).endswith("[Command aborted]"),

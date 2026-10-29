@@ -88,6 +88,7 @@ fn tool(name: &str, path: &str) -> AssistantBlock {
         name: name.into(),
         arguments: json!({"path":path}).as_object().unwrap().clone(),
         thought_signature: None,
+        ..Default::default()
     })
 }
 
@@ -116,6 +117,8 @@ fn live_context() -> Context {
                 ]),
                 synthetic: None,
                 timestamp: 7,
+                provider_payload: None,
+                provider_payload_origin: None,
             }),
             Message::Assistant(response("settled work")),
             Message::User(UserMessage::text(render_handoff_prompt(Some("Preserve exact commands.")))),
@@ -124,6 +127,7 @@ fn live_context() -> Context {
             name: "read".into(),
             description: "live tool schema".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}}}),
+            ..Default::default()
         }]),
     }
 }

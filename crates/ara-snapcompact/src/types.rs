@@ -1,7 +1,66 @@
 //! Neutral fixed-OMP snapcompact DTOs. This crate never owns a Session or route.
+use crate::Utf16Text;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+
+/// Parsed frame fields plus its exact object span, including unknown metadata.
+#[derive(Clone, Debug)]
+pub struct FrameUtf16 {
+    pub data: Utf16Text,
+    pub mime_type: Utf16Text,
+    pub cols: f64,
+    pub rows: f64,
+    pub chars: f64,
+    pub source: Box<RawValue>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveUtf16 {
+    pub frames: Vec<FrameUtf16>,
+    pub total_chars: f64,
+    pub truncated_chars: f64,
+    pub text: Option<Utf16Text>,
+    pub text_head: Option<Utf16Text>,
+    pub text_tail: Option<Utf16Text>,
+    pub without_thinking: Option<Box<ArchiveViewUtf16>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArchiveViewUtf16 {
+    pub summary: Utf16Text,
+    pub archive: ArchiveUtf16,
+}
+
+#[derive(Clone, Debug)]
+pub enum HistoryBlockUtf16 {
+    Text { text: Utf16Text },
+    Image { data: Utf16Text, mime_type: Utf16Text, detail: Option<Box<RawValue>> },
+}
+
+/// Restricted JSON model-message input. Hosts retain original provenance.
+#[derive(Clone, Debug)]
+pub struct CompactionPreparationUtf16 {
+    pub first_kept_entry_id: String,
+    pub messages_to_summarize: Vec<Box<RawValue>>,
+    pub turn_prefix_messages: Vec<Box<RawValue>>,
+    pub tokens_before: f64,
+    pub previous_summary: Option<Utf16Text>,
+    pub previous_preserve_data: Option<Box<RawValue>>,
+    pub file_ops: FileOperations,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactionResultUtf16 {
+    pub summary: String,
+    pub short_summary: Option<String>,
+    pub first_kept_entry_id: String,
+    pub tokens_before: f64,
+    pub details: Option<CompactionDetails>,
+    pub preserve_data: Option<Box<RawValue>>,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +87,22 @@ pub struct Archive {
     pub text_head: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_tail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub without_thinking: Option<Box<ArchiveView>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveView {
+    pub summary: String,
+    pub archive: Archive,
+}
+
+/// The Host prices an externalized frame without reading it. Only a retained
+/// frame invokes `read`; absence from the resolver denotes an unavailable blob.
+pub struct LazyFrameData<'a> {
+    pub bytes: usize,
+    pub read: Box<dyn FnOnce() -> crate::Result<Utf16Text> + 'a>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -62,6 +137,8 @@ pub struct Shape {
     pub frame_size: f64,
     pub frame_token_estimate: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_tokens_verified: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_detail: Option<String>,
 }
 
@@ -69,6 +146,40 @@ pub struct Shape {
 pub struct ShapeTarget {
     pub api: Option<String>,
     pub id: Option<String>,
+    pub provider: Option<String>,
+    pub identity: Option<ModelIdentity>,
+}
+
+/// Identity of an already built model. Billing uses this before classifying its id.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelIdentity {
+    pub class: String,
+    pub family: Option<String>,
+    pub revision: Option<String>,
+}
+
+/// The host supplies the request's actual route decision, including environment reroutes.
+/// Core owns no environment variables or provider clients.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeploymentTarget {
+    pub model: ShapeTarget,
+    pub provider_type: Option<String>,
+    pub request_model_id: Option<String>,
+    pub reasoning: bool,
+    pub official_endpoint: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageSize {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// The source catalog rule retains its authored fields and insertion order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FrameBilling {
+    pub rule: Option<Value>,
+    pub image_detail: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

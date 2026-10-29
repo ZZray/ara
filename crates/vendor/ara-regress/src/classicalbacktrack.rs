@@ -1013,6 +1013,17 @@ impl<'r, Input: InputIndexer> BacktrackExecutor<'r, Input> {
 }
 
 impl<Input: InputIndexer> BacktrackExecutor<'_, Input> {
+    /// ARA additive dependency: attempt once at the requested offset in the
+    /// complete input. Preserve anchors, lookbehind and absolute capture ranges.
+    /// No prefix search, suffix scan, input slice or injected anchor is used.
+    #[cfg(feature = "utf16")]
+    pub(crate) fn match_at_offset(&mut self, offset: usize) -> Option<Match> {
+        let inp = self.input;
+        let pos = inp.try_move_right(inp.left_end(), offset)?;
+        let end = self.matcher.try_at_pos(inp, 0, pos, Forward::new())?;
+        Some(self.successful_match(pos, end))
+    }
+
     fn successful_match(&mut self, start: Input::Position, end: Input::Position) -> Match {
         // We want to simultaneously map our groups to offsets, and clear the groups.
         // A for loop is the easiest way to do this while satisfying the borrow checker.

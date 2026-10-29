@@ -1,0 +1,188 @@
+{
+  "state": "INITIAL_VERIFY_PLAN_AWAITING_ROOT_CONFIRMATION_EXCEPT_AUTHORIZED_F1",
+  "scope": "One merged fault/observation bank for original M5/M8/O1/O8 and Native MCP/RPC grant dependencies; preserve all original19 criteria, original9 groups and89 identities/assertions.",
+  "authority": {
+    "source": "P/source frozen validated V4; not current E HEAD",
+    "target": "P/target cache preserved",
+    "point_audit": "final-point-v4/POINT-AUDIT.json",
+    "exec_review": "final-exec-v4/EXEC-REVIEW.json",
+    "criteria": "../peer-owned-resource-implementation-v1/SOURCE-CRITERIA-MAP.json"
+  },
+  "method": {
+    "tier": "Verify with exact source reads",
+    "graph": "Parent reports list_projects Transport closed; no graph generation/coverage available. No graph retry, index rebuild or exhaustive structural claim.",
+    "skills": [
+      "ara-git-review",
+      "ara-rust-core-review",
+      "ara-backend-verification",
+      "first-principles-solving",
+      "humanizer"
+    ],
+    "execution": "No build/test/model/target/source/E mutation; only candidate packet permitted."
+  },
+  "minimum_scenarios": [
+    {
+      "id": "F1-native-parent-interval",
+      "covers": [
+        "O1"
+      ],
+      "existing_seam": "tests/support/task_host_cases.rs RoutedUpstream::start_gated, Bank, WireProcess; child actual write followed by second model request",
+      "change": "Extend router with a separate file-controlled hold on child second response, after actual first write ToolResult. Snapshot exact parent HEAD/rawindex/staged+unstaged binary diffs/full untracked bytes before dispatch, while held, after completion; require before==held, and final preservation for apply=false. Save snapshots and exact isolated output/journal paths.",
+      "production_changes": false,
+      "authorization": "Root explicitly authorized candidate F1 before remaining PLAN approval."
+    },
+    {
+      "id": "F2-materialized-pre-spawn-and-rejected-attachment",
+      "covers": [
+        "M5",
+        "M8",
+        "O8"
+      ],
+      "existing_seam": "ChildHostFactory::create_isolated:349-371 already distinguishes prepared error(finalize known stopped) from seed.spawn error(finalize unknown); existing peer-before-bind gate precedes actual bind_actor after resource reservation.",
+      "variants": [
+        "Real allocated backend+lease, terminal prepare_child_seed failure using invalid child route/model config; no runtime; assert original released-or-retained receipt and workspace state.",
+        "Real allocated lease and spawned actor, then seal that exact pending lease at a cfg(test-fixture) attachment frontier; execute original prepare_publish/publish_attachment and require its real rejection, not an injected function-return error. Preserve actual pending/failed/owned table observation and original error/effect receipts."
+      ],
+      "needed_hook": "Only a narrowly scoped cfg(test-fixture) action/readback at existing pending lease/bind boundary if no existing actor operation reaches it; no production behavior change.",
+      "not_equivalent": "Preflight refusal, coldDisplayName label change or failAfterRelease alone cannot prove actual lease adoption rejection."
+    },
+    {
+      "id": "F3-active-Bash-cancel-and-dropped-release-observer",
+      "covers": [
+        "M8",
+        "O8"
+      ],
+      "existing_seam": "Real Native Bash async owner/effects, ChildHost::followup settle barrier:273-289, NativeWait consume, existing task_release(observerDrop) fixture and child-close-before-join frontier.",
+      "variants": [
+        "Start actual Bash gated by disposable files, retain real job/process/effect identity while child is pending; show no capture/removal before same effect settles, use actual NativeWait to consume results where required.",
+        "Issue actual ordinary abort/cancel while that Bash is live; record cancellation/process settlement or Unknown and matching retained workspace; never infer cleanup from process exit.",
+        "Drop only release observer using existing fixture, then join retained original release flight and prove no duplicated stop/capture/effects."
+      ],
+      "hook_boundary": "NativeWait-driven Bash result delivery is not deferred extension-hook proof. Before proposing a hook case, inspect real Core AgentHooks and HostEffect owner wiring; current CliHooks has no actual extension callback. If no executable production binding exists, record implementation gap and separate it from Bash evidence; do not build temporary extension framework."
+    },
+    {
+      "id": "F4-real-Git-completed-prefix-partial-failure",
+      "covers": [
+        "M8",
+        "O8"
+      ],
+      "existing_seam": "worktree::commit_to_branch dirty-history loop: first real commit and durable rescue ref precede next risky step.",
+      "change": "Actual isolated child makes two Git commits. After first rewritten prefix/rescue publication hold a cfg(test-fixture) exact frontier; obstruct lease-private scratch path so the next actual Git/synthetic-tree stage fails. Assert root.patch, first commit/rescue ref and original workspace preserved, explicit failure/path, no replay. This is distinct from existing public-ref CAS failure.",
+      "needed_hook": "One cfg(test-fixture) pause after completed prefix; no manufactured successful commit or replacement patch."
+    },
+    {
+      "id": "F5-real-nested-capture-file-persistence-error",
+      "covers": [
+        "M8",
+        "O8"
+      ],
+      "existing_seam": "capture::persist_capture writes actual root.patch then nested-i.patch before capture.json/branch publication.",
+      "change": "Materialize a real nested Git repo and real nested edit through isolated ordinary child. Pause only between persisted root.patch and nested write; create a directory at exact nested-0.patch to make original write_new fail with real filesystem error. Require root.patch and nested workspace content preserved, error/path reported, capture.json not falsely successful, no replay.",
+      "needed_hook": "One cfg(test-fixture) exact write-frontier/readback. Do not substitute existing nested stash conflict or top-level artifact obstruction."
+    },
+    {
+      "id": "F6-exact-native-MCP-RPC-grants",
+      "covers": [
+        "M1 dependency"
+      ],
+      "existing_seam": "Ordinary --mcp-config/--mcp-allow, real ara-mcp-fixture stdio server, NativeMcpSource and NativeRpcHostSource exact owner bindings; task_host parent preflight and child_host exact grant transfer.",
+      "variants": [
+        "Real current MCP owner true grant: child invokes selected MCP capability; record tools/call stdio request/response, Native request tooldefinition and ToolResult.",
+        "Actual source false/absent/foreign owner: entire two-item batch rejects before any child journal/lease; no synthetic grant JSON or empty ACP mcpServers substitute.",
+        "RPC must use production rpc_host_tools::ToolBridge NativeHostOwner with actual pending encode/dispatch/response. Ordinary RPC transport alone does not prove an RPC tool capability."
+      ],
+      "open_feasibility": "Current ordinary task_host bank has no registered RPC tool source scenario. First verify existing register-tool/ToolBridge entry and actual source mutation/owner swap seam; if no legitimate route, report actual reachability gap and propose only a narrow cfg(test-fixture) connection of that existing owner, never new RPC backend or fake return.",
+      "scope_gate": "Exact candidate source files for grant injection require completed source trace and Root confirmation; no claim closed until original source-owned permissions execute."
+    }
+  ],
+  "exact_file_scope": {
+    "authorized_now": [
+      "crates/ara-cli/tests/support/task_host_cases.rs",
+      "crates/ara-cli/tests/task_host.rs"
+    ],
+    "conditional_after_confirmation": [
+      {
+        "path": "crates/ara-cli/src/peer_host.rs",
+        "why": "Reuse existing cfg fixture_frontier/config and observe real pending/owned/failed lease; one attachment-seal action only if required."
+      },
+      {
+        "path": "crates/ara-cli/src/child_host.rs",
+        "why": "Only materialized pre/postspawn readback or exact existing startup frontier if test configuration cannot observe it; no alternate ChildHost path."
+      },
+      {
+        "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+        "why": "cfg pause/readback after first actual dirty-history rescue prefix, so next stage can suffer real FS failure."
+      },
+      {
+        "path": "crates/ara-cli/src/task_isolation/capture.rs",
+        "why": "cfg pause/readback after root.patch before first nested file write, enabling exact real FS failure."
+      }
+    ],
+    "not_yet_authorized_or_finalized": [
+      "Native grant fixture wiring file(s) pending exact ToolBridge route trace",
+      "Core/Host extension hooks: feasibility check only, no extension framework"
+    ],
+    "not_touched": [
+      "all P/source and P/target files",
+      "E workspace",
+      "original assertion bodies, names, denominators and timeouts",
+      "next cleanup/root resolver/backend implementation",
+      "async expected-result changes"
+    ]
+  },
+  "candidate_shape": {
+    "directory": "P/gap-bank-v1/candidate/<relative path>",
+    "copy_policy": "Only edited source files, no whole repository copy",
+    "one_added_test": "One new task_host bank function dispatches six bounded scenario families with original raw evidence; no new Cargo target",
+    "old_tests": "All original source assertions preserved byte-for-byte except adding new code outside their bodies; verify hashes/semantic diff mapping before handoff.",
+    "SOURCE-DIFF": "Each changed file records original SHA256, candidate SHA256, exact hunks, reason, source obligation and remaining gap."
+  },
+  "estimate": {
+    "F1_source_candidate_minutes": "20-35",
+    "remaining_verified_candidate_minutes": "90-150, subject to grant/hook reachability",
+    "build_test_model_work": "0 in this assignment",
+    "risk": "MCP/RPC exact owner wiring and deferred hook implementation availability may require a follow-up decision; do not manufacture green criteria."
+  },
+  "next": "Root confirms remaining scenario/file scope; F1 is independently authorized and may proceed. No candidate hook or grant framework until confirmation. Independent reviewer checks this PLAN and later exact diff.",
+  "created_utc": "2026-10-29T15:34:11.3504081Z",
+  "authority_hashes": [
+    {
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-point-v4/POINT-AUDIT.json",
+      "sha256": "9fc19281a970cdca97e8ed9c7e30846ead6edc94fd9d2421cf0662bbcb5d2d2d"
+    },
+    {
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-exec-v4/EXEC-REVIEW.json",
+      "sha256": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5"
+    },
+    {
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/peer-owned-resource-implementation-v1/SOURCE-CRITERIA-MAP.json",
+      "sha256": "3f0ab15dcd403a1a18a9cd8c1f1bed8f5cc4db92d22b820a9520d5352298a039"
+    }
+  ],
+  "original_source_hashes": [
+    {
+      "path": "crates/ara-cli/tests/support/task_host_cases.rs",
+      "sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6"
+    },
+    {
+      "path": "crates/ara-cli/tests/task_host.rs",
+      "sha256": "6af99d96f423bdb370e2d97338f3574a78b9d81a405c237400f385050de32168"
+    },
+    {
+      "path": "crates/ara-cli/src/child_host.rs",
+      "sha256": "7ccf7a15766b784e267ee6ad004bc6dd9b76fb0db47037f3280cc98776919edd"
+    },
+    {
+      "path": "crates/ara-cli/src/peer_host.rs",
+      "sha256": "bfb6c2b0e8ae225fce1dad8ccb799ef3db5964e8bcab82e5828a5c71689717a4"
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+      "sha256": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc"
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/capture.rs",
+      "sha256": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527"
+    }
+  ]
+}

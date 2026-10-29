@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-10-29T15:44:17.605Z",
+  "reviewer": "independent Codex /root/task_owner_complete_review",
+  "scope": "Read-only F6 route notes for candidate author. Existing production true paths and source grants are traced; no source candidate, process, build, test, model or environment modification.",
+  "verdict": "TRUE_MCP_AND_RPC_ROUTES_EXIST_CFG_ONLY_NEGATIVE_OWNER_WIRING_REQUIRES_EXACT_REVIEW",
+  "sources": {
+    "task_preflight": "crates/ara-cli/src/task_host.rs:95-128",
+    "owner_grants": "crates/ara-cli/src/native_setup.rs:87-118",
+    "child_transfer": "crates/ara-cli/src/child_host.rs:533-555",
+    "mcp_source": "crates/ara-cli/src/mcp_native.rs:194-221",
+    "rpc_source": "crates/ara-cli/src/native_rpc_host.rs:250-279",
+    "rpc_registration": "crates/ara-cli/src/rpc_host.rs:4429-4462,4941-5010,6524-6538",
+    "rpc_response_input": "crates/ara-cli/src/rpc_host.rs:7616",
+    "bridge": "crates/ara-cli/src/rpc_host_tools.rs:147-205,208-241,275-303,380-429,440-466",
+    "existing_examples": [
+      "crates/ara-cli/tests/rpc_host.rs:40-75",
+      "crates/ara-cli/tests/support/native_mcp.rs:85-127"
+    ]
+  },
+  "positive_MCP": {
+    "connection": "Ordinary --mcp-config plus --mcp-allow uses main.rs5150 ara_mcp::connect_owned to create actual Arc<McpTool> owners. Reuse the existing local stdio MCP fixture. Capture the actual discovered descriptor/name rather than inventing a prefix.",
+    "native_route": "native_setup publishes NativeMcpSource and exact NativeMcpLineage; Task preflight uses that current snapshot and parent owned_mcp; child_host retains the selected exact Arc<McpTool> and obtains parent_native.mcp_grant before building the child's source.",
+    "must_use_current_supported_route": "Agent declaration includes the MCP name and caller item omits explicit tools, so restrictToolNames is false. Keep real parent advertisement and source grant Allow. Child model invokes the actual MCP capability; retain stdio tools/call/response, native wire definition and journal ToolResult. This follows the fixed upstream restriction recorded below.",
+    "evidence": "Actual selected capability owner/request ID/arguments, local server response and original Task result (taskAccepted=false), child init/grant provenance, resource and parent preservation.",
+    "fixture_helper_boundary": "Reuse an existing source-bound local fixture binary/script. If ara-mcp-fixture is needed but not prepared by the selected build, request only that existing helper in the same narrow build/driver review; do not install tools, add a Cargo target or copy a second runtime."
+  },
+  "positive_RPC": {
+    "ordinary_registration_available": true,
+    "setup_frame": {
+      "id": "f6-register",
+      "type": "set_host_tools",
+      "tools": [
+        {
+          "name": "f6_host_echo",
+          "description": "Private controlled RPC tool",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ]
+          }
+        }
+      ]
+    },
+    "route": [
+      "rpc_host command set_host_tools normalizes real definitions.",
+      "set_host_tools prepares overlay from current definitions/active names; ToolBridge.adapters returns captured definition adapters and native_owners returns corresponding NativeHostOwner from that exact bridge.",
+      "SessionFactory.config publishes a complete candidate Native setup, carrying the exact registered adapter/owner pairs and current grants; root snapshots are refreshed before the Task prompt.",
+      "Agent declaration selects the host tool and caller does not set tools, so child_host captures the exact parent RPC adapter/owner and reads parent_native.rpc_grant.",
+      "Child Native invocation calls NativeHostOwner.prepare_native -> ToolBridge.prepare_raw. The original pending ID is inserted before synchronous encoding outside locks.",
+      "PreparedHostRequest.dispatch checks cancellation/current publication grant and marks that same pending request dispatched before emitting host_tool_call.",
+      "Reply through ordinary host_tool_result with the emitted pending id; rpc_host input consumes it through tool_bridge.consume before generic command dispatch. The same pending owner settles the child ToolResult."
+    ],
+    "reply_frame_template": {
+      "id": "<exact emitted host_tool_call.id>",
+      "type": "host_tool_result",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "private bridge response"
+          }
+        ]
+      },
+      "isError": false
+    },
+    "cautions": [
+      "Use host_tool_call.id for the bridge reply, not the model toolCallId. Record both identities.",
+      "The later generic command switch lists host_tool_result as unsupported; recognized valid side-channel frames are consumed earlier at7616. Do not infer unreachability from that fallback branch.",
+      "Keep nonbuiltin unique registration name and visible active definition. Duplicate/conflicting names are rejected by set_host_tools.",
+      "The bridge is the parent connection owner captured by the child. Respond on the parent ordinary RPC input that owns it; do not fabricate a child-only bridge."
+    ]
+  },
+  "exact_permission_matrix": [
+    {
+      "case": "true",
+      "existing_interface": "Native source permission(member.binding,current prepared.values()) -> Allow; native_setup getter returns Some(true)",
+      "actual_task_path": "Normal advertised declaration selection, then actual MCP/ToolBridge invocation and ToolResult.",
+      "new_production_code": false
+    },
+    {
+      "case": "false",
+      "existing_interface": "snapshot.mcp().set_enabled(index,false) or snapshot.rpc().set_enabled(index,false)",
+      "actual_task_path": "After a current source is registered, use the same real source. Explicit second item authority request must reject before first child/lease creation; default declaration filtering alone is not the whole-batch rejection test.",
+      "needed_fixture": "A narrow cfg-only action at the current actor/Task preparation boundary may call the existing setter. No new production grant API is required."
+    },
+    {
+      "case": "absent",
+      "existing_interface": "NativeCliOwner::mcp_grant/rpc_grant returns None when no exact Arc owner lineage is known. Entire absence from advertised catalog yields not-exposed earlier.",
+      "actual_task_path": "Distinguish unknown advertised name from exact owner absent under an existing name. A normal set_host_tools([]) can prove not-exposed, but it does not prove the later exact-owner None branch.",
+      "needed_fixture": "If the criterion requires the exact-owner None branch plus whole-batch rejection, cfg-only cloned Host input/owner omission must reach original preflight with original advertised source and no child created. Review the exact pointer flow; do not count a getter-only assertion as a Task execution."
+    },
+    {
+      "case": "foreign",
+      "existing_interface": "An independent Arc<McpTool> or Arc<dyn NativeRpcHostOwner> with the same name/definition still fails Arc::ptr_eq lookup and returns None; a foreign binding/realm at permission also rejects.",
+      "actual_task_path": "Use an actual independently owned adapter/connection. Expose the deliberate stale/foreign Host input only through the cfg fixture and execute original Task preflight, preserving the original parent source owner/realm.",
+      "needed_fixture": "Existing source construction/ToolBridge native_owners supplies genuine owners. A narrow cfg-only template/owner substitution is required for full preflight reachability; a JSON grant=false or same-owner renamed field is insufficient."
+    }
+  ],
+  "critical_route_limit": {
+    "source": "task_host.rs sets restrictToolNames=item.tools.is_some(); child_host.rs536-545 clears owned_mcp and captured_rpc when restricted=true.",
+    "consequence": "A Task with explicit caller tools does not currently carry MCP/RPC adapters into the child, even if preflight sees a true source grant. Declaration-based true transfer and explicit caller negative preflight are different paths.",
+    "required_reporting": "The current Rust restriction matches fixed OMP. Keep positive MCP/RPC grant transfer on agent declarations with no caller tools; explicit caller negative authority cases must reject the full batch. Do not label restricted-source exclusion a bug or expand it into explicit MCP support.",
+    "classification": "FIXED_UPSTREAM_RESTRICTION_NOT_A_PROVEN_BUG",
+    "fixed_omp_evidence": {
+      "commit": "b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c",
+      "path": "packages/coding-agent/src/task/executor.ts",
+      "lines": "4346-4347,4425,4427",
+      "sha256": "430e9f9278b0e841da8780a4cf1c046e561e3b9645f3c3431c999ec749b725fa",
+      "actual_source_read": true,
+      "content": "restrictToolNames=true disables MCP and clears preloaded extension/custom-tool paths."
+    }
+  },
+  "current_snapshot_warning": {
+    "reason": "set_host_tools rebuilds/publishes Native setup and updates self.sessions.tool_owner. The fixture's startup-time clone may still refer to the old NativeCliOwner.",
+    "constraint": "Apply set_enabled and inspect mcp_grant/rpc_grant on the current published actor/Task template after registration. Do not revoke an old snapshot and call it an effective grant denial.",
+    "smallest_cfg_location": "Either existing rpc_host cfg actor operation with access to current self.sessions.tool_owner, or a cfg-only helper at original task_host::prepare before policy selection with the current template. Choose one exact site; preserve production code outside cfg.",
+    "owner_substitution_warning": "Source set_enabled handles false directly. Absent/foreign require exact real owner mismatch in the Host input, not only source toggling. Any helper that clones/substitutes input must still call the original prepare branch and record the intentional test-only Host mismatch."
+  },
+  "conditional_file_scope": [
+    {
+      "path": "crates/ara-cli/tests/support/task_host_cases.rs",
+      "purpose": "Ordinary registration/reply driver, MCP fixture bindings, real wire/journal/whole-batch evidence, one merged bank."
+    },
+    {
+      "path": "crates/ara-cli/tests/task_host.rs",
+      "purpose": "Register the one added bank; preserve old functions."
+    },
+    {
+      "path": "crates/ara-cli/src/rpc_host.rs",
+      "condition": "Only if chosen cfg current-actor action is required to mutate/read current source grants/owner input. Ordinary true RPC route requires no production change here."
+    },
+    {
+      "path": "crates/ara-cli/src/task_host.rs",
+      "condition": "Alternative cfg-only current-template inspection/substitution site if actor access is insufficient. Do not add both routes by default; Root must confirm exact new path."
+    },
+    {
+      "path": "crates/ara-cli/src/peer_host.rs",
+      "condition": "Reuse already-approved cfg fixture orchestration only; do not create a new registry/connection owner."
+    }
+  ],
+  "not_required": [
+    "New MCP/RPC backend",
+    "New Native source grant API",
+    "Public bypass/foreign-owner config",
+    "Production extension registry",
+    "New Cargo target",
+    "Full repository exploration/build/test"
+  ],
+  "execution_gates": "This note authorizes no execution. Author supplies exact before/after candidate/hunks and Root confirms conditional F6 paths; independent POST reviews real provenance and failure criteria before the one affected build.",
+  "activity": {
+    "source_edits": 0,
+    "candidate_edits": 0,
+    "builds": 0,
+    "tests": 0,
+    "models": 0,
+    "process_operations": 0,
+    "environment_changes": 0,
+    "only_report": "gap-bank-v1/F6-ROUTE-NOTES.json"
+  }
+}

@@ -13,6 +13,8 @@ use crate::{AssistantMessage, ToolCall, ToolResultMessage, UserBlock};
 use ara_rpc::json::{WireString, WireValue};
 use std::collections::HashSet;
 
+pub mod actual;
+
 // Fixed packages/wire/src/index.ts:400, not a guessed harness field name.
 const INTENT_FIELD: &str = "i";
 const LEGACY_INTENT_FIELD: &str = "__intent";
@@ -58,7 +60,7 @@ impl RepeatedToolCallDetection {
 pub struct ToolCallLoopGuard {
     threshold: f64,
     exempt_tools: HashSet<String>,
-    last_hash: Option<String>,
+    last_hash: Option<WireString>,
     count: f64,
 }
 
@@ -97,10 +99,10 @@ impl ToolCallLoopGuard {
             canonical_calls.into_iter().map(|call| WireValue::String(WireString::from(call))).collect(),
         )
         .stringify();
-        if self.last_hash.as_ref() == Some(&turn_hash) {
+        if self.last_hash.as_ref() == Some(&WireString::from(turn_hash.as_str())) {
             self.count += 1.0;
         } else {
-            self.last_hash = Some(turn_hash);
+            self.last_hash = Some(WireString::from(turn_hash));
             self.count = 1.0;
         }
 

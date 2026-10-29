@@ -76,7 +76,7 @@ fn native_handoff_same_session_reopen_and_chained_sources_keep_raw_documents_and
     assert_eq!(view.method, "handoff");
     assert_eq!(view.source_entry_ids.as_ref().unwrap(), &first);
     assert_eq!(view.file_details.as_ref().unwrap().read_files, document.read_files);
-    let context = journal.model_context();
+    let context = journal.model_context().unwrap();
     assert_eq!(context.len(), 3);
     let Message::User(message) = &context[0] else { panic!("native lower-trust handoff projection") };
     assert_eq!(
@@ -89,7 +89,7 @@ fn native_handoff_same_session_reopen_and_chained_sources_keep_raw_documents_and
     assert!(!serde_json::to_string(&context).unwrap().contains("RAW_FIRST_HISTORY"));
     let mut reopened = SessionJournal::open(&path).unwrap();
     assert_eq!(reopened.entries(), journal.entries());
-    assert_eq!(reopened.model_context(), context);
+    assert_eq!(reopened.model_context().unwrap(), context);
     assert_eq!(reopened.native_handoff_snapshot().unwrap(), journal.native_handoff_snapshot().unwrap());
     assert_eq!(reopened.title(), journal.title());
     let third = turn(&mut reopened, "retained third turn");
@@ -107,7 +107,7 @@ fn native_handoff_same_session_reopen_and_chained_sources_keep_raw_documents_and
     assert_eq!(reopened.entries().iter().filter(|entry| entry.kind == "compaction").count(), 2);
     let checked = SessionJournal::open(&path).unwrap();
     assert_eq!(checked.native_handoff_snapshot().unwrap(), reopened.native_handoff_snapshot().unwrap());
-    assert_eq!(checked.model_context(), reopened.model_context());
+    assert_eq!(checked.model_context().unwrap(), reopened.model_context().unwrap());
     // A later native soft cut retains its old API/projection and carries the
     // exact handoff provenance forward, without treating the document as raw.
     let fourth = turn(&mut reopened, "fourth kept turn");
@@ -115,7 +115,9 @@ fn native_handoff_same_session_reopen_and_chained_sources_keep_raw_documents_and
     reopened.commit_native_entry_compaction(&snapshot, "soft after handoff", &fourth[0], &third, 60).unwrap();
     assert_eq!(summary(&reopened).method, "soft");
     assert!(
-        serde_json::to_string(&reopened.model_context()[0]).unwrap().contains("Compacted summary of earlier turns")
+        serde_json::to_string(&reopened.model_context().unwrap()[0])
+            .unwrap()
+            .contains("Compacted summary of earlier turns")
     );
     assert_eq!(reopened.entries().last().unwrap().raw["method"], "soft");
 
@@ -257,9 +259,11 @@ fn handoff_atomic_prepublication_failure_preserves_recovery_owner_and_commit_byp
             let reopened = SessionJournal::open(&path).unwrap();
             assert_eq!(reopened.leaf_id(), Some(id.as_str()));
             assert_eq!(reopened.entries(), journal.entries());
-            assert_eq!(reopened.model_context(), journal.model_context());
+            assert_eq!(reopened.model_context().unwrap(), journal.model_context().unwrap());
             assert!(!reopened.branch().iter().any(|entry| entry.id == failed));
-            assert!(!serde_json::to_string(&reopened.model_context()).unwrap().contains("FAILED_ORIGINAL_OUTPUT"));
+            assert!(
+                !serde_json::to_string(&reopened.model_context().unwrap()).unwrap().contains("FAILED_ORIGINAL_OUTPUT")
+            );
         }
         assert_eq!(journal.entries().iter().find(|entry| entry.id == failed), Some(&failed_raw));
     }

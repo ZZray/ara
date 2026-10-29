@@ -439,7 +439,13 @@ fn internal_urls_follow_the_host() {
 // --- date-cwd-reminder.test.ts ---------------------------------------------------------
 
 fn user(content: &str, timestamp: i64) -> Message {
-    Message::User(UserMessage { content: UserContent::Text(content.into()), synthetic: None, timestamp })
+    Message::User(UserMessage {
+        content: UserContent::Text(content.into()),
+        synthetic: None,
+        timestamp,
+        provider_payload: None,
+        provider_payload_origin: None,
+    })
 }
 
 fn assistant(text: &str) -> Message {
@@ -485,6 +491,8 @@ fn date_cwd_reminder_injection() {
         })]),
         synthetic: None,
         timestamp: 1,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let out = DateCwdReminder::new().transform(
         Context { system_prompt: vec!["system".into()], messages: vec![image], tools: None },
@@ -668,4 +676,60 @@ fn reminder_developer_fallback_uses_provider_compatible_wire_role() {
         assert_eq!(fallback["role"], expected_role);
         assert_eq!(fallback["content"], render_date_cwd_reminder("day2", "/w"));
     }
+}
+
+/// Fixed Native full/compact inventory mode and intentField prompt consumer.
+#[test]
+fn inline_inventory_and_intent_guidance_reach_default_prompt_without_changing_custom_prompt() {
+    let env = env();
+    let inventory = "## functions\n\nnamespace functions {\n\n// Reads files from disk.\ntype read = (_: {\npath: string,\n});\n\n} // namespace functions";
+    let options = SystemPromptOptions {
+        tools: Some(read_tool()),
+        tool_inventory: Some(inventory.into()),
+        intent_field: Some("i".into()),
+        ..explicit()
+    };
+    let (_, text) = render_text(&env, &env.root, &options);
+    assert!(text.contains(inventory));
+    assert_eq!(text.matches("Reads files from disk.").count(), 1);
+    assert!(!text.contains("- Read: `read`"));
+    assert!(text.contains("Most tools take `i`"));
+    let (_, compact) = render_text(
+        &env,
+        &env.root,
+        &SystemPromptOptions { tool_inventory: None, intent_field: Some(String::new()), ..options.clone() },
+    );
+    assert!(compact.contains("- Read: `read`"));
+    assert!(!compact.contains("namespace functions") && !compact.contains("Most tools take"));
+    let (_, aliased) = render_text(
+        &env,
+        &env.root,
+        &SystemPromptOptions {
+            tool_inventory: None,
+            tool_name_overrides: [("read".into(), "read_wire".into())].into(),
+            skills: Some(vec![skill("source-review", "Read project source", false)]),
+            ..options.clone()
+        },
+    );
+    assert!(aliased.contains("- Read: `read_wire`"));
+    assert!(aliased.contains("source-review: Read project source"));
+    assert!(!aliased.contains("- Read: `read`"));
+    let (_, empty) = render_text(
+        &env,
+        &env.root,
+        &SystemPromptOptions {
+            tools: Some(Vec::new()),
+            tool_inventory: Some(String::new()),
+            intent_field: None,
+            ..explicit()
+        },
+    );
+    assert!(!empty.contains("# Tool Inventory") && !empty.contains("namespace functions"));
+    let (_, custom) = render_text(
+        &env,
+        &env.root,
+        &SystemPromptOptions { custom_prompt: Some("Host-owned explicit prompt".into()), ..options },
+    );
+    assert!(custom.contains("Host-owned explicit prompt"));
+    assert!(!custom.contains("namespace functions") && !custom.contains("Most tools take"));
 }

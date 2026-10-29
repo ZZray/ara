@@ -1,0 +1,934 @@
+{
+  "schema_version": 1,
+  "point": "TASK_ISOLATION_RESOURCE_OWNER_M1_M9",
+  "auditor": "independent Codex /root/task_final_point_audit",
+  "created_utc": "2026-10-29T15:24:57.9452316Z",
+  "verdict": "PARTIAL_POINT_NOT_ACCEPT_COMPLETE_M1_M9",
+  "decision": "The final V4 original nine-group/89-function recovery execution is valid. Original19 criteria remain unchanged: M5/M8/O1/O8 are partial. Keep the complete point open and preserve every existing assertion.",
+  "findings": [],
+  "finding_count": 0,
+  "coverage_gaps_are_not_proven_production_defects": true,
+  "skills": [
+    "ara-git-review",
+    "ara-rust-core-review",
+    "ara-backend-verification",
+    "point-delivery-audit",
+    "humanizer"
+  ],
+  "read_only_audit": {
+    "ran_build_or_tests": false,
+    "git_reads": "--no-optional-locks rev-parse/show/diff only",
+    "writes": "Only new reports under final-point-v4",
+    "git_mutation": false,
+    "replayed_effects": false,
+    "ran_models": false,
+    "source_mutation": false
+  },
+  "authority": {
+    "original_index_sha256": "0b37246f6efab0e0a7e1cfc56517d4405a8ebefd928b8b4711d217fe470a5a3e",
+    "final_EXEC_verdict": "APPROVE_EXECUTED_RECOVERY_SCOPE_ONLY_NOT_COMPLETE_M1_M9",
+    "source_snapshot": {
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source",
+      "origin": "E:\\repos\\ara-github",
+      "head": "3960505c831870230aff3e2a9b1f44b6859be3e3",
+      "origin_index_sha256": "0b37246f6efab0e0a7e1cfc56517d4405a8ebefd928b8b4711d217fe470a5a3e",
+      "source_pins": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\repair-v4\\SOURCE-PINS.json",
+      "source_pins_sha256": "889d1090df1b68d302c1fa87653621a703c916aabab36a4085055940666ec3fd",
+      "inputs": 1551
+    },
+    "upstream52": {
+      "sha256": "ccd41bce21ccc42503fbebff60942a5830ae024d9df3933ef7a8df2e8b9b2436",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/peer-owned-resource-implementation-v1/UPSTREAM52-RUST-ASSERTION-MAP.json"
+    },
+    "criteria": {
+      "sha256": "3f0ab15dcd403a1a18a9cd8c1f1bed8f5cc4db92d22b820a9520d5352298a039",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/peer-owned-resource-implementation-v1/SOURCE-CRITERIA-MAP.json"
+    },
+    "current_E_HEAD_observed": "c06106234d8124c602d4d0f99e95dc9d4076a967",
+    "original_head": "3960505c831870230aff3e2a9b1f44b6859be3e3",
+    "fixed_omp": "b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c",
+    "origin_dirty_source": "Frozen snapshot includes scoped dirty changes, not a delivered clean commit",
+    "final_EXEC": {
+      "sha256": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-exec-v4/EXEC-REVIEW.json"
+    },
+    "E_note": "External Lite commits are not the audited Task source. No E files/index changed by this auditor.",
+    "snapshot_has_git_index": false,
+    "plan": {
+      "sha256": "969da628cf00f363639374d1759ea8310635460249181df2052acc6134374966",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/repair-v4/BATCH-PLAN.json"
+    },
+    "omp_checkout": "D:/workspace/env/cache/ara-omp-sync-20261014-b91db66e"
+  },
+  "verification": {
+    "test_seconds": 207.108,
+    "raw_artifact_hash_scope": "Independent EXEC rehashed all2479 files; this point auditor independently checked concrete raw samples, pins, images and logs, and hashed its own check reports.",
+    "runtime_payload_entries": 2557,
+    "build_seconds": 490.566,
+    "source_drift": [],
+    "images": 10,
+    "image_drift": [],
+    "stdout_stderr_drift": [],
+    "source_inputs": 1551,
+    "failed": 0,
+    "runtime_drift": [],
+    "original_groups": 9,
+    "original_functions_passed": 89,
+    "real_model_calls": 0,
+    "runtime_pin_entries": 2558,
+    "ignored": 0,
+    "runtime_manifest_entries": 1,
+    "ordinary_binary": {
+      "executable": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\ara.exe",
+      "executable_sha256": "182a30d6ad1b2bc5ad38f39c030cb22163983014e8c23db0f809dd134e22f6cc",
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 1,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      },
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "ara",
+        "src_path": "D:\\WorkSpace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\main.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "package_id": "path+file:///D:/WorkSpace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/source/crates/ara-cli#0.1.0"
+    }
+  },
+  "source_review": {
+    "chain": {
+      "original": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\peer-owned-resource-independent-complete-source-plan-review-v1\\REVIEW.json",
+        "sha256": "6d28e73fcaabfa758e66f909039bea51ca1b3fcfb0bda51e7673d8b4e725c8d0"
+      },
+      "delta": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\peer-owned-resource-repair-v2\\DELTA-REVIEW.json",
+        "sha256": "8f16d5ab01a210635cf7974908025ddbe2b4d2ef84c9b24ee261c461c4f75cb8"
+      },
+      "stable_rust_delta": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\peer-owned-resource-stable-rust-repair-v3\\REVIEW.json",
+        "sha256": "5f07ce43a72679e47f7ccc76aa9c80d4c0b08d310b22fdba2cd6937287d59a7f"
+      },
+      "macro_delta_root": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\peer-owned-resource-batch-preparation-v4\\ROOT-ADOPTION.json",
+        "sha256": "235bb7f4467a3e04814a67a151c4af061a5d16b80c1882906c97a738c9677de3"
+      },
+      "type_and_runner_delta": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\peer-owned-resource-type-repair-v5\\REVIEW.json",
+        "sha256": "7b01e8306b7f0eb89672bc10e7accbd8ea3d4aa734a8c8497ed4b9c877a2ffc8"
+      },
+      "single_trait_import": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\repair-v2\\REVIEW.json",
+        "sha256": "06b0e81b2611683860d7d5581950a8cb5c36354e23b61bd666b15b384eef896c"
+      },
+      "combined_graph_git_path": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\repair-v3\\REVIEW.json",
+        "sha256": "c2feda11eff11d0fbab3c3ce86ad75b99866fce9d689486b81fb86c4c63c3564"
+      },
+      "combined_v4": {
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\repair-v4\\REVIEW.json",
+        "sha256": "af69de48c15ecb1974e47c618ae4ddc227ad1dc971e7c3567c7263718e9d6a35"
+      }
+    },
+    "final_recovery_review": {
+      "sha256": "af69de48c15ecb1974e47c618ae4ddc227ad1dc971e7c3567c7263718e9d6a35",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/repair-v4/REVIEW.json"
+    },
+    "test_source_bindings": [
+      {
+        "sha256": "3b57921570fe985ba5c9a5bca09c86a02ef5ccaa46ed81a7324c40f0dc70e948",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\task_host.rs"
+      },
+      {
+        "sha256": "bfb6c2b0e8ae225fce1dad8ccb799ef3db5964e8bcab82e5828a5c71689717a4",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\peer_host.rs"
+      },
+      {
+        "sha256": "7ccf7a15766b784e267ee6ad004bc6dd9b76fb0db47037f3280cc98776919edd",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\child_host.rs"
+      },
+      {
+        "sha256": "d7508cc187e2a6b2f1354bb3f1ae1bc1bbaa71861c37c88b78c68f11fa46b69d",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\task_isolation\\owner.rs"
+      },
+      {
+        "sha256": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\task_isolation\\capture.rs"
+      },
+      {
+        "sha256": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\task_isolation\\worktree.rs"
+      },
+      {
+        "sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\tests\\support\\task_host_cases.rs"
+      },
+      {
+        "sha256": "89f85f371b4b01135e9ac3768683dc238e1aba2eb1a90d4d937d6d37066b1056",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\tests\\support\\task_isolation_cases.rs"
+      },
+      {
+        "sha256": "0ba4527bb116e0776d3939042aae9c51e44ec58a3079dab483c2285ac76784f7",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\tests\\peer_lifecycle.rs"
+      }
+    ],
+    "coverage": "Original independent source review covered64 module paths; later review deltas are bounded. This point auditor inspected criterion-critical source/callers/tests and raw effects, not a second64-path full code review.",
+    "bindings_verified": "Every chained review/criteria/authorization hash checked"
+  },
+  "human_authorization": {
+    "current_test_sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+    "expectation_weakened_without_authorization": false,
+    "receipt": {
+      "sha256": "5110c8d0a16ea4b2bd21afbe3d45108d4632f5e89e27325a0b83732a5a9ab300",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/repair-v4/HUMAN-AUTHORIZATION.json"
+    },
+    "authorized_change": "Exactly reviewed parent request count3 to3or4, child2each, optional fourth request is an original-child system-notice; all other assertions/timeouts preserved"
+  },
+  "criterion_counts": {
+    "observable": {
+      "passed": 8,
+      "partial": 2,
+      "original": 10,
+      "open": 0
+    },
+    "module": {
+      "passed": 7,
+      "partial": 2,
+      "original": 9,
+      "open": 0
+    },
+    "meaning": "Criterion proof accounting only; no OMP feature denominator or accepted counter changes"
+  },
+  "module_criteria": [
+    {
+      "limits": [
+        "Only exercised Builtin grants and caller-denied builtin cases are runtime evidence. RPC/MCP grant transfer is source-backed only; ACP used mcpServers=[] and is not MCP execution proof."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M1",
+      "observed": "Ordinary source-built Native Task invokes the existing ChildHost/Agent path with separate Task execution, child Session, exact PeerKey and resource identities. Four ordinary entry modes and bounded async Task/Wait run. taskAccepted remains false.",
+      "original_content": "Introduce/complete Task isolation runner behind actual Task/native invocation with exact parent+Task+PeerKey generation; reuse ChildHostFactory and ChildContractOwner rather than duplicate Agent loop. Isolated input, mergeMode, keepAlive, backend choice and applyChanges are explicit Host policy. Existing async Task scheduler/batch capabilities are not inferred complete from this owner.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_contract::native_task_schema_shape_identity_and_real_grant_bank",
+        "task_contract::task_policy_depth_schema_modes_and_selected_prose_bank",
+        [
+          "task_agents::fixed_five_agents_preserve_prompt_roles_thinking_tools_and_outputs",
+          "task_agents::actual_native_roots_override_in_order_and_settings_preserve_model_fallbacks",
+          "task_agents::custom_agent_contract_keeps_empty_tools_invalid_schema_and_reserved_names_explicit"
+        ],
+        "rpc_host_settings::task_settings_observations::task_nested_global_project_settings_and_host_only_fields",
+        "validation::graph::driver::observations::declared_lenient_failure_preserves_exact_args_but_not_runtime_errors",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_async_batch_and_actual_wait_bank"
+      ],
+      "evidence": [
+        "raw_lifecycle",
+        "raw_entry",
+        "G3_ASYNC",
+        "source_task_prepare"
+      ],
+      "original_obligation": "Real production Task execution ownership entry"
+    },
+    {
+      "limits": [
+        "Passed within current Windows live-owner scope. Other OS/mount backends and sourceCommonDir symlink runtime remain open."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M2",
+      "observed": "Current Windows paths create an actual rcopy sandbox, owner and backend receipts, detached Git metadata and retained backend identity. G1 exercised linked-worktree/private metadata, sparse/shallow/unborn handling, backend labels and budgets.",
+      "original_content": "Create sandbox and owner marker before materialization; preserve fixed platform candidate/fallback semantics and compact paths, detach .git/linked-worktree metadata so child Git does not mutate parent HEAD/index/refs. Retain actual backend for teardown. No temp empty directory posing as worktree.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "ara-iso --lib current-platform original native bank",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "evidence": [
+        "G1",
+        "ISO_NATIVE",
+        "primitive_artifacts",
+        "source_owner_create"
+      ],
+      "original_obligation": "Real isolation backend handle and live ownership marker"
+    },
+    {
+      "limits": [
+        "Ordinary root native effects and root/nested Git primitive effects are distinct proof layers. No production nested model task is claimed."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M3",
+      "observed": "G2 exercises actual root/nested dirty Git baselines, binary patch and baseline-WIP subtraction; ordinary child native write/Bash results identify the actual isolated cwd and durable patch/history files.",
+      "original_content": "Capture staged/unstaged/untracked/root+nested baseline inside copy. Isolated ChildHost cwd must be actual merged directory, with outside-root tool exposure following fixed isolated policy. Produce binary-safe patch/nested artifacts and history outputs via real writes.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "evidence": [
+        "G2",
+        "raw_lifecycle",
+        "primitive_artifacts",
+        "source_capture"
+      ],
+      "original_obligation": "Exact copied baseline and effects capture"
+    },
+    {
+      "limits": [
+        "Final recapture is the complete delta relative to the retained baseline and contains initial agent/Bash edits plus warm-only.txt. It is not a warm-only patch and does not replay parent apply."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M4",
+      "observed": "Patch and branch modes both capture initial native edits. Unchanged G2 release preserves fingerprint; warm changes create a new capture/fingerprint, durable patch and recovery branch surviving sandbox removal.",
+      "original_content": "Support both fixed merge modes, preserve agent commits/trailing edits and baseline-WIP subtraction, handedOff fingerprint suppresses duplicate unchanged capture, follow-up changes recaptured at release, artifacts remain durable after sandbox cleanup.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "evidence": [
+        "G2",
+        "G4",
+        "raw_lifecycle",
+        "source_capture"
+      ],
+      "original_obligation": "Run-end branch/patch result assembly and final release recapture"
+    },
+    {
+      "limits": [
+        null
+      ],
+      "accepted_complete": false,
+      "status": "partial",
+      "id": "M5",
+      "observed": "Both ordinary merge modes retain exact PeerKey, ResourceId and cwd through manual park; runtime becomes null then generation 2 -> 3 on warm revival. G4 enforces exact publication and admission sealing.",
+      "original_content": "Resource owner keyed to stable exact PeerKey/root generation lives independently of transient RuntimeKey and ChildHost. Park drops writer/runtime only; no cleanup callback. Adoption must transfer ownership exactly once. Failures before adoption release or retain actual workspace according to fixed outcome.",
+      "missing": [
+        "The original final clause, failures before adoption release or retain actual workspace according to outcome, lacks executed actual Task-owner pre-adoption failure/rejection cases."
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "evidence": [
+        "raw_lifecycle",
+        "G4",
+        "source_peer_owner"
+      ],
+      "original_obligation": "Generation-owned resource lease survives park"
+    },
+    {
+      "limits": [
+        "This accepts the current generic factory's no-lease refusal. It does not establish resource-owner recovery across a new OS process, restart or foreign root."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M6",
+      "observed": "The ordinary isolated warm path uses the same retained cwd/baseline and exact PeerKey with a new RuntimeKey. The real generic cold factory refuses the isolated transcript while its directory exists, and preserves the parked owner. Selected P3 functions retain non-isolated cold behavior.",
+      "original_content": "While exact retained owner still lives, warm park revival rebuilds Native Session in same isolated cwd and retains baseline/onRelease authority. Current generic cold factory remains history-only for isolated transcript; restart/foreign root/file existence cannot manufacture owner.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "evidence": [
+        "raw_lifecycle",
+        "PEER_P3",
+        "source_child_factory"
+      ],
+      "original_obligation": "Warm isolated revival versus cold history-only"
+    },
+    {
+      "limits": [
+        "Actual actor-close Unknown uses a controlled frontier on the real ordinary Host. General deferred Bash/hook settlement remains the M8 gap."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M7",
+      "observed": "G4 actual admission holds cleanup until writer permit drop, joins repeated/concurrent finalization and survives dropped observer. Ordinary release and Unknown close retain the same close channel. G5 marker/ref replacement and VCS expected-tip CAS retain successors.",
+      "original_content": "Retained capture+cleanup receipt coalesces repeated/concurrent release/root close and survives dropped observer. Old exact lease can never remove replacement sandbox/ref. Current lifecycle root close joins close/release concurrently: resource owner must require stopped/settled writers before final capture and removal. No lock across external async cleanup.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "evidence": [
+        "G4",
+        "G5",
+        "VCS_NATIVE",
+        "raw_lifecycle",
+        "raw_unknown",
+        "source_finalize"
+      ],
+      "original_obligation": "Once-only release, lost observer and cross-generation boundaries"
+    },
+    {
+      "limits": [
+        null
+      ],
+      "accepted_complete": false,
+      "status": "partial",
+      "id": "M8",
+      "observed": "Executed normal one-shot cleanup, keepAlive park/warm transfer, artifact-directory publication failure, public-ref/owner replacement, actual Windows backend-stop sharing denial, cancellation-before-parent-apply, merge conflict/nested stash conflict, and actual ChildHost Unknown close retain appropriate receipts/workspace.",
+      "original_content": "Startup cleanup, genuine kill, one-shot cleanup, keepAlive transfer, deferred Bash/hooks settlement, patch write failure, branch commit partial effects, nested persistence errors and backend stop failure each have fixed observable artifact/retained-workspace paths. Unknown external effects are receipts awaiting reconciliation, never automatic replay.",
+      "missing": [
+        "Actual isolated Task startup failure before and after runtime spawn is unexecuted.",
+        "Actual Task-owner adoption rejection is unexecuted.",
+        "Genuine kill of the actual isolated child and deferred native Bash/hook settlement are unexecuted.",
+        "Partial branch commit and nested artifact persistence failure are unexecuted; merge/stash conflict and top-level artifact obstruction do not prove these distinct frontiers."
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "evidence": [
+        "G2",
+        "G5",
+        "raw_entry",
+        "raw_lifecycle",
+        "raw_unknown",
+        "primitive_artifacts"
+      ],
+      "original_obligation": "Recoverable failures/deferred effects"
+    },
+    {
+      "limits": [
+        "Canonical Host mutations are serialized. Arbitrary external Git/stash writers outside this gate are not covered. Partial branch-commit failure remains M8."
+      ],
+      "accepted_complete": true,
+      "status": "passed",
+      "id": "M9",
+      "observed": "Only configured apply requests mutate disposable parent Git. G2 runs both merge modes, preserves staged/index/untracked/older stash, skips an already landed pick, preserves author/messages and trailing edits, and retains recovery branch on conflict. Ordinary Task receipts keep successful Run separate from Task acceptance.",
+      "original_content": "Production result integration applies only when policy requests it; serialize parent Git mutations, preserve staged/index/untracked and unrelated stash, retain committed recovery branch on partial failure. Actual Task acceptance still separate from successful Run and effect capture.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention"
+      ],
+      "evidence": [
+        "G2",
+        "G5",
+        "raw_lifecycle",
+        "source_parent_gate",
+        "source_capture"
+      ],
+      "original_obligation": "Requested merge/apply while preserving parent WIP"
+    }
+  ],
+  "observable_criteria": [
+    {
+      "limits": [
+        null
+      ],
+      "status": "partial",
+      "id": "O1",
+      "observed": "Actual ordinary Task creates a private isolated cwd and real owner/capture receipts; parent staged user.txt and untracked-user contents remain preserved after native apply. G1/G2 provide exact parent HEAD/raw-index comparisons at primitive layer.",
+      "original_proof": "Ordinary production Task isolated start in private disposable dirty Git root creates actual sandbox, owner marker, detached metadata and child cwd; parent HEAD/index/diffs/untracked remain byte-equivalent during child work.",
+      "missing": [
+        "The required ordinary child-work interval lacks a complete before/during observation of parent HEAD, raw index bytes, staged/unstaged binary diffs and untracked bytes. Bank.initial_head/index are recorded, while preserved_wip checks expected content rather than comparing the complete native-interval snapshot. Primitive assertions cannot close this ordinary-process clause."
+      ],
+      "original_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted_complete": false,
+      "evidence": [
+        "raw_lifecycle",
+        "raw_entry",
+        "G1",
+        "G2"
+      ]
+    },
+    {
+      "limits": [
+        "Native root effects and nested/binary primitive effects are separately recorded."
+      ],
+      "status": "passed",
+      "id": "O2",
+      "observed": "Ordinary child native write/Bash produce initial agent/Bash patch and real file bytes; G2 actual Git/FS produces binary-safe root/nested patches excluding dirty baseline and matching applied bytes/history outputs.",
+      "original_proof": "Real child file/Bash edits in sandbox yield root+nested binary-safe patches that exclude baseline WIP; patch/branch output and history artifact paths agree with persisted results.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "raw_lifecycle",
+        "G2",
+        "primitive_artifacts"
+      ]
+    },
+    {
+      "limits": [
+        "This case uses actual manual park, allowed by original TTL/manual criterion."
+      ],
+      "status": "passed",
+      "id": "O3",
+      "observed": "Raw ordinary stdout shows manual park joined=true, runtime=null, unchanged PeerKey/resource/cwd and only the prior capture effect; warm revival retains the same resource and increments runtime 2 -> 3.",
+      "original_proof": "Wait for actual TTL/manual park and writer join; sandbox/owner/baseline stay intact and cleanup count/effect remains zero. Warm revive keeps PeerKey, changes RuntimeKey only and uses same sandbox/capture baseline.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "raw_lifecycle",
+        "source_peer_owner"
+      ]
+    },
+    {
+      "limits": [
+        "The final durable patch is baseline-relative and includes initial plus warm changes, not only the warm edit."
+      ],
+      "status": "passed",
+      "id": "O4",
+      "observed": "Warm follow-up changes captureId/fingerprint; durable final patch and actual parent recovery ref contain warm-only.txt. Parent lacks warm-only.txt, proving final release does not repeat apply. Unchanged G2 release does not create another capture delta.",
+      "original_proof": "After warm follow-up edits, release captures exactly new delta. Unchanged release makes no second commit; changed follow-up preserves new commit/patch. Main parent original WIP remains untouched.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "raw_lifecycle",
+        "G2",
+        "G4"
+      ]
+    },
+    {
+      "limits": [
+        "No count from an assertions JSON is used as sole evidence; raw receipt files, actual Git refs and filesystem are checked."
+      ],
+      "status": "passed",
+      "id": "O5",
+      "observed": "G4 repeated/concurrent finalization and dropped observer coalesce one retained operation; raw ordinary release removes exact cwd after durable captures. G5 marker replacement and native VCS CAS preserve successor refs/resources.",
+      "original_proof": "Repeated/root/concurrent release or dropped result observer joins one retained capture/cleanup operation; exact resource disappears once after durable artifacts. Delayed old release never deletes successor resource or ref.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "G4",
+        "G5",
+        "VCS_NATIVE",
+        "raw_lifecycle",
+        "raw_unknown"
+      ]
+    },
+    {
+      "limits": [
+        "No new-process resource-owner restoration is accepted."
+      ],
+      "status": "passed",
+      "id": "O6",
+      "observed": "The actual generic cold factory rejects the isolated transcript as history-only with cwd still present and original owner unchanged; selected P3 runs cover non-isolated cold restoration.",
+      "original_proof": "Cold isolated transcript remains history-only with owner absent/restart, even when retained directory exists. Non-isolated cold revive remains unchanged.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "raw_lifecycle",
+        "PEER_P3",
+        "source_child_factory"
+      ]
+    },
+    {
+      "limits": [
+        "The specific genuine kill/deferred Bash/hook paths listed by M8 remain unexecuted."
+      ],
+      "status": "passed",
+      "id": "O7",
+      "observed": "Executed G4 holds an actual writer admission while finalization seals, aborts only its observer, then releases the writer to allow durable capture/removal. G5 uses actual filesystem obstruction/Windows sharing denial; actual ordinary close frontier exposes Unknown and retains the original workspace without replay.",
+      "original_proof": "Hold real owner effect/writer cleanup and show capture/removal does not race it. Bounded fault hooks on actual Git/FS frontier expose failure receipts without re-running unknown commit/apply/removal.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "G4",
+        "G5",
+        "raw_unknown",
+        "primitive_artifacts"
+      ]
+    },
+    {
+      "limits": [
+        null
+      ],
+      "status": "partial",
+      "id": "O8",
+      "observed": "Ordinary one-shot EOF cleans real cwd. Actual Unknown close retains cwd/owner/capture and emits peer_root_shutdown settled=false; ordinary process exits 1. G5 actual artifact obstruction and backend-stop denial remain retained with durable paths.",
+      "original_proof": "Startup failure/one-shot/genuine kill/adoption rejection release according to owner outcome. Patch/nested persistence failure retains recoverable workspace/branch and reports path; teardown failure must not falsely claim a destroyed or safe-to-delete resource.",
+      "missing": [
+        "Original startup failure/genuine kill/adoption rejection clauses lack actual Task-owner execution.",
+        "Nested persistence failure and partial branch-commit effects lack execution; root artifact obstruction and merge/stash conflict cover different frontiers."
+      ],
+      "original_banks": [
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted_complete": false,
+      "evidence": [
+        "raw_entry",
+        "raw_unknown",
+        "G5",
+        "primitive_artifacts"
+      ]
+    },
+    {
+      "limits": [
+        "Only current-host applicable behavior is passed. Native Linux/macOS/mount backend and Windows privileged symlink runtime remain open as required by the original criterion."
+      ],
+      "status": "passed",
+      "id": "O9",
+      "observed": "All fixed backend labels and resolver sources remain present; current Windows native tests plus G1/Git facade test real current-host fallback, detached metadata, budget checks and literal/exact cleanup behavior. Explicit sourceCommonDir symlink NOT_EXECUTED receipt preserves the platform gap.",
+      "original_proof": "Backend preferred/unavailable fallback, linked worktree/private Git metadata, budget limits and path/symlink/literal cleanup rules follow fixed source. Applicable real Windows/Linux cases recorded separately; unsupported runtime cases stay open.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "ara-iso --lib current-platform original native bank",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "G1",
+        "ISO_NATIVE",
+        "VCS_NATIVE",
+        "primitive_artifacts",
+        "upstream_identity"
+      ]
+    },
+    {
+      "limits": [
+        "Passing this audit-binding criterion does not make the complete point accepted while M5/M8/O1/O8 remain partial."
+      ],
+      "status": "passed",
+      "id": "O10",
+      "observed": "G2 executes requested patch/branch integration preserving real disposable parent staged/index/untracked/older stash and conflict receipts. Raw ordinary events keep taskAccepted=false. Source/plan/10-image/log identity and independent source/EXEC/point bindings are recorded.",
+      "original_proof": "Requested merge/apply preserves actual disposable parent index/staged/untracked/unrelated stash and records conflicts/partial merged subset; no implicit Task acceptance. Source identity unchanged and final independent source/EXEC/point audit binds actual code/images/artifacts.",
+      "missing": [
+        null
+      ],
+      "original_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention"
+      ],
+      "accepted_complete": true,
+      "evidence": [
+        "G2",
+        "G5",
+        "raw_lifecycle",
+        "pin_checks",
+        "final_exec"
+      ]
+    }
+  ],
+  "evidence_catalog": {
+    "pin_checks": {
+      "sha256": "7fa0f2be3aa0aec2379443efc5ee26a6299e4a721a2cfd2f07eda367d24cf012",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/INDEPENDENT-CHECKS.json"
+    },
+    "raw_lifecycle": {
+      "sha256": "f50fefc6e4f19ee582cb41a445dd93aaf6ecd014561ba4ef6b6d4b5aa24b04b5",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/RAW-SAMPLE-CHECKS.json"
+    },
+    "raw_unknown": {
+      "sha256": "f50fefc6e4f19ee582cb41a445dd93aaf6ecd014561ba4ef6b6d4b5aa24b04b5",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/RAW-SAMPLE-CHECKS.json"
+    },
+    "primitive_artifacts": {
+      "sha256": "9faa90fd64e7f9320a9466642d84890bee3ab726416b7f06c36c73962dd9e33d",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/PRIMITIVE-ARTIFACT-CHECKS.json"
+    },
+    "upstream_identity": {
+      "sha256": "01283b1e5a1d756b0e7d0f0ed985c9e857203612ee882d15f6516598195de614",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/UPSTREAM-IDENTITY-CHECKS.json"
+    },
+    "final_exec": {
+      "sha256": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5",
+      "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-exec-v4/EXEC-REVIEW.json"
+    },
+    "G1": {
+      "test": "g1_backend_policy_baseline_budget_and_linked_detachment",
+      "log": {
+        "sha256": "294bb6ce373038e263a78a8becc590b456fd9894e3da58eef5bfdd0f03d3f1df",
+        "path": "D:/Temp/ara-task-m1m9-v4/06-task_isolation.stdout.log"
+      },
+      "source": "crates/ara-cli/tests/support/task_isolation_cases.rs:381"
+    },
+    "G2": {
+      "test": "g2_real_git_binary_nested_history_and_parent_wip",
+      "log": {
+        "sha256": "294bb6ce373038e263a78a8becc590b456fd9894e3da58eef5bfdd0f03d3f1df",
+        "path": "D:/Temp/ara-task-m1m9-v4/06-task_isolation.stdout.log"
+      },
+      "source": "crates/ara-cli/tests/support/task_isolation_cases.rs:513"
+    },
+    "G4": {
+      "test": "g4_exact_resource_admission_release_and_lost_observer",
+      "log": {
+        "sha256": "294bb6ce373038e263a78a8becc590b456fd9894e3da58eef5bfdd0f03d3f1df",
+        "path": "D:/Temp/ara-task-m1m9-v4/06-task_isolation.stdout.log"
+      },
+      "source": "crates/ara-cli/tests/support/task_isolation_cases.rs:822"
+    },
+    "G5": {
+      "test": "g5_artifact_ref_and_unknown_close_retention",
+      "log": {
+        "sha256": "294bb6ce373038e263a78a8becc590b456fd9894e3da58eef5bfdd0f03d3f1df",
+        "path": "D:/Temp/ara-task-m1m9-v4/06-task_isolation.stdout.log"
+      },
+      "source": "crates/ara-cli/tests/support/task_isolation_cases.rs:899"
+    },
+    "G3_ASYNC": {
+      "test": "g3_native_async_batch_and_actual_wait_bank",
+      "log": {
+        "sha256": "8edc76685f5a3a4feeff9ffd82b0e835db5b9819b344cad341a2fc64f5f78d12",
+        "path": "D:/Temp/ara-task-m1m9-v4/07-task_host.stdout.log"
+      },
+      "source": "crates/ara-cli/tests/support/task_host_cases.rs:731",
+      "raw": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-async-batch-01a18830-c20a-70a3-bc44-ab864153db27"
+    },
+    "raw_entry": {
+      "test": "g3_native_task_print_line_rpc_acp_entry_bank",
+      "log": {
+        "sha256": "8edc76685f5a3a4feeff9ffd82b0e835db5b9819b344cad341a2fc64f5f78d12",
+        "path": "D:/Temp/ara-task-m1m9-v4/07-task_host.stdout.log"
+      },
+      "directories": [
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-acp-01a18831-486c-771e-abc6-b47a0ff9357e",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-reviewer-01a18831-6509-712d-96bc-aff170aa179e",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-scout-01a18831-5760-70de-86c7-cca74a37311a",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-security-reviewer-01a18831-765d-740e-b2eb-e06540a740fd",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-find-01a18831-8e70-7058-924f-d43aaf6eb23d",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-lsp-01a18831-9450-7214-9568-d01d6dc0e9fc",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-write-01a18831-99ff-7342-9714-ca1b60ad7cf8",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-line-01a18831-28f7-76a5-9b99-7a8285e65c5c",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-print-01a18831-1564-756e-9c33-7b20b8152e04",
+        "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-rpc-01a18831-39bc-731d-b1c0-09ce2660ea6b"
+      ]
+    },
+    "ISO_NATIVE": {
+      "sha256": "e276fc58383ce5c9eafa643fbaecc500b6ba1c15308965f8486165c7251055b6",
+      "path": "D:/Temp/ara-task-m1m9-v4/00-ara_iso.stdout.log"
+    },
+    "VCS_NATIVE": {
+      "sha256": "aa8fd4760baa72964c4b5793f6adce5455df6a2cba4082457813faf22ca08ffc",
+      "path": "D:/Temp/ara-task-m1m9-v4/01-ara_task_vcs.stdout.log"
+    },
+    "PEER_P3": {
+      "original_functions": [
+        "p3_park_revive_root_latches_artifacts_and_history_bank",
+        "peer_p3_park_cold_revive_latest_contract_and_writer_bank"
+      ],
+      "log": {
+        "sha256": "b2e73d2d20f597adf2d6a15266390117cad6a9675242aba7697d239cebd07173",
+        "path": "D:/Temp/ara-task-m1m9-v4/08-peer_lifecycle.stdout.log"
+      }
+    },
+    "source_task_prepare": {
+      "line": 86,
+      "path": "crates/ara-cli/src/task_host.rs"
+    },
+    "source_owner_create": {
+      "line": 152,
+      "path": "crates/ara-cli/src/task_isolation/owner.rs"
+    },
+    "source_peer_owner": {
+      "line": 99,
+      "path": "crates/ara-cli/src/peer_host.rs"
+    },
+    "source_child_factory": {
+      "line": 349,
+      "path": "crates/ara-cli/src/child_host.rs"
+    },
+    "source_finalize": {
+      "line": 525,
+      "path": "crates/ara-cli/src/task_isolation/owner.rs"
+    },
+    "source_parent_gate": {
+      "line": 456,
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs"
+    },
+    "source_capture": {
+      "line": 98,
+      "path": "crates/ara-cli/src/task_isolation/capture.rs"
+    }
+  },
+  "original_peer_identity": {
+    "full_Peer_acceptance": false,
+    "original_inventory_promoted": false,
+    "status": "passed",
+    "evidence": [
+      "raw_lifecycle",
+      "G4",
+      "source_peer_owner"
+    ],
+    "original": {
+      "group": "peer",
+      "version": "target",
+      "path": "packages/coding-agent/test/registry/agent-lifecycle.test.ts",
+      "line": 442,
+      "title": "AgentLifecycleManager > keeps owned resources through parking and releases them with the agent",
+      "file_sha256": "ddaf42347df3068029ac8198af40f4b701f30103125970d5178e6a8070c09d2f",
+      "status": "SOURCE_DECLARED_NOT_RUN",
+      "inventory_origin": "preserved-original-peer-identity",
+      "disposition": "REQUIRED_PEER_IMPLEMENTATION_NOT_RUN",
+      "owner": "host_peers registry/inbox/lifecycle/roster/native/agent_uri/wake according to source file"
+    },
+    "scope": "Bounded current Windows park-retention/exact-release semantics observed in both ordinary Task merge modes",
+    "original_source_body_read": true
+  },
+  "upstream52_disposition": {
+    "identity_check": {
+      "sha256": "01283b1e5a1d756b0e7d0f0ed985c9e857203612ee882d15f6516598195de614",
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\final-point-v4/UPSTREAM-IDENTITY-CHECKS.json"
+    },
+    "body_review": "Original table does not claim every source body reviewed. Matching filenames/titles and89 successful Rust functions do not establish all52 original identities.",
+    "rows47_48_49_51": "open: global stale/markerless/corrupt/retained-sidecar scanner remains unimplemented",
+    "row50": "partial: actual live-lease stop denial retained workspace is observed; global discovery/scanner remains open",
+    "accepted_rows_promoted": 0,
+    "source_declared": 52
+  },
+  "minimum_followup": {
+    "no_full_workspace_build_requested": true,
+    "groups": [
+      {
+        "id": "F1_NATIVE_PARENT_INTERVAL",
+        "criteria": [
+          "O1"
+        ],
+        "reuse": "Existing task_host Bank/RoutedUpstream and ordinary source-built ara; keep the original lifecycle/async assertions.",
+        "scenario": "Capture parent HEAD, raw index bytes, staged and unstaged binary diff bytes, and untracked file-byte manifest before dispatch. Hold the existing child's final provider response after its actual native write/Bash tool results, before result capture/apply, then take the same parent snapshot while the edited isolated child is held.",
+        "expected": "Before/held parent snapshots are byte-equivalent, isolated edits and live resource are real, then release that same response and inspect the original result/apply. Preserve all raw snapshots and actual effect receipts.",
+        "proof_limit": "A successful final preserved_wip check or the G1/G2 primitive byte comparison alone cannot close this ordinary-process interval."
+      },
+      {
+        "id": "F2_PRE_ADOPTION_AND_STARTUP",
+        "criteria": [
+          "M5",
+          "M8",
+          "O8"
+        ],
+        "reuse": "Existing actual IsolationLease -> ChildHostFactory -> BinaryPeerHost resource reservation/publication path in the task_host fixture; use narrow actual-frontier test hooks only where no deterministic real boundary is already available.",
+        "scenario": "Within one combined bank, reach a materialized lease then exercise known pre-spawn preparation failure, post-spawn startup/join uncertainty, and actual registry/adoption rejection after allocation. Keep the original Task/Peer/resource identity and original close flight.",
+        "expected": "Known stopped preparation follows actual capture/stop/release outcome; unknown writer outcome retains exact workspace/owner and reports reconciliation. Repeated observers join original receipts. Preflight tool denial before lease allocation is a separate successful case.",
+        "proof_limit": "Do not replace a real owner outcome with callback counters, a fabricated transcript, or a synthetic taskAccepted result."
+      },
+      {
+        "id": "F3_GENUINE_KILL_AND_DEFERRED_EFFECTS",
+        "criteria": [
+          "M8",
+          "O8"
+        ],
+        "reuse": "Existing ordinary child native Bash/tool-hook owner, ChildHost close/kill path, dropped-observer and root-release fixture seams.",
+        "scenario": "Hold actual child-owned Bash/hook settlement, request a genuine child kill/cancel and concurrent root/resource release, and drop only the observing caller. Observe that capture/removal has not run while the original effect/join is held, then settle or fail that exact original effect.",
+        "expected": "Known stopped effects allow exactly one final capture/cleanup; unknown outcome retains actual workspace and failed/unsettled root receipt. The original effect is never replayed, and cancelled/failed Run never accepts Task.",
+        "proof_limit": "An ordinary successful Bash call, primitive admission permit or the already-tested after-close-before-join fault does not establish deferred Bash/hook settlement."
+      },
+      {
+        "id": "F4_PARTIAL_GIT_AND_NESTED_PERSISTENCE",
+        "criteria": [
+          "M8",
+          "O8"
+        ],
+        "reuse": "Existing real Git/FS capture and recovery paths used by G2/G5, exercised on the actual task_host resource within the same combined bank.",
+        "scenario": "Cause a bounded real Git failure after a branch/history effect has partly occurred, and a separate nested patch/artifact publication failure after a durable root artifact exists. Record actual Git tips/commits/subset, patch bytes, retained owner/backend and original error receipts.",
+        "expected": "Preserve recoverable workspace, durable artifacts and any committed rescue branch; state the actual partial outcome instead of claiming an all-or-nothing rollback. Repeated release/result observation must join the original outcome without repeating unknown commit/apply/removal.",
+        "proof_limit": "Existing CAS replacement, merge conflict, nested stash conflict and top-level artifact-directory obstruction are retained as distinct evidence."
+      },
+      {
+        "id": "F5_RELATED_MCP_RPC_GRANT_DEPENDENCY",
+        "criteria": [
+          "M1-related-dependency"
+        ],
+        "reuse": "Existing task_host controlled environment and current Native MCP/RPC source-owner bindings.",
+        "scenario": "Add the smallest actual true/false/absent/foreign-owner grant cases for one real MCP/RPC capability, with full WRITE versus transport-only WRITE preserved.",
+        "expected": "Authentic granted capability reaches the child; absent/denied/foreign owner rejects the complete batch before child or lease effects. Record actual requested and bound source owners.",
+        "proof_limit": "This is a related execution gap, separately tracked from the original19 criterion count. ACP with mcpServers=[] does not close it."
+      }
+    ],
+    "no_test_weakening": true,
+    "execution_shape": "One combined module fault/observation bank in the existing task_host target, plus directly affected original complete functions after independent source review. Reuse the same D target/cache/profile and ordinary binary. Keep all original nine group identities and89 original assertions.",
+    "new_source_or_behavior": "This report proposes executable evidence only. Any discovered production defect needs scoped repair/review and testing on the new frozen snapshot."
+  },
+  "gates_and_limits": [
+    "--no-session/in-memory Task, full scheduler/workpool/speculative launch/UI/advisory/name generation/autoload/prewalk/extensions are outside this live-owner acceptance.",
+    "Actual MCP/RPC grant transfer remains execution-open; selected real builtin grants and caller denials do not prove every source-owner class.",
+    "Other OS and mounting backend runtime behavior and platform-specific symlink cases remain open.",
+    "No real-model/API/account acceptance; controlled loopback models/accounts only.",
+    "Global cargo-deny is still FAIL33 existing baseline diagnostics. Dependency delta0 is not a global audit pass or release waiver.",
+    "Workspace-wide fmt/clippy/doctests/all-targets and product/release gates are not proved by this module batch.",
+    "Arbitrary external concurrent Git/stash writers are outside canonical Host serialization.",
+    "Full Task/Peer/Child/History/OMP/product acceptance is open. Old7/111,new-target6,ported_through_commit=null remain unchanged."
+  ],
+  "unmodified_artifacts": "No original plan, tests, source snapshot, raw results, source-declared map, Git refs or old reports changed."
+}

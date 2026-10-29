@@ -1,16 +1,17 @@
-//! The fixed catalog's lenient classifyModel("", id) path, used only for shape choice.
+//! Fixed OMP b91db66e taxonomy paths used by shape, billing, and deployment policy.
 //! Source: packages/catalog/src/compat/{taxonomy,revision,cascade}.ts (MIT).
+//! Copyright (c) 2025 Mario Zechner; 2025-2026 Can Bölük; 2026 Stencil Labs, Inc.
 use serde_json::Value;
 use std::sync::OnceLock;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Identity {
     pub class: String,
     pub family: Option<String>,
     pub revision: Option<[u8; 3]>,
 }
 
-fn rules() -> &'static Value {
+pub(crate) fn rules() -> &'static Value {
     static RULES: OnceLock<Value> = OnceLock::new();
     RULES.get_or_init(|| serde_json::from_str(include_str!("catalog-rules.json")).expect("fixed catalog rules"))
 }
@@ -31,7 +32,7 @@ fn bounded(value: &str, token: &str) -> bool {
             .is_some_and(|ch| matches!(ch, '-' | '_' | '.' | ':' | '0'..='9'))
 }
 
-fn glob(pattern: &str, subject: &str) -> bool {
+pub(crate) fn glob(pattern: &str, subject: &str) -> bool {
     // Anchored '*' matching, with the same greedy/backtracking semantics as cascade.ts.
     let p = pattern.as_bytes();
     let s = subject.as_bytes();
@@ -122,20 +123,25 @@ fn family_rank(cls: &Value, subject: &str) -> (Option<String>, bool) {
     }
     (winner.map(|(_, id)| id), tied)
 }
-fn ranks_in_class(cls: &Value, model: &str) -> Identity {
+fn ranks_in_class(cls: &Value, model: &str, lenient: bool) -> crate::Result<Identity> {
     let lower = ara_prompt::js::trim(model).to_lowercase();
     let subject = bare(&lower);
     let (mut family, tied) = family_rank(cls, subject);
+    let mut unresolved_tie = tied;
     if tied {
         family = None;
         if let Some(at) = subject.find(['.', ':']).filter(|&i| i > 0 && i + 1 < subject.len())
             && array(&cls["matchers"]).iter().any(|m| string(&m["token"]) == &subject[..at])
         {
             let (rescored, tied) = family_rank(cls, &subject[at + 1..]);
-            if !tied {
+            if !tied && rescored.is_some() {
                 family = rescored;
+                unresolved_tie = false;
             }
         }
+    }
+    if unresolved_tie && !lenient {
+        return Err(crate::Error::from_reason(format!("ambiguous family for `{lower}`")));
     }
     let mut revision = None;
     if !array(&cls["skipBare"]).iter().any(|v| v.as_str() == Some(subject)) {
@@ -152,9 +158,9 @@ fn ranks_in_class(cls: &Value, model: &str) -> Identity {
             }
         }
     }
-    Identity { class: string(&cls["id"]).into(), family, revision }
+    Ok(Identity { class: string(&cls["id"]).into(), family, revision })
 }
-fn classify_ranks(model: &str) -> Identity {
+fn classify_ranks(model: &str, lenient: bool) -> crate::Result<Identity> {
     let lower = ara_prompt::js::trim(model).to_lowercase();
     let subject = bare(&lower);
     let mut winner: Option<((u8, usize), &Value)> = None;
@@ -200,39 +206,89 @@ fn classify_ranks(model: &str) -> Identity {
         }
     }
     if tied {
-        return Identity { class: "unknown".into(), ..Default::default() };
+        return if lenient {
+            Ok(Identity { class: "unknown".into(), ..Default::default() })
+        } else {
+            Err(crate::Error::from_reason(format!("ambiguous class for `{lower}`")))
+        };
     }
     winner
-        .map(|(_, cls)| ranks_in_class(cls, model))
-        .unwrap_or_else(|| Identity { class: "unknown".into(), ..Default::default() })
+        .map(|(_, cls)| ranks_in_class(cls, model, lenient))
+        .unwrap_or_else(|| Ok(Identity { class: "unknown".into(), ..Default::default() }))
 }
 pub(crate) fn classify(model: &str) -> Identity {
+    classify_for_provider("", model, true).expect("lenient fixed taxonomy")
+}
+
+pub(crate) fn classify_for_provider(provider: &str, model: &str, lenient: bool) -> crate::Result<Identity> {
     let trimmed = ara_prompt::js::trim(model);
     let lower_bare = bare(trimmed).to_lowercase();
     let classes = array(&rules()["taxonomy"]["classes"]);
-    let mut agnostic = None;
-    for cls in classes {
-        for item in array(&cls["overrides"]) {
-            if string(&item["model"]).to_lowercase() != lower_bare {
+    let lower_provider = provider.to_lowercase();
+    let overrides: Vec<_> = classes.iter().flat_map(|cls| array(&cls["overrides"])).collect();
+    let scoped = overrides.iter().copied().find(|item| {
+        item["model"].as_str().is_some_and(|id| id.to_lowercase() == lower_bare)
+            && item["provider"].as_str().is_some_and(|p| p.to_lowercase() == lower_provider)
+    });
+    let agnostic = overrides.iter().copied().find(|item| {
+        item["model"].as_str().is_some_and(|id| id.to_lowercase() == lower_bare) && item.get("provider").is_none()
+    });
+    if let Some(item) = scoped.or(agnostic) {
+        return override_identity(item, trimmed, lenient);
+    }
+    // Pattern overrides are ranked separately by scope, then by non-wildcard length.
+    // The source callers omit observedAtMs, so even expiring overrides remain active.
+    for scope in [Some(lower_provider.as_str()), None] {
+        let mut winner: Option<(usize, &Value)> = None;
+        let mut tied = false;
+        for item in &overrides {
+            if item.get("model").is_some() {
                 continue;
             }
-            if let Some(provider) = item["provider"].as_str() {
-                if provider.is_empty() {
-                    return override_identity(item, trimmed);
+            let Some(pattern) = item["glob"].as_str() else {
+                continue;
+            };
+            let item_provider = item["provider"].as_str().map(str::to_lowercase);
+            if item_provider.as_deref() != scope || !glob(pattern, &lower_bare) {
+                continue;
+            }
+            let specificity = pattern.encode_utf16().filter(|&c| c != 42).count();
+            match winner {
+                Some((prior, _)) if prior == specificity => tied = true,
+                None => {
+                    winner = Some((specificity, item));
+                    tied = false;
                 }
-            } else if agnostic.is_none() {
-                agnostic = Some(item);
+                Some((prior, _)) if prior < specificity => {
+                    winner = Some((specificity, item));
+                    tied = false;
+                }
+                _ => {}
             }
         }
+        if tied {
+            if !lenient {
+                return Err(crate::Error::from_reason(format!("ambiguous override for `{lower_bare}`")));
+            }
+            break;
+        }
+        if let Some((_, item)) = winner {
+            return override_identity(item, trimmed, lenient);
+        }
     }
-    if let Some(item) = agnostic {
-        return override_identity(item, trimmed);
-    }
+    let collapse = &rules()["taxonomy"]["collapse"];
     let lower = trimmed.to_lowercase();
     let subject = bare(&lower);
     let mut suffix = "";
     if trimmed.len() == model.len() {
-        for item in array(&rules()["taxonomy"]["collapse"]["suffixes"]) {
+        for family in array(&collapse["effortFamilies"]) {
+            if family["provider"].as_str() == Some(lower_provider.as_str())
+                && array(&family["aliases"]).iter().any(|id| id.as_str() == Some(lower.as_str()))
+            {
+                return classify_ranks(string(&family["logical"]), lenient);
+            }
+        }
+        for item in array(&collapse["suffixes"]) {
             let token = string(&item["suffix"]);
             if lower.ends_with(token)
                 && !item["exceptBarePrefix"].as_str().is_some_and(|p| subject.starts_with(p))
@@ -241,16 +297,57 @@ pub(crate) fn classify(model: &str) -> Identity {
                 suffix = token;
             }
         }
+        if !suffix.is_empty() {
+            return classify_ranks(&trimmed[..trimmed.len() - suffix.len()], lenient);
+        }
+        for lane in array(&collapse["lanes"]) {
+            let lane_suffix = string(&lane["suffix"]);
+            if !array(&lane["providers"]).iter().any(|v| v.as_str() == Some(lower_provider.as_str()))
+                || !lower.ends_with(lane_suffix)
+            {
+                continue;
+            }
+            let lane_start = trimmed.len() - lane_suffix.len();
+            let before_lane = &lower[..lane_start];
+            let bare_before_lane = bare(before_lane);
+            if lane["barePrefix"].as_str().is_some_and(|prefix| !bare_before_lane.starts_with(prefix)) {
+                continue;
+            }
+            let mut effort_suffix = "";
+            for item in array(&collapse["suffixes"]) {
+                let token = string(&item["suffix"]);
+                if item.get("effort").is_some()
+                    && before_lane.ends_with(token)
+                    && !item["exceptBarePrefix"].as_str().is_some_and(|p| bare_before_lane.starts_with(p))
+                    && token.len() > effort_suffix.len()
+                {
+                    effort_suffix = token;
+                }
+            }
+            if effort_suffix.is_empty() {
+                continue;
+            }
+            let base = &trimmed[..lane_start - effort_suffix.len()];
+            if base.is_empty() || base.ends_with('/') {
+                continue;
+            }
+            return classify_ranks(&format!("{base}{}", &trimmed[lane_start..]), lenient);
+        }
     }
-    classify_ranks(&trimmed[..trimmed.len() - suffix.len()])
+    classify_ranks(trimmed, lenient)
 }
-fn override_identity(item: &Value, model: &str) -> Identity {
+fn override_identity(item: &Value, model: &str, lenient: bool) -> crate::Result<Identity> {
     let logical = item["logical"].as_str().unwrap_or(model);
-    let class = item["class"].as_str().map(str::to_owned).unwrap_or_else(|| classify_ranks(logical).class);
+    let class = if let Some(class) = item["class"].as_str() {
+        class.to_owned()
+    } else {
+        classify_ranks(logical, lenient)?.class
+    };
     let mut identity = array(&rules()["taxonomy"]["classes"])
         .iter()
         .find(|c| c["id"].as_str() == Some(&class))
-        .map(|cls| ranks_in_class(cls, logical))
+        .map(|cls| ranks_in_class(cls, logical, lenient))
+        .transpose()?
         .unwrap_or_default();
     identity.class = class;
     if let Some(family) = item["family"].as_str() {
@@ -259,5 +356,5 @@ fn override_identity(item: &Value, model: &str) -> Identity {
     if let Some(revision) = item["revision"].as_str() {
         identity.revision = parse_revision(revision);
     }
-    identity
+    Ok(identity)
 }

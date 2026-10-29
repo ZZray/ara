@@ -23,6 +23,16 @@ pub struct BrokerFixture {
 
 impl BrokerFixture {
     pub async fn start(handler: impl Fn(&Request) -> (u16, Value) + Send + Sync + 'static) -> Self {
+        Self::start_inner(handler, false).await
+    }
+
+    /// Opt-in actual snapshot SSE for the Cold fixture. Other consumers retain
+    /// their existing start behavior and scripted route/fault responses.
+    pub async fn start_with_snapshot_stream(handler: impl Fn(&Request) -> (u16, Value) + Send + Sync + 'static) -> Self {
+        Self::start_inner(handler, true).await
+    }
+
+    async fn start_inner(handler: impl Fn(&Request) -> (u16, Value) + Send + Sync + 'static, snapshot_stream: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -41,8 +51,16 @@ impl BrokerFixture {
                 tokio::spawn(async move {
                     let Some(request) = read_request(&mut socket, &stop).await else { return };
                     seen.lock().unwrap().push(request.clone());
-                    if request.method == "GET" && request.path.starts_with("/v1/events") {
-                        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: fixture stream\n\n";
+                    let snapshot_path = request.path.split('?').next() == Some("/v1/snapshot/stream");
+                    if request.method == "GET" && (request.path.starts_with("/v1/events") || (snapshot_stream && snapshot_path)) {
+                        let body = if snapshot_stream && snapshot_path {
+                            let (status, mut body) = handler(&request);
+                            assert_eq!(status, 200, "controlled initial snapshot stream status");
+                            body["kind"] = json!("snapshot");
+                            ara_cli::auth_broker_wire::validate_wire(ara_cli::auth_broker_wire::BrokerWireSchema::SnapshotStreamSnapshotEvent, &body).unwrap();
+                            format!("event: snapshot\ndata: {body}\n\n")
+                        } else { ": fixture stream\n\n".to_owned() };
+                        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}");
                         if socket.write_all(head.as_bytes()).await.is_ok() {
                             stop.cancelled().await;
                         }

@@ -84,6 +84,7 @@ fn config(model: Model) -> AgentConfig {
         deadline: None,
         max_model_calls: None,
         hooks: Arc::new(NoHooks),
+        interrupt_mode: ara_agent::InterruptMode::Immediate,
     }
 }
 fn attempt(input: u64, error: bool) -> RemoteAttempt {
@@ -212,6 +213,8 @@ async fn native_whole_history_checked_publication_reopen_and_iterative_replay_fa
             ]),
             synthetic: None,
             timestamp: 1,
+            provider_payload: None,
+            provider_payload_origin: None,
         }))
         .unwrap();
     let mut original_answer = AssistantMessage::empty("openai-responses", "openai", "remote-fixture");
@@ -341,6 +344,7 @@ async fn generic_readable_sources_second_short_call_and_atomic_reopen_family() {
     assert!(
         reopened
             .model_context()
+            .unwrap()
             .iter()
             .any(|message| matches!(message, Message::User(user) if user.content.plain_text().contains("ALPHA-4242")))
     );

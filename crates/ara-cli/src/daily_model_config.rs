@@ -278,6 +278,107 @@ pub fn resolve_daily_selection_with_registry(
     })
 }
 
+/// Project the exact startup donor, retaining routed metadata and opaque
+/// headers while applying the same authored CLI generation/auth overrides.
+pub fn resolve_daily_selection_with_reference(
+    config: Option<&ModelsConfig>,
+    cli: &DailyOverrides,
+    env: &dyn DailyEnvironment,
+    reference: &HostModelRef,
+) -> Result<DailySelection, DailyConfigError> {
+    resolve_daily_selection_with_lookup(config, cli, env, &|provider, id| {
+        if reference.spec().get("provider").and_then(ara_rpc::WireValue::as_string) != Some(provider)
+            || reference.spec().get("id").and_then(ara_rpc::WireValue::as_string) != Some(id)
+        {
+            return Err(error("model", "startup donor does not match selected identity"));
+        }
+        Ok(Some(reference.clone()))
+    })
+}
+
+/// Prepare a fallback's own executable contract from its registry identity.
+/// Launch route overrides are not inherited; an explicitly configured key may
+/// still name one of those environment variables. Authentication, thinking,
+/// usage eligibility and actual publication remain the Session Host's work.
+/// Fixed source: turn-recovery.ts:1653-1707,1761-1838.
+pub fn resolve_daily_fallback_selection(
+    config: Option<&ModelsConfig>,
+    selector: &crate::retry_fallback::RetryFallbackSelector,
+    env: &dyn DailyEnvironment,
+    registry: Option<&crate::model_registry::ModelRegistry>,
+) -> Result<DailySelection, DailyConfigError> {
+    resolve_daily_side_selection(config, selector, env, registry, None)
+}
+
+/// Preserve the role resolver's materialized routing and opaque header donors.
+/// A fresh lookup by plain id would silently discard an authored upstream route.
+pub fn resolve_daily_role_selection(
+    config: Option<&ModelsConfig>,
+    selector: &crate::retry_fallback::RetryFallbackSelector,
+    env: &dyn DailyEnvironment,
+    reference: &HostModelRef,
+) -> Result<DailySelection, DailyConfigError> {
+    resolve_daily_side_selection(config, selector, env, None, Some(reference))
+}
+
+fn resolve_daily_side_selection(
+    config: Option<&ModelsConfig>,
+    selector: &crate::retry_fallback::RetryFallbackSelector,
+    env: &dyn DailyEnvironment,
+    registry: Option<&crate::model_registry::ModelRegistry>,
+    reference: Option<&HostModelRef>,
+) -> Result<DailySelection, DailyConfigError> {
+    let provider =
+        config.and_then(|config| config.value().get("providers")?.get(&selector.provider)).and_then(Value::as_object);
+    let explicit_key_env = provider
+        .and_then(|provider| provider.get("apiKey"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.starts_with('!') && (PROMOTION_ROUTE_ENV.contains(name) || env.get(name).is_some()))
+        .map(str::to_owned);
+    let target_env = |name: &str| {
+        if explicit_key_env.as_deref() == Some(name) || !PROMOTION_ROUTE_ENV.contains(&name) {
+            env.get(name)
+        } else {
+            None
+        }
+    };
+    let mut cli = DailyOverrides {
+        provider: Some(selector.provider.clone()),
+        model: Some(selector.id.clone()),
+        api_key_env: explicit_key_env.clone(),
+        ..Default::default()
+    };
+    // Preserve the existing no-helper-before-auth-ownership check even when
+    // loading the live Registry can perform native discovery/config work.
+    validate_daily_auth_ownership(config, &cli, &target_env)?;
+    let provider_id = selector.provider.as_str().into();
+    let model_id = selector.id.as_str().into();
+    let target = if let Some(reference) = reference {
+        Some(reference.clone())
+    } else if let Some(registry) = registry {
+        registry
+            .find_reference(&provider_id, &model_id)
+            .map_err(|_| error("fallback/model", "cannot load the selected native model"))?
+    } else {
+        StaticModelRegistry::from_config(config)
+            .map_err(|_| error("fallback/model", "cannot compose the native static model catalog"))?
+            .find_exact(&provider_id, &model_id)
+            .map_err(|_| error("fallback/model", "cannot compose the selected native model"))?
+    }
+    .ok_or_else(|| error("fallback/model", "candidate is absent from the current catalog"))?;
+    let metadata: Value = serde_json::from_str(&target.spec().to_wire_json().stringify())
+        .map_err(|_| error("fallback/model", "catalog metadata is not valid JSON"))?;
+    let metadata = metadata.as_object().ok_or_else(|| error("fallback/model", "catalog model must be an object"))?;
+    cli.api = text(metadata, "api");
+    cli.base_url = Some(
+        text(metadata, "baseUrl")
+            .or_else(|| (selector.provider == "openai-codex").then(|| "https://chatgpt.com/backend-api".into()))
+            .ok_or_else(|| error("fallback/baseUrl", "candidate needs its own endpoint"))?,
+    );
+    cli.tokenizer = Some(text(metadata, "tokenizer").unwrap_or_else(|| "auto".into()));
+    resolve_daily_selection_with_lookup(config, &cli, &target_env, &|_, _| Ok(Some(target.clone())))
+}
+
 /// Check authored authentication ownership before Registry loading can execute
 /// config helpers or open persistent account storage. Values stay unresolved;
 /// the final projection still validates the actual catalog header donors.
@@ -407,7 +508,7 @@ fn resolve_daily_selection_with_lookup(
         let mut overrides = object(Some(value), "provider/modelOverrides")?;
         reject_fields(
             &overrides,
-            &["contextPromotionTarget", "remoteCompaction", "headers"],
+            &["contextPromotionTarget", "remoteCompaction", "headers", "imageInputDecoder"],
             "provider/modelOverrides",
         )?;
         model_override_headers = overrides.remove("headers");
@@ -425,12 +526,7 @@ fn resolve_daily_selection_with_lookup(
     // The catalog preserves these native options. Their wire transports remain
     // explicit pending work in this daily adapter, including promotion routes.
     let authored_override = provider.get("modelOverrides").and_then(|v| v.get(&model_id));
-    let authored_image_input = [model.get("input"), authored_override.and_then(|value| value.get("input"))]
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_array)
-        .any(|input| input.iter().any(|value| value.as_str() == Some("image")));
-    for field in ["thinking", "preferWebsockets", "omitMaxOutputTokens", "imageInputDecoder", "compactionModel"] {
+    for field in ["preferWebsockets", "omitMaxOutputTokens", "compactionModel"] {
         if model.contains_key(field) || authored_override.is_some_and(|value| value.get(field).is_some()) {
             return Err(error(&format!("model/{field}"), "is not supported by this daily wire adapter"));
         }
@@ -453,6 +549,7 @@ fn resolve_daily_selection_with_lookup(
             "baseUrl",
             "reasoning",
             "input",
+            "imageInputDecoder",
             "tokenizer",
             "maxTokens",
             "cost",
@@ -521,9 +618,6 @@ fn resolve_daily_selection_with_lookup(
         return Err(error("provider/api", "openai-codex must use the openai-codex-responses API"));
     }
     let reasoning = cli.reasoning.or_else(|| model.get("reasoning").and_then(Value::as_bool)).unwrap_or(false);
-    if reasoning && api == DailyApi::OpenAiCompletions {
-        return Err(error("reasoning", "reasoning configuration is only supported by Responses routes"));
-    }
     let configured_cap = positive_cap(model.get("maxTokens"))?;
     let context_window = model.get("contextWindow").and_then(Value::as_f64);
     let generation = DailyGeneration {
@@ -576,14 +670,13 @@ fn resolve_daily_selection_with_lookup(
     if authored_loop_guard.as_ref().is_some_and(|value| !value.is_boolean()) {
         return Err(error("compat/thinkingLoopGuard", "must be a boolean"));
     }
-    reject_fields(
-        &compat,
-        if api == DailyApi::OpenAiCompletions { CHAT_COMPAT } else { &["streamIdleTimeoutMs"] },
-        "compat",
-    )?;
+    let mut represented_compat =
+        if api == DailyApi::OpenAiCompletions { CHAT_COMPAT.to_vec() } else { vec!["streamIdleTimeoutMs"] };
+    represented_compat.extend_from_slice(ara_ai::OPENAI_REASONING_COMPAT_KEYS);
+    reject_fields(&compat, &represented_compat, "compat")?;
     if let Some(selected) = &catalog_model {
         let materialized = selected.spec().record("compat");
-        for key in if api == DailyApi::OpenAiCompletions { CHAT_COMPAT } else { &["streamIdleTimeoutMs"] } {
+        for key in &represented_compat {
             if let Some(value) = materialized.as_ref().and_then(|v| v.get(key)) {
                 let value = serde_json::from_str(&value.stringify())
                     .map_err(|_| error("compat", "native wire option is not valid JSON"))?;
@@ -646,9 +739,11 @@ fn resolve_daily_selection_with_lookup(
         });
         ordinary_headers.clear();
     }
-    let protocol = match api {
+    let no_strict = crate::schema_policy::parse_no_strict(env.get(crate::schema_policy::NO_STRICT_ENV).as_deref());
+    let mut protocol = match api {
         DailyApi::OpenAiCompletions => {
             let mut options = chat::StreamOptions {
+                no_strict,
                 max_tokens: generation.max_tokens,
                 temperature: generation.temperature,
                 extra_headers: ordinary_headers,
@@ -677,6 +772,10 @@ fn resolve_daily_selection_with_lookup(
                 };
             }
             options.compat.requires_reasoning_content_on_all_assistant_turns = replay;
+            if cli.chat_replay_reasoning_content == Some(true) {
+                options.compat.requires_reasoning_content_for_tool_calls = true;
+                options.compat.allows_synthetic_reasoning_content_for_tool_calls = false;
+            }
             if mistral {
                 options.compat.requires_mistral_tool_ids = true;
                 options.compat.requires_tool_result_name = true;
@@ -695,6 +794,7 @@ fn resolve_daily_selection_with_lookup(
                 stateful_responses: stateful,
                 ..Default::default()
             };
+            options.request.no_strict = no_strict;
             options.request.max_tokens = generation.max_tokens;
             options.request.temperature = generation.temperature;
             options.request.supports_images = supports_images.unwrap_or(false);
@@ -708,18 +808,17 @@ fn resolve_daily_selection_with_lookup(
             if generation.max_tokens.is_some() || generation.temperature.is_some() {
                 return Err(error("codex generation", "output caps and sampling are not supported by Codex"));
             }
-            if authored_image_input {
-                return Err(error(
-                    "model/input",
-                    "the daily Codex route currently supports text and function tools only",
-                ));
-            }
             if !codex_endpoint_allowed(&url, &base_url) {
                 return Err(error("baseUrl", "Codex account authentication requires the fixed OpenAI endpoint"));
             }
-            codex_protocol(ordinary_headers, watchdog)
+            codex_protocol(ordinary_headers, watchdog, no_strict)
         }
     };
+    let catalog_id = catalog_model
+        .as_ref()
+        .and_then(|model| crate::model_identity_wire::text(model.spec(), "id"))
+        .and_then(|id| id.to_utf8().ok())
+        .unwrap_or_else(|| model_id.clone());
     let execution_id = catalog_model
         .as_ref()
         .and_then(|model| {
@@ -738,14 +837,86 @@ fn resolve_daily_selection_with_lookup(
         context_window,
         tokenizer,
     };
+    let mut reasoning_spec = if let Some(selected) = &catalog_model {
+        serde_json::from_str(&selected.spec().to_wire_json().stringify())
+            .map_err(|_| error("thinking", "materialized model is not valid JSON"))?
+    } else {
+        Value::Object(model.clone())
+    };
+    // Capture authored sparse compat before resolved protocol defaults merge.
+    // The selected materialized donor also owns requestModelId/capabilities.
+    let sparse_compat = if catalog_model.is_some() {
+        reasoning_spec.get("compatConfig").filter(|value| value.is_object()).cloned()
+    } else {
+        (!compat.is_empty()).then(|| Value::Object(compat.clone()))
+    };
+    reasoning_spec["reasoning"] = json!(reasoning);
+    let mut reasoning_compat = reasoning_spec.get("compat").and_then(Value::as_object).cloned().unwrap_or_default();
+    reasoning_compat.extend(compat.clone());
+    if matches!(api, DailyApi::OpenAiCompletions) && cli.chat_replay_reasoning_content == Some(true) {
+        let required_replay = [
+            ("requiresReasoningContentForAllAssistantTurns", true),
+            ("requiresReasoningContentForToolCalls", true),
+            ("allowsSyntheticReasoningContentForToolCalls", false),
+        ];
+        for (key, value) in required_replay {
+            reasoning_compat.insert(key.into(), json!(value));
+        }
+        if let Some(Value::Object(when_thinking)) = reasoning_compat.get_mut("whenThinking") {
+            for (key, value) in required_replay {
+                when_thinking.insert(key.into(), json!(value));
+            }
+        }
+    }
+    reasoning_spec["compat"] = Value::Object(reasoning_compat);
+    let reasoning_policy = ara_ai::OpenAIReasoningPolicy::from_model_spec(&reasoning_spec)
+        .map_err(|_| error("thinking", "invalid materialized thinking policy"))?;
+    let apply_patch_tool_type = reasoning_spec.get("applyPatchToolType").and_then(Value::as_str).map(str::to_owned);
+    // The final materialized donor owns capability; sparse false/null or
+    // absence never becomes support through endpoint or model-name guesses.
+    let supports_computer_use = reasoning_spec.get("supportsComputerUse").and_then(Value::as_bool) == Some(true);
+    let selected_supports_images = reasoning_spec
+        .get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|input| input.iter().any(|value| value.as_str() == Some("image")));
+    match &mut protocol {
+        ProtocolOptions::Completions(options) => options.reasoning_policy = Some(reasoning_policy),
+        ProtocolOptions::Responses(options) => {
+            options.request.reasoning_policy = Some(reasoning_policy);
+            options.request.apply_patch_tool_type = apply_patch_tool_type;
+            options.request.supports_computer_use = supports_computer_use;
+            options.request.supports_images = selected_supports_images;
+        }
+        ProtocolOptions::CodexResponses(options) => {
+            options.request.reasoning_policy = Some(reasoning_policy);
+            options.request.apply_patch_tool_type = apply_patch_tool_type;
+            options.request.supports_computer_use = supports_computer_use;
+            options.request.supports_images = selected_supports_images;
+        }
+        ProtocolOptions::Anthropic(_) => unreachable!("daily OpenAI route"),
+    }
     let mut loop_guard_policy = crate::model_route::resolved_loop_guard_policy(&execution_model)
         .map_err(|_| error("model", "cannot resolve the native loop guard policy"))?;
     if authored_loop_guard.is_some() {
         loop_guard_policy.semantic_heuristics = true;
     }
-    let mut metadata = json!({"provider":execution_model.provider,"id":execution_model.id,
+    let mut metadata = json!({"provider":execution_model.provider,"id":execution_model.id,"catalogModelId":catalog_id,
         "api":execution_model.api,"contextWindow":execution_model.context_window});
-    if let Some(input) = model.get("input") {
+    for field in ["thinking", "reasoningMode", "requestModelId", "routing", "compat", "applyPatchToolType", "imageInputDecoder", "identity", "providerType"] {
+        if let Some(value) = reasoning_spec.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    if let Some(sparse_compat) = sparse_compat {
+        metadata["compatConfig"] = sparse_compat;
+    }
+    for field in ["supportsTools", "supportsComputerUse"] {
+        if let Some(value) = reasoning_spec.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    metadata["reasoning"] = json!(reasoning);
+    if let Some(input) = reasoning_spec.get("input") {
         metadata["input"] = input.clone();
     }
     let bundled_remote = {
@@ -1031,9 +1202,14 @@ fn provider_command_values(provider: &Map<String, Value>) -> Vec<String> {
     values
 }
 
-fn codex_protocol(headers: Vec<(String, String)>, watchdog: Option<Option<Duration>>) -> ProtocolOptions {
+fn codex_protocol(
+    headers: Vec<(String, String)>,
+    watchdog: Option<Option<Duration>>,
+    no_strict: bool,
+) -> ProtocolOptions {
     let mut options =
         ara_ai::providers::openai_codex_responses::StreamOptions { extra_headers: headers, ..Default::default() };
+    options.request.no_strict = no_strict;
     if let Some(value) = watchdog {
         options.first_event_timeout = value;
         options.idle_timeout = value;

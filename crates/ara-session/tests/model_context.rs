@@ -59,7 +59,7 @@ fn assistant_text(message: &Message) -> String {
 fn model_context_replaces_the_summarized_prefix_with_a_summary_user_message() {
     let (_dir, path, ids) = seed_compacted();
     let journal = SessionJournal::open(&path).unwrap();
-    let context = journal.model_context();
+    let context = journal.model_context().unwrap();
     assert_eq!(context.len(), 3, "summary + kept user + kept assistant");
     let summary = as_user_text(&context[0]).expect("summary is a user message");
     assert!(summary.starts_with("[Compacted summary of earlier turns"), "{summary}");
@@ -85,7 +85,7 @@ fn raw_summarized_entries_stay_in_the_journal_file() {
     let (_dir, path, ids) = seed_compacted();
     let before = fs::read_to_string(&path).unwrap();
     let journal = SessionJournal::open(&path).unwrap();
-    let _ = journal.model_context();
+    let _ = journal.model_context().unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), before, "model_context is read-only");
     for id in &ids {
         assert!(before.contains(&format!("\"id\":\"{id}\"")), "entry {id} remains in the file");
@@ -97,8 +97,8 @@ fn raw_summarized_entries_stay_in_the_journal_file() {
 #[test]
 fn reopen_yields_the_same_model_context() {
     let (_dir, path, _) = seed_compacted();
-    let before = SessionJournal::open(&path).unwrap().model_context();
-    let after = SessionJournal::open(&path).unwrap().model_context();
+    let before = SessionJournal::open(&path).unwrap().model_context().unwrap();
+    let after = SessionJournal::open(&path).unwrap().model_context().unwrap();
     // The synthesized summary user message gets a fresh timestamp; compare content.
     let texts = |context: &[Message]| -> Vec<(String, String)> {
         context
@@ -131,8 +131,8 @@ fn missing_first_kept_id_falls_back_to_build_context() {
     text = text.replace("firstKeptEntryId\":\"", "firstKeptEntryId\":\"missing-");
     fs::write(&path, text).unwrap();
     let journal = SessionJournal::open(&path).unwrap();
-    let model = journal.model_context();
-    let raw = journal.build_context();
+    let model = journal.model_context().unwrap();
+    let raw = journal.build_context().unwrap();
     assert_eq!(model, raw, "invalid projection falls back to raw history");
     assert_eq!(raw.len(), 4, "user, assistant, user, assistant still present");
     assert!(raw.iter().any(|m| as_user_text(m) == Some("question one")));
@@ -164,8 +164,8 @@ fn assistant_first_kept_without_source_ids_falls_back_to_build_context() {
         .join("\n");
     fs::write(&path, entries + "\n").unwrap();
     let journal = SessionJournal::open(&path).unwrap();
-    let model = journal.model_context();
-    let raw = journal.build_context();
+    let model = journal.model_context().unwrap();
+    let raw = journal.build_context().unwrap();
     assert_eq!(model, raw, "Assistant cut without source IDs is rejected and falls back");
     assert_eq!(raw.len(), 2);
 }

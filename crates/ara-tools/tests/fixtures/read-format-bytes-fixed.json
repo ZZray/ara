@@ -1,0 +1,87 @@
+{
+  "fixed_omp_commit": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "source": "packages/utils/src/format.ts:54-59",
+  "source_sha256": "b0c465241841fa799b726ffb421f219a5992c2f211fd4163310381c4c38c9deb",
+  "cases": [
+    {
+      "bytes": "0",
+      "formatted": "0B"
+    },
+    {
+      "bytes": "1",
+      "formatted": "1B"
+    },
+    {
+      "bytes": "1023",
+      "formatted": "1023B"
+    },
+    {
+      "bytes": "1024",
+      "formatted": "1.0KB"
+    },
+    {
+      "bytes": "1279",
+      "formatted": "1.2KB"
+    },
+    {
+      "bytes": "1280",
+      "formatted": "1.3KB"
+    },
+    {
+      "bytes": "1281",
+      "formatted": "1.3KB"
+    },
+    {
+      "bytes": "1536",
+      "formatted": "1.5KB"
+    },
+    {
+      "bytes": "1048575",
+      "formatted": "1024.0KB"
+    },
+    {
+      "bytes": "1048576",
+      "formatted": "1.0MB"
+    },
+    {
+      "bytes": "1310719",
+      "formatted": "1.2MB"
+    },
+    {
+      "bytes": "1310720",
+      "formatted": "1.3MB"
+    },
+    {
+      "bytes": "1310721",
+      "formatted": "1.3MB"
+    },
+    {
+      "bytes": "1073741823",
+      "formatted": "1024.0MB"
+    },
+    {
+      "bytes": "1073741824",
+      "formatted": "1.0GB"
+    },
+    {
+      "bytes": "1342177280",
+      "formatted": "1.3GB"
+    },
+    {
+      "bytes": "9007199254740991",
+      "formatted": "8388608.0GB"
+    },
+    {
+      "bytes": "9007199254740992",
+      "formatted": "8388608.0GB"
+    },
+    {
+      "bytes": "9007199254740993",
+      "formatted": "8388608.0GB"
+    },
+    {
+      "bytes": "18446744073709551615",
+      "formatted": "17179869184.0GB"
+    }
+  ]
+}

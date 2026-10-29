@@ -52,7 +52,9 @@ impl ToolCallOriginScope {
     }
 
     pub(crate) fn pairing_key<'a>(&self, id: &'a str) -> &'a str {
-        let Some((call, _)) = id.split_once('|') else { return id };
+        let Some((call, _)) = id.split_once('|') else {
+            return id;
+        };
         if call.is_empty() || self.opaque_composite_call_ids.contains(id) {
             return id;
         }
@@ -92,6 +94,8 @@ fn synthetic_result(call: &ToolCall, text: &str, timestamp: i64) -> Message {
         details: None,
         is_error: true,
         timestamp,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -115,7 +119,9 @@ fn sanitize_malformed_tool_calls(messages: &[Message]) -> Vec<Message> {
                 drop_queues.clear();
                 let mut assistant = assistant.clone();
                 assistant.content.retain(|block| {
-                    let AssistantBlock::ToolCall(call) = block else { return true };
+                    let AssistantBlock::ToolCall(call) = block else {
+                        return true;
+                    };
                     let malformed = call.id.trim().is_empty() || call.name.trim().is_empty();
                     drop_queues.entry(call.id.clone()).or_default().push_back(malformed);
                     !malformed
@@ -172,7 +178,9 @@ fn deduplicate_tool_call_ids(messages: &[Message], scope: &ToolCallOriginScope) 
                 let mut assistant = assistant.clone();
                 let mut touched = HashSet::new();
                 for block in &mut assistant.content {
-                    let AssistantBlock::ToolCall(call) = block else { continue };
+                    let AssistantBlock::ToolCall(call) = block else {
+                        continue;
+                    };
                     let original = scope.pairing_key(&call.id).to_owned();
                     if touched.insert(original.clone()) {
                         pending.remove(&original);
@@ -368,6 +376,8 @@ pub fn transform_messages(messages: &[Message]) -> Vec<Message> {
                             )),
                             synthetic: None,
                             timestamp: r.timestamp,
+                            provider_payload: None,
+                            provider_payload_origin: None,
                         }));
                     }
                 }
@@ -434,6 +444,7 @@ mod tests {
                 name: "read".into(),
                 arguments: JsonObject::new(),
                 thought_signature: None,
+                ..Default::default()
             }));
         }
         Message::Assistant(m)
@@ -451,6 +462,8 @@ mod tests {
             details: None,
             is_error: false,
             timestamp: 1,
+            provider_metadata: None,
+            useless: false,
         })
     }
 
@@ -505,7 +518,12 @@ mod tests {
     }
 
     fn developer(text: &str) -> Message {
-        Message::Developer(crate::types::DeveloperMessage { content: UserContent::Text(text.into()), timestamp: 1 })
+        Message::Developer(crate::types::DeveloperMessage {
+            content: UserContent::Text(text.into()),
+            timestamp: 1,
+            provider_payload: None,
+            provider_payload_origin: None,
+        })
     }
 
     #[test]
@@ -639,6 +657,7 @@ mod tests {
             name: name.into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         })
     }
 

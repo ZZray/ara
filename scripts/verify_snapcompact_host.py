@@ -38,11 +38,16 @@ def configure(directory, fake, *, vision=True, window=200000):
         "compaction:\n  methodOrder: [snapcompact]\n  supersedeReads: false\n"
         "  dropUseless: false\n  autoContinue: false\n", encoding="utf-8")
     model = {"id": shared.MODEL, "input": ["text", "image"] if vision else ["text"]}
-    if window is not None:
+    if window is not None and window != 0:
         model["contextWindow"] = window
-    shared.dump(agent / "models.json", {"providers": {PROVIDER: {
+    provider = {
         "api": "openai-completions", "baseUrl": fake.base_url, "apiKey": "ARA_API_KEY",
-        "models": [model]}}})
+        "models": [model]}
+    if window == 0:
+        # Definitions require positive limits; a native per-model override
+        # retains zero to exercise unknown-window rescue sizing.
+        provider["modelOverrides"] = {shared.MODEL: {"contextWindow": 0}}
+    shared.dump(agent / "models.json", {"providers": {PROVIDER: provider}})
     return agent / "models.json"
 
 
@@ -122,6 +127,8 @@ def manual_reopen_repl(trial):
         shared.require(written["firstKeptEntryId"] == "kept-user", "native kept cut changed")
         frames = archive(written)["frames"]
         shared.require(frames, "long history did not produce PNG frames")
+        shared.require(all(frame.get("detail") == "original" for frame in frames),
+                       "fixed archive frame detail was lost before Chat conversion")
         for frame in frames:
             reference = frame["data"]
             shared.require(reference.startswith("blob:sha256:"), "frame was not externalized")
@@ -138,8 +145,10 @@ def manual_reopen_repl(trial):
         images = [block for message in wire if isinstance(message.get("content"), list)
                   for block in message["content"] if block.get("type") == "image_url"]
         shared.require(len(images) == len(frames), "reopened archive image count differs from journal")
-        shared.require(all(block["image_url"].get("detail") == "original" for block in images),
-                       "fixed archive image detail was not forwarded")
+        # Fixed OMP preserves archive detail but Chat Completions has no
+        # "original" hint; its provider converter omits that unsupported value.
+        shared.require(all("detail" not in block["image_url"] for block in images),
+                       "fixed Chat conversion forwarded unsupported original detail")
         shared.require("Keep current work." in json.dumps(wire), "same-Session retained source was lost")
         original_text = before["source-user"]["message"]["content"][0]["text"]
         shared.require(original_text not in json.dumps(wire), "full original old source resurrected")
@@ -226,7 +235,13 @@ def blocked_dead_ends(trial):
                 end = process.until(lambda frame: frame.get("type") == "auto_compaction_end")
                 notice = process.until(lambda frame: frame.get("type") == "notice" and frame.get("level") == "warning"
                     and "Compaction freed too little context to make progress" in frame.get("message", ""))
-                shared.require("errorMessage" in end and not end.get("willRetry"), "dead end silently continued")
+                shared.require(not end.get("willRetry"), "dead end silently continued")
+                if name == "text-only":
+                    shared.require("errorMessage" in end, "text-only soft fallback lost its real error")
+                else:
+                    shared.require("errorMessage" not in end and end.get("skipped") is True
+                                   and "result" not in end,
+                                   "native no-preparation without rebuild differs from fixed skipped lifecycle")
                 notices = [frame for frame in process.seen if "Compaction freed too little context to make progress"
                            in frame.get("message", "")]
                 shared.require(len(notices) == 1 and notice["source"] == "compaction", "dead end warning was duplicated")
@@ -245,15 +260,16 @@ def blocked_dead_ends(trial):
 def insufficient_rebuild(trial):
     directory, work, session = trial.setup("insufficient", stale_seed())
     with shared.FakeUpstream() as fake:
-        models = configure(directory, fake, window=None)
+        models = configure(directory, fake, window=0)
         process = opened(trial, directory, work, session, models, threshold=1000)
         try:
             process.command("continue", "prompt", message="Continue the task.")
             end = process.until(lambda frame: frame.get("type") == "auto_compaction_end")
             warning = process.until(lambda frame: frame.get("type") == "notice" and frame.get("level") == "warning"
                 and "Compaction freed too little context to make progress" in frame.get("message", ""))
-            shared.require("errorMessage" in end and end.get("result", {}).get("method") == "snapcompact",
-                           "published insufficient rescue missing from lifecycle result")
+            shared.require("errorMessage" not in end and end.get("skipped") is False
+                           and end.get("result", {}).get("method") == "snapcompact",
+                           "published native no-preparation rescue differs from fixed lifecycle result")
             shared.require(end["result"]["preserveData"] == {"extensionState": "keep-me"}, "opaque metadata lost from result")
             shared.require("reduce archived image frames (" in warning["message"], "image remedy missing")
             no_archive_payload(process.seen)

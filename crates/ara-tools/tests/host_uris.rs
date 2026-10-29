@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Default)]
 struct HostPort {
     routes: Mutex<HashMap<String, ContentUriRoute>>,
+    exact_routes: Mutex<HashMap<String, ContentUriRoute>>,
     resource: Mutex<Option<UriResource>>,
     reads: Mutex<Vec<String>>,
     writes: Mutex<Vec<(String, String)>>,
@@ -38,6 +39,7 @@ impl HostPort {
 #[async_trait]
 impl ContentUriPort for HostPort {
     fn route(&self, url: &str) -> ContentUriRoute {
+        if let Some(route) = self.exact_routes.lock().unwrap().get(url).copied() { return route; }
         hierarchical_scheme(url)
             .and_then(|scheme| self.routes.lock().unwrap().get(&scheme.to_ascii_lowercase()).copied())
             .unwrap_or(ContentUriRoute::Unregistered)
@@ -79,7 +81,7 @@ async fn read(ctx: ToolContext, path: &str) -> Result<ToolOutput, ToolError> {
 }
 
 async fn write(ctx: ToolContext, path: &str, content: &str) -> Result<ToolOutput, ToolError> {
-    WriteTool { ctx }
+    WriteTool::new(ctx)
         .execute("write-call", args(json!({"path":path,"content":content})), CancellationToken::new(), noop())
         .await
 }
@@ -163,6 +165,21 @@ async fn explicit_skill_override_uses_selectors_and_removal_does_not_restore_nat
     assert_eq!(read(ctx.clone(), "skill://demo").await.unwrap_err().0, "Unknown protocol: skill://");
     assert_eq!(write(ctx, "skill://demo", "overwrite").await.unwrap_err().0, "Unknown protocol: skill://");
     assert!(port.writes.lock().unwrap().is_empty());
+
+    // Exact local registrations must see the same selector-free URL as reads.
+    // A removed exact route cannot fall through to a Session-local file.
+    let exact = HostPort::new("unused", false, "host local content\n", false);
+    let url = "local://host-plan.md";
+    exact.exact_routes.lock().unwrap().insert(url.into(), ContentUriRoute::Registered { writable: false });
+    let ctx = ToolContext::new(dir.path()).with_uri_port(exact.clone());
+    let output = read(ctx.clone(), "local://host-plan.md:raw").await.unwrap();
+    assert!(text(&output).contains("host local content"));
+    assert_eq!(exact.reads.lock().unwrap().as_slice(), [url]);
+    assert_eq!(output.details.as_ref().unwrap()["meta"]["source"]["value"], url);
+    exact.exact_routes.lock().unwrap().insert(url.into(), ContentUriRoute::Removed);
+    assert_eq!(read(ctx, "local://host-plan.md:raw").await.unwrap_err().0, "Unknown protocol: local://");
+    assert_eq!(exact.reads.lock().unwrap().as_slice(), [url]);
+    assert!(exact.writes.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -287,7 +304,8 @@ async fn readonly_and_unknown_uri_writes_never_fall_back_to_filesystem() {
         "db:// URLs are read-only for write; use the protocol-specific tool for mutations."
     );
     assert_eq!(read(ctx.clone(), "unknown://table").await.unwrap_err().0, "Unknown protocol: unknown://");
-    assert_eq!(write(ctx, "unknown://table", "row").await.unwrap_err().0, "Unknown protocol: unknown://");
+    assert_eq!(write(ctx, "unknown://table", "row").await.unwrap_err().0,
+        "Unknown URI-like write target 'unknown://table'. Tool devices use 'xd://<tool>'. Prefix the path with './' to write it as a filesystem path.");
     assert!(port.writes.lock().unwrap().is_empty());
     assert!(port.reads.lock().unwrap().is_empty());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -338,12 +356,12 @@ async fn cancellation_before_dispatch_and_while_waiting_reaches_the_host_port() 
     let dir = tempfile::tempdir().unwrap();
     let port = Arc::new(WaitingPort::default());
     let ctx = ToolContext::new(dir.path()).with_uri_port(port.clone());
-    for tool in [Arc::new(ReadTool { ctx: ctx.clone() }) as Arc<dyn AgentTool>, Arc::new(WriteTool { ctx })] {
+    for (is_write, tool) in [(false, Arc::new(ReadTool { ctx: ctx.clone() }) as Arc<dyn AgentTool>), (true, Arc::new(WriteTool::new(ctx)))] {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let error =
             tool.execute("before", args(json!({"path":"db://wait","content":"x"})), cancel, noop()).await.unwrap_err();
-        assert!(error.0.ends_with("was aborted"));
+        assert_eq!(error.0, if is_write { "Aborted: Cancelled" } else { "Host URI read for db://wait was aborted" });
         assert_eq!(port.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         let cancel = CancellationToken::new();
         let execution = tool.execute("during", args(json!({"path":"db://wait","content":"x"})), cancel.clone(), noop());
@@ -355,8 +373,126 @@ async fn cancellation_before_dispatch_and_while_waiting_reaches_the_host_port() 
         }
         cancel.cancel();
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), execution).await.unwrap();
-        assert!(result.unwrap_err().0.ends_with("was aborted"));
+        assert_eq!(result.unwrap_err().0, if is_write { "Host URI write for db://wait was aborted" } else { "Host URI read for db://wait was aborted" });
         port.calls.store(0, std::sync::atomic::Ordering::SeqCst);
     }
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+struct OriginalArtifactFilePort(std::path::PathBuf);
+#[async_trait]
+impl ContentUriPort for OriginalArtifactFilePort {
+    fn route(&self, url: &str) -> ContentUriRoute {
+        if url == "artifact://0" {
+            ContentUriRoute::Registered { writable: false }
+        } else {
+            ContentUriRoute::Unregistered
+        }
+    }
+    async fn read_file(&self, _: &str, _: CancellationToken) -> Result<Option<ara_tools::UriFileResource>, ToolError> {
+        Ok(Some(ara_tools::UriFileResource {
+            path: self.0.clone(),
+            content_type: "text/plain".into(),
+            max_inline_bytes: Some(8 * 1024 * 1024),
+            immutable: true,
+        }))
+    }
+    async fn read(&self, _: &str, _: CancellationToken) -> Result<UriResource, ToolError> {
+        panic!("artifact must stream from authorized backing file")
+    }
+    async fn write(&self, _: &str, _: &str, _: CancellationToken) -> Result<(), ToolError> {
+        panic!("immutable artifact")
+    }
+}
+
+#[tokio::test]
+async fn original_read_artifact_large_seven_cases() {
+    if let Some(root) = std::env::var_os("ARA_READ_ORIGINAL_HOME_CHILD") {
+        let root = std::path::PathBuf::from(root);
+        let tool = ReadTool {
+            ctx: ToolContext::new(&root)
+                .with_uri_port(Arc::new(OriginalArtifactFilePort(root.join("session/0.mcp.log")))),
+        };
+        // B-61aa4e76f5: real child home isolates os.homedir equivalent from concurrent tests.
+        let output = tool
+            .execute("home", args(json!({"path":"artifact://0:raw"})), CancellationToken::new(), noop())
+            .await
+            .unwrap();
+        assert!(text(&output).contains(&format!("~{}session", std::path::MAIN_SEPARATOR)));
+        assert!(!text(&output).contains(&root.join("session").to_string_lossy().to_string()));
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let artifacts = dir.path().join("session");
+    std::fs::create_dir(&artifacts).unwrap();
+    let content = (1..=400).map(|i| format!("line-{i:03} {}", "x".repeat(256))).collect::<Vec<_>>().join("\n");
+    std::fs::write(artifacts.join("0.mcp.log"), &content).unwrap();
+    let tool = ReadTool {
+        ctx: ToolContext::new(dir.path())
+            .with_uri_port(Arc::new(OriginalArtifactFilePort(artifacts.join("0.mcp.log")))),
+    };
+    let read = |suffix: &str| {
+        tool.execute(
+            "artifact",
+            args(json!({"path":format!("artifact://0{suffix}")})),
+            CancellationToken::new(),
+            noop(),
+        )
+    };
+    let blocked = read(":raw").await.unwrap(); // B-fe91f98bbd
+    assert!(!blocked.is_error);
+    let blocked = text(&blocked);
+    assert!(
+        blocked.contains("Unbounded raw read blocked for artifact://0") && blocked.contains("artifact://0:raw:1-3000")
+    );
+    assert!(blocked.contains(&artifacts.to_string_lossy().to_string()));
+    assert!(!blocked.contains("line-001"));
+    let range = text(&read(":1-3").await.unwrap()); // B-9f4d6a0bb7
+    assert!(range.contains("line-001") && range.contains("line-003") && !range.contains("line-400"));
+    assert!(range.contains("Artifact storage:") && range.contains("artifact://0:raw:N-M"));
+    let raw = text(&read(":raw:1-2").await.unwrap()); // B-0b681ab308
+    assert!(raw.starts_with("line-001") && raw.contains("line-002") && !raw.contains("line-400"));
+    assert!(!raw.contains("Artifact storage:") && !raw.contains("artifact://0:raw:N-M"));
+    let exact = text(&read(":raw:31-31").await.unwrap()); // B-599f36e304
+    assert!(exact.contains("line-031") && !exact.contains("line-030") && !exact.contains("line-032"));
+    let tail = read(":raw:301-").await.unwrap(); // B-c13470e263
+    assert_eq!(tail.details.as_ref().unwrap()["totalLines"], 400);
+    let tail = text(&read(":-3").await.unwrap()); // B-9a8b16adf3
+    assert!(
+        !tail.contains("line-396")
+            && tail.contains("line-397")
+            && tail.contains("line-398")
+            && tail.contains("line-400")
+    );
+    let raw_tail = text(&read(":raw:-2").await.unwrap());
+    assert!(raw_tail.starts_with("line-399") && !raw_tail.contains("line-398") && raw_tail.contains("line-400"));
+    // B-61aa4e76f5 continues in a real test child with the same production ReadTool.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "original_read_artifact_large_seven_cases", "--nocapture"])
+        .env("ARA_READ_ORIGINAL_HOME_CHILD", dir.path())
+        .env("HOME", dir.path())
+        .env("USERPROFILE", dir.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!("Artifact home child exceeded20s: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

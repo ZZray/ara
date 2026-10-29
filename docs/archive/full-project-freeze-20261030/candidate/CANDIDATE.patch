@@ -1,0 +1,912 @@
+diff --git a/crates/ara-cli/src/child_host.rs b/crates/ara-cli/src/child_host.rs
+index 4e936eb..7886703 100644
+--- a/crates/ara-cli/src/child_host.rs
++++ b/crates/ara-cli/src/child_host.rs
+@@ -359,6 +359,10 @@ impl<'a> ChildHostFactory<'a>{
+             let mut journal=SessionJournal::create_with_parent(&directory,lease.cwd(),Some(&self.parent.path().to_string_lossy()))?;journal.bind_blob_directory(&ara_blobs_directory())?;
+             let id=journal.session_id().to_owned();lease.bind_public_agent_id(&id)?;
+             let peers=self.template.peers.as_ref().context("Task requires actual Peer owner")?;let root=self.template.peer_root.as_deref().unwrap_or(self.parent.session_id());
++            #[cfg(feature="test-fixture")]
++            super::peer_host::fixture_frontier("task-materialized-before-seed",
++                &json!({"root":root,"child_id":id,"cwd":lease.cwd(),"resource":lease.snapshot(),
++                    "actor_spawned":false,"journal":journal.path(),"selected_model":init.resolved_model}).to_string()).await?;
+             let seed=prepare_child_seed(self.template,lease.cwd(),init,Some(journal),false,None,cancel).await?;
+             peers.reserve_task_resource(root,&id,lease.clone())?;
+             Ok::<_,anyhow::Error>((seed,id))
+diff --git a/crates/ara-cli/src/main.rs b/crates/ara-cli/src/main.rs
+index 05d46fa..8664ecd 100644
+--- a/crates/ara-cli/src/main.rs
++++ b/crates/ara-cli/src/main.rs
+@@ -457,7 +457,89 @@ impl LoopHooks for CliHooks {
+         context.values.check_handle(context.args)?;
+         context.values.check_handle(context.result)?;
+         if let Some(bundle)=&self.child_yield {bundle.after_tool_call(&context)?;}
+-        // This concrete CLI type has no after-tool extension callback.
++        // The production CLI has no after-tool extension callback.
++        #[cfg(feature = "test-fixture")]
++        {
++            let observed: anyhow::Result<()> = async {
++                let Some(config_path) = std::env::var_os("ARA_TEST_PEER_FRONTIERS").map(PathBuf::from) else {
++                    return Ok(());
++                };
++                let bytes = match std::fs::read(&config_path) {
++                    Ok(bytes) => bytes,
++                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++                    Err(error) => return Err(error.into()),
++                };
++                let config: serde_json::Value = serde_json::from_slice(&bytes)?;
++                if !config["gates"].as_array().into_iter().flatten()
++                    .any(|gate| gate["name"].as_str() == Some("task-after-tool-hook"))
++                {
++                    return Ok(());
++                }
++                let heap = context.values.heap();
++                let read_name = |field: &str| -> anyhow::Result<String> {
++                    let value = heap.get(context.tool_call, &field.into(), context.values.runtime())?;
++                    let ara_rpc::value_heap::ValueSnapshot::String(value) = heap.snapshot(&value)? else {
++                        anyhow::bail!("Actual fixture tool {field} is not a string");
++                    };
++                    value.to_utf8().map_err(|_| anyhow::anyhow!("Actual fixture tool {field} is not scalar text"))
++                };
++                let tool_call_id = read_name("id")?;
++                let tool_name = read_name("name")?;
++                let identity = format!("{}|{tool_call_id}|{tool_name}", self.cwd);
++                for gate in config["gates"].as_array().into_iter().flatten() {
++                    if gate["name"].as_str() != Some("task-after-tool-hook")
++                        || !identity.contains(gate["identityContains"].as_str().unwrap_or(""))
++                    {
++                        continue;
++                    }
++                    let key = gate["key"].as_str().context("Frontier gate key missing")?;
++                    anyhow::ensure!(
++                        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
++                        "Invalid private frontier gate key"
++                    );
++                    static COUNTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();
++                    let occurrence = {
++                        let mut counts = COUNTS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
++                        let count = counts.entry(key.into()).or_default();
++                        *count += 1;
++                        *count
++                    };
++                    if occurrence != gate["occurrence"].as_u64().unwrap_or(1) {
++                        continue;
++                    }
++                    let cwd = Path::new(&self.cwd);
++                    let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(
++                        cwd.parent().context("Actual isolated cwd has no owner directory")?.join("owner.json"),
++                    )?)?;
++                    let resource_id = marker["resource_id"].as_str().context("Actual isolated owner marker has no ResourceId")?;
++                    let proof_path = cwd.join(format!("after-hook-{key}.json"));
++                    let mut proof = serde_json::json!({
++                        "phase": "held", "cwd": cwd, "resource_id": resource_id,
++                        "tool_call_id": tool_call_id, "tool_name": tool_name,
++                        "proof_path": proof_path, "is_error": context.is_error
++                    });
++                    std::fs::write(&proof_path, serde_json::to_vec_pretty(&proof)?)?;
++                    let dir = config_path.parent().context("Private frontier config directory missing")?.join("frontiers");
++                    std::fs::create_dir_all(&dir)?;
++                    std::fs::write(
++                        dir.join(format!("{key}.reached.json")),
++                        serde_json::to_vec_pretty(&serde_json::json!({
++                            "name": "task-after-tool-hook", "identity": identity, "occurrence": occurrence,
++                            "at": ara_cli::host_peers::now_ms(), "details": proof
++                        }))?,
++                    )?;
++                    tokio::time::timeout(std::time::Duration::from_secs(25), async {
++                        while !dir.join(format!("{key}.release")).is_file() {
++                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
++                        }
++                    }).await.context("Actual after-tool callback remained held; original effect requires reconciliation, no replay")?;
++                    proof["phase"] = "released".into();
++                    std::fs::write(&proof_path, serde_json::to_vec_pretty(&proof)?)?;
++                }
++                Ok(())
++            }.await;
++            observed.map_err(|error| ara_agent::ActualProviderError::Callback(format!("{error:#}")))?;
++        }
+         Ok(None)
+     }
+     fn transform_tool_call_arguments_actual(
+diff --git a/crates/ara-cli/src/peer_host.rs b/crates/ara-cli/src/peer_host.rs
+index 663afa1..04ff66f 100644
+--- a/crates/ara-cli/src/peer_host.rs
++++ b/crates/ara-cli/src/peer_host.rs
+@@ -138,6 +138,22 @@ impl BinaryPeerHost {
+         let generation=match &expected{AttachmentExpectation::Rebind(runtime)=>runtime.runtime_generation,_=>self.sequence.fetch_add(1,Ordering::AcqRel)};
+         let kind=match &expected{AttachmentExpectation::Parked(old)=>old.kind,_=>if parent.is_none(){PeerKind::Main}else{PeerKind::Sub}};
+         let pending_lease=self.pending_resources.lock().unwrap_or_else(|e|e.into_inner()).get(&(root.into(),id.into())).cloned();
++        #[cfg(feature="test-fixture")]
++        if let Some(lease)=pending_lease.as_ref(){
++            if let Some((config_path,config))=fixture_frontier_config()?{
++                if config["taskFaults"]["rejectPendingAttachment"]==true{
++                    let before=lease.snapshot();
++                    lease.seal_admission()?;
++                    std::fs::write(config_path.parent().context("Task attachment fixture directory missing")?
++                        .join("task-rejected-pending-attachment.json"),serde_json::to_vec_pretty(&json!({
++                            "root":root,"child_id":id,"cwd":lease.cwd(),"resource_before":before,
++                            "resource_after_seal":lease.snapshot(),"registry_before":self.coordinator.registry.list(root),
++                            "registered_child_before":self.coordinator.registry.get(root,id),
++                            "boundary":"actual spawned actor reaches original sealed lease publication check next"
++                        }))?)?;
++                }
++            }
++        }
+         let lease=pending_lease.or_else(||match &expected{AttachmentExpectation::Parked(old)=>self.task_resource(&old.key),AttachmentExpectation::Rebind(runtime)=>self.task_resource(&runtime.peer),_=>None});
+         let publish=lease.as_ref().map(|lease|match &expected {
+             AttachmentExpectation::Parked(old)=>lease.prepare_republish(&old.key),
+diff --git a/crates/ara-cli/src/task_host.rs b/crates/ara-cli/src/task_host.rs
+index 69c90c8..f29af7e 100644
+--- a/crates/ara-cli/src/task_host.rs
++++ b/crates/ara-cli/src/task_host.rs
+@@ -92,6 +92,64 @@ pub(super) async fn prepare(template:&rpc_host::SessionFactory,parent:&SessionJo
+     anyhow::ensure!(policy.batch_enabled||request.items.len()==1,"Task batch is disabled");
+     let peers=template.peers.as_ref().context("Task requires an actual Peer ownership Host")?;
+     let native=template.tool_owner.native.as_ref().context("Task requires Native ownership")?;
++    #[cfg(feature = "test-fixture")]
++    if let Some(config_path) = std::env::var_os("ARA_TEST_PEER_FRONTIERS").map(PathBuf::from) {
++        let bytes = match std::fs::read(&config_path) {
++            Ok(bytes) => Some(bytes),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
++            Err(error) => return Err(error.into()),
++        };
++        if let Some(bytes) = bytes {
++            let config: Value = serde_json::from_slice(&bytes)?;
++            let mut observations = Vec::new();
++            for action in config["taskSourcePermissions"].as_array().into_iter().flatten() {
++                let source_kind = action["source"].as_str().context("Task fixture source kind missing")?;
++                let tool = action["tool"].as_str().context("Task fixture tool name missing")?;
++                let enabled = action["enabled"].as_bool().context("Task fixture source grant must be boolean")?;
++                let advertised_before = native.snapshot.advertised_capabilities(native.prepared.values())?
++                    .into_iter().map(|tool| tool.definition().name).collect::<Vec<_>>();
++                let (before, after, owner_pointer, source_pointer) = match source_kind {
++                    "rpc" => {
++                        let matches = native.rpc.iter().enumerate()
++                            .filter(|(_, member)| member.binding.capability.definition().name == tool)
++                            .collect::<Vec<_>>();
++                        anyhow::ensure!(matches.len() == 1, "Task fixture must select one current RPC owner");
++                        let (index, member) = matches[0];
++                        let source = native.snapshot.rpc().context("Task fixture current RPC source missing")?;
++                        let before = native.rpc_grant(&member.owner)?;
++                        source.set_enabled(index, enabled)?;
++                        (before, native.rpc_grant(&member.owner)?, format!("{:p}", Arc::as_ptr(&member.owner)), format!("{:p}", Arc::as_ptr(source)))
++                    }
++                    "mcp" => {
++                        let matches = native.mcp.iter().enumerate()
++                            .filter(|(_, member)| member.binding.capability.definition().name == tool)
++                            .collect::<Vec<_>>();
++                        anyhow::ensure!(matches.len() == 1, "Task fixture must select one current MCP owner");
++                        let (index, member) = matches[0];
++                        let source = native.snapshot.mcp().context("Task fixture current MCP source missing")?;
++                        let before = native.mcp_grant(&member.owner)?;
++                        source.set_enabled(index, enabled)?;
++                        (before, native.mcp_grant(&member.owner)?, format!("{:p}", Arc::as_ptr(&member.owner)), format!("{:p}", Arc::as_ptr(source)))
++                    }
++                    _ => bail!("Task fixture source kind must be rpc or mcp"),
++                };
++                observations.push(json!({
++                    "source": source_kind, "tool": tool, "requested_enabled": enabled,
++                    "before": before, "after": after, "owner_pointer": owner_pointer,
++                    "source_pointer": source_pointer, "snapshot_pointer": format!("{:p}", Arc::as_ptr(&native.snapshot)),
++                    "session_id": parent.session_id(), "advertised_before": advertised_before,
++                    "advertised_after": native.snapshot.advertised_capabilities(native.prepared.values())?
++                        .into_iter().map(|tool| tool.definition().name).collect::<Vec<_>>()
++                }));
++            }
++            if !observations.is_empty() {
++                std::fs::write(
++                    config_path.parent().context("Task fixture config directory missing")?.join("task-source-grants.json"),
++                    serde_json::to_vec_pretty(&observations)?,
++                )?;
++            }
++        }
++    }
+     // Coordination's transport-only WRITE is callable, but is not a delegable full WRITE grant.
+     let transport_only_write=template.tool_owner.context.as_ref().is_some_and(|context|context.write_transport_policy().device_only);
+     let parent_tools=native.snapshot.advertised_capabilities(native.prepared.values())?.into_iter()
+diff --git a/crates/ara-cli/src/task_isolation/capture.rs b/crates/ara-cli/src/task_isolation/capture.rs
+index 786ea79..78dcda6 100644
+--- a/crates/ara-cli/src/task_isolation/capture.rs
++++ b/crates/ara-cli/src/task_isolation/capture.rs
+@@ -120,6 +120,18 @@ pub(crate) fn persist_capture(
+     let mut nested_patch_paths = Vec::new();
+     for (i, patch) in delta.nested_patches.iter().enumerate() {
+         let patch_path = dir.join(format!("nested-{i}.patch"));
++        #[cfg(feature = "test-fixture")]
++        if i == 0 {
++            worktree::fixture_frontier(
++                "task-root-patch-before-nested",
++                resource,
++                serde_json::json!({
++                    "cwd": copy, "resource_id": resource, "root_patch": dir.join("root.patch"),
++                    "capture_dir": dir, "nested_patch": patch_path, "nested_index": i,
++                    "relative_path": patch.relative_path
++                }),
++            )?;
++        }
+         write_new(&patch_path, patch.patch.as_bytes())?;
+         nested_patch_paths.push(NestedPatchArtifact {
+             relative_path: patch.relative_path.clone(),
+diff --git a/crates/ara-cli/src/task_isolation/worktree.rs b/crates/ara-cli/src/task_isolation/worktree.rs
+index 1c6c9c4..88d061f 100644
+--- a/crates/ara-cli/src/task_isolation/worktree.rs
++++ b/crates/ara-cli/src/task_isolation/worktree.rs
+@@ -12,6 +12,64 @@ use std::{
+     sync::{Arc, Mutex, OnceLock},
+ };
+ 
++/// Test-only pause at an actual Git/FS frontier; the original operation resumes unchanged.
++#[cfg(feature = "test-fixture")]
++pub(crate) fn fixture_frontier(
++    name: &str,
++    identity: &str,
++    details: serde_json::Value,
++) -> Result<()> {
++    let Some(config_path) = std::env::var_os("ARA_TEST_PEER_FRONTIERS").map(PathBuf::from) else {
++        return Ok(());
++    };
++    let bytes = match fs::read(&config_path) {
++        Ok(bytes) => bytes,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++        Err(error) => return Err(error.into()),
++    };
++    let config: serde_json::Value = serde_json::from_slice(&bytes)?;
++    for gate in config["gates"].as_array().into_iter().flatten() {
++        if gate["name"].as_str() != Some(name)
++            || !identity.contains(gate["identityContains"].as_str().unwrap_or(""))
++        {
++            continue;
++        }
++        let key = gate["key"].as_str().context("Frontier gate key missing")?;
++        anyhow::ensure!(
++            !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
++            "Invalid private frontier gate key"
++        );
++        static COUNTS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
++        let occurrence = {
++            let mut counts = COUNTS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
++            let count = counts.entry(key.into()).or_default();
++            *count += 1;
++            *count
++        };
++        if occurrence != gate["occurrence"].as_u64().unwrap_or(1) {
++            continue;
++        }
++        let dir = config_path.parent().context("Private frontier config directory missing")?.join("frontiers");
++        fs::create_dir_all(&dir)?;
++        fs::write(
++            dir.join(format!("{key}.reached.json")),
++            serde_json::to_vec_pretty(&serde_json::json!({
++                "name": name, "identity": identity, "occurrence": occurrence,
++                "at": crate::host_peers::now_ms(), "details": details
++            }))?,
++        )?;
++        let started = std::time::Instant::now();
++        while !dir.join(format!("{key}.release")).is_file() {
++            anyhow::ensure!(
++                started.elapsed() < std::time::Duration::from_secs(25),
++                "Actual {name} frontier remained held; original effect requires reconciliation, no replay"
++            );
++            std::thread::sleep(std::time::Duration::from_millis(5));
++        }
++    }
++    Ok(())
++}
++
+ pub const BASELINE_MAX_CONTENT_BYTES: usize = 1024 * 1024 * 1024;
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+@@ -561,6 +619,8 @@ pub fn commit_to_branch(
+         synthetic_tree(root, base, &baseline.root.patches(), false, scratch)?;
+         let dirty = synthetic_tree(copy, base, &baseline.root.patches(), false, scratch)?;
+         let mut previous = base.clone();
++        #[cfg(feature = "test-fixture")]
++        let mut fixture_prefix_observed = false;
+         for sha in isolated.rev_list_range(base, &head)? {
+             let state = isolated.diff_tree(&dirty, &format!("{sha}^{{tree}}"), true)?;
+             let filtered = synthetic_tree(root, base, &[&state], true, scratch)?;
+@@ -583,6 +643,19 @@ pub fn commit_to_branch(
+             if !repo.compare_and_swap_ref(&rescue, old.as_deref(), Some(&tip))? {
+                 bail!("rescue reference changed concurrently: {rescue}");
+             }
++            #[cfg(feature = "test-fixture")]
++            if !fixture_prefix_observed && tip != *base {
++                fixture_prefix_observed = true;
++                fixture_frontier(
++                    "task-branch-prefix-persisted",
++                    resource,
++                    serde_json::json!({
++                        "cwd": copy, "resource_id": resource, "parent_root": root,
++                        "scratch": scratch, "rescue_ref": rescue, "tip": tip,
++                        "source_commit": sha, "completed_prefix": 1
++                    }),
++                )?;
++            }
+         }
+         if tip == *base {
+             tip = commit_patch(
+diff --git a/crates/ara-cli/tests/task_host.rs b/crates/ara-cli/tests/task_host.rs
+index d6c15fb..c78c0fd 100644
+--- a/crates/ara-cli/tests/task_host.rs
++++ b/crates/ara-cli/tests/task_host.rs
+@@ -16,3 +16,8 @@ async fn g3_native_async_batch_and_actual_wait_bank() {
+ async fn g3_native_task_print_line_rpc_acp_entry_bank() {
+     cases::ordinary_entries().await;
+ }
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn g3_native_task_fault_and_parent_observation_gap_bank() {
++    cases::fault_and_parent_observation().await;
++}
+diff --git a/crates/ara-cli/tests/support/task_host_cases.rs b/crates/ara-cli/tests/support/task_host_cases.rs
+index a53e207..da993f5 100644
+--- a/crates/ara-cli/tests/support/task_host_cases.rs
++++ b/crates/ara-cli/tests/support/task_host_cases.rs
+@@ -20,6 +20,476 @@ const CHILD_A: &str = "G3_CHILD_A_NATIVE_ONLY";
+ const CHILD_B: &str = "G3_CHILD_B_NATIVE_ONLY";
+ const BOUND: Duration = Duration::from_secs(90);
+ 
++#[derive(Debug, PartialEq, serde::Serialize)]
++struct GapParentSnapshot {
++    head: Vec<u8>,
++    raw_index: Vec<u8>,
++    staged_binary_diff: Vec<u8>,
++    unstaged_binary_diff: Vec<u8>,
++    untracked: std::collections::BTreeMap<String, Vec<u8>>,
++}
++impl GapParentSnapshot {
++    fn capture(bank: &Bank, label: &str) -> Self {
++        let observe = |args: &[&str]| {
++            let output = std::process::Command::new("git")
++                .current_dir(&bank.project)
++                .env_remove("GIT_DIR")
++                .env_remove("GIT_WORK_TREE")
++                .env_remove("GIT_INDEX_FILE")
++                .env("GIT_OPTIONAL_LOCKS", "0")
++                .args(["-c", "diff.autoRefreshIndex=false"])
++                .args(args)
++                .output()
++                .unwrap();
++            assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
++            output.stdout
++        };
++        let paths = observe(&["ls-files", "--others", "--exclude-standard", "-z"]);
++        fn untracked_bytes(project: &Path, relative: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
++            let path = project.join(relative);
++            if path.is_dir() {
++                for entry in fs::read_dir(&path).unwrap() {
++                    let entry = entry.unwrap();
++                    // Embedded repositories are reported as directories by ls-files.
++                    // Their Git administration is not untracked worktree content.
++                    if entry.file_name() != std::ffi::OsStr::new(".git") {
++                        untracked_bytes(project, &relative.join(entry.file_name()), out);
++                    }
++                }
++            } else {
++                out.insert(relative.to_string_lossy().into_owned(), fs::read(&path).unwrap());
++            }
++        }
++        let mut untracked = std::collections::BTreeMap::new();
++        for path in paths.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
++            let path = String::from_utf8(path.to_vec()).expect("controlled fixture paths are scalar UTF-8");
++            untracked_bytes(&bank.project, Path::new(&path), &mut untracked);
++        }
++        let snapshot = Self {
++            head: observe(&["rev-parse", "HEAD"]),
++            raw_index: fs::read(bank.project.join(".git/index")).unwrap(),
++            staged_binary_diff: observe(&["diff", "--binary", "--no-ext-diff", "--cached"]),
++            unstaged_binary_diff: observe(&["diff", "--binary", "--no-ext-diff"]),
++            untracked,
++        };
++        let directory = bank.directory.join("parent-byte-snapshots").join(label);
++        fs::create_dir_all(&directory).unwrap();
++        fs::write(directory.join("HEAD.stdout"), &snapshot.head).unwrap();
++        fs::write(directory.join("index.bin"), &snapshot.raw_index).unwrap();
++        fs::write(directory.join("staged.patch"), &snapshot.staged_binary_diff).unwrap();
++        fs::write(directory.join("unstaged.patch"), &snapshot.unstaged_binary_diff).unwrap();
++        fs::write(directory.join("snapshot.json"), serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
++        snapshot
++    }
++}
++
++async fn gap_wait_file(path: &Path) {
++    tokio::time::timeout(Duration::from_secs(25), async {
++        while !path.is_file() {
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    }).await.unwrap_or_else(|_| panic!("missing actual gap frontier {}; inspect the original process", path.display()));
++}
++
++fn gap_files_named(root: &Path, name: &str) -> Vec<PathBuf> {
++    fn visit(directory: &Path, name: &str, found: &mut Vec<PathBuf>) {
++        for entry in fs::read_dir(directory).unwrap() {
++            let entry = entry.unwrap();
++            if entry.file_type().unwrap().is_dir() {
++                visit(&entry.path(), name, found);
++            } else if entry.file_name() == std::ffi::OsStr::new(name) {
++                found.push(entry.path());
++            }
++        }
++    }
++    let mut found = Vec::new();
++    if root.is_dir() {
++        visit(root, name, &mut found);
++    }
++    found.sort();
++    found
++}
++
++async fn gap_finish(process: WireProcess, bank: &Bank, expected_success: bool) -> Vec<Value> {
++    let WireProcess { mut child, input, mut output, mut frames, directory } = process;
++    drop(input);
++    let drain = async {
++        while let Some(line) = output.next_line().await.unwrap() {
++            let mut raw = fs::OpenOptions::new().create(true).append(true).open(directory.join("stdout.txt")).unwrap();
++            writeln!(raw, "{line}").unwrap();
++            if let Ok(frame) = serde_json::from_str::<Value>(&line) {
++                frames.push(frame);
++            }
++        }
++    };
++    let (status, ()) = tokio::join!(wait_exit(bank, &mut child), drain);
++    assert_eq!(status.success(), expected_success, "{}", fs::read_to_string(bank.directory.join("stderr.txt")).unwrap());
++    fs::write(bank.directory.join("wire-frames.json"), serde_json::to_vec_pretty(&frames).unwrap()).unwrap();
++    frames
++}
++
++async fn gap_materialized_startup_failures() {
++    for reject_attachment in [false, true] {
++        let bank = Bank::new(
++            if reject_attachment { "g3-gap-rejected-attachment" } else { "g3-gap-pre-spawn-failure" },
++            "patch", false, false, false, false,
++        );
++        if !reject_attachment {
++            let agent_file = bank.project.join(".ara/agents/g3-task-a.md");
++            let original = fs::read_to_string(&agent_file).unwrap();
++            fs::write(&agent_file, original.replacen("tools: write, bash", "tools: write, bash\nmodel: ara-gap-missing-provider/ara-gap-missing-model", 1)).unwrap();
++        }
++        let config = bank.directory.join("frontiers.json");
++        fs::write(&config, serde_json::to_vec_pretty(&json!({
++            "gates":[{"name":"task-materialized-before-seed","key":"materialized","occurrence":1}],
++            "taskFaults":{"rejectPendingAttachment":reject_attachment}
++        })).unwrap()).unwrap();
++        let up = RoutedUpstream::start(
++            &bank.directory,
++            vec![
++                call("g3-gap-startup-task", "task", task_args("g3-task-a", "Exercise the original post-allocation startup failure frontier.")),
++                answer("The original Task startup failure was reported."),
++            ],
++            vec![], vec![],
++        ).await;
++        let mut command = bank.command(&up.url(), "rpc");
++        command.env("ARA_TEST_PEER_FRONTIERS", &config);
++        let mut process = WireProcess::spawn(command, &bank.directory);
++        process.until(|frame| frame["type"] == "ready").await;
++        let before = GapParentSnapshot::capture(&bank, "before-dispatch");
++        process.rpc("gap-startup-prompt", "prompt", json!({"message":"Run the prescribed isolated Task once."})).await;
++        let reached_path = bank.directory.join("frontiers/materialized.reached.json");
++        gap_wait_file(&reached_path).await;
++        let reached: Value = serde_json::from_slice(&fs::read(&reached_path).unwrap()).unwrap();
++        let materialized: Value = serde_json::from_str(reached["identity"].as_str().unwrap()).unwrap();
++        let resource = &materialized["resource"];
++        let cwd = PathBuf::from(materialized["cwd"].as_str().unwrap());
++        let resource_id = resource["resource_id"].as_str().unwrap();
++        assert_eq!(materialized["actor_spawned"], false);
++        assert!(cwd.is_dir(), "the actual backend must be materialized before this fault");
++        let marker: Value = serde_json::from_slice(&fs::read(cwd.parent().unwrap().join("owner.json")).unwrap()).unwrap();
++        assert_eq!(marker["resource_id"], resource_id);
++        assert!(resource["peer"].is_null(), "the materialized lease must not already be adopted");
++        assert_eq!(up.counts(), [1, 0, 0]);
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "materialized-before-spawn"));
++        fs::write(bank.directory.join("frontiers/materialized.release"), b"continue the original preparation").unwrap();
++        process.until(|frame| frame["type"] == "agent_end").await;
++        let frames = gap_finish(process, &bank, !reject_attachment).await;
++        let release_paths = gap_files_named(&bank.home.join("sessions"), "release.json");
++        assert_eq!(release_paths.len(), 1, "one original resource must own the startup outcome");
++        let release: Value = serde_json::from_slice(&fs::read(&release_paths[0]).unwrap()).unwrap();
++        assert_eq!(release["resource_id"], resource_id);
++        if reject_attachment {
++            let rejected: Value = serde_json::from_slice(&fs::read(bank.directory.join("task-rejected-pending-attachment.json")).unwrap()).unwrap();
++            assert_eq!(rejected["resource_before"]["resource_id"], resource_id);
++            assert_eq!(rejected["resource_before"]["sealed"], false);
++            assert_eq!(rejected["resource_after_seal"]["sealed"], true);
++            assert!(rejected["registered_child_before"].is_null());
++            assert_eq!(release["status"], "retained");
++            assert!(release["error"].as_str().unwrap().contains("startup/join outcome requires reconciliation"));
++            assert!(release["capture"].is_null());
++            assert!(cwd.is_dir(), "unknown post-spawn outcome must retain the original workspace");
++        } else {
++            assert_eq!(release["status"], "released");
++            assert!(release["error"].is_null());
++            assert!(!cwd.exists(), "known stopped preparation failure must finalize its actual backend");
++        }
++        let journals = actual_journals(&bank);
++        let result = journals.iter().flat_map(|journal| journal["rows"].as_array().unwrap())
++            .find(|message| message["role"] == "toolResult" && message["toolCallId"] == "g3-gap-startup-task").unwrap();
++        assert_eq!(result["isError"], true);
++        assert!(result.to_string().contains(if reject_attachment { "sealed" } else { "No child role or saved model resolved" }));
++        assert_eq!(up.counts(), [2, 0, 0], "no child model invocation may stand for a failed startup");
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "after-original-startup-failure"));
++        fs::write(bank.directory.join("gap-startup-assertions.json"), serde_json::to_vec_pretty(&json!({
++            "criteria":["M5","M8","O8"],"rejectAttachment":reject_attachment,"materialized":materialized,
++            "release":release,"releasePath":release_paths[0],"frames":frames,"journals":journals
++        })).unwrap()).unwrap();
++    }
++}
++
++fn gap_enable_async_bash(bank: &Bank) {
++    let settings_path = bank.home.join("agent/config.yml");
++    let mut settings: Value = serde_json::from_slice(&fs::read(&settings_path).unwrap()).unwrap();
++    settings["async"]["enabled"] = true.into();
++    fs::write(settings_path, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
++    let agent_file = bank.project.join(".ara/agents/g3-task-a.md");
++    let source = fs::read_to_string(&agent_file).unwrap();
++    fs::write(agent_file, source.replacen("tools: write, bash", "tools: write, bash, wait\nblocking: true", 1)).unwrap();
++}
++
++async fn gap_actual_child(bank: &Bank) -> Value {
++    tokio::time::timeout(Duration::from_secs(25), async {
++        loop {
++            if let Some(child) = actual_journals(bank).into_iter().find(|journal| journal["init"]["isolated"] == true) {
++                return child;
++            }
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    }).await.expect("ordinary Task did not create its actual isolated journal")
++}
++
++fn gap_bash_responses() -> Vec<Value> {
++    vec![
++        call("g3-gap-live-bash", "bash", json!({
++            "command":"printf 'running\\n' > bash-live-started.txt; while [ ! -f bash-live-release ]; do sleep 0.05; done; printf 'settled\\n' > bash-finished.txt",
++            "async":true
++        })),
++        call("g3-gap-bash-wait", "wait", json!({})),
++        answer("The actual Bash completion was consumed by the same Native Wait."),
++    ]
++}
++
++async fn gap_bash_hook_and_observer() {
++    let bank = Bank::new("g3-gap-bash-hook-owner", "patch", false, true, false, false);
++    gap_enable_async_bash(&bank);
++    fs::write(bank.directory.join("frontiers.json"), serde_json::to_vec_pretty(&json!({
++        "gates":[{"name":"task-after-tool-hook","key":"bash-hook","identityContains":"|g3-gap-bash-wait|wait","occurrence":1}]
++    })).unwrap()).unwrap();
++    let up = RoutedUpstream::start(
++        &bank.directory,
++        vec![
++            call("g3-gap-hook-task", "task", task_args("g3-task-a", "Run the actual async Bash job and consume its result through Native Wait.")),
++            answer("The original Task has completed its owned work."),
++        ],
++        gap_bash_responses(), vec![],
++    ).await;
++    let before = GapParentSnapshot::capture(&bank, "before-dispatch");
++    let driving = fixture(&bank, &up, vec![
++        json!({"op":"root_prompt","text":"Invoke the actual Task once."}),
++        json!({"op":"task_alias","alias":"gap-worker"}),
++        json!({"op":"task_snapshot","alias":"gap-worker"}),
++        json!({"op":"task_release","alias":"gap-worker","observerDrop":true}),
++    ]);
++    let observing = async {
++        let child = gap_actual_child(&bank).await;
++        let cwd = PathBuf::from(child["header"]["cwd"].as_str().unwrap());
++        gap_wait_file(&cwd.join("bash-live-started.txt")).await;
++        assert!(!cwd.join("bash-finished.txt").exists());
++        assert!(gap_files_named(&bank.home.join("sessions"), "capture.json").is_empty());
++        assert!(gap_files_named(&bank.home.join("sessions"), "release.json").is_empty());
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "during-actual-bash"));
++        fs::write(cwd.join("bash-live-release"), b"finish the same original OS process").unwrap();
++        let gate = bank.directory.join("frontiers/bash-hook.reached.json");
++        gap_wait_file(&gate).await;
++        let reached: Value = serde_json::from_slice(&fs::read(gate).unwrap()).unwrap();
++        let details = &reached["details"];
++        assert_eq!(details["cwd"], json!(cwd));
++        assert_eq!(details["tool_call_id"], "g3-gap-bash-wait");
++        assert_eq!(details["tool_name"], "wait");
++        assert_eq!(details["is_error"], false);
++        assert_eq!(fs::read(cwd.join("bash-finished.txt")).unwrap(), b"settled\n");
++        let proof_path = PathBuf::from(details["proof_path"].as_str().unwrap());
++        let proof: Value = serde_json::from_slice(&fs::read(&proof_path).unwrap()).unwrap();
++        assert_eq!(proof["phase"], "held");
++        assert_eq!(proof["resource_id"], details["resource_id"]);
++        assert!(cwd.is_dir());
++        assert!(gap_files_named(&bank.home.join("sessions"), "capture.json").is_empty(),
++            "Task captured while its real Core after-tool callback was still held");
++        assert!(gap_files_named(&bank.home.join("sessions"), "release.json").is_empty());
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "during-actual-after-tool-hook"));
++        fs::write(bank.directory.join("gap-held-bash-hook-observation.json"),
++            serde_json::to_vec_pretty(&json!({"child":child,"reached":reached,"proof":proof,"parentBytesEqual":true})).unwrap()).unwrap();
++        fs::write(bank.directory.join("frontiers/bash-hook.release"), b"complete the same real Core callback").unwrap();
++    };
++    let ((receipts, teardown), ()) = tokio::join!(driving, observing);
++    let released = result(&receipts, 3);
++    assert_eq!(released["releaseReceipt"]["status"], "released");
++    assert_eq!(released["cwdExists"], false);
++    assert!(released["releaseError"].is_null());
++    let capture = &released["releaseReceipt"]["capture"];
++    let patch = fs::read_to_string(capture["patch_path"].as_str().unwrap()).unwrap();
++    assert!(patch.contains("bash-live-started.txt") && patch.contains("bash-finished.txt"));
++    assert!(patch.contains("after-hook-bash-hook.json") && patch.contains("released"));
++    let held: Value = serde_json::from_slice(&fs::read(bank.directory.join("gap-held-bash-hook-observation.json")).unwrap()).unwrap();
++    assert_eq!(capture["resource_id"], held["proof"]["resource_id"]);
++    let effect_paths = gap_files_named(&bank.home.join("sessions"), "release.json");
++    assert_eq!(effect_paths.len(), 1, "dropped release observer must join the same retained resource");
++    assert_eq!(before, GapParentSnapshot::capture(&bank, "after-hook-and-release"));
++    bank.preserved_wip();
++    fs::write(bank.directory.join("gap-bash-hook-assertions.json"), serde_json::to_vec_pretty(&json!({
++        "criteria":["M8","O8"],"proofBoundary":"actual Core callback await, not OMP extension product acceptance",
++        "receipts":receipts,"teardown":teardown,"sameResource":held["proof"]["resource_id"]
++    })).unwrap()).unwrap();
++}
++
++async fn gap_cancel_live_bash() {
++    let bank = Bank::new("g3-gap-cancel-live-bash", "patch", false, false, false, false);
++    gap_enable_async_bash(&bank);
++    let up = RoutedUpstream::start(
++        &bank.directory,
++        vec![
++            call("g3-gap-cancel-task", "task", task_args("g3-task-a", "Run the prescribed actual async Bash job.")),
++            answer("The original cancellation result was observed."),
++        ], gap_bash_responses(), vec![],
++    ).await;
++    let mut process = WireProcess::spawn(bank.command(&up.url(), "rpc"), &bank.directory);
++    process.until(|frame| frame["type"] == "ready").await;
++    let before = GapParentSnapshot::capture(&bank, "before-dispatch");
++    process.rpc("gap-cancel-prompt", "prompt", json!({"message":"Invoke the actual isolated Task."})).await;
++    let child = gap_actual_child(&bank).await;
++    let cwd = PathBuf::from(child["header"]["cwd"].as_str().unwrap());
++    gap_wait_file(&cwd.join("bash-live-started.txt")).await;
++    assert!(!cwd.join("bash-finished.txt").exists());
++    assert!(gap_files_named(&bank.home.join("sessions"), "capture.json").is_empty());
++    let cancelled = process.rpc("gap-real-peer-cancel", "peer_control",
++        json!({"operation":"cancel","target":child["id"]})).await;
++    assert_eq!(cancelled["cancelled"], true, "actual child cancel must reach its live original owner");
++    process.until(|frame| frame["type"] == "agent_end").await;
++    let releases = gap_files_named(&bank.home.join("sessions"), "release.json");
++    assert_eq!(releases.len(), 1);
++    let release: Value = serde_json::from_slice(&fs::read(&releases[0]).unwrap()).unwrap();
++    let frames = gap_finish(process, &bank, release["status"] == "released").await;
++    if release["status"] == "released" {
++        assert!(!cwd.exists());
++        assert!(release["error"].is_null());
++        let patch = fs::read_to_string(release["capture"]["patch_path"].as_str().unwrap()).unwrap();
++        assert!(patch.contains("bash-live-started.txt"));
++        assert!(!patch.contains("bash-finished.txt"), "cancelled live Bash ran past its gate");
++    } else {
++        assert_eq!(release["status"], "retained");
++        assert!(release["error"].as_str().is_some_and(|error| {
++            let error = error.to_ascii_lowercase();
++            error.contains("unknown") || error.contains("unsettled") || error.contains("reconciliation")
++        }));
++        assert!(cwd.is_dir(), "Unknown cancellation must retain its exact materialized workspace");
++    }
++    let journals = actual_journals(&bank);
++    let result = journals.iter().flat_map(|journal| journal["rows"].as_array().unwrap())
++        .find(|message| message["role"] == "toolResult" && message["toolCallId"] == "g3-gap-cancel-task").unwrap();
++    assert_eq!(result["isError"], true);
++    assert_eq!(result["details"]["results"][0]["taskAccepted"], false);
++    assert_eq!(before, GapParentSnapshot::capture(&bank, "after-actual-peer-cancel"));
++    fs::write(bank.directory.join("gap-live-cancel-assertions.json"), serde_json::to_vec_pretty(&json!({
++        "criteria":["M8","O8"],"actualCancel":cancelled,"originalChild":child,
++        "release":release,"frames":frames,"journals":journals,"scope":"Peer hard cancel of a live Task/Bash owner, not an OS sandbox claim"
++    })).unwrap()).unwrap();
++}
++
++async fn gap_partial_git_and_nested_persistence() {
++    for nested in [false, true] {
++        let bank = Bank::new(
++            if nested { "g3-gap-nested-persistence" } else { "g3-gap-partial-history" },
++            if nested { "patch" } else { "branch" }, false, false, false, false,
++        );
++        if nested {
++            let directory = bank.project.join("nested");
++            fs::create_dir(&directory).unwrap();
++            git(&directory, &["init", "-b", "main"]);
++            git(&directory, &["config", "user.name", "Task nested fixture"]);
++            git(&directory, &["config", "user.email", "task-nested@example.invalid"]);
++            git(&directory, &["config", "core.autocrlf", "false"]);
++            fs::write(directory.join("n"), "original nested bytes\n").unwrap();
++            git(&directory, &["add", "."]);
++            git(&directory, &["commit", "-qm", "original nested baseline"]);
++        }
++        let key = if nested { "nested-write" } else { "branch-prefix" };
++        let frontier = if nested { "task-root-patch-before-nested" } else { "task-branch-prefix-persisted" };
++        let config = bank.directory.join("frontiers.json");
++        fs::write(&config, serde_json::to_vec_pretty(&json!({
++            "gates":[{"name":frontier,"key":key,"occurrence":1,"failAfterRelease":false}]
++        })).unwrap()).unwrap();
++        let child = if nested {
++            vec![
++                json!({"events":[
++                    tool_call(0,"g3-gap-root-write","write",&json!({"path":"gap-root.txt","content":"actual root change\n"}).to_string()),
++                    tool_call(1,"g3-gap-nested-write","write",&json!({"path":"nested/n","content":"actual nested change\n"}).to_string()),
++                    finish("tool_calls"),done()
++                ]}),
++                answer("The actual root and nested edits have finished."),
++            ]
++        } else {
++            vec![
++                call("g3-gap-real-git-commits", "bash", json!({
++                    "command":"printf 'first prefix\\n' > gap-first-prefix.txt && git add gap-first-prefix.txt && git commit -qm 'gap first original commit' && printf 'second prefix\\n' > gap-second-prefix.txt && git add gap-second-prefix.txt && git commit -qm 'gap second original commit'"
++                })),
++                answer("Both original Git commits have finished."),
++            ]
++        };
++        let up = RoutedUpstream::start(
++            &bank.directory,
++            vec![
++                call("g3-gap-persistence-task", "task", task_args("g3-task-a", "Perform only the prescribed isolated Git/file changes.")),
++                answer("The original persistence failure was reported."),
++            ], child, vec![],
++        ).await;
++        let mut command = bank.command(&up.url(), "rpc");
++        command.env("ARA_TEST_PEER_FRONTIERS", &config);
++        let mut process = WireProcess::spawn(command, &bank.directory);
++        process.until(|frame| frame["type"] == "ready").await;
++        let before = GapParentSnapshot::capture(&bank, "before-dispatch");
++        process.rpc("gap-persistence-prompt", "prompt", json!({"message":"Invoke the actual isolated Task once."})).await;
++        let reached_path = bank.directory.join(format!("frontiers/{key}.reached.json"));
++        gap_wait_file(&reached_path).await;
++        let reached: Value = serde_json::from_slice(&fs::read(&reached_path).unwrap()).unwrap();
++        let details = &reached["details"];
++        let cwd = PathBuf::from(details["cwd"].as_str().unwrap());
++        let resource_id = details["resource_id"].as_str().unwrap();
++        assert!(cwd.is_dir());
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "during-original-persistence-frontier"));
++        if nested {
++            let root_patch = PathBuf::from(details["root_patch"].as_str().unwrap());
++            assert!(root_patch.is_file(), "actual root durability must precede the nested fault");
++            assert!(fs::read_to_string(&root_patch).unwrap().contains("gap-root.txt"));
++            assert_eq!(details["nested_index"], 0);
++            assert_eq!(details["relative_path"], "nested");
++            assert_eq!(fs::read(cwd.join("nested/n")).unwrap(), b"actual nested change\n");
++            let nested_patch = PathBuf::from(details["nested_patch"].as_str().unwrap());
++            assert!(!nested_patch.exists());
++            fs::create_dir(&nested_patch).unwrap();
++        } else {
++            assert_eq!(details["completed_prefix"], 1);
++            let rescue = details["rescue_ref"].as_str().unwrap();
++            let tip = details["tip"].as_str().unwrap();
++            assert_eq!(git(&bank.project, &["rev-parse", rescue]), tip);
++            assert_eq!(git(&bank.project, &["show", &format!("{tip}:gap-first-prefix.txt")]), "first prefix");
++            assert!(!git(&bank.project, &["ls-tree", "--name-only", tip]).contains("gap-second-prefix.txt"));
++            let scratch = PathBuf::from(details["scratch"].as_str().unwrap());
++            assert!(scratch.is_dir());
++            let saved = scratch.with_file_name("indexes-gap-saved-after-first-prefix");
++            assert!(!saved.exists());
++            fs::rename(&scratch, &saved).unwrap();
++            fs::write(&scratch, b"obstruct the next real synthetic index stage after its durable first commit").unwrap();
++        }
++        fs::write(bank.directory.join(format!("frontiers/{key}.release")), b"attempt the original real filesystem operation").unwrap();
++        process.until(|frame| frame["type"] == "agent_end").await;
++        let releases = gap_files_named(&bank.home.join("sessions"), "release.json");
++        assert_eq!(releases.len(), 1);
++        let release: Value = serde_json::from_slice(&fs::read(&releases[0]).unwrap()).unwrap();
++        assert_eq!(release["status"], "retained");
++        assert_eq!(release["resource_id"], resource_id);
++        assert!(release["error"].as_str().is_some_and(|error| !error.is_empty()));
++        assert!(cwd.is_dir());
++        let frames = gap_finish(process, &bank, false).await;
++        let root_patches = gap_files_named(&bank.home.join("sessions"), "root.patch");
++        assert_eq!(root_patches.len(), 1, "failure cannot replay the original capture");
++        assert!(gap_files_named(&bank.home.join("sessions"), "capture.json").is_empty(),
++            "an incomplete capture must not publish a success receipt");
++        let patch = fs::read_to_string(&root_patches[0]).unwrap();
++        if nested {
++            assert!(patch.contains("gap-root.txt"));
++            assert!(Path::new(details["nested_patch"].as_str().unwrap()).is_dir());
++            assert_eq!(fs::read(cwd.join("nested/n")).unwrap(), b"actual nested change\n");
++            assert_eq!(fs::read(bank.project.join("nested/n")).unwrap(), b"original nested bytes\n");
++        } else {
++            assert!(patch.contains("gap-first-prefix.txt") && patch.contains("gap-second-prefix.txt"));
++            assert_eq!(git(&bank.project, &["rev-parse", details["rescue_ref"].as_str().unwrap()]), details["tip"].as_str().unwrap());
++            assert_eq!(fs::read(cwd.join("gap-second-prefix.txt")).unwrap(), b"second prefix\n");
++        }
++        let journals = actual_journals(&bank);
++        let result = journals.iter().flat_map(|journal| journal["rows"].as_array().unwrap())
++            .find(|message| message["role"] == "toolResult" && message["toolCallId"] == "g3-gap-persistence-task").unwrap();
++        assert_eq!(result["isError"], true);
++        assert!(result["details"]["results"][0]["error"].as_str().is_some_and(|error| !error.is_empty()));
++        assert!(result["details"]["results"][0]["releaseError"].as_str().is_some_and(|error| !error.is_empty()));
++        assert_eq!(before, GapParentSnapshot::capture(&bank, "after-original-persistence-failure"));
++        fs::write(bank.directory.join("gap-persistence-assertions.json"), serde_json::to_vec_pretty(&json!({
++            "criteria":["M8","O8"],"nested":nested,"frontier":reached,"rootPatch":root_patches[0],
++            "release":release,"frames":frames,"journals":journals,"noReplay":true
++        })).unwrap()).unwrap();
++    }
++}
++
+ fn call(id: &str, name: &str, args: Value) -> Value {
+     json!({"events":[tool_call(0,id,name,&args.to_string()),finish("tool_calls"),done()]})
+ }
+@@ -175,6 +645,25 @@ impl RoutedUpstream {
+                         tokio::time::sleep(Duration::from_millis(5)).await;
+                     }}).await.expect("actual Native Wait did not watch original jobs; original model body remains held");
+                     }
++                    if route == 1
++                        && evidence.join("gap-hold-child-second-response").is_file()
++                        && body["messages"].as_array().is_some_and(|messages| {
++                            messages.iter().any(|message| {
++                                message["role"] == "tool"
++                                    && message["tool_call_id"] == "g3-child-write"
++                            })
++                        })
++                    {
++                        fs::write(
++                            evidence.join("gap-child-write-completed-response-held.json"),
++                            serde_json::to_vec_pretty(&json!({"route":"child-a","request":body})).unwrap(),
++                        ).unwrap();
++                        tokio::time::timeout(Duration::from_secs(25), async {
++                            while !evidence.join("gap-release-child-second-response").is_file() {
++                                tokio::time::sleep(Duration::from_millis(5)).await;
++                            }
++                        }).await.expect("ordinary child second response remained held; inspect the original process");
++                    }
+                     client.write_all(&response).await.unwrap();
+                     let _ = client.shutdown().await;
+                 });
+@@ -968,6 +1457,64 @@ fn actual_journals(bank: &Bank) -> Vec<Value> {
+     journals
+ }
+ 
++/// Supplemental evidence only; the original nineteen criteria and all existing banks remain unchanged.
++pub async fn fault_and_parent_observation() {
++    let bank = Bank::new("g3-gap-parent-interval", "patch", false, false, false, false);
++    fs::write(bank.directory.join("gap-hold-child-second-response"), b"hold the actual second child response").unwrap();
++    let up = RoutedUpstream::start(
++        &bank.directory,
++        vec![
++            call("g3-gap-parent-task", "task", task_args("g3-task-a", "Write the isolated observation output.")),
++            answer("The isolated Task has completed."),
++        ],
++        child_script("gap-live-child.txt", "actual isolated interval output\n", false),
++        vec![],
++    ).await;
++    let mut process = WireProcess::spawn(bank.command(&up.url(), "rpc"), &bank.directory);
++    process.until(|frame| frame["type"] == "ready").await;
++    let before = GapParentSnapshot::capture(&bank, "before-dispatch");
++    process.rpc("gap-parent-prompt", "prompt", json!({"message":"Run the actual isolated Task and preserve the parent repository."})).await;
++    gap_wait_file(&bank.directory.join("gap-child-write-completed-response-held.json")).await;
++    assert!(!bank.directory.join("gap-release-child-second-response").exists());
++    let held = GapParentSnapshot::capture(&bank, "during-native-child");
++    assert_eq!(before, held, "ordinary native child work changed parent HEAD/index/diffs/untracked bytes");
++    let journals_held = actual_journals(&bank);
++    let child = journals_held.iter().find(|journal| journal["init"]["isolated"] == true)
++        .expect("actual isolated child journal must exist during the held native interval");
++    let cwd = PathBuf::from(child["header"]["cwd"].as_str().unwrap());
++    assert_ne!(fs::canonicalize(&cwd).unwrap(), fs::canonicalize(&bank.project).unwrap());
++    assert_eq!(fs::read(cwd.join("gap-live-child.txt")).unwrap(), b"actual isolated interval output\n");
++    assert!(!bank.project.join("gap-live-child.txt").exists());
++    assert!(!journals_held.iter().flat_map(|journal| journal["rows"].as_array().unwrap())
++        .any(|message| message["role"] == "toolResult" && message["toolCallId"] == "g3-gap-parent-task"));
++    fs::write(
++        bank.directory.join("gap-parent-held-observation.json"),
++        serde_json::to_vec_pretty(&json!({"child":child,"isolatedCwd":cwd,"parentByteEquivalent":true,"journals":journals_held})).unwrap(),
++    ).unwrap();
++    fs::write(bank.directory.join("gap-release-child-second-response"), b"release the same original response").unwrap();
++    process.until(|frame| frame["type"] == "agent_end").await;
++    let frames = process.finish(&bank).await;
++    let after = GapParentSnapshot::capture(&bank, "after-original-completion");
++    assert_eq!(before, after, "apply=false ordinary Task changed parent HEAD/index/diffs/untracked bytes");
++    bank.preserved_wip();
++    let journals = actual_journals(&bank);
++    let result = journals.iter().flat_map(|journal| journal["rows"].as_array().unwrap())
++        .find(|message| message["role"] == "toolResult" && message["toolCallId"] == "g3-gap-parent-task")
++        .expect("same original Task result must be durably observed");
++    assert_ne!(result["isError"], true, "{result}");
++    assert_eq!(result["details"]["results"][0]["runSucceeded"], true);
++    assert_eq!(result["details"]["results"][0]["taskAccepted"], false);
++    assert_eq!(up.counts(), [2, 2, 0]);
++    fs::write(
++        bank.directory.join("gap-parent-interval-assertions.json"),
++        serde_json::to_vec_pretty(&json!({"criterion":"O1","beforeEqualsHeld":true,"beforeEqualsAfter":true,"frames":frames,"journals":journals,"requestCounts":up.counts()})).unwrap(),
++    ).unwrap();
++    gap_materialized_startup_failures().await;
++    gap_bash_hook_and_observer().await;
++    gap_cancel_live_bash().await;
++    gap_partial_git_and_nested_persistence().await;
++}
++
+ pub async fn ordinary_entries() {
+     for entry in ["print", "line", "rpc", "acp"] {
+         let bank = Bank::new(

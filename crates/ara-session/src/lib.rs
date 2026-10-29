@@ -17,8 +17,9 @@
 //! ARA additions (intentional): unsupported header versions are rejected
 //! rather than half-read (migrations are not ported); the bytes of a torn file
 //! are copied to a synced backup before any rewrite; appends are `fsync`ed and
-//! rewrites are atomic with a directory sync where supported; a failed append is rolled back
-//! so `Err` always means "not recorded"; tool calls interrupted before their
+//! rewrites are atomic with a directory sync where supported; a failed ordinary
+//! per-entry append is rolled back in memory. Checked transactions distinguish
+//! published receipts with an uncertain directory barrier; tool calls interrupted before their
 //! results were recorded are paired with explicit "effect unknown" results on
 //! resume instead of being replayed.
 //!
@@ -27,9 +28,22 @@
 //! listing/search, moving, title generation, generic lossy persistence trimming.
 //! Image/blob persistence is available when the Host binds its blob directory.
 
+pub mod actual_persistence;
 pub mod blob;
+pub mod context_view;
 mod handoff;
 mod loop_guard_notice;
+pub use loop_guard_notice::actual as actual_loop_guard_notice;
+mod model_usage;
+mod native_message;
+mod native_recovery;
+pub use native_recovery::{NativeFailedAssistantRecovery, NativeFailedAssistantRecoveryOutcome};
+mod snapcompact_source;
+pub use native_message::{AgentEntrySource, AgentMessageBody, NativeJournalEncoder, NativeMessageSource};
+pub use native_message::{
+    checked_serde as native_checked_serde, clone_wire as native_clone_wire, wire_from_serde as native_wire_from_serde,
+};
+pub use snapcompact_source::NativeSnapcompactArchiveSource;
 mod reduction;
 mod remote;
 mod skill_prompt;
@@ -40,6 +54,7 @@ pub use handoff::{NativeCompactionFileDetails, NativeHandoffError, NativeHandoff
 pub use loop_guard_notice::{
     GEMINI_TOOL_CALL_REMINDER_TYPE, LoopGuardNotice, THINKING_LOOP_REDIRECT_TYPE, TOOL_CALL_LOOP_REDIRECT_TYPE,
 };
+pub use model_usage::{ModelUsageOwner, ModelUsageRecord};
 pub use reduction::{
     SessionReductionAction, SessionReductionEdit, SessionReductionError, SessionReductionReceipt, SessionReductionSlot,
     SessionReductionSnapshot,
@@ -49,8 +64,8 @@ pub use skill_prompt::{SKILL_PROMPT_CUSTOM_TYPE, UserSkillPrompt};
 pub use snapcompact::{NativeSnapcompactError, NativeSnapcompactSnapshot, NativeSnapcompactSummary};
 
 use ara_ai::{
-    AssistantBlock, AssistantMessage, DeveloperMessage, Message, StopReason, ToolResultMessage, UserBlock, UserContent,
-    UserMessage, now_ms,
+    AssistantBlock, AssistantMessage, DeveloperMessage, Message, StopReason, UserBlock, UserContent, UserMessage,
+    now_ms,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -66,6 +81,9 @@ pub const CORRUPT_HEADER_MESSAGE: &str = "session header is missing or malformed
 pub const UNKNOWN_EFFECT_TEXT: &str = "Tool call was interrupted before its result was recorded; its effects are unknown. Inspect the affected state before retrying it.";
 pub const DISCARDED_ENTRY_BRANCH_MARKER: &str = "discarded-entry-branch";
 pub const ACCEPTED_TERMINAL_EMPTY_STOP_MARKER: &str = "accepted-terminal-empty-stop";
+/// Fixed OMP `session-entries.ts:33`: transient model changes retain their
+/// receipt without selecting that role when the Session is restored.
+pub const EPHEMERAL_MODEL_CHANGE_ROLE: &str = "fallback";
 
 /// Native user command receipt (fixed OMP `session/messages.ts`). This stays
 /// distinct from the model's ordinary user message and from Agent tool calls.
@@ -120,6 +138,8 @@ impl BashExecutionMessage {
             content: UserContent::Blocks(vec![UserBlock::text(text)]),
             synthetic: None,
             timestamp: self.timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
         }))
     }
 
@@ -235,7 +255,9 @@ fn grouped_count(count: u64) -> String {
 // Bash's outputMeta builder supplies truncation/column limits. Preserve other
 // imported metadata raw; no tool renderer or LSP dependency belongs to Session.
 fn bash_output_notice(meta: Option<&Value>) -> String {
-    let Some(meta) = meta else { return String::new() };
+    let Some(meta) = meta else {
+        return String::new();
+    };
     let mut parts = Vec::new();
     if let Some(truncation) = meta.get("truncation").filter(|value| value.is_object()) {
         let number = |field: &str| truncation.get(field).and_then(Value::as_u64).unwrap_or(0);
@@ -277,7 +299,9 @@ fn bash_output_notice(meta: Option<&Value>) -> String {
         } else {
             let range = truncation.get("shownRange");
             notice = match range.and_then(|range| Some((range.get("start")?.as_u64()?, range.get("end")?.as_u64()?))) {
-                Some((start, end)) if end >= start => format!("Showing lines {start}-{end} of {total_lines}"),
+                Some((start, end)) if end >= start => {
+                    format!("Showing lines {start}-{end} of {total_lines}")
+                }
                 _ => format!("Showing {output_lines} of {total_lines} lines"),
             };
             if truncation.get("truncatedBy").and_then(Value::as_str) == Some("bytes") {
@@ -320,6 +344,55 @@ pub enum SessionError {
 }
 
 pub type Result<T> = std::result::Result<T, SessionError>;
+
+/// Model and thinking receipts share one publication boundary. An uncertain
+/// directory barrier is distinct from a write that never published the pair.
+#[derive(Debug, thiserror::Error)]
+pub enum ModelAndThinkingChangeError {
+    #[error(transparent)]
+    Storage(#[from] SessionError),
+    #[error(
+        "model {model_entry_id} and thinking {thinking_entry_id} were published, but directory durability is unknown: {source}"
+    )]
+    PublishedButDurabilityUnknown {
+        model_entry_id: String,
+        thinking_entry_id: String,
+        #[source]
+        source: SessionError,
+    },
+}
+
+impl ModelAndThinkingChangeError {
+    /// The journal retains the complete published pair. The Host must stop
+    /// adoption and reconcile that receipt before retrying this transition.
+    pub fn history_published(&self) -> bool {
+        matches!(self, Self::PublishedButDurabilityUnknown { .. })
+    }
+}
+
+/// Publication result for a model change whose thinking receipt is optional.
+/// `None` means no thinking entry was staged, including in an uncertain write.
+#[derive(Debug, thiserror::Error)]
+pub enum ModelAndOptionalThinkingChangeError {
+    #[error(transparent)]
+    Storage(#[from] SessionError),
+    #[error(
+        "model {model_entry_id} and optional thinking {thinking_entry_id:?} were published, but directory durability is unknown: {source}"
+    )]
+    PublishedButDurabilityUnknown {
+        model_entry_id: String,
+        thinking_entry_id: Option<String>,
+        #[source]
+        source: SessionError,
+    },
+}
+
+impl ModelAndOptionalThinkingChangeError {
+    /// The matching published view is retained; reconcile it before retrying.
+    pub fn history_published(&self) -> bool {
+        matches!(self, Self::PublishedButDurabilityUnknown { .. })
+    }
+}
 
 /// An atomic rewrite may have published its candidate before its final
 /// directory durability barrier fails. New checked transactions retain that
@@ -421,15 +494,171 @@ fn sync_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// One journal line. Entry types ARA does not interpret are preserved verbatim.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Entry {
     pub id: String,
     pub parent_id: Option<String>,
     pub kind: String,
     pub raw: Value,
+    /// Canonical native source; raw may contain only an explicitly checked mirror.
+    pub native_message: Option<NativeMessageSource>,
+    /// Canonical compaction preserveData. Distinct from a live message owner.
+    pub snapcompact_source: Option<NativeSnapcompactArchiveSource>,
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        if self.id != other.id || self.parent_id != other.parent_id || self.kind != other.kind {
+            return false;
+        }
+        if self.snapcompact_source.is_some() || other.snapcompact_source.is_some() {
+            if NativeSnapcompactArchiveSource::envelope(&self.raw)
+                != NativeSnapcompactArchiveSource::envelope(&other.raw)
+            {
+                return false;
+            }
+            let preserve = |entry: &Entry| {
+                entry.snapcompact_source.clone().or_else(|| {
+                    entry
+                        .raw
+                        .get("preserveData")
+                        .and_then(|value| native_message::wire_from_serde(value).ok())
+                        .map(NativeSnapcompactArchiveSource::from_wire)
+                })
+            };
+            return preserve(self) == preserve(other) && self.native_message == other.native_message;
+        }
+        if self.native_message.is_none() && other.native_message.is_none() {
+            return self.raw == other.raw;
+        }
+        let envelope = |entry: &Entry| native_message::entry_envelope(&entry.raw);
+        if envelope(self) != envelope(other) {
+            return false;
+        }
+        match (&self.native_message, &other.native_message) {
+            (Some(left), Some(right)) => left == right,
+            (Some(NativeMessageSource::Persisted { body }), None) => {
+                other.legacy_native_body().is_some_and(|value| body.deep_equal(&value))
+            }
+            (None, Some(NativeMessageSource::Persisted { body })) => {
+                self.legacy_native_body().is_some_and(|value| body.deep_equal(&value))
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Entry {
+    fn legacy_native_body(&self) -> Option<ara_rpc::WireValue> {
+        native_message::body_from_entry(&native_message::wire_from_serde(&self.raw).ok()?).ok().flatten()
+    }
+
+    /// Canonical application body, with journal identity kept outside it.
+    /// Known-role JSON is validated without replacing its extension fields.
+    pub fn agent_message_body(&self) -> Result<Option<AgentMessageBody>> {
+        if let Some(source) = &self.native_message {
+            return Ok(Some(AgentMessageBody::Native(source.clone())));
+        }
+        let mut body = match self.kind.as_str() {
+            "message" => self.raw.get("message").cloned().ok_or_else(|| agent_body_error("missing message body"))?,
+            "custom_message" => {
+                let mut body = self.raw.clone();
+                let object = body.as_object_mut().ok_or_else(|| agent_body_error("invalid custom entry"))?;
+                object.remove("type");
+                object.remove("id");
+                object.remove("parentId");
+                object.insert("role".into(), json!("custom"));
+                object.insert(
+                    "timestamp".into(),
+                    json!(entry_timestamp(&self.raw).ok_or_else(|| agent_body_error("invalid custom timestamp"))?),
+                );
+                body
+            }
+            "branch_summary" if !self.is_discarded_entry_branch_marker() => {
+                let mut body = self.raw.clone();
+                let object = body.as_object_mut().ok_or_else(|| agent_body_error("invalid branch summary"))?;
+                object.remove("type");
+                object.remove("id");
+                object.remove("parentId");
+                object.insert("role".into(), json!("branchSummary"));
+                object.insert(
+                    "timestamp".into(),
+                    json!(entry_timestamp(&self.raw).ok_or_else(|| agent_body_error("invalid branch timestamp"))?),
+                );
+                body
+            }
+            _ => return Ok(None),
+        };
+        // Validation and conversion inspect the current body, never a saved
+        // source projection. Unrecognized application roles have zero fragments.
+        Self::project_agent_message_body(&body)?;
+        Ok(Some(AgentMessageBody::Legacy(std::mem::take(&mut body))))
+    }
+
+    /// Checked current-body projection shared by raw Host conversion and append.
+    pub fn project_agent_message_body(body: &Value) -> Result<Vec<Message>> {
+        let role = body
+            .as_object()
+            .and_then(|object| object.get("role"))
+            .and_then(Value::as_str)
+            .filter(|role| !role.is_empty())
+            .ok_or_else(|| agent_body_error("message requires a nonempty role"))?;
+        if matches!(role, "user" | "developer" | "assistant") {
+            let message: Message = serde_json::from_value(body.clone())
+                .map_err(|error| agent_body_error(format!("malformed {role}: {error}")))?;
+            return Ok(vec![message]);
+        }
+        if role == "custom" {
+            let custom_type = body
+                .get("customType")
+                .and_then(Value::as_str)
+                .ok_or_else(|| agent_body_error("custom message requires customType"))?;
+            let reserved = custom_type == SKILL_PROMPT_CUSTOM_TYPE && body["attribution"] == "user"
+                || matches!(
+                    custom_type,
+                    THINKING_LOOP_REDIRECT_TYPE | GEMINI_TOOL_CALL_REMINDER_TYPE | TOOL_CALL_LOOP_REDIRECT_TYPE
+                );
+            if !reserved
+                && serde_json::from_value::<UserContent>(body.get("content").cloned().unwrap_or(Value::Null)).is_err()
+            {
+                return Ok(Vec::new());
+            }
+        }
+        if !matches!(
+            role,
+            "toolResult"
+                | "custom"
+                | "hookMessage"
+                | "bashExecution"
+                | "branchSummary"
+                | "compactionSummary"
+                | "fileMention"
+        ) {
+            return Ok(Vec::new());
+        }
+        let entry = Entry {
+            id: "raw-agent-body".into(),
+            parent_id: None,
+            kind: "message".into(),
+            raw: json!({"type":"message", "message":body}),
+            native_message: None,
+            snapcompact_source: None,
+        };
+        entry.model_messages()?.ok_or_else(|| agent_body_error(format!("malformed reserved {role} message")))
+    }
+
+    /// Native remote summaries stay one raw compactionSummary. A checked
+    /// carrier is derived only for the active route's provider preparation.
+    pub fn project_agent_message_body_for_route(
+        body: &Value,
+        model: &ara_ai::Model,
+        native_replay_available: bool,
+    ) -> Result<Vec<Message>> {
+        // Native proof is supplied only by checked Session selection below.
+        // A valid raw preserveData payload alone is not source/route evidence.
+        let _ = (model, native_replay_available);
+        Self::project_agent_message_body(body)
+    }
     fn is_service_tier_change(&self) -> bool {
         self.kind == "service_tier_change"
             && self.raw.get("serviceTier").is_some_and(|tier| tier.is_null() || tier.is_object())
@@ -449,24 +678,33 @@ impl Entry {
             && self.raw.get("data").is_none()
     }
 
-    pub fn bash_execution(&self) -> Option<BashExecutionMessage> {
+    pub fn bash_execution(&self) -> Result<Option<BashExecutionMessage>> {
+        if self.native_message.is_some() {
+            return Ok(BashExecutionMessage::from_entry(&self.checked_raw()?));
+        }
+        Ok(self.legacy_bash_execution())
+    }
+
+    fn legacy_bash_execution(&self) -> Option<BashExecutionMessage> {
         BashExecutionMessage::from_entry(&self.raw)
     }
 
-    fn is_excluded_bash_execution(&self) -> bool {
-        self.bash_execution().is_some_and(|message| message.exclude_from_context == Some(true))
-    }
-
     fn is_decodable_message(&self) -> bool {
-        self.model_messages().is_some()
+        self.model_messages().is_ok_and(|messages| messages.is_some())
     }
 
     /// Original user-invoked Skill identity, independent of its model projection.
     pub fn skill_prompt(&self) -> Option<UserSkillPrompt> {
+        if self.native_message.is_some() {
+            return UserSkillPrompt::from_entry(&self.checked_raw().ok()?);
+        }
         UserSkillPrompt::from_entry(&self.raw)
     }
 
     pub fn loop_guard_notice(&self) -> Option<LoopGuardNotice> {
+        if self.native_message.is_some() {
+            return LoopGuardNotice::from_entry(&self.checked_raw().ok()?);
+        }
         LoopGuardNotice::from_entry(&self.raw)
     }
 
@@ -478,17 +716,76 @@ impl Entry {
 
     /// Compatibility projection for consumers that require exactly one
     /// message. Multi-fragment entries must use [`model_messages`](Self::model_messages).
-    pub fn message(&self) -> Option<Message> {
-        let mut messages = self.model_messages()?;
-        (messages.len() == 1).then(|| messages.remove(0))
+    pub fn message(&self) -> Result<Option<Message>> {
+        let Some(mut messages) = self.model_messages()? else {
+            return Ok(None);
+        };
+        Ok((messages.len() == 1).then(|| messages.remove(0)))
     }
 
     /// Canonical ordered provider fragments. `None` identifies an unknown or
     /// malformed entry; an empty vector is a recognized non-context entry.
-    pub fn model_messages(&self) -> Option<Vec<Message>> {
+    pub fn model_messages(&self) -> Result<Option<Vec<Message>>> {
+        // A journal compaction is a boundary, never an ordinary message. Its
+        // preserve owner is checked only by summary admission/conversion.
+        if self.kind == "compaction" {
+            return Ok(self.legacy_model_messages());
+        }
+        if self.native_message.is_some() || self.snapcompact_source.is_some() {
+            // Preserve the established malformed-entry classification after
+            // the explicit checked bridge. Native representation/Host errors
+            // propagate; a representable malformed reserved receipt is None.
+            let mut observed = self.clone();
+            observed.raw = self.checked_raw()?;
+            observed.native_message = None;
+            observed.snapcompact_source = None;
+            return Ok(observed.legacy_model_messages());
+        }
+        Ok(self.legacy_model_messages())
+    }
+
+    fn observed_excluded_bash_execution(&self) -> Result<bool> {
+        use ara_rpc::WireValue as W;
+        if self.kind != "message" || !self.observed_role()?.is_some_and(|role| role.equals_ascii("bashExecution")) {
+            return Ok(false);
+        }
+        // A flag on a malformed receipt is not a transparent recovery tail.
+        // Read only the reserved fields used by BashExecutionMessage::from_entry;
+        // arbitrary metadata/extension graphs are irrelevant to this decision.
+        let exit = self.observed_message_field(&["exitCode"])?;
+        if !match exit.as_ref() {
+            None | Some(W::Null) => true,
+            Some(W::Number(value)) => {
+                value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= f64::from(i32::MIN)
+                    && *value <= f64::from(i32::MAX)
+            }
+            _ => false,
+        } {
+            return Ok(false);
+        }
+        if !matches!(self.observed_message_field(&["excludeFromContext"])?, Some(W::Bool(true))) {
+            return Ok(false);
+        }
+        for key in ["command", "output"] {
+            if !matches!(self.observed_message_field(&[key])?, Some(W::String(_))) {
+                return Ok(false);
+            }
+        }
+        for key in ["cancelled", "truncated"] {
+            if !matches!(self.observed_message_field(&[key])?, Some(W::Bool(_))) {
+                return Ok(false);
+            }
+        }
+        Ok(matches!(self.observed_message_field(&["timestamp"])?, Some(W::Number(value))
+            if value.is_finite() && value.fract() == 0.0 && value >= i64::MIN as f64 && value < i64::MAX as f64))
+    }
+
+    fn legacy_model_messages(&self) -> Option<Vec<Message>> {
         match self.kind.as_str() {
             "message" if self.role() == Some("bashExecution") => {
-                Some(self.bash_execution()?.model_message().into_iter().collect())
+                Some(self.legacy_bash_execution()?.model_message().into_iter().collect())
             }
             "message" if self.role() == Some("hookMessage") => custom_model_messages(self.raw.get("message")?),
             "message" if self.role() == Some("custom") => {
@@ -541,6 +838,14 @@ impl Entry {
                 }
                 Some(vec![serde_json::from_value(message).ok()?])
             }
+            "message" if self.role().is_some_and(|role| !matches!(role, "user" | "developer" | "assistant")) => {
+                // Valid application-only records remain raw evidence, while
+                // the default Host projection contributes no model fragment.
+                let body = self.raw.get("message")?;
+                body.as_object()?;
+                body.get("role")?.as_str().filter(|role| !role.is_empty())?;
+                Some(Vec::new())
+            }
             "message" => Some(vec![serde_json::from_value(self.raw.get("message")?.clone()).ok()?]),
             "custom_message" => custom_entry_model_messages(&self.raw),
             "branch_summary" if self.is_discarded_entry_branch_marker() => Some(Vec::new()),
@@ -577,13 +882,46 @@ impl Entry {
     }
 
     fn native_compaction_entry(&self) -> std::result::Result<NativeCompactionEntry, CompactionSourceError> {
-        let messages = self.model_messages().ok_or_else(|| {
-            if self.kind == "message" {
-                CompactionSourceError::UndecodableMessage { id: self.id.clone() }
+        if self.native_message.is_some() {
+            let observed = if self.kind == "message" {
+                self.native_message.as_ref().expect("native message source").checked_compaction_message_entry(&self.raw)
+                    .map_err(SessionError::from)
             } else {
-                CompactionSourceError::UnsupportedContextEntry { id: self.id.clone(), kind: self.kind.clone() }
-            }
-        })?;
+                // Custom envelopes and summaries keep their exact strict view.
+                self.checked_raw()
+            };
+            let raw = observed.map_err(|_| CompactionSourceError::UndecodableMessage { id: self.id.clone() })?;
+            let view = Entry {
+                id: self.id.clone(),
+                parent_id: self.parent_id.clone(),
+                kind: self.kind.clone(),
+                raw,
+                native_message: None,
+                snapcompact_source: None,
+            };
+            return view.native_compaction_entry();
+        }
+        // The ordinary custom-message converter retains its legacy empty
+        // projection on invalid content. A compaction source must distinguish
+        // that decode failure from an intentionally empty context entry.
+        if self.kind == "custom_message"
+            && serde_json::from_value::<UserContent>(self.raw.get("content").cloned().unwrap_or(Value::Null)).is_err()
+        {
+            return Err(CompactionSourceError::UnsupportedContextEntry {
+                id: self.id.clone(),
+                kind: self.kind.clone(),
+            });
+        }
+        let messages = self
+            .model_messages()
+            .map_err(|_| CompactionSourceError::UndecodableMessage { id: self.id.clone() })?
+            .ok_or_else(|| {
+                if self.kind == "message" {
+                    CompactionSourceError::UndecodableMessage { id: self.id.clone() }
+                } else {
+                    CompactionSourceError::UnsupportedContextEntry { id: self.id.clone(), kind: self.kind.clone() }
+                }
+            })?;
         let origin = match self.kind.as_str() {
             "message" => match self.role() {
                 Some("user") => NativeEntryOrigin::User,
@@ -596,7 +934,7 @@ impl Entry {
                 Some("branchSummary") => NativeEntryOrigin::LegacyBranchSummary,
                 Some("compactionSummary") => NativeEntryOrigin::LegacyCompactionSummary,
                 Some("fileMention") => NativeEntryOrigin::FileMention,
-                _ => unreachable!("canonical message decoder recognized a fixed role"),
+                _ => NativeEntryOrigin::Metadata,
             },
             "custom_message" if self.is_user_skill_prompt_candidate() => NativeEntryOrigin::UserSkill,
             "custom_message" if LoopGuardNotice::is_candidate(&self.raw) => NativeEntryOrigin::LoopGuardNotice,
@@ -612,7 +950,7 @@ impl Entry {
         // Count one proxy per raw `message`, never once per projected fragment.
         // Native Bash/legacy-role estimation remains a text projection proxy.
         let raw_token_message = if self.role() == Some("bashExecution") {
-            let mut bash = self.bash_execution().expect("canonical Bash decoded");
+            let mut bash = self.legacy_bash_execution().expect("canonical Bash decoded");
             bash.exclude_from_context = None;
             bash.model_message()
         } else if self.kind == "message" {
@@ -637,12 +975,143 @@ impl Entry {
                         .pointer("/message/timestamp")
                         .and_then(Value::as_i64)
                         .expect("native timestamp decoded"),
+                    provider_payload: None,
+                    provider_payload_origin: None,
                 }))
             }
         } else {
             None
         };
         Ok(NativeCompactionEntry { entry_id: self.id.clone(), origin, messages, raw_token_message })
+    }
+
+    /// Checked derived full entry for consumers with a legacy JSON contract.
+    /// Failure is explicit; this value does not replace native canonical data.
+    pub fn checked_raw(&self) -> Result<Value> {
+        if let Some(source) = &self.snapcompact_source {
+            return source.checked_entry(&self.raw).map_err(Into::into);
+        }
+        if let Some(source) = &self.native_message {
+            return source.checked_entry(&self.raw).map_err(Into::into);
+        }
+        Ok(self.raw.clone())
+    }
+
+    /// Selected local-reduction observation; the canonical native source is
+    /// retained and only its Host-prepared edited candidate can be published.
+    pub fn checked_reduction_raw(&self) -> Result<Value> {
+        if let Some(source) = &self.snapcompact_source {
+            return source.checked_entry(&self.raw).map_err(Into::into);
+        }
+        match &self.native_message {
+            Some(source) => source.checked_reduction_entry(&self.raw).map_err(Into::into),
+            None => Ok(self.raw.clone()),
+        }
+    }
+
+    pub fn original_source(&self) -> AgentEntrySource {
+        if let Some(preserve) = &self.snapcompact_source {
+            return AgentEntrySource::Snapcompact {
+                envelope: NativeSnapcompactArchiveSource::envelope(&self.raw),
+                preserve: preserve.clone(),
+            };
+        }
+        match &self.native_message {
+            Some(body) => {
+                let envelope = native_message::entry_envelope(&self.raw);
+                AgentEntrySource::Native { envelope, body: body.clone() }
+            }
+            None => AgentEntrySource::Legacy(self.raw.clone()),
+        }
+    }
+
+    /// Complete current summary body for Host source equality, including all
+    /// original metadata. This is not a model-visible conversion or grant.
+    pub fn compaction_summary_source(&self) -> std::io::Result<NativeMessageSource> {
+        if self.kind != "compaction" {
+            return Err(native_message::invalid("not a compaction entry"));
+        }
+        let mut raw = self.raw.clone();
+        let fields = raw.as_object_mut().ok_or_else(|| native_message::invalid("invalid summary source"))?;
+        fields.remove("type");
+        fields.remove("id");
+        fields.remove("parentId");
+        fields.insert("role".into(), json!("compactionSummary"));
+        fields.insert(
+            "timestamp".into(),
+            json!(entry_timestamp(&self.raw).ok_or_else(|| native_message::invalid("invalid summary timestamp"))?),
+        );
+        fields.insert(
+            "method".into(),
+            json!(self.raw.get("method").filter(|value| !value.is_null()).and_then(Value::as_str).unwrap_or("soft")),
+        );
+        let body = match &self.snapcompact_source {
+            Some(source) => source.wire_entry(&raw)?,
+            None => native_message::wire_from_serde(&raw)?,
+        };
+        Ok(NativeMessageSource::persisted(body))
+    }
+
+    fn archive_source(&self) -> Option<NativeSnapcompactArchiveSource> {
+        self.snapcompact_source.clone().or_else(|| {
+            self.raw
+                .get("preserveData")
+                .filter(|value| !value.is_null())
+                .and_then(|value| native_message::wire_from_serde(value).ok())
+                .map(NativeSnapcompactArchiveSource::from_wire)
+        })
+    }
+
+    fn has_archive(&self) -> bool {
+        self.archive_source().and_then(|source| source.exact_archive().ok().flatten()).is_some()
+    }
+
+    pub fn observed_message_body(&self) -> Result<Option<std::sync::Arc<ara_rpc::WireValue>>> {
+        if let Some(source) = &self.native_message {
+            return Ok(Some(source.observe()?));
+        }
+        self.raw
+            .get("message")
+            .map(native_message::wire_from_serde)
+            .transpose()
+            .map(|body| body.map(std::sync::Arc::new))
+            .map_err(Into::into)
+    }
+
+    pub fn observed_message_field(&self, path: &[&str]) -> Result<Option<ara_rpc::WireValue>> {
+        if let Some(source) = &self.native_message {
+            return source.observe_field(path).map_err(Into::into);
+        }
+        let Some(body) = self.raw.get("message") else {
+            return Ok(None);
+        };
+        let mut value = body;
+        for key in path {
+            let Some(next) = value.get(*key) else {
+                return Ok(None);
+            };
+            value = next;
+        }
+        native_message::wire_from_serde(value).map(Some).map_err(Into::into)
+    }
+
+    pub fn observed_tool_calls(&self) -> Result<Vec<(ara_rpc::WireString, ara_rpc::WireString)>> {
+        if let Some(source) = &self.native_message {
+            return source.observe_tool_calls().map_err(Into::into);
+        }
+        Ok(self
+            .raw
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|call| call.get("type").and_then(Value::as_str) == Some("toolCall"))
+            .filter_map(|call| Some((call.get("id")?.as_str()?.into(), call.get("name")?.as_str()?.into())))
+            .collect())
+    }
+
+    fn observed_role(&self) -> Result<Option<ara_rpc::WireString>> {
+        Ok(self.observed_message_field(&["role"])?.and_then(|role| role.as_string().cloned()))
     }
 
     fn role(&self) -> Option<&str> {
@@ -655,6 +1124,10 @@ impl Entry {
 
 fn entry_timestamp(raw: &Value) -> Option<i64> {
     Some(chrono::DateTime::parse_from_rfc3339(raw.get("timestamp")?.as_str()?).ok()?.timestamp_millis())
+}
+
+fn agent_body_error(message: impl Into<String>) -> SessionError {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message.into()).into()
 }
 
 /// Fixed session/messages.ts fileMention conversion: text files occupy the
@@ -694,12 +1167,20 @@ fn file_mention_model_messages(raw: &Value) -> Option<Vec<Message>> {
         messages.push(Message::Developer(DeveloperMessage {
             content: UserContent::Blocks(vec![UserBlock::text(text_files.join("\n"))]),
             timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
         }));
     }
     if !image_files.is_empty() {
         let mut content = vec![UserBlock::text(image_files.join("\n"))];
         content.extend(images);
-        messages.push(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }));
+        messages.push(Message::User(UserMessage {
+            content: UserContent::Blocks(content),
+            synthetic: None,
+            timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
+        }));
     }
     Some(messages)
 }
@@ -735,7 +1216,13 @@ fn custom_entry_model_messages(raw: &Value) -> Option<Vec<Message>> {
                 }
             }
         };
-        return Some(vec![Message::User(UserMessage { content, synthetic: None, timestamp: entry_timestamp(raw)? })]);
+        return Some(vec![Message::User(UserMessage {
+            content,
+            synthetic: None,
+            timestamp: entry_timestamp(raw)?,
+            provider_payload: None,
+            provider_payload_origin: None,
+        })]);
     }
     let mut message = raw.clone();
     message["timestamp"] = json!(entry_timestamp(raw)?);
@@ -751,20 +1238,39 @@ fn custom_model_messages(raw: &Value) -> Option<Vec<Message>> {
         return None;
     }
     let timestamp = raw.get("timestamp")?.as_i64()?;
-    let content: UserContent = serde_json::from_value(raw.get("content")?.clone()).ok()?;
+    let content: UserContent = match serde_json::from_value(raw.get("content").cloned().unwrap_or(Value::Null)) {
+        Ok(content) => content,
+        Err(_) => return Some(Vec::new()),
+    };
     let blocks = content_blocks(content);
     let (images, text): (Vec<UserBlock>, Vec<UserBlock>) =
         blocks.into_iter().partition(|block| matches!(block, UserBlock::Image(_)));
     if images.is_empty() {
-        return Some(vec![Message::Developer(DeveloperMessage { content: UserContent::Blocks(text), timestamp })]);
+        return Some(vec![Message::Developer(DeveloperMessage {
+            content: UserContent::Blocks(text),
+            timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
+        })]);
     }
     let mut messages = Vec::new();
     if !text.is_empty() {
-        messages.push(Message::Developer(DeveloperMessage { content: UserContent::Blocks(text), timestamp }));
+        messages.push(Message::Developer(DeveloperMessage {
+            content: UserContent::Blocks(text),
+            timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
+        }));
     }
     let mut content = vec![UserBlock::text(format!("Images attached to {custom_type}."))];
     content.extend(images);
-    messages.push(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }));
+    messages.push(Message::User(UserMessage {
+        content: UserContent::Blocks(content),
+        synthetic: None,
+        timestamp,
+        provider_payload: None,
+        provider_payload_origin: None,
+    }));
     Some(messages)
 }
 
@@ -817,7 +1323,13 @@ fn summary_model_message(raw: &Value, kind: &str, timestamp: i64) -> Option<Mess
         }
         content
     };
-    Some(Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp }))
+    Some(Message::User(UserMessage {
+        content: UserContent::Blocks(content),
+        synthetic: None,
+        timestamp,
+        provider_payload: None,
+        provider_payload_origin: None,
+    }))
 }
 
 /// Storage-side guard for a soft summary's replaced prefix. It mirrors the
@@ -860,7 +1372,9 @@ fn safe_compaction_prefix_with_archive(
         let images_allowed = native_replay
             || archive_prefix_end.is_some_and(|end| index < end)
             || previous_archive.is_some_and(|summary| summary.entry_id == entry.id);
-        let Ok(group) = entry.native_compaction_entry() else { return false };
+        let Ok(group) = entry.native_compaction_entry() else {
+            return false;
+        };
         let historical_custom = matches!(
             group.origin,
             NativeEntryOrigin::CustomMessage
@@ -947,7 +1461,9 @@ fn active_context_start(branch: &[&Entry]) -> usize {
 
 fn native_kept_boundary_supported(branch: &[&Entry], index: usize) -> bool {
     for entry in &branch[index..] {
-        let Ok(group) = entry.native_compaction_entry() else { return false };
+        let Ok(group) = entry.native_compaction_entry() else {
+            return false;
+        };
         if group.origin == NativeEntryOrigin::Metadata {
             continue;
         }
@@ -963,12 +1479,14 @@ fn native_kept_boundary_supported(branch: &[&Entry], index: usize) -> bool {
     false
 }
 
-fn context_source_ids(branch: &[&Entry]) -> Vec<String> {
-    branch
-        .iter()
-        .filter(|entry| entry.model_messages().is_some_and(|messages| !messages.is_empty()))
-        .map(|entry| entry.id.clone())
-        .collect()
+fn context_source_ids(branch: &[&Entry]) -> std::result::Result<Vec<String>, CompactionProjectionError> {
+    let mut ids = Vec::new();
+    for entry in branch {
+        if !entry.native_compaction_entry()?.messages.is_empty() {
+            ids.push(entry.id.clone());
+        }
+    }
+    Ok(ids)
 }
 
 /// One decoded message tied to its actual journal entry ID. This is an
@@ -978,6 +1496,53 @@ fn context_source_ids(branch: &[&Entry]) -> Vec<String> {
 pub struct SourcedMessage {
     pub entry_id: String,
     pub message: Message,
+}
+
+/// A single raw application record and its immutable Session source. One
+/// record can yield zero, one or many provider fragments; no Agent dependency.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawAgentContextMessage {
+    pub body: AgentMessageBody,
+    pub source: AgentEntrySource,
+    /// Temporary provider fragments from checked Session source selection.
+    /// The Host consumes these into a weak projection cache, not a second
+    /// canonical transcript. Serialization/reopen must derive proof anew.
+    pub checked_projection: Option<Vec<Message>>,
+}
+
+fn raw_checked_summary_projection(
+    summary: &CompactionSummaryView,
+    model: &ara_ai::Model,
+    supports_images: bool,
+    blob_store: Option<&BlobStore>,
+) -> Result<Message> {
+    if summary.has_archive() && summary.archive.is_none() {
+        return Err(agent_body_error("exact archive is not representable in scalar model context"));
+    }
+    if summary.remote.is_some() {
+        return remote::checked_raw_model_message(summary, model, supports_images);
+    }
+    if summary.method == "handoff" {
+        return Ok(handoff::model_message(summary));
+    }
+    let mut message = if summary.archive.is_some() {
+        snapcompact::model_message_from_summary_with_blob_store(
+            &summary.summary,
+            summary.preserve_data.as_ref(),
+            blob_store,
+        )?
+    } else {
+        Message::User(UserMessage::text(format!(
+            "[Compacted summary of earlier turns; source entries withheld]\n{}",
+            summary.summary
+        )))
+    };
+    if let Message::User(user) = &mut message {
+        user.timestamp = chrono::DateTime::parse_from_rfc3339(&summary.timestamp)
+            .map(|timestamp| timestamp.timestamp_millis())
+            .unwrap_or(0);
+    }
+    Ok(message)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1068,6 +1633,7 @@ pub struct CompactionSummaryView {
     pub archive_image_boundary: Option<ArchiveImageBoundary>,
     /// Original preserve state remains separate from its runtime projection.
     pub preserve_data: Option<Value>,
+    pub preserve_source: Option<NativeSnapcompactArchiveSource>,
     /// `None` means an imported entry has no verifiable source list.
     pub source_entry_ids: Option<Vec<String>>,
 }
@@ -1175,10 +1741,10 @@ pub struct LoadReport {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Recovery {
     /// Calls paired with an "effect unknown" result right after their assistant turn.
-    pub paired: Vec<String>,
+    pub paired: Vec<ara_rpc::WireString>,
     /// Earlier calls without results that can no longer be paired adjacently;
     /// left for the provider-side pairing guard and reported to the host.
-    pub unpaired_earlier: Vec<String>,
+    pub unpaired_earlier: Vec<ara_rpc::WireString>,
 }
 
 /// A checked, temporary branch selection for fixed turn-recovery.ts:998-1059.
@@ -1189,9 +1755,15 @@ pub struct FailedAssistantRecovery {
     session_id: String,
     parent_branch: Vec<Entry>,
     failed_entry: Entry,
-    assistant: AssistantMessage,
+    assistant: FailedAssistantRecoveryMessage,
     previous_compaction_id: Option<String>,
     local_history_rewritten: bool,
+}
+
+#[derive(Debug)]
+enum FailedAssistantRecoveryMessage {
+    Legacy(AssistantMessage),
+    Native,
 }
 
 impl FailedAssistantRecovery {
@@ -1199,6 +1771,13 @@ impl FailedAssistantRecovery {
     /// Hosts retain this fact even when later rescue layers make no progress.
     pub fn local_history_rewritten(&self) -> bool {
         self.local_history_rewritten
+    }
+    /// Checked recovery receipt retains the original lossless journal source.
+    pub fn failed_entry_source(&self) -> AgentEntrySource {
+        self.failed_entry.original_source()
+    }
+    pub fn failed_message_body(&self) -> Result<AgentMessageBody> {
+        self.failed_entry.agent_message_body()?.ok_or_else(|| agent_body_error("failed assistant has no original body"))
     }
 }
 
@@ -1269,6 +1848,44 @@ pub fn assistant_turn_produced_output(message: &AssistantMessage) -> bool {
 
 fn failed_recovery_error(message: impl Into<String>) -> SessionError {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into()).into()
+}
+
+/// Fixed b91 session_init wire contract. Credentials and Host authority are never persisted here.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedChildInit {
+    #[serde(deserialize_with = "child_system_blocks")]
+    pub system_prompt: Vec<String>,
+    pub task: String,
+    pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub model_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub resolved_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub retry_fallback: Option<ChildRetryFallback>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub read_only: Option<bool>,
+    #[serde(default, deserialize_with = "child_present_json", skip_serializing_if = "Option::is_none")] pub output_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub output_schema_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub restrict_tool_names: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub spawns: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub read_summarize: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub advisor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub compaction_threshold: Option<ChildCompactionThreshold>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub isolated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub work_pool_yield_items: Option<Vec<ChildWorkPoolItem>>,
+    /// Unknown future metadata survives extraction/republication; tree keys are excluded below.
+    #[serde(default, flatten)] pub extra: serde_json::Map<String, Value>,
+}
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ChildRetryFallback { pub primary: String, pub chain: Vec<String> }
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChildCompactionThreshold { pub threshold_percent: f64, pub threshold_tokens: f64 }
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ChildWorkPoolItem { pub id: String, pub index: usize }
+fn child_present_json<'de,D:serde::Deserializer<'de>>(input:D)->std::result::Result<Option<Value>,D::Error>{ <Value as serde::Deserialize>::deserialize(input).map(Some) }
+fn child_system_blocks<'de,D:serde::Deserializer<'de>>(input:D)->std::result::Result<Vec<String>,D::Error>{
+    #[derive(serde::Deserialize)] #[serde(untagged)] enum Blocks { Legacy(String), Current(Vec<String>) }
+    match <Blocks as serde::Deserialize>::deserialize(input)? { Blocks::Legacy(block)=>Ok(vec![block]), Blocks::Current(blocks)=>Ok(blocks) }
 }
 
 pub struct SessionJournal {
@@ -1406,7 +2023,9 @@ impl SessionJournal {
             // followed by a new label moves that target to the end.
             let mut labels: Vec<(String, String)> = Vec::new();
             for entry in self.entries.iter().filter(|entry| entry.kind == "label") {
-                let Some(target) = entry.raw.get("targetId").and_then(Value::as_str) else { continue };
+                let Some(target) = entry.raw.get("targetId").and_then(Value::as_str) else {
+                    continue;
+                };
                 match entry.raw.get("label").and_then(Value::as_str).filter(|label| !label.is_empty()) {
                     Some(label) => {
                         if let Some((_, current)) = labels.iter_mut().find(|(id, _)| id.as_str() == target) {
@@ -1453,14 +2072,39 @@ impl SessionJournal {
             if line.trim().is_empty() {
                 continue;
             }
-            let parsed: Option<Value> = serde_json::from_str(line).ok();
-            let Some(value) = parsed.filter(Value::is_object) else {
+            let parsed = ara_rpc::WireValue::parse(line).ok();
+            let Some(mut wire) = parsed.filter(ara_rpc::WireValue::is_object) else {
                 if header.is_none() {
                     return Err(corrupt(CORRUPT_HEADER_MESSAGE.into()));
                 }
                 malformed += 1;
                 continue;
             };
+            let native_message = native_message::take_entry_source(&mut wire);
+            let snapcompact_source = snapcompact_source::take_entry_source(&mut wire);
+            let mut value = match native_message::checked_serde(&wire) {
+                Ok(value) => value,
+                Err(_) if header.is_some() => {
+                    malformed += 1;
+                    continue;
+                }
+                Err(_) => return Err(corrupt(CORRUPT_HEADER_MESSAGE.into())),
+            };
+            if let Some(source) = &native_message {
+                if let Ok(observed) = source.checked_entry(&value) {
+                    value = observed;
+                }
+            }
+            // Archive healing works on exact data before optional checked mirror.
+            let snapcompact_source = match snapcompact_source {
+                Some(source) => Some(source.repair_truncated()?),
+                None => None,
+            };
+            if let Some(source) = &snapcompact_source {
+                if let Ok(observed) = source.checked_entry(&value) {
+                    value = observed;
+                }
+            }
             if first_record && is_title_slot(&value) {
                 title = Some(TitleSlot {
                     title: value.get("title").and_then(Value::as_str).unwrap_or_default().into(),
@@ -1492,7 +2136,7 @@ impl SessionJournal {
                     // Duplicate ids keep both lines; lookups resolve to the last (OMP index semantics).
                     let mut value = value;
                     blob::repair_truncated_archive(&mut value);
-                    entries.push(Entry { id, parent_id, kind, raw: value });
+                    entries.push(Entry { id, parent_id, kind, raw: value, native_message, snapcompact_source });
                 }
                 _ => malformed += 1,
             }
@@ -1555,6 +2199,36 @@ impl SessionJournal {
         let mut warnings = Vec::new();
         for entry in &mut entries {
             blob::repair_truncated_archive(&mut entry.raw);
+            if let Some(source) = &entry.snapcompact_source {
+                let mut wire = source.repair_truncated()?.wire_entry(&entry.raw)?;
+                blob::resolve_native_entry(&mut wire, &store, &mut warnings)?;
+                let source = snapcompact_source::take_owned_entry_source(&mut wire).ok_or_else(|| {
+                    native_message::invalid("exact archive source disappeared during blob resolution")
+                })?;
+                entry.raw = native_message::checked_serde(&wire)?;
+                if let Ok(observed) = source.checked_entry(&entry.raw) {
+                    entry.raw = observed;
+                }
+                entry.snapcompact_source = Some(source);
+                // Resolve the complete entry once. A checked mirror of an
+                // unresolved ref must not produce a second warning receipt.
+                continue;
+            }
+            if let Some(source) = &entry.native_message {
+                let NativeMessageSource::Persisted { body } = source else {
+                    return Err(agent_body_error(
+                        "bind_blob_directory requires durable native sources before realm binding",
+                    ));
+                };
+                let mut wire = native_message::clone_wire(body);
+                blob::resolve_native_entry(&mut wire, &store, &mut warnings)?;
+                let source = NativeMessageSource::persisted(wire);
+                entry.raw = native_message::entry_envelope(&entry.raw);
+                if let Ok(observed) = source.checked_entry(&entry.raw) {
+                    entry.raw = observed;
+                }
+                entry.native_message = Some(source);
+            }
             blob::resolve_entry(&mut entry.raw, &store, &mut warnings)?;
         }
         self.entries = entries;
@@ -1634,10 +2308,17 @@ impl SessionJournal {
         format!("{value}\n")
     }
 
-    fn persisted_line(&self, value: &Value) -> std::io::Result<String> {
+    fn persisted_line(&self, entry: &Entry) -> std::io::Result<String> {
+        if let Some(source) = &entry.snapcompact_source {
+            return source.encoded_line(&entry.raw, self.blob_store.as_ref());
+        }
+        if let Some(source) = &entry.native_message {
+            let envelope = native_message::entry_envelope(&entry.raw);
+            return source.encoded_line(&envelope, self.blob_store.as_ref());
+        }
         match &self.blob_store {
-            Some(store) => Ok(Self::line_for(&blob::prepare_entry(value, store)?)),
-            None => Ok(Self::line_for(value)),
+            Some(store) => Ok(Self::line_for(&blob::prepare_entry(&entry.raw, store)?)),
+            None => Ok(Self::line_for(&entry.raw)),
         }
     }
 
@@ -1645,13 +2326,18 @@ impl SessionJournal {
         let mut body = serialize_title_slot(&self.title);
         body.push_str(&Self::line_for(&self.header));
         for e in &self.entries {
-            body.push_str(&self.persisted_line(&e.raw)?);
+            body.push_str(&self.persisted_line(e)?);
         }
         Ok(body)
     }
 
-    fn has_assistant(&self) -> bool {
-        self.entries.iter().any(|e| e.role() == Some("assistant"))
+    fn has_assistant(&self) -> Result<bool> {
+        for entry in &self.entries {
+            if entry.observed_role()?.is_some_and(|role| role.equals_ascii("assistant")) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn dir(&self) -> PathBuf {
@@ -1706,24 +2392,26 @@ impl SessionJournal {
         Ok(())
     }
 
-    fn persist(&mut self, entry_raw: &Value) -> Result<()> {
+    fn persist(&mut self, entry: &Entry) -> Result<()> {
         if !self.persistent {
             return Ok(());
         }
-        if !self.materialized && !self.has_assistant() {
+        if !self.materialized && !self.has_assistant()? {
             return Ok(()); // lazy: nothing on disk until an assistant message exists
         }
         if !self.materialized || self.rewrite_required {
             return self.rewrite();
         }
-        let line = self.persisted_line(entry_raw)?;
+        let line = self.persisted_line(entry)?;
         let mut f = OpenOptions::new().append(true).open(&self.path)?;
         f.write_all(line.as_bytes())?;
         f.sync_data()?;
         Ok(())
     }
 
-    fn append_raw(&mut self, kind: &str, mut fields: serde_json::Map<String, Value>) -> Result<String> {
+    /// Stage a native entry without an independent persistence boundary.
+    /// Only the caller may publish the candidate or roll it back as a unit.
+    fn stage_raw(&mut self, kind: &str, mut fields: serde_json::Map<String, Value>) -> String {
         let id = generate_id(&self.ids);
         let mut raw = serde_json::Map::new();
         raw.insert("type".into(), json!(kind));
@@ -1732,11 +2420,34 @@ impl SessionJournal {
         raw.insert("timestamp".into(), json!(now_iso()));
         raw.append(&mut fields);
         let raw = Value::Object(raw);
-        let previous_leaf = self.leaf.clone();
-        self.entries.push(Entry { id: id.clone(), parent_id: self.leaf.clone(), kind: kind.into(), raw: raw.clone() });
+        self.entries.push(Entry {
+            id: id.clone(),
+            parent_id: self.leaf.clone(),
+            kind: kind.into(),
+            raw,
+            native_message: None,
+            snapcompact_source: None,
+        });
         self.ids.insert(id.clone());
         self.leaf = Some(id.clone());
-        if let Err(e) = self.persist(&raw) {
+        id
+    }
+
+    fn append_raw(&mut self, kind: &str, fields: serde_json::Map<String, Value>) -> Result<String> {
+        self.append_raw_with_snapcompact_source(kind, fields, None)
+    }
+
+    fn append_raw_with_snapcompact_source(
+        &mut self,
+        kind: &str,
+        fields: serde_json::Map<String, Value>,
+        source: Option<NativeSnapcompactArchiveSource>,
+    ) -> Result<String> {
+        let previous_leaf = self.leaf.clone();
+        let id = self.stage_raw(kind, fields);
+        self.entries.last_mut().expect("staged entry").snapcompact_source = source;
+        let entry = self.entries.last().expect("staged entry").clone();
+        if let Err(e) = self.persist(&entry) {
             // Roll back so `Err` means "not recorded"; a partially written line is
             // replaced by the full rewrite the next append performs.
             self.entries.pop();
@@ -1748,10 +2459,128 @@ impl SessionJournal {
         Ok(id)
     }
 
+    /// Latest loaded session_init, including entries on retained branches, as fixed extractSessionInit.
+    pub fn latest_child_init(&self) -> Result<Option<PersistedChildInit>> {
+        let Some(entry)=self.entries.iter().rev().find(|entry|entry.kind=="session_init") else {return Ok(None)};
+        let mut raw=entry.raw.as_object().cloned().ok_or_else(||SessionError::Corrupt{path:self.path.clone(),message:"session_init is not an object".into()})?;
+        for key in ["type","id","parentId","timestamp"] { raw.remove(key); }
+        serde_json::from_value(Value::Object(raw)).map(Some).map_err(|error|SessionError::Corrupt{path:self.path.clone(),message:format!("invalid child session_init: {error}")})
+    }
+    /// Uses the same append/rollback/leaf bookkeeping as every native metadata entry.
+    /// Lazy journals remain lazy; a Host requiring durable init first materializes its own child.
+    pub fn append_child_init(&mut self, init:&PersistedChildInit) -> Result<String> {
+        let value=serde_json::to_value(init).map_err(|error|SessionError::Corrupt{path:self.path.clone(),message:format!("invalid child session_init: {error}")})?;
+        let mut fields=value.as_object().cloned().expect("child init serializes an object");
+        for key in ["type","id","parentId","timestamp"] { fields.remove(key); }
+        self.append_raw("session_init",fields)
+    }
+
+    /// Append the original native body, using the existing ID/branch/writer and
+    /// rollback owner. This requires no successful legacy Message projection.
+    pub fn append_native_message(&mut self, source: NativeMessageSource) -> Result<String> {
+        let role = source.observe_field(&["role"])?;
+        let Some(role) = role.as_ref().and_then(ara_rpc::WireValue::as_string).filter(|role| !role.is_empty()) else {
+            return Err(agent_body_error("native message requires a nonempty role"));
+        };
+        let custom_timestamp = source.custom_entry_timestamp(role)?;
+        let mut fields = serde_json::Map::new();
+        if let Some(timestamp) = &custom_timestamp {
+            fields.insert("timestamp".into(), json!(timestamp));
+        }
+        let previous_leaf = self.leaf.clone();
+        let kind = if custom_timestamp.is_some() { "custom_message" } else { "message" };
+        let id = self.stage_raw(kind, fields);
+        let staged = self.entries.last_mut().expect("staged native entry");
+        if matches!(&source, NativeMessageSource::Persisted { .. })
+            && let Ok(observed) = source.checked_entry(&staged.raw)
+        {
+            staged.raw = observed;
+        }
+        staged.native_message = Some(source);
+        let entry = self.entries.last().expect("staged native entry").clone();
+        if let Err(error) = self.persist(&entry) {
+            self.entries.pop();
+            self.ids.remove(&id);
+            self.leaf = previous_leaf;
+            self.rewrite_required = true;
+            return Err(error);
+        }
+        Ok(id)
+    }
+
+    /// Prepare an unpublished fork for a different logical Session realm.
+    /// Encode Live bodies through their original durable boundary; keep IDs,
+    /// parent links, native UTF16 and the source journal untouched. Callers then
+    /// bind the completed candidate through bind_native_realm.
+    pub fn prepare_native_fork_for_realm(&mut self) -> Result<()> {
+        let mut entries = self.entries.clone();
+        for entry in &mut entries {
+            if let Some(source @ NativeMessageSource::Live { .. }) = &entry.native_message {
+                let line = source.encoded_line(&entry.raw, self.blob_store.as_ref())?;
+                let encoded = ara_rpc::WireValue::parse(line.trim_end_matches('\n'))
+                    .map_err(|error| agent_body_error(error.to_string()))?;
+                let body = native_message::body_from_entry(&encoded)?
+                    .ok_or_else(|| agent_body_error("native fork has no durable body"))?;
+                entry.native_message = Some(NativeMessageSource::persisted(body));
+                entry.raw = native_message::entry_envelope(&entry.raw);
+            }
+        }
+        self.entries = entries;
+        Ok(())
+    }
+
+    /// Bind all durable message bodies in one candidate to the current Host.
+    /// A failure leaves this journal's canonical view and IDs intact.
+    pub fn bind_native_realm(
+        &mut self,
+        heap: &std::sync::Arc<ara_rpc::value_heap::ValueHeap>,
+        encoder: std::sync::Arc<dyn NativeJournalEncoder>,
+    ) -> Result<()> {
+        let mut entries = self.entries.clone();
+        for entry in &mut entries {
+            if let Some(source) = &entry.native_message {
+                if let NativeMessageSource::Live { body, .. } = source {
+                    heap.adopt(body).map_err(|error| agent_body_error(error.to_string()))?;
+                    continue;
+                }
+                entry.native_message = Some(source.bind_current(heap, encoder.clone())?);
+                // Current graph observations are used by every checked consumer.
+                entry.raw = native_message::entry_envelope(&entry.raw);
+            }
+        }
+        self.entries = entries;
+        Ok(())
+    }
+
     pub fn append_message(&mut self, message: &Message) -> Result<String> {
         let mut f = serde_json::Map::new();
         f.insert("message".into(), serde_json::to_value(message).expect("message serializes"));
         self.append_raw("message", f)
+    }
+
+    /// Append the CURRENT raw body once using the existing rollback owner.
+    /// Specialized custom envelopes retain extensions and the input timestamp.
+    pub fn append_agent_message_body(&mut self, body: &Value) -> Result<String> {
+        Entry::project_agent_message_body(body)?;
+        if body["role"] == "custom" && !["id", "parentId", "type"].iter().any(|field| body.get(*field).is_some()) {
+            let timestamp = body
+                .get("timestamp")
+                .and_then(Value::as_i64)
+                .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+                .ok_or_else(|| agent_body_error("invalid custom message timestamp"))?
+                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string();
+            let mut fields = body.as_object().expect("validated object").clone();
+            fields.remove("role");
+            fields.insert("timestamp".into(), json!(timestamp));
+            self.append_raw("custom_message", fields)
+        } else {
+            // A raw extension named id/type/parentId must not overwrite the
+            // journal envelope. Its full body stays under the message slot.
+            let mut fields = serde_json::Map::new();
+            fields.insert("message".into(), body.clone());
+            self.append_raw("message", fields)
+        }
     }
 
     /// Fixed OMP `appendResetBoundary`: retain Session identity, settings and
@@ -1782,7 +2611,7 @@ impl SessionJournal {
             .iter()
             .position(|entry| entry.id == entry_id)
             .ok_or_else(|| failed_recovery_error("failed assistant entry is outside the current branch"))?;
-        if branch[index].message() != Some(Message::Assistant(assistant.clone()))
+        if branch[index].message()? != Some(Message::Assistant(assistant.clone()))
             || branch[index + 1..].iter().any(|entry| !entry.is_service_tier_change())
         {
             return Err(failed_recovery_error("failed assistant entry or metadata tail changed"));
@@ -1798,7 +2627,7 @@ impl SessionJournal {
             session_id: self.session_id().to_owned(),
             parent_branch,
             failed_entry: (*branch[index]).clone(),
-            assistant: assistant.clone(),
+            assistant: FailedAssistantRecoveryMessage::Legacy(assistant.clone()),
             previous_compaction_id,
             local_history_rewritten: false,
         };
@@ -1814,6 +2643,26 @@ impl SessionJournal {
         token: FailedAssistantRecovery,
         history_rewritten: bool,
     ) -> Result<FailedAssistantRecoveryOutcome> {
+        let FailedAssistantRecoveryMessage::Legacy(assistant) = &token.assistant else {
+            return Err(failed_recovery_error("native recovery requires its native finish API"));
+        };
+        let empty_error = is_empty_error_turn(assistant);
+        let Some(appended_entry_id) =
+            self.finish_failed_assistant_recovery_transaction(&token, history_rewritten, empty_error)?
+        else {
+            return Ok(FailedAssistantRecoveryOutcome::Committed);
+        };
+        let FailedAssistantRecoveryMessage::Legacy(assistant) = token.assistant else { unreachable!() };
+        Ok(FailedAssistantRecoveryOutcome::Restored { message: Box::new(assistant), appended_entry_id })
+    }
+
+    // Shared branch publication/restore transaction, independent of a typed body.
+    fn finish_failed_assistant_recovery_transaction(
+        &mut self,
+        token: &FailedAssistantRecovery,
+        history_rewritten: bool,
+        empty_error: bool,
+    ) -> Result<Option<Option<String>>> {
         if self.session_id() != token.session_id {
             return Err(failed_recovery_error("failed assistant recovery belongs to another Session"));
         }
@@ -1839,7 +2688,7 @@ impl SessionJournal {
             .map(|entry| &entry.id);
         if latest_compaction.map(String::as_str) != token.previous_compaction_id.as_deref() {
             self.compacted_context_projection().map_err(|error| failed_recovery_error(error.to_string()))?;
-            return Ok(FailedAssistantRecoveryOutcome::Committed);
+            return Ok(None);
         }
         let durable_discard = branch[token.parent_branch.len()..].iter().any(|entry| {
             entry.is_discarded_entry_branch_marker()
@@ -1847,7 +2696,7 @@ impl SessionJournal {
                     == Some(token.failed_entry.id.as_str())
         });
         if history_rewritten && durable_discard {
-            return Ok(FailedAssistantRecoveryOutcome::Committed);
+            return Ok(None);
         }
         if history_rewritten
             || durable_discard
@@ -1855,12 +2704,15 @@ impl SessionJournal {
         {
             return Err(failed_recovery_error("failed assistant recovery has no matching committed history receipt"));
         }
-        let appended_entry_id = if is_empty_error_turn(&token.assistant) {
+        let appended_entry_id = if empty_error {
             None
         } else {
-            Some(self.append_message(&Message::Assistant(token.assistant.clone()))?)
+            Some(match &token.failed_entry.native_message {
+                Some(source) => self.append_native_message(source.clone())?,
+                None => self.append_agent_message_body(&token.failed_entry.raw["message"])?,
+            })
         };
-        Ok(FailedAssistantRecoveryOutcome::Restored { message: Box::new(token.assistant), appended_entry_id })
+        Ok(Some(appended_entry_id))
     }
 
     /// Fixed session-manager.ts:2678-2715. Durably bypass this exact failed
@@ -1935,9 +2787,25 @@ impl SessionJournal {
         if self.leaf_id() != expected_leaf {
             return Err(failed_recovery_error("durable discard branch changed"));
         }
-        let Some(target) = self.entries.iter().find(|entry| entry.id == entry_id).cloned() else { return Ok(None) };
-        if target.message() != Some(Message::Assistant(assistant.clone())) {
+        let Some(target) = self.entries.iter().find(|entry| entry.id == entry_id).cloned() else {
+            return Ok(None);
+        };
+        if target.message()? != Some(Message::Assistant(assistant.clone())) {
             return Err(failed_recovery_error("durable discard requires the exact assistant receipt"));
+        }
+        self.discard_admitted_assistant_durably(expected_leaf, entry_id, target, promotion_model)
+    }
+
+    // Only branch mechanics are shared. Each caller admits its original receipt.
+    fn discard_admitted_assistant_durably(
+        &mut self,
+        expected_leaf: Option<&str>,
+        entry_id: &str,
+        target: Entry,
+        promotion_model: Option<&str>,
+    ) -> Result<Option<String>> {
+        if self.leaf_id() != expected_leaf {
+            return Err(failed_recovery_error("durable discard branch changed"));
         }
         let branch = if self.leaf.is_none() {
             Vec::new()
@@ -1978,14 +2846,29 @@ impl SessionJournal {
         let raw = json!({"type":"branch_summary", "id":marker_id, "parentId":parent_id,
             "timestamp":now_iso(), "fromId":parent_id.as_deref().unwrap_or("root"), "summary":"",
             "details":{"kind":DISCARDED_ENTRY_BRANCH_MARKER,"discardedEntryId":entry_id}});
-        self.entries.push(Entry { id: marker_id.clone(), parent_id, kind: "branch_summary".into(), raw });
+        self.entries.push(Entry {
+            id: marker_id.clone(),
+            parent_id,
+            kind: "branch_summary".into(),
+            raw,
+            native_message: None,
+            snapcompact_source: None,
+        });
         self.ids.insert(marker_id.clone());
         self.leaf = Some(marker_id.clone());
         if let Some(model) = promotion_model {
             let id = generate_id(&self.ids);
             let raw = json!({"type":"model_change", "id":id, "parentId":marker_id,
-                "timestamp":now_iso(), "model":model});
-            self.entries.push(Entry { id: id.clone(), parent_id: Some(marker_id), kind: "model_change".into(), raw });
+                "timestamp":now_iso(), "model":model,
+                "role":EPHEMERAL_MODEL_CHANGE_ROLE,"resolvedModelIsFallback":false});
+            self.entries.push(Entry {
+                id: id.clone(),
+                parent_id: Some(marker_id),
+                kind: "model_change".into(),
+                raw,
+                native_message: None,
+                snapcompact_source: None,
+            });
             self.ids.insert(id.clone());
             self.leaf = Some(id);
         }
@@ -2015,7 +2898,7 @@ impl SessionJournal {
             .position(|entry| entry.id == entry_id)
             .ok_or_else(|| failed_recovery_error("accepted empty Stop is outside the current branch"))?;
         let target = branch[index];
-        if target.message() != Some(Message::Assistant(assistant.clone()))
+        if target.message()? != Some(Message::Assistant(assistant.clone()))
             || branch[index + 1..].iter().any(|entry| !entry.is_service_tier_change())
         {
             return Err(failed_recovery_error("accepted empty-stop receipt or metadata tail changed"));
@@ -2060,7 +2943,7 @@ impl SessionJournal {
                 });
             }
             let entry = self.entries.iter().find(|entry| &entry.id == id).expect("branch entry exists");
-            if !matches!(entry.message(), Some(Message::Assistant(message))
+            if !matches!(entry.message()?,  Some(Message::Assistant(message))
                 if matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Aborted))
                 || recovery.kind != "auto-retry"
                 || !matches!(recovery.status.as_str(), "recovered" | "superseded")
@@ -2075,10 +2958,18 @@ impl SessionJournal {
             return Ok(());
         }
         let previous = self.entries.clone();
+        let mut candidate = previous.clone();
         for (id, recovery) in updates {
-            let entry = self.entries.iter_mut().find(|entry| &entry.id == id).expect("validated entry");
-            entry.raw["message"]["retryRecovery"] = serde_json::to_value(recovery).expect("retry recovery serializes");
+            let entry = candidate.iter_mut().find(|entry| &entry.id == id).expect("validated entry");
+            let before = entry.checked_raw()?;
+            let mut after = before.clone();
+            after["message"]["retryRecovery"] = serde_json::to_value(recovery).expect("retry recovery serializes");
+            if let Some(source) = &entry.native_message {
+                entry.native_message = Some(source.checked_edit(&before["message"], &after["message"])?);
+            }
+            entry.raw = after;
         }
+        self.entries = candidate;
         if let Err(error) = self.rewrite() {
             self.entries = previous;
             self.rewrite_required = true;
@@ -2167,7 +3058,9 @@ impl SessionJournal {
             return Err(invalid().into());
         }
         let target = self.entries.iter().find(|entry| entry.id == aborted_entry_id).ok_or_else(invalid)?;
-        let Some(Message::Assistant(message)) = target.message() else { return Err(invalid().into()) };
+        let Some(Message::Assistant(message)) = target.message()? else {
+            return Err(invalid().into());
+        };
         if message.stop_reason != ara_ai::StopReason::Aborted
             || message.content.iter().any(|block| !matches!(block, AssistantBlock::Thinking(_)))
         {
@@ -2184,9 +3077,181 @@ impl SessionJournal {
 
     /// OMP `appendModelChange`: `model` in `provider/modelId` form.
     pub fn append_model_change(&mut self, model: &str) -> Result<String> {
+        self.append_model_change_with_role(model, None, false)
+    }
+
+    /// Fixed `session-manager.ts:2377-2387`. A missing role means default;
+    /// the fallback flag is historical attribution, not an ephemeral selector.
+    pub fn append_model_change_with_role(
+        &mut self,
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+    ) -> Result<String> {
+        self.append_raw("model_change", Self::model_change_fields(model, role, resolved_model_is_fallback))
+    }
+
+    fn model_change_fields(
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+    ) -> serde_json::Map<String, Value> {
         let mut f = serde_json::Map::new();
         f.insert("model".into(), json!(model));
-        self.append_raw("model_change", f)
+        if let Some(role) = role {
+            f.insert("role".into(), json!(role));
+        }
+        f.insert("resolvedModelIsFallback".into(), json!(resolved_model_is_fallback));
+        f
+    }
+
+    /// Fixed `session-manager.ts:2348-2358`: persist both the resolved level
+    /// and configured selector (including auto), with absent values as null.
+    pub fn append_thinking_level_change(
+        &mut self,
+        thinking_level: Option<&str>,
+        configured: Option<&str>,
+    ) -> Result<String> {
+        self.append_raw("thinking_level_change", Self::thinking_level_change_fields(thinking_level, configured))
+    }
+
+    fn thinking_level_change_fields(
+        thinking_level: Option<&str>,
+        configured: Option<&str>,
+    ) -> serde_json::Map<String, Value> {
+        let mut f = serde_json::Map::new();
+        f.insert("thinkingLevel".into(), json!(thinking_level));
+        f.insert("configured".into(), json!(configured));
+        f
+    }
+
+    /// Commit the native model and thinking receipts as one atomic pair.
+    /// Entry shapes follow fixed `session-manager.ts:2348-2358,2377-2387`;
+    /// the single durable publication is ARA's existing rewrite adaptation.
+    ///
+    /// The model entry follows the old leaf, and thinking follows model. Lazy
+    /// and in-memory journals retain their ordinary no-file behavior. A failed
+    /// write before publication restores entries, IDs and leaf. If rename has
+    /// already published both entries but directory sync fails, the matching
+    /// journal view is retained and the typed error requires Host reconciliation.
+    /// Cancellation and candidate adoption remain the Host's responsibility.
+    pub fn append_model_and_thinking_change(
+        &mut self,
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+        thinking_level: Option<&str>,
+        configured: Option<&str>,
+    ) -> std::result::Result<(String, String), ModelAndThinkingChangeError> {
+        self.append_model_and_thinking_change_with_sync(
+            model,
+            role,
+            resolved_model_is_fallback,
+            thinking_level,
+            configured,
+            sync_dir,
+        )
+    }
+
+    fn append_model_and_thinking_change_with_sync(
+        &mut self,
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+        thinking_level: Option<&str>,
+        configured: Option<&str>,
+        directory_sync: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> std::result::Result<(String, String), ModelAndThinkingChangeError> {
+        self.append_model_and_optional_thinking_change_with_sync(
+            model,
+            role,
+            resolved_model_is_fallback,
+            Some((thinking_level, configured)),
+            directory_sync,
+        )
+        .map(|(model, thinking)| (model, thinking.expect("mandatory thinking entry was staged")))
+        .map_err(|error| match error {
+            ModelAndOptionalThinkingChangeError::Storage(source) => ModelAndThinkingChangeError::Storage(source),
+            ModelAndOptionalThinkingChangeError::PublishedButDurabilityUnknown {
+                model_entry_id,
+                thinking_entry_id,
+                source,
+            } => ModelAndThinkingChangeError::PublishedButDurabilityUnknown {
+                model_entry_id,
+                thinking_entry_id: thinking_entry_id.expect("mandatory thinking entry was published"),
+                source,
+            },
+        })
+    }
+
+    /// Atomically record a model change with a thinking change only when the
+    /// Host supplies one. Fixed `model-controls.ts:542,547-550` records thinking
+    /// when leaving auto or changing the effective level; that decision remains
+    /// with the Host. `None` stages no thinking receipt, whereas
+    /// `Some((None, None))` explicitly records both native null fields.
+    ///
+    /// The return/error IDs name exactly the entries published by the shared
+    /// transaction. Lazy materialization and publication-phase semantics match
+    /// [`append_model_and_thinking_change`](Self::append_model_and_thinking_change).
+    pub fn append_model_and_optional_thinking_change(
+        &mut self,
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+        thinking_change: Option<(Option<&str>, Option<&str>)>,
+    ) -> std::result::Result<(String, Option<String>), ModelAndOptionalThinkingChangeError> {
+        self.append_model_and_optional_thinking_change_with_sync(
+            model,
+            role,
+            resolved_model_is_fallback,
+            thinking_change,
+            sync_dir,
+        )
+    }
+
+    fn append_model_and_optional_thinking_change_with_sync(
+        &mut self,
+        model: &str,
+        role: Option<&str>,
+        resolved_model_is_fallback: bool,
+        thinking_change: Option<(Option<&str>, Option<&str>)>,
+        directory_sync: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> std::result::Result<(String, Option<String>), ModelAndOptionalThinkingChangeError> {
+        let previous_len = self.entries.len();
+        let previous_leaf = self.leaf.clone();
+        let previous_materialized = self.materialized;
+        let previous_rewrite_required = self.rewrite_required;
+        let model_entry_id =
+            self.stage_raw("model_change", Self::model_change_fields(model, role, resolved_model_is_fallback));
+        let thinking_entry_id = thinking_change.map(|(level, configured)| {
+            self.stage_raw("thinking_level_change", Self::thinking_level_change_fields(level, configured))
+        });
+        if !self.persistent || (!self.materialized && !self.has_assistant()?) {
+            return Ok((model_entry_id, thinking_entry_id));
+        }
+        match self.rewrite_with_directory_sync(directory_sync) {
+            Ok(()) => Ok((model_entry_id, thinking_entry_id)),
+            Err(RewritePhaseError::BeforePublication(source)) => {
+                self.entries.truncate(previous_len);
+                self.ids.remove(&model_entry_id);
+                if let Some(thinking_entry_id) = &thinking_entry_id {
+                    self.ids.remove(thinking_entry_id);
+                }
+                self.leaf = previous_leaf;
+                self.materialized = previous_materialized;
+                self.rewrite_required = previous_rewrite_required;
+                Err(ModelAndOptionalThinkingChangeError::Storage(source))
+            }
+            Err(RewritePhaseError::PublishedButDurabilityUnknown(source)) => {
+                self.materialized = true;
+                self.rewrite_required = false;
+                Err(ModelAndOptionalThinkingChangeError::PublishedButDurabilityUnknown {
+                    model_entry_id,
+                    thinking_entry_id,
+                    source,
+                })
+            }
+        }
     }
 
     /// Force the file to exist even without an assistant message.
@@ -2407,12 +3472,25 @@ impl SessionJournal {
     ) -> std::result::Result<String, CompactionCommitError> {
         let cumulative =
             self.native_entry_compaction_sources(snapshot, summary, first_kept_entry_id, window_source_entry_ids)?;
-        let preserve = snapshot.previous_summary.as_ref().and_then(|previous| {
-            let state = ara_snapcompact::strip_preserved_archive(previous.preserve_data.as_ref());
-            let mut state = state?.as_object()?.clone();
-            state.remove("openaiRemoteCompaction");
-            (!state.is_empty()).then_some(Value::Object(state))
+        let preserve_source = snapshot
+            .previous_summary
+            .as_ref()
+            .map(|previous| previous.preserve_data_without_archive_utf16())
+            .transpose()
+            .map_err(SessionError::from)?
+            .flatten()
+            .map(|raw| NativeSnapcompactArchiveSource::from_raw(&raw))
+            .transpose()
+            .map_err(SessionError::from)?;
+        let preserve_source = preserve_source.and_then(|source| {
+            let mut state = native_message::clone_wire(source.observe());
+            let ara_rpc::WireValue::Object(fields) = &mut state else {
+                return None;
+            };
+            fields.retain(|(key, _)| !key.equals_ascii("openaiRemoteCompaction"));
+            (!fields.is_empty()).then(|| NativeSnapcompactArchiveSource::from_wire(state))
         });
+        let preserve = preserve_source.as_ref().and_then(|source| source.checked_preserve().ok());
         let archive_source = snapshot
             .previous_summary
             .as_ref()
@@ -2425,6 +3503,7 @@ impl SessionJournal {
             tokens_before,
             preserve.as_ref(),
             archive_source,
+            preserve_source,
         )?)
     }
 
@@ -2491,7 +3570,7 @@ impl SessionJournal {
             .iter()
             .position(|entry| entry.id == current.entries[0].entry_id)
             .ok_or(CompactionCommitError::InvalidWindow)?;
-        let mut cumulative = context_source_ids(&branch[..raw_start]);
+        let mut cumulative = context_source_ids(&branch[..raw_start])?;
         cumulative.extend(expected);
         let raw_kept = branch
             .iter()
@@ -2505,7 +3584,7 @@ impl SessionJournal {
             .is_some_and(|previous| matches!(branch[previous].kind.as_str(), "message" | "compaction"));
         if !backtracked
             || !native_kept_boundary_supported(branch, raw_kept)
-            || cumulative != context_source_ids(&branch[..raw_kept])
+            || cumulative != context_source_ids(&branch[..raw_kept])?
         {
             return Err(CompactionCommitError::InvalidWindow);
         }
@@ -2609,7 +3688,7 @@ impl SessionJournal {
             .iter()
             .position(|entry| entry.id == first_kept_entry_id)
             .ok_or(CompactionCommitError::InvalidWindow)?;
-        let raw_sources = context_source_ids(&branch[..raw_kept_index]);
+        let raw_sources = context_source_ids(&branch[..raw_kept_index])?;
         if cumulative_sources != raw_sources {
             return Err(CompactionCommitError::InvalidWindow);
         }
@@ -2671,19 +3750,25 @@ impl SessionJournal {
                         branch[kept_index].native_compaction_entry()?.origin != NativeEntryOrigin::User;
                     let native_replay = entry.raw["method"] == "remote"
                         && entry.raw.get("preserveData").is_some_and(|value| !value.is_null())
-                        || ara_snapcompact::get_preserved_archive(entry.raw.get("preserveData")).is_some();
+                        || entry.has_archive();
                     let soft =
                         matches!(entry.raw.get("method"), None | Some(Value::Null)) || entry.raw["method"] == "soft";
                     let migrated_archive = soft.then(|| latest.as_ref().map(|(_, summary)| summary)).flatten();
                     let migrated_boundary = migrated_archive
                         .filter(|summary| summary.source_entry_ids.is_some())
                         .and_then(|summary| summary.archive_image_boundary.clone());
-                    if !safe_compaction_prefix_with_archive(
-                        &branch[..kept_index],
-                        allow_unanswered_user,
-                        native_replay,
-                        migrated_archive,
-                    ) {
+                    // An imported archive can retain every raw entry without a replaced
+                    // prefix. Keep its unknown provenance while validating the archive below.
+                    let retained_all_archive =
+                        kept_index == 0 && entry.has_archive() && entry.raw.get("sourceEntryIds").is_none();
+                    if !retained_all_archive
+                        && !safe_compaction_prefix_with_archive(
+                            &branch[..kept_index],
+                            allow_unanswered_user,
+                            native_replay,
+                            migrated_archive,
+                        )
+                    {
                         return Err(CompactionProjectionError::UnsafeSummaryBoundary { id: entry.id.clone() });
                     }
                     let tokens_before =
@@ -2709,9 +3794,18 @@ impl SessionJournal {
                     };
                     let file_details = handoff::native_file_details(&entry.raw);
                     let archive = ara_snapcompact::get_preserved_archive(entry.raw.get("preserveData"));
-                    if archive.is_some()
-                        && entry.raw.get("preserveData").and_then(|data| data.get("openaiRemoteCompaction")).is_some()
-                    {
+                    let preserve_source = entry.archive_source();
+                    let exact_archive = preserve_source
+                        .as_ref()
+                        .map(|source| source.exact_archive())
+                        .transpose()
+                        .map_err(|_| invalid("preserveData.snapcompact"))?
+                        .flatten();
+                    let has_archive = exact_archive.is_some();
+                    let remote_preserve = preserve_source
+                        .as_ref()
+                        .is_some_and(|source| source.observe().get("openaiRemoteCompaction").is_some());
+                    if has_archive && remote_preserve {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
                     let short_summary = match matches!(method, "remote" | "snapcompact")
@@ -2731,9 +3825,10 @@ impl SessionJournal {
                         }
                         // Handoff is a text document, not provider replay or
                         // an extension/native image archive admission path.
-                        if ["preserveData", "shortSummary", "providerPayload", "blocks", "images"]
-                            .iter()
-                            .any(|field| entry.raw.get(*field).is_some_and(|value| !value.is_null()))
+                        if preserve_source.is_some()
+                            || ["preserveData", "shortSummary", "providerPayload", "blocks", "images"]
+                                .iter()
+                                .any(|field| entry.raw.get(*field).is_some_and(|value| !value.is_null()))
                             || !matches!(entry.raw.get("fromExtension"), None | Some(Value::Null | Value::Bool(false)))
                         {
                             return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
@@ -2742,23 +3837,22 @@ impl SessionJournal {
                     if method != "remote"
                         && (entry.raw.get("providerReplayThroughEntryId").is_some_and(|value| !value.is_null())
                             || entry.raw.get("fromExtension").and_then(Value::as_bool) == Some(true)
-                            || archive.is_none()
-                                && entry.raw.get("preserveData").is_some_and(|value| match value {
-                                    Value::Null => false,
-                                    Value::Object(fields) => {
-                                        fields.contains_key("snapcompact")
-                                            || fields.contains_key("openaiRemoteCompaction")
+                            || !has_archive
+                                && preserve_source.as_ref().is_some_and(|source| match source.observe() {
+                                    ara_rpc::WireValue::Null => false,
+                                    ara_rpc::WireValue::Object(_) => {
+                                        source.observe().get("snapcompact").is_some() || remote_preserve
                                     }
                                     _ => true,
                                 }))
                     {
                         return Err(CompactionProjectionError::UnsupportedReplayData { id: entry.id.clone() });
                     }
-                    if method == "snapcompact" && archive.is_none() {
+                    if method == "snapcompact" && !has_archive {
                         return Err(invalid("preserveData.snapcompact"));
                     }
                     let source_entry_ids = match entry.raw.get("sourceEntryIds") {
-                        None if archive.is_none()
+                        None if !has_archive
                             && (allow_unanswered_user || matches!(method, "handoff" | "remote" | "snapcompact")) =>
                         {
                             return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
@@ -2770,7 +3864,7 @@ impl SessionJournal {
                                 .map(|id| id.as_str().filter(|id| !id.is_empty()).map(str::to_owned))
                                 .collect::<Option<_>>()
                                 .ok_or_else(|| invalid("sourceEntryIds"))?;
-                            let expected = context_source_ids(&branch[..kept_index]);
+                            let expected = context_source_ids(&branch[..kept_index])?;
                             if ids.is_empty() || ids != expected {
                                 return Err(CompactionProjectionError::SourceIdsMismatch { id: entry.id.clone() });
                             }
@@ -2785,7 +3879,7 @@ impl SessionJournal {
                             return Err(invalid("archiveSourceEntryId"));
                         }
                     }
-                    let archive_image_boundary = if archive.is_some() && source_entry_ids.is_some() {
+                    let archive_image_boundary = if has_archive && source_entry_ids.is_some() {
                         Some(ArchiveImageBoundary {
                             entry_id: entry.id.clone(),
                             first_kept_entry_id: first_kept.to_owned(),
@@ -2827,6 +3921,7 @@ impl SessionJournal {
                             archive,
                             archive_image_boundary,
                             preserve_data: entry.raw.get("preserveData").filter(|value| !value.is_null()).cloned(),
+                            preserve_source,
                             source_entry_ids,
                         },
                     ));
@@ -2862,9 +3957,15 @@ impl SessionJournal {
     /// Model-visible messages on the current branch (subset of OMP
     /// `buildSessionContext`). Messages ARA cannot decode are skipped and
     /// counted by [`undecodable_messages`](Self::undecodable_messages).
-    pub fn build_context(&self) -> Vec<Message> {
+    pub fn build_context(&self) -> Result<Vec<Message>> {
         let branch = self.branch();
-        branch[active_context_start(&branch)..].iter().filter_map(|entry| entry.model_messages()).flatten().collect()
+        let mut messages = Vec::new();
+        for entry in &branch[active_context_start(&branch)..] {
+            if let Some(projected) = entry.model_messages()? {
+                messages.extend(projected);
+            }
+        }
+        Ok(messages)
     }
 
     /// Append a soft-compaction summary. The summarized prefix stays raw in
@@ -2879,7 +3980,15 @@ impl SessionJournal {
         source_entry_ids: &[String],
         tokens_before: u64,
     ) -> Result<String> {
-        self.append_compaction_with_preserve(summary, first_kept_entry_id, source_entry_ids, tokens_before, None, None)
+        self.append_compaction_with_preserve(
+            summary,
+            first_kept_entry_id,
+            source_entry_ids,
+            tokens_before,
+            None,
+            None,
+            None,
+        )
     }
 
     fn append_compaction_with_preserve(
@@ -2890,6 +3999,7 @@ impl SessionJournal {
         tokens_before: u64,
         preserve_data: Option<&Value>,
         archive_source_entry_id: Option<&str>,
+        preserve_source: Option<NativeSnapcompactArchiveSource>,
     ) -> Result<String> {
         let mut f = serde_json::Map::new();
         f.insert("method".into(), json!("soft"));
@@ -2903,7 +4013,7 @@ impl SessionJournal {
         if let Some(source) = archive_source_entry_id {
             f.insert("archiveSourceEntryId".into(), json!(source));
         }
-        self.append_raw("compaction", f)
+        self.append_raw_with_snapcompact_source("compaction", f, preserve_source)
     }
 
     /// Model-visible messages honoring the latest valid soft/handoff summary: the
@@ -2911,55 +4021,341 @@ impl SessionJournal {
     /// message so the model treats it as lower-trust prior context), kept and
     /// later messages stay raw. Falls back to [`build_context`](Self::build_context)
     /// when no valid compaction entry exists.
-    pub fn model_context(&self) -> Vec<Message> {
+    pub fn model_context(&self) -> Result<Vec<Message>> {
         self.model_context_with_route(None)
     }
 
     /// A temporary active-route Assistant carrier exposes checked native replay
     /// to its provider encoder. It is not appended as an invented response or
     /// usage receipt. Other routes retain readable original source context.
-    pub fn model_context_for_route(&self, active_model: &ara_ai::Model, native_replay_available: bool) -> Vec<Message> {
+    pub fn model_context_for_route(
+        &self,
+        active_model: &ara_ai::Model,
+        native_replay_available: bool,
+    ) -> Result<Vec<Message>> {
         self.model_context_with_route(Some((active_model, native_replay_available)))
     }
 
-    fn model_context_with_route(&self, route: Option<(&ara_ai::Model, bool)>) -> Vec<Message> {
+    /// Select the same reset/branch/summary/replay window as the existing
+    /// projection, retaining each raw source exactly once (including excluded
+    /// notifications). The converter is a separate Host owner.
+    pub fn raw_agent_context_for_route(
+        &self,
+        active_model: &ara_ai::Model,
+        native_replay_available: bool,
+    ) -> Result<Vec<RawAgentContextMessage>> {
+        self.raw_agent_context_for_route_with_images(active_model, native_replay_available, false)
+    }
+
+    pub fn raw_agent_context_for_route_with_images(
+        &self,
+        active_model: &ara_ai::Model,
+        native_replay_available: bool,
+        supports_images: bool,
+    ) -> Result<Vec<RawAgentContextMessage>> {
+        let branch = self.branch();
+        let branch = &branch[active_context_start(&branch)..];
+        let summary_projection = if branch.iter().any(|entry| entry.kind == "compaction") {
+            let projection =
+                self.compacted_context_projection_with_route(Some((active_model, native_replay_available)));
+            if projection.is_err()
+                && branch.iter().any(|entry| entry.native_message.is_some() && entry.model_messages().is_err())
+            {
+                return Err(agent_body_error("native compacted context requires a checked source window"));
+            }
+            projection.ok()
+        } else {
+            None
+        };
+        let summary = summary_projection.and_then(|projection| {
+            projection.items.into_iter().find_map(|item| match item {
+                CompactedContextItem::Summary(summary) => Some(summary),
+                _ => None,
+            })
+        });
+        let mut output = Vec::new();
+        let start = if let Some(summary) = summary {
+            let source = branch
+                .iter()
+                .find(|entry| entry.id == summary.entry_id)
+                .ok_or_else(|| agent_body_error("summary source is outside the active branch"))?;
+            let mut body = source.raw.clone();
+            let fields = body.as_object_mut().ok_or_else(|| agent_body_error("invalid summary source"))?;
+            fields.remove("type");
+            fields.remove("id");
+            fields.remove("parentId");
+            fields.insert("role".into(), json!("compactionSummary"));
+            fields.insert(
+                "timestamp".into(),
+                json!(entry_timestamp(&source.raw).ok_or_else(|| agent_body_error("invalid summary timestamp"))?),
+            );
+            fields.insert("method".into(), json!(summary.method));
+            let (body, checked_projection) = if source.snapcompact_source.is_some() {
+                (AgentMessageBody::Native(source.compaction_summary_source()?), None)
+            } else {
+                let checked_projection = Some(vec![raw_checked_summary_projection(
+                    &summary,
+                    active_model,
+                    supports_images,
+                    self.blob_store.as_ref(),
+                )?]);
+                Entry::project_agent_message_body(&body)?;
+                (AgentMessageBody::Legacy(body), checked_projection)
+            };
+            output.push(RawAgentContextMessage { body, source: source.original_source(), checked_projection });
+            if let Some(remote) = summary.remote {
+                branch
+                    .iter()
+                    .position(|entry| entry.id == remote.replay_through_entry_id)
+                    .ok_or_else(|| agent_body_error("remote replay boundary is outside the active branch"))?
+                    + 1
+            } else {
+                branch
+                    .iter()
+                    .position(|entry| entry.id == summary.first_kept_entry_id)
+                    .ok_or_else(|| agent_body_error("summary kept boundary is outside the active branch"))?
+            }
+        } else {
+            0
+        };
+        for entry in &branch[start..] {
+            if let Some(body) = entry.agent_message_body()? {
+                output.push(RawAgentContextMessage { body, source: entry.original_source(), checked_projection: None });
+            }
+        }
+        Ok(output)
+    }
+
+    /// Exact archive grant: current body equality plus current branch/route
+    /// selection. Neither an archive-shaped value nor a marker grants replay.
+    pub fn checked_snapcompact_source_for_route(
+        &self,
+        current: &ara_rpc::WireValue,
+        source_entry_id: &str,
+        model: &ara_ai::Model,
+        native_replay_available: bool,
+        supports_images: bool,
+    ) -> Result<Option<NativeMessageSource>> {
+        self.checked_snapcompact_source_for_route_with_options(
+            current,
+            source_entry_id,
+            model,
+            native_replay_available,
+            supports_images,
+            ara_snapcompact::HistoryBlockOptions { max_frame_data_bytes: Some(snapcompact::FRAME_DATA_BYTES_BUDGET) },
+            true,
+        )
+    }
+
+    /// Host supplies the current deployment's payload budget and reasoning
+    /// policy; the journal retains branch/source checks and owns blob IO.
+    #[allow(clippy::too_many_arguments)]
+    pub fn checked_snapcompact_source_for_route_with_options(
+        &self,
+        current: &ara_rpc::WireValue,
+        source_entry_id: &str,
+        model: &ara_ai::Model,
+        native_replay_available: bool,
+        supports_images: bool,
+        history_options: ara_snapcompact::HistoryBlockOptions,
+        include_thinking: bool,
+    ) -> Result<Option<NativeMessageSource>> {
+        let branch = self.branch();
+        let branch = &branch[active_context_start(&branch)..];
+        let Some(source) = branch.iter().find(|entry| entry.id == source_entry_id && entry.kind == "compaction") else {
+            return Ok(None);
+        };
+        if !source.compaction_summary_source()?.observe()?.deep_equal(current) {
+            return Ok(None);
+        }
+        let projection = self
+            .compacted_context_projection_with_route(Some((model, native_replay_available)))
+            .map_err(|error| agent_body_error(format!("checked exact archive source projection: {error}")))?;
+        let Some(summary) = projection.items.iter().find_map(|item| match item {
+            CompactedContextItem::Summary(summary)
+                if summary.entry_id == source_entry_id && summary.remote.is_none() && summary.method != "handoff" =>
+            {
+                Some(summary.as_ref())
+            }
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        // The existing checked archive projection accepts attached frames
+        // regardless of supports_images; provider preparation owns that policy.
+        let _ = supports_images;
+        let model_source = if summary.has_archive() {
+            let details = source
+                .raw
+                .get("details")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<ara_snapcompact::CompactionDetails>(value).ok());
+            snapcompact::model_source_from_summary_with_blob_store(
+                &summary.summary,
+                summary.exact_preserve_json()?.as_deref(),
+                self.blob_store.as_ref(),
+                Some(history_options),
+                include_thinking,
+                details.as_ref(),
+            )?
+        } else {
+            snapcompact::model_source_from_summary(
+                &format!("[Compacted summary of earlier turns; source entries withheld]\n{}", summary.summary),
+                None,
+            )?
+        };
+        let mut body = native_message::clone_wire(model_source.observe()?.as_ref());
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&summary.timestamp)
+            .map(|timestamp| timestamp.timestamp_millis())
+            .unwrap_or(0);
+        body.insert("timestamp", ara_rpc::WireValue::Number(timestamp as f64));
+        body.insert("historyRewriteAt", ara_rpc::WireValue::Number(timestamp as f64));
+        Ok(Some(NativeMessageSource::persisted(body)))
+    }
+
+    /// Host refresh after admission selects a new route while a Run is busy.
+    /// Source identity is supplied by the Host's trusted weak registration;
+    /// exact CURRENT body equality is required before any source projection.
+    /// An edited summary remains editable raw input and receives no grant.
+    pub fn checked_agent_message_projection_for_route(
+        &self,
+        body: &Value,
+        source_entry_id: &str,
+        model: &ara_ai::Model,
+        native_replay_available: bool,
+        supports_images: bool,
+    ) -> Result<Option<Vec<Message>>> {
+        if body["role"] != "compactionSummary" {
+            return Ok(None);
+        }
+        let branch = self.branch();
+        let branch = &branch[active_context_start(&branch)..];
+        let Some(source) = branch.iter().find(|entry| entry.id == source_entry_id && entry.kind == "compaction") else {
+            return Ok(None);
+        };
+        // A partial checked mirror without preserveData cannot receive a
+        // source grant. Exact callers use the Wire equality entry point below.
+        if source.snapcompact_source.as_ref().is_some_and(|source| source.checked_preserve().is_err()) {
+            return Ok(None);
+        }
+        let method =
+            source.raw.get("method").filter(|method| !method.is_null()).and_then(Value::as_str).unwrap_or("soft");
+        let mut expected = source.raw.clone();
+        let fields = expected.as_object_mut().ok_or_else(|| agent_body_error("invalid summary source"))?;
+        fields.remove("type");
+        fields.remove("id");
+        fields.remove("parentId");
+        fields.insert("role".into(), json!("compactionSummary"));
+        fields.insert(
+            "timestamp".into(),
+            json!(entry_timestamp(&source.raw).ok_or_else(|| agent_body_error("invalid summary timestamp"))?),
+        );
+        fields.insert("method".into(), json!(method));
+        if body != &expected {
+            return Ok(None);
+        }
+        let projection = self
+            .compacted_context_projection_with_route(Some((model, native_replay_available)))
+            .map_err(|error| agent_body_error(format!("checked raw source projection: {error}")))?;
+        if let Some(summary) = projection.items.iter().find_map(|item| match item {
+            CompactedContextItem::Summary(summary) if summary.entry_id == source_entry_id => Some(summary.as_ref()),
+            _ => None,
+        }) {
+            return Ok(Some(vec![raw_checked_summary_projection(
+                summary,
+                model,
+                supports_images,
+                self.blob_store.as_ref(),
+            )?]));
+        }
+        // A non-reusable native remote record contributes the checked original
+        // source window it covered, rather than borrowing foreign native proof
+        // or duplicating the current Run's post-boundary tail.
+        if method != "remote" {
+            return Ok(None);
+        }
+        let Some(through) = source.raw.get("providerReplayThroughEntryId").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let through = branch
+            .iter()
+            .position(|entry| entry.id == through)
+            .ok_or_else(|| agent_body_error("checked remote source boundary is unavailable"))?;
+        let positions: HashMap<_, _> =
+            branch.iter().enumerate().map(|(index, entry)| (entry.id.as_str(), index)).collect();
+        let mut messages = Vec::new();
+        for item in projection.items {
+            match item {
+                CompactedContextItem::Summary(summary)
+                    if positions.get(summary.entry_id.as_str()).is_some_and(|index| *index <= through) =>
+                {
+                    messages.push(raw_checked_summary_projection(
+                        &summary,
+                        model,
+                        supports_images,
+                        self.blob_store.as_ref(),
+                    )?)
+                }
+                CompactedContextItem::Message(message)
+                    if positions.get(message.entry_id.as_str()).is_some_and(|index| *index <= through) =>
+                {
+                    messages.push(message.message)
+                }
+                _ => {}
+            }
+        }
+        Ok(Some(messages))
+    }
+
+    fn model_context_with_route(&self, route: Option<(&ara_ai::Model, bool)>) -> Result<Vec<Message>> {
         let messages = match self.compacted_context_projection_with_route(route) {
             Ok(projection) if projection.items.iter().any(|item| matches!(item, CompactedContextItem::Summary(_))) => {
+                if projection.items.iter().any(|item| {
+                    matches!(item,
+                    CompactedContextItem::Summary(summary) if summary.has_archive() && summary.archive.is_none())
+                }) {
+                    return Err(agent_body_error("exact archive requires native model context"));
+                }
                 projection
                     .items
                     .into_iter()
-                    .map(|item| match item {
-                        CompactedContextItem::Summary(s) if s.remote.is_some() => {
-                            remote::model_message(&s, route.expect("readable native replay has a route").0)
-                        }
-                        CompactedContextItem::Summary(s) if s.method == "handoff" => handoff::model_message(&s),
-                        CompactedContextItem::Summary(s) if s.archive.is_some() => {
-                            let mut message =
-                                snapcompact::model_message_from_summary(&s.summary, s.preserve_data.as_ref());
-                            if let Message::User(user) = &mut message {
-                                user.timestamp = chrono::DateTime::parse_from_rfc3339(&s.timestamp)
-                                    .map(|timestamp| timestamp.timestamp_millis())
-                                    .unwrap_or(0);
+                    .map(|item| {
+                        Ok(match item {
+                            CompactedContextItem::Summary(s) if s.remote.is_some() => {
+                                remote::model_message(&s, route.expect("readable native replay has a route").0)
                             }
-                            message
-                        }
-                        CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
-                            "[Compacted summary of earlier turns; source entries withheld]\n{}",
-                            s.summary
-                        ))),
-                        CompactedContextItem::Message(m) => m.message.clone(),
+                            CompactedContextItem::Summary(s) if s.method == "handoff" => handoff::model_message(&s),
+                            CompactedContextItem::Summary(s) if s.archive.is_some() => {
+                                let mut message = snapcompact::model_message_from_summary_with_blob_store(
+                                    &s.summary,
+                                    s.preserve_data.as_ref(),
+                                    self.blob_store.as_ref(),
+                                )?;
+                                if let Message::User(user) = &mut message {
+                                    user.timestamp = chrono::DateTime::parse_from_rfc3339(&s.timestamp)
+                                        .map(|timestamp| timestamp.timestamp_millis())
+                                        .unwrap_or(0);
+                                }
+                                message
+                            }
+                            CompactedContextItem::Summary(s) => Message::User(UserMessage::text(format!(
+                                "[Compacted summary of earlier turns; source entries withheld]\n{}",
+                                s.summary
+                            ))),
+                            CompactedContextItem::Message(m) => m.message.clone(),
+                        })
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>>>()?
             }
-            _ => self.build_context(),
+            _ => self.build_context()?,
         };
         // Fixed session-context.ts:346 preserves live/transcript receipts, but
         // never sends an empty error turn back to the model after native resume.
         // Source snapshots deliberately keep the exact original message/ID.
-        messages
+        Ok(messages
             .into_iter()
             .filter(|message| message.as_assistant().is_none_or(|assistant| !is_empty_error_turn(assistant)))
-            .collect()
+            .collect())
     }
 
     pub fn undecodable_messages(&self) -> usize {
@@ -2971,13 +4367,85 @@ impl SessionJournal {
             .count()
     }
 
-    /// Last `model_change` on the branch.
-    pub fn current_model(&self) -> Option<String> {
+    /// First native restore candidate. Transient fallback receipts do not
+    /// replace the configured default; the Host still owns model availability.
+    pub fn current_model(&self) -> Result<Option<String>> {
+        Ok(self.restorable_model_candidates()?.into_iter().next())
+    }
+
+    /// Fixed `session-context.ts:91-109,239-280`: build the branch role map,
+    /// preserve an explicit default against assistant inference, then try the
+    /// last non-ephemeral role followed by default. Native legacy Sessions infer
+    /// default from assistant provider/model only until an explicit default.
+    pub fn restorable_model_candidates(&self) -> Result<Vec<String>> {
+        let mut models = HashMap::new();
+        let mut explicit_default = false;
+        let mut last_role = None;
+        for entry in self.branch() {
+            if entry.kind == "model_change" {
+                let role = entry.raw.get("role").and_then(Value::as_str).unwrap_or("default");
+                last_role = Some(role.to_owned());
+                if let Some(model) = entry.raw.get("model").and_then(Value::as_str).filter(|model| !model.is_empty()) {
+                    models.insert(role.to_owned(), model.to_owned());
+                    if role == "default" {
+                        explicit_default = true;
+                    }
+                }
+            } else if !explicit_default {
+                if entry.observed_role()?.is_some_and(|role| role.equals_ascii("assistant")) {
+                    if let (
+                        Some(ara_rpc::WireValue::String(ref provider)),
+                        Some(ara_rpc::WireValue::String(ref model)),
+                    ) = (entry.observed_message_field(&["provider"])?, entry.observed_message_field(&["model"])?)
+                    {
+                        let provider = provider
+                            .to_utf8()
+                            .map_err(|_| agent_body_error("native provider identity requires a lossless route"))?;
+                        let model = model
+                            .to_utf8()
+                            .map_err(|_| agent_body_error("native model identity requires a lossless route"))?;
+                        models.insert("default".into(), format!("{provider}/{model}"));
+                    }
+                }
+            }
+        }
+        let default = models.get("default");
+        let role_model = last_role
+            .as_deref()
+            .filter(|role| !role.is_empty() && *role != "default" && *role != EPHEMERAL_MODEL_CHANGE_ROLE)
+            .and_then(|role| models.get(role));
+        let mut candidates = Vec::new();
+        if let Some(model) = role_model {
+            candidates.push(model.clone());
+        }
+        if let Some(model) = default.filter(|model| role_model != Some(*model)) {
+            candidates.push(model.clone());
+        }
+        Ok(candidates)
+    }
+
+    /// Native effective thinking defaults to off, including an empty branch.
+    /// Null/missing levels on a recorded change also mean off.
+    pub fn current_thinking_level(&self) -> Option<String> {
         self.branch()
             .into_iter()
             .rev()
-            .find(|e| e.kind == "model_change")
-            .and_then(|e| e.raw.get("model").and_then(Value::as_str).map(str::to_string))
+            .find(|entry| entry.kind == "thinking_level_change")
+            .map(|entry| entry.raw.get("thinkingLevel").and_then(Value::as_str).unwrap_or("off").to_owned())
+            .or_else(|| Some("off".into()))
+    }
+
+    /// Fixed `session-context.ts:257-259`: configured ?? thinkingLevel.
+    /// Ephemeral model selection does not suppress thinking receipts.
+    pub fn current_configured_thinking_level(&self) -> Option<String> {
+        self.branch().into_iter().rev().find(|entry| entry.kind == "thinking_level_change").and_then(|entry| {
+            entry
+                .raw
+                .get("configured")
+                .and_then(Value::as_str)
+                .or_else(|| entry.raw.get("thinkingLevel").and_then(Value::as_str))
+                .map(str::to_owned)
+        })
     }
 
     /// Pair tool calls that never got a recorded result with explicit
@@ -2990,63 +4458,82 @@ impl SessionJournal {
         let raw_branch = self.branch();
         let branch: Vec<Entry> =
             raw_branch[active_context_start(&raw_branch)..].iter().map(|entry| (**entry).clone()).collect();
+        // Narrow current role/ID/name Gets. Arguments and unrelated Graph
+        // extension fields are not traversed for this decision.
+        let roles = branch.iter().map(Entry::observed_role).collect::<Result<Vec<_>>>()?;
+        let role_is = |index: usize, role: &str| roles[index].as_ref().is_some_and(|value| value.equals_ascii(role));
         let mut recovery = Recovery::default();
-        let mut answered: HashSet<String> = HashSet::new();
-        let mut last_assistant: Option<usize> = None;
-        for (i, e) in branch.iter().enumerate() {
-            match e.role() {
-                Some("toolResult") => {
-                    if let Some(id) = e.raw.pointer("/message/toolCallId").and_then(Value::as_str) {
-                        answered.insert(id.to_string());
+        let mut answered = HashSet::<ara_rpc::WireString>::new();
+        let mut last_assistant = None;
+        for (index, entry) in branch.iter().enumerate() {
+            if role_is(index, "toolResult") {
+                match entry.observed_message_field(&["toolCallId"])? {
+                    Some(ara_rpc::WireValue::String(ref id)) => {
+                        answered.insert(id.clone());
                     }
+                    _ if entry.native_message.is_some() => {
+                        return Err(agent_body_error("native result requires its exact toolCallId"));
+                    }
+                    _ => {}
                 }
-                Some("assistant") => last_assistant = Some(i),
-                _ => {}
+            } else if role_is(index, "assistant") {
+                last_assistant = Some(index);
             }
         }
-        let calls_of = |e: &Entry| -> Vec<(String, String)> {
-            e.raw
-                .pointer("/message/content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|b| b.get("type").and_then(Value::as_str) == Some("toolCall"))
-                .filter_map(|b| Some((b.get("id")?.as_str()?.to_string(), b.get("name")?.as_str()?.to_string())))
-                .collect()
-        };
-        for (i, e) in branch.iter().enumerate() {
-            if e.role() != Some("assistant") {
+        for (index, entry) in branch.iter().enumerate() {
+            if !role_is(index, "assistant") {
                 continue;
             }
-            let missing: Vec<(String, String)> =
-                calls_of(e).into_iter().filter(|(id, _)| !answered.contains(id)).collect();
+            let missing =
+                entry.observed_tool_calls()?.into_iter().filter(|(id, _)| !answered.contains(id)).collect::<Vec<_>>();
             if missing.is_empty() {
                 continue;
             }
-            let tail_is_results_only = Some(i) == last_assistant
-                && branch[i + 1..].iter().all(|f| {
-                    if f.kind == "message" {
-                        f.role() == Some("toolResult") || f.is_excluded_bash_execution()
+            let mut tail_is_results_only = Some(index) == last_assistant;
+            if tail_is_results_only {
+                for next in index + 1..branch.len() {
+                    let follower = &branch[next];
+                    let allowed = if follower.kind == "message" {
+                        role_is(next, "toolResult")
+                            || (role_is(next, "bashExecution") && follower.observed_excluded_bash_execution()?)
                     } else {
-                        f.model_messages().is_some_and(|messages| messages.is_empty())
+                        follower.model_messages()?.is_some_and(|messages| messages.is_empty())
+                    };
+                    if !allowed {
+                        tail_is_results_only = false;
+                        break;
                     }
-                });
+                }
+            }
             if !tail_is_results_only {
                 recovery.unpaired_earlier.extend(missing.into_iter().map(|(id, _)| id));
                 continue;
             }
             for (id, name) in missing {
-                let result = ToolResultMessage {
-                    tool_call_id: id.clone(),
-                    tool_name: name,
-                    content: vec![UserBlock::text(UNKNOWN_EFFECT_TEXT)],
-                    details: Some(
-                        json!({"__synthetic": true, "source": "interrupted_unknown_effect", "executed": "unknown"}),
+                use ara_rpc::WireValue as W;
+                let result = W::object(vec![
+                    ("role", W::String("toolResult".into())),
+                    ("toolCallId", W::String(id.clone())),
+                    ("toolName", W::String(name)),
+                    (
+                        "content",
+                        W::Array(vec![W::object(vec![
+                            ("type", W::String("text".into())),
+                            ("text", W::String(UNKNOWN_EFFECT_TEXT.into())),
+                        ])]),
                     ),
-                    is_error: true,
-                    timestamp: now_ms(),
-                };
-                self.append_message(&Message::ToolResult(result))?;
+                    (
+                        "details",
+                        W::object(vec![
+                            ("__synthetic", W::Bool(true)),
+                            ("source", W::String("interrupted_unknown_effect".into())),
+                            ("executed", W::String("unknown".into())),
+                        ]),
+                    ),
+                    ("isError", W::Bool(true)),
+                    ("timestamp", W::Number(now_ms() as f64)),
+                ]);
+                self.append_native_message(NativeMessageSource::persisted(result))?;
                 recovery.paired.push(id);
             }
         }
@@ -3062,10 +4549,180 @@ pub fn latest_session(dir: &Path) -> Option<PathBuf> {
         if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else { continue };
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
         if best.as_ref().is_none_or(|(t, _)| modified > *t) {
             best = Some((modified, p));
         }
     }
     best.map(|(_, p)| p)
+}
+
+#[cfg(test)]
+mod model_change_publication_tests {
+    use super::*;
+
+    #[test]
+    fn composite_directory_barrier_failure_retains_exact_published_receipts() {
+        // Exercise both public APIs' complete commit paths using the existing
+        // rewrite directory barrier. The injected failure occurs after the
+        // real temp-file sync and rename, rather than simulating a failed write.
+        for with_thinking in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+            journal.append_model_and_thinking_change("fake/primary", None, false, Some("low"), Some("low")).unwrap();
+            journal.materialize().unwrap();
+            let path = journal.path().to_path_buf();
+            let previous_bytes = fs::read(&path).unwrap();
+            let previous_len = journal.entries().len();
+            let previous_leaf = journal.leaf_id().unwrap().to_owned();
+            let mut barrier_reached = false;
+            let fail_directory_sync = |directory: &Path| {
+                assert_eq!(directory, dir.path());
+                barrier_reached = true;
+                // The complete candidate must already be observable on disk
+                // when the existing primitive reports uncertain durability.
+                let published = SessionJournal::open(&path).unwrap();
+                assert_eq!(published.entries().len(), previous_len + if with_thinking { 2 } else { 1 });
+                assert_eq!(published.current_model().unwrap().as_deref(), Some("fake/replaced"));
+                Err(std::io::Error::other("injected model-change directory barrier failure"))
+            };
+            let (model_entry_id, thinking_entry_id) = if with_thinking {
+                let error = journal
+                    .append_model_and_thinking_change_with_sync(
+                        "fake/replaced",
+                        Some("default"),
+                        true,
+                        Some("high"),
+                        Some("auto"),
+                        fail_directory_sync,
+                    )
+                    .unwrap_err();
+                assert!(error.history_published());
+                let ModelAndThinkingChangeError::PublishedButDurabilityUnknown {
+                    model_entry_id,
+                    thinking_entry_id,
+                    ..
+                } = error
+                else {
+                    panic!("paired transaction lost its publication phase");
+                };
+                (model_entry_id, Some(thinking_entry_id))
+            } else {
+                let error = journal
+                    .append_model_and_optional_thinking_change_with_sync(
+                        "fake/replaced",
+                        Some("default"),
+                        true,
+                        None,
+                        fail_directory_sync,
+                    )
+                    .unwrap_err();
+                assert!(error.history_published());
+                let ModelAndOptionalThinkingChangeError::PublishedButDurabilityUnknown {
+                    model_entry_id,
+                    thinking_entry_id,
+                    ..
+                } = error
+                else {
+                    panic!("optional transaction lost its publication phase");
+                };
+                (model_entry_id, thinking_entry_id)
+            };
+            assert!(barrier_reached);
+            assert_eq!(thinking_entry_id.is_some(), with_thinking);
+            assert_eq!(journal.entries().len(), previous_len + if with_thinking { 2 } else { 1 });
+            assert_eq!(journal.entries()[previous_len].id, model_entry_id);
+            assert_eq!(journal.entries()[previous_len].parent_id.as_deref(), Some(previous_leaf.as_str()));
+            if let Some(thinking_entry_id) = &thinking_entry_id {
+                assert_eq!(journal.entries().last().unwrap().id, *thinking_entry_id);
+                assert_eq!(journal.entries().last().unwrap().parent_id.as_deref(), Some(model_entry_id.as_str()));
+                assert!(journal.ids.contains(thinking_entry_id));
+            }
+            assert_eq!(journal.leaf_id(), Some(thinking_entry_id.as_deref().unwrap_or(model_entry_id.as_str())));
+            assert!(journal.ids.contains(&model_entry_id));
+            assert!(journal.materialized);
+            assert!(!journal.rewrite_required);
+            assert_ne!(fs::read(&path).unwrap(), previous_bytes);
+            let reopened = SessionJournal::open(&path).unwrap();
+            assert_eq!(reopened.entries(), journal.entries());
+            assert_eq!(reopened.leaf_id(), journal.leaf_id());
+            assert_eq!(reopened.current_thinking_level().as_deref(), Some(if with_thinking { "high" } else { "low" }));
+            assert_eq!(
+                reopened.current_configured_thinking_level().as_deref(),
+                Some(if with_thinking { "auto" } else { "low" })
+            );
+        }
+    }
+}
+
+// Append to ara-session/src/lib.rs as an existing @lib test module.
+#[cfg(test)]
+mod raw_messages_r_group {
+    use super::*;
+
+    #[test]
+    fn raw_lossless_append_reopen_reserved_fields_and_recovery_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+        let user = json!({"role":"user","content":"source user","timestamp":1,"application":{"user":true}});
+        journal.append_agent_message_body(&user).unwrap();
+        let custom = json!({"role":"custom","customType":"extension-fixture","content":{"raw":[1,2]},"id":"body-id","type":"body-type","parentId":"body-parent","timestamp":2,"application":{"retained":true}});
+        let custom_id = journal.append_agent_message_body(&custom).unwrap();
+        let mut failed = AssistantMessage::empty("openai-responses", "openai", "raw-native");
+        failed.stop_reason = StopReason::Error;
+        failed.error_message = Some("source failure".into());
+        failed.content.push(AssistantBlock::text("failed original output"));
+        let mut body = serde_json::to_value(Message::Assistant(failed.clone())).unwrap();
+        body["application"] = json!({"unknown":["preserved",3]});
+        body["errorId"] = json!(0x0002_1000_u32);
+        let id = journal.append_agent_message_body(&body).unwrap();
+        let leaf = journal.leaf_id().unwrap().to_owned();
+        let token = journal.begin_failed_assistant_recovery(&leaf, &id, &failed).unwrap();
+        assert_eq!(token.failed_message_body().unwrap().checked_legacy().unwrap(), body);
+        let FailedAssistantRecoveryOutcome::Restored { appended_entry_id: Some(restored), .. } =
+            journal.finish_failed_assistant_recovery(token, false).unwrap()
+        else {
+            panic!("contentful rollback")
+        };
+        assert_ne!(restored, id);
+        assert_eq!(
+            journal.branch().last().unwrap().raw["message"],
+            body,
+            "rollback uses checked raw source, preserving errorId and application extensions"
+        );
+        let reopened = SessionJournal::open(journal.path()).unwrap();
+        assert_eq!(reopened.entries(), journal.entries());
+        assert_eq!(
+            reopened
+                .entries()
+                .iter()
+                .find(|entry| entry.id == custom_id)
+                .unwrap()
+                .agent_message_body()
+                .unwrap()
+                .map(|body| body.checked_legacy().unwrap()),
+            Some(custom.clone())
+        );
+        let model = ara_ai::Model {
+            id: "raw-native".into(),
+            api: "openai-responses".into(),
+            provider: "openai".into(),
+            base_url: "http://fixture.invalid/v1".into(),
+            reasoning: false,
+            max_tokens: None,
+            context_window: None,
+            tokenizer: None,
+        };
+        let context = reopened.raw_agent_context_for_route(&model, false).unwrap();
+        assert!(context.iter().any(|item| item.body.checked_legacy().unwrap() == user));
+        assert!(context.iter().any(|item| item.body.checked_legacy().unwrap() == custom));
+        assert_eq!(context.last().unwrap().body.checked_legacy().unwrap(), body);
+        assert_eq!(
+            context.last().unwrap().source.checked_legacy().unwrap()["id"],
+            restored,
+            "source is the retained Session envelope, outside editable body"
+        );
+    }
 }

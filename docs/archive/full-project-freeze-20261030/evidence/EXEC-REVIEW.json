@@ -1,0 +1,2235 @@
+{
+  "schema_version": 1,
+  "reviewer": "independent Codex /root/task_owner_complete_review",
+  "created_utc": "2026-10-29T15:22:37.421Z",
+  "verdict": "APPROVE_EXECUTED_RECOVERY_SCOPE_ONLY_NOT_COMPLETE_M1_M9",
+  "accepted_scope": "The bound final V4 execution of the original nine groups/89 functions and the actual positive/negative runtime observations described below. Complete M1-M9 is not accepted.",
+  "findings": [],
+  "findings_count": 0,
+  "coverage_gaps_are_not_proven_production_defects": true,
+  "skills": [
+    "ara-git-review",
+    "ara-rust-core-review",
+    "humanizer embedded prose pass"
+  ],
+  "source_and_runtime_binding": {
+    "E_HEAD_current": "c06106234d8124c602d4d0f99e95dc9d4076a967",
+    "D_source_origin": "3960505c831870230aff3e2a9b1f44b6859be3e3 plus frozen dirty; source1551pins authoritative",
+    "source_drift": [],
+    "retained_artifact_drift": [],
+    "image_drift": [],
+    "result_sha256": "b73ed67c23b65c547ef9151bc6c9758a074d0a7a5320046a6840dac21886cbad",
+    "source_pins_sha256": "889d1090df1b68d302c1fa87653621a703c916aabab36a4085055940666ec3fd",
+    "runtime_pins_sha256": "03212d54c317ae1a2e175aeb2e4b5bfd28a546b3a55147d2170efd206326dd3d",
+    "source_criteria_sha256": "3f0ab15dcd403a1a18a9cd8c1f1bed8f5cc4db92d22b820a9520d5352298a039"
+  },
+  "identity_and_original_log_checks": {
+    "plan_sha256": "969da628cf00f363639374d1759ea8310635460249181df2052acc6134374966",
+    "runner_sha256": "434d85744fd337eca5f49b3fa8028ff68959a71bd2a42f97afd2bb90b33fd55d",
+    "source_count": 1551,
+    "runtime_pin_count": 2558,
+    "runtime_manifest_count": 1,
+    "runtime_payload_count": 2557,
+    "artifact_file_count": 2479,
+    "source_drift": [],
+    "runtime_drift": [],
+    "artifact_drift": [],
+    "source_before_after_equal": true,
+    "images": [
+      {
+        "name": "ara_ai",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\ara_ai-4afbc34dd5332730.exe",
+        "sha256": "2908582985a836711f49cd74e821a49bea311081817c085f3b452b5f138e8fb4",
+        "kind": [
+          "lib"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "ara_task_vcs",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\ara_task_vcs-d05b8e6fa9d17161.exe",
+        "sha256": "3e4fa4a4984bd76aa010252cc2c7832c357e790e4317940a1b17972fb6490060",
+        "kind": [
+          "lib"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "ara_iso",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\ara_iso-2d36f26c435a6971.exe",
+        "sha256": "7c447afd23616e116281bbe5f03b7bd896bddc5197fc95801caa03951f83207e",
+        "kind": [
+          "lib"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "peer_lifecycle",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\peer_lifecycle-ed9a5daee3ee0d39.exe",
+        "sha256": "2185b04aefad2900969bedbf5c27fb3730e24a0ffdbc0aa3dc07eee6b8479614",
+        "kind": [
+          "test"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "task_isolation",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\task_isolation-7eadf09c872cde1d.exe",
+        "sha256": "a51f0a7a3f53d075601704a038e340e6f151a3b8b123350831fb20bcb0fa973c",
+        "kind": [
+          "test"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "task_contract",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\task_contract-34989024ca9e5810.exe",
+        "sha256": "418f7edd322c6404a520148fcfbcd6a2a3f74836e99c7b63020a8ab9f9ec4ad9",
+        "kind": [
+          "test"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "task_host",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\task_host-51d9f1265a8fb441.exe",
+        "sha256": "7addee9d42235545a9270725b00b2fcbdf1dc193ee22737d9438ed3c60db79a8",
+        "kind": [
+          "test"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "task_agents",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\task_agents-4ff437e4a4955357.exe",
+        "sha256": "73419da7b653ea689150240474c2bfdfd0e3d6672a4714d1735a40438bcd8bbe",
+        "kind": [
+          "test"
+        ],
+        "stack_reserve": 1048576,
+        "stack_commit": 4096
+      },
+      {
+        "name": "ara",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\deps\\ara-a93b8107372658ae.exe",
+        "sha256": "6c058ae941e6c63b8cf3b5cb76a108a8e8a061c50a80dd2600da920a12f78731",
+        "kind": [
+          "bin"
+        ],
+        "stack_reserve": 8388608,
+        "stack_commit": 4096
+      },
+      {
+        "name": "ara",
+        "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\target\\debug\\ara.exe",
+        "sha256": "182a30d6ad1b2bc5ad38f39c030cb22163983014e8c23db0f809dd134e22f6cc",
+        "kind": [
+          "bin"
+        ],
+        "stack_reserve": 8388608,
+        "stack_commit": 4096
+      }
+    ],
+    "groups": [
+      {
+        "target": "ara_iso",
+        "successful": 3,
+        "seconds": 0.038,
+        "summary": [
+          [
+            "3",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "e276fc58383ce5c9eafa643fbaecc500b6ba1c15308965f8486165c7251055b6"
+      },
+      {
+        "target": "ara_task_vcs",
+        "successful": 70,
+        "seconds": 75.017,
+        "summary": [
+          [
+            "70",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "aa8fd4760baa72964c4b5793f6adce5455df6a2cba4082457813faf22ca08ffc"
+      },
+      {
+        "target": "ara_ai",
+        "successful": 1,
+        "seconds": 0.058,
+        "summary": [
+          [
+            "1",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "afcc65e6d3c487c79c0a7343d13405907b553118a7669223199acbb9a4b4acbe"
+      },
+      {
+        "target": "ara",
+        "successful": 1,
+        "seconds": 0.077,
+        "summary": [
+          [
+            "1",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "91d191eaf2b02881313c538fa3a9aecee48914acf37a17f1193240ca35af5fc3"
+      },
+      {
+        "target": "task_agents",
+        "successful": 3,
+        "seconds": 0.059,
+        "summary": [
+          [
+            "3",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "c52576e5bde943c929fdb5035734ec8934b079d76e58641eea893a1f109e5ddc"
+      },
+      {
+        "target": "task_contract",
+        "successful": 2,
+        "seconds": 0.084,
+        "summary": [
+          [
+            "2",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "a7f14cb0f10e498643b394dfc5fbec2daf43fcc199d8a6f09b97237b5dd920ef"
+      },
+      {
+        "target": "task_isolation",
+        "successful": 4,
+        "seconds": 73.724,
+        "summary": [
+          [
+            "4",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "294bb6ce373038e263a78a8becc590b456fd9894e3da58eef5bfdd0f03d3f1df"
+      },
+      {
+        "target": "task_host",
+        "successful": 3,
+        "seconds": 56.69,
+        "summary": [
+          [
+            "3",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "8edc76685f5a3a4feeff9ffd82b0e835db5b9819b344cad341a2fc64f5f78d12"
+      },
+      {
+        "target": "peer_lifecycle",
+        "successful": 2,
+        "seconds": 1.361,
+        "summary": [
+          [
+            "2",
+            "0",
+            "0"
+          ]
+        ],
+        "sha256": "b2e73d2d20f597adf2d6a15266390117cad6a9675242aba7697d239cebd07173"
+      }
+    ],
+    "passed": 89,
+    "index_before": null,
+    "index_after": null,
+    "human_auth": {
+      "state": "EXPLICIT_HUMAN_AUTHORIZATION_RECEIVED",
+      "observed_utc": "2026-10-29T14:47:45.154561+00:00",
+      "source": "Human send_user_message_question_reply questionItemId call_8af18ef5d2b64df4841eb017c40c3a48 item0",
+      "answer": "允许按真实合同修正该预期（推荐）",
+      "scope": "Adopt exact reviewed async-script-candidate-v4 only: parent count3or4, child2each, fourth request original-child system-notice, all other assertions/timeouts preserved.",
+      "candidate_sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+      "live_snapshot_rule": "Wait for focused batch terminal before adopting into D source; no repeated confirmation required."
+    },
+    "auth_sha256": "5110c8d0a16ea4b2bd21afbe3d45108d4632f5e89e27325a0b83732a5a9ab300",
+    "source_async_sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+    "runtime_or_models": {
+      "real_model_calls": 0,
+      "scope": "Loopback synthetic accounts and models only; no real accounts or model calls"
+    }
+  },
+  "result": {
+    "path": "D:/Temp/ara-task-m1m9-v4/RESULT.json",
+    "sha256": "b73ed67c23b65c547ef9151bc6c9758a074d0a7a5320046a6840dac21886cbad",
+    "state": "BATCH_PASS_PENDING_INDEPENDENT_REVIEW",
+    "passed": 89,
+    "failed": 0,
+    "ignored": 0,
+    "build_seconds": 490.566,
+    "test_seconds": 207.108,
+    "real_model_calls": 0
+  },
+  "reviewed_source": {
+    "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/source",
+    "origin": "3960505c831870230aff3e2a9b1f44b6859be3e3 plus frozen dirty",
+    "authoritative": "Exact1551 compiler-input hashes, the reviewed four after hashes and final-source pins. Current E HEAD is external WIP and not D provenance.",
+    "E_head_at_final_read": "c06106234d8124c602d4d0f99e95dc9d4076a967",
+    "index_boundary": "D snapshot has no Git index; null before/after is expected. No claim is made that this null proves parent fixture Git index preservation."
+  },
+  "human_authorization": {
+    "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/repair-v4/HUMAN-AUTHORIZATION.json",
+    "sha256": "5110c8d0a16ea4b2bd21afbe3d45108d4632f5e89e27325a0b83732a5a9ab300",
+    "scope": "Adopt exact reviewed async-script-candidate-v4 only: parent count3or4, child2each, fourth request original-child system-notice, all other assertions/timeouts preserved.",
+    "explicit_answer": "允许按真实合同修正该预期（推荐）",
+    "source_async_after_hash": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+    "observed_execution": [
+      4,
+      2,
+      2
+    ]
+  },
+  "raw_artifacts_reviewed": {
+    "strategy": "Independent direct reads of stdout fixture receipts, actual root/child JSONL journals/events, actual HTTP request logs, capture/apply/release/effect files, physical parent/recovery files and read-only Git ODB/refs/index contents. Assertion-summary JSON files were not used as substitutes.",
+    "ordinary_banks": [
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-async-batch-01a18830-c20a-70a3-bc44-ab864153db27",
+        "process": {
+          "pid": 40868,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "c34a419d8020b5fbdb2738ba6515a75712504368fb0585de7ac8c164b46426e1",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? batch-a.txt\n?? batch-b.txt\n?? untracked-user",
+            "error": ""
+          }
+        },
+        "async": {
+          "requests": [
+            4,
+            2,
+            2
+          ],
+          "child_ids": [
+            "01a18830-c9d4-7297-8a60-c23687de4b5a",
+            "01a18830-ccab-74a0-b751-643a750279af"
+          ],
+          "last_role": "user",
+          "last_notice_original": true,
+          "agent_end_count": 1,
+          "wait_running": true,
+          "all_operations_success": true,
+          "release_statuses": [
+            "released",
+            "released"
+          ],
+          "task_flags": [
+            {
+              "runSucceeded": true,
+              "integrationSucceeded": true,
+              "artifactSucceeded": true,
+              "taskAccepted": false
+            },
+            {
+              "runSucceeded": true,
+              "integrationSucceeded": true,
+              "artifactSucceeded": true,
+              "taskAccepted": false
+            }
+          ],
+          "parent_files": [
+            "A actual task\n",
+            "B actual task\n"
+          ]
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-acp-01a18831-486c-771e-abc6-b47a0ff9357e",
+        "process": {
+          "pid": 36824,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "ba9cc64a1b1a1994d042cd90a88c19187039d026f7f2226649c8456249ad9bcc",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? bash-proof.txt\n?? entry-proof.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-reviewer-01a18831-6509-712d-96bc-aff170aa179e",
+        "process": {
+          "pid": 59660,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "e3d2fcb71c4bef306497e37edb340a99099c1ab6602f0daec9efd219413216be",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-scout-01a18831-5760-70de-86c7-cca74a37311a",
+        "process": {
+          "pid": 79348,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "1bd913694739965d03aae755eaaa8fdf2357791c31a3b89dd80eb7ed7c299545",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-security-reviewer-01a18831-765d-740e-b2eb-e06540a740fd",
+        "process": {
+          "pid": 70092,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "239b143d6c136ff7299ef2fd3794f1c6a8775be19cf54db74b86d729fec00645",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-find-01a18831-8e70-7058-924f-d43aaf6eb23d",
+        "process": {
+          "pid": 61900,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "9ea75e7766290609eba54e812959c661e8a0260af42d2d63af5dad951bdc76aa",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-lsp-01a18831-9450-7214-9568-d01d6dc0e9fc",
+        "process": {
+          "pid": 39728,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "6dbae6334842932d3281016c86341361b0bdc7c9e615af6f7c12ea336220f518",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-write-01a18831-99ff-7342-9714-ca1b60ad7cf8",
+        "process": {
+          "pid": 13760,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "ac715e23d1eebb8e1009d8994945c3068c7ed6cebfa951b0cd422b14fcac2552",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-line-01a18831-28f7-76a5-9b99-7a8285e65c5c",
+        "process": {
+          "pid": 74876,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "36b44f4f2d1b5f7a24fff2bc0d9bfabb0c5615d2a94e38735c1c198f5f5cb60f",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? bash-proof.txt\n?? entry-proof.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-print-01a18831-1564-756e-9c33-7b20b8152e04",
+        "process": {
+          "pid": 15992,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "cbfecee8bb847c0f76dd04e5ff54970534c23d619cfa572e343f916c1290aca7",
+          "status": {
+            "exit": 0,
+            "text": "M .ara/agents/g3-task-a.md\nM  user.txt\n?? bash-proof.txt\n?? entry-proof.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-rpc-01a18831-39bc-731d-b1c0-09ce2660ea6b",
+        "process": {
+          "pid": 52652,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "370dbd15e735da971beef3e4d1e2fd95a775112b4ed3379cdca4601534e03a52",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? bash-proof.txt\n?? entry-proof.txt\n?? untracked-user",
+            "error": ""
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-branch-01a18830-f287-7376-8dd8-8329b8b9253c",
+        "process": {
+          "pid": 71304,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "155e5f2e0c00481c12eb6b7b9cc5c788996393d6074df3c2c411c72d57fee0b1",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? untracked-user",
+            "error": ""
+          }
+        },
+        "lifecycle": {
+          "peer_same": true,
+          "peer_key": {
+            "root": "01a18830-f612-76df-976a-b06f22f656bf",
+            "id": "01a18830-f95f-75ea-b5ae-266412a463a0",
+            "generation": 2
+          },
+          "resource_same": true,
+          "resource_id": "4fb40ab0a1ca45e0acbdc87971d3e731",
+          "cwd_same": true,
+          "park_runtime": null,
+          "generations": [
+            2,
+            3
+          ],
+          "park_resource_unchanged": true,
+          "cold": {
+            "rejected": true,
+            "state_unchanged": true,
+            "error": "Isolated child transcript remains history-only"
+          },
+          "result_flags": {
+            "runSucceeded": true,
+            "integrationSucceeded": true,
+            "artifactSucceeded": true,
+            "taskAccepted": false
+          },
+          "release_status": "released",
+          "release_path": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-branch-01a18830-f287-7376-8dd8-8329b8b9253c\\home\\sessions\\2026-10-29T15-04-32-530Z_01a18830-f612-76df-976a-b06f22f656bf\\task-01a18830-f714-70a9-a2e1-da311b8a3124\\4fb40ab0a1ca45e0acbdc87971d3e731\\release.json",
+          "workspace_exists": false,
+          "final_branch_warm": {
+            "exit": 0,
+            "text": "follow-up retained until release",
+            "error": ""
+          },
+          "parent_warm_exists": false,
+          "fingerprint_changed": true,
+          "patch_has_warm": true,
+          "patch_has_parent_WIP": false,
+          "effects_started": {
+            "backend_stop_and_remove": 1,
+            "capture": 2
+          },
+          "native_tools": [
+            {
+              "name": "write",
+              "error": false
+            },
+            {
+              "name": "bash",
+              "error": false
+            },
+            {
+              "name": "write",
+              "error": false
+            }
+          ],
+          "child_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-branch-01a18830-f287-7376-8dd8-8329b8b9253c\\home\\sessions\\2026-10-29T15-04-32-530Z_01a18830-f612-76df-976a-b06f22f656bf\\2026-10-29T15-04-33-375Z_01a18830-f95f-75ea-b5ae-266412a463a0.jsonl",
+          "teardown": {
+            "root": "01a18830-f612-76df-976a-b06f22f656bf",
+            "expected": {
+              "peer": {
+                "root": "01a18830-f612-76df-976a-b06f22f656bf",
+                "id": "01a18830-f612-76df-976a-b06f22f656bf",
+                "generation": 1
+              },
+              "runtime_generation": 1
+            },
+            "peers": [
+              {
+                "key": {
+                  "root": "01a18830-f612-76df-976a-b06f22f656bf",
+                  "id": "01a18830-f95f-75ea-b5ae-266412a463a0",
+                  "generation": 2
+                },
+                "runtime": {
+                  "peer": {
+                    "root": "01a18830-f612-76df-976a-b06f22f656bf",
+                    "id": "01a18830-f95f-75ea-b5ae-266412a463a0",
+                    "generation": 2
+                  },
+                  "runtime_generation": 3
+                },
+                "settled": true,
+                "error": null
+              },
+              {
+                "key": {
+                  "root": "01a18830-f612-76df-976a-b06f22f656bf",
+                  "id": "01a18830-f95f-75ea-b5ae-266412a463a0",
+                  "generation": 2
+                },
+                "runtime": {
+                  "peer": {
+                    "root": "01a18830-f612-76df-976a-b06f22f656bf",
+                    "id": "01a18830-f95f-75ea-b5ae-266412a463a0",
+                    "generation": 2
+                  },
+                  "runtime_generation": 2
+                },
+                "settled": true,
+                "error": null
+              }
+            ],
+            "settled": true,
+            "unresolved_jobs": [],
+            "unresolved_turns": []
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-patch-01a18830-df98-7632-a4a4-fa49fe9aa8d4",
+        "process": {
+          "pid": 14144,
+          "state": "exited",
+          "success": true,
+          "code": 0
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "6d10da2f01e9d79a6302135cf5743213f8593df1094d1cddfab13c29997459f2",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? agent.txt\n?? bash-proof.txt\n?? untracked-user",
+            "error": ""
+          }
+        },
+        "lifecycle": {
+          "peer_same": true,
+          "peer_key": {
+            "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+            "id": "01a18830-e68b-7099-a64a-62c3e0f56799",
+            "generation": 2
+          },
+          "resource_same": true,
+          "resource_id": "40ba41869f9c4be482c05a6c139ddf35",
+          "cwd_same": true,
+          "park_runtime": null,
+          "generations": [
+            2,
+            3
+          ],
+          "park_resource_unchanged": true,
+          "cold": {
+            "rejected": true,
+            "state_unchanged": true,
+            "error": "Isolated child transcript remains history-only"
+          },
+          "result_flags": {
+            "runSucceeded": true,
+            "integrationSucceeded": true,
+            "artifactSucceeded": true,
+            "taskAccepted": false
+          },
+          "release_status": "released",
+          "release_path": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-patch-01a18830-df98-7632-a4a4-fa49fe9aa8d4\\home\\sessions\\2026-10-29T15-04-27-706Z_01a18830-e33a-7117-aefc-c59db07f8d02\\task-01a18830-e42d-7240-9cb2-51620bd1a72f\\40ba41869f9c4be482c05a6c139ddf35\\release.json",
+          "workspace_exists": false,
+          "final_branch_warm": {
+            "exit": 0,
+            "text": "follow-up retained until release",
+            "error": ""
+          },
+          "parent_warm_exists": false,
+          "fingerprint_changed": true,
+          "patch_has_warm": true,
+          "patch_has_parent_WIP": false,
+          "effects_started": {
+            "backend_stop_and_remove": 1,
+            "capture": 2
+          },
+          "native_tools": [
+            {
+              "name": "write",
+              "error": false
+            },
+            {
+              "name": "bash",
+              "error": false
+            },
+            {
+              "name": "write",
+              "error": false
+            }
+          ],
+          "child_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-patch-01a18830-df98-7632-a4a4-fa49fe9aa8d4\\home\\sessions\\2026-10-29T15-04-27-706Z_01a18830-e33a-7117-aefc-c59db07f8d02\\2026-10-29T15-04-28-555Z_01a18830-e68b-7099-a64a-62c3e0f56799.jsonl",
+          "teardown": {
+            "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+            "expected": {
+              "peer": {
+                "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                "id": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                "generation": 1
+              },
+              "runtime_generation": 1
+            },
+            "peers": [
+              {
+                "key": {
+                  "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                  "id": "01a18830-e68b-7099-a64a-62c3e0f56799",
+                  "generation": 2
+                },
+                "runtime": {
+                  "peer": {
+                    "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                    "id": "01a18830-e68b-7099-a64a-62c3e0f56799",
+                    "generation": 2
+                  },
+                  "runtime_generation": 3
+                },
+                "settled": true,
+                "error": null
+              },
+              {
+                "key": {
+                  "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                  "id": "01a18830-e68b-7099-a64a-62c3e0f56799",
+                  "generation": 2
+                },
+                "runtime": {
+                  "peer": {
+                    "root": "01a18830-e33a-7117-aefc-c59db07f8d02",
+                    "id": "01a18830-e68b-7099-a64a-62c3e0f56799",
+                    "generation": 2
+                  },
+                  "runtime_generation": 2
+                },
+                "settled": true,
+                "error": null
+              }
+            ],
+            "settled": true,
+            "unresolved_jobs": [],
+            "unresolved_turns": []
+          }
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-task-unknown-close-01a18831-08e5-71af-95a0-168532c6813d",
+        "process": {
+          "pid": 16488,
+          "state": "exited",
+          "success": false,
+          "code": 1
+        },
+        "parent": {
+          "user": "user staged WIP\n",
+          "untracked": "untracked user WIP\n",
+          "staged": {
+            "exit": 0,
+            "text": "user staged WIP",
+            "error": ""
+          },
+          "head_user": {
+            "exit": 0,
+            "text": "base user content",
+            "error": ""
+          },
+          "index_sha256": "c13a49a826c3a3abd00903ff0282dceb454ab75c8d96f387ec77db63f0b17441",
+          "status": {
+            "exit": 0,
+            "text": "M  user.txt\n?? agent.txt\n?? untracked-user",
+            "error": ""
+          }
+        },
+        "unknown": {
+          "release": {
+            "resource_id": "b7ad803d2fa04a4794ddd1bcb701ad5c",
+            "status": "retained",
+            "workspace": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-task-unknown-close-01a18831-08e5-71af-95a0-168532c6813d\\home\\task-worktrees\\tb7ad803d2fa04a4794dd\\m",
+            "backend": "rcopy",
+            "capture": {
+              "resource_id": "b7ad803d2fa04a4794ddd1bcb701ad5c",
+              "capture_id": "12b2119794a8464e9e6082231e446041",
+              "fingerprint": "d4338ee62dc8ef35e35c24750b335a6e6d04fb21a00ae5c77373215d5443425a",
+              "patch_path": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-task-unknown-close-01a18831-08e5-71af-95a0-168532c6813d\\home\\sessions\\2026-10-29T15-04-38-323Z_01a18831-0cb3-729f-adda-fb637013ce3b\\task-01a18831-0da8-76ce-a3e0-a7e7930c13f5\\b7ad803d2fa04a4794ddd1bcb701ad5c\\12b2119794a8464e9e6082231e446041\\root.patch",
+              "nested_patch_paths": [],
+              "branch": null,
+              "changed": true,
+              "merge_mode": "patch",
+              "durable_receipt": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-task-unknown-close-01a18831-08e5-71af-95a0-168532c6813d\\home\\sessions\\2026-10-29T15-04-38-323Z_01a18831-0cb3-729f-adda-fb637013ce3b\\task-01a18831-0da8-76ce-a3e0-a7e7930c13f5\\b7ad803d2fa04a4794ddd1bcb701ad5c\\12b2119794a8464e9e6082231e446041\\capture.json"
+            },
+            "error": "Controlled actual frontier failure after child-close-before-join; effect outcome requires reconciliation",
+            "durable_receipt": "\\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-lifecycle-task-unknown-close-01a18831-08e5-71af-95a0-168532c6813d\\home\\sessions\\2026-10-29T15-04-38-323Z_01a18831-0cb3-729f-adda-fb637013ce3b\\task-01a18831-0da8-76ce-a3e0-a7e7930c13f5\\b7ad803d2fa04a4794ddd1bcb701ad5c\\release.json"
+          },
+          "cwd_exists": true,
+          "same_channel": true,
+          "teardown": {
+            "actualEOF": {
+              "code": 1
+            },
+            "lifecycleRootSnapshot": {
+              "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+              "expected": {
+                "peer": {
+                  "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                  "id": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                  "generation": 1
+                },
+                "runtime_generation": 1
+              },
+              "peers": [
+                {
+                  "key": {
+                    "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                    "id": "01a18831-1035-7100-9de6-9cd5aa4a3462",
+                    "generation": 2
+                  },
+                  "runtime": {
+                    "peer": {
+                      "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                      "id": "01a18831-1035-7100-9de6-9cd5aa4a3462",
+                      "generation": 2
+                    },
+                    "runtime_generation": 2
+                  },
+                  "settled": false,
+                  "error": "Controlled actual frontier failure after child-close-before-join; effect outcome requires reconciliation; resource: Task resource remains retained: Controlled actual frontier failure after child-close-before-join; effect outcome requires reconciliation"
+                }
+              ],
+              "settled": false,
+              "unresolved_jobs": [],
+              "unresolved_turns": []
+            },
+            "lifecycleRootSnapshotSource": "actual peer_root_shutdown receipt",
+            "libraryLifecycleRootSnapshot": {
+              "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+              "expected": {
+                "peer": {
+                  "root": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                  "id": "01a18831-0cb3-729f-adda-fb637013ce3b",
+                  "generation": 1
+                },
+                "runtime_generation": 1
+              },
+              "peers": [],
+              "settled": true,
+              "unresolved_jobs": [],
+              "unresolved_turns": []
+            }
+          },
+          "effect_phases": [
+            "capture"
+          ]
+        }
+      },
+      {
+        "bank": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\p3-01a18831-a080-741b-aa5d-c4afb2e18a0d",
+        "process": {
+          "success": true,
+          "code": 0,
+          "served": 2,
+          "pid": 79256
+        }
+      }
+    ],
+    "entry_wire_and_journal_checks": [
+      {
+        "bank": "g3-entry-acp-01a18831-486c-771e-abc6-b47a0ff9357e",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-acp-01a18831-486c-771e-abc6-b47a0ff9357e\\home\\sessions\\2026-10-29T15-04-54-631Z_01a18831-4c67-7051-9efc-43f2d53cb4b0.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 2
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-entry-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-4dbe-73d2-bc13-758c796e5a17\",\\n      \"agentId\": \"01a18831-500e"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-acp-01a18831-486c-771e-abc6-b47a0ff9357e\\home\\sessions\\2026-10-29T15-04-54-631Z_01a18831-4c67-7051-9efc-43f2d53cb4b0\\2026-10-29T15-04-55-566Z_01a18831-500e-74d8-8365-97313b897fc1.jsonl",
+            "tools": [
+              "write",
+              "bash"
+            ],
+            "isolated": true,
+            "readOnly": false,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "bash",
+          "write"
+        ],
+        "parent_files": {
+          "entry-proof.txt": "actual entry proof\n",
+          "bash-proof.txt": "native-bash-proof\n"
+        },
+        "release_statuses": [
+          "released"
+        ]
+      },
+      {
+        "bank": "g3-entry-bundled-reviewer-01a18831-6509-712d-96bc-aff170aa179e",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-reviewer-01a18831-6509-712d-96bc-aff170aa179e\\home\\sessions\\2026-10-29T15-05-02-829Z_01a18831-6c6d-7076-a637-93e145a19bdd.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 3
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-bundled-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-6d80-733b-ace2-5ed78b5be39f\",\\n      \"agentId\": \"01a18831-6fda"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-reviewer-01a18831-6509-712d-96bc-aff170aa179e\\home\\sessions\\2026-10-29T15-05-02-829Z_01a18831-6c6d-7076-a637-93e145a19bdd\\2026-10-29T15-05-03-706Z_01a18831-6fda-747c-be40-fad2c2293e9e.jsonl",
+            "tools": [
+              "read",
+              "grep",
+              "glob",
+              "yield"
+            ],
+            "isolated": true,
+            "readOnly": true,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "glob",
+          "grep",
+          "read",
+          "write",
+          "yield"
+        ],
+        "actual_child_tools": [
+          {
+            "name": "read",
+            "error": false
+          },
+          {
+            "name": "write",
+            "error": true
+          },
+          {
+            "name": "yield",
+            "error": false
+          }
+        ]
+      },
+      {
+        "bank": "g3-entry-bundled-scout-01a18831-5760-70de-86c7-cca74a37311a",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-scout-01a18831-5760-70de-86c7-cca74a37311a\\home\\sessions\\2026-10-29T15-04-58-422Z_01a18831-5b36-7615-8095-1d94899ea3c7.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 3
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-bundled-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-5c45-7409-8f47-43e41ed10343\",\\n      \"agentId\": \"01a18831-5f02"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-scout-01a18831-5760-70de-86c7-cca74a37311a\\home\\sessions\\2026-10-29T15-04-58-422Z_01a18831-5b36-7615-8095-1d94899ea3c7\\2026-10-29T15-04-59-394Z_01a18831-5f02-75cf-9d9d-b2ace52d6576.jsonl",
+            "tools": [
+              "read",
+              "grep",
+              "glob",
+              "yield"
+            ],
+            "isolated": true,
+            "readOnly": true,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "glob",
+          "grep",
+          "read",
+          "write",
+          "yield"
+        ],
+        "actual_child_tools": [
+          {
+            "name": "read",
+            "error": false
+          },
+          {
+            "name": "write",
+            "error": true
+          },
+          {
+            "name": "yield",
+            "error": false
+          }
+        ]
+      },
+      {
+        "bank": "g3-entry-bundled-security-reviewer-01a18831-765d-740e-b2eb-e06540a740fd",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-security-reviewer-01a18831-765d-740e-b2eb-e06540a740fd\\home\\sessions\\2026-10-29T15-05-07-245Z_01a18831-7dad-71b1-a947-3202b5b516ac.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 3
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-bundled-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-7ea4-77d5-b97a-6c751684106a\",\\n      \"agentId\": \"01a18831-842b"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-bundled-security-reviewer-01a18831-765d-740e-b2eb-e06540a740fd\\home\\sessions\\2026-10-29T15-05-07-245Z_01a18831-7dad-71b1-a947-3202b5b516ac\\2026-10-29T15-05-08-907Z_01a18831-842b-74d3-8888-d845e03837a6.jsonl",
+            "tools": [
+              "read",
+              "grep",
+              "glob",
+              "yield"
+            ],
+            "isolated": true,
+            "readOnly": true,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "glob",
+          "grep",
+          "read",
+          "write",
+          "yield"
+        ],
+        "actual_child_tools": [
+          {
+            "name": "read",
+            "error": false
+          },
+          {
+            "name": "write",
+            "error": true
+          },
+          {
+            "name": "yield",
+            "error": false
+          }
+        ]
+      },
+      {
+        "bank": "g3-entry-caller-denied-find-01a18831-8e70-7058-924f-d43aaf6eb23d",
+        "journals": 1,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-find-01a18831-8e70-7058-924f-d43aaf6eb23d\\home\\sessions\\2026-10-29T15-05-12-562Z_01a18831-9272-70d4-9229-8e15cf094d86.jsonl",
+        "routes": {
+          "root": 2
+        },
+        "task_results": [
+          {
+            "isError": true,
+            "toolCallId": "g3-caller-denied-task",
+            "taskAccepted": null,
+            "text": "[{'type': 'text', 'text': 'Task tool \"find\" is not exposed by the actual parent'}]"
+          }
+        ],
+        "child_init": [],
+        "denial": {
+          "before_child_effects": true,
+          "error": true,
+          "text": [
+            {
+              "type": "text",
+              "text": "Task tool \"find\" is not exposed by the actual parent"
+            }
+          ]
+        }
+      },
+      {
+        "bank": "g3-entry-caller-denied-lsp-01a18831-9450-7214-9568-d01d6dc0e9fc",
+        "journals": 1,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-lsp-01a18831-9450-7214-9568-d01d6dc0e9fc\\home\\sessions\\2026-10-29T15-05-14-032Z_01a18831-9830-715a-946d-e34f536a52e9.jsonl",
+        "routes": {
+          "root": 2
+        },
+        "task_results": [
+          {
+            "isError": true,
+            "toolCallId": "g3-caller-denied-task",
+            "taskAccepted": null,
+            "text": "[{'type': 'text', 'text': 'Task tool \"lsp\" is not exposed by the actual parent'}]"
+          }
+        ],
+        "child_init": [],
+        "denial": {
+          "before_child_effects": true,
+          "error": true,
+          "text": [
+            {
+              "type": "text",
+              "text": "Task tool \"lsp\" is not exposed by the actual parent"
+            }
+          ]
+        }
+      },
+      {
+        "bank": "g3-entry-caller-denied-write-01a18831-99ff-7342-9714-ca1b60ad7cf8",
+        "journals": 1,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-caller-denied-write-01a18831-99ff-7342-9714-ca1b60ad7cf8\\home\\sessions\\2026-10-29T15-05-15-414Z_01a18831-9d96-72e1-8ac4-c003aaa88996.jsonl",
+        "routes": {
+          "root": 2
+        },
+        "task_results": [
+          {
+            "isError": true,
+            "toolCallId": "g3-caller-denied-task",
+            "taskAccepted": null,
+            "text": "[{'type': 'text', 'text': 'Task tool \"write\" is not exposed by the actual parent'}]"
+          }
+        ],
+        "child_init": [],
+        "denial": {
+          "before_child_effects": true,
+          "error": true,
+          "text": [
+            {
+              "type": "text",
+              "text": "Task tool \"write\" is not exposed by the actual parent"
+            }
+          ]
+        }
+      },
+      {
+        "bank": "g3-entry-line-01a18831-28f7-76a5-9b99-7a8285e65c5c",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-line-01a18831-28f7-76a5-9b99-7a8285e65c5c\\home\\sessions\\2026-10-29T15-04-46-923Z_01a18831-2e4b-7056-ba98-c31a89812ba8.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 2
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-entry-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-3015-70a8-92f0-3f9f64c485ac\",\\n      \"agentId\": \"01a18831-329a"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-line-01a18831-28f7-76a5-9b99-7a8285e65c5c\\home\\sessions\\2026-10-29T15-04-46-923Z_01a18831-2e4b-7056-ba98-c31a89812ba8\\2026-10-29T15-04-48-026Z_01a18831-329a-705a-81d3-e29dc6cd6fe8.jsonl",
+            "tools": [
+              "write",
+              "bash"
+            ],
+            "isolated": true,
+            "readOnly": false,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "bash",
+          "write"
+        ],
+        "parent_files": {
+          "entry-proof.txt": "actual entry proof\n",
+          "bash-proof.txt": "native-bash-proof\n"
+        },
+        "release_statuses": [
+          "released"
+        ]
+      },
+      {
+        "bank": "g3-entry-print-01a18831-1564-756e-9c33-7b20b8152e04",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-print-01a18831-1564-756e-9c33-7b20b8152e04\\home\\sessions\\2026-10-29T15-04-42-328Z_01a18831-1c58-705a-9951-f40b0c02b36b.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 2
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-entry-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-1dcd-7380-8326-1053cbc01ce8\",\\n      \"agentId\": \"01a18831-2084"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-print-01a18831-1564-756e-9c33-7b20b8152e04\\home\\sessions\\2026-10-29T15-04-42-328Z_01a18831-1c58-705a-9951-f40b0c02b36b\\2026-10-29T15-04-43-396Z_01a18831-2084-7674-af1d-a7df1cf1f58a.jsonl",
+            "tools": [
+              "write",
+              "bash"
+            ],
+            "isolated": true,
+            "readOnly": false,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "bash",
+          "write"
+        ],
+        "parent_files": {
+          "entry-proof.txt": "actual entry proof\n",
+          "bash-proof.txt": "native-bash-proof\n"
+        },
+        "release_statuses": [
+          "released"
+        ]
+      },
+      {
+        "bank": "g3-entry-rpc-01a18831-39bc-731d-b1c0-09ce2660ea6b",
+        "journals": 2,
+        "root_journal": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-rpc-01a18831-39bc-731d-b1c0-09ce2660ea6b\\home\\sessions\\2026-10-29T15-04-50-869Z_01a18831-3db5-7330-a247-f33df70cde7b.jsonl",
+        "routes": {
+          "root": 2,
+          "child-a": 2
+        },
+        "task_results": [
+          {
+            "isError": false,
+            "toolCallId": "g3-entry-task",
+            "taskAccepted": false,
+            "text": "[{'type': 'text', 'text': '{\\n  \"results\": [\\n    {\\n      \"taskExecutionId\": \"01a18831-3eb7-7512-8b29-c96d201f3dc3\",\\n      \"agentId\": \"01a18831-4132"
+          }
+        ],
+        "child_init": [
+          {
+            "path": "D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\g3-entry-rpc-01a18831-39bc-731d-b1c0-09ce2660ea6b\\home\\sessions\\2026-10-29T15-04-50-869Z_01a18831-3db5-7330-a247-f33df70cde7b\\2026-10-29T15-04-51-762Z_01a18831-4132-725e-9ce0-56f8c20e8acf.jsonl",
+            "tools": [
+              "write",
+              "bash"
+            ],
+            "isolated": true,
+            "readOnly": false,
+            "restricted": false
+          }
+        ],
+        "actual_child_wire_names": [
+          "bash",
+          "write"
+        ],
+        "parent_files": {
+          "entry-proof.txt": "actual entry proof\n",
+          "bash-proof.txt": "native-bash-proof\n"
+        },
+        "release_statuses": [
+          "released"
+        ]
+      }
+    ],
+    "primitive_git_and_effect_checks": [
+      {
+        "fixture": "task-iso-branch-Gjmvfh",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "fb4a10a747dc4519aaecfe418f0a2368",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ],
+        "parent": {
+          "binary": [
+            0,
+            9,
+            0,
+            8,
+            255
+          ],
+          "untracked": "parent untracked\n",
+          "staged": {
+            "exit": 0,
+            "text": "parent staged"
+          },
+          "stash": {
+            "exit": 0,
+            "text": "On main: unrelated stash"
+          }
+        },
+        "patches": [
+          {
+            "binary": true,
+            "parent_wip_in_patch": false
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-cancel-before-apply-WbGVms",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "caad955fd78e4176b6b924b86a2a15a3",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ],
+        "cancel": {
+          "agent_file_exists": false,
+          "apply_statuses": [
+            "cancelled_before_mutation"
+          ]
+        }
+      },
+      {
+        "fixture": "task-iso-cas-vrp6qG",
+        "panicking": false,
+        "retained_at_exit": 2,
+        "releases": [
+          {
+            "resource": "08c5474e47c7458db25d865b289b70e9",
+            "status": "retained",
+            "error": "public branch CAS conflict; recovery ref refs/ara/task-rescue/08c5474e47c7458db25d865b289b70e9/ace4b6db94664649bf3f47eca42f304b; retained workspace \\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\task-isolation-primitives\\task-iso-cas-vrp6qG\\resources\\t08c5474e47c7458db25d\\m",
+            "workspace_exists": true,
+            "capture": true,
+            "phases": {
+              "capture": 2
+            }
+          },
+          {
+            "resource": "1d48874eeffb4196855c48e679363e6e",
+            "status": "retained",
+            "error": "final capture failed: resource owner marker mismatch",
+            "workspace_exists": true,
+            "capture": false,
+            "phases": {
+              "capture": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-detach-shallow-split-iHuem8",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": []
+      },
+      {
+        "fixture": "task-iso-detach-source-common-symlink-F6wt5g",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": []
+      },
+      {
+        "fixture": "task-iso-detach-sparse-Edh2UU",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": []
+      },
+      {
+        "fixture": "task-iso-detach-unborn-jHNyPN",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": []
+      },
+      {
+        "fixture": "task-iso-empty-pick-bMLPOA",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "11abe678d79646ab986c03ee3e285c27",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-fault-YxbAQZ",
+        "panicking": false,
+        "retained_at_exit": 2,
+        "releases": [
+          {
+            "resource": "3f58041d5ed3444689263d21e746a405",
+            "status": "retained",
+            "error": "could not persist effect admission: 当文件已存在时，无法创建该文件。 (os error 183)",
+            "workspace_exists": true,
+            "capture": false,
+            "phases": {}
+          },
+          {
+            "resource": "d58f5cd13ead4c4b8aa8d5f1d5461011",
+            "status": "retained",
+            "error": "original writer effects could not settle",
+            "workspace_exists": true,
+            "capture": false,
+            "phases": {}
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-history-VT9ERF",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "56015700ed8e44aca701a41d9079e8a5",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-merge-conflict-rTejkb",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "632f47a251994f82af8e1647a9f59269",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-native-stop-denied-JDCv7n",
+        "panicking": false,
+        "retained_at_exit": 1,
+        "releases": [
+          {
+            "resource": "608973421d94480db1f2348994958102",
+            "status": "retained",
+            "error": "backend stop failed; retained in place: unable to remove \\\\?\\D:\\Temp\\ara-task-m1m9-v4\\service-artifacts\\task-isolation-primitives\\task-iso-native-stop-denied-JDCv7n\\resources\\t608973421d94480db1f2\\m: 另一个程序正在使用此文件，进程无法访问。 (os error 32)",
+            "workspace_exists": true,
+            "capture": true,
+            "phases": {
+              "capture": 1,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-nearby-wip-FcQkyN",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "783725e82e194e4eb689a3701200f181",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ],
+        "branch_checks": [
+          {
+            "tip": "c883855375d8e6b42eaeaca132ab52a32d098738",
+            "content": {
+              "exit": 0,
+              "text": "one\ntwo\nthree\nfour\nagent five\nsix\nseven\neight\nnine\nten"
+            },
+            "preimage_types": [
+              {
+                "exit": 0,
+                "text": "blob"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-nearby-wip-OYjZNj",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "c7280f1e76d6408d9a2f8fb122b5ef7a",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "backend_stop_and_remove": 1,
+              "capture": 2
+            }
+          }
+        ],
+        "branch_checks": [
+          {
+            "tip": "f090887e593b9eb891dda7cf8de1cdc1ddd4710a",
+            "content": {
+              "exit": 0,
+              "text": "one\ntwo\nthree\nfour\nagent five\nsix\nseven\neight\nnine\nten"
+            },
+            "preimage_types": [
+              {
+                "exit": 0,
+                "text": "blob"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-nested-NxteYy",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "992baf360558410b8eb6fd61fd23e933",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "backend_stop_and_remove": 1,
+              "capture": 2
+            }
+          }
+        ],
+        "nested": {
+          "head_n": {
+            "exit": 0,
+            "text": "agent nested"
+          },
+          "staged": {
+            "exit": 0,
+            "text": "diff --git a/wip b/wip\nindex df967b9..539c5ea 100644\n--- a/wip\n+++ b/wip\n@@ -1 +1 @@\n-base\n+nested staged"
+          },
+          "stash": {
+            "exit": 128,
+            "text": ""
+          },
+          "apply": [
+            {
+              "applied": true,
+              "warnings": []
+            }
+          ]
+        }
+      },
+      {
+        "fixture": "task-iso-nested-stash-conflict-LbRpAf",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "a9557acacc0c422e94dc265c5cabc1c8",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ],
+        "nested": {
+          "head_n": {
+            "exit": 0,
+            "text": "agent conflicting value"
+          },
+          "staged": {
+            "exit": 0,
+            "text": ""
+          },
+          "stash": {
+            "exit": 0,
+            "text": "ara-isolation-a9557acacc0c422e94dc265c5cabc1c8"
+          },
+          "apply": [
+            {
+              "applied": true,
+              "warnings": [
+                "Nested nested WIP stash b0e3813b105cd215389b95b3a89618721cc973e1 could not be restored; entry preserved"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "fixture": "task-iso-ownership-SiE2iZ",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "585bd16241d84902abe402815ac8d93e",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 1,
+              "backend_stop_and_remove": 1
+            }
+          },
+          {
+            "resource": "dc1381d3704a440bad3d1062f870599d",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 1,
+              "backend_stop_and_remove": 1
+            }
+          },
+          {
+            "resource": "e9d59e3765124c0cbdeaa60c8204c625",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-patch-7V8PH4",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "ba0b7f7265d9473a94e47e690c01a635",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "backend_stop_and_remove": 1,
+              "capture": 2
+            }
+          }
+        ],
+        "parent": {
+          "binary": [
+            0,
+            9,
+            0,
+            8,
+            255
+          ],
+          "untracked": "parent untracked\n",
+          "staged": {
+            "exit": 0,
+            "text": "parent staged"
+          },
+          "stash": {
+            "exit": 0,
+            "text": "On main: unrelated stash"
+          }
+        },
+        "patches": [
+          {
+            "binary": true,
+            "parent_wip_in_patch": false
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-primitives-BX6yGD",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "19983ef7fb344df8a9d090b4aa21bab1",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "backend_stop_and_remove": 1,
+              "capture": 1
+            }
+          },
+          {
+            "resource": "1c525535636944faa62c774e85d8a2c1",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 1,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-publication-seal-PpRcmK",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "37238001651d4454851e20aa0232f74e",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 1,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-warm-unknown-5FdiST",
+        "panicking": false,
+        "retained_at_exit": 1,
+        "releases": [
+          {
+            "resource": "0a9c4fdef3b845c6a432619c0437e418",
+            "status": "retained",
+            "error": "warm actor's original close receipt is unknown",
+            "workspace_exists": true,
+            "capture": false,
+            "phases": {}
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-wip-overlap-I8r0zS",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "320a07d6e9ce4bdbacebe3b2a84d8c9a",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      },
+      {
+        "fixture": "task-iso-wip-overlap-oFntkb",
+        "panicking": false,
+        "retained_at_exit": 0,
+        "releases": [
+          {
+            "resource": "ca4bf13901984f6588b9ac688567b571",
+            "status": "released",
+            "error": null,
+            "workspace_exists": false,
+            "capture": true,
+            "phases": {
+              "capture": 2,
+              "backend_stop_and_remove": 1
+            }
+          }
+        ]
+      }
+    ],
+    "readonly_process_snapshot": {
+      "requested_pids": [
+        32956,
+        40868,
+        36824,
+        59660,
+        79348,
+        70092,
+        61900,
+        39728,
+        13760,
+        74876,
+        15992,
+        52652,
+        71304,
+        14144,
+        16488,
+        79256
+      ],
+      "present_pids": [],
+      "scope": "Read-only current PID query found no recorded runner/ordinary process still present; no process was killed or replayed."
+    }
+  },
+  "module_criteria": [
+    {
+      "id": "M1",
+      "conclusion": "PASS_DECLARED_ENTRY_SCOPE_WITH_GRANT_DEPENDENCY_GAP",
+      "actual_proof": "Actual ordinary print/line/RPC/ACP Task paths, dynamic Native Task schema/grant bank, agent definitions/settings/Graph bank and async Task/Wait execute on the bound images. Parent, Task execution, Peer identity and TaskAccepted=false are visible in raw journals and result receipts.",
+      "gap": "Builtin Task grant false/true and caller find/lsp/write whole-batch denial are executed. MCP/RPC source grant delegation is source-supported only; ACP is a transport entry and its mcpServers=[] does not exercise MCP grants.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M2",
+      "conclusion": "PASS_CURRENT_WINDOWS_REFERENCE_SCOPE",
+      "actual_proof": "Original G1 bank, three applicable ara-iso native functions and all70 VCS functions pass. Physical resources/markers, detached metadata and Windows unavailable-ProjFS-to-rcopy fallback are recorded. Linked private isolation final capture/release now succeeds.",
+      "gap": "Actual rcopy and unavailable/fallback paths are exercised; actual ProjFS mount, Unix/macOS mounts and the explicitly NOT_EXECUTED source-common symlink branch remain open.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M3",
+      "conclusion": "PASS_DECLARED_MIXED_LAYER_SCOPE",
+      "actual_proof": "Native child journals contain isolated=true, actual private cwd and write/Bash effects. Actual primitive captures contain binary Git patches and nested patches, and the physical parent/nested Git objects and staged state match the executed bank assertions.",
+      "gap": "Binary/nested and exact baseline/index assertions are primitive-level evidence; ordinary Host paths are separately exercised. Neither a tool allowlist nor these files proves an OS sandbox.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M4",
+      "conclusion": "PASS_BASELINE_RELATIVE_CAPTURE_SCOPE",
+      "actual_proof": "Both patch/branch Task runs yield durable run-end capture/apply results. Park/warm finalization preserves changed follow-up in the recovery branch/patch without applying it to parent. Unchanged capture IDs/fingerprints are coalesced in executed primitive cases.",
+      "gap": "Final patch is a complete baseline-relative recapture containing agent.txt, bash-proof.txt and warm-only.txt. It is not a warm-only incremental patch; no such claim is accepted.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M5",
+      "conclusion": "PARTIAL",
+      "actual_proof": "Both ordinary lifecycle banks retain exact PeerKey/ResourceId/cwd across park and runtime generation2→3. Raw park snapshots preserve the entire resource state and have no backend-stop effect. Successful owner publication and exact lease separation execute.",
+      "gap": "The clause 'Failures before adoption release or retain actual workspace according to fixed outcome' has no actual lease-created/parent-adoption-rejected fault run. Entry preflight rejection occurs before lease creation and cannot satisfy it.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M6",
+      "conclusion": "PASS_DECLARED_FACTORY_SCOPE",
+      "actual_proof": "Actual warm Native child continues in the same isolated cwd with stable resource owner. The generic cold factory rejects the isolated transcript as history-only while the retained cwd exists and leaves its owner snapshot unchanged. Ordinary non-isolated P3 recovery executes.",
+      "gap": "The generic-factory refusal is directly exercised; an additional fresh-process restart/foreign-root recovery is not claimed. Controlled library NativePort P3 cases are not promoted to actual isolated resource execution.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M7",
+      "conclusion": "PASS_DECLARED_ONCE_ONLY_SCOPE",
+      "actual_proof": "G4 retained admission/lost-observer/concurrent finalize cases execute, with durable terminal release per resource. Both actual lifecycle banks have exactly two capture effect starts and one backend_stop_and_remove start. G5 CAS conflict and marker replacement retain exact workspaces without stop/replay; Unknown root preserves the original close channel.",
+      "gap": "These are the tested lease/generation/effect frontiers, not proof against arbitrary external Git or OS/process interference.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M8",
+      "conclusion": "PARTIAL",
+      "actual_proof": "Actual one-shot entry cleanup, unavailable backend fallback, Windows sharing-denied backend stop, root artifact publication obstruction, ref-CAS conflict/recovery artifacts, nested stash restore warning, cancellation-before-apply and actual Unknown close retention execute. Their durable files remain present.",
+      "gap": "Missing explicit Task-resource execution of terminal startup failure after allocation, genuine kill during live effects, post-lease adoption rejection, deferred Bash/hooks settlement, multi-step branch commit partial failure beyond tested CAS, and nested artifact persistence failure. Plain successful Bash and generic controlled P3 do not close these branches.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "M9",
+      "conclusion": "PASS_DECLARED_PARENT_INTEGRATION_SCOPE",
+      "actual_proof": "Actual primitive before/after raw index assertions execute; physical parent binary bytes, staged text, untracked text and unrelated stash remain correct. Both nearby-WIP branch tips contain agent edits and exclude parent WIP, and their preimage blobs exist in the destination ODB. Cancel/refCAS/conflict/nested warning receipts retain recovery evidence and TaskAccepted=false.",
+      "gap": "Native entry parents preserve actual user/staged/untracked content at final inspection; O1's stronger during-child byte comparison is separately partial. External concurrent stash writers retain the declared TOCTOU limitation.",
+      "full_criterion_accepted": false
+    }
+  ],
+  "observable_criteria": [
+    {
+      "id": "O1",
+      "conclusion": "PARTIAL",
+      "actual_proof": "Ordinary Task startup/isolated cwd/native writes and final parent user/staged/untracked content are proven. G1/G2 primitive banks execute exact HEAD/index preservation assertions.",
+      "gap": "The ordinary Host Bank stores initial_head/initial_index but preserved_wip checks only final user/untracked content and staged text. No before/during-child raw HEAD/index/full-diff snapshot proves byte-equivalence while native child work is held.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O2",
+      "conclusion": "PASS_DECLARED_LAYERED_EFFECT_SCOPE",
+      "actual_proof": "Actual Native write/Bash ToolResults and physical parent outputs plus primitive root/nested binary-safe patch/history artifacts are verified.",
+      "gap": "No real model or Native nested-edit run is inferred from the primitive Git bank.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O3",
+      "conclusion": "PASS_MANUAL_PARK_AND_WARM_SCOPE",
+      "actual_proof": "Raw stdout park receipt, unchanged resource snapshot, null parked runtime, stable PeerKey/ResourceId/cwd and new runtime generation match the physical child journal.",
+      "gap": "Manual park is exercised; a separate real-time TTL wait for the isolated Native owner is not claimed.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O4",
+      "conclusion": "PASS_BASELINE_RELATIVE_RECAPTURE_SCOPE",
+      "actual_proof": "Both modes record a changed final fingerprint, persisted recovery branch and discoverable full patch including warm-only.txt; parent warm-only.txt remains absent.",
+      "gap": "The final patch also includes the initial agent/Bash edits. Exactly-new-delta is accepted only as a changed complete delta relative to the retained baseline, not as a patch containing only warm edits.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O5",
+      "conclusion": "PASS_TESTED_EXACT_RESOURCE_SCOPE",
+      "actual_proof": "G4 concurrent/dropped-observer/old-vs-successor assertions execute; physical release/effect receipts show one stop/removal operation per successful resource. G5 actual CAS/marker protection retains old resources.",
+      "gap": "No universal process-crash/external-writer proof is claimed.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O6",
+      "conclusion": "PASS_GENERIC_COLD_FACTORY_BOUNDARY",
+      "actual_proof": "Actual task_cold_probe returns history-only while cwd exists and before==after owner snapshot; warm owner continuation and non-isolated P3 recovery remain successful.",
+      "gap": "No new-process owner resurrection or complete restart flow is claimed.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O7",
+      "conclusion": "PASS_TESTED_WRITER_AND_EFFECT_FRONTIERS",
+      "actual_proof": "G4 holds actual admission before release, aborts the observer and joins the retained finalizer. Actual controlled close frontier, cancel-before-apply and real Git/FS failures preserve receipts without replay.",
+      "gap": "Deferred Native Bash/hooks resource settlement remains part of the M8/O8 gap.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O8",
+      "conclusion": "PARTIAL",
+      "actual_proof": "One-shot, actual artifact obstruction, native backend sharing failure, refCAS, Unknown close and nested stash-conflict receipts are independently observed.",
+      "gap": "Startup/genuine-kill/post-lease-adoption-rejection and nested artifact persistence errors lack required actual resource-owner execution. Root artifact failure and nested stash conflict do not stand for nested capture-file persistence failure.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O9",
+      "conclusion": "PASS_APPLICABLE_WINDOWS_SCOPE",
+      "actual_proof": "G1 + current-platform native/VCS banks exercise actual fallback, budgets, detached metadata and literal private paths; source-common symlink NOT_EXECUTED marker is retained.",
+      "gap": "Real Linux/macOS mounts and privilege-dependent paths remain open. A missing DLL/fallback is not ProjFS mount acceptance.",
+      "full_criterion_accepted": false
+    },
+    {
+      "id": "O10",
+      "conclusion": "PASS_RUNTIME_SCOPE_PENDING_POINT_AUDIT",
+      "actual_proof": "Actual parent/stash/nested/conflict/cancel/CAS outputs and delivered source/image/artifact bindings are verified; formal Task acceptance remains false.",
+      "gap": "Final independent point audit still decides acceptance. O1 Native during-child byte proof and M8 failure branches remain open.",
+      "full_criterion_accepted": false
+    }
+  ],
+  "original_peer_identity": {
+    "path": "packages/coding-agent/test/registry/agent-lifecycle.test.ts",
+    "line": 442,
+    "title": "AgentLifecycleManager > keeps owned resources through parking and releases them with the agent",
+    "source_body_read": true,
+    "actual_proof": "Both ordinary isolated Task banks show resource ownership intact after actual manual park and one backend_stop_and_remove on final release. Selected controlled library P3 also runs lifecycle writer/revival semantics.",
+    "conclusion": "BOUNDED_PARK_RETENTION_AND_EXACT_RELEASE_SEMANTICS_OBSERVED",
+    "limits": "The upstream fake-timer identity is not promoted into a full Peer/TTL/product acceptance claim. M5 pre-adoption resource failure remains partial."
+  },
+  "grant_boundary": {
+    "source": "crates/ara-cli/src/task_host.rs:95-128 and child_host.rs current grant binding",
+    "builtin_actual": "Native Task source set_granted(false/true) passes in task_contract; actual caller find/lsp/write rejects complete batch with one parent journal, no child init/isolation effects. Bundled agents advertise only read/grep/glob/yield plus synthetic transport WRITE; actual local filesystem WRITE fails.",
+    "MCP_RPC_actual": "NOT_EXECUTED_IN_SELECTED_BANKS",
+    "reason": "Selected ACP startup uses mcpServers=[]; no child request contains an actual MCP or RPC source capability. Source equality checks for native.mcp_grant/rpc_grant are not runtime tests.",
+    "smallest_missing_case": "Use exact current Native MCP/RPC owner bindings in the existing task_host controlled environment: true grant permits the selected capability; false/absent/foreign owner rejects whole batch before a child/lease is created. Preserve the actual WRITE transport-vs-full authority distinction."
+  },
+  "minimum_followup": {
+    "scope": "One additional combined fault/observation bank in the existing task_host target, reusing current Bank/RoutedUpstream/ordinary ara/fixture seams. Preserve all original nine-group function identities and assertions. No new target, full workspace build or unrelated behavior is requested.",
+    "scenarios": [
+      {
+        "id": "O1-native-parent-bytes",
+        "criterion": "O1 proof during ordinary native child work",
+        "need": "Capture parent HEAD, raw index bytes, staged/unstaged binary diffs and untracked bytes before dispatch; hold an actual child after its isolated write and before return/apply; inspect the same parent while work is held; require exact equality and record before/held/after artifacts."
+      },
+      {
+        "id": "M5-post-lease-rejection",
+        "criterion": "M5 content final sentence",
+        "need": "Reach an actual allocated lease before publication/adoption, cause the exact parent adoption/publication rejection through a narrow test-only existing boundary, then inspect released-or-retained resource/effect/ownership receipts. Preflight refusal alone is insufficient."
+      },
+      {
+        "id": "M8-terminal-startup-and-kill",
+        "criterion": "M8 content and O8 proof",
+        "need": "Exercise a terminal startup/preparation failure after allocation and a genuine task kill/cancel while an original tool/effect is live; retain exact original cleanup outcome and ensure no unknown effects are replayed."
+      },
+      {
+        "id": "M8-deferred-Bash-hooks",
+        "criterion": "M8 deferred Bash/hooks settlement clause",
+        "need": "Hold the actual relevant Bash/hook owner settlement and show final capture/removal waits for that same effect, recording raw effect and close receipts; ordinary successful Bash or a primitive permit is insufficient for this clause."
+      },
+      {
+        "id": "M8-partial-branch-nested-persistence",
+        "criterion": "M8 branch commit partial effects/nested persistence and O8 patch/nested failure clauses",
+        "need": "Use bounded real Git/FS frontiers on the actual resource: a partial branch/history publication beyond the already-tested CAS case, and a nested artifact publication failure. Verify preserved patches/branch/workspace, explicit error and no replay. Keep current successful CAS and nested stash-conflict evidence distinct."
+      },
+      {
+        "id": "MCP-RPC-grant-owner",
+        "criterion": "M1 related tool-grant dependency",
+        "need": "Include the smallest real Native owner true/false/absent-grant cases described above, without treating ACP transport as RPC-tool/MCP capability proof."
+      }
+    ],
+    "validation_selection": "After reviewed source/fixture changes, build only ordinary ara and existing affected task_host integration image on the same D cache/profile, run the new combined bank plus directly affected original complete functions. Parent/point reviewer determines the final bounded rerun scope; this EXEC review starts no tests.",
+    "no_assertion_weakening": true
+  },
+  "limits": [
+    "Complete M1-M9 and all original19 criteria are not accepted; M5/M8/O1/O8 remain explicitly partial and MCP/RPC source grant execution remains open.",
+    "Original UPSTREAM52 body_review is not complete. This review does not accept52 source rows or substitute a89-function count for original identities.",
+    "Original global scanner rows47-51 remain unimplemented/unexecuted in this V4; row50 live-lease retention is distinct from the missing global scanner path.",
+    "No-session/in-memory Task explicitly rejects before ownership effects and remains an open full Task surface. Full scheduler/workpool/speculative/UI/advisor/autoload/prewalk/extensions remain outside this batch.",
+    "Actual private ordinary processes and Git/FS effects use controlled loopback models/accounts. No actual public account or real model acceptance is claimed.",
+    "Current Host uses rcopy fallback. Other OS/mount/platform behavior and privilege-dependent symlink branches remain explicitly open.",
+    "Global cargo-deny FAIL33 remains, with no waiver or product/release dependency pass.",
+    "External concurrent Git stash writers remain outside the canonical in-process mutation guarantee.",
+    "Current E HEAD changed externally during ongoing work; authoritative D source and images were rehashed at final read and remain unchanged.",
+    "Old7/111,new-target6,full port marker null and product/release counters do not change from this review."
+  ],
+  "verification_cost": {
+    "new_builds": 0,
+    "new_tests": 0,
+    "new_models": 0,
+    "replays": 0,
+    "source_or_E_index_writes": 0,
+    "readonly_Git_queries": "Only retained disposable fixture repositories; GIT_OPTIONAL_LOCKS=0 and --no-optional-locks.",
+    "written_file": "final-exec-v4/EXEC-REVIEW.json"
+  }
+}
+

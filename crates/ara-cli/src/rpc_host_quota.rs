@@ -51,6 +51,13 @@ impl QuotaControl {
         self.queued_stops > 0 || self.input_closed
     }
 
+    // EOF closes quota/recovery preparation, but an already admitted ordinary
+    // Auto turn is still allowed to finish. Explicit replacement/abort stops
+    // remain reader-visible before the serial Host handles their commands.
+    pub(super) fn queued_stop_requested(&self) -> bool {
+        self.queued_stops > 0
+    }
+
     pub(super) fn begin(control: &Arc<Mutex<Self>>, connection: &CancellationToken) -> QuotaGuard {
         let cancel = connection.child_token();
         let mut state = control.lock().unwrap();
@@ -76,6 +83,50 @@ impl Drop for QuotaGuard {
 }
 
 impl Host {
+    /// Actual counterpart of the existing quota feedback join. The caller
+    /// supplies its already checked Native retry admission; this private
+    /// feedback receipt never supplies that admission itself.
+    pub(super) async fn session_quota_outcome_actual(
+        &self,
+        active: &ActiveRun,
+        message: &AgentMessage,
+        end: RunEnd,
+        persistence_ok: bool,
+        native_replay_admitted: bool,
+    ) -> Result<Option<super::super::session_quota_recovery::SessionQuotaOutcome>> {
+        let values = active
+            .sink
+            .session
+            .projector
+            .actual_values()
+            .context("actual quota feedback has no current Session values")?;
+        let Some(observed) = self.sessions.provider.recorded_session_quota_actual(message, &values)? else {
+            return Ok(None);
+        };
+        let guard = QuotaControl::begin(&self.quota_control, &self.connection);
+        let current = self.agent.raw_messages().await;
+        let has_owner = current.iter().filter(|candidate| candidate.same_record(message)).count() == 1;
+        // Existing projector ownership is keyed by this exact Agent record;
+        // no typed entry or second transcript is required for the match.
+        let has_entry = active.sink.session.projector.entry_id(message).is_some();
+        let allow_recovery = persistence_ok
+            && matches!(end, RunEnd::Error | RunEnd::Aborted)
+            && !guard.cancel.is_cancelled()
+            && !active.cancel.is_cancelled()
+            && Arc::ptr_eq(&active.sink.session, &self.session)
+            && self.retry_policy.enabled()
+            && has_owner
+            && has_entry
+            && native_replay_admitted;
+        let session_id =
+            active.sink.session.header["id"].as_str().context("actual quota feedback Session has no ID")?;
+        self.sessions
+            .provider
+            .recover_session_quota(observed, &self.config.model, session_id, allow_recovery, &guard.cancel)
+            .await
+            .map(Some)
+    }
+
     pub(super) async fn session_quota_outcome(
         &self,
         active: &ActiveRun,
@@ -96,7 +147,7 @@ impl Host {
         {
             class.replay_blocked = false;
         }
-        let messages = self.agent.messages().await;
+        let messages = self.agent.messages().await?;
         let has_entry =
             active.sink.entries.lock().unwrap().iter().any(|(_, candidate)| candidate.as_assistant() == Some(message));
         let attempt = self.retry.as_ref().map_or(0, |retry| retry.attempt).saturating_add(1);

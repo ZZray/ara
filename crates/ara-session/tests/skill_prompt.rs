@@ -37,6 +37,7 @@ fn tool_call(id: &str) -> Message {
         name: "bash".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     message.stop_reason = StopReason::ToolUse;
     Message::Assistant(message)
@@ -83,8 +84,8 @@ fn persists_one_custom_entry_and_reopens_without_skill_file() {
     let reopened = SessionJournal::open(&path).unwrap();
     assert_eq!(reopened.branch()[0].skill_prompt(), Some(prompt.clone()));
     assert!(reopened.branch()[1].skill_prompt().is_none());
-    assert_eq!(reopened.build_context(), vec![expected.clone(), answer]);
-    assert_eq!(reopened.model_context(), reopened.build_context());
+    assert_eq!(reopened.build_context().unwrap(), vec![expected.clone(), answer]);
+    assert_eq!(reopened.model_context().unwrap(), reopened.build_context().unwrap());
     let snapshot = reopened.compaction_source_snapshot().unwrap();
     assert_eq!(snapshot.messages[0].entry_id, id);
     assert_eq!(snapshot.messages[0].message, expected);
@@ -119,7 +120,7 @@ fn block_content_and_images_remain_typed_without_details_in_model() {
     journal.append_skill_prompt(&prompt).unwrap();
     journal.append_message(&assistant("response")).unwrap();
     let reopened = SessionJournal::open(journal.path()).unwrap();
-    assert_eq!(reopened.build_context()[0], model);
+    assert_eq!(reopened.build_context().unwrap()[0], model);
     assert_eq!(reopened.compaction_source_snapshot().unwrap().messages[0].message, model);
 }
 
@@ -170,7 +171,7 @@ fn custom_skill_can_be_first_kept_message_with_real_source_ids() {
     assert_eq!(message.entry_id, kept);
     let CompactedContextItem::Message(message) = &projection.items[2] else { panic!("kept answer") };
     assert_eq!(message.entry_id, kept_answer);
-    assert_eq!(reopened.model_context().len(), 3);
+    assert_eq!(reopened.model_context().unwrap().len(), 3);
     assert_eq!(
         reopened.branch().iter().find(|entry| entry.id == kept).unwrap().raw["details"]["originalInput"],
         "/skill:review target"
@@ -214,9 +215,9 @@ fn generic_and_agent_attributed_custom_entries_project_to_developer() {
         );
         let journal = SessionJournal::open(&path).unwrap();
         assert!(journal.branch()[0].skill_prompt().is_none());
-        assert_eq!(journal.build_context().len(), 2);
+        assert_eq!(journal.build_context().unwrap().len(), 2);
         assert!(
-            matches!(&journal.build_context()[0], Message::Developer(message) if message.content.plain_text() == "x")
+            matches!(&journal.build_context().unwrap()[0], Message::Developer(message) if message.content.plain_text() == "x")
         );
         assert_eq!(journal.undecodable_messages(), 0);
         assert_eq!(journal.compaction_source_snapshot().unwrap().messages[0].entry_id, "custom");
@@ -247,7 +248,7 @@ fn historical_skill_content_does_not_depend_on_details_or_current_metadata() {
     write_journal(&path, &invalid[1..]);
     let journal = SessionJournal::open(&path).unwrap();
     assert!(journal.branch()[0].skill_prompt().is_none());
-    assert!(journal.build_context().iter().all(|message| !matches!(message, Message::User(_))));
+    assert!(journal.build_context().unwrap().iter().all(|message| !matches!(message, Message::User(_))));
     assert_eq!(journal.undecodable_messages(), 1, "the host can warn about the omitted Skill");
     assert!(
         matches!(journal.compaction_source_snapshot(), Err(CompactionSourceError::UnsupportedContextEntry { id, .. }) if id == "custom")

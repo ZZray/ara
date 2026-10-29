@@ -1,16 +1,21 @@
 //! Production facade scenarios: real configuration/SQLite with injected fetch.
 use ara_cli::{
+    auth_storage::{AuthRequestContext, AuthStorage, AuthStorageOptions},
+    auth_storage_registry::AuthStorageRegistryCredentials,
     catalog_discovery::{CatalogContext, DiscoveryError, DiscoveryReply, DiscoveryRequest, DiscoveryTransport},
     credential_store::{AuthCredential, SqliteCredentialStore},
-    daily_model_config::{DailyOverrides, resolve_daily_selection_with_registry},
+    daily_model_config::{
+        DailyApi, DailyAuthSource, DailyOverrides, resolve_daily_fallback_selection,
+        resolve_daily_selection_with_registry,
+    },
     model_cache::{SqliteModelCache, WireModelCacheWriteOptions},
     model_collapse::VariantSpec,
     model_config_file::ModelsConfigFile,
     model_config_values::{
         CommandConfigCache, ConfigCommandExecutor, ConfigCommandFailure, ConfigValueContext, ConfigValueResolver,
-        SystemConfigValueClock, resolve_config_headers,
+        HeaderSource, SystemConfigValueClock, resolve_config_headers,
     },
-    model_identity_wire::text,
+    model_identity_wire::{number, text},
     model_manager::{ModelRefreshStrategy, RawModelValue},
     model_patch::{HeaderSlot, ModelPatch, OrderedProviderSet},
     model_registry::{ModelRegistry, ModelRegistryHost, OpenAiCodexRegistryCredentials, RegistryCredentials},
@@ -20,8 +25,10 @@ use ara_cli::{
     },
     model_registry_loader::{RegistryLoadOptions, startup_model_cache_provider_ids},
     model_registry_runtime::RegistryRuntimeResult,
+    model_route::{CredentialIdentity, ProtocolOptions},
     openai_codex_auth::OpenAiCodexAuth,
     provider_models::{ProviderEnvironment, models_dev_catalog_provider_ids, provider_descriptors},
+    retry_fallback::parse_retry_fallback_selector,
 };
 use ara_rpc::{WireString, WireValue};
 use async_trait::async_trait;
@@ -105,19 +112,546 @@ fn host(root: &Path, fetch: Arc<Fetch>) -> ModelRegistryHost {
     host
 }
 
+fn selected_configuration(kind: &str) -> Value {
+    json!({"providers":{
+        "p":{"api":"openai-completions","baseUrl":"http://runtime.test/v1","auth":"none",
+            "headers":{"X-Selected-Donor":"private-selected-header"},
+            "discovery":{"type":kind,"timeoutMs":25},"models":[{"id":"local-a"},{"id":"local-b"}]},
+        "q":{"api":"openai-completions","baseUrl":"http://other.test/v1","auth":"none",
+            "models":[{"id":"q-model"}]}
+    }})
+}
+
+async fn selected_registry(root: &Path, config: Value, fetch: Arc<Fetch>) -> (ModelRegistry, Arc<RuntimeCredentials>) {
+    let path = root.join("selected-models.json");
+    std::fs::write(&path, config.to_string()).unwrap();
+    let credentials = Arc::new(RuntimeCredentials::default());
+    let mut supplied = host(root, fetch);
+    supplied.credentials = credentials.clone();
+    supplied.clock = Arc::new(|| 1000.0);
+    let registry = ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap();
+    (registry, credentials)
+}
+
+#[tokio::test]
+async fn selected_lm_studio_tracks_load_unload_and_preserves_private_donor_without_auth_resolution() {
+    let temp = tempfile::tempdir().unwrap();
+    let fetch = Arc::new(Fetch::default());
+    *fetch.payload.lock().unwrap() = json!({"data":[{"id":"local-a","state":"loaded",
+        "loaded_context_length":512,"max_context_length":32768,"type":"vlm"}]});
+    let (registry, credentials) =
+        selected_registry(temp.path(), selected_configuration("lm-studio"), fetch.clone()).await;
+    // Compare references in one materialized Native catalogue generation;
+    // lazy find() donors precede ensureFullSnapshot's fresh composition.
+    registry.get_all().unwrap();
+    let selected = registry.find_exact(&"p".into(), &"local-a".into()).unwrap().unwrap();
+    let unrelated = registry.find_exact(&"p".into(), &"local-b".into()).unwrap().unwrap();
+    assert!(registry.has_lazy_runtime_metadata(&"p".into()));
+    assert!(!registry.has_lazy_runtime_metadata(&"q".into()));
+    let loaded = registry.refresh_selected_model_metadata(&selected).await.unwrap();
+    assert_eq!(number(loaded.spec(), "contextWindow"), Some(512.0));
+    assert_eq!(number(loaded.spec(), "maxTokens"), Some(512.0));
+    assert_eq!(loaded.spec().get("input"), Some(&VariantSpec::from_json(&json!(["text", "image"])).value));
+    // HeaderSource wrappers are cloned; their private backing owner survives
+    // the metadata-only patch. A later mutation must be visible through loaded.
+    let donor = selected.headers().as_source().unwrap();
+    match donor {
+        HeaderSource::Config(record) => record.set("X-Donor-Identity", "shared-owner"),
+        HeaderSource::Live(headers) => {
+            headers.set("X-Donor-Identity", "shared-owner");
+        }
+    }
+    let values = ConfigValueResolver::isolated();
+    let env = |_: &str| None;
+    let context = ConfigValueContext { project_dir: temp.path(), environment: &env };
+    assert_eq!(
+        resolve_config_headers(loaded.headers().as_source(), &values, &context).unwrap().get("X-Donor-Identity"),
+        Some("shared-owner")
+    );
+    match donor {
+        HeaderSource::Config(record) => {
+            record.delete("X-Donor-Identity");
+        }
+        HeaderSource::Live(headers) => {
+            headers.delete("X-Donor-Identity");
+        }
+    }
+    assert!(!loaded.spec().to_wire_json().stringify().contains("private-selected-header"));
+    let other = registry.find_exact(&"p".into(), &"local-b".into()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&unrelated, &other));
+    let same = registry.refresh_selected_model_metadata(&loaded).await.unwrap();
+    assert!(Arc::ptr_eq(&loaded, &same), "unchanged metadata returns the current donor");
+    *fetch.payload.lock().unwrap() = json!({"data":[{"id":"local-a","state":"unloaded",
+        "loaded_context_length":256,"max_context_length":32768,"type":"llm"}]});
+    let unloaded = registry.refresh_selected_model_metadata(&same).await.unwrap();
+    assert_eq!(number(unloaded.spec(), "contextWindow"), Some(32768.0));
+    assert_eq!(number(unloaded.spec(), "maxTokens"), Some(512.0), "Native carries the selected model output cap");
+    assert_eq!(unloaded.spec().get("input"), Some(&VariantSpec::from_json(&json!(["text"])).value));
+    assert!(credentials.peeks.lock().unwrap().is_empty());
+    assert_eq!(credentials.resolves.load(Ordering::SeqCst), 0);
+    assert!(
+        fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(url, bearer)| url == "http://runtime.test/api/v0/models" && bearer.is_none())
+    );
+}
+
+#[tokio::test]
+async fn selected_llama_uses_native_endpoints_and_runtime_config_server_training_precedence() {
+    let temp = tempfile::tempdir().unwrap();
+    let fetch = Arc::new(Fetch::default());
+    let (registry, credentials) =
+        selected_registry(temp.path(), selected_configuration("llama.cpp"), fetch.clone()).await;
+    let mut selected = registry.find_exact(&"p".into(), &"local-a".into()).unwrap().unwrap();
+    let rows = [
+        (json!({"id":"local-a","meta":{"n_ctx":4096,"n_ctx_train":65536},"status":{"args":["-c","2048"]}}), 4096.0),
+        (json!({"id":"local-a","meta":{"n_ctx_train":65536},"status":{"preset":"ctx-size = 2048\n"}}), 2048.0),
+        (json!({"id":"local-a","meta":{"n_ctx_train":65536}}), 1024.0),
+    ];
+    for (row, expected) in rows {
+        *fetch.payload.lock().unwrap() = json!({"data":[row],"default_generation_settings":{"n_ctx":1024,"n_predict":-1},
+            "modalities":{"vision":true}});
+        selected = registry.refresh_selected_model_metadata(&selected).await.unwrap();
+        assert_eq!(number(selected.spec(), "contextWindow"), Some(expected));
+        assert_eq!(number(selected.spec(), "maxTokens"), Some(expected));
+        assert_eq!(selected.spec().get("input"), Some(&VariantSpec::from_json(&json!(["text", "image"])).value));
+    }
+    *fetch.payload.lock().unwrap() = json!({"data":[{"id":"local-a","meta":{"n_ctx_train":65536},
+        "architecture":{"input_modalities":[]}}]});
+    selected = registry.refresh_selected_model_metadata(&selected).await.unwrap();
+    assert_eq!(number(selected.spec(), "contextWindow"), Some(65536.0));
+    assert_eq!(number(selected.spec(), "maxTokens"), Some(32768.0));
+    assert_eq!(selected.spec().get("input"), Some(&VariantSpec::from_json(&json!(["text"])).value));
+    assert!(fetch.calls.lock().unwrap().iter().all(|(url, key)| {
+        ["http://runtime.test/models", "http://runtime.test/props"].contains(&url.as_str()) && key.is_none()
+    }));
+    assert_eq!(fetch.calls.lock().unwrap().len(), 8);
+    assert!(credentials.peeks.lock().unwrap().is_empty());
+    assert_eq!(credentials.resolves.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn selected_metadata_keeps_authored_fields_and_reprojects_unprojected_models_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let fetch = Arc::new(Fetch::default());
+    *fetch.payload.lock().unwrap() = json!({"data":[{"id":"local-a","state":"loaded","loaded_context_length":4096,"type":"vlm"},
+        {"id":"local-b","state":"loaded","loaded_context_length":8192,"type":"vlm"}]});
+    let mut config = selected_configuration("lm-studio");
+    config["providers"]["p"]["modelOverrides"] =
+        json!({"local-a":{"contextWindow":1024,"maxTokens":700,"input":["text"]}});
+    config["providers"]["p"]["models"][1] =
+        json!({"id":"local-b","contextWindow":2048,"maxTokens":512,"input":["text"]});
+    let (registry, _) = selected_registry(temp.path(), config, fetch.clone()).await;
+    for (id, window, max) in [("local-a", 1024.0, 700.0), ("local-b", 2048.0, 512.0)] {
+        let current = registry.find_exact(&"p".into(), &id.into()).unwrap().unwrap();
+        let refreshed = registry.refresh_selected_model_metadata(&current).await.unwrap();
+        assert!(Arc::ptr_eq(&current, &refreshed));
+        assert_eq!(number(refreshed.spec(), "contextWindow"), Some(window));
+        assert_eq!(number(refreshed.spec(), "maxTokens"), Some(max));
+        assert_eq!(refreshed.spec().get("input"), Some(&VariantSpec::from_json(&json!(["text"])).value));
+    }
+    // Clear only the test's authored constraints by opening an independent
+    // actual generation; no Registry source or test oracle is mutated.
+    let second = tempfile::tempdir().unwrap();
+    let (registry, _) = selected_registry(second.path(), selected_configuration("lm-studio"), fetch).await;
+    let modifier: Arc<dyn RuntimeModelModifier> =
+        Arc::new(|mut models: Vec<ModifierModel>, _: &OpaqueExtensionHandle| {
+            for model in &mut models {
+                let name = text(&model.fields, "name").unwrap().to_utf8().unwrap();
+                model.fields.set("name", WireValue::String(format!("{name} [selected-modifier]").into()));
+            }
+            Ok(models)
+        });
+    let mut runtime = RuntimeProviderConfig::new(
+        VariantSpec::from_json(&json!({"api":"openai-completions","baseUrl":"http://other.test/v1"})),
+        HeaderSlot::Absent,
+        None,
+    )
+    .unwrap();
+    runtime.oauth = Some(RuntimeOAuthRegistration {
+        handle: runtime_callback("selected-oauth-definition"),
+        modifier: Some(modifier),
+    });
+    runtime.models = Some(vec![runtime_definition("Runtime Q")]);
+    registry.register_provider("q".into(), runtime, None).await.unwrap();
+    let before = registry.find_exact(&"p".into(), &"local-a".into()).unwrap().unwrap();
+    assert_eq!(text(before.spec(), "name"), Some("local-a [selected-modifier]".into()), "registered hook is active");
+    let after = registry.refresh_selected_model_metadata(&before).await.unwrap();
+    assert_eq!(text(after.spec(), "name"), Some("local-a [selected-modifier]".into()));
+    assert_eq!(number(after.spec(), "contextWindow"), Some(4096.0));
+    // The existing modifier pipeline creates a literal isolated header record;
+    // that intentional projection is distinct from the raw donor's ownership.
+    let values = ConfigValueResolver::isolated();
+    let env = |_: &str| None;
+    let context = ConfigValueContext { project_dir: second.path(), environment: &env };
+    assert_eq!(
+        resolve_config_headers(after.headers().as_source(), &values, &context).unwrap().get("X-Selected-Donor"),
+        Some("private-selected-header")
+    );
+    assert!(!after.spec().to_wire_json().stringify().contains("private-selected-header"));
+}
+
+struct SelectedStall;
+#[async_trait]
+impl DiscoveryTransport for SelectedStall {
+    fn context_id(&self) -> u64 {
+        0x551ec7
+    }
+    async fn fetch(&self, _: DiscoveryRequest) -> Result<DiscoveryReply, DiscoveryError> {
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn selected_probe_failure_timeout_and_nonlazy_provider_keep_current_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let fetch = Arc::new(Fetch { refresh: true, ..Default::default() });
+    let mut config = selected_configuration("lm-studio");
+    config["providers"]["p"]["headers"]["Authorization"] = json!("Bearer initial-test-key");
+    let (registry, credentials) = selected_registry(temp.path(), config.clone(), fetch.clone()).await;
+    let selected = registry.find_exact(&"p".into(), &"local-a".into()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&selected, &registry.refresh_selected_model_metadata(&selected).await.unwrap()));
+    assert_eq!(fetch.calls.lock().unwrap().len(), 1, "selected 401 does not rotate or retry credentials");
+    assert!(credentials.peeks.lock().unwrap().is_empty());
+    assert_eq!(credentials.resolves.load(Ordering::SeqCst), 0);
+    let other = registry.find_exact(&"q".into(), &"q-model".into()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&other, &registry.refresh_selected_model_metadata(&other).await.unwrap()));
+    assert_eq!(fetch.calls.lock().unwrap().len(), 1);
+
+    let stall_root = tempfile::tempdir().unwrap();
+    let path = stall_root.path().join("models.json");
+    std::fs::write(&path, config.to_string()).unwrap();
+    let mut supplied = host(stall_root.path(), Arc::new(Fetch::default()));
+    supplied.context = CatalogContext::new(Arc::new(SelectedStall)).unwrap();
+    let stalled = ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap();
+    let current = stalled.find_exact(&"p".into(), &"local-a".into()).unwrap().unwrap();
+    let settled =
+        tokio::time::timeout(std::time::Duration::from_secs(1), stalled.refresh_selected_model_metadata(&current))
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(Arc::ptr_eq(&current, &settled), "Native deadline bounds a transport ignoring its signal");
+}
+
+#[tokio::test]
+async fn explicit_selector_clear_retains_other_models_and_uses_native_thinking_normalization() {
+    let temp = tempfile::tempdir().unwrap();
+    let fetch = Arc::new(Fetch::default());
+    let (registry, _) = selected_registry(temp.path(), selected_configuration("lm-studio"), fetch.clone()).await;
+    for selector in ["p/local-a", "p/local-a:high", "p/local-b", "q/q-model"] {
+        registry.suppress_selector(&selector.into(), 2000.0).unwrap();
+    }
+    registry.clear_suppressed_selector(&"p/local-a".into()).unwrap();
+    assert!(!registry.is_selector_suppressed(&"p/local-a".into()).unwrap());
+    assert!(
+        !registry.is_selector_suppressed(&"p/local-a:high".into()).unwrap(),
+        "Native suppression drops effort suffixes"
+    );
+    for selector in ["p/local-b", "q/q-model"] {
+        assert!(registry.is_selector_suppressed(&selector.into()).unwrap());
+    }
+    registry.clear_suppressed_selector(&"p/local-a".into()).unwrap();
+    registry.suppress_selector(&"p/local-a:high".into(), 2000.0).unwrap();
+    registry.clear_suppressed_selector(&"p/local-a:high".into()).unwrap();
+    assert!(!registry.is_selector_suppressed(&"p/local-a".into()).unwrap());
+    assert!(!registry.is_selector_suppressed(&"p/local-a:high".into()).unwrap());
+    assert!(registry.is_selector_suppressed(&"p/local-b".into()).unwrap());
+    assert!(fetch.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn configured_key_availability_tracks_file_reload_and_runtime_removal() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("models.json");
+    let mut config = json!({"providers":{"q":{"api":"openai-completions","baseUrl":"http://q.test/v1",
+        "apiKey":"synthetic-file-key","models":[{"id":"q-model"}]}}});
+    std::fs::write(&path, config.to_string()).unwrap();
+    let fetch = Arc::new(Fetch::default());
+    let supplied = host(temp.path(), fetch.clone());
+    assert!(!supplied.credentials.has_auth(&"q".into()));
+    let registry = ModelRegistry::open(ModelsConfigFile::new(&path).unwrap(), options(), supplied).await.unwrap();
+    let check = |expected: bool| {
+        let available = registry.get_available_for_providers(&provider_set("q")).unwrap();
+        assert_eq!(!available.is_empty(), expected);
+        let model = registry.find_exact(&"q".into(), &"q-model".into()).unwrap().unwrap();
+        assert_eq!(registry.has_configured_auth(&model), expected);
+    };
+    check(true);
+    config["providers"]["q"].as_object_mut().unwrap().remove("apiKey");
+    // A valid non-keyless configuration without a stored OAuth account.
+    config["providers"]["q"]["auth"] = json!("oauth");
+    std::fs::write(&path, config.to_string()).unwrap();
+    registry.runtime().reapply_model_policies().await.unwrap();
+    check(false);
+    let runtime = RuntimeProviderConfig::new(
+        VariantSpec::from_json(&json!({"api":"openai-completions","baseUrl":"http://q.test/v1"})),
+        HeaderSlot::Absent,
+        Some("synthetic-runtime-key".into()),
+    )
+    .unwrap();
+    registry.register_provider("q".into(), runtime, None).await.unwrap();
+    check(true);
+    registry.unregister_provider("q".into()).await.unwrap();
+    check(false);
+    assert!(fetch.calls.lock().unwrap().is_empty(), "availability does not issue discovery requests");
+}
+
+struct SelectionCredentials {
+    has_auth: bool,
+    key: Option<WireString>,
+    contexts: Mutex<Vec<AuthRequestContext>>,
+}
+#[async_trait]
+impl RegistryCredentials for SelectionCredentials {
+    fn has_auth(&self, _: &WireString) -> bool {
+        self.has_auth
+    }
+    async fn peek_key(&self, _: &WireString) -> RegistryRuntimeResult<Option<WireString>> {
+        Ok(self.key.clone())
+    }
+    async fn resolve_key_with_context(
+        &self,
+        _: &WireString,
+        context: &AuthRequestContext,
+        cancel: &CancellationToken,
+    ) -> RegistryRuntimeResult<Option<WireString>> {
+        assert!(!cancel.is_cancelled());
+        self.contexts.lock().unwrap().push(context.clone());
+        Ok(self.key.clone())
+    }
+}
+struct EmptySelectionKey(AtomicUsize);
+impl ConfigCommandExecutor for EmptySelectionKey {
+    fn directory_is_enterable(&self, _: &Path) -> bool {
+        true
+    }
+    fn execute(&self, _: &str, _: &Path) -> Result<String, ConfigCommandFailure> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(String::new())
+    }
+}
+
+#[tokio::test]
+async fn selection_key_cascade_stops_empty_commands_and_respects_keyless_auth_presence() {
+    for (auth, command, has_auth, key, expected) in [
+        ("apiKey", true, true, Some("lower-key"), None),
+        ("none", false, false, None, Some("N/A")),
+        ("none", false, true, Some("actual-key"), Some("actual-key")),
+        ("none", false, true, None, None),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("models.json");
+        let mut config = json!({"providers":{"q":{"api":"openai-completions","baseUrl":"http://q.test/v1",
+            "auth":auth,"models":[{"id":"q-model"}]}}});
+        if command {
+            config["providers"]["q"]["apiKey"] = json!("!empty-selection-key");
+        }
+        std::fs::write(&path, config.to_string()).unwrap();
+        let credentials =
+            Arc::new(SelectionCredentials { has_auth, key: key.map(Into::into), contexts: Mutex::new(Vec::new()) });
+        let commands = Arc::new(EmptySelectionKey(AtomicUsize::new(0)));
+        let mut supplied = host(temp.path(), Arc::new(Fetch::default()));
+        supplied.credentials = credentials.clone();
+        supplied.config_values = Arc::new(ConfigValueResolver::with_ports(
+            Arc::new(CommandConfigCache::default()),
+            Arc::new(SystemConfigValueClock),
+            commands.clone(),
+        ));
+        let registry = ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap();
+        let model = registry.find_exact(&"q".into(), &"q-model".into()).unwrap().unwrap();
+        assert_eq!(
+            registry.get_api_key(&model, Some("selection-session"), &CancellationToken::new()).await.unwrap(),
+            expected.map(Into::into)
+        );
+        assert_eq!(credentials.contexts.lock().unwrap().len(), usize::from(!command && has_auth));
+        assert_eq!(commands.0.load(Ordering::SeqCst), usize::from(command), "failed command cache prevents replay");
+    }
+}
+
+#[tokio::test]
+async fn selection_provider_and_model_keys_preserve_distinct_actual_contexts_and_cancel_before_resolution() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("models.json");
+    std::fs::write(
+        &path,
+        json!({"providers":{"q":{"api":"openai-completions","baseUrl":"http://q.test/v3",
+        "auth":"oauth","models":[{"id":"q-model"}]}}})
+        .to_string(),
+    )
+    .unwrap();
+    let credentials = Arc::new(SelectionCredentials {
+        has_auth: true,
+        key: Some("context-key".into()),
+        contexts: Mutex::new(Vec::new()),
+    });
+    let mut supplied = host(temp.path(), Arc::new(Fetch::default()));
+    supplied.credentials = credentials.clone();
+    let registry = ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap();
+    let model = registry.find_exact(&"q".into(), &"q-model".into()).unwrap().unwrap();
+    let cancel = CancellationToken::new();
+    registry.get_api_key_for_provider(&"q".into(), Some("same-session"), &cancel).await.unwrap();
+    registry.get_api_key(&model, Some("same-session"), &cancel).await.unwrap();
+    cancel.cancel();
+    assert!(registry.get_api_key(&model, Some("same-session"), &cancel).await.is_err());
+    let contexts = credentials.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[0].session_id.as_deref(), Some("same-session"));
+    assert!(contexts[0].model_id.is_none() && contexts[0].base_url.is_none());
+    assert_eq!(contexts[1].session_id.as_deref(), Some("same-session"));
+    assert_eq!(contexts[1].model_id.as_deref(), Some("q-model"));
+    assert_eq!(contexts[1].base_url.as_deref(), Some("http://q.test/v3"));
+    assert!(contexts.iter().all(|context| !context.force_refresh && context.environment_key.is_none()));
+}
+
+#[tokio::test]
+async fn selection_real_auth_storage_runtime_precedes_installed_config_and_contextual_keys_avoid_discovery_leases() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(Mutex::new(SqliteCredentialStore::open(temp.path().join("auth.sqlite")).unwrap()));
+    store
+        .lock()
+        .unwrap()
+        .replace_auth_credentials_for_provider("r", &[AuthCredential::api_key("stored-r-key")])
+        .unwrap();
+    let storage = AuthStorage::new(store, None, AuthStorageOptions::default()).unwrap();
+    storage.set_runtime_api_key("q", "runtime-q-key".into()).unwrap();
+    storage.set_runtime_api_key("s", "runtime-s-key".into()).unwrap();
+    let credentials = Arc::new(AuthStorageRegistryCredentials::new(storage.clone(), CancellationToken::new()));
+    let path = temp.path().join("models.json");
+    std::fs::write(
+        &path,
+        json!({"providers":{
+            "q":{"api":"openai-completions","baseUrl":"http://q.test/v1","apiKey":"installed-q-key",
+                "models":[{"id":"q-model"}]},
+            "r":{"api":"openai-completions","baseUrl":"http://r.test/v1","auth":"oauth",
+                "models":[{"id":"r-model"}]},
+            "s":{"api":"openai-completions","baseUrl":"http://s.test/v1","apiKey":"!empty-selection-key",
+                "models":[{"id":"s-model"}]}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let mut supplied = host(temp.path(), Arc::new(Fetch::default()));
+    supplied.credentials = credentials.clone();
+    supplied.config_values = Arc::new(ConfigValueResolver::with_ports(
+        Arc::new(CommandConfigCache::default()),
+        Arc::new(SystemConfigValueClock),
+        Arc::new(EmptySelectionKey(AtomicUsize::new(0))),
+    ));
+    let registry = ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap();
+    let cancel = CancellationToken::new();
+    assert!(
+        registry.get_api_key_for_provider(&"s".into(), None, &cancel).await.unwrap().is_none(),
+        "configured command failure stops the cascade even with a real runtime key"
+    );
+    for (runtime, expected) in
+        [(Some("runtime-q-key"), "runtime-q-key"), (None, "installed-q-key"), (Some(""), "installed-q-key")]
+    {
+        match runtime {
+            Some(key) => storage.set_runtime_api_key("q", key.into()).unwrap(),
+            None => storage.remove_runtime_api_key("q").unwrap(),
+        }
+        assert_eq!(
+            registry.get_api_key_for_provider(&"q".into(), Some("actual-storage-session"), &cancel).await.unwrap(),
+            Some(expected.into())
+        );
+    }
+    let model = registry.find_exact(&"r".into(), &"r-model".into()).unwrap().unwrap();
+    assert_eq!(
+        registry.get_api_key(&model, Some("actual-storage-session"), &cancel).await.unwrap(),
+        Some("stored-r-key".into())
+    );
+    assert!(
+        credentials.refresh_rejected_key(&"r".into(), &"stored-r-key".into()).await.unwrap().is_none(),
+        "selection resolution must not populate discovery rejected-bearer receipts"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn selection_cancellation_waits_for_started_config_command_without_replay() {
+    struct HeldKey {
+        calls: AtomicUsize,
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl ConfigCommandExecutor for HeldKey {
+        fn directory_is_enterable(&self, _: &Path) -> bool {
+            true
+        }
+        fn execute(&self, _: &str, _: &Path) -> Result<String, ConfigCommandFailure> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Ok("initial-key".into());
+            }
+            self.started.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok("settled-key".into())
+        }
+    }
+    for stop_host in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("models.json");
+        std::fs::write(
+            &path,
+            json!({"providers":{"q":{"api":"openai-completions","baseUrl":"http://q.test/v1",
+            "apiKey":"!held-key","models":[{"id":"q-model"}]}}})
+            .to_string(),
+        )
+        .unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let commands =
+            Arc::new(HeldKey { calls: AtomicUsize::new(0), started: started_tx, release: Mutex::new(release_rx) });
+        let values = Arc::new(ConfigValueResolver::with_ports(
+            Arc::new(CommandConfigCache::default()),
+            Arc::new(SystemConfigValueClock),
+            commands.clone(),
+        ));
+        let mut supplied = host(temp.path(), Arc::new(Fetch::default()));
+        supplied.config_values = values.clone();
+        let host_cancel = supplied.cancel.clone();
+        let registry =
+            Arc::new(ModelRegistry::open(ModelsConfigFile::new(path).unwrap(), options(), supplied).await.unwrap());
+        values.invalidate_command_config(Some("!held-key"));
+        let cancel = CancellationToken::new();
+        let caller = cancel.clone();
+        let selected = registry.clone();
+        let request = tokio::spawn(async move { selected.get_api_key_for_provider(&"q".into(), None, &caller).await });
+        started_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        if stop_host {
+            host_cancel.cancel()
+        } else {
+            cancel.cancel()
+        }
+        let premature = request.is_finished();
+        release_tx.send(()).unwrap();
+        assert!(!premature, "started synchronous key command must settle before cancellation returns");
+        assert!(request.await.unwrap().is_err());
+        if !stop_host {
+            assert_eq!(
+                registry.get_api_key_for_provider(&"q".into(), None, &CancellationToken::new()).await.unwrap(),
+                Some("settled-key".into())
+            );
+        }
+        assert_eq!(commands.calls.load(Ordering::SeqCst), 2, "load plus one settled command, no replay");
+    }
+}
+
 #[tokio::test]
 async fn production_cache_discovery_identity_reload_and_daily_projection() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("models.json");
-    std::fs::write(&path, configuration(false, "Q before").to_string()).unwrap();
+    let mut authored = configuration(false, "Q before");
+    authored["providers"]["q"]["headers"] = json!({"X-Fallback-Donor":"live-registry-header"});
+    std::fs::write(&path, authored.to_string()).unwrap();
     let fetch = Arc::new(Fetch {
         payload: Mutex::new(json!({"data":[{"id":"p-model","context_length":64000}]})),
         ..Default::default()
     });
-    let registry =
-        ModelRegistry::open(ModelsConfigFile::new(&path).unwrap(), options(), host(temp.path(), fetch.clone()))
-            .await
-            .unwrap();
+    let supplied = host(temp.path(), fetch.clone());
+    let values = supplied.config_values.clone();
+    let registry = ModelRegistry::open(ModelsConfigFile::new(&path).unwrap(), options(), supplied).await.unwrap();
     assert!(fetch.calls.lock().unwrap().is_empty(), "constructor must not perform discovery");
     let q = registry.find_exact(&"q".into(), &"q-model".into()).unwrap().unwrap();
     assert!(registry.find_exact(&"p".into(), &"p-model".into()).unwrap().is_none());
@@ -135,6 +669,66 @@ async fn production_cache_discovery_identity_reload_and_daily_projection() {
     .unwrap();
     assert_eq!(selection.model.context_window, Some(64000.0));
     assert_eq!(selection.model.base_url, "http://catalog.test/v3/compat");
+    // This discovered model is absent from the static authored catalog.
+    let selector = parse_retry_fallback_selector("p/p-model", None).unwrap();
+    let launch_environment = |name: &str| match name {
+        "ARA_MODEL" | "ARA_TEST_MODEL_ID" => Some("q-model".into()),
+        "ARA_PROVIDER" => Some("q".into()),
+        "ARA_BASE_URL" | "ARA_TEST_BASE_URL" | "OPENROUTER_BASE_URL" => Some("http://old.test/v1".into()),
+        "ARA_API_KEY" | "ARA_TEST_API_KEY" => Some("old-ambient-key".into()),
+        "ARA_TOKENIZER" => Some("unsupported-old-tokenizer".into()),
+        _ => None,
+    };
+    let fallback =
+        resolve_daily_fallback_selection(config.as_ref(), &selector, &launch_environment, Some(&registry)).unwrap();
+    assert_eq!(fallback.model.provider, "p");
+    assert_eq!(fallback.model.id, "p-model");
+    assert_eq!(fallback.model.base_url, "http://catalog.test/v3/compat");
+    assert_eq!(fallback.model.context_window, Some(64000.0));
+    assert_eq!(fallback.api, DailyApi::OpenAiCompletions);
+    assert!(matches!(&fallback.protocol, ProtocolOptions::Completions(_)));
+    assert!(!fallback.host_default_auth);
+    let current = fallback.catalog_model.as_ref().unwrap();
+    assert!(Arc::ptr_eq(current, &p));
+    // Even an empty opaque native header source retains its configured owner;
+    // keyless authority describes the base lease, not the resolver variant.
+    let DailyAuthSource::Configured(auth) = &fallback.auth_source else {
+        panic!("discovered candidate's private resolver")
+    };
+    assert_eq!(auth.base.identity(), &CredentialIdentity::Keyless);
+    assert!(auth.composed_headers.is_some());
+    // Keep the discovered model's headerless cache contract while checking
+    // the configured model's opaque donor in this same Registry generation.
+    let header_selector = parse_retry_fallback_selector("q/q-model", None).unwrap();
+    let header_fallback =
+        resolve_daily_fallback_selection(config.as_ref(), &header_selector, &launch_environment, Some(&registry))
+            .unwrap();
+    let header_current = header_fallback.catalog_model.as_ref().unwrap();
+    assert!(Arc::ptr_eq(header_current, &q));
+    let donor = q.headers().as_source().unwrap();
+    assert!(std::ptr::eq(header_current.headers().as_source().unwrap(), donor));
+    let DailyAuthSource::Configured(auth) = &header_fallback.auth_source else {
+        panic!("candidate's private header donor")
+    };
+    assert_eq!(auth.base.identity(), &CredentialIdentity::Keyless);
+    let no_environment = |_: &str| None;
+    let header_context = ConfigValueContext { project_dir: temp.path(), environment: &no_environment };
+    let composed = auth.composed_headers.as_ref().unwrap().as_source();
+    assert_eq!(
+        resolve_config_headers(composed, &values, &header_context).unwrap().get("X-Fallback-Donor"),
+        Some("live-registry-header")
+    );
+    // A later source update must remain visible through the cloned auth slot.
+    match donor {
+        HeaderSource::Config(record) => record.set("X-Fallback-Donor", "updated-registry-header"),
+        HeaderSource::Live(headers) => {
+            headers.set("X-Fallback-Donor", "updated-registry-header");
+        }
+    }
+    assert_eq!(
+        resolve_config_headers(composed, &values, &header_context).unwrap().get("X-Fallback-Donor"),
+        Some("updated-registry-header")
+    );
     assert_eq!(fetch.calls.lock().unwrap().len(), 1);
     // Native provider lookup returns the whole catalog after get_all warms it;
     // header attribution still requires an exact provider match and truthy URL.

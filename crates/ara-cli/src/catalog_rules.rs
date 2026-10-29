@@ -2,6 +2,8 @@
 //! Source: packages/catalog/src/compat/{revision,cascade,taxonomy}.ts at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d. MIT, Copyright (c) 2025 Mario
 //! Zechner, 2025-2026 Can Bölük, 2026 Stencil Labs, Inc.; LICENSE.omp-catalog.
+//! Pattern-only override fallback: compat/taxonomy.ts:209-330 at
+//! b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c. Global rule data stays fixed.
 //! This module consumes the complete compiled tree without recompiling it.
 //! It does not perform the separate collapse.ts model-list transformation.
 
@@ -23,7 +25,9 @@ impl Error for CatalogPolicyError {}
 
 pub fn compiled_rules() -> &'static Value {
     static RULES: OnceLock<Value> = OnceLock::new();
-    RULES.get_or_init(|| serde_json::from_slice(RULES_JSON).expect("pinned compiled rules are valid JSON"))
+    RULES.get_or_init(|| {
+        serde_json::from_slice(RULES_JSON).expect("pinned compiled rules are valid JSON")
+    })
 }
 
 pub type Revision = [u8; 3];
@@ -88,9 +92,13 @@ pub fn parse_revision_prefix(value: &str) -> Option<Revision> {
         } else {
             parse_component(&value[start..index])
         };
-        let Some(component) = component else { return (count > 0).then_some(out) };
+        let Some(component) = component else {
+            return (count > 0).then_some(out);
+        };
         out[count] = component;
-        if !matches!(bytes.get(index), Some(b'.' | b'-')) || !bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+        if !matches!(bytes.get(index), Some(b'.' | b'-'))
+            || !bytes.get(index + 1).is_some_and(u8::is_ascii_digit)
+        {
             break;
         }
         index += 1;
@@ -143,7 +151,10 @@ pub fn parse_revision_constraint(expression: &str) -> Option<Vec<RevisionTerm>> 
         if operand.contains('-') {
             return None;
         }
-        terms.push(RevisionTerm { op, revision: parse_revision(operand)? });
+        terms.push(RevisionTerm {
+            op,
+            revision: parse_revision(operand)?,
+        });
     }
     (!terms.is_empty()).then_some(terms)
 }
@@ -154,12 +165,16 @@ pub fn glob_match(pattern: &str, value: &str) -> bool {
     if segments.len() == 1 {
         return value == pattern;
     }
-    let Some(mut remainder) = value.strip_prefix(segments[0]) else { return false };
+    let Some(mut remainder) = value.strip_prefix(segments[0]) else {
+        return false;
+    };
     for segment in &segments[1..segments.len() - 1] {
         if segment.is_empty() {
             continue;
         }
-        let Some(found) = remainder.find(segment) else { return false };
+        let Some(found) = remainder.find(segment) else {
+            return false;
+        };
         remainder = &remainder[found + segment.len()..];
     }
     remainder.ends_with(segments.last().expect("nonempty segments"))
@@ -197,8 +212,9 @@ struct IndexedRule {
 }
 
 fn build_rule_index(cascade: &Value) -> Result<Vec<IndexedRule>, CatalogPolicyError> {
-    let rules: Vec<CompiledRule> = serde_json::from_value(cascade.get("rules").cloned().unwrap_or(Value::Null))
-        .map_err(|e| CatalogPolicyError(format!("invalid compiled cascade: {e}")))?;
+    let rules: Vec<CompiledRule> =
+        serde_json::from_value(cascade.get("rules").cloned().unwrap_or(Value::Null))
+            .map_err(|e| CatalogPolicyError(format!("invalid compiled cascade: {e}")))?;
     rules
         .into_iter()
         .map(|compiled| {
@@ -210,9 +226,15 @@ fn build_rule_index(cascade: &Value) -> Result<Vec<IndexedRule>, CatalogPolicyEr
                         .iter()
                         .map(|term| {
                             let revision = parse_revision(&term.revision).ok_or_else(|| {
-                                CatalogPolicyError(format!("invalid compiled revision term in {}", compiled.source))
+                                CatalogPolicyError(format!(
+                                    "invalid compiled revision term in {}",
+                                    compiled.source
+                                ))
                             })?;
-                            Ok(RevisionTerm { op: term.op, revision })
+                            Ok(RevisionTerm {
+                                op: term.op,
+                                revision,
+                            })
                         })
                         .collect::<Result<Vec<_>, CatalogPolicyError>>()
                 })
@@ -228,8 +250,17 @@ fn build_rule_index(cascade: &Value) -> Result<Vec<IndexedRule>, CatalogPolicyEr
             .filter(|v| *v)
             .count() as u8;
             let priority = compiled.priority.unwrap_or(0.0);
-            let exact_efforts = compiled.thinking.as_ref().is_some_and(|thinking| thinking.contains_key("efforts"));
-            Ok(IndexedRule { compiled, revision, dimensions, priority, exact_efforts })
+            let exact_efforts = compiled
+                .thinking
+                .as_ref()
+                .is_some_and(|thinking| thinking.contains_key("efforts"));
+            Ok(IndexedRule {
+                compiled,
+                revision,
+                dimensions,
+                priority,
+                exact_efforts,
+            })
         })
         .collect()
 }
@@ -245,11 +276,20 @@ struct ResolveTarget {
 }
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 struct Rank(u8, u8, f64);
-fn rank_rule(rule: &IndexedRule, target: &ResolveTarget, revision: Option<Revision>, lower: &str) -> Option<Rank> {
+fn rank_rule(
+    rule: &IndexedRule,
+    target: &ResolveTarget,
+    revision: Option<Revision>,
+    lower: &str,
+) -> Option<Rank> {
     let c = &rule.compiled;
     if c.class.as_ref().is_some_and(|class| class != &target.class)
-        || c.providers.as_ref().is_some_and(|providers| !providers.contains(&target.provider))
-        || c.family.as_ref().is_some_and(|family| Some(family) != target.family.as_ref())
+        || c.providers
+            .as_ref()
+            .is_some_and(|providers| !providers.contains(&target.provider))
+        || c.family
+            .as_ref()
+            .is_some_and(|family| Some(family) != target.family.as_ref())
     {
         return None;
     }
@@ -265,11 +305,16 @@ fn rank_rule(rule: &IndexedRule, target: &ResolveTarget, revision: Option<Revisi
             let matched = match selector.kind.as_str() {
                 "exact" => selector.value == target.model,
                 "glob" => glob_match(&selector.value, lower),
-                "token" => lower.split(|c: char| !c.is_ascii_alphanumeric()).any(|token| token == selector.value),
+                "token" => lower
+                    .split(|c: char| !c.is_ascii_alphanumeric())
+                    .any(|token| token == selector.value),
                 _ => false,
             };
             if matched {
-                best = Some(best.unwrap_or(0).max(if selector.kind == "exact" { 2 } else { 1 }));
+                best = Some(
+                    best.unwrap_or(0)
+                        .max(if selector.kind == "exact" { 2 } else { 1 }),
+                );
             }
         }
         exactness = best?;
@@ -306,17 +351,31 @@ fn contest<'a>(
     }
     Ok(())
 }
-fn collect(winners: Winners<'_>, pick: impl Fn(&CompiledRule) -> &Option<Map<String, Value>>) -> Value {
+fn collect(
+    winners: Winners<'_>,
+    pick: impl Fn(&CompiledRule) -> &Option<Map<String, Value>>,
+) -> Value {
     let mut out = Map::new();
     for (axis, _, rule) in winners {
-        out.insert(axis.clone(), pick(&rule.compiled).as_ref().unwrap()[&axis].clone());
+        out.insert(
+            axis.clone(),
+            pick(&rule.compiled).as_ref().unwrap()[&axis].clone(),
+        );
     }
-    Value::Object(ara_prompt::js::entries(&out).into_iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    Value::Object(
+        ara_prompt::js::entries(&out)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
 }
 
 pub fn resolve_cascade(target: &Value) -> Result<Value, CatalogPolicyError> {
     static INDEX: OnceLock<Result<Vec<IndexedRule>, CatalogPolicyError>> = OnceLock::new();
-    let index = INDEX.get_or_init(|| build_rule_index(&compiled_rules()["cascade"])).as_ref().map_err(Clone::clone)?;
+    let index = INDEX
+        .get_or_init(|| build_rule_index(&compiled_rules()["cascade"]))
+        .as_ref()
+        .map_err(Clone::clone)?;
     resolve_over_index(index, target)
 }
 pub fn resolve_cascade_rules(cascade: &Value, target: &Value) -> Result<Value, CatalogPolicyError> {
@@ -329,17 +388,32 @@ fn resolve_over_index(index: &[IndexedRule], target: &Value) -> Result<Value, Ca
     let revision = target.revision.as_deref().and_then(parse_revision);
     let reasoning = target.reasoning
         || index.iter().any(|rule| {
-            rule.exact_efforts && rank_rule(rule, &target, revision, &lower).is_some_and(|rank| rank.0 == 2)
+            rule.exact_efforts
+                && rank_rule(rule, &target, revision, &lower).is_some_and(|rank| rank.0 == 2)
         });
     let mut wire = Vec::new();
     let mut thinking = Vec::new();
     let mut catalog = Vec::new();
     for rule in index {
-        let Some(rank) = rank_rule(rule, &target, revision, &lower) else { continue };
+        let Some(rank) = rank_rule(rule, &target, revision, &lower) else {
+            continue;
+        };
         contest(&mut wire, rule.compiled.wire.as_ref(), rank, rule, &target)?;
-        contest(&mut catalog, rule.compiled.catalog.as_ref(), rank, rule, &target)?;
+        contest(
+            &mut catalog,
+            rule.compiled.catalog.as_ref(),
+            rank,
+            rule,
+            &target,
+        )?;
         if reasoning {
-            contest(&mut thinking, rule.compiled.thinking.as_ref(), rank, rule, &target)?;
+            contest(
+                &mut thinking,
+                rule.compiled.thinking.as_ref(),
+                rank,
+                rule,
+                &target,
+            )?;
         }
     }
     Ok(
@@ -370,15 +444,18 @@ fn js_len(s: &str) -> usize {
 }
 fn js_slice(s: &str, start: usize, end: usize) -> String {
     let units: Vec<_> = s.encode_utf16().collect();
-    String::from_utf16(&units[start.min(units.len())..end.min(units.len()).max(start.min(units.len()))])
-        .expect("fixed ASCII suffix slicing preserves UTF-16 scalar boundaries")
+    String::from_utf16(
+        &units[start.min(units.len())..end.min(units.len()).max(start.min(units.len()))],
+    )
+    .expect("fixed ASCII suffix slicing preserves UTF-16 scalar boundaries")
 }
 // A suffix probe can start inside a surrogate pair even when no suffix
 // matches. JS retains that lone surrogate, which cannot equal the declared
 // ASCII suffix. Decode only for comparison, never replace malformed units.
 fn suffix_matches_at(model: &str, split: usize, suffix: &str) -> bool {
     let units: Vec<_> = model.encode_utf16().collect();
-    String::from_utf16(&units[split.min(units.len())..]).is_ok_and(|tail| tail.to_lowercase() == suffix)
+    String::from_utf16(&units[split.min(units.len())..])
+        .is_ok_and(|tail| tail.to_lowercase() == suffix)
 }
 fn bounded_match(value: &str, token: &str) -> bool {
     value == token
@@ -397,7 +474,13 @@ fn matcher_matches(matcher: &Value, lower: &str, bare: &str) -> bool {
             lower
                 .split(|c| c == '/' || (bounded && matches!(c, '.' | ':')))
                 .filter(|p| !p.is_empty())
-                .any(|p| if bounded { bounded_match(p, token) } else { p == token })
+                .any(|p| {
+                    if bounded {
+                        bounded_match(p, token)
+                    } else {
+                        p == token
+                    }
+                })
         }
         "prefix" => bare.starts_with(token),
         "glob" => glob_match(token, bare),
@@ -417,7 +500,9 @@ fn rank_families<'a>(class: &'a Value, subject: &str) -> FamilyRanking<'a> {
         }
         let rank = (
             family["priority"].as_f64().expect("compiled priority"),
-            glob.encode_utf16().filter(|c| *c != u16::from(b'*')).count(),
+            glob.encode_utf16()
+                .filter(|c| *c != u16::from(b'*'))
+                .count(),
         );
         let id = string(&family["id"]);
         if let Some((held_rank, held_id)) = winner {
@@ -435,7 +520,9 @@ fn rank_families<'a>(class: &'a Value, subject: &str) -> FamilyRanking<'a> {
     (winner, tied)
 }
 fn ambiguity(model: &str, first: &str, second: &str, kind: &str) -> CatalogPolicyError {
-    CatalogPolicyError(format!("ambiguous {kind} for `{model}`: `{first}` and `{second}` tie"))
+    CatalogPolicyError(format!(
+        "ambiguous {kind} for `{model}`: `{first}` and `{second}` tie"
+    ))
 }
 fn classify_family(
     class: &Value,
@@ -444,18 +531,26 @@ fn classify_family(
     lenient: bool,
 ) -> Result<Option<String>, CatalogPolicyError> {
     let (winner, tied) = rank_families(class, bare);
-    let Some((first, second)) = tied else { return Ok(winner.map(|(_, id)| id.to_owned())) };
+    let Some((first, second)) = tied else {
+        return Ok(winner.map(|(_, id)| id.to_owned()));
+    };
     if let Some(separator) = bare.find(['.', ':'])
         && separator > 0
         && separator < bare.len() - 1
-        && array(&class["matchers"]).iter().any(|m| m["token"].as_str() == Some(&bare[..separator]))
+        && array(&class["matchers"])
+            .iter()
+            .any(|m| m["token"].as_str() == Some(&bare[..separator]))
     {
         let (winner, tied) = rank_families(class, &bare[separator + 1..]);
         if tied.is_none() && winner.is_some() {
             return Ok(winner.map(|(_, id)| id.to_owned()));
         }
     }
-    if lenient { Ok(None) } else { Err(ambiguity(model, first, second, "family")) }
+    if lenient {
+        Ok(None)
+    } else {
+        Err(ambiguity(model, first, second, "family"))
+    }
 }
 fn extract_revision(class: &Value, bare: &str) -> Option<String> {
     if contains(&class["skipBare"], bare) {
@@ -481,7 +576,12 @@ fn ranks_in_class(
     lenient: bool,
 ) -> Result<Map<String, Value>, CatalogPolicyError> {
     let mut out = Map::new();
-    let Some(class) = classes.iter().find(|class| class["id"].as_str() == Some(id)) else { return Ok(out) };
+    let Some(class) = classes
+        .iter()
+        .find(|class| class["id"].as_str() == Some(id))
+    else {
+        return Ok(out);
+    };
     let lower = ara_prompt::js::trim(model).to_lowercase();
     let bare = bare_of(&lower);
     if let Some(family) = classify_family(class, bare, &lower, lenient)? {
@@ -492,7 +592,11 @@ fn ranks_in_class(
     }
     Ok(out)
 }
-fn classify_ranks(classes: &[Value], model: &str, lenient: bool) -> Result<Map<String, Value>, CatalogPolicyError> {
+fn classify_ranks(
+    classes: &[Value],
+    model: &str,
+    lenient: bool,
+) -> Result<Map<String, Value>, CatalogPolicyError> {
     let lower = ara_prompt::js::trim(model).to_lowercase();
     let bare = bare_of(&lower);
     let mut winner: Option<((u8, usize), &Value)> = None;
@@ -531,7 +635,9 @@ fn classify_ranks(classes: &[Value], model: &str, lenient: bool) -> Result<Map<S
         }
         return Ok(json!({"class":"unknown"}).as_object().unwrap().clone());
     }
-    let Some((_, class)) = winner else { return Ok(json!({"class":"unknown"}).as_object().unwrap().clone()) };
+    let Some((_, class)) = winner else {
+        return Ok(json!({"class":"unknown"}).as_object().unwrap().clone());
+    };
     let mut out = Map::new();
     out.insert("class".into(), class["id"].clone());
     if let Some(family) = classify_family(class, bare, &lower, lenient)? {
@@ -548,13 +654,16 @@ fn find_identity_override<'a>(
     provider: &str,
     bare: &str,
     observed: Option<f64>,
-) -> Option<&'a Value> {
+    lenient: bool,
+) -> Result<Option<&'a Value>, CatalogPolicyError> {
     let lower_provider = provider.to_lowercase();
     let lower_model = bare.to_lowercase();
     let mut agnostic = None;
     for class in classes {
         for rule in array(&class["overrides"]) {
-            if string(&rule["model"]).to_lowercase() != lower_model {
+            // b91db66e adds reviewed pattern overrides to the EDIT taxonomy.
+            // Keep exact lookup first; a pattern has no model string to read.
+            if rule.get("model").and_then(Value::as_str).is_none_or(|model| model.to_lowercase() != lower_model) {
                 continue;
             }
             if rule
@@ -567,20 +676,71 @@ fn find_identity_override<'a>(
             }
             if let Some(provider) = rule.get("provider") {
                 if string(provider).to_lowercase() == lower_provider {
-                    return Some(rule);
+                    return Ok(Some(rule));
                 }
             } else if agnostic.is_none() {
                 agnostic = Some(rule);
             }
         }
     }
-    agnostic
+    if agnostic.is_some() {
+        return Ok(agnostic);
+    }
+    // Fixed target compat/taxonomy.ts: patterns rank only after exact miss;
+    // provider-scoped patterns precede agnostic ones, then specificity wins.
+    // No pattern exists in the unchanged 596f2da global compiled taxonomy.
+    for scope in [Some(lower_provider.as_str()), None] {
+        let mut winner: Option<(&Value, usize)> = None;
+        let mut tied: Option<(&Value, &Value)> = None;
+        for class in classes {
+            for rule in array(&class["overrides"]) {
+                if rule.get("model").is_some() {
+                    continue;
+                }
+                let Some(glob) = rule.get("glob").and_then(Value::as_str) else {
+                    continue;
+                };
+                let rule_provider = rule.get("provider").and_then(Value::as_str).map(str::to_lowercase);
+                if rule_provider.as_deref() != scope
+                    || rule.get("expiresAtMs").and_then(Value::as_f64).zip(observed)
+                        .is_some_and(|(expires, now)| now >= expires)
+                    || !glob_match(glob, &lower_model)
+                {
+                    continue;
+                }
+                let specificity = glob.encode_utf16().filter(|unit| *unit != u16::from(b'*')).count();
+                match winner {
+                    Some((held, rank)) if rank == specificity => tied = Some((held, rule)),
+                    Some((_, rank)) if rank > specificity => {},
+                    _ => {
+                        winner = Some((rule, specificity));
+                        tied = None;
+                    }
+                }
+            }
+        }
+        if let Some((first, second)) = tied {
+            return if lenient { Ok(None) } else {
+                Err(ambiguity(&lower_model, string(&first["id"]), string(&second["id"]), "override"))
+            };
+        }
+        if let Some((rule, _)) = winner {
+            return Ok(Some(rule));
+        }
+    }
+    Ok(None)
 }
 
-pub fn classify_model(provider: &str, model_id: &str, options: ClassifyOptions) -> Result<Value, CatalogPolicyError> {
+pub fn classify_model(
+    provider: &str,
+    model_id: &str,
+    options: ClassifyOptions,
+) -> Result<Value, CatalogPolicyError> {
     classify_over_taxonomy(&compiled_rules()["taxonomy"], provider, model_id, options)
 }
-fn classify_over_taxonomy(
+/// Classify against a versioned domain taxonomy without changing global rules.
+/// EDIT uses this to advance its pinned model adaptation policy independently.
+pub fn classify_over_taxonomy(
     taxonomy: &Value,
     provider: &str,
     model_id: &str,
@@ -588,8 +748,13 @@ fn classify_over_taxonomy(
 ) -> Result<Value, CatalogPolicyError> {
     let classes = array(&taxonomy["classes"]);
     let trimmed = ara_prompt::js::trim(model_id);
-    if let Some(rule) = find_identity_override(classes, provider, bare_of(trimmed), options.observed_at_ms) {
-        let logical = rule.get("logical").and_then(Value::as_str).unwrap_or(trimmed);
+    if let Some(rule) =
+        find_identity_override(classes, provider, bare_of(trimmed), options.observed_at_ms, options.lenient)?
+    {
+        let logical = rule
+            .get("logical")
+            .and_then(Value::as_str)
+            .unwrap_or(trimmed);
         let class = match rule.get("class").and_then(Value::as_str) {
             Some(class) => class.to_owned(),
             None => string(&classify_ranks(classes, logical, options.lenient)?["class"]).to_owned(),
@@ -598,14 +763,21 @@ fn classify_over_taxonomy(
         let mut out = Map::new();
         out.insert("class".into(), class.into());
         for name in ["family", "revision"] {
-            if let Some(value) = rule.get(name).filter(|v| !v.is_null()).or_else(|| inferred.get(name)) {
+            if let Some(value) = rule
+                .get(name)
+                .filter(|v| !v.is_null())
+                .or_else(|| inferred.get(name))
+            {
                 out.insert(name.into(), value.clone());
             }
         }
         if let Some(effort) = rule.get("effort") {
             out.insert("effort".into(), effort.clone());
         }
-        if rule.get("thinkingVariant").is_some_and(ara_prompt::js::truthy) {
+        if rule
+            .get("thinkingVariant")
+            .is_some_and(ara_prompt::js::truthy)
+        {
             out.insert("thinkingVariant".into(), true.into());
         }
         if logical != trimmed {
@@ -647,7 +819,11 @@ fn collapse_over_vocabulary(collapse: &Value, provider: &str, model: &str) -> Va
     let mut winner: Option<&Value> = None;
     for rule in array(&collapse["suffixes"]) {
         let suffix = string(&rule["suffix"]);
-        if !lower.ends_with(suffix) || rule.get("exceptBarePrefix").is_some_and(|p| bare.starts_with(string(p))) {
+        if !lower.ends_with(suffix)
+            || rule
+                .get("exceptBarePrefix")
+                .is_some_and(|p| bare.starts_with(string(p)))
+        {
             continue;
         }
         if winner.is_none_or(|w| js_len(suffix) > js_len(string(&w["suffix"]))) {
@@ -668,7 +844,10 @@ fn collapse_over_vocabulary(collapse: &Value, provider: &str, model: &str) -> Va
         }
         let trimmed = &lower[..lower.len() - suffix.len()];
         let bare = bare_of(trimmed);
-        if lane.get("barePrefix").is_some_and(|p| !bare.starts_with(string(p))) {
+        if lane
+            .get("barePrefix")
+            .is_some_and(|p| !bare.starts_with(string(p)))
+        {
             continue;
         }
         let mut effort: Option<&Value> = None;
@@ -676,7 +855,9 @@ fn collapse_over_vocabulary(collapse: &Value, provider: &str, model: &str) -> Va
             let suffix = string(&rule["suffix"]);
             if rule.get("effort").is_none()
                 || !trimmed.ends_with(suffix)
-                || rule.get("exceptBarePrefix").is_some_and(|p| bare.starts_with(string(p)))
+                || rule
+                    .get("exceptBarePrefix")
+                    .is_some_and(|p| bare.starts_with(string(p)))
             {
                 continue;
             }
@@ -685,7 +866,11 @@ fn collapse_over_vocabulary(collapse: &Value, provider: &str, model: &str) -> Va
             }
         }
         let Some(effort) = effort else { continue };
-        let base = js_slice(model, 0, js_len(trimmed).saturating_sub(js_len(string(&effort["suffix"]))));
+        let base = js_slice(
+            model,
+            0,
+            js_len(trimmed).saturating_sub(js_len(string(&effort["suffix"]))),
+        );
         if base.is_empty() || base.ends_with('/') {
             continue;
         }
@@ -704,7 +889,9 @@ pub fn strip_thinking_variant_suffix_utf16(model: &str) -> Option<Vec<u16>> {
         let needle = format!("-{}", string(token));
         let mut from = 0;
         while from < lower.len() {
-            let Some(offset) = lower[from..].find(&needle) else { break };
+            let Some(offset) = lower[from..].find(&needle) else {
+                break;
+            };
             let index = from + offset;
             let end = index + needle.len();
             let follows = bytes.get(end).is_some_and(u8::is_ascii_alphanumeric);
@@ -774,24 +961,36 @@ pub fn routing_variant_plain(provider: &str, model: &str) -> Option<String> {
 }
 pub fn has_routing_variants(provider: &str) -> bool {
     let provider = provider.to_lowercase();
-    array(&collapse_vocabulary()["routingVariants"]).iter().any(|r| contains(&r["providers"], &provider))
+    array(&collapse_vocabulary()["routingVariants"])
+        .iter()
+        .any(|r| contains(&r["providers"], &provider))
 }
 pub fn recovers_canonical_params(provider: &str) -> bool {
-    contains(&discovery_vocabulary()["canonicalRecovery"], &provider.to_lowercase())
+    contains(
+        &discovery_vocabulary()["canonicalRecovery"],
+        &provider.to_lowercase(),
+    )
 }
 pub fn responses_hint_group(provider: &str) -> Option<&'static Value> {
     let provider = provider.to_lowercase();
-    array(&discovery_vocabulary()["responsesHintGroups"]).iter().find(|g| contains(g, &provider))
+    array(&discovery_vocabulary()["responsesHintGroups"])
+        .iter()
+        .find(|g| contains(g, &provider))
 }
 pub fn responses_route_models(provider: &str) -> Option<&'static Value> {
     discovery_vocabulary()["responsesRouteModels"].get(provider.to_lowercase())
 }
 pub fn supports_dynamic_effort_siblings(provider: &str) -> bool {
-    effort_families_for(provider).into_iter().any(|f| !string(&f["logical"]).is_empty())
+    effort_families_for(provider)
+        .into_iter()
+        .any(|f| !string(&f["logical"]).is_empty())
 }
 pub fn effort_families_for(provider: &str) -> Vec<&'static Value> {
     let provider = provider.to_lowercase();
-    array(&collapse_vocabulary()["effortFamilies"]).iter().filter(|f| f["provider"] == provider).collect()
+    array(&collapse_vocabulary()["effortFamilies"])
+        .iter()
+        .filter(|f| f["provider"] == provider)
+        .collect()
 }
 pub fn strip_effort_lane(provider: &str, model: &str) -> String {
     let provider = provider.to_lowercase();
@@ -834,9 +1033,10 @@ mod tests {
             assert_eq!(parse_revision(input), Some(expected));
             assert_eq!(parse_revision(&format_revision(expected)), Some(expected));
         }
-        for invalid in
-            ["", " 4", "4 ", "4..2", "4.2.", "4.2.0.0", "256", "1.256", "1.1.256", "-4", "+4", "4a", "４", "0x4"]
-        {
+        for invalid in [
+            "", " 4", "4 ", "4..2", "4.2.", "4.2.0.0", "256", "1.256", "1.1.256", "-4", "+4", "4a",
+            "４", "0x4",
+        ] {
             assert_eq!(parse_revision(invalid), None, "{invalid}");
         }
         for (input, expected) in [
@@ -882,9 +1082,15 @@ mod tests {
             json!({"wire":{"store":false,"retained":"base"},"thinking":{},"catalog":{"limit":30}})
         );
         t["model"] = "MODEL-1".into();
-        assert_eq!(resolve_cascade_rules(&rules, &t).unwrap()["wire"]["store"], true);
+        assert_eq!(
+            resolve_cascade_rules(&rules, &t).unwrap()["wire"]["store"],
+            true
+        );
         t["class"] = "other".into();
-        assert_eq!(resolve_cascade_rules(&rules, &t).unwrap(), json!({"wire":{},"thinking":{},"catalog":{}}));
+        assert_eq!(
+            resolve_cascade_rules(&rules, &t).unwrap(),
+            json!({"wire":{},"thinking":{},"catalog":{}})
+        );
     }
 
     #[test]
@@ -895,18 +1101,24 @@ mod tests {
             {"source":"later.kdl:10","class":"cls","priority":9,"wire":{"x":true}}
         ]});
         assert_eq!(
-            resolve_cascade_rules(&rules, &target()).unwrap_err().to_string(),
+            resolve_cascade_rules(&rules, &target())
+                .unwrap_err()
+                .to_string(),
             "ambiguous overlap for `prov/model-1` on axis `x`: rules `first.kdl:8` and `second.kdl:9` tie; add an explicit priority"
         );
-        let invalid = json!({"rules":[{"source":"bad.kdl:12","revision":[{"op":">=","revision":"256"}]}]});
+        let invalid =
+            json!({"rules":[{"source":"bad.kdl:12","revision":[{"op":">=","revision":"256"}]}]});
         assert_eq!(
-            resolve_cascade_rules(&invalid, &target()).unwrap_err().to_string(),
+            resolve_cascade_rules(&invalid, &target())
+                .unwrap_err()
+                .to_string(),
             "invalid compiled revision term in bad.kdl:12"
         );
     }
 
     #[test]
-    fn cascade_reasoning_upgrade_requires_matching_exact_efforts_and_empty_constraints_do_not_match() {
+    fn cascade_reasoning_upgrade_requires_matching_exact_efforts_and_empty_constraints_do_not_match()
+     {
         let rules = json!({"rules":[
             {"source":"b:1","thinking":{"mode":"effort"}},
             {"source":"e:2","providers":["prov"],"models":[{"kind":"exact","value":"model-1"}],"thinking":{"efforts":["low","high"]}},
@@ -928,7 +1140,10 @@ mod tests {
             json!({"wire":{"token":true},"thinking":{},"catalog":{"requiresRevision":true}})
         );
         t["revision"] = "bad".into();
-        assert_eq!(resolve_cascade_rules(&rules, &t).unwrap()["catalog"], json!({}));
+        assert_eq!(
+            resolve_cascade_rules(&rules, &t).unwrap()["catalog"],
+            json!({})
+        );
     }
 
     #[test]
@@ -950,27 +1165,56 @@ mod tests {
     #[test]
     fn fixed_taxonomy_source_fixtures_and_trim_bypass() {
         let cases = [
-            ("anthropic", "claude-opus-4-6", json!({"class":"anthropic","family":"opus","revision":"4.6.0"})),
+            (
+                "anthropic",
+                "claude-opus-4-6",
+                json!({"class":"anthropic","family":"opus","revision":"4.6.0"}),
+            ),
             (
                 "openrouter",
                 "anthropic/claude-opus-4-6",
                 json!({"class":"anthropic","family":"opus","revision":"4.6.0"}),
             ),
-            ("litellm", "mistral.mixtral-8x7b-instruct-v0:1", json!({"class":"mistral","family":"mixtral"})),
-            ("litellm", "mistral.mistral-large-2402-v1:0", json!({"class":"mistral","family":"mistral"})),
-            ("openai", "o3", json!({"class":"openai","family":"o-series"})),
-            ("openai", "o3-mini", json!({"class":"openai","family":"o-series","revision":"3.0.0"})),
-            ("cerebras", "zai-glm-4.7", json!({"class":"glm","revision":"4.7.0"})),
+            (
+                "litellm",
+                "mistral.mixtral-8x7b-instruct-v0:1",
+                json!({"class":"mistral","family":"mixtral"}),
+            ),
+            (
+                "litellm",
+                "mistral.mistral-large-2402-v1:0",
+                json!({"class":"mistral","family":"mistral"}),
+            ),
+            (
+                "openai",
+                "o3",
+                json!({"class":"openai","family":"o-series"}),
+            ),
+            (
+                "openai",
+                "o3-mini",
+                json!({"class":"openai","family":"o-series","revision":"3.0.0"}),
+            ),
+            (
+                "cerebras",
+                "zai-glm-4.7",
+                json!({"class":"glm","revision":"4.7.0"}),
+            ),
             ("test", "anthropicology", json!({"class":"unknown"})),
             ("test", "deepseeker", json!({"class":"unknown"})),
         ];
         for (provider, model, expected) in cases {
-            assert_eq!(classify_model(provider, model, Default::default()).unwrap(), expected, "{model}");
+            assert_eq!(
+                classify_model(provider, model, Default::default()).unwrap(),
+                expected,
+                "{model}"
+            );
         }
         let qwen = classify_model("alibaba-token-plan", "qwen3.6-max", Default::default()).unwrap();
         assert_eq!(qwen["class"], "qwen");
         assert!(qwen.get("effort").is_none());
-        let daybreak = classify_model("openai", "daybreak-blue-latest", Default::default()).unwrap();
+        let daybreak =
+            classify_model("openai", "daybreak-blue-latest", Default::default()).unwrap();
         assert_eq!(daybreak["class"], "unknown");
         assert_eq!(daybreak["revision"], "5.6.0");
         let kilo = classify_model("kilo", "qwq-32b", Default::default()).unwrap();
@@ -995,24 +1239,47 @@ mod tests {
         let mut second = class("two");
         let tree = taxonomy(vec![first.clone(), second.clone()]);
         assert_eq!(
-            classify_over_taxonomy(&tree, "p", "MODEL-1", Default::default()).unwrap_err().to_string(),
+            classify_over_taxonomy(&tree, "p", "MODEL-1", Default::default())
+                .unwrap_err()
+                .to_string(),
             "ambiguous class for `model-1`: `one` and `two` tie"
         );
         assert_eq!(
-            classify_over_taxonomy(&tree, "p", "MODEL-1", ClassifyOptions { lenient: true, ..Default::default() })
-                .unwrap(),
+            classify_over_taxonomy(
+                &tree,
+                "p",
+                "MODEL-1",
+                ClassifyOptions {
+                    lenient: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
             json!({"class":"unknown"})
         );
-        second["matchers"].as_array_mut().unwrap().push(json!({"kind":"exact","token":"model-1"}));
+        second["matchers"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"kind":"exact","token":"model-1"}));
         second["families"] = json!([{"id":"a","glob":"*model*","priority":0},{"id":"b","glob":"*model*","priority":0}]);
         let tree = taxonomy(vec![first, second]);
         assert_eq!(
-            classify_over_taxonomy(&tree, "p", "MODEL-1", Default::default()).unwrap_err().to_string(),
+            classify_over_taxonomy(&tree, "p", "MODEL-1", Default::default())
+                .unwrap_err()
+                .to_string(),
             "ambiguous family for `model-1`: `a` and `b` tie"
         );
         assert_eq!(
-            classify_over_taxonomy(&tree, "p", "MODEL-1", ClassifyOptions { lenient: true, ..Default::default() })
-                .unwrap(),
+            classify_over_taxonomy(
+                &tree,
+                "p",
+                "MODEL-1",
+                ClassifyOptions {
+                    lenient: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
             json!({"class":"two"})
         );
     }
@@ -1035,16 +1302,25 @@ mod tests {
             &tree,
             "p",
             "ns/alias",
-            ClassifyOptions { observed_at_ms: Some(100.0), lenient: false },
+            ClassifyOptions {
+                observed_at_ms: Some(100.0),
+                lenient: false,
+            },
         )
         .unwrap();
-        assert_eq!(expired, json!({"class":"one","logicalId":"model-2.3","revision":"2.3.0","family":"agnostic"}));
+        assert_eq!(
+            expired,
+            json!({"class":"one","logicalId":"model-2.3","revision":"2.3.0","family":"agnostic"})
+        );
         assert_eq!(
             classify_over_taxonomy(
                 &tree,
                 "p",
                 "alias",
-                ClassifyOptions { observed_at_ms: Some(f64::NAN), lenient: false }
+                ClassifyOptions {
+                    observed_at_ms: Some(f64::NAN),
+                    lenient: false
+                }
             )
             .unwrap(),
             active
@@ -1076,13 +1352,26 @@ mod tests {
             ("a-no-thinking-thinking", Some("a-no-thinking")),
             ("😀-thinking", Some("😀")),
         ] {
-            assert_eq!(strip_thinking_variant_suffix(input).unwrap().as_deref(), expected, "{input}");
+            assert_eq!(
+                strip_thinking_variant_suffix(input).unwrap().as_deref(),
+                expected,
+                "{input}"
+            );
         }
-        assert_eq!(strip_thinking_variant_suffix_utf16("İ-thinking😀"), Some(vec![0x0130, 0x002d, 0xde00]));
+        assert_eq!(
+            strip_thinking_variant_suffix_utf16("İ-thinking😀"),
+            Some(vec![0x0130, 0x002d, 0xde00])
+        );
         assert!(strip_thinking_variant_suffix("İ-thinking😀").is_err());
-        assert_eq!(routing_variant_plain("OPENAI-CODEX", "gpt-5.6-luna-WM").as_deref(), Some("gpt-5.6-luna"));
+        assert_eq!(
+            routing_variant_plain("OPENAI-CODEX", "gpt-5.6-luna-WM").as_deref(),
+            Some("gpt-5.6-luna")
+        );
         assert_eq!(routing_variant_plain("openai", "gpt-5.6-luna-wm"), None);
-        assert_eq!(billing_variant_plain("gpt-5.5-pro-free").as_deref(), Some("gpt-5.5-pro"));
+        assert_eq!(
+            billing_variant_plain("gpt-5.5-pro-free").as_deref(),
+            Some("gpt-5.5-pro")
+        );
         assert_eq!(billing_variant_plain("-free"), None);
         assert_eq!(billing_variant_plain("😀xxxx"), None);
         assert_eq!(routing_variant_plain("openai-codex", "😀xx"), None);
@@ -1099,11 +1388,20 @@ mod tests {
         }
         for group in array(&discovery_vocabulary()["responsesHintGroups"]) {
             for provider in array(group) {
-                assert_eq!(responses_hint_group(&string(provider).to_uppercase()), Some(group));
+                assert_eq!(
+                    responses_hint_group(&string(provider).to_uppercase()),
+                    Some(group)
+                );
             }
         }
-        for (provider, models) in discovery_vocabulary()["responsesRouteModels"].as_object().unwrap() {
-            assert_eq!(responses_route_models(&provider.to_uppercase()), Some(models));
+        for (provider, models) in discovery_vocabulary()["responsesRouteModels"]
+            .as_object()
+            .unwrap()
+        {
+            assert_eq!(
+                responses_route_models(&provider.to_uppercase()),
+                Some(models)
+            );
         }
         assert_eq!(responses_hint_group("missing"), None);
         assert_eq!(responses_route_models("missing"), None);
@@ -1116,7 +1414,10 @@ mod tests {
     #[test]
     fn fixed_glm_revision_ladder_and_all_bundled_targets_resolve_without_ties() {
         let result = resolve_cascade(&json!({"provider":"alibaba-coding-plan","class":"glm","model":"glm-5.2","revision":"5.2","reasoning":true})).unwrap();
-        assert_eq!(result["thinking"]["efforts"], json!(["minimal", "low", "medium", "high", "max"]));
+        assert_eq!(
+            result["thinking"]["efforts"],
+            json!(["minimal", "low", "medium", "high", "max"])
+        );
         let catalog: Value = serde_json::from_slice(crate::model_catalog::BUNDLED_JSON).unwrap();
         let mut count = 0;
         for (provider, models) in catalog.as_object().unwrap() {
@@ -1126,7 +1427,8 @@ mod tests {
                 target.insert("provider".into(), provider.clone().into());
                 target.insert("model".into(), id.clone().into());
                 target.insert("reasoning".into(), model["reasoning"].clone());
-                resolve_cascade(&Value::Object(target)).unwrap_or_else(|e| panic!("{provider}/{id}: {e}"));
+                resolve_cascade(&Value::Object(target))
+                    .unwrap_or_else(|e| panic!("{provider}/{id}: {e}"));
                 count += 1;
             }
         }

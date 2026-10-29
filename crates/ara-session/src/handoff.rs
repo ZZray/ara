@@ -154,7 +154,14 @@ impl SessionJournal {
             "details":{"readFiles":prepared.read_files,"modifiedFiles":prepared.modified_files},
         });
         let mut candidate = self.entries.clone();
-        candidate.push(Entry { id: id.clone(), parent_id, kind: "compaction".into(), raw });
+        candidate.push(Entry {
+            id: id.clone(),
+            parent_id,
+            kind: "compaction".into(),
+            raw,
+            native_message: None,
+            snapcompact_source: None,
+        });
         let previous_entries = std::mem::replace(&mut self.entries, candidate);
         let previous_leaf = self.leaf.replace(id.clone());
         let mut candidate_ids = self.ids.clone();

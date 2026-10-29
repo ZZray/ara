@@ -146,6 +146,15 @@ pub struct GlobEntry {
 
 /// Entries matching the pattern, newest first (ties by path), capped.
 pub fn glob(req: &GlobRequest<'_>, budget: &Budget) -> Result<Vec<GlobEntry>, EngineError> {
+    glob_with_cache(req, budget, false)
+}
+
+/// Explicit native glob cache policy. Ordinary GlobTool calls remain uncached;
+/// the shared owner caches raw scans, so distinct patterns never share a filter.
+pub fn glob_with_cache(req: &GlobRequest<'_>, budget: &Budget, cache: bool) -> Result<Vec<GlobEntry>, EngineError> {
+    if cache {
+        budget.check()?;
+    }
     let pattern = req.pattern.trim();
     let pattern = if pattern.is_empty() { "*" } else { pattern };
     let walk_pattern = build_glob_pattern(pattern, req.recursive);
@@ -159,18 +168,68 @@ pub fn glob(req: &GlobRequest<'_>, budget: &Budget) -> Result<Vec<GlobEntry>, En
         skip_node_modules: !pattern.contains("node_modules"),
         max_depth: walk_depth_bound(&walk_pattern).unwrap_or(usize::MAX),
     };
-    let mut matches = Vec::new();
-    walk::walk(req.root, opts, budget, |e| {
-        if matcher.is_match(&e.relative) {
-            // Only matched entries are stat'ed.
-            let mtime_ms = std::fs::symlink_metadata(&e.path).map_or(0.0, |m| walk::mtime_ms(&m));
-            matches.push(GlobEntry { relative: e.relative, kind: e.kind, mtime_ms });
+    let mut matches = if cache {
+        // Native glob resolves its directory operand before choosing Never for
+        // descendant links; match the ordinary visitor's canonical root here.
+        let root = std::fs::canonicalize(req.root).unwrap_or_else(|_| req.root.to_path_buf());
+        let mut options = walk::CollectOptions {
+            walk: opts,
+            detail: walk::WalkDetail::Full,
+            follow_links: walk::FollowLinks::Never,
+            cache: true,
+        };
+        let filter = |entries: Vec<walk::CollectedEntry>| {
+            entries
+                .into_iter()
+                .filter(|entry| matcher.is_match(&entry.relative))
+                .map(|entry| GlobEntry {
+                    relative: entry.relative,
+                    kind: entry.kind,
+                    mtime_ms: entry.mtime_ms.unwrap_or(0.0),
+                })
+                .collect::<Vec<_>>()
+        };
+        let scan = walk::collect_entries(&root, options, budget)?;
+        let age = scan.cache_age_ms;
+        let mut matches = filter(scan.entries);
+        // The threshold applies after filtering, including a nonempty cached
+        // root whose old scan has no matches for this particular pattern.
+        let threshold = walk::empty_recheck_ms();
+        if matches.is_empty() && age > 0 && threshold > 0 && age >= threshold {
+            options.cache = false;
+            matches = filter(walk::collect_entries(&root, options, budget)?.entries);
         }
-        Visit::Continue
-    })?;
+        budget.check()?;
+        matches
+    } else {
+        let mut matches = Vec::new();
+        walk::walk(req.root, opts, budget, |e| {
+            if matcher.is_match(&e.relative) {
+                // The default streaming path only stats matched entries.
+                let mtime_ms = std::fs::symlink_metadata(&e.path).map_or(0.0, |m| walk::mtime_ms(&m));
+                matches.push(GlobEntry { relative: e.relative, kind: e.kind, mtime_ms });
+            }
+            Visit::Continue
+        })?;
+        matches
+    };
     matches.sort_by(|a, b| b.mtime_ms.total_cmp(&a.mtime_ms).then_with(|| a.relative.cmp(&b.relative)));
     matches.truncate(req.max_results);
     Ok(matches)
+}
+
+/// The process-shared scan owner used by explicit cached glob consumers and
+/// Host mutation hooks. A missing path clears the complete native scan cache.
+pub fn invalidate_fs_scan_cache(path: Option<&Path>) {
+    match path {
+        Some(path) => walk::invalidate_path(path),
+        None => walk::invalidate_all(),
+    }
+}
+
+/// Configured lifetime of the same process-shared native scan owner.
+pub fn fs_scan_cache_ttl_ms() -> u64 {
+    walk::cache_ttl_ms()
 }
 
 // ---------------------------------------------------------------------------

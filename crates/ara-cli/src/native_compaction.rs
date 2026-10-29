@@ -7,27 +7,41 @@
 use ara_agent::compaction::{NativeEntryOrigin as CoreOrigin, NativeEntrySource};
 use ara_agent::tokenizer::{MessageCountOptions, count_message};
 use ara_ai::{Message, Model};
-use ara_session::{Entry, NativeCompactionEntry, NativeEntryOrigin as SessionOrigin};
+use ara_session::{Entry, NativeCompactionEntry, NativeEntryOrigin as SessionOrigin, Result};
 use serde_json::{Value, json};
 
 /// Public history preserves the native receipt, including custom images, rather
 /// than substituting one provider fragment for a multi-fragment entry.
-pub fn extension_event_message(entry: &Entry) -> Option<Value> {
-    entry.model_messages()?;
+pub fn extension_event_message(entry: &Entry) -> Result<Option<Value>> {
+    let Some(projected) = entry.model_messages()? else {
+        return Ok(None);
+    };
     if entry.kind == "message" {
-        let message = entry.raw.get("message")?;
-        return matches!(
-            message.get("role")?.as_str()?,
-            "custom" | "hookMessage" | "fileMention" | "branchSummary" | "compactionSummary"
-        )
-        .then(|| message.clone());
+        // Explicit checked legacy observation of the current canonical body.
+        // The raw mirror is not a source for native messages.
+        let raw = entry.checked_raw()?;
+        let Some(message) = raw.get("message") else {
+            return Ok(None);
+        };
+        let Some(role) = message.get("role").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        return Ok(matches!(role, "custom" | "hookMessage" | "fileMention" | "branchSummary" | "compactionSummary")
+            .then(|| message.clone()));
     }
-    let timestamp =
-        chrono::DateTime::parse_from_rfc3339(entry.raw.get("timestamp")?.as_str()?).ok()?.timestamp_millis();
-    match entry.kind.as_str() {
+    let Some(timestamp) = entry.raw.get("timestamp").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+        return Ok(None);
+    };
+    let timestamp = timestamp.timestamp_millis();
+    Ok(match entry.kind.as_str() {
         "custom_message" => {
-            let mut message = entry.raw.clone();
-            let object = message.as_object_mut()?;
+            let mut message = entry.checked_raw()?;
+            let Some(object) = message.as_object_mut() else {
+                return Ok(None);
+            };
             for key in ["id", "parentId", "type"] {
                 object.remove(key);
             }
@@ -35,12 +49,15 @@ pub fn extension_event_message(entry: &Entry) -> Option<Value> {
             object.insert("timestamp".into(), json!(timestamp));
             Some(message)
         }
-        "branch_summary" if !entry.model_messages()?.is_empty() => Some(json!({
-            "role":"branchSummary", "summary":entry.raw.get("summary")?,
-            "fromId":entry.raw.get("fromId")?, "timestamp":timestamp,
-        })),
+        "branch_summary" if !projected.is_empty() => {
+            let raw = entry.checked_raw()?;
+            let (Some(summary), Some(from_id)) = (raw.get("summary"), raw.get("fromId")) else {
+                return Ok(None);
+            };
+            Some(json!({"role":"branchSummary", "summary":summary, "fromId":from_id, "timestamp":timestamp}))
+        }
         _ => None,
-    }
+    })
 }
 
 pub fn sources(entries: &[NativeCompactionEntry]) -> Vec<NativeEntrySource<'_>> {

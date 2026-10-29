@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "state": "HANDOFF_SOURCE_DRAFT_UNBUILT_UNEXECUTED_UNREVIEWED",
+  "author": "Codex /root/task_final_point_audit, candidate-author role",
+  "scope": "Existing F6 source draft only; stopped further extension when Root relayed the user's integration-core direction change.",
+  "written": [
+    {
+      "path": "candidate/crates/ara-cli/src/task_host.rs",
+      "purpose": "One cfg(test-fixture) block immediately after obtaining the current Task template Native owner. It selects exactly one matching MCP/RPC lineage, calls the existing source.set_enabled method and reads the same owner's actual grant before/after, plus current advertised snapshot and pointer/session evidence."
+    },
+    {
+      "path": "F6-CANDIDATE-FRAGMENT.rs",
+      "purpose": "Draft async fn gap_native_grants() for later append by the primary author to existing task_host_cases; uses Bank/RoutedUpstream/WireProcess/gap_finish/gap_files_named/GapParentSnapshot."
+    }
+  ],
+  "fixture_schema": {
+    "environment": "ARA_TEST_PEER_FRONTIERS",
+    "configuration": {
+      "gates": [],
+      "taskSourcePermissions": [
+        {
+          "source": "rpc or mcp",
+          "tool": "f6_host_echo or mcp__fixture__echo",
+          "enabled": "boolean"
+        }
+      ]
+    },
+    "output": "configuration parent/task-source-grants.json",
+    "actual_readback_fields": [
+      "source",
+      "tool",
+      "requested_enabled",
+      "before",
+      "after",
+      "owner_pointer",
+      "source_pointer",
+      "snapshot_pointer",
+      "session_id",
+      "advertised_before",
+      "advertised_after"
+    ]
+  },
+  "draft_scenarios": [
+    {
+      "source": "RPC",
+      "state": "true",
+      "entry": "Ordinary set_host_tools -> current ToolBridge owner -> declaration-selected child tool -> actual host_tool_call and exact pending-ID host_tool_result."
+    },
+    {
+      "source": "MCP",
+      "state": "true",
+      "entry": "Ordinary --mcp-config/--mcp-allow fixture:echo -> existing ara-mcp-fixture stdio server -> declaration-selected mcp__fixture__echo call, server record, real marker effect and child ToolResult."
+    },
+    {
+      "source": "RPC/MCP",
+      "state": "false",
+      "entry": "Current Task prepare source setter on exactly one advertised owner; explicit second-item authority request reaches original full-batch preflight. No child transcript/lease/tool dispatch may occur."
+    },
+    {
+      "source": "RPC/MCP",
+      "state": "catalog absent",
+      "entry": "Ordinary unregistered tool-name request rejects full batch. This case does not claim the later exact-owner None grant branch."
+    }
+  ],
+  "preserved_contracts": [
+    "Positive external tool transfer uses agent-declared tools and omits caller item.tools. Fixed OMP restrictToolNames behavior remains unchanged.",
+    "Negative explicit tool requests run the original preflight; no synthetic NotDispatched or JSON grant result replaces it.",
+    "No owner substitution, new Native source API, new backend, new Cargo target or extension framework.",
+    "Previously completed main/worktree/capture helper candidates remain frozen and separate from this draft."
+  ],
+  "open": [
+    "Exact-owner None under an advertised capability remains OPEN.",
+    "Foreign actual owner/realm remains OPEN; no source owner was fabricated or substituted.",
+    "F6 source draft has not received final static syntax/API/type review or independent source review.",
+    "Primary author has not been authorized by this handoff to append or execute the draft automatically.",
+    "Actual MCP/RPC processes, requests, file effects and negative preflight outcomes have not been executed.",
+    "Whole Task/module acceptance and original M5/M8/O1/O8 remain open pending their actual evidence; this draft closes no criterion."
+  ],
+  "remaining_handoff": [
+    "If the user resumes this direction, independently review task_host cfg pointer/index mapping and complete fragment API/type checks against the final primary candidate.",
+    "Optionally strengthen the readback session_id comparison against the original root journal; existing source draft writes the real value but does not yet assert that equality.",
+    "Only after source review, primary may compose this fragment into the one existing task_host gap bank and freeze exact source/plan/image inputs.",
+    "Prepare the already existing ara-mcp-fixture binary in the same approved build/profile/cache, then execute only the reviewed affected batch.",
+    "Inspect actual ToolBridge pending IDs, MCP server call/marker, child journals, current source readbacks and full-batch no-effects receipts before acceptance."
+  ],
+  "proposed_existing_build_dependency": {
+    "change": "Add --bin ara-mcp-fixture beside existing --bin ara in the same package build arguments.",
+    "example": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--keep-going",
+      "--profile",
+      "test",
+      "-p",
+      "ara-cli",
+      "--features",
+      "ara-cli/test-fixture",
+      "--bin",
+      "ara",
+      "--bin",
+      "ara-mcp-fixture",
+      "--test",
+      "task_host"
+    ],
+    "runtime": "env!(CARGO_BIN_EXE_ara-mcp-fixture), existing source crates/ara-cli/tests/support/fake_mcp.rs and existing dependencies; no new target or downloaded runtime.",
+    "performed": false
+  },
+  "verification": {
+    "source_reads": true,
+    "source_diff_only": true,
+    "syntax_parse_F6": false,
+    "type_check": false,
+    "builds": 0,
+    "tests": 0,
+    "models": 0,
+    "runtime_processes": 0,
+    "E_writes": 0,
+    "frozen_source_writes": 0,
+    "target_writes": 0,
+    "original_assertion_changes": 0,
+    "original_helper_or_audit_report_changes": 0
+  },
+  "next": "Retain this source-only handoff. Root/user decides whether to continue F6 after the integration-core discussion; do not mark the entire Task complete.",
+  "created_utc": "2026-10-29T15:56:32.3109403Z",
+  "bindings": [
+    {
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source\\crates\\ara-cli\\src\\task_host.rs",
+      "sha256": "3b57921570fe985ba5c9a5bca09c86a02ef5ccaa46ed81a7324c40f0dc70e948"
+    },
+    {
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\gap-bank-v1\\candidate\\crates\\ara-cli\\src\\task_host.rs",
+      "sha256": "6b7bdb188e2f508eebaa152a10e9c0bb0fe64345dbf31a371d5a2de808b5813d"
+    },
+    {
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\gap-bank-v1\\F6-CANDIDATE-FRAGMENT.rs",
+      "sha256": "4900cc9eb6e299fd28c461fc08d878ca93c4fabea69c91dafbddf1faa59731c5"
+    },
+    {
+      "path": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\gap-bank-v1\\F6-ROUTE-NOTES.json",
+      "sha256": "c8198ef505f9faa60b56780e3b0bf0c499b608a4afc035a6fe4adc60e1c81b76"
+    }
+  ],
+  "task_host_unified_diff": "diff --git \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_host.rs\" \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_host.rs\"\nindex 69c90c8..f29af7e 100644\n--- \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_host.rs\"\n+++ \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_host.rs\"\n@@ -92,6 +92,64 @@ pub(super) async fn prepare(template:&rpc_host::SessionFactory,parent:&SessionJo\n     anyhow::ensure!(policy.batch_enabled||request.items.len()==1,\"Task batch is disabled\");\n     let peers=template.peers.as_ref().context(\"Task requires an actual Peer ownership Host\")?;\n     let native=template.tool_owner.native.as_ref().context(\"Task requires Native ownership\")?;\n+    #[cfg(feature = \"test-fixture\")]\n+    if let Some(config_path) = std::env::var_os(\"ARA_TEST_PEER_FRONTIERS\").map(PathBuf::from) {\n+        let bytes = match std::fs::read(&config_path) {\n+            Ok(bytes) => Some(bytes),\n+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,\n+            Err(error) => return Err(error.into()),\n+        };\n+        if let Some(bytes) = bytes {\n+            let config: Value = serde_json::from_slice(&bytes)?;\n+            let mut observations = Vec::new();\n+            for action in config[\"taskSourcePermissions\"].as_array().into_iter().flatten() {\n+                let source_kind = action[\"source\"].as_str().context(\"Task fixture source kind missing\")?;\n+                let tool = action[\"tool\"].as_str().context(\"Task fixture tool name missing\")?;\n+                let enabled = action[\"enabled\"].as_bool().context(\"Task fixture source grant must be boolean\")?;\n+                let advertised_before = native.snapshot.advertised_capabilities(native.prepared.values())?\n+                    .into_iter().map(|tool| tool.definition().name).collect::<Vec<_>>();\n+                let (before, after, owner_pointer, source_pointer) = match source_kind {\n+                    \"rpc\" => {\n+                        let matches = native.rpc.iter().enumerate()\n+                            .filter(|(_, member)| member.binding.capability.definition().name == tool)\n+                            .collect::<Vec<_>>();\n+                        anyhow::ensure!(matches.len() == 1, \"Task fixture must select one current RPC owner\");\n+                        let (index, member) = matches[0];\n+                        let source = native.snapshot.rpc().context(\"Task fixture current RPC source missing\")?;\n+                        let before = native.rpc_grant(&member.owner)?;\n+                        source.set_enabled(index, enabled)?;\n+                        (before, native.rpc_grant(&member.owner)?, format!(\"{:p}\", Arc::as_ptr(&member.owner)), format!(\"{:p}\", Arc::as_ptr(source)))\n+                    }\n+                    \"mcp\" => {\n+                        let matches = native.mcp.iter().enumerate()\n+                            .filter(|(_, member)| member.binding.capability.definition().name == tool)\n+                            .collect::<Vec<_>>();\n+                        anyhow::ensure!(matches.len() == 1, \"Task fixture must select one current MCP owner\");\n+                        let (index, member) = matches[0];\n+                        let source = native.snapshot.mcp().context(\"Task fixture current MCP source missing\")?;\n+                        let before = native.mcp_grant(&member.owner)?;\n+                        source.set_enabled(index, enabled)?;\n+                        (before, native.mcp_grant(&member.owner)?, format!(\"{:p}\", Arc::as_ptr(&member.owner)), format!(\"{:p}\", Arc::as_ptr(source)))\n+                    }\n+                    _ => bail!(\"Task fixture source kind must be rpc or mcp\"),\n+                };\n+                observations.push(json!({\n+                    \"source\": source_kind, \"tool\": tool, \"requested_enabled\": enabled,\n+                    \"before\": before, \"after\": after, \"owner_pointer\": owner_pointer,\n+                    \"source_pointer\": source_pointer, \"snapshot_pointer\": format!(\"{:p}\", Arc::as_ptr(&native.snapshot)),\n+                    \"session_id\": parent.session_id(), \"advertised_before\": advertised_before,\n+                    \"advertised_after\": native.snapshot.advertised_capabilities(native.prepared.values())?\n+                        .into_iter().map(|tool| tool.definition().name).collect::<Vec<_>>()\n+                }));\n+            }\n+            if !observations.is_empty() {\n+                std::fs::write(\n+                    config_path.parent().context(\"Task fixture config directory missing\")?.join(\"task-source-grants.json\"),\n+                    serde_json::to_vec_pretty(&observations)?,\n+                )?;\n+            }\n+        }\n+    }\n     // Coordination's transport-only WRITE is callable, but is not a delegable full WRITE grant.\n     let transport_only_write=template.tool_owner.context.as_ref().is_some_and(|context|context.write_transport_policy().device_only);\n     let parent_tools=native.snapshot.advertised_capabilities(native.prepared.values())?.into_iter()"
+}

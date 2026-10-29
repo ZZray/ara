@@ -354,6 +354,12 @@ fn wrap_bundled_model(spec: &SpecRef) -> Result<HostModelRef, CollapseError> {
     HostModel::new(Arc::new(fields), headers)
 }
 
+/// Wrap an already-built Manager Model without rerunning policy resolution.
+/// Transport headers retain the same opaque sidecar and safe-metadata checks.
+pub(crate) fn host_model_from_built_model(spec: &SpecRef) -> Result<HostModelRef, CollapseError> {
+    wrap_bundled_model(spec)
+}
+
 /// Restore a sparse cache/discovery ModelSpec without putting headers into
 /// its safe metadata. A bundled Model is already materialized and uses the
 /// separate wrapper above.
@@ -634,6 +640,138 @@ impl StaticModelRegistry {
             state.full_snapshot = Some(self.project_metrics(&mut state, projected, intern)?);
             return Ok(());
         }
+    }
+
+    /// Native model-registry.ts:611-675 selected runtime metadata publication.
+    /// Patch the unprojected donor, then run modifiers and metrics once. Runtime
+    /// observations never replace authored model overrides/custom fields.
+    pub fn patch_selected_runtime_metadata(
+        &self,
+        model: &HostModelRef,
+        metadata: &VariantSpec,
+    ) -> Result<HostModelRef, CollapseError> {
+        self.get_all()?;
+        let (provider, id) = identity(model)?;
+        let mut state = self.state.lock().map_err(|_| fixed_error("Static registry state is unavailable"))?;
+        let models = state.full_snapshot.clone().unwrap_or_default();
+        let references = crate::provider_model_reference::ProviderModelReferenceIndex::with_collapse_runtime(
+            &models,
+            state.collapse.clone(),
+        )?;
+        let current = references.resolve(&provider, &id)?.unwrap_or_else(|| model.clone());
+        let (provider, id) = identity(&current)?;
+        // The override resolver calls has_live while holding the alias mutex.
+        // Resolve those observations first so it never recursively locks it.
+        let aliases = state
+            .collapse
+            .lock()
+            .map_err(|_| fixed_error("Model alias state is unavailable"))?
+            .get_variant_alias_sources(&provider, &id)?
+            .snapshot();
+        let mut live_aliases = HashSet::new();
+        for alias in aliases {
+            if references.resolve(&provider, &alias)?.is_some() {
+                live_aliases.insert(alias);
+            }
+        }
+        let override_ = match self.config.model_overrides.get(&provider) {
+            Some(overrides) => resolve_model_override_with_aliases(
+                overrides,
+                &current,
+                &mut *state.collapse.lock().map_err(|_| fixed_error("Model alias state is unavailable"))?,
+                &|observed_provider, observed_id| observed_provider == &provider && live_aliases.contains(observed_id),
+            )?,
+            None => None,
+        };
+        let custom = self
+            .config
+            .custom_models
+            .iter()
+            .chain(state.runtime_overlays.as_ref().unwrap_or(&self.inputs.runtime_model_overlays))
+            .find(|overlay| {
+                text(overlay.fields(), "provider").as_ref() == Some(&provider)
+                    && text(overlay.fields(), "id").as_ref() == Some(&id)
+            });
+        let authored = |key: &str| {
+            [override_.map(ModelPatch::fields), custom.map(CustomModelOverlay::fields)]
+                .into_iter()
+                .flatten()
+                .any(|fields| fields.get(key).is_some())
+        };
+        let mut fields = empty();
+        if let Some(window) = number(metadata, "contextWindow")
+            && !authored("contextWindow")
+            && number(current.spec(), "contextWindow") != Some(window)
+        {
+            fields.set("contextWindow", WireValue::Number(window));
+        }
+        let effective_window = override_
+            .and_then(|value| number(value.fields(), "contextWindow"))
+            .or_else(|| custom.and_then(|value| number(value.fields(), "contextWindow")))
+            .or_else(|| number(&fields, "contextWindow"))
+            .or_else(|| number(current.spec(), "contextWindow"))
+            .or_else(|| number(metadata, "contextWindow"));
+        if let (Some(max), Some(window)) = (number(metadata, "maxTokens"), effective_window) {
+            let effective = max.min(window);
+            if !authored("maxTokens") && number(current.spec(), "maxTokens") != Some(effective) {
+                fields.set("maxTokens", WireValue::Number(effective));
+            }
+        }
+        if let Some(input) = metadata.get("input")
+            && !authored("input")
+            && current.spec().get("input") != Some(input)
+        {
+            fields.set("input", input.clone());
+        }
+        if fields.own_keys().is_empty() {
+            return Ok(current);
+        }
+        let patch = ModelPatch::new(fields, HeaderSlot::Absent)?;
+        let unprojected = state.unprojected_snapshot.clone().unwrap_or_default();
+        let base = crate::provider_model_reference::ProviderModelReferenceIndex::with_collapse_runtime(
+            &unprojected,
+            state.collapse.clone(),
+        )?
+        .resolve(&provider, &id)?;
+        if let Some(base) = base {
+            let base_identity = identity(&base)?;
+            let patched = apply_model_patch(&base, &patch, ModelTransportPolicy::Merge)?;
+            state.unprojected_snapshot = Some(
+                unprojected
+                    .into_iter()
+                    .map(|candidate| {
+                        if identity(&candidate).ok().as_ref() == Some(&base_identity) {
+                            patched.clone()
+                        } else {
+                            candidate
+                        }
+                    })
+                    .collect(),
+            );
+            let mut touched = OrderedProviderSet::default();
+            touched.insert(provider.clone());
+            Self::invalidate_touched(&mut state, &touched);
+            drop(state);
+            self.reproject_full_snapshot(false)?;
+            return Ok(self.find_reference(&provider, &id)?.unwrap_or(patched));
+        }
+        let patched = apply_model_patch(&current, &patch, ModelTransportPolicy::Merge)?;
+        state.full_snapshot = Some(
+            models
+                .into_iter()
+                .map(|candidate| {
+                    if identity(&candidate).ok().as_ref() == Some(&(provider.clone(), id.clone())) {
+                        patched.clone()
+                    } else {
+                        candidate
+                    }
+                })
+                .collect(),
+        );
+        let mut touched = OrderedProviderSet::default();
+        touched.insert(provider);
+        Self::invalidate_touched(&mut state, &touched);
+        Ok(patched)
     }
 
     pub fn prepare_cached_provider_models(

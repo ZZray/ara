@@ -25,7 +25,13 @@ impl UserSkillPrompt {
             UserContent::Text(text) => UserContent::Blocks(vec![UserBlock::text(text.clone())]),
             UserContent::Blocks(blocks) => UserContent::Blocks(blocks.clone()),
         };
-        Message::User(UserMessage { content, synthetic: None, timestamp: self.timestamp })
+        Message::User(UserMessage {
+            content,
+            synthetic: None,
+            timestamp: self.timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
+        })
     }
 
     /// Event payload for a host that displays the original custom message.

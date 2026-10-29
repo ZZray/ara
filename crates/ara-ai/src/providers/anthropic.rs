@@ -639,16 +639,22 @@ fn build_params_with_strict(
     let available_tools = context.tools.as_deref().unwrap_or_default();
     if let Some(choice) = &options.tool_choice
         && match choice {
-            ToolChoice::Required => !available_tools.is_empty(),
-            ToolChoice::Tool(name) => available_tools.iter().any(|tool| tool.name == *name),
+            ToolChoice::Any | ToolChoice::Required => !available_tools.is_empty(),
+            ToolChoice::Function(name) | ToolChoice::FunctionNested(name) | ToolChoice::Tool(name) => {
+                available_tools.iter().any(|tool| tool.name == *name)
+            }
+            ToolChoice::Computer => false,
             _ => true,
         }
     {
         params["tool_choice"] = match choice {
             ToolChoice::Auto => json!({"type":"auto"}),
             ToolChoice::None => json!({"type":"none"}),
-            ToolChoice::Required => json!({"type":"any"}),
-            ToolChoice::Tool(name) => json!({"type":"tool","name":name}),
+            ToolChoice::Any | ToolChoice::Required => json!({"type":"any"}),
+            ToolChoice::Function(name) | ToolChoice::FunctionNested(name) | ToolChoice::Tool(name) => {
+                json!({"type":"tool","name":name})
+            }
+            ToolChoice::Computer => unreachable!("computer choice omitted above"),
         };
     }
     if let Some(temperature) = options.temperature {
@@ -951,6 +957,7 @@ impl MessageState {
                             name: name.clone(),
                             arguments: display_input,
                             thought_signature: None,
+                            ..Default::default()
                         }));
                         events.push(Event::ToolcallStart { content_index, partial: self.output.clone() });
                         OpenBlock::Tool {
@@ -1079,7 +1086,7 @@ impl MessageState {
                                     ProviderError::Stream(format!("Anthropic tool input for {id} is not an object"))
                                 })?
                         };
-                        let call = ToolCall { id, name, arguments, thought_signature: None };
+                        let call = ToolCall { id, name, arguments, thought_signature: None, ..Default::default() };
                         self.output.content[content_index] = AssistantBlock::ToolCall(call.clone());
                         events.push(Event::ToolcallEnd {
                             content_index,
@@ -1453,6 +1460,7 @@ mod strict_tool_tests {
                 name: "edit".into(),
                 description: "Edit a file".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+                ..Default::default()
             }]),
             ..Default::default()
         };
@@ -1469,6 +1477,7 @@ mod strict_tool_tests {
             cause: ProviderError::Http { status, detail: detail.into() },
             code: code.map(str::to_owned),
             failure_evidence: None,
+            captured: None,
         };
         assert!(strict_rejection(&error(400, Some("invalid_request_error"), "The compiled grammar is too large")));
         assert!(strict_rejection(&error(400, None, "structured_outputs not supported")));

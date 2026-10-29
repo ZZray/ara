@@ -23,6 +23,10 @@ use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
+pub mod native_dispatch;
+pub mod native_errors;
+pub mod native_graph;
+
 #[cfg(windows)]
 mod windows_child;
 
@@ -429,18 +433,20 @@ fn parse_tool_result(value: &Value, server: &str, tool: &str) -> Result<ToolOutp
         content: blocks,
         details: Some(json!({"source":"mcp_stdio","server":server,"tool":tool})),
         is_error,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
 /// Launch an explicitly configured server, initialize it, and expose only
 /// exact `(server, original tool name)` grants. The returned tools own the
 /// child; dropping them ends the direct child process.
-pub async fn connect(
+pub async fn connect_owned(
     config: ServerConfig,
     cwd: &Path,
     allow: &[String],
     reserved_names: &[&str],
-) -> Result<Vec<Arc<dyn AgentTool>>, String> {
+) -> Result<Vec<Arc<McpTool>>, String> {
     config.validate()?;
     if allow.is_empty() {
         return Err("MCP config requires at least one --mcp-allow server:tool grant".into());
@@ -566,7 +572,7 @@ pub async fn connect(
             return Err(format!("MCP tool {original:?} description exceeds 8 KiB"));
         }
         definitions.push((
-            Tool { name: public, description: description.to_owned(), parameters: schema },
+            Tool { name: public, description: description.to_owned(), parameters: schema, ..Default::default() },
             original.to_owned(),
         ));
     }
@@ -585,12 +591,25 @@ pub async fn connect(
         next_id: AtomicU64::new(next_id),
         abort: task.abort_handle(),
     });
-    let tools: Vec<Arc<dyn AgentTool>> = definitions
+    let tools: Vec<Arc<McpTool>> = definitions
         .into_iter()
         .map(|(definition, original_name)| {
             Arc::new(McpTool { definition, server: config.name.clone(), original_name, owner: owner.clone() })
-                as Arc<dyn AgentTool>
         })
         .collect();
     Ok(tools)
+}
+
+/// Existing typed callers keep the same explicit-grant launch contract.
+pub async fn connect(
+    config: ServerConfig,
+    cwd: &Path,
+    allow: &[String],
+    reserved_names: &[&str],
+) -> Result<Vec<Arc<dyn AgentTool>>, String> {
+    Ok(connect_owned(config, cwd, allow, reserved_names)
+        .await?
+        .into_iter()
+        .map(|tool| tool as Arc<dyn AgentTool>)
+        .collect())
 }

@@ -3,8 +3,12 @@ use ara_ai::{AssistantBlock, AssistantMessage, Message, StopReason, ThinkingCont
 use ara_session::{LoopGuardNotice, SessionJournal};
 use serde_json::json;
 
+#[path = "support/actual_loop_guard_notice.rs"]
+mod actual_loop_guard_notice;
+
 #[test]
 fn fixed_agent_notices_reopen_project_to_developer_and_preserve_compaction_sources() {
+    actual_loop_guard_notice::observe_native_notice_body();
     let dir = tempfile::tempdir().unwrap();
     let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
     journal.append_message(&Message::User(UserMessage::text("original request"))).unwrap();
@@ -49,7 +53,7 @@ fn fixed_agent_notices_reopen_project_to_developer_and_preserve_compaction_sourc
         assert_eq!(native["role"], "custom");
         assert_eq!(native["display"], false);
         assert_eq!(native["attribution"], "agent");
-        assert!(matches!(entry.message(), Some(Message::Developer(_))));
+        assert!(matches!(entry.message().unwrap(), Some(Message::Developer(_))));
         assert!(
             snapshot
                 .messages

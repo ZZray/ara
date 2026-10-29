@@ -82,8 +82,42 @@ fn bounded(value: &WireString, token: &str) -> bool {
         && value.units().get(token.encode_utf16().count()).is_some_and(|u| matches!(*u, 45 | 95 | 46 | 58 | 48..=57))
 }
 /// cascade.ts uses anchored literal segments, not a Unicode regexp.
+fn fixed_glob_segments() -> &'static std::collections::HashMap<&'static str, Vec<Vec<u16>>> {
+    static SEGMENTS: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<Vec<u16>>>> =
+        std::sync::OnceLock::new();
+    SEGMENTS.get_or_init(|| {
+        fn collect(value: &'static Value, out: &mut std::collections::HashMap<&'static str, Vec<Vec<u16>>>) {
+            match value {
+                Value::String(value) => {
+                    out.entry(value.as_str())
+                        .or_insert_with(|| value.split('*').map(|part| part.encode_utf16().collect()).collect());
+                }
+                Value::Array(values) => {
+                    for value in values {
+                        collect(value, out);
+                    }
+                }
+                Value::Object(values) => {
+                    for value in values.values() {
+                        collect(value, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        collect(catalog_rules::compiled_rules(), &mut out);
+        out
+    })
+}
 fn glob(pattern: &str, value: &WireString) -> bool {
-    let segments = pattern.split('*').map(|part| part.encode_utf16().collect::<Vec<_>>()).collect::<Vec<_>>();
+    let fallback;
+    let segments = if let Some(segments) = fixed_glob_segments().get(pattern) {
+        segments
+    } else {
+        fallback = pattern.split('*').map(|part| part.encode_utf16().collect::<Vec<_>>()).collect::<Vec<_>>();
+        &fallback
+    };
     if segments.len() == 1 {
         return value.units() == segments[0];
     }
@@ -432,6 +466,27 @@ pub fn classify_wire(provider: &WireString, model: &WireString, lenient: bool) -
     Ok(out)
 }
 
+type FixedCascadeRule = (&'static Value, Option<Vec<catalog_rules::RevisionTerm>>);
+fn fixed_cascade_rules() -> &'static [FixedCascadeRule] {
+    static RULES: std::sync::OnceLock<Vec<FixedCascadeRule>> = std::sync::OnceLock::new();
+    RULES.get_or_init(|| {
+        array(&catalog_rules::compiled_rules()["cascade"]["rules"])
+            .iter()
+            .map(|rule| {
+                let terms = rule.get("revision").map(|terms| {
+                    array(terms)
+                        .iter()
+                        .flat_map(|term| {
+                            let expression = format!("{}{}", js_string(&term["op"]), js_string(&term["revision"]));
+                            catalog_rules::parse_revision_constraint(&expression).expect("compiled revision term")
+                        })
+                        .collect()
+                });
+                (rule, terms)
+            })
+            .collect()
+    })
+}
 fn cascade(spec: &VariantSpec, identity: &VariantSpec) -> Result<Value, CollapseError> {
     let provider = get_string(spec, "provider");
     let model = get_string(spec, "id");
@@ -439,24 +494,19 @@ fn cascade(spec: &VariantSpec, identity: &VariantSpec) -> Result<Value, Collapse
     let revision = get_string(identity, "revision").to_utf8().ok().and_then(|v| catalog_rules::parse_revision(&v));
     type Rank = (u8, usize, f64);
     let mut matched = Vec::<(Rank, &Value)>::new();
-    for rule in array(&catalog_rules::compiled_rules()["cascade"]["rules"]) {
-        if rule.get("class").is_some_and(|v| !equal_ascii(&get_string(identity, "class"), js_string(v)))
+    let class = get_string(identity, "class");
+    let family = get_string(identity, "family");
+    for (rule, terms) in fixed_cascade_rules() {
+        if rule.get("class").is_some_and(|v| !equal_ascii(&class, js_string(v)))
             || rule.get("providers").is_some_and(|v| !contains(v, &provider))
-            || rule.get("family").is_some_and(|v| !equal_ascii(&get_string(identity, "family"), js_string(v)))
+            || rule.get("family").is_some_and(|v| !equal_ascii(&family, js_string(v)))
         {
             continue;
         }
-        if let Some(terms) = rule.get("revision") {
-            let terms = array(terms)
-                .iter()
-                .flat_map(|term| {
-                    let expression = format!("{}{}", js_string(&term["op"]), js_string(&term["revision"]));
-                    catalog_rules::parse_revision_constraint(&expression).expect("compiled revision term")
-                })
-                .collect::<Vec<_>>();
-            if !revision.is_some_and(|r| catalog_rules::revision_satisfies(r, &terms)) {
-                continue;
-            }
+        if let Some(terms) = terms
+            && !revision.is_some_and(|r| catalog_rules::revision_satisfies(r, terms))
+        {
+            continue;
         }
         let mut exactness = 0;
         if let Some(selectors) = rule.get("models") {
@@ -469,7 +519,7 @@ fn cascade(spec: &VariantSpec, identity: &VariantSpec) -> Result<Value, Collapse
                     "token" => normalized
                         .units()
                         .split(|u| !matches!(*u,48..=57|97..=122))
-                        .any(|part| part == value.encode_utf16().collect::<Vec<_>>()),
+                        .any(|part| part.iter().copied().eq(value.encode_utf16())),
                     _ => false,
                 };
                 if hit {
@@ -1068,19 +1118,26 @@ impl NativePrototype {
         None
     }
 }
+fn has_own_record_key(record: &VariantSpec, key: &WireString) -> bool {
+    matches!(&record.value, WireValue::Object(entries) if entries.iter().any(|(candidate, _)| candidate == key))
+}
 impl NativeCompat {
     fn new(own: VariantSpec) -> Self {
         Self { own, prototype: NativePrototype::Ordinary }
     }
     fn record(&self, key: &str) -> Option<VariantSpec> {
         let key = WireString::from(key);
-        if self.own.own_keys().contains(&key) { self.own.record_key(&key) } else { self.prototype.record(&key) }
+        if has_own_record_key(&self.own, &key) { self.own.record_key(&key) } else { self.prototype.record(&key) }
     }
     fn overrides(&mut self, overrides: Option<&VariantSpec>) {
-        let Some(overrides) = overrides.filter(|record| truthy(&record.value)) else { return };
+        let Some(overrides) = overrides.filter(|record| truthy(&record.value)) else {
+            return;
+        };
         for key in enumerable_keys(overrides) {
-            let Some(value) = own_property(overrides, &key) else { continue };
-            let own = self.own.own_keys().contains(&key);
+            let Some(value) = own_property(overrides, &key) else {
+                continue;
+            };
+            let own = has_own_record_key(&self.own, &key);
             if !own && !self.prototype.has(&key) {
                 continue;
             }

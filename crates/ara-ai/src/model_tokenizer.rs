@@ -76,6 +76,29 @@ pub fn count_default_fragments<'a>(fragments: impl IntoIterator<Item = &'a str>)
     count_encoding_fragments(Encoding::O200kBase, fragments)
 }
 
+/// Original UTF16 message fragments, as read by the fixed native tokenizer.
+/// No scalar conversion or replacement is performed at this adapter boundary.
+pub fn count_family_utf16_fragments<'a>(
+    family: ModelTokenizer,
+    fragments: impl IntoIterator<Item = &'a [u16]>,
+) -> ModelContentCount {
+    count_encoding_utf16_fragments(family.encoding(), fragments)
+}
+
+pub fn count_default_utf16_fragments<'a>(fragments: impl IntoIterator<Item = &'a [u16]>) -> ModelContentCount {
+    count_encoding_utf16_fragments(Encoding::O200kBase, fragments)
+}
+
+fn count_encoding_utf16_fragments<'a>(
+    encoding: Encoding,
+    fragments: impl IntoIterator<Item = &'a [u16]>,
+) -> ModelContentCount {
+    match fragments.into_iter().try_fold(0u64, |sum, units| sum.checked_add(u64::from(encoding.count(units)))) {
+        Some(count) => ModelContentCount::Exact(count),
+        None => ModelContentCount::CountOverflow,
+    }
+}
+
 fn count_encoding_fragments<'a>(encoding: Encoding, fragments: impl IntoIterator<Item = &'a str>) -> ModelContentCount {
     match ara_ctok::count_encoding_fragments(fragments, encoding) {
         Some(count) => ModelContentCount::Exact(count),

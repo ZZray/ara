@@ -141,3 +141,10 @@ Unrun/blocked checks and impact:
 Decision: tested. Not accepted (real-model trial pending).
 
 Decision: accepted for the behaviors exercised in [real-model trials 2026-09-25](real-model-a1-a2-20260925.md) (Agnes `agnes-2.5-flash`, OpenRouter `openrouter/free`); items listed there as not exercised stay open.
+
+## 2026-10-07 contract update
+
+The historical lossy-decode and hashline `MV` refusals recorded above have been
+removed to restore fixed OMP behavior. Current Windows module execution and
+remaining platform/gate limits are in [the edit-engine receipt](edit-engine-parity-20261007.md).
+Historical results above describe their original snapshot, not the restored contract.

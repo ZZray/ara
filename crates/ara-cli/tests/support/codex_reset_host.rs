@@ -78,11 +78,19 @@ pub struct Reply {
     pub body: String,
     pub gate: Option<Arc<Gate>>,
     pub retry_after_seconds: Option<u64>,
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl Reply {
     pub fn json(status: u16, body: Value) -> Self {
-        Self { status, content_type: "application/json", body: body.to_string(), gate: None, retry_after_seconds: None }
+        Self {
+            status,
+            content_type: "application/json",
+            body: body.to_string(),
+            gate: None,
+            retry_after_seconds: None,
+            extra_headers: Vec::new(),
+        }
     }
 
     pub fn malformed() -> Self {
@@ -92,11 +100,14 @@ impl Reply {
             body: "{invalid fixture JSON".into(),
             gate: None,
             retry_after_seconds: None,
+            extra_headers: Vec::new(),
         }
     }
 
     pub fn text(message: &str) -> Self {
         let events = [
+            serde_json::json!({"type":"response.output_item.added","output_index":0,"item":{
+                "type":"message","id":"msg_reset_fixture","role":"assistant","content":[]}}),
             serde_json::json!({"type":"response.output_item.done","output_index":0,"item":{
                 "type":"message","id":"msg_reset_fixture","role":"assistant","content":[{"type":"output_text","text":message}]}}),
             serde_json::json!({"type":"response.completed","response":{"status":"completed"}}),
@@ -111,6 +122,7 @@ impl Reply {
             body: events.into_iter().map(|event| format!("data: {event}\n\n")).collect(),
             gate: None,
             retry_after_seconds: None,
+            extra_headers: Vec::new(),
         }
     }
 
@@ -121,6 +133,11 @@ impl Reply {
 
     pub fn retry_after(mut self, seconds: u64) -> Self {
         self.retry_after_seconds = Some(seconds);
+        self
+    }
+
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        self.extra_headers.push((name.into(), value.into()));
         self
     }
 }
@@ -153,7 +170,7 @@ impl ResetFixture {
                         tokio::select! { biased; _ = stop.cancelled() => return, _ = gate.wait() => {} }
                     }
                     let wire = format!(
-                        "HTTP/1.1 {} Fixture\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+                        "HTTP/1.1 {} Fixture\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}{}Connection: close\r\n\r\n{}",
                         reply.status,
                         reply.content_type,
                         reply.body.len(),
@@ -161,6 +178,11 @@ impl ResetFixture {
                             .retry_after_seconds
                             .map(|seconds| format!("Retry-After: {seconds}\r\n"))
                             .unwrap_or_default(),
+                        reply
+                            .extra_headers
+                            .iter()
+                            .map(|(name, value)| format!("{name}: {value}\r\n"))
+                            .collect::<String>(),
                         reply.body
                     );
                     let _ = socket.write_all(wire.as_bytes()).await;

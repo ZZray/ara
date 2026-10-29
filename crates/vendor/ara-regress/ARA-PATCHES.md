@@ -12,7 +12,9 @@ the exact `=0.12.0` dependency. The ARA directory is `ara-regress`.
 
 ## Local native changes
 
-Only `src/unicode.rs` and `src/parse.rs` change release source behavior.
+`src/unicode.rs` and `src/parse.rs` contain the semantic corrections below.
+`src/api.rs` and `src/classicalbacktrack.rs` also add the narrow at-offset
+UCS2 matching API required by Native RegExp default split.
 The historical benchmark document `perf.md` adds `https://` to its upstream
 repository link so the project documentation checker recognizes the URL.
 Its benchmark text and results remain unchanged.
@@ -38,6 +40,26 @@ receipts are kept with that batch. No complete RegExp specification or full
 OMP catalogue acceptance is implied by this dependency's targeted checks.
 
 Future dependency upgrades must compare the original published release with
-these two source patches and rerun the retained source oracle. Formatting
+these four source patches and rerun the retained source oracle. Formatting
 uses this package's original rustfmt configuration; do not apply the OMP
 vendor parent's tab configuration to this release.
+
+## At-offset UCS2 matching
+
+`Regex::match_at_ucs2` retains the complete original input and returns a match
+only at the requested UCS2 offset. The internal executor moves to that offset
+and calls `try_at_pos` once, preserving anchors, lookbehind and absolute capture
+ranges. Out-of-range offsets return `None`. The existing nonsticky search path
+is unchanged. This API avoids scanning the whole remaining suffix for each
+sticky miss in Native RegExp split. The single-attempt property is source
+derived; runtime observations and review remain separate acceptance evidence.
+
+
+## At-offset UTF16 Unicode matching
+
+`Regex::match_at_utf16` uses the existing UTF16 input and single-attempt
+executor at the requested code-unit offset, preserving complete-input anchors
+and UTF16 match ranges. It supplies the native Unicode sticky splitter used
+by the fixed OMP Bash approval RegExp dependency. Existing UCS2 matching is
+unchanged. Source review and actual selected runtime evidence remain separate;
+this API addition does not claim full ECMAScript RegExp coverage.

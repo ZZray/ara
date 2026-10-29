@@ -27,7 +27,7 @@
 //! SOFTWARE.
 
 use crate::auth_storage::{
-    AuthStorage, AuthStorageError, CredentialBaseUrlResolver, FetchUsageReportsOptions, ListResetCreditsOptions,
+    AuthSessionScope, AuthStorage, AuthStorageError, CredentialBaseUrlResolver, FetchUsageReportsOptions, ListResetCreditsOptions,
     RedeemResetCreditOptions, ResetCreditAccountStatus, ResetRedemption,
 };
 use crate::auth_storage_policy::UsageReport;
@@ -35,7 +35,7 @@ use crate::auth_storage_state::OAuthAccountSummary;
 use crate::codex_auto_reset::{
     ATTEMPT_COOLDOWN_MS, CodexAutoRedeemMode, CodexResetAction, CodexResetPlanInput, CodexResetSettings,
     CodexResetTrigger, REDEEM_RETRY_DEFER_MS, SWEEP_MIN_INTERVAL_MS, is_terminal_redeem_outcome,
-    overlay_live_reset_credits, plan_codex_resets, should_evaluate_codex_auto_redeem, should_prompt_codex_auto_redeem,
+    overlay_live_reset_credits, plan_codex_resets_with_permits, should_evaluate_codex_auto_redeem, should_prompt_codex_auto_redeem,
 };
 use crate::codex_reset_receipts::{ResetOperationReceipt, ResetReceiptState, ResetReceiptStore};
 use crate::model_route::{
@@ -45,7 +45,7 @@ use crate::model_route::{
 use ara_ai::Model;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, atomic::{AtomicBool, Ordering}};
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
@@ -90,6 +90,10 @@ pub struct CodexResetContext {
 }
 
 impl CodexResetContext {
+    pub fn with_session_scope(mut self, scope: Arc<AuthSessionScope>) -> Self {
+        self.usage.context = scope.context_for(&self.provider, &self.usage.context);
+        self
+    }
     pub fn for_model(model: &Model, session_id: Option<String>, resolver: Option<CredentialBaseUrlResolver>) -> Self {
         Self {
             provider: model.provider.clone(),
@@ -109,7 +113,12 @@ impl CodexResetContext {
     }
 }
 
-type PassResult = Vec<ResetOperationReceipt>;
+#[derive(Clone, Debug, Default)]
+struct SharedResetPass {
+    receipts: Vec<ResetOperationReceipt>,
+    pool_limited: bool,
+}
+type PassResult = SharedResetPass;
 type PassReceiver = watch::Receiver<Option<PassResult>>;
 
 #[derive(Default)]
@@ -191,8 +200,8 @@ async fn await_pass(mut receiver: PassReceiver, cancel: &CancellationToken) -> P
         }
         tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Vec::new(),
-            changed = receiver.changed() => if changed.is_err() { return Vec::new() },
+            _ = cancel.cancelled() => return PassResult::default(),
+            changed = receiver.changed() => if changed.is_err() { return PassResult::default() },
         }
     }
 }
@@ -281,6 +290,31 @@ impl CodexResetController {
             session_id,
             base_url_resolver,
             host_epoch: self.host.epoch(),
+            session_scope: None,
+        })
+    }
+
+    pub fn decorate_scoped(
+        self: &Arc<Self>, inner: Arc<dyn RequestAuthResolver>, session_id: Option<String>,
+        base_url_resolver: Option<CredentialBaseUrlResolver>, scope: Arc<AuthSessionScope>,
+    ) -> Arc<dyn RequestAuthResolver> {
+        Arc::new(ResetRequestAuth { inner, controller: self.clone(), session_id, base_url_resolver,
+            host_epoch: self.host.epoch(), session_scope: Some(scope) })
+    }
+
+    fn receipt_usable(&self, context: &CodexResetContext, receipt: &ResetOperationReceipt) -> bool {
+        if !context.usage.context.session_scope.as_ref()
+            .is_some_and(|scope| scope.oauth_account_pools.contains_key("openai-codex")) { return true }
+        self.storage.list_oauth_accounts_with_context("openai-codex", &context.usage.context).ok()
+            .is_some_and(|rows| rows.iter().any(|row| row.credential_id == receipt.credential_id
+                && receipt.account_id.as_ref().is_none_or(|id| row.account_id.as_ref() == Some(id))
+                && receipt.email.as_ref().is_none_or(|email| row.email.as_ref() == Some(email))))
+    }
+
+    fn pass_usable(&self, context: &CodexResetContext, pass: &SharedResetPass) -> bool {
+        if pass.receipts.is_empty() { return !pass.pool_limited }
+        pass.receipts.iter().any(|receipt| {
+            receipt.is_confirmed_reset() && self.receipt_usable(context, receipt)
         })
     }
 
@@ -382,13 +416,16 @@ impl CodexResetController {
                 .get_oauth_account_identity("openai-codex", context.usage.context.session_id.as_deref())
                 .ok()
                 .flatten();
-            let actions =
+            let (actions, _) =
                 controller.plan(&context, CodexResetTrigger::Sweep, Some(&reports), identity.as_ref(), None, settings);
             let result = if controller.confirm(&context, &actions, settings).await {
                 controller.execute(&context, actions).await
             } else {
-                Vec::new()
+                PassResult::default()
             };
+            // Settle the owner before publishing completion. A waiter may
+            // immediately admit a distinct pass without an older guard removing it.
+            drop(_guard);
             let _ = tx.send(Some(result));
         });
     }
@@ -399,81 +436,67 @@ impl CodexResetController {
         identity: OAuthAccountSummary,
         unblock_at_ms: Option<f64>,
         cancel: &CancellationToken,
-    ) -> PassResult {
+    ) -> Vec<ResetOperationReceipt> {
         let Ok(settings) = self.host.settings() else { return Vec::new() };
-        if cancel.is_cancelled()
-            || !should_evaluate_codex_auto_redeem(settings.auto_redeem)
-            || context.provider != "openai-codex"
-        {
-            return Vec::new();
-        }
+        if cancel.is_cancelled() || !should_evaluate_codex_auto_redeem(settings.auto_redeem)
+            || context.provider != "openai-codex" { return Vec::new() }
         let Ok((context, scope)) = self.freeze_context(context) else { return Vec::new() };
         let base = context.usage.base_url_resolver.as_ref().and_then(|resolve| resolve("openai-codex"));
-        let Ok(key) = self.storage.reset_operation_account_key(
-            "openai-codex",
-            base.as_deref(),
-            identity.credential_id,
-            identity.account_id.as_deref(),
-            identity.email.as_deref(),
-        ) else {
-            return Vec::new();
-        };
-        let (tx, rx) = watch::channel(None);
-        let (existing, sweep) = {
-            let mut state = self.coordinator.state.lock().unwrap();
-            if state.closed || cancel.is_cancelled() {
-                return Vec::new();
+        let Ok(key) = self.storage.reset_operation_account_key("openai-codex", base.as_deref(),
+            identity.credential_id, identity.account_id.as_deref(), identity.email.as_deref()) else { return Vec::new() };
+        loop {
+            if cancel.is_cancelled() || !self.host.is_current(&context) { return Vec::new() }
+            let (tx, rx) = watch::channel(None);
+            let (existing, sweep) = {
+                let mut state = self.coordinator.state.lock().unwrap();
+                if state.closed || cancel.is_cancelled() { return Vec::new() }
+                if let Some(existing) = state.in_flight_by_account.get(&key) {
+                    (Some(existing.clone()), None)
+                } else {
+                    let sweep = state.sweeps_in_flight.contains(&scope)
+                        .then(|| state.sweep_settlement.get(&scope).cloned()).flatten();
+                    state.in_flight_by_account.insert(key.clone(), rx.clone());
+                    state.jobs += 1;
+                    (None, sweep)
+                }
+            };
+            if let Some(existing) = existing {
+                let result = await_pass(existing, cancel).await;
+                if cancel.is_cancelled() || !self.host.is_current(&context) { return Vec::new() }
+                if self.pass_usable(&context, &result) { return result.receipts }
+                // The original owner removed its key before publishing this
+                // result. Re-admit under our scope, never re-observe a completed watch.
+                continue;
             }
-            if let Some(existing) = state.in_flight_by_account.get(&key) {
-                (Some(existing.clone()), None)
-            } else {
-                let sweep = state
-                    .sweeps_in_flight
-                    .contains(&scope)
-                    .then(|| state.sweep_settlement.get(&scope).cloned())
-                    .flatten();
-                state.in_flight_by_account.insert(key.clone(), rx.clone());
-                state.jobs += 1;
-                (None, sweep)
-            }
-        };
-        if let Some(existing) = existing {
-            return await_pass(existing, cancel).await;
+            let controller = self.clone();
+            let pass_context = context.clone();
+            let pass_identity = identity.clone();
+            let pass_scope = scope.clone();
+            let guard = JobGuard { coordinator: self.coordinator.clone(), account: Some(key.clone()), sweep: None };
+            tokio::spawn(async move {
+                let _guard = guard;
+                let adopted = if let Some(sweep) = sweep {
+                    let result = await_pass(sweep, &CancellationToken::new()).await;
+                    let receipts = result.receipts.into_iter().filter(|receipt| receipt.is_confirmed_reset()
+                        && receipt.account_key.starts_with(&format!("{pass_scope}:"))).collect();
+                    let result = SharedResetPass { receipts, pool_limited: result.pool_limited };
+                    if !result.receipts.is_empty() && controller.pass_usable(&pass_context, &result) {
+                        Some(result)
+                    } else { None }
+                } else { None };
+                let result = if let Some(adopted) = adopted { adopted }
+                else if controller.coordinator.state.lock().unwrap().closed
+                    || !controller.host.is_current(&pass_context)
+                    || !controller.host.settings().is_ok_and(|settings| should_evaluate_codex_auto_redeem(settings.auto_redeem)) {
+                    PassResult::default()
+                } else {
+                    controller.blocked_pass(&pass_context, &pass_identity, unblock_at_ms, settings).await
+                };
+                drop(_guard);
+                let _ = tx.send(Some(result));
+            });
+            return await_pass(rx, cancel).await.receipts;
         }
-        let controller = self.clone();
-        let guard = JobGuard { coordinator: self.coordinator.clone(), account: Some(key), sweep: None };
-        tokio::spawn(async move {
-            let _guard = guard;
-            // Fixed native admission gates sweeps on blocked work in one
-            // direction. Serialize the reverse direction as an ARA safety
-            // difference, adopting only this scope's durable confirmations.
-            let adopted = if let Some(sweep) = sweep {
-                await_pass(sweep, &CancellationToken::new())
-                    .await
-                    .into_iter()
-                    .filter(|receipt| {
-                        receipt.is_confirmed_reset() && receipt.account_key.starts_with(&format!("{scope}:"))
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            let result = if !adopted.is_empty() {
-                adopted
-            } else if controller.coordinator.state.lock().unwrap().closed
-                || !controller.host.is_current(&context)
-                || !controller
-                    .host
-                    .settings()
-                    .is_ok_and(|settings| should_evaluate_codex_auto_redeem(settings.auto_redeem))
-            {
-                Vec::new()
-            } else {
-                controller.blocked_pass(&context, &identity, unblock_at_ms, settings).await
-            };
-            let _ = tx.send(Some(result));
-        });
-        await_pass(rx, cancel).await
     }
 
     async fn blocked_pass(
@@ -485,9 +508,9 @@ impl CodexResetController {
     ) -> PassResult {
         let token = CancellationToken::new();
         if self.storage.invalidate_usage_cache_and_notify(Some("openai-codex"), &token).await.is_err() {
-            return Vec::new();
+            return PassResult::default();
         }
-        let Ok(reports) = self.fetch_usage_reports(context, &token).await else { return Vec::new() };
+        let Ok(reports) = self.fetch_usage_reports(context, &token).await else { return PassResult::default() };
         let live_token = CancellationToken::new();
         let options = ListResetCreditsOptions {
             session_id: context.usage.context.session_id.clone(),
@@ -503,7 +526,7 @@ impl CodexResetController {
                 reports
             }
         };
-        let actions = self.plan(
+        let (actions, pool_limited) = self.plan(
             context,
             CodexResetTrigger::Blocked,
             effective.as_deref(),
@@ -511,7 +534,11 @@ impl CodexResetController {
             unblock_at_ms,
             settings,
         );
-        if self.confirm(context, &actions, settings).await { self.execute(context, actions).await } else { Vec::new() }
+        let mut result = if self.confirm(context, &actions, settings).await {
+            self.execute(context, actions).await
+        } else { PassResult::default() };
+        result.pool_limited |= pool_limited;
+        result
     }
 
     fn plan(
@@ -522,8 +549,8 @@ impl CodexResetController {
         identity: Option<&OAuthAccountSummary>,
         unblock_at_ms: Option<f64>,
         settings: CodexResetSettings,
-    ) -> Vec<CodexResetAction> {
-        let Ok(scope) = self.reset_scope(context) else { return Vec::new() };
+    ) -> (Vec<CodexResetAction>, bool) {
+        let Ok(scope) = self.reset_scope(context) else { return (Vec::new(), false) };
         let prefix = format!("{scope}:");
         let state = self.coordinator.state.lock().unwrap();
         // The pure native planner sees only this authority's logical keys.
@@ -540,7 +567,11 @@ impl CodexResetController {
             .iter()
             .filter_map(|(key, at)| key.strip_prefix(&prefix).map(|key| (key.to_owned(), *at)))
             .collect();
-        let mut actions = plan_codex_resets(&CodexResetPlanInput {
+        drop(state);
+        let permits = |target: &crate::auth_storage::ResetCreditTarget| {
+            self.storage.permits_reset_target("openai-codex", target, &context.usage.context).unwrap_or(false)
+        };
+        let plan = plan_codex_resets_with_permits(&CodexResetPlanInput {
             now_ms: now_ms(),
             trigger,
             provider: &context.provider,
@@ -552,13 +583,14 @@ impl CodexResetController {
             deferred_until_by_key: &deferred_until_by_key,
             last_attempt_at_by_account: &last_attempt_at_by_account,
             active_block_unblock_at_ms: unblock_at_ms,
-        })
-        .actions;
+        }, Some(&permits));
+        let pool_limited = plan.skipped.iter().any(|skip| skip.reason == "outside-account-pool");
+        let mut actions = plan.actions;
         for action in &mut actions {
             action.account_key = format!("{prefix}{}", action.account_key);
             action.attempt_key = format!("{prefix}{}", action.attempt_key);
         }
-        actions
+        (actions, pool_limited)
     }
 
     async fn confirm(
@@ -599,6 +631,7 @@ impl CodexResetController {
 
     async fn execute(self: &Arc<Self>, context: &CodexResetContext, actions: Vec<CodexResetAction>) -> PassResult {
         let mut confirmed = Vec::new();
+        let mut pool_limited = false;
         for action in actions {
             if !self.host.is_current(context) {
                 break;
@@ -608,7 +641,12 @@ impl CodexResetController {
             if !self.host.settings().is_ok_and(|settings| settings.auto_redeem == CodexAutoRedeemMode::Yes) {
                 break;
             }
-            {
+            let blocked = action.reason == "blocked-account";
+            if blocked && !self.storage.permits_reset_target("openai-codex", &action.target, &context.usage.context).unwrap_or(false) {
+                pool_limited = true;
+                continue;
+            }
+            let (attempted_at, previous_attempt) = {
                 let mut state = self.coordinator.state.lock().unwrap();
                 let now = now_ms();
                 if state.closed
@@ -621,14 +659,27 @@ impl CodexResetController {
                     continue;
                 }
                 state.attempted_keys.insert(action.attempt_key.clone());
-                state.last_attempt_at_by_account.insert(action.account_key.clone(), now);
-            }
+                let previous = state.last_attempt_at_by_account.insert(action.account_key.clone(), now);
+                (now, previous)
+            };
             let admission_host = self.host.clone();
             let admission_context = context.clone();
             let admission_coordinator = self.coordinator.clone();
+            let pool_denied = Arc::new(AtomicBool::new(false));
+            let resolved_guard = if blocked {
+                let denied = pool_denied.clone();
+                let storage = self.storage.clone();
+                let auth_context = context.usage.context.clone();
+                Some(Arc::new(move |row: &crate::credential_store::StoredAuthCredential| {
+                    let allowed = storage.permits_stored_credential("openai-codex", row, &auth_context);
+                    if !allowed { denied.store(true, Ordering::Release); }
+                    allowed
+                }) as Arc<dyn Fn(&crate::credential_store::StoredAuthCredential) -> bool + Send + Sync>)
+            } else { None };
             let outcome = self
                 .consume(RedeemResetCreditOptions {
                     target: action.target.clone(),
+                    admit_resolved_credential: resolved_guard,
                     base_url_resolver: context.usage.base_url_resolver.clone(),
                     admit_consume: Some(Arc::new(move || {
                         !admission_coordinator.state.lock().unwrap().closed
@@ -640,6 +691,21 @@ impl CodexResetController {
                     ..Default::default()
                 })
                 .await;
+            if pool_denied.load(Ordering::Acquire) && outcome.as_ref().is_ok_and(|result|
+                result.operation.is_none() && result.outcome.code == "account_unavailable"
+                    && result.outcome.settlement_error.is_none()) {
+                // Proven pre-dispatch denial: undo only this attempt's additions.
+                // Unknown/Pending/dispatched operations never enter this branch.
+                let mut state = self.coordinator.state.lock().unwrap();
+                state.attempted_keys.remove(&action.attempt_key);
+                if state.last_attempt_at_by_account.get(&action.account_key) == Some(&attempted_at) {
+                    if let Some(previous) = previous_attempt {
+                        state.last_attempt_at_by_account.insert(action.account_key.clone(), previous);
+                    } else { state.last_attempt_at_by_account.remove(&action.account_key); }
+                }
+                pool_limited = true;
+                continue;
+            }
             match outcome {
                 Ok(result) => {
                     let is_known =
@@ -689,7 +755,7 @@ impl CodexResetController {
             // successful snapshot from recursively scheduling another sweep.
             let _ = self.storage.fetch_usage_reports_with_options(&context.usage, &CancellationToken::new()).await;
         }
-        confirmed
+        SharedResetPass { receipts: confirmed, pool_limited }
     }
 
     async fn consume(&self, options: RedeemResetCreditOptions) -> Result<ResetRedemption, AuthStorageError> {
@@ -835,10 +901,15 @@ struct ResetRequestAuth {
     session_id: Option<String>,
     base_url_resolver: Option<CredentialBaseUrlResolver>,
     host_epoch: Option<u64>,
+    session_scope: Option<Arc<AuthSessionScope>>,
 }
 
 #[async_trait]
 impl RequestAuthResolver for ResetRequestAuth {
+    #[cfg(feature = "test-fixture")]
+    fn session_scope_receipt(&self) -> Option<serde_json::Value> {
+        self.inner.session_scope_receipt()
+    }
     async fn resolve(&self, model: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
         self.inner.resolve(model, cancel).await
     }
@@ -871,7 +942,21 @@ impl RequestAuthResolver for ResetRequestAuth {
     fn for_session(&self, id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
         self.inner
             .for_session(id)
-            .map(|inner| self.controller.decorate(inner, Some(id.to_owned()), self.base_url_resolver.clone()))
+            .map(|inner| if let Some(scope) = &self.session_scope {
+                self.controller.decorate_scoped(inner, Some(id.to_owned()), self.base_url_resolver.clone(), scope.clone())
+            } else { self.controller.decorate(inner, Some(id.to_owned()), self.base_url_resolver.clone()) })
+    }
+    fn for_primary_session(&self, id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        // Preparing an immutable scope does not admit a new Host epoch.
+        // The existing committed for_session/decorate path captures that epoch.
+        self.inner.for_primary_session(id).map(|inner| Arc::new(Self {
+            inner,
+            controller: self.controller.clone(),
+            session_id: Some(id.to_owned()),
+            base_url_resolver: self.base_url_resolver.clone(),
+            session_scope: self.session_scope.as_ref().map(|scope| scope.for_primary(id)),
+            host_epoch: self.host_epoch,
+        }) as Arc<dyn RequestAuthResolver>)
     }
     async fn quota_reset(
         &self,
@@ -887,13 +972,16 @@ impl RequestAuthResolver for ResetRequestAuth {
         let Some(identity) = self
             .controller
             .storage
-            .list_oauth_accounts("openai-codex", self.session_id.as_deref())
+            .list_oauth_accounts_with_context("openai-codex", &crate::auth_storage::AuthRequestContext {
+                session_id: self.session_id.clone(), session_scope: self.session_scope.clone(), ..Default::default()
+            })
             .ok()
             .and_then(|accounts| accounts.into_iter().find(|account| account.credential_id == *id))
         else {
             return Ok(None);
         };
         let mut context = CodexResetContext::for_model(model, self.session_id.clone(), self.base_url_resolver.clone());
+        if let Some(scope) = &self.session_scope { context = context.with_session_scope(scope.clone()); }
         context.host_epoch = self.host_epoch;
         let Ok((context, scope)) = self.controller.freeze_context(context) else { return Ok(None) };
         let unblock = failure.retry_after_ms.filter(|wait| wait.is_finite() && *wait > 0.0).map(|wait| now_ms() + wait);
@@ -911,7 +999,200 @@ impl RequestAuthResolver for ResetRequestAuth {
         };
         let receipt = receipts.iter().find(|receipt| {
             Some(receipt.credential_id) == restored && receipt.account_key.starts_with(&format!("{scope}:"))
+                && self.controller.receipt_usable(&context, receipt)
         });
         Ok(receipt.and_then(|receipt| QuotaResetReplay::from_confirmed(lease, receipt)))
     }
+}
+
+
+#[cfg(test)]
+mod cold_pool_tests {
+    use super::*;
+    use crate::auth_storage::{AggregateUsageSource, AuthRequestContext, AuthStorageOptions, OAuthProvider, ResolvedOAuth};
+    use crate::auth_storage_policy::{UsageAmount, UsageLimit, UsageWindow, UsageResetCredits};
+    use crate::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
+    use crate::codex_reset_receipts::{ResetReceiptCode, SqliteResetReceiptStore};
+    use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+    use std::collections::BTreeMap;
+
+    struct Host;
+    #[async_trait]
+    impl CodexResetHost for Host {
+        fn settings(&self) -> Result<CodexResetSettings, String> {
+            Ok(CodexResetSettings { auto_redeem: CodexAutoRedeemMode::Yes, salvage_horizon_hours: 0.0, ..Default::default() })
+        }
+        fn persist_mode(&self, _: CodexAutoRedeemMode) -> Result<(), String> { Ok(()) }
+        fn notice(&self, _: &str, _: &str) {}
+    }
+    struct FreshOAuth;
+    #[async_trait]
+    impl OAuthProvider for FreshOAuth {
+        fn lease(&self, row: &StoredAuthCredential) -> Result<RequestAuthLease, AuthStorageError> {
+            let AuthCredential::OAuth { fields } = &row.credential else { return Err(AuthStorageError::Unavailable) };
+            Ok(RequestAuthLease::new(CredentialIdentity::Stored { id: row.id, revision: row.revision },
+                fields.get("access").and_then(serde_json::Value::as_str).map(str::to_owned)))
+        }
+        async fn resolve(&self, row: StoredAuthCredential, _: bool, _: &CancellationToken) -> Result<ResolvedOAuth, AuthStorageError> {
+            Ok(ResolvedOAuth { lease: self.lease(&row)?, row })
+        }
+    }
+    struct Reports(Vec<UsageReport>);
+    #[async_trait]
+    impl AggregateUsageSource for Reports {
+        async fn fetch_usage_reports(&self) -> Result<Option<Vec<UsageReport>>, AuthStorageError> { Ok(Some(self.0.clone())) }
+    }
+    fn report(email: &str, now: f64) -> UsageReport {
+        UsageReport { provider: "openai-codex".into(), fetched_at: now,
+            metadata: Some(serde_json::json!({"email":email,"accountId":email,"limitReached":true}).as_object().unwrap().clone()),
+            limits: vec![UsageLimit { id: "openai-codex:primary".into(),
+                amount: UsageAmount { used_fraction: Some(1.0), ..Default::default() },
+                window: Some(UsageWindow { resets_at: Some(now + 7_200_000.0), ..Default::default() }), ..Default::default() }],
+            reset_credits: Some(UsageResetCredits { available_count: 1.0, ..Default::default() }), ..Default::default() }
+    }
+    fn scope(email: &str) -> Arc<AuthSessionScope> {
+        AuthSessionScope::new("primary".into(), BTreeMap::from([("openai-codex".into(),
+            [format!("email:{email}")].into_iter().collect())]))
+    }
+
+    #[tokio::test]
+    async fn shared_unusable_or_pool_limited_pass_settles_before_waiter_plans_own_consume() {
+        for empty_shared in [false, true] {
+            let now = now_ms();
+            let mut http = fixture(vec![
+                HttpReply::json(200, serde_json::json!({"credits":[{"id":"credit"}]})),
+                HttpReply::json(200, serde_json::json!({"credits":[{"id":"credit"}]})),
+                HttpReply::json(200, serde_json::json!({"credits":[{"id":"credit"}]})),
+                HttpReply::json(200, serde_json::json!({"code":"reset"})),
+            ]).await;
+            let store = Arc::new(Mutex::new(SqliteCredentialStore::from_connection(
+                rusqlite::Connection::open_in_memory().unwrap(), Duration::from_millis(20)).unwrap()));
+            let credentials: Vec<_> = ["a@fixture", "b@fixture"].into_iter().map(|email| AuthCredential::oauth(
+                serde_json::json!({"email":email,"accountId":email,"access":format!("access-{email}"),"refresh":"refresh","expires":now+7_200_000.0})
+                    .as_object().unwrap().clone())).collect();
+            store.lock().unwrap().replace_auth_credentials_for_provider("openai-codex", &credentials).unwrap();
+            let storage = Arc::new(AuthStorage::new(store, None, AuthStorageOptions {
+                reset_credit_client: Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))),
+                aggregate_usage_override: Some(Arc::new(Reports(vec![report("a@fixture", now), report("b@fixture", now)]))),
+                ..Default::default()
+            }).unwrap());
+            storage.register_oauth_provider("openai-codex", Arc::new(FreshOAuth)).unwrap();
+            let auth = scope("a@fixture").context_for("openai-codex", &AuthRequestContext::default());
+            let identity = storage.get_oauth_account_identity_with_context("openai-codex", &auth).unwrap().unwrap();
+            let b = storage.list_oauth_accounts("openai-codex", None).unwrap().into_iter().find(|row| row.email.as_deref()==Some("b@fixture")).unwrap();
+            let context = CodexResetContext { provider: "openai-codex".into(), model_id: "gpt-5.6-sol".into(), host_epoch: None,
+                usage: FetchUsageReportsOptions { context: auth, ..Default::default() } };
+            let coordinator = Arc::new(CodexResetCoordinator::default());
+            let controller = CodexResetController::new(storage.clone(), Arc::new(SqliteResetReceiptStore::memory().unwrap()), Arc::new(Host), coordinator.clone());
+            let key = storage.reset_operation_account_key("openai-codex", None, identity.credential_id,
+                identity.account_id.as_deref(), identity.email.as_deref()).unwrap();
+            let (tx, rx) = watch::channel(None);
+            { let mut state = coordinator.state.lock().unwrap(); state.in_flight_by_account.insert(key.clone(), rx); state.jobs += 1; }
+            let original = JobGuard { coordinator: coordinator.clone(), account: Some(key), sweep: None };
+            let child = controller.clone(); let child_context = context.clone(); let child_identity = identity.clone();
+            let waiter = tokio::spawn(async move { child.blocked(child_context, child_identity, Some(now+7_200_000.0), &CancellationToken::new()).await });
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while tx.receiver_count() < 2 { tokio::task::yield_now().await; }
+            }).await.unwrap();
+            let receipt = ResetOperationReceipt { request_id: "earlier-flight".into(),
+                account_key: storage.reset_operation_account_key("openai-codex", None, b.credential_id, b.account_id.as_deref(), b.email.as_deref()).unwrap(),
+                credential_id: b.credential_id, account_id: b.account_id, email: b.email, credit_id: "earlier-credit".into(),
+                endpoint_fingerprint: "fixture".into(), created_at: now, updated_at: now,
+                state: ResetReceiptState::Known, code: ResetReceiptCode::Reset };
+            let result = SharedResetPass { receipts: if empty_shared { Vec::new() } else { vec![receipt] }, pool_limited: empty_shared };
+            assert!(!controller.pass_usable(&context, &result));
+            drop(original);
+            tx.send(Some(result)).unwrap();
+            let actual = tokio::time::timeout(Duration::from_secs(5), waiter).await.unwrap().unwrap();
+            assert_eq!(actual.len(), 1); assert_eq!(actual[0].credential_id, identity.credential_id);
+            assert!(actual[0].is_confirmed_reset());
+            let mut posts = Vec::new();
+            while let Ok(request) = http.requests.try_recv() { if request.method=="POST" { posts.push(request); } }
+            assert_eq!(posts.len(), 1);
+            assert_eq!(posts[0].headers.get("chatgpt-account-id").map(String::as_str), Some("a@fixture"));
+            coordinator.wait_for_settlement().await;
+            assert!(coordinator.state.lock().unwrap().in_flight_by_account.is_empty());
+        }
+    }
+
+
+    struct SwapOAuth { store: Arc<Mutex<SqliteCredentialStore>>, replace: AtomicBool }
+    #[async_trait]
+    impl OAuthProvider for SwapOAuth {
+        fn lease(&self, row: &StoredAuthCredential) -> Result<RequestAuthLease, AuthStorageError> { FreshOAuth.lease(row) }
+        async fn resolve(&self, row: StoredAuthCredential, force: bool, cancel: &CancellationToken) -> Result<ResolvedOAuth, AuthStorageError> {
+            FreshOAuth.resolve(row, force, cancel).await
+        }
+        async fn prepare_for_request(&self, row: &StoredAuthCredential, _: &CancellationToken) -> Result<(), AuthStorageError> {
+            if self.replace.swap(false, Ordering::AcqRel) {
+                let mut credential = row.credential.clone();
+                if let AuthCredential::OAuth { fields } = &mut credential {
+                    fields.insert("email".into(), "b@fixture".into()); fields.insert("accountId".into(), "b@fixture".into());
+                }
+                self.store.lock().unwrap().try_update_auth_credential_if_matches(row.id, &row.serialized_data, &credential, None).unwrap();
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn final_pool_denial_restores_previous_cooldown_but_unknown_consume_stays_fenced() {
+        for replace_identity in [true, false] {
+            let now = now_ms();
+            let mut http = fixture(vec![
+                HttpReply::json(200, serde_json::json!({"credits":[{"id":"credit"}]})),
+                HttpReply::json(500, serde_json::json!({"code":"reset"})),
+            ]).await;
+            let store = Arc::new(Mutex::new(SqliteCredentialStore::from_connection(
+                rusqlite::Connection::open_in_memory().unwrap(), Duration::from_millis(20)).unwrap()));
+            store.lock().unwrap().replace_auth_credentials_for_provider("openai-codex", &[AuthCredential::oauth(
+                serde_json::json!({"email":"a@fixture","accountId":"a@fixture","access":"access-a","refresh":"refresh","expires":now+7_200_000.0})
+                    .as_object().unwrap().clone())]).unwrap();
+            let storage = Arc::new(AuthStorage::new(store.clone(), None, AuthStorageOptions {
+                reset_credit_client: Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))), ..Default::default()
+            }).unwrap());
+            storage.register_oauth_provider("openai-codex", Arc::new(SwapOAuth { store, replace: AtomicBool::new(replace_identity) })).unwrap();
+            let auth = scope("a@fixture").context_for("openai-codex", &AuthRequestContext::default());
+            let identity = storage.get_oauth_account_identity_with_context("openai-codex", &auth).unwrap().unwrap();
+            let context = CodexResetContext { provider: "openai-codex".into(), model_id: "gpt-5.6-sol".into(), host_epoch: None,
+                usage: FetchUsageReportsOptions { context: auth, ..Default::default() } };
+            let coordinator = Arc::new(CodexResetCoordinator::default());
+            let journal = Arc::new(SqliteResetReceiptStore::memory().unwrap());
+            let controller = CodexResetController::new(storage.clone(), journal.clone(), Arc::new(Host), coordinator.clone());
+            let target = crate::auth_storage::ResetCreditTarget { credential_id: Some(identity.credential_id),
+                email: identity.email, account_id: identity.account_id };
+            let account_key = storage.reset_operation_account_key("openai-codex", None, identity.credential_id,
+                target.account_id.as_deref(), target.email.as_deref()).unwrap();
+            let attempt_key = format!("{account_key}:test-attempt");
+            let previous = now - 2.0 * ATTEMPT_COOLDOWN_MS;
+            coordinator.state.lock().unwrap().last_attempt_at_by_account.insert(account_key.clone(), previous);
+            let action = CodexResetAction { reason: "blocked-account".into(), target: target.clone(), account_key: account_key.clone(),
+                attempt_key: attempt_key.clone(), label: "fixture".into(), ..Default::default() };
+            let result = controller.execute(&context, vec![action]).await;
+            assert!(result.receipts.is_empty());
+            assert_eq!(http.requests.recv().await.unwrap().method, "GET");
+            let state = coordinator.state.lock().unwrap();
+            if replace_identity {
+                assert!(result.pool_limited);
+                assert!(!state.attempted_keys.contains(&attempt_key));
+                assert_eq!(state.last_attempt_at_by_account.get(&account_key), Some(&previous));
+                assert!(!state.deferred_until_by_key.contains_key(&attempt_key));
+                assert!(journal.receipts().unwrap().is_empty());
+                assert!(http.requests.try_recv().is_err());
+            } else {
+                assert!(!result.pool_limited);
+                assert!(state.attempted_keys.contains(&attempt_key));
+                assert_ne!(state.last_attempt_at_by_account.get(&account_key), Some(&previous));
+                assert_eq!(journal.receipts().unwrap()[0].state, ResetReceiptState::Unknown);
+                assert_eq!(http.requests.try_recv().unwrap().method, "POST");
+                drop(state);
+                let again = controller.consume(RedeemResetCreditOptions { target,
+                    credit_id: Some("credit".into()), ..Default::default() }).await.unwrap();
+                assert_eq!(again.outcome.code, "outcome_unknown");
+                assert_eq!(again.operation.unwrap().state, ResetReceiptState::Unknown);
+                assert!(http.requests.try_recv().is_err());
+            }
+        }
+    }
+
 }

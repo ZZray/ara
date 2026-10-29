@@ -199,6 +199,41 @@ pub(crate) enum CredentialStoreOwner {
 }
 
 impl CredentialStoreOwner {
+    /// Publication for the native unpersisted OAuth override callback. This
+    /// owner-specific operation does not expand the generic store trait.
+    pub(crate) fn publish_oauth_override_if_matches(
+        &self,
+        provider: &str,
+        id: i64,
+        expected_data: &str,
+        credential: &AuthCredential,
+    ) -> Result<(StoredAuthCredential, bool), AuthStorageError> {
+        match self {
+            Self::Local(store) => {
+                let store = store.lock().map_err(|_| AuthStorageError::Storage)?;
+                let current = store
+                    .list_auth_credentials(Some(provider))
+                    .map_err(|_| AuthStorageError::Storage)?
+                    .into_iter()
+                    .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
+                    .ok_or(AuthStorageError::Unavailable)?;
+                let won = store
+                    .try_update_auth_credential_if_matches(id, expected_data, credential, None)
+                    .map_err(|_| AuthStorageError::Storage)?;
+                let row = store
+                    .list_auth_credentials(Some(&current.provider))
+                    .map_err(|_| AuthStorageError::Storage)?
+                    .into_iter()
+                    .find(|row| row.id == id)
+                    .ok_or(AuthStorageError::Unavailable)?;
+                // A separate SQLite connection can change the row after our
+                // winning CAS. Only the exact submitted result is our grant.
+                let own = won && row.credential == *credential;
+                Ok((row, own))
+            }
+            Self::Remote(store) => store.publish_oauth_override_if_matches(provider, id, expected_data, credential),
+        }
+    }
     #[cfg(test)]
     pub(crate) fn local_for_test(&self) -> &Arc<Mutex<SqliteCredentialStore>> {
         match self {

@@ -11,6 +11,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::provider_metadata::{ToolCallProviderMetadata, ToolResultProviderMetadata};
+
 pub type JsonObject = Map<String, Value>;
 
 /// Milliseconds since the Unix epoch.
@@ -49,13 +51,23 @@ pub struct ImageContent {
     pub compaction_frame: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: JsonObject,
+    /// Canonical intent annotated before the final assistant is journaled.
+    /// Original arguments, including an authored `i`, remain unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
     #[serde(rename = "thoughtSignature", default, skip_serializing_if = "Option::is_none")]
     pub thought_signature: Option<String>,
+    /// Original custom-tool wire name; raw input remains arguments.input.
+    /// Absence preserves old function-call journals without rewriting them.
+    #[serde(rename = "customWireName", default, skip_serializing_if = "Option::is_none")]
+    pub custom_wire_name: Option<String>,
+    #[serde(rename = "providerMetadata", default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<ToolCallProviderMetadata>,
 }
 
 /// Content allowed in user, developer and tool-result messages.
@@ -207,23 +219,51 @@ pub struct RetryAttempt {
     pub stop_reason: StopReason,
 }
 
+/// Temporary Host proof for a checked route's opaque client history.
+/// Fields are private to the AI crate and skipped by message serialization.
+/// This is an explicit Host adoption boundary, not an OS or cryptographic sandbox.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResponsesClientHistoryOrigin {
+    pub(crate) role: String,
+    pub(crate) api: String,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) endpoint_sha256: String,
+    pub(crate) payload_sha256: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub content: UserContent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthetic: Option<bool>,
+    /// Lossless Native client-history ingress. A raw field alone grants no replay.
+    #[serde(rename = "providerPayload", default, skip_serializing_if = "Option::is_none")]
+    pub provider_payload: Option<Value>,
+    #[serde(skip)]
+    pub provider_payload_origin: Option<ResponsesClientHistoryOrigin>,
     pub timestamp: i64,
 }
 
 impl UserMessage {
     pub fn text(text: impl Into<String>) -> Self {
-        UserMessage { content: UserContent::Text(text.into()), synthetic: None, timestamp: now_ms() }
+        UserMessage {
+            content: UserContent::Text(text.into()),
+            synthetic: None,
+            provider_payload: None,
+            provider_payload_origin: None,
+            timestamp: now_ms(),
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeveloperMessage {
     pub content: UserContent,
+    #[serde(rename = "providerPayload", default, skip_serializing_if = "Option::is_none")]
+    pub provider_payload: Option<Value>,
+    #[serde(skip)]
+    pub provider_payload_origin: Option<ResponsesClientHistoryOrigin>,
     pub timestamp: i64,
 }
 
@@ -346,7 +386,7 @@ impl AssistantMessage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ToolResultMessage {
     #[serde(rename = "toolCallId")]
     pub tool_call_id: String,
@@ -357,7 +397,27 @@ pub struct ToolResultMessage {
     pub details: Option<Value>,
     #[serde(rename = "isError")]
     pub is_error: bool,
+    #[serde(
+        rename = "providerMetadata",
+        default,
+        deserialize_with = "deserialize_tool_result_metadata",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_metadata: Option<ToolResultProviderMetadata>,
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub useless: bool,
     pub timestamp: i64,
+}
+
+fn deserialize_tool_result_metadata<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ToolResultProviderMetadata>, D::Error> {
+    let raw = Value::deserialize(deserializer)?;
+    crate::provider_metadata::snapshot_tool_result_provider_metadata(Some(&raw)).map_err(serde::de::Error::custom)
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
 }
 
 // Messages are plain transcript values moved between the journal, the loop and
@@ -394,12 +454,62 @@ impl Message {
 }
 
 /// Tool definition sent to the model.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     /// JSON Schema object for the arguments.
     pub parameters: Value,
+    /// Explicit provider-native declaration, independent of the authored name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<NativeToolMarker>,
+    /// Optional strict validation metadata from the tool's authored definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+    #[serde(rename = "customFormat", default, skip_serializing_if = "Option::is_none")]
+    pub custom_format: Option<CustomToolFormat>,
+    #[serde(rename = "customWireName", default, skip_serializing_if = "Option::is_none")]
+    pub custom_wire_name: Option<String>,
+    /// Source examples rendered by the shared provider-context normalizer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub examples: Option<Vec<ToolExample>>,
+}
+
+/// Fixed OMP `packages/ai/src/types.ts` tool examples. Their arguments are
+/// authored without the injected intent placeholder; the normalizer adds it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolExample {
+    Call {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        call: JsonObject,
+    },
+    Compare {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        bad: JsonObject,
+        good: JsonObject,
+    },
+    Note {
+        caption: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+}
+
+/// Native optional custom-tool grammar; ordinary function providers ignore it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CustomToolFormat {
+    pub syntax: CustomToolSyntax,
+    pub definition: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomToolSyntax {
+    Lark,
+    Regex,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -410,13 +520,86 @@ pub struct Context {
     pub tools: Option<Vec<Tool>>,
 }
 
-/// Wire tool-choice directive.
-#[derive(Clone, Debug, PartialEq)]
+/// Fixed Native provider marker. A tool called `computer` alone is not native.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum NativeToolMarker {
+    Computer,
+}
+
+/// All eight fixed Native input choices. Named forms retain their source shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolChoice {
     Auto,
     None,
+    Any,
     Required,
+    Function(String),
+    FunctionNested(String),
     Tool(String),
+    Computer,
+}
+
+impl ToolChoice {
+    pub fn logical_name(&self) -> Option<&str> {
+        match self {
+            Self::Function(name) | Self::FunctionNested(name) | Self::Tool(name) => Some(name),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for ToolChoice {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value = match self {
+            Self::Auto => serde_json::json!("auto"),
+            Self::None => serde_json::json!("none"),
+            Self::Any => serde_json::json!("any"),
+            Self::Required => serde_json::json!("required"),
+            Self::Function(name) => serde_json::json!({"type":"function", "name":name}),
+            Self::FunctionNested(name) => serde_json::json!({"type":"function", "function":{"name":name}}),
+            Self::Tool(name) => serde_json::json!({"type":"tool", "name":name}),
+            Self::Computer => serde_json::json!({"type":"computer"}),
+        };
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolChoice {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let choice = match &value {
+            Value::String(keyword) => match keyword.as_str() {
+                "auto" => Some(Self::Auto),
+                "none" => Some(Self::None),
+                "any" => Some(Self::Any),
+                "required" => Some(Self::Required),
+                _ => None,
+            },
+            Value::Object(fields) => match fields.get("type").and_then(Value::as_str) {
+                Some("computer") if fields.len() == 1 => Some(Self::Computer),
+                Some("tool") if fields.len() == 2 => {
+                    fields.get("name").and_then(Value::as_str).map(|name| Self::Tool(name.into()))
+                }
+                Some("function") if fields.len() == 2 => {
+                    if let Some(name) = fields.get("name").and_then(Value::as_str) {
+                        Some(Self::Function(name.into()))
+                    } else {
+                        fields
+                            .get("function")
+                            .and_then(Value::as_object)
+                            .filter(|nested| nested.len() == 1)
+                            .and_then(|nested| nested.get("name"))
+                            .and_then(Value::as_str)
+                            .map(|name| Self::FunctionNested(name.into()))
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        choice.ok_or_else(|| serde::de::Error::custom("invalid fixed Native tool choice shape"))
+    }
 }
 
 /// A model endpoint selected by the host.
@@ -444,6 +627,32 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn native_tool_choices_preserve_all_eight_shapes() {
+        for (wire, choice) in [
+            (json!("auto"), ToolChoice::Auto),
+            (json!("none"), ToolChoice::None),
+            (json!("any"), ToolChoice::Any),
+            (json!("required"), ToolChoice::Required),
+            (json!({"type":"function","name":"read"}), ToolChoice::Function("read".into())),
+            (json!({"type":"function","function":{"name":"read"}}), ToolChoice::FunctionNested("read".into())),
+            (json!({"type":"tool","name":"read"}), ToolChoice::Tool("read".into())),
+            (json!({"type":"computer"}), ToolChoice::Computer),
+        ] {
+            assert_eq!(serde_json::from_value::<ToolChoice>(wire.clone()).unwrap(), choice);
+            assert_eq!(serde_json::to_value(&choice).unwrap(), wire);
+        }
+        for invalid in [
+            json!("computer"),
+            json!({"name":"read"}),
+            json!({"type":"function","name":"read","function":{"name":"write"}}),
+            json!({"type":"computer","name":"computer"}),
+        ] {
+            assert!(serde_json::from_value::<ToolChoice>(invalid).is_err());
+        }
+        assert_eq!(serde_json::to_value(NativeToolMarker::Computer).unwrap(), json!({"type":"computer"}));
+    }
+
+    #[test]
     fn message_json_shape_matches_omp() {
         // Shape taken from OMP session fixture packages/coding-agent/test/fixtures/before-compaction.jsonl.
         let raw = json!({
@@ -464,6 +673,20 @@ mod tests {
         assert_eq!(assistant.stop_reason, StopReason::ToolUse);
         assert_eq!(assistant.tool_calls().count(), 1);
         assert_eq!(serde_json::to_value(&msg).unwrap(), raw);
+
+        // Canonical result metadata keeps old missing fields compatible, but
+        // explicit null is malformed as at the actual raw result boundary.
+        let mut result = json!({"toolCallId":"receipt","toolName":"computer","content":[],
+            "isError":false,"timestamp":1});
+        let legacy: ToolResultMessage = serde_json::from_value(result.clone()).unwrap();
+        assert!(legacy.provider_metadata.is_none() && !legacy.useless);
+        result["providerMetadata"] = Value::Null;
+        assert!(serde_json::from_value::<ToolResultMessage>(result.clone()).is_err());
+        result["providerMetadata"] = json!({"type":"computer",
+            "screenshot":{"type":"computer_screenshot","file_id":"retained"},
+            "acknowledgedSafetyChecks":[{"id":"check","message":null}]});
+        let canonical: ToolResultMessage = serde_json::from_value(result.clone()).unwrap();
+        assert_eq!(serde_json::to_value(canonical).unwrap(), result);
     }
 
     #[test]

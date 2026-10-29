@@ -2098,11 +2098,17 @@ async fn summarize_window(
         &context,
         CallOptions {
             cancel: provider_cancel.clone(),
+            max_in_flight_requests: None,
+            wait_for_terminal_drain: false,
             tool_choice: Some(ToolChoice::None),
             max_tokens: Some(max_output_tokens),
+            suppress_native_tool_choice: false,
             temperature: None,
             loop_guard: None,
             on_response: None,
+            reasoning: None,
+            include: None,
+            responses_lite: None,
         },
     );
     let deadline = tokio::time::Instant::from_std(deadline);

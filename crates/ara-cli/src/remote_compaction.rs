@@ -67,7 +67,20 @@ pub fn route_context(
     supports_images: bool,
 ) -> Result<Vec<Message>> {
     let available = native_replay_available(journal, model, metadata, settings, supports_images)?;
-    Ok(journal.model_context_for_route(model, available))
+    Ok(journal.model_context_for_route(model, available)?)
+}
+
+pub fn route_raw_context(
+    journal: &SessionJournal,
+    projector: &crate::agent_message_projection::AgentMessageProjector,
+    model: &Model,
+    metadata: Option<&Value>,
+    settings: &RemoteSettings,
+    supports_images: bool,
+) -> Result<Vec<ara_agent::AgentMessage>> {
+    projector.set_donor(model, metadata, settings, supports_images);
+    let available = native_replay_available(journal, model, metadata, settings, supports_images)?;
+    Ok(projector.raw_context(journal, model, available, supports_images)?)
 }
 
 /// Covered raw entries remain source evidence for a later readable fallback.
@@ -81,6 +94,15 @@ pub fn native_reduction_boundary(
 ) -> Result<Option<String>> {
     if !journal.is_on_disk() || journal.leaf_id().is_none() {
         journal.raw_reduction_snapshot()?;
+        return Ok(None);
+    }
+    // Boundary selection only needs summary metadata. Preserve the strict raw
+    // branch check without decoding unrelated native message domains when no
+    // compaction entry can supply a boundary.
+    let snapshot = journal.raw_reduction_snapshot()?;
+    // Retain the established metadata validation before route availability.
+    model_config(metadata)?;
+    if !snapshot.entries.iter().any(|entry| entry.kind == "compaction") {
         return Ok(None);
     }
     let available = native_replay_available(journal, model, metadata, settings, supports_images)?;
@@ -263,20 +285,30 @@ pub async fn prepare_remote(
         if let Some(cut) = compaction::select_native_remote_compaction_cut(&sources, keep_tokens, previous_summary)?
             && cut.first_kept_index > 0
         {
-            let mut context = Context {
-                system_prompt: config.system_prompt.clone(),
-                messages: projection.entries.iter().flat_map(|entry| entry.messages.clone()).collect(),
-                tools: Some(config.tools.iter().map(|tool| tool.definition()).collect()),
-            };
+            let execution =
+                config.hooks.execution_snapshot().unwrap_or_else(|| ara_agent::ExecutionSnapshot::from_config(config));
+            if execution.model.as_ref().map_or(&config.model, |selected| &selected.model) != &snapshot.active_model {
+                bail!("remote side snapshot no longer matches the accepted route");
+            }
+            let mut side_messages =
+                projection.entries.iter().flat_map(|entry| entry.messages.clone()).collect::<Vec<_>>();
             if let Some(previous) = previous_text {
-                context.messages.insert(
+                side_messages.insert(
                     0,
                     Message::User(ara_ai::UserMessage::text(format!(
                         "[Compacted summary of earlier turns; source entries withheld]\n{previous}"
                     ))),
                 );
             }
-            let context = config.hooks.transform_provider_context(context, &config.model).await;
+            let mut side_config = config.clone();
+            side_config.system_prompt = execution.system_prompt.clone();
+            if let Some(selected) = &execution.model {
+                side_config.model = selected.model.clone();
+                side_config.provider = selected.provider.clone();
+            }
+            let context = ara_agent::build_side_request_context_from_snapshot(config, execution, side_messages, None)
+                .await
+                .map_err(anyhow::Error::new)?;
             let previous = projection
                 .previous_summary
                 .as_ref()
@@ -284,7 +316,7 @@ pub async fn prepare_remote(
                 .and_then(|remote| parse_remote_preserve_data(&remote.preserve_data));
             match native_call(
                 transport.as_ref(),
-                config,
+                &side_config,
                 &context,
                 remote_config,
                 settings,

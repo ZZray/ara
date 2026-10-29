@@ -1,5 +1,7 @@
 # ARA
 
+> **Full Rust OMP port: maintenance paused on 2026-10-30.** The owner requested a source checkpoint and cleanup of Full-specific worktrees and caches. This is an unfinished implementation archive, not a complete OMP release. The independent Lite workspaces are outside this freeze. See the [freeze record and retained candidate patches](docs/archive/full-project-freeze-20261030/README.md). The development plans below are retained as historical context.
+
 ARA is a Rust Agent Core for completing tasks across personal AI products. Its first implementation target is a source-backed Rust port of [Oh My Pi](https://github.com/can1357/oh-my-pi) at the fixed commit `596f2da7101178214aa27a753529d15e6b7ad91d` (v18.1.8). After that baseline is tested, ARA adds its own sourced memory, revisable planning, reviewed feedback loop, bounded background execution, and typed multimodal input. The [Agent evolution direction](docs/knowledge/agent-evolution.md) explains how these parts serve task completion rather than one-turn answers.
 
 The Core is shared code. AI HandWave, a customized [Paseo](https://github.com/getpaseo/paseo) frontend in [Lantern](https://github.com/ZZray/Lantern), Lumen, and later products connect through host/RPC interfaces. Each product keeps its own identity, data, permissions, and lifecycle.

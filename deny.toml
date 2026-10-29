@@ -28,6 +28,17 @@ allow = [
   "Zlib",
 ]
 
+# Fixed TUI static color parser dependencies; package/version-scoped MPL grants.
+exceptions = [
+  { name = "cssparser", version = "=0.37.0", allow = ["MPL-2.0"] },
+  { name = "cssparser-color", version = "=0.5.0", allow = ["MPL-2.0"] },
+  # PDF/SVG resvg dependency; retain the complete notice in distributions.
+  { name = "arrayref", version = "=0.3.9", allow = ["BSD-2-Clause"] },
+  # Fixed b91 gix-pack 0.72 -> uluru 3.1.0. Unmodified registry source;
+  # source access and full MPL notice retained in THIRD_PARTY_NOTICES.md/LICENSE.uluru.
+  { name = "uluru", version = "=3.1.0", allow = ["MPL-2.0"] },
+]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

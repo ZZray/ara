@@ -147,13 +147,12 @@ async fn provider_response_notifications_follow_final_success_and_await_callback
         .await;
         assert_eq!(settled.load(Ordering::Acquire), 1, "timeout does not discard callback work");
         assert_eq!(server.served(), 1, "a callback deadline cannot replay the successful POST");
-        if api == "openai-completions" {
-            assert_eq!(output.stop_reason, StopReason::Error);
-            let evidence = output.failure_evidence.unwrap();
-            assert!(evidence.replay_blocked && evidence.same_route_blocked);
-        } else {
-            assert_eq!(output.stop_reason, StopReason::Stop);
-        }
+        // b91db66e first-event-timeout: connected headers disarm the watchdog
+        // before awaited onResponse work. This is a new upstream contract, not
+        // a relaxation of the old successful-POST no-replay boundary above.
+        assert_eq!(output.stop_reason, StopReason::Stop);
+        assert_eq!(output.text(), "after callback");
+        assert!(output.failure_evidence.is_none());
     }
 }
 
@@ -566,6 +565,8 @@ async fn collect(mut stream: ara_ai::AssistantStream) -> AssistantMessage {
 
 #[tokio::test]
 async fn codex_side_calls_preserve_cache_prefix_and_isolate_transport_state() {
+    observe_no_strict_actual_daily_routes().await;
+    observe_native_chat_strict_session_isolation().await;
     for cache_override in [None, Some("explicit-cache-key")] {
         let server =
             server(vec![responses("main"), responses("side one"), responses("side two"), responses("continued")]).await;
@@ -602,6 +603,177 @@ async fn codex_side_calls_preserve_cache_prefix_and_isolate_transport_state() {
         assert_eq!(requests[3]["headers"]["session_id"], "main-session");
         assert!(requests[1]["headers"]["session_id"].as_str().unwrap().starts_with("main-session:side:"));
         assert_ne!(requests[1]["headers"]["session_id"], requests[2]["headers"]["session_id"]);
+    }
+}
+
+async fn observe_no_strict_actual_daily_routes() {
+    use ara_cli::daily_model_config::{DailyOverrides, resolve_daily_fallback_selection, resolve_daily_selection};
+    use ara_cli::models_config::ModelsConfig;
+    use ara_cli::schema_policy::{NO_STRICT_ENV, SchemaPolicySnapshot};
+    for api in ["openai-completions", "openai-responses", "openai-codex-responses"] {
+        for (raw, expected) in [(None, false), (Some("true"), true), (Some("True"), false)] {
+            let reply = if api == "openai-completions" { chat("schema policy") } else { responses("schema policy") };
+            let upstream = server(vec![reply; 4]).await;
+            let provider = if api == "openai-codex-responses" { "openai-codex" } else { "custom" };
+            let endpoint = if api == "openai-codex-responses" {
+                "https://chatgpt.com/backend-api".into()
+            } else {
+                upstream.base_url()
+            };
+            let cfg = ModelsConfig::validate(json!({"providers":{provider:{"api":api,"baseUrl":endpoint,
+                "auth":if api == "openai-codex-responses" { "oauth" } else { "none" },
+                // A loopback custom Host otherwise resolves strict support to
+                // false. Author this fixture capability before testing the flag.
+                "compat":{"supportsStrictMode":true},
+                "models":[{"id":"schema-model","reasoning":false}]}}}))
+            .unwrap();
+            let cli = DailyOverrides {
+                provider: Some(provider.into()),
+                model: Some("schema-model".into()),
+                ..Default::default()
+            };
+            let current = Mutex::new(raw.map(str::to_owned));
+            let env = |name: &str| if name == NO_STRICT_ENV { current.lock().unwrap().clone() } else { None };
+            let snapshot = SchemaPolicySnapshot::capture(&env);
+            let frozen = |name: &str| snapshot.environment_value(name, &env);
+            let selector =
+                ara_cli::retry_fallback::parse_retry_fallback_selector(&format!("{provider}/schema-model"), None)
+                    .unwrap();
+            for (generation, lifecycle) in ["startup", "reload", "fallback", "newSession"].into_iter().enumerate() {
+                if generation == 1 {
+                    *current.lock().unwrap() = Some(if expected { "false" } else { "true" }.into());
+                }
+                let mut selected = if lifecycle == "fallback" {
+                    resolve_daily_fallback_selection(Some(&cfg), &selector, &frozen, None).unwrap()
+                } else {
+                    resolve_daily_selection(Some(&cfg), &cli, &frozen).unwrap()
+                };
+                // Endpoint admission was exercised by the real resolver above.
+                // Synthetic Codex auth/wire is routed to the controlled socket;
+                // this is not an OAuth network or account-login observation.
+                selected.model.base_url = upstream.base_url();
+                let mut lease = RequestAuthLease::new(CredentialIdentity::Runtime, Some("fixture-key".into()));
+                if api == "openai-codex-responses" {
+                    // Reuse the synthetic host lease contract from the existing
+                    // Codex side-call fixture. Graph admission requires exactly
+                    // one account header; it does not parse this token as a JWT.
+                    lease = lease.with_headers(vec![(
+                        ara_ai::providers::openai_codex_responses::ACCOUNT_HEADER.into(),
+                        "fixture-account".into(),
+                    )]);
+                }
+                let route = PreparedRoute::new(
+                    selected.model.clone(),
+                    selected.protocol,
+                    Arc::new(FixedRequestAuth::new(lease)),
+                    generation as u64,
+                )
+                .unwrap();
+                let provider = route.bind(reqwest::Client::new(), None);
+                let (factory, context) = actual_route_fixture();
+                let tools = factory.heap().import_strict(ara_rpc::WireValue::parse(
+                    r#"[{"name":"read","description":"Read","strict":true,"parameters":{"type":"object","properties":{"path":{"type":"string"},"optional":{"type":"string"}},"required":["path"]}}]"#
+                ).unwrap()).unwrap();
+                factory
+                    .heap()
+                    .define_own_data(
+                        context.original_context.as_ref().unwrap(),
+                        "tools".into(),
+                        tools,
+                        factory.runtime(),
+                    )
+                    .unwrap();
+                let (events, failures) = collect_actual_route(
+                    provider
+                        .stream_actual(&selected.model, &context, factory, CallOptions::default())
+                        .unwrap_or_else(|error| panic!("{api}/{raw:?}/{lifecycle}: stream setup failed: {error}")),
+                )
+                .await;
+                let failure_details: Vec<_> = failures.iter().map(|error| error.to_string()).collect();
+                assert!(
+                    failures.is_empty(),
+                    "{api}/{raw:?}/{lifecycle}: failure_receipt={failure_details:?}, served={}",
+                    upstream.served()
+                );
+                assert!(matches!(
+                    events.last(),
+                    Some(ara_ai::ActualAssistantEvent::Done { reason: StopReason::Stop, .. })
+                ));
+                assert_eq!(upstream.served(), generation + 1, "policy never adds a retry");
+            }
+            let requests = upstream.requests.lock().await;
+            assert_eq!(requests.len(), 4);
+            eprintln!(
+                "ARA-NO-STRICT GRAPH_WIRE api={api} raw={raw:?} fixture_supports_strict=true body={}",
+                requests[0]["body"]
+            );
+            for request in requests.iter() {
+                if api == "openai-codex-responses" {
+                    assert_eq!(request["headers"]["chatgpt-account-id"], "fixture-account");
+                }
+                let tool = if api == "openai-completions" {
+                    &request["body"]["tools"][0]["function"]
+                } else {
+                    &request["body"]["tools"][0]
+                };
+                assert_eq!(
+                    tool.get("strict").and_then(Value::as_bool),
+                    if expected { None } else { Some(true) },
+                    "{api}/{raw:?}: authored strict-capable Host"
+                );
+                let required = tool["parameters"]["required"].as_array().unwrap();
+                assert!(required.contains(&json!("path")));
+                assert_eq!(required.contains(&json!("optional")), !expected, "{api}/{raw:?}: frozen schema shape");
+                assert_eq!(
+                    tool["parameters"].get("additionalProperties"),
+                    if expected { None } else { Some(&json!(false)) }
+                );
+                assert_eq!(request["body"]["tools"], requests[0]["body"]["tools"]);
+            }
+        }
+    }
+}
+
+async fn observe_native_chat_strict_session_isolation() {
+    let rejected = json!({"status":400,"body":json!({"error":{
+        "message":"invalid schema for function read","type":"invalid_request_error"
+    }}).to_string()});
+    let upstream =
+        server(vec![rejected.clone(), chat("main"), chat("continued"), rejected, chat("new"), chat("main again")])
+            .await;
+    let prepared = model("openai-completions", "fixture", upstream.base_url());
+    let route = PreparedRoute::new(
+        prepared.clone(),
+        protocol(&prepared.api),
+        Arc::new(FixedRequestAuth::new(RequestAuthLease::new(CredentialIdentity::Runtime, Some("fixture-key".into())))),
+        0,
+    )
+    .unwrap();
+    let client = reqwest::Client::new();
+    let main = route.bind(client.clone(), None);
+    let separate = route.bind(client, None);
+    let (factory, context) = actual_route_fixture();
+    let tools = factory.heap().import_strict(ara_rpc::WireValue::parse(
+        r#"[{"name":"read","description":"Read","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}]"#
+    ).unwrap()).unwrap();
+    factory
+        .heap()
+        .define_own_data(context.original_context.as_ref().unwrap(), "tools".into(), tools, factory.runtime())
+        .unwrap();
+    for provider in [&main, &main, &separate, &main] {
+        let (events, failures) = collect_actual_route(
+            provider.stream_actual(&prepared, &context, factory.clone(), CallOptions::default()).unwrap(),
+        )
+        .await;
+        assert!(failures.is_empty());
+        assert!(matches!(events.last(), Some(ara_ai::ActualAssistantEvent::Done { reason: StopReason::Stop, .. })));
+    }
+    let requests = upstream.requests.lock().await;
+    assert_eq!(requests.len(), 6);
+    for (index, strict) in [(0, true), (1, false), (2, false), (3, true), (4, false), (5, false)] {
+        let expected = strict.then_some(json!(true));
+        assert_eq!(requests[index]["body"]["tools"][0]["function"].get("strict"), expected.as_ref());
+        assert_eq!(requests[index]["body"]["messages"], requests[0]["body"]["messages"]);
     }
 }
 
@@ -1633,6 +1805,7 @@ async fn live_snapshot_adopts_the_whole_route_on_the_next_call_of_the_same_agent
                 name: "write_fixture".into(),
                 description: self.marker.into(),
                 parameters: json!({"type":"object","properties":{}}),
+                ..Default::default()
             }
         }
         async fn execute(
@@ -1677,6 +1850,7 @@ async fn live_snapshot_adopts_the_whole_route_on_the_next_call_of_the_same_agent
         deadline: None,
         max_model_calls: Some(3),
         hooks: Arc::new(NoHooks),
+        interrupt_mode: ara_agent::InterruptMode::Immediate,
     };
     let mut b_config = a_config.clone();
     b_config.model = b_model.clone();
@@ -1727,7 +1901,7 @@ async fn live_snapshot_adopts_the_whole_route_on_the_next_call_of_the_same_agent
             .any(|item| item["type"] == "function_call_output" && item["output"] == "tool A retained")
     );
     assert!(b_requests[1]["body"].to_string().contains("queued before switch"));
-    let messages = agent.messages().await;
+    let messages = agent.messages().await.unwrap();
     assert!(messages.iter().any(|message| matches!(message, Message::Assistant(message) if message.provider == "A")));
     assert_eq!(
         messages
@@ -1740,6 +1914,11 @@ async fn live_snapshot_adopts_the_whole_route_on_the_next_call_of_the_same_agent
 
 #[tokio::test]
 async fn settlement_failure_retains_the_provider_content_usage_and_native_id() {
+    #[cfg(feature = "test-fixture")]
+    ara_cli::model_route::cancelled_quota_queue_family().await;
+    observe_actual_quota_cancellation_ownership().await;
+    observe_actual_guard_queued_cancellation().await;
+    observe_actual_route_auth_and_settlement().await;
     let mut reply = responses("visible evidence");
     reply["events"][1]["data"]["response"]["usage"] = json!({"input_tokens":7,"output_tokens":3,"total_tokens":10});
     let server = server(vec![reply]).await;
@@ -1757,4 +1936,657 @@ async fn settlement_failure_retains_the_provider_content_usage_and_native_id() {
     assert_eq!(result.usage.output, Some(3));
     assert_eq!(result.usage.total_tokens, Some(10));
     assert!(result.failure_evidence.as_ref().unwrap().same_route_blocked);
+}
+
+// Actual authentication/settlement observations share the existing module gate.
+// The fixture imports its own input only; no typed Provider output is bridged.
+struct ActualRouteObserver {
+    started: Mutex<Vec<RequestIdentity>>,
+    settled: Mutex<Vec<(RequestIdentity, ara_rpc::value_heap::ValueHandle)>>,
+    finished: Mutex<Vec<uuid::Uuid>>,
+    throw: Option<ara_rpc::value_heap::ValueHandle>,
+    cancel_on_settle: Option<CancellationToken>,
+}
+impl RequestReceiptObserver for ActualRouteObserver {
+    fn started(&self, request: &RequestIdentity) -> Result<(), ReceiptError> {
+        self.started.lock().unwrap().push(request.clone());
+        Ok(())
+    }
+    fn settled(&self, _: &RequestIdentity, _: &AssistantMessage) -> Result<(), ReceiptError> {
+        panic!("Actual route must not invoke typed settlement")
+    }
+    fn settled_actual(
+        &self,
+        request: &RequestIdentity,
+        message: &ara_rpc::value_heap::ValueHandle,
+        _: &ara_ai::graph_values::GraphValueFactory,
+    ) -> Result<(), ara_rpc::value_heap::ValueError> {
+        self.settled.lock().unwrap().push((request.clone(), message.clone()));
+        if let Some(cancel) = &self.cancel_on_settle {
+            cancel.cancel();
+        }
+        match &self.throw {
+            Some(value) => Err(ara_rpc::value_heap::ValueError::Thrown(value.clone())),
+            None => Ok(()),
+        }
+    }
+    fn quota_rejected_actual(
+        &self,
+        _: &RequestIdentity,
+        _: &RequestAuthLease,
+        _: &ara_rpc::value_heap::ValueHandle,
+        _: &ara_ai::graph_values::GraphValueFactory,
+    ) -> Result<bool, ara_rpc::value_heap::ValueError> {
+        Ok(false)
+    }
+    fn interrupted(&self, _: &RequestIdentity) {}
+    fn finished(&self, call_id: uuid::Uuid) {
+        self.finished.lock().unwrap().push(call_id);
+    }
+}
+fn actual_route_fixture() -> (Arc<ara_ai::graph_values::GraphValueFactory>, ara_ai::GraphProviderContext) {
+    use ara_rpc::value_heap::{NoRuntime, ValueHeap};
+    let factory =
+        Arc::new(ara_ai::graph_values::GraphValueFactory::new(ValueHeap::new().unwrap(), Arc::new(NoRuntime)).unwrap());
+    let root = factory.heap().import_strict(ara_rpc::WireValue::parse(
+        r#"{"systemPrompt":["fixture actual instructions"],"messages":[{"role":"user","content":"actual hello","timestamp":1}]}"#,
+    ).unwrap()).unwrap();
+    let context = ara_ai::GraphProviderContext {
+        original_context: Some(root),
+        system_prompt: Vec::new(),
+        messages: Vec::new(),
+        tools: None,
+        history_demotion_dialect: None,
+        history_id_hash: None,
+        history_id_hash_function: None,
+    };
+    (factory, context)
+}
+fn actual_route_get(
+    factory: &ara_ai::graph_values::GraphValueFactory,
+    value: &ara_rpc::value_heap::ValueHandle,
+    key: &str,
+) -> ara_rpc::value_heap::ValueHandle {
+    factory.heap().get(value, &key.into(), factory.runtime()).unwrap()
+}
+async fn collect_actual_route(
+    mut stream: ara_ai::ActualAssistantStream,
+) -> (Vec<ara_ai::ActualAssistantEvent>, Vec<Arc<ara_rpc::value_heap::ValueError>>) {
+    let receipt = stream.failure_receipt();
+    let events = tokio::time::timeout(Duration::from_secs(8), async {
+        let mut events = Vec::new();
+        while let Some(event) = stream.recv().await {
+            events.push(event);
+        }
+        events
+    })
+    .await
+    .expect("Actual route must release its event channel");
+    drop(stream);
+    let failures = tokio::time::timeout(Duration::from_secs(3), receipt.wait_settled())
+        .await
+        .expect("Actual dispatched owners must settle");
+    assert_eq!(events.iter().filter(|event| event.is_terminal()).count(), 1);
+    (events, failures)
+}
+struct CancelActualRefresh {
+    calls: AtomicUsize,
+    parent: CancellationToken,
+}
+#[async_trait]
+impl RequestAuthResolver for CancelActualRefresh {
+    async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+        Ok(RequestAuthLease::new(CredentialIdentity::Stored { id: 31, revision: 1 }, Some("fixture-key".into())))
+    }
+    fn supports_auth_refresh(&self) -> bool {
+        true
+    }
+    async fn refresh(&self, _: &Model, _: &CancellationToken) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.parent.cancel();
+        Err(AuthResolveError::Cancelled)
+    }
+}
+async fn observe_actual_route_auth_and_settlement() {
+    use ara_ai::AssistantMessageEvent;
+    use ara_rpc::value_heap::{ValueError, ValueSnapshot};
+    for (fail_settlement, cancel_settlement) in [(false, false), (true, false), (false, true)] {
+        let mut reply = chat("actual visible evidence");
+        reply["events"][0]["data"]["id"] = json!("chat_actual_receipt");
+        reply["events"][1]["data"]["usage"] = json!({"prompt_tokens":7,"completion_tokens":3,"total_tokens":10});
+        let server = server(vec![reply]).await;
+        let model = model("openai-completions", "fixture", server.base_url());
+        let (factory, context) = actual_route_fixture();
+        let thrown = factory.heap().object().unwrap();
+        let cancel = CancellationToken::new();
+        let observer = Arc::new(ActualRouteObserver {
+            started: Mutex::new(Vec::new()),
+            settled: Mutex::new(Vec::new()),
+            finished: Mutex::new(Vec::new()),
+            throw: fail_settlement.then(|| thrown.clone()),
+            cancel_on_settle: cancel_settlement.then(|| cancel.clone()),
+        });
+        let provider = PreparedRoute::new(
+            model.clone(),
+            protocol(&model.api),
+            Arc::new(FixedRequestAuth::new(RequestAuthLease::new(
+                CredentialIdentity::Stored { id: 30, revision: 2 },
+                Some("fixture-key".into()),
+            ))),
+            19,
+        )
+        .unwrap()
+        .bind(reqwest::Client::new(), Some(observer.clone()));
+        let (events, failures) = collect_actual_route(
+            provider
+                .stream_actual(
+                    &model,
+                    &context,
+                    factory.clone(),
+                    CallOptions { cancel: cancel.clone(), ..Default::default() },
+                )
+                .unwrap(),
+        )
+        .await;
+        let received = events.last().unwrap().partial();
+        let settled = observer.settled.lock().unwrap();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].0.route_generation, 19);
+        assert_eq!(settled[0].0.credential, CredentialIdentity::Stored { id: 30, revision: 2 });
+        assert_eq!(observer.started.lock().unwrap().as_slice(), &[settled[0].0.clone()]);
+        assert_eq!(observer.finished.lock().unwrap().as_slice(), &[settled[0].0.call_id]);
+        for key in ["content", "usage", "responseId"] {
+            assert!(
+                actual_route_get(&factory, received, key).same_identity(&actual_route_get(
+                    &factory,
+                    &settled[0].1,
+                    key
+                )),
+                "Original {key} handle survives settlement"
+            );
+        }
+        assert!(matches!(factory.heap().snapshot(&actual_route_get(&factory, received, "responseId")).unwrap(),
+            ValueSnapshot::String(value) if value == "chat_actual_receipt".into()));
+        let usage = actual_route_get(&factory, received, "usage");
+        assert!(matches!(
+            factory.heap().snapshot(&actual_route_get(&factory, &usage, "input")).unwrap(),
+            ValueSnapshot::Number(7.0)
+        ));
+        assert!(matches!(
+            factory.heap().snapshot(&actual_route_get(&factory, &usage, "output")).unwrap(),
+            ValueSnapshot::Number(3.0)
+        ));
+        if fail_settlement {
+            assert!(matches!(events.last().unwrap(), AssistantMessageEvent::Error { .. }));
+            assert!(
+                failures
+                    .iter()
+                    .any(|error| matches!(error.as_ref(), ValueError::Thrown(value) if value.same_identity(&thrown)))
+            );
+        } else {
+            assert!(received.same_identity(&settled[0].1));
+            assert!(matches!(events.last().unwrap(), AssistantMessageEvent::Done { reason: StopReason::Stop, .. }));
+            assert!(failures.is_empty());
+        }
+        assert_eq!(cancel.is_cancelled(), cancel_settlement);
+        drop(settled);
+        assert_eq!(server.served(), 1);
+        let requests = server.requests.lock().await;
+        assert_eq!(requests[0]["body"]["messages"][0]["content"], "fixture actual instructions");
+        assert_eq!(requests[0]["body"]["messages"][1]["content"], "actual hello");
+    }
+    for cancel_refresh in [false, true] {
+        let server = server(vec![json!({"status":401,"body":"invalid api key"}), chat("after actual refresh")]).await;
+        let model = model("openai-completions", "fixture", server.base_url());
+        let (factory, context) = actual_route_fixture();
+        let observer = Arc::new(ActualRouteObserver {
+            started: Mutex::new(Vec::new()),
+            settled: Mutex::new(Vec::new()),
+            finished: Mutex::new(Vec::new()),
+            throw: None,
+            cancel_on_settle: None,
+        });
+        let cancel = CancellationToken::new();
+        let cancellation = Arc::new(CancelActualRefresh { calls: AtomicUsize::new(0), parent: cancel.clone() });
+        let auth: Arc<dyn RequestAuthResolver> =
+            if cancel_refresh { cancellation.clone() } else { Arc::new(CallbackRetryAuth(AtomicUsize::new(0))) };
+        let provider = PreparedRoute::new(model.clone(), protocol(&model.api), auth, 20)
+            .unwrap()
+            .bind(reqwest::Client::new(), Some(observer.clone()));
+        let (events, failures) = collect_actual_route(
+            provider
+                .stream_actual(
+                    &model,
+                    &context,
+                    factory.clone(),
+                    CallOptions { cancel: cancel.clone(), ..Default::default() },
+                )
+                .unwrap(),
+        )
+        .await;
+        assert!(failures.is_empty());
+        let settled = observer.settled.lock().unwrap();
+        let started = observer.started.lock().unwrap();
+        let finished = observer.finished.lock().unwrap();
+        if cancel_refresh {
+            assert!(cancel.is_cancelled(), "Run cancellation remains observable");
+            assert_eq!(cancellation.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(server.served(), 1, "Captured auth failure must not authorize another POST");
+            assert_eq!(settled.len(), 1);
+            assert!(
+                events.last().unwrap().partial().same_identity(&settled[0].1),
+                "Cancellation retains captured failure root"
+            );
+            assert!(matches!(events.last().unwrap(), AssistantMessageEvent::Error { .. }));
+        } else {
+            assert_eq!(server.served(), 2);
+            assert_eq!(settled.len(), 2);
+            assert_ne!(settled[0].0.call_id, settled[1].0.call_id);
+            assert_eq!(settled[0].0.credential, CredentialIdentity::Stored { id: 1, revision: 1 });
+            assert_eq!(settled[1].0.credential, CredentialIdentity::Stored { id: 1, revision: 2 });
+            assert!(matches!(events.last().unwrap(), AssistantMessageEvent::Done { reason: StopReason::Stop, .. }));
+        }
+        assert_eq!(started.len(), settled.len());
+        assert_eq!(finished.len(), settled.len());
+        for (identity, _) in settled.iter() {
+            assert!(started.contains(identity));
+            assert!(finished.contains(&identity.call_id));
+        }
+    }
+}
+
+async fn observe_actual_guard_queued_cancellation() {
+    use ara_ai::{ActualAssistantStream, AssistantMessageEvent};
+    // Cancellation is ready before this real guard task first polls. Its raw
+    // input already contains a terminal behind zero/one/a full queue of starts.
+    // The controlled original owner remains unsealed until after wrapper EOF.
+    for ahead in [0, 1, 255] {
+        for error_terminal in [false, true] {
+            let (factory, _) = actual_route_fixture();
+            let root = factory.heap().import_strict(ara_rpc::WireValue::parse(
+                r#"{"role":"assistant","content":[{"type":"text","text":"known result"},{"type":"toolCall","id":"known_tool","name":"read","arguments":{"path":"known.txt"}}],"usage":{"input":7,"output":3,"totalTokens":10},"responseId":"known_terminal"}"#,
+            ).unwrap()).unwrap();
+            let original_content = actual_route_get(&factory, &root, "content");
+            let original_usage = actual_route_get(&factory, &root, "usage");
+            let terminal = if error_terminal {
+                AssistantMessageEvent::Error { reason: StopReason::Error, error: root.clone() }
+            } else {
+                AssistantMessageEvent::Done { reason: StopReason::Stop, message: root.clone() }
+            };
+            let (sink, inner, original_receipt) = ActualAssistantStream::channel();
+            let original_owner = original_receipt.owner_settlement_guard();
+            for _ in 0..ahead {
+                assert!(sink.try_push(AssistantMessageEvent::Start { partial: root.clone() }));
+            }
+            assert!(sink.try_push(terminal));
+            drop(sink);
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let model = model("openai-completions", "fixture", String::new());
+            let mut stream = ara_ai::thinking_loop::with_actual_thinking_loop_guard(
+                &model,
+                CallOptions { cancel: cancel.clone(), ..Default::default() },
+                ara_ai::thinking_loop::LoopGuardPolicy::default(),
+                factory.clone(),
+                |options| {
+                    assert!(options.cancel.is_cancelled());
+                    Ok(inner)
+                },
+            )
+            .unwrap();
+            let receipt = stream.failure_receipt();
+            let events = tokio::time::timeout(Duration::from_secs(3), async {
+                let mut events = Vec::new();
+                while let Some(event) = stream.recv().await {
+                    events.push(event);
+                }
+                events
+            })
+            .await
+            .expect("Cancelled wrapper must drain ready terminal without waiting for the unknown original owner");
+            assert_eq!(events.iter().filter(|event| event.is_terminal()).count(), 1);
+            let received = events.last().unwrap().partial();
+            assert!(received.same_identity(&root));
+            assert!(actual_route_get(&factory, received, "content").same_identity(&original_content));
+            assert!(actual_route_get(&factory, received, "usage").same_identity(&original_usage));
+            assert_eq!(events.last().unwrap().type_name(), if error_terminal { "error" } else { "done" });
+            assert!(cancel.is_cancelled());
+            assert!(!receipt.is_settled(), "Wrapper cancellation cannot seal the original owner");
+            drop(stream);
+            drop(original_owner);
+            assert!(tokio::time::timeout(Duration::from_secs(2), receipt.wait_settled()).await.unwrap().is_empty());
+        }
+    }
+}
+
+// Actual route ownership is exercised through the real authentication driver.
+// SQLite persistence and Core lineage are observed by the shared main helper.
+async fn observe_actual_quota_cancellation_ownership() {
+    use ara_rpc::value_heap::{ValueError, ValueHandle};
+    struct QuotaObserver {
+        settled: Mutex<Vec<(RequestIdentity, ValueHandle)>>,
+        feedback: Mutex<Vec<(RequestIdentity, CredentialIdentity, ValueHandle)>>,
+        finished: Mutex<Vec<uuid::Uuid>>,
+        cancel: CancellationToken,
+        cancel_on_settle: bool,
+        cancel_on_feedback: bool,
+    }
+    impl RequestReceiptObserver for QuotaObserver {
+        fn started(&self, _: &RequestIdentity) -> Result<(), ReceiptError> {
+            Ok(())
+        }
+        fn settled(&self, _: &RequestIdentity, _: &AssistantMessage) -> Result<(), ReceiptError> {
+            panic!("typed quota settlement")
+        }
+        fn settled_actual(
+            &self,
+            request: &RequestIdentity,
+            root: &ValueHandle,
+            _: &ara_ai::graph_values::GraphValueFactory,
+        ) -> Result<(), ValueError> {
+            self.settled.lock().unwrap().push((request.clone(), root.clone()));
+            if self.cancel_on_settle {
+                self.cancel.cancel();
+            }
+            Ok(())
+        }
+        fn quota_rejected_actual(
+            &self,
+            request: &RequestIdentity,
+            lease: &RequestAuthLease,
+            root: &ValueHandle,
+            _: &ara_ai::graph_values::GraphValueFactory,
+        ) -> Result<bool, ValueError> {
+            self.feedback.lock().unwrap().push((request.clone(), lease.identity().clone(), root.clone()));
+            if self.cancel_on_feedback {
+                self.cancel.cancel();
+            }
+            Ok(true)
+        }
+        fn interrupted(&self, _: &RequestIdentity) {
+            panic!("known quota cannot become unknown interruption")
+        }
+        fn finished(&self, call: uuid::Uuid) {
+            self.finished.lock().unwrap().push(call);
+        }
+    }
+    struct QuotaAuth {
+        lease: RequestAuthLease,
+        cancel: CancellationToken,
+        dispatches: AtomicUsize,
+        resets: AtomicUsize,
+        dispatch_cancel: bool,
+    }
+    #[async_trait]
+    impl RequestAuthResolver for QuotaAuth {
+        async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+            Ok(self.lease.clone())
+        }
+        fn supports_auth_retry(&self) -> bool {
+            true
+        }
+        fn requires_settlement(&self) -> bool {
+            true
+        }
+        async fn retry(
+            &self,
+            _: &Model,
+            failed: &RequestAuthLease,
+            failure: &RequestAuthFailure,
+            action: AuthRetryAction,
+            _: &CancellationToken,
+        ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+            assert_eq!(failed.identity(), self.lease.identity());
+            #[cfg(feature = "test-fixture")]
+            assert!(ara_cli::model_route::lease_snapshot_matches_fixture(failed, &self.lease));
+            assert_eq!(failure.kind, RequestAuthFailureKind::Quota);
+            assert_eq!(action, AuthRetryAction::RotateSibling);
+            self.dispatches.fetch_add(1, Ordering::SeqCst);
+            assert!(self.dispatch_cancel, "post-output/settled cancellation cannot enter auth driver");
+            // A dispatch with no positive write receipt must not be repeated by
+            // the independent Session observer when the future is cancelled.
+            self.cancel.cancel();
+            Err(AuthResolveError::Cancelled)
+        }
+        async fn quota_reset(
+            &self,
+            _: &Model,
+            _: &RequestAuthLease,
+            _: &RequestAuthFailure,
+            _: &CancellationToken,
+        ) -> Result<Option<QuotaResetReplay>, AuthResolveError> {
+            self.resets.fetch_add(1, Ordering::SeqCst);
+            panic!("cancelled quota cannot dispatch reset")
+        }
+    }
+    for scenario in ["settled-cancel", "observer-owned", "driver-dispatched"] {
+        let scripted = if scenario == "observer-owned" {
+            json!({"events":[{"data":{"choices":[{"delta":{"content":"visible quota evidence"}}]}},{"data":{"error":{"code":"insufficient_quota","message":"insufficient_quota: quota exceeded"}}}]})
+        } else {
+            json!({"status":429,"body":json!({"error":{"code":"insufficient_quota","message":"insufficient_quota: quota exceeded"}}).to_string()})
+        };
+        let wire = server(vec![scripted, chat("must never dispatch after cancelled quota")]).await;
+        let prepared = model("openai-completions", "quota-native", wire.base_url());
+        let (factory, context) = actual_route_fixture();
+        let cancel = CancellationToken::new();
+        let lease = RequestAuthLease::new(
+            CredentialIdentity::Stored { id: 79, revision: 4 },
+            Some("quota-synthetic-key".into()),
+        );
+        let auth = Arc::new(QuotaAuth {
+            lease: lease.clone(),
+            cancel: cancel.clone(),
+            dispatches: AtomicUsize::new(0),
+            resets: AtomicUsize::new(0),
+            dispatch_cancel: scenario == "driver-dispatched",
+        });
+        let observer = Arc::new(QuotaObserver {
+            settled: Mutex::new(vec![]),
+            feedback: Mutex::new(vec![]),
+            finished: Mutex::new(vec![]),
+            cancel: cancel.clone(),
+            cancel_on_settle: scenario == "settled-cancel",
+            cancel_on_feedback: scenario == "observer-owned",
+        });
+        let mut quota_protocol = protocol(&prepared.api);
+        let ProtocolOptions::Completions(options) = &mut quota_protocol else { unreachable!() };
+        // Observe one explicit HTTP rejection at the auth-driver boundary.
+        // The shared helper's two-attempt wire policy would consume the next
+        // scripted success before publishing the quota terminal.
+        options.retry.max_attempts = 1;
+        let provider = PreparedRoute::new(prepared.clone(), quota_protocol, auth.clone(), 29)
+            .unwrap()
+            .bind(reqwest::Client::new(), Some(observer.clone()));
+        let stream = provider
+            .stream_actual(
+                &prepared,
+                &context,
+                factory.clone(),
+                CallOptions { cancel: cancel.clone(), ..Default::default() },
+            )
+            .unwrap();
+        let receipt = stream.failure_receipt();
+        let (events, faults) = collect_actual_route(stream).await;
+        assert!(faults.is_empty(), "{scenario}");
+        assert!(cancel.is_cancelled());
+        assert_eq!(wire.served(), 1, "{scenario}: no cancelled retry POST");
+        assert_eq!(auth.resets.load(Ordering::SeqCst), 0, "{scenario}");
+        assert_eq!(auth.dispatches.load(Ordering::SeqCst), usize::from(scenario == "driver-dispatched"), "{scenario}");
+        let settled = observer.settled.lock().unwrap();
+        let feedback = observer.feedback.lock().unwrap();
+        assert_eq!(settled.len(), 1, "{scenario}");
+        assert_eq!(settled[0].0.route_generation, 29);
+        assert_eq!(settled[0].0.credential, *lease.identity());
+        assert_eq!(observer.finished.lock().unwrap().as_slice(), &[settled[0].0.call_id]);
+        assert_eq!(
+            feedback.len(),
+            usize::from(scenario != "driver-dispatched"),
+            "{scenario}: independent ownership excludes duplicate feedback"
+        );
+        if let Some((request, credential, root)) = feedback.first() {
+            assert_eq!(request, &settled[0].0);
+            assert_eq!(credential, lease.identity());
+            if scenario == "observer-owned" {
+                assert!(!root.same_identity(&settled[0].1), "post-output quota candidate is a derived veto root");
+                assert!(
+                    events.last().unwrap().partial().same_identity(root),
+                    "publish the exact feedback candidate after cancellation"
+                );
+            } else {
+                assert!(root.same_identity(&settled[0].1));
+            }
+        }
+        let received = events.last().unwrap().partial();
+        if scenario != "observer-owned" {
+            assert!(received.same_identity(&settled[0].1), "{scenario}: retain original quota root");
+        }
+        for key in ["content", "usage"] {
+            let original = actual_route_get(&factory, &settled[0].1, key);
+            assert!(
+                actual_route_get(&factory, received, key).same_identity(&original),
+                "{scenario}: original {key} survives output"
+            );
+            if let Some((_, _, root)) = feedback.first() {
+                assert!(
+                    actual_route_get(&factory, root, key).same_identity(&original),
+                    "{scenario}: original {key} survives feedback"
+                );
+            }
+        }
+        assert!(receipt.known_terminals().iter().any(|event| event.partial().same_identity(&settled[0].1)));
+    }
+}
+
+// Fixed b91db66e headers-watchdog/body-error deltas through the real Graph Host
+// route, credential binding and settlement. This is not a full Agent/tool effect
+// or account-login trial; the streamed tool fragment is deliberately not run.
+#[tokio::test]
+async fn custom_chat_upgrade_actual_host_receipts_and_no_replay_family() {
+    struct Auth {
+        resolves: AtomicUsize,
+        retries: AtomicUsize,
+        resets: AtomicUsize,
+    }
+    #[async_trait]
+    impl RequestAuthResolver for Auth {
+        async fn resolve(&self, _: &Model, _: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
+            self.resolves.fetch_add(1, Ordering::SeqCst);
+            Ok(RequestAuthLease::new(CredentialIdentity::Stored { id: 84, revision: 2 }, Some("fixture-key".into())))
+        }
+        fn supports_auth_retry(&self) -> bool { true }
+        async fn retry(
+            &self, _: &Model, _: &RequestAuthLease, _: &RequestAuthFailure,
+            _: AuthRetryAction, _: &CancellationToken,
+        ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+            self.retries.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+        async fn quota_reset(
+            &self, _: &Model, _: &RequestAuthLease, _: &RequestAuthFailure, _: &CancellationToken,
+        ) -> Result<Option<QuotaResetReplay>, AuthResolveError> {
+            self.resets.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+    }
+    let flat = json!({"events":[{"data":{"code":429}}]});
+    let text_first = json!({"events":[
+        {"data":{"choices":[{"delta":{"content":"partial retained"}}]}},
+        {"data":{"status":429}}
+    ]});
+    let tool_first = json!({"events":[
+        {"data":{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_partial","type":"function",
+            "function":{"name":"write_fixture","arguments":"{}"}}]}}]}},
+        {"data":{"error":{"status":503}}}
+    ]});
+    for (name, scripted, expected_posts, succeeds, output_kind, slow_callback) in [
+        ("connected callback", vec![chat("after callback")], 1, true, "text", true),
+        ("flat opaque throttle", vec![flat.clone(), chat("recovered")], 2, true, "text", false),
+        ("nested service status", vec![json!({"events":[{"data":{"error":{"status":503}}}]}), chat("recovered")], 2, true, "text", false),
+        ("exhausted opaque throttle", vec![flat.clone(), flat], 2, false, "none", false),
+        ("visible text veto", vec![text_first, chat("must not replay")], 1, false, "text", false),
+        ("visible tool veto", vec![tool_first, chat("must not replay")], 1, false, "toolCall", false),
+    ] {
+        let wire = server(scripted).await;
+        let prepared = model("openai-completions", "custom", wire.base_url());
+        let auth = Arc::new(Auth { resolves: AtomicUsize::new(0), retries: AtomicUsize::new(0), resets: AtomicUsize::new(0) });
+        let observer = Arc::new(ActualRouteObserver {
+            started: Mutex::new(Vec::new()), settled: Mutex::new(Vec::new()), finished: Mutex::new(Vec::new()),
+            throw: None, cancel_on_settle: None,
+        });
+        let mut options = protocol(&prepared.api);
+        if slow_callback {
+            let ProtocolOptions::Completions(chat) = &mut options else { unreachable!() };
+            chat.first_event_timeout = Some(Duration::from_millis(200));
+        }
+        let provider = PreparedRoute::new(prepared.clone(), options, auth.clone(), 84)
+            .unwrap().bind(reqwest::Client::new(), Some(observer.clone()));
+        let callback_calls = Arc::new(AtomicUsize::new(0));
+        let callback = slow_callback.then(|| ara_ai::ProviderResponseCallback::new({
+            let calls = callback_calls.clone();
+            move |_, _| {
+                let calls = calls.clone();
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(350)).await;
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            }
+        }));
+        let (factory, context) = actual_route_fixture();
+        let (events, faults) = collect_actual_route(provider.stream_actual(
+            &prepared, &context, factory.clone(), CallOptions { on_response: callback, ..Default::default() }
+        ).unwrap()).await;
+        assert!(faults.is_empty(), "{name}: dispatched Host owners settle without faults");
+        assert_eq!(wire.served(), expected_posts, "{name}: exact real POST count");
+        assert_eq!(auth.resolves.load(Ordering::SeqCst), 1, "{name}");
+        assert_eq!(auth.retries.load(Ordering::SeqCst), 0, "{name}: synthetic inband status never rotates credentials");
+        assert_eq!(auth.resets.load(Ordering::SeqCst), 0, "{name}: opaque throttle never burns quota");
+        assert_eq!(callback_calls.load(Ordering::SeqCst), usize::from(slow_callback), "{name}");
+        let terminal = events.last().unwrap();
+        assert!(if succeeds {
+            matches!(terminal, ara_ai::ActualAssistantEvent::Done { reason: StopReason::Stop, .. })
+        } else {
+            matches!(terminal, ara_ai::ActualAssistantEvent::Error { reason: StopReason::Error, .. })
+        }, "{name}");
+        let settled = observer.settled.lock().unwrap();
+        assert_eq!(settled.len(), 1, "{name}: one logical Host settlement");
+        assert!(terminal.partial().same_identity(&settled[0].1), "{name}: publish original settled graph root");
+        assert_eq!(settled[0].0.credential, CredentialIdentity::Stored { id: 84, revision: 2 });
+        assert_eq!(observer.started.lock().unwrap().as_slice(), &[settled[0].0.clone()]);
+        assert_eq!(observer.finished.lock().unwrap().as_slice(), &[settled[0].0.call_id]);
+        let metadata = actual_failure_metadata(&prepared, terminal.partial(), &factory).unwrap();
+        if succeeds { assert!(metadata.is_none(), "{name}"); }
+        else {
+            let metadata = metadata.unwrap();
+            assert!(!metadata.class.usage_limit, "{name}: synthetic status is not an account quota receipt");
+            // Session same-route admission differs from local output commitment.
+            assert!(!metadata.class.replay_blocked, "{name}: no same-route veto");
+            let failure = actual_route_get(&factory, terminal.partial(), "failureEvidence");
+            let local_veto = actual_route_get(&factory, &failure, "replayBlocked");
+            assert_eq!(factory.heap().truthy(&local_veto).unwrap(), output_kind != "none", "{name}: local output commitment");
+            if output_kind == "none" { assert!(metadata.class.retriable, "{name}"); }
+        }
+        if output_kind != "none" {
+            let content = actual_route_get(&factory, terminal.partial(), "content");
+            let first = actual_route_get(&factory, &content, "0");
+            assert!(matches!(factory.heap().snapshot(&actual_route_get(&factory, &first, "type")).unwrap(),
+                ara_rpc::value_heap::ValueSnapshot::String(value) if value == output_kind.into()), "{name}");
+            if output_kind == "text" {
+                let expected = if slow_callback { "after callback" } else if succeeds { "recovered" } else { "partial retained" };
+                assert!(matches!(factory.heap().snapshot(&actual_route_get(&factory, &first, "text")).unwrap(),
+                    ara_rpc::value_heap::ValueSnapshot::String(value) if value == expected.into()), "{name}");
+            } else {
+                assert!(matches!(factory.heap().snapshot(&actual_route_get(&factory, &first, "id")).unwrap(),
+                    ara_rpc::value_heap::ValueSnapshot::String(value) if value == "call_partial".into()), "{name}");
+            }
+        }
+        let requests = wire.requests.lock().await;
+        assert_eq!(requests.len(), expected_posts, "{name}");
+        for request in requests.iter() {
+            assert_eq!(request["request"], "POST /v1/chat/completions HTTP/1.1", "{name}");
+            assert_eq!(request["body"], requests[0]["body"], "{name}: wire retry preserves the entire request");
+            assert_eq!(request["headers"]["authorization"], requests[0]["headers"]["authorization"], "{name}");
+        }
+        eprintln!("CHAT-UPGRADE ACTUAL_HOST {name} PASS posts={expected_posts} settlement=1 auth_retry=0 quota_reset=0");
+    }
 }

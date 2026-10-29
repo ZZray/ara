@@ -71,14 +71,23 @@ impl NativeRemoteError {
     }
 }
 
-fn replay_through_valid(branch: &[&Entry], end: usize, kept: usize, through: &str) -> bool {
-    let Some(index) = branch[..end].iter().position(|entry| entry.id == through) else { return false };
-    index >= kept
-        && !branch[index + 1..end].iter().any(|entry| entry.kind == "compaction")
-        && branch[..end]
-            .iter()
-            .rfind(|entry| entry.model_messages().is_some_and(|messages| !messages.is_empty()))
-            .is_some_and(|entry| entry.id == through)
+fn replay_through_valid(
+    branch: &[&Entry],
+    end: usize,
+    kept: usize,
+    through: &str,
+) -> Result<bool, CompactionProjectionError> {
+    let Some(index) = branch[..end].iter().position(|entry| entry.id == through) else { return Ok(false) };
+    if index < kept || branch[index + 1..end].iter().any(|entry| entry.kind == "compaction") {
+        return Ok(false);
+    }
+    let mut last = None;
+    for entry in &branch[..end] {
+        if !entry.native_compaction_entry()?.messages.is_empty() {
+            last = Some(entry.id.as_str());
+        }
+    }
+    Ok(last == Some(through))
 }
 
 pub(super) fn validate_remote_entry(
@@ -117,7 +126,7 @@ pub(super) fn validate_remote_entry(
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
         .ok_or_else(|| invalid("providerReplayThroughEntryId"))?;
-    if !replay_through_valid(branch, index, kept, through) {
+    if !replay_through_valid(branch, index, kept, through)? {
         return Err(invalid("providerReplayThroughEntryId"));
     }
     Ok(Some(NativeRemoteReplay { preserve_data, replay_through_entry_id: through.to_owned() }))
@@ -139,6 +148,26 @@ pub(super) fn model_message(summary: &CompactionSummaryView, model: &Model) -> M
         crate::entry_timestamp(&json!({"timestamp":summary.timestamp})).expect("checked native remote timestamp");
     carrier.provider_payload = native_replacement_payload(model, &data.replacement_history);
     Message::Assistant(carrier)
+}
+
+/// The raw Host path is independently derived from this checked Session
+/// summary. Ordinary caller JSON/current Model cannot manufacture this proof.
+/// The public typed facade above keeps its existing Assistant compatibility.
+pub(super) fn checked_raw_model_message(
+    summary: &CompactionSummaryView,
+    model: &Model,
+    supports_images: bool,
+) -> Result<Message, SessionError> {
+    let remote = summary.remote.as_ref().expect("checked readable remote summary");
+    let data = parse_remote_preserve_data(&remote.preserve_data).expect("checked native preserve data");
+    let mut user = ara_ai::UserMessage::text(summary.summary.clone());
+    user.timestamp =
+        crate::entry_timestamp(&json!({"timestamp":summary.timestamp})).expect("checked native remote timestamp");
+    user.provider_payload = native_replacement_payload(model, &data.replacement_history);
+    let mut carrier = Message::User(user);
+    ara_ai::providers::openai_responses::adopt_client_history_for_checked_route(model, &mut carrier, supports_images)
+        .map_err(|error| crate::agent_body_error(format!("checked Session native replay: {error}")))?;
+    Ok(carrier)
 }
 
 impl SessionJournal {
@@ -224,7 +253,9 @@ impl SessionJournal {
             .iter()
             .position(|entry| entry.id == first_kept_entry_id)
             .ok_or(NativeRemoteError::InvalidReplayThrough)?;
-        if !replay_through_valid(branch, branch.len(), kept, replay_through_entry_id) {
+        if !replay_through_valid(branch, branch.len(), kept, replay_through_entry_id)
+            .map_err(crate::CompactionCommitError::from)?
+        {
             return Err(NativeRemoteError::InvalidReplayThrough);
         }
         let id = crate::generate_id(&self.ids);
@@ -291,7 +322,14 @@ impl SessionJournal {
         directory_sync: impl FnOnce(&Path) -> std::io::Result<()>,
     ) -> Result<String, NativeRemoteError> {
         let mut candidate = self.entries.clone();
-        candidate.push(Entry { id: id.clone(), parent_id, kind: "compaction".into(), raw });
+        candidate.push(Entry {
+            id: id.clone(),
+            parent_id,
+            kind: "compaction".into(),
+            raw,
+            native_message: None,
+            snapcompact_source: None,
+        });
         let previous_entries = std::mem::replace(&mut self.entries, candidate);
         let previous_leaf = self.leaf.replace(id.clone());
         let mut candidate_ids = self.ids.clone();
@@ -378,8 +416,8 @@ mod tests {
                 let reopened = SessionJournal::open(&path).unwrap();
                 assert_eq!(reopened.entries(), journal.entries());
                 assert_eq!(
-                    reopened.model_context_for_route(&model, true),
-                    journal.model_context_for_route(&model, true)
+                    reopened.model_context_for_route(&model, true).unwrap(),
+                    journal.model_context_for_route(&model, true).unwrap()
                 );
             } else {
                 assert!(matches!(error, NativeRemoteError::Storage(_)));

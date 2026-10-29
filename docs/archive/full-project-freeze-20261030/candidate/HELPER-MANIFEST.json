@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "state": "MINIMAL_COMPLETE_SOURCE_CANDIDATE_UNBUILT_UNEXECUTED",
+  "author": "Codex /root/task_final_point_audit (new candidate-author role; original point/doc reports remain unchanged)",
+  "created_utc": "2026-10-29T15:45:11.7334832Z",
+  "point": "TASK_M1_M9_GAP_BANK_REAL_FRONTIERS",
+  "scope": "Only three supplied candidate Rust files and this manifest",
+  "source_root": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\source",
+  "candidate_root": "D:\\workspace\\env\\cache\\ara-port-candidates\\omp-upgrade-host-service-control-v1\\task-m1m9-resume-20261029\\gap-bank-v1\\candidate",
+  "files": [
+    {
+      "candidate": "42a1dd2ad7be0dfe33ba07a8dfbd268340b536b5289ae8049e1e017ab832c2e2",
+      "original": "a25acf6943a1224ad4668f34c39ad40b66af5bc5b1a4901a4d9fedead28f61ab",
+      "whitespace_check": {
+        "output": "",
+        "exit": 1
+      },
+      "path": "crates/ara-cli/src/main.rs",
+      "syntax_parse": {
+        "scope": "Syntax only, no type check, build, tests or formatting writes",
+        "command": "rustfmt --emit stdout --config skip_children=true --edition2024 <candidate>; stdout discarded; candidate unchanged",
+        "exit": 0
+      },
+      "exact_original_recovered_after_removing_additions": true,
+      "unified_diff": "diff --git \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\main.rs\" \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\main.rs\"\nindex 05d46fa..8664ecd 100644\n--- \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\main.rs\"\n+++ \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\main.rs\"\n@@ -457,7 +457,89 @@ impl LoopHooks for CliHooks {\n         context.values.check_handle(context.args)?;\n         context.values.check_handle(context.result)?;\n         if let Some(bundle)=&self.child_yield {bundle.after_tool_call(&context)?;}\n-        // This concrete CLI type has no after-tool extension callback.\n+        // The production CLI has no after-tool extension callback.\n+        #[cfg(feature = \"test-fixture\")]\n+        {\n+            let observed: anyhow::Result<()> = async {\n+                let Some(config_path) = std::env::var_os(\"ARA_TEST_PEER_FRONTIERS\").map(PathBuf::from) else {\n+                    return Ok(());\n+                };\n+                let bytes = match std::fs::read(&config_path) {\n+                    Ok(bytes) => bytes,\n+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),\n+                    Err(error) => return Err(error.into()),\n+                };\n+                let config: serde_json::Value = serde_json::from_slice(&bytes)?;\n+                if !config[\"gates\"].as_array().into_iter().flatten()\n+                    .any(|gate| gate[\"name\"].as_str() == Some(\"task-after-tool-hook\"))\n+                {\n+                    return Ok(());\n+                }\n+                let heap = context.values.heap();\n+                let read_name = |field: &str| -> anyhow::Result<String> {\n+                    let value = heap.get(context.tool_call, &field.into(), context.values.runtime())?;\n+                    let ara_rpc::value_heap::ValueSnapshot::String(value) = heap.snapshot(&value)? else {\n+                        anyhow::bail!(\"Actual fixture tool {field} is not a string\");\n+                    };\n+                    value.to_utf8().map_err(|_| anyhow::anyhow!(\"Actual fixture tool {field} is not scalar text\"))\n+                };\n+                let tool_call_id = read_name(\"id\")?;\n+                let tool_name = read_name(\"name\")?;\n+                let identity = format!(\"{}|{tool_call_id}|{tool_name}\", self.cwd);\n+                for gate in config[\"gates\"].as_array().into_iter().flatten() {\n+                    if gate[\"name\"].as_str() != Some(\"task-after-tool-hook\")\n+                        || !identity.contains(gate[\"identityContains\"].as_str().unwrap_or(\"\"))\n+                    {\n+                        continue;\n+                    }\n+                    let key = gate[\"key\"].as_str().context(\"Frontier gate key missing\")?;\n+                    anyhow::ensure!(\n+                        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),\n+                        \"Invalid private frontier gate key\"\n+                    );\n+                    static COUNTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();\n+                    let occurrence = {\n+                        let mut counts = COUNTS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());\n+                        let count = counts.entry(key.into()).or_default();\n+                        *count += 1;\n+                        *count\n+                    };\n+                    if occurrence != gate[\"occurrence\"].as_u64().unwrap_or(1) {\n+                        continue;\n+                    }\n+                    let cwd = Path::new(&self.cwd);\n+                    let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(\n+                        cwd.parent().context(\"Actual isolated cwd has no owner directory\")?.join(\"owner.json\"),\n+                    )?)?;\n+                    let resource_id = marker[\"resource_id\"].as_str().context(\"Actual isolated owner marker has no ResourceId\")?;\n+                    let proof_path = cwd.join(format!(\"after-hook-{key}.json\"));\n+                    let mut proof = serde_json::json!({\n+                        \"phase\": \"held\", \"cwd\": cwd, \"resource_id\": resource_id,\n+                        \"tool_call_id\": tool_call_id, \"tool_name\": tool_name,\n+                        \"proof_path\": proof_path, \"is_error\": context.is_error\n+                    });\n+                    std::fs::write(&proof_path, serde_json::to_vec_pretty(&proof)?)?;\n+                    let dir = config_path.parent().context(\"Private frontier config directory missing\")?.join(\"frontiers\");\n+                    std::fs::create_dir_all(&dir)?;\n+                    std::fs::write(\n+                        dir.join(format!(\"{key}.reached.json\")),\n+                        serde_json::to_vec_pretty(&serde_json::json!({\n+                            \"name\": \"task-after-tool-hook\", \"identity\": identity, \"occurrence\": occurrence,\n+                            \"at\": ara_cli::host_peers::now_ms(), \"details\": proof\n+                        }))?,\n+                    )?;\n+                    tokio::time::timeout(std::time::Duration::from_secs(25), async {\n+                        while !dir.join(format!(\"{key}.release\")).is_file() {\n+                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;\n+                        }\n+                    }).await.context(\"Actual after-tool callback remained held; original effect requires reconciliation, no replay\")?;\n+                    proof[\"phase\"] = \"released\".into();\n+                    std::fs::write(&proof_path, serde_json::to_vec_pretty(&proof)?)?;\n+                }\n+                Ok(())\n+            }.await;\n+            observed.map_err(|error| ara_agent::ActualProviderError::Callback(format!(\"{error:#}\")))?;\n+        }\n         Ok(None)\n     }\n     fn transform_tool_call_arguments_actual("
+    },
+    {
+      "candidate": "08cc4d5ba5e66b8716389e9ae060fdb83eec0ca74f47a9e3468dc541997c107d",
+      "original": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc",
+      "whitespace_check": {
+        "output": "",
+        "exit": 1
+      },
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+      "syntax_parse": {
+        "scope": "Syntax only, no type check, build, tests or formatting writes",
+        "command": "rustfmt --emit stdout --config skip_children=true --edition2024 <candidate>; stdout discarded; candidate unchanged",
+        "exit": 0
+      },
+      "exact_original_recovered_after_removing_additions": true,
+      "unified_diff": "diff --git \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\worktree.rs\" \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\worktree.rs\"\nindex 1c6c9c4..88d061f 100644\n--- \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\worktree.rs\"\n+++ \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\worktree.rs\"\n@@ -12,6 +12,64 @@ use std::{\n     sync::{Arc, Mutex, OnceLock},\n };\n \n+/// Test-only pause at an actual Git/FS frontier; the original operation resumes unchanged.\n+#[cfg(feature = \"test-fixture\")]\n+pub(crate) fn fixture_frontier(\n+    name: &str,\n+    identity: &str,\n+    details: serde_json::Value,\n+) -> Result<()> {\n+    let Some(config_path) = std::env::var_os(\"ARA_TEST_PEER_FRONTIERS\").map(PathBuf::from) else {\n+        return Ok(());\n+    };\n+    let bytes = match fs::read(&config_path) {\n+        Ok(bytes) => bytes,\n+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),\n+        Err(error) => return Err(error.into()),\n+    };\n+    let config: serde_json::Value = serde_json::from_slice(&bytes)?;\n+    for gate in config[\"gates\"].as_array().into_iter().flatten() {\n+        if gate[\"name\"].as_str() != Some(name)\n+            || !identity.contains(gate[\"identityContains\"].as_str().unwrap_or(\"\"))\n+        {\n+            continue;\n+        }\n+        let key = gate[\"key\"].as_str().context(\"Frontier gate key missing\")?;\n+        anyhow::ensure!(\n+            !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),\n+            \"Invalid private frontier gate key\"\n+        );\n+        static COUNTS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();\n+        let occurrence = {\n+            let mut counts = COUNTS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());\n+            let count = counts.entry(key.into()).or_default();\n+            *count += 1;\n+            *count\n+        };\n+        if occurrence != gate[\"occurrence\"].as_u64().unwrap_or(1) {\n+            continue;\n+        }\n+        let dir = config_path.parent().context(\"Private frontier config directory missing\")?.join(\"frontiers\");\n+        fs::create_dir_all(&dir)?;\n+        fs::write(\n+            dir.join(format!(\"{key}.reached.json\")),\n+            serde_json::to_vec_pretty(&serde_json::json!({\n+                \"name\": name, \"identity\": identity, \"occurrence\": occurrence,\n+                \"at\": crate::host_peers::now_ms(), \"details\": details\n+            }))?,\n+        )?;\n+        let started = std::time::Instant::now();\n+        while !dir.join(format!(\"{key}.release\")).is_file() {\n+            anyhow::ensure!(\n+                started.elapsed() < std::time::Duration::from_secs(25),\n+                \"Actual {name} frontier remained held; original effect requires reconciliation, no replay\"\n+            );\n+            std::thread::sleep(std::time::Duration::from_millis(5));\n+        }\n+    }\n+    Ok(())\n+}\n+\n pub const BASELINE_MAX_CONTENT_BYTES: usize = 1024 * 1024 * 1024;\n \n #[derive(Clone, Debug, Serialize, Deserialize)]\n@@ -561,6 +619,8 @@ pub fn commit_to_branch(\n         synthetic_tree(root, base, &baseline.root.patches(), false, scratch)?;\n         let dirty = synthetic_tree(copy, base, &baseline.root.patches(), false, scratch)?;\n         let mut previous = base.clone();\n+        #[cfg(feature = \"test-fixture\")]\n+        let mut fixture_prefix_observed = false;\n         for sha in isolated.rev_list_range(base, &head)? {\n             let state = isolated.diff_tree(&dirty, &format!(\"{sha}^{{tree}}\"), true)?;\n             let filtered = synthetic_tree(root, base, &[&state], true, scratch)?;\n@@ -583,6 +643,19 @@ pub fn commit_to_branch(\n             if !repo.compare_and_swap_ref(&rescue, old.as_deref(), Some(&tip))? {\n                 bail!(\"rescue reference changed concurrently: {rescue}\");\n             }\n+            #[cfg(feature = \"test-fixture\")]\n+            if !fixture_prefix_observed && tip != *base {\n+                fixture_prefix_observed = true;\n+                fixture_frontier(\n+                    \"task-branch-prefix-persisted\",\n+                    resource,\n+                    serde_json::json!({\n+                        \"cwd\": copy, \"resource_id\": resource, \"parent_root\": root,\n+                        \"scratch\": scratch, \"rescue_ref\": rescue, \"tip\": tip,\n+                        \"source_commit\": sha, \"completed_prefix\": 1\n+                    }),\n+                )?;\n+            }\n         }\n         if tip == *base {\n             tip = commit_patch("
+    },
+    {
+      "candidate": "66c29a90487f882b4111358febcb1a59b029cf7312e6a6885e584d901db7259b",
+      "original": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527",
+      "whitespace_check": {
+        "output": "",
+        "exit": 1
+      },
+      "path": "crates/ara-cli/src/task_isolation/capture.rs",
+      "syntax_parse": {
+        "scope": "Syntax only, no type check, build, tests or formatting writes",
+        "command": "rustfmt --emit stdout --config skip_children=true --edition2024 <candidate>; stdout discarded; candidate unchanged",
+        "exit": 0
+      },
+      "exact_original_recovered_after_removing_additions": true,
+      "unified_diff": "diff --git \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\capture.rs\" \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\capture.rs\"\nindex 786ea79..78dcda6 100644\n--- \"a/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\source\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\capture.rs\"\n+++ \"b/D:\\\\workspace\\\\env\\\\cache\\\\ara-port-candidates\\\\omp-upgrade-host-service-control-v1\\\\task-m1m9-resume-20261029\\\\gap-bank-v1\\\\candidate\\\\crates\\\\ara-cli\\\\src\\\\task_isolation\\\\capture.rs\"\n@@ -120,6 +120,18 @@ pub(crate) fn persist_capture(\n     let mut nested_patch_paths = Vec::new();\n     for (i, patch) in delta.nested_patches.iter().enumerate() {\n         let patch_path = dir.join(format!(\"nested-{i}.patch\"));\n+        #[cfg(feature = \"test-fixture\")]\n+        if i == 0 {\n+            worktree::fixture_frontier(\n+                \"task-root-patch-before-nested\",\n+                resource,\n+                serde_json::json!({\n+                    \"cwd\": copy, \"resource_id\": resource, \"root_patch\": dir.join(\"root.patch\"),\n+                    \"capture_dir\": dir, \"nested_patch\": patch_path, \"nested_index\": i,\n+                    \"relative_path\": patch.relative_path\n+                }),\n+            )?;\n+        }\n         write_new(&patch_path, patch.patch.as_bytes())?;\n         nested_patch_paths.push(NestedPatchArtifact {\n             relative_path: patch.relative_path.clone(),"
+    }
+  ],
+  "schema": {
+    "configuration": "Existing ARA_TEST_PEER_FRONTIERS JSON file",
+    "gates": [
+      {
+        "name": "task-after-tool-hook",
+        "key": "unique ASCII key",
+        "identityContains": "actual toolCallId or cwd/tool name fragment",
+        "occurrence": 1,
+        "failAfterRelease": false
+      },
+      {
+        "name": "task-branch-prefix-persisted",
+        "key": "unique ASCII key",
+        "identityContains": "actual ResourceId fragment",
+        "occurrence": 1,
+        "failAfterRelease": false
+      },
+      {
+        "name": "task-root-patch-before-nested",
+        "key": "unique ASCII key",
+        "identityContains": "actual ResourceId fragment",
+        "occurrence": 1,
+        "failAfterRelease": false
+      }
+    ],
+    "output": "config.parent/frontiers/<key>.reached.json",
+    "release": "config.parent/frontiers/<key>.release",
+    "reached": {
+      "common": [
+        "name",
+        "identity",
+        "occurrence",
+        "at"
+      ],
+      "details": {
+        "after_tool": [
+          "phase",
+          "cwd",
+          "resource_id",
+          "tool_call_id",
+          "tool_name",
+          "proof_path",
+          "is_error"
+        ],
+        "branch": [
+          "cwd",
+          "resource_id",
+          "parent_root",
+          "scratch",
+          "rescue_ref",
+          "tip",
+          "source_commit",
+          "completed_prefix"
+        ],
+        "nested": [
+          "cwd",
+          "resource_id",
+          "root_patch",
+          "capture_dir",
+          "nested_patch",
+          "nested_index",
+          "relative_path"
+        ]
+      }
+    },
+    "proof": {
+      "path": "Actual isolated cwd/after-hook-<key>.json",
+      "before_gate": "phase=held, written by the actual awaited CliHooks callback after all existing Native/values/child_yield checks",
+      "after_gate": "phase=released, written by the same callback before returning original None"
+    },
+    "timeout_seconds": 25,
+    "synthetic_failAfterRelease": "Not implemented by these three gates. F4/F5 fail through the original subsequent real Git/FS operation after external obstruction."
+  },
+  "observations": [
+    "main.rs runs the fixture callback after all existing native source and Graph handle checks and child_yield; Core actual_execute.rs awaits that existing Host hook. No wrapper or new extension framework is introduced.",
+    "Only an explicitly configured matching after-tool gate writes isolated cwd proof. Configs with no after-tool gate return before extra Graph field reads.",
+    "worktree.rs pauses only after first actual rewritten non-base tip has a successful rescue CAS in the dirty-history loop. Original next Git/scratch operation is preserved.",
+    "capture.rs pauses before nested-0.patch write only after write_new(root.patch) succeeds. Original nested file write is preserved.",
+    "The one shared cfg pub(crate) helper belongs only to task_isolation/worktree.rs and is reused by capture.rs; it imports no binary peer_host state.",
+    "Occurrence counters select a frontier only. Acceptance must inspect actual Git refs/commits, root/nested bytes, cwd proof and original retained owner receipts."
+  ],
+  "self_review": {
+    "original_assertion_changes": 0,
+    "production_nonfixture_behavior": "Added executable code and state are all cfg(feature=test-fixture); only an explanatory comment changes outside cfg",
+    "independent_review": "Pending independent /root/task_owner_complete_review",
+    "source_and_callers_read": [
+      "main.rs CliHooks::after_tool_call_actual",
+      "ara-agent/src/agent_loop/actual_execute.rs:1404 actual await",
+      "task_isolation/owner.rs actual spawn_blocking persist_capture",
+      "task_isolation/worktree.rs dirty-history commit/rescue and scratch creation",
+      "task_isolation/capture.rs original root/nested durable write order",
+      "peer_host.rs current fixture gate schema"
+    ]
+  },
+  "boundaries": {
+    "frozen_source_writes": 0,
+    "target_writes": 0,
+    "full_OMP_extensions_claim": false,
+    "models": 0,
+    "original_audit_reports_overwritten": false,
+    "E_writes": 0,
+    "builds": 0,
+    "runtime_acceptance": false,
+    "tests": 0
+  },
+  "next": "Independent source review of complete composed candidate; only then Root may freeze/adopt and execute one centralized batch."
+}

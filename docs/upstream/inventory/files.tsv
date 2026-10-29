@@ -4193,7 +4193,7 @@ packages/coding-agent/test/blob-uploaders-self-hosted-legacy.test.ts	21062	575	t
 packages/coding-agent/test/block-images.test.ts	3470	103	test	CA-TOOL-MEDIA
 packages/coding-agent/test/builtin-names.test.ts	455	11	test	CA-TOOL-FRAMEWORK
 packages/coding-agent/test/bundled-agent-parsing.test.ts	3584	92	test	CA-DISCOVERY
-packages/coding-agent/test/cache-invalidation-marker.test.ts	4309	94	test	CA-TOOL-WRITE
+packages/coding-agent/test/cache-invalidation-marker.test.ts	4309	94	test	CA-TUI-MODE
 packages/coding-agent/test/capability/fs-special-files.test.ts	2104	52	test	CA-CAPABILITY
 packages/coding-agent/test/capability/rule-agents.test.ts	1356	44	test	CA-CAPABILITY
 packages/coding-agent/test/capability/rule-buckets.test.ts	8868	222	test	CA-CAPABILITY

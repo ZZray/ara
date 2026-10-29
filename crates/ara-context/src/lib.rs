@@ -5,9 +5,9 @@
 //! 596f2da7101178214aa27a753529d15e6b7ad91d), rendering upstream's templates
 //! (see `prompts/README.md` for ARA's edits) with `ara-prompt`.
 //!
-//! Not ported here: the full `namespace functions` tool catalog (ARA uses
-//! provider-native tool calling, so the compact list mode applies), GPU
-//! probing, workspace-tree building, rules, subagent/delegation settings and
+//! Hosts may supply the rendered `namespace functions` catalogue for inline
+//! descriptors; otherwise provider-native compact list mode applies.
+//! Not ported here: GPU probing, workspace-tree building, rules, subagent/delegation settings and
 //! `xd://` devices; the templates' sections for them stay off.
 
 mod reminder;
@@ -19,6 +19,7 @@ pub use skill_invocation::{BuiltSkillPrompt, build_skill_prompt};
 use ara_discovery::{Discovery, LoadedSkill, ProjectContextFile, SkillsSettings, dedupe_contained_context_files};
 use ara_prompt::TemplateError;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const SYSTEM_TEMPLATE: &str = include_str!("../prompts/system-prompt.md");
@@ -112,6 +113,13 @@ pub struct SystemPromptOptions {
     pub append_prompt: Option<String>,
     /// Active tools in order; `None` falls back to [`DEFAULT_TOOL_NAMES`].
     pub tools: Option<Vec<PromptTool>>,
+    /// Provider-callable names by logical name. Prompt gates keep logical names.
+    pub tool_name_overrides: HashMap<String, String>,
+    /// Raw, pre-rendered full catalogue. Some selects inline descriptor mode,
+    /// including an explicitly empty catalogue; custom prompts own their text.
+    pub tool_inventory: Option<String>,
+    /// Native intent guidance field. None or an empty string disables guidance.
+    pub intent_field: Option<String>,
     /// Pre-loaded context files; `None` discovers them from cwd.
     pub context_files: Option<Vec<ProjectContextFile>>,
     /// Pre-loaded skills; `None` loads them with `skills_settings`.
@@ -130,6 +138,8 @@ pub struct SystemPromptOptions {
     pub render_mermaid: bool,
     pub reactions: bool,
     pub urls: InternalUrls,
+    /// The Host's enabled vault handler and available Obsidian binary.
+    pub has_obsidian: bool,
 }
 
 impl Default for SystemPromptOptions {
@@ -139,6 +149,9 @@ impl Default for SystemPromptOptions {
             custom_prompt: None,
             append_prompt: None,
             tools: None,
+            tool_name_overrides: HashMap::new(),
+            tool_inventory: None,
+            intent_field: None,
             context_files: None,
             skills: None,
             skills_settings: SkillsSettings::default(),
@@ -153,6 +166,7 @@ impl Default for SystemPromptOptions {
             render_mermaid: true,
             reactions: false,
             urls: InternalUrls::default(),
+            has_obsidian: false,
         }
     }
 }
@@ -404,10 +418,13 @@ pub fn build_system_prompt(
         None => DEFAULT_TOOL_NAMES.iter().map(|n| PromptTool { name: (*n).into(), label: String::new() }).collect(),
     };
     let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    let prompt_name = |tool: &PromptTool| options.tool_name_overrides.get(&tool.name).unwrap_or(&tool.name).clone();
     let tool_refs: serde_json::Map<String, Value> =
-        tools.iter().map(|t| (t.name.clone(), Value::String(t.name.clone()))).collect();
-    let tool_info: Vec<Value> =
-        tools.iter().map(|t| json!({ "name": t.name, "internalName": t.name, "label": t.label })).collect();
+        tools.iter().map(|tool| (tool.name.clone(), Value::String(prompt_name(tool)))).collect();
+    let tool_info: Vec<Value> = tools
+        .iter()
+        .map(|tool| json!({ "name": prompt_name(tool), "internalName": tool.name, "label": tool.label }))
+        .collect();
 
     // Skills need `read` to be usable; hidden skills stay out of the listing.
     let has_read = tool_names.contains(&"read");
@@ -436,6 +453,10 @@ pub fn build_system_prompt(
         .map(|r| r.display().to_string())
         .collect();
 
+    let mut urls = options.urls.to_json();
+    if options.has_obsidian {
+        urls["any"] = json!(true);
+    }
     let mut data = json!({
         "harnessName": options.harness_name,
         "systemPromptCustomization": customization,
@@ -443,9 +464,9 @@ pub fn build_system_prompt(
         "appendPrompt": append.unwrap_or_default(),
         "tools": tool_names,
         "toolInfo": tool_info,
-        "toolInventory": "",
-        "inlineToolDescriptors": false,
-        "toolListMode": true,
+        "toolInventory": options.tool_inventory.as_deref().unwrap_or_default(),
+        "inlineToolDescriptors": options.tool_inventory.is_some(),
+        "toolListMode": options.tool_inventory.is_none(),
         "toolRefs": tool_refs,
         "environment": environment,
         "contextFiles": context_json,
@@ -459,8 +480,8 @@ pub fn build_system_prompt(
         "model": if options.include_model_in_prompt { options.model.clone().unwrap_or_default() } else { String::new() },
         "useCodexTaskPrompt": false,
         "personality": personality,
-        "intentTracing": false,
-        "intentField": "",
+        "intentTracing": options.intent_field.as_ref().is_some_and(|field| !field.is_empty()),
+        "intentField": options.intent_field.as_deref().unwrap_or_default(),
         "eagerTasks": false,
         "eagerTasksAlways": false,
         "taskBatch": true,
@@ -470,7 +491,7 @@ pub fn build_system_prompt(
         "secretsEnabled": false,
         "hasMemoryRoot": false,
         "securityEnabled": false,
-        "hasObsidian": false,
+        "hasObsidian": options.has_obsidian,
         "includeWorkspaceTree": options.include_workspace_tree,
         "renderMermaid": options.render_mermaid,
         "reactions": options.reactions,
@@ -479,7 +500,7 @@ pub fn build_system_prompt(
         "xdevDocs": "",
         "autoQaEnabled": false,
         "writeTransportOnly": false,
-        "urls": options.urls.to_json(),
+        "urls": urls,
     });
 
     let main = ara_prompt::render(if custom.is_some() { CUSTOM_TEMPLATE } else { SYSTEM_TEMPLATE }, &data)?;

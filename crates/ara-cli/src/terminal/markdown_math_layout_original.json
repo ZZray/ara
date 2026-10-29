@@ -1,0 +1,585 @@
+[
+  {
+    "id": "B-b7f32402d8",
+    "source": "\\frac{1}{2}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " 1 ",
+      "───",
+      " 2 "
+    ]
+  },
+  {
+    "id": "B-7a6b099bae",
+    "source": "\\frac{a+b}{c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " a+b ",
+      "─────",
+      "  c  "
+    ]
+  },
+  {
+    "id": "B-9b6b052d5b",
+    "source": "x = \\frac{a+b}{c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "     a+b ",
+      "x = ─────",
+      "      c  "
+    ]
+  },
+  {
+    "id": "B-a6ecb19f1e",
+    "source": "\\frac{\\frac{a}{b}}{c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "  a  ",
+      " ─── ",
+      "  b  ",
+      "─────",
+      "  c  "
+    ]
+  },
+  {
+    "id": "B-3ca43758af",
+    "source": "x^2 + y_1 = 0",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "x² + y₁ = 0"
+    ]
+  },
+  {
+    "id": "B-b70b7f9ad2",
+    "source": "e^{i\\pi} + 1 = 0",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " iπ",
+      "e   + 1 = 0"
+    ]
+  },
+  {
+    "id": "B-495fe35002",
+    "source": "\\begin{equation} x = \\frac{a+b}{c} \\end{equation}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "     a+b ",
+      "x = ─────",
+      "      c  "
+    ]
+  },
+  {
+    "id": "B-9718ea2de2",
+    "source": "\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "⎡ a  b ⎤",
+      "⎢      ⎥",
+      "⎣ c  d ⎦"
+    ]
+  },
+  {
+    "id": "B-9718ea2de2",
+    "source": "\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "⎛ a  b ⎞",
+      "⎜      ⎟",
+      "⎝ c  d ⎠"
+    ]
+  },
+  {
+    "id": "B-9718ea2de2",
+    "source": "\\begin{pmatrix} a & b & c \\end{pmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "(a  b  c)"
+    ]
+  },
+  {
+    "id": "B-b0ee4b48c1",
+    "source": "",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": []
+  },
+  {
+    "id": "B-b0ee4b48c1",
+    "source": "   ",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": []
+  },
+  {
+    "id": "B-bc325ac819",
+    "source": "\\begin{bmatrix} \\frac{1}{2} & x \\\\ y & z \\end{bmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "⎡  1     ⎤",
+      "⎢ ───  x ⎥",
+      "⎢  2     ⎥",
+      "⎢        ⎥",
+      "⎣  y   z ⎦"
+    ]
+  },
+  {
+    "id": "B-3ae2bc43fc",
+    "source": "A = \\begin{bmatrix} a \\\\ b \\end{bmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "    ⎡ a ⎤",
+      "A = ⎢   ⎥",
+      "    ⎣ b ⎦"
+    ]
+  },
+  {
+    "id": "B-7dd4e12fbc",
+    "source": "\\begin{vmatrix} a & b \\\\ c & d \\end{vmatrix}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "│ a  b │",
+      "│      │",
+      "│ c  d │"
+    ]
+  },
+  {
+    "id": "B-e5bb3bdf3b",
+    "source": "\\begin{array}{lcr} 1 & 22 & 333 \\\\ aaa & b & c \\end{array}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "1    22  333",
+      "",
+      "aaa  b     c"
+    ]
+  },
+  {
+    "id": "B-9c1c4c4ced",
+    "source": "\\sum_{i=0}^{n} i^2",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " n    ",
+      " ∑  i²",
+      "i=0   "
+    ]
+  },
+  {
+    "id": "B-9e76f1b2e2",
+    "source": "\\int_a^b f(x) dx",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "∫ₐᵇ f(x) dx"
+    ]
+  },
+  {
+    "id": "B-9e76f1b2e2",
+    "source": "\\int\\limits_a^b f(x) dx",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "b",
+      "∫ f(x) dx",
+      "a"
+    ]
+  },
+  {
+    "id": "B-2f88b0333c",
+    "source": "\\left( \\frac{a+b}{c} \\right)^2",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "⎛  a+b  ⎞²",
+      "⎜ ───── ⎟",
+      "⎝   c   ⎠"
+    ]
+  },
+  {
+    "id": "B-102688fa44",
+    "source": "( \\frac{a}{b} )",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "⎛   a   ⎞",
+      "⎜  ───  ⎟",
+      "⎝   b   ⎠"
+    ]
+  },
+  {
+    "id": "B-d686ab629d",
+    "source": "[0, 1)",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "[0, 1)"
+    ]
+  },
+  {
+    "id": "B-d048fc2da0",
+    "source": "\\sqrt{\\frac{a+1}{b}}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " ┌──────",
+      " │  a+1",
+      " │ ─────",
+      "╲│   b"
+    ]
+  },
+  {
+    "id": "B-d048fc2da0",
+    "source": "\\sqrt{x}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " ┌──",
+      "╲│ x"
+    ]
+  },
+  {
+    "id": "B-664e05a7c7",
+    "source": "\\binom{n}{k}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "⎛ n ⎞",
+      "⎜   ⎟",
+      "⎝ k ⎠"
+    ]
+  },
+  {
+    "id": "B-d369ff05fc",
+    "source": "e^{\\frac{x}{2}}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "  x",
+      " ───",
+      "  2",
+      "e"
+    ]
+  },
+  {
+    "id": "B-7c798b9cb3",
+    "source": "x^q",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " q",
+      "x"
+    ]
+  },
+  {
+    "id": "B-7c798b9cb3",
+    "source": "x_q",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "x",
+      " q"
+    ]
+  },
+  {
+    "id": "B-7c798b9cb3",
+    "source": "x_q^q",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " q",
+      "x",
+      " q"
+    ]
+  },
+  {
+    "id": "B-ee08006b61",
+    "source": "N_{turns} + 1",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "N      + 1",
+      " turns"
+    ]
+  },
+  {
+    "id": "B-ee08006b61",
+    "source": "x^{ab}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      " ab",
+      "x"
+    ]
+  },
+  {
+    "id": "B-ee08006b61",
+    "source": "x_i + y_1",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "xᵢ + y₁"
+    ]
+  },
+  {
+    "id": "B-d5fec10302",
+    "source": "\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}_0^T",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "⎡ a  b ⎤ᵀ",
+      "⎢      ⎥",
+      "⎣ c  d ⎦₀"
+    ]
+  },
+  {
+    "id": "B-0a34656ef5",
+    "source": "x + \\underbrace{a+b}_{\\text{sum}}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "x + a+b",
+      "    ╰┬╯",
+      "    sum"
+    ]
+  },
+  {
+    "id": "B-28a6bdeaf3",
+    "source": "\\overbrace{a+b}^{\\text{sum}} + x",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "sum",
+      "╭┴╮",
+      "a+b + x"
+    ]
+  },
+  {
+    "id": "B-3e7ad6a44e",
+    "source": "\\underbrace{ab}_{\\text{longer label}}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "     ab",
+      "    ╰┬╯",
+      "longer label"
+    ]
+  },
+  {
+    "id": "B-964fb39141",
+    "source": "\\underbrace{a+b+c}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "a+b+c",
+      "╰─┬─╯"
+    ]
+  },
+  {
+    "id": "B-f15753a7ef",
+    "source": "A \\overset{!}{=} B",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "  !",
+      "A = B"
+    ]
+  },
+  {
+    "id": "B-f15753a7ef",
+    "source": "A \\underset{0}{=} B",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "A = B",
+      "  0"
+    ]
+  },
+  {
+    "id": "B-ad05ae802e",
+    "source": "\\begin{align} f(x) &= x^2 + 1 \\\\ g(x) &= \\frac{x}{2} \\end{align}",
+    "strip_ansi": false,
+    "trim_end": true,
+    "expected": [
+      "f(x) = x² + 1",
+      "        x",
+      "g(x) = ───",
+      "        2"
+    ]
+  },
+  {
+    "id": "B-97273ef2c3",
+    "source": "\\begin{gather} a = b \\\\ longer = expression \\end{gather}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "       a = b       ",
+      "longer = expression"
+    ]
+  },
+  {
+    "id": "B-028507a1e4",
+    "source": "a \\\\ b",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "id": "B-a4a10869a7",
+    "source": "\\frac{a}\n{b}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " a ",
+      "───",
+      " b "
+    ]
+  },
+  {
+    "id": "B-a4a10869a7",
+    "source": "\\frac\n{a}{b}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " a ",
+      "───",
+      " b "
+    ]
+  },
+  {
+    "id": "B-a4a10869a7",
+    "source": "\\frac{a}\n\\sqrt{b}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "equivalent": "\\frac{a}\\sqrt{b}"
+  },
+  {
+    "id": "B-a4a10869a7",
+    "source": "\\frac\na\nb",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " a ",
+      "───",
+      " b "
+    ]
+  },
+  {
+    "id": "B-a4a10869a7",
+    "source": "x^\n\\alpha",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "xᵅ"
+    ]
+  },
+  {
+    "id": "B-259de56d4e",
+    "source": "\\frac\\frac{a}{b}\n{c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "  a  ",
+      " ─── ",
+      "  b  ",
+      "─────",
+      "  c  "
+    ]
+  },
+  {
+    "id": "B-259de56d4e",
+    "source": "\\frac\\frac\n{a}\n{b}\n{c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "  a  ",
+      " ─── ",
+      "  b  ",
+      "─────",
+      "  c  "
+    ]
+  },
+  {
+    "id": "B-259de56d4e",
+    "source": "\\frac\\hat{a}\n{b}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " â ",
+      "───",
+      " b "
+    ]
+  },
+  {
+    "id": "B-80f34ee118",
+    "source": "y =\n\\frac{1}{2}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "y =",
+      " 1 ",
+      "───",
+      " 2 "
+    ]
+  },
+  {
+    "id": "B-80f34ee118",
+    "source": "\\frac{a}{b}\n\\frac{c}{d}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " a ",
+      "───",
+      " b ",
+      " c ",
+      "───",
+      " d "
+    ]
+  },
+  {
+    "id": "B-80f34ee118",
+    "source": "a\n{b+c}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "a  ",
+      "b+c"
+    ]
+  },
+  {
+    "id": "B-80f34ee118",
+    "source": "x+1\n{y+2}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      "x+1",
+      "y+2"
+    ]
+  },
+  {
+    "id": "B-ea79d008b9",
+    "source": "\\mathbf{\\frac{a}{b}}",
+    "strip_ansi": false,
+    "trim_end": false,
+    "expected": [
+      " 𝐚 ",
+      "───",
+      " 𝐛 "
+    ]
+  }
+]

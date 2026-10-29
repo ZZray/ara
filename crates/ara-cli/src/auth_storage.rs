@@ -44,7 +44,8 @@ use crate::{
         stored_credential_arrays_equal,
     },
     credential_store::{
-        AuthCredential, SqliteCredentialStore, StoredAuthCredential, StoredCredentialBlock, USAGE_REPORT_TTL_MS,
+        AuthCredential, OAuthRefreshPublication, SqliteCredentialStore, StoredAuthCredential, StoredCredentialBlock,
+        USAGE_REPORT_TTL_MS, standard_oauth_projection,
     },
     credential_store_port::{AuthCredentialStore, CredentialBlockSettlement, CredentialStoreOwner},
     model_route::{
@@ -78,6 +79,12 @@ const USAGE_CACHE_PREFIX: &str = "usage_cache:";
 
 #[path = "auth_storage_broker.rs"]
 mod broker;
+#[path = "auth_storage_broker_server.rs"]
+mod broker_server;
+pub use broker_server::{
+    BrokerCredentialEntry, BrokerCredentialSnapshot, BrokerGenerationSubscription, BrokerStorageError,
+    BrokerStorageFacade,
+};
 #[path = "auth_storage_diagnostics.rs"]
 mod diagnostics;
 #[path = "auth_storage_health.rs"]
@@ -203,6 +210,19 @@ pub trait OAuthProvider: Send + Sync {
         force_refresh: bool,
         cancel: &CancellationToken,
     ) -> Result<ResolvedOAuth, AuthStorageError>;
+    /// Fixed Native custom refreshToken capability for Broker explicit force.
+    /// The provider publishes standard fields at its original own usable grant
+    /// CAS. Ordinary force remains Merge; adopted peers require the full refresh
+    /// skew and stay verbatim; expired ACKs persist merged material before error.
+    /// Missing custom refresh support rejects before any dispatch, as Native
+    /// auth-storage.ts:5408-5415 does. Never delegate silently to ordinary force.
+    async fn resolve_broker_explicit(
+        &self,
+        _observed: StoredAuthCredential,
+        _cancel: &CancellationToken,
+    ) -> Result<ResolvedOAuth, AuthStorageError> {
+        Err(AuthStorageError::Unsupported)
+    }
     fn lease(&self, row: &StoredAuthCredential) -> Result<RequestAuthLease, AuthStorageError>;
     async fn prepare_for_request(
         &self,
@@ -300,8 +320,10 @@ pub trait UsageStoreHooks: AggregateUsageSource {
 }
 
 pub struct AuthStorageOptions {
-    /// Explicit Host refresh callback, ahead of the store hook. Registered
-    /// custom providers remain below remote refresh and still project leases.
+    /// Native grant callback (auth-storage.ts:607-619), ahead of the store hook.
+    /// Unlike installed persisted-row providers, it returns updated material;
+    /// AuthStorage owns its exact-row publication. Registered custom providers
+    /// remain below remote refresh and still project leases.
     pub oauth_refresh_override: Option<Arc<dyn OAuthProvider>>,
     pub config_key_resolver: Arc<dyn ConfigKeyResolver>,
     pub environment: Arc<dyn Environment>,
@@ -333,6 +355,37 @@ impl Default for AuthStorageOptions {
     }
 }
 
+/// Exact provider identity keys; credentials remain owned by shared AuthStorage.
+pub type OAuthAccountPools = BTreeMap<String, BTreeSet<String>>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthSessionScope {
+    pub primary_session_id: String,
+    pub oauth_account_pools: OAuthAccountPools,
+}
+impl AuthSessionScope {
+    pub fn new(primary_session_id: String, oauth_account_pools: OAuthAccountPools) -> Arc<Self> {
+        Arc::new(Self { primary_session_id, oauth_account_pools })
+    }
+    pub fn for_primary(&self, new_id: &str) -> Arc<Self> {
+        Self::new(new_id.to_owned(), self.oauth_account_pools.clone())
+    }
+    pub fn context_for(self: &Arc<Self>, provider: &str, context: &AuthRequestContext) -> AuthRequestContext {
+        let mut context = context.clone();
+        context.session_scope = Some(self.clone());
+        if self.oauth_account_pools.contains_key(provider) && context.session_id.is_none() {
+            context.session_id = Some(self.primary_session_id.clone());
+        }
+        context
+    }
+    pub fn allows_credential(&self, provider: &str, credential: &AuthCredential) -> bool {
+        let Some(pool) = self.oauth_account_pools.get(provider) else { return true };
+        matches!(credential, AuthCredential::OAuth { .. })
+            && crate::credential_store::resolve_credential_identity_key(provider, credential)
+                .is_some_and(|identity| pool.contains(&identity))
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct AuthRequestContext {
     pub session_id: Option<String>,
@@ -343,6 +396,18 @@ pub struct AuthRequestContext {
     pub environment_key: Option<EnvironmentKey>,
     pub force_refresh: bool,
     pub excluded_credential_ids: BTreeSet<i64>,
+    pub session_scope: Option<Arc<AuthSessionScope>>,
+}
+impl AuthRequestContext {
+    fn scoped_for(&self, provider: &str) -> Self {
+        self.session_scope.as_ref().map(|scope| scope.context_for(provider, self)).unwrap_or_else(|| self.clone())
+    }
+    fn pool_restricted(&self, provider: &str) -> bool {
+        self.session_scope.as_ref().is_some_and(|scope| scope.oauth_account_pools.contains_key(provider))
+    }
+    fn allows(&self, provider: &str, row: &StoredAuthCredential) -> bool {
+        self.session_scope.as_ref().is_none_or(|scope| scope.allows_credential(provider, &row.credential))
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialSource {
@@ -406,7 +471,7 @@ struct HostState {
 }
 type UsageFlight = watch::Receiver<Option<Option<UsageReport>>>;
 type AggregateUsageFlight = watch::Receiver<Option<Result<Option<Vec<UsageReport>>, AuthStorageError>>>;
-type RemoteRefreshFlight = watch::Receiver<Option<Result<StoredAuthCredential, AuthStorageError>>>;
+type RemoteRefreshFlight = watch::Receiver<Option<Result<StoredAuthCredential, BrokerStorageError>>>;
 struct AuthStorageInner {
     store: CredentialStoreOwner,
     codex: Option<Arc<OpenAiCodexAuth>>,
@@ -501,6 +566,22 @@ fn access_from_row(row: &StoredAuthCredential) -> Option<OAuthAccess> {
         org_name: text_field(row, "orgName"),
     })
 }
+fn validate_resolved_oauth(
+    provider: &str,
+    id: i64,
+    resolved: ResolvedOAuth,
+) -> Result<ResolvedOAuth, AuthStorageError> {
+    if resolved.row.id != id
+        || resolved.row.provider != provider
+        || resolved.row.disabled_cause.is_some()
+        || !matches!(resolved.row.credential, AuthCredential::OAuth { .. })
+        || !matches!(resolved.lease.identity(), CredentialIdentity::Stored { id: lease_id, .. } if *lease_id == id)
+    {
+        return Err(AuthStorageError::Configuration);
+    }
+    Ok(resolved)
+}
+
 fn map_codex_error(error: CodexAuthError) -> AuthStorageError {
     match error {
         CodexAuthError::Cancelled => AuthStorageError::Cancelled,
@@ -639,10 +720,14 @@ impl AuthStorage {
         let (result, changed) = self.inner.store.with_store(|store| {
             let mut state = self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?;
             let result = operation(store, &mut state);
-            Ok((result, std::mem::take(&mut state.generation_changed)))
+            let changed = std::mem::take(&mut state.generation_changed);
+            if changed {
+                self.inner.generation.fetch_add(1, Ordering::AcqRel);
+            }
+            Ok((result, changed))
         })?;
         if changed {
-            self.bump_generation();
+            self.inner.changed.notify_waiters();
         }
         result
     }
@@ -656,55 +741,58 @@ impl AuthStorage {
             .map_err(|_| AuthStorageError::Storage)?
     }
     pub fn reload(&self) -> Result<(), AuthStorageError> {
-        self.store_operation(|store, state| {
-            let rows = store.list_auth_credentials(None).map_err(|error| {
-                state.assignments.observe_store_error(&error);
-                AuthStorageError::Storage
-            })?;
-            let mut grouped = BTreeMap::<String, Vec<StoredAuthCredential>>::new();
-            for row in &rows {
-                grouped.entry(row.provider.clone()).or_default().push(row.clone());
-            }
-            // Fixed reload keeps the last stored OAuth row for each native
-            // identity and soft-disables older duplicates before publication.
-            for (provider, entries) in &mut grouped {
-                let mut seen = BTreeSet::new();
-                let mut removed = BTreeSet::new();
-                for row in entries.iter().rev() {
-                    if matches!(row.credential, AuthCredential::OAuth { .. })
-                        && let Some(identity) =
-                            crate::credential_store::resolve_credential_identity_key(provider, &row.credential)
-                        && !seen.insert(identity)
-                    {
-                        store
-                            .delete_auth_credential(row.id, "deduplicated duplicate credential")
-                            .map_err(|_| AuthStorageError::Storage)?;
-                        removed.insert(row.id);
-                    }
-                }
-                if !removed.is_empty() {
-                    entries.retain(|row| !removed.contains(&row.id));
-                    state.assignments.reset_provider_assignments(store, provider);
-                }
-            }
-            let changed = state.rows.len() != grouped.len()
-                || grouped.iter().any(|(provider, rows)| {
-                    !stored_credential_arrays_equal(state.rows.get(provider).map(Vec::as_slice).unwrap_or(&[]), rows)
-                });
-            let active_rows: Vec<_> = grouped.values().flatten().cloned().collect();
-            state.assignments.reload_state(&active_rows);
-            // Native Map updates preserve an existing provider's position;
-            // removing its oldest credential must not reorder the provider.
-            state.stored_provider_order.retain(|provider| grouped.contains_key(provider));
-            for row in &rows {
-                if grouped.contains_key(&row.provider) && !state.stored_provider_order.contains(&row.provider) {
-                    state.stored_provider_order.push(row.provider.clone());
+        self.store_operation(Self::reload_state_from_store)
+    }
+    // The Broker's external-revision acknowledgement and reload use the same
+    // original store -> HostState critical section, including publication.
+    fn reload_state_from_store(store: &dyn AuthCredentialStore, state: &mut HostState) -> Result<(), AuthStorageError> {
+        let rows = store.list_auth_credentials(None).map_err(|error| {
+            state.assignments.observe_store_error(&error);
+            AuthStorageError::Storage
+        })?;
+        let mut grouped = BTreeMap::<String, Vec<StoredAuthCredential>>::new();
+        for row in &rows {
+            grouped.entry(row.provider.clone()).or_default().push(row.clone());
+        }
+        // Fixed reload keeps the last stored OAuth row for each native
+        // identity and soft-disables older duplicates before publication.
+        for (provider, entries) in &mut grouped {
+            let mut seen = BTreeSet::new();
+            let mut removed = BTreeSet::new();
+            for row in entries.iter().rev() {
+                if matches!(row.credential, AuthCredential::OAuth { .. })
+                    && let Some(identity) =
+                        crate::credential_store::resolve_credential_identity_key(provider, &row.credential)
+                    && !seen.insert(identity)
+                {
+                    store
+                        .delete_auth_credential(row.id, "deduplicated duplicate credential")
+                        .map_err(|_| AuthStorageError::Storage)?;
+                    removed.insert(row.id);
                 }
             }
-            state.rows = grouped;
-            state.generation_changed |= changed;
-            Ok(())
-        })
+            if !removed.is_empty() {
+                entries.retain(|row| !removed.contains(&row.id));
+                state.assignments.reset_provider_assignments(store, provider);
+            }
+        }
+        let changed = state.rows.len() != grouped.len()
+            || grouped.iter().any(|(provider, rows)| {
+                !stored_credential_arrays_equal(state.rows.get(provider).map(Vec::as_slice).unwrap_or(&[]), rows)
+            });
+        let active_rows: Vec<_> = grouped.values().flatten().cloned().collect();
+        state.assignments.reload_state(&active_rows);
+        // Native Map updates preserve an existing provider's position;
+        // removing its oldest credential must not reorder the provider.
+        state.stored_provider_order.retain(|provider| grouped.contains_key(provider));
+        for row in &rows {
+            if grouped.contains_key(&row.provider) && !state.stored_provider_order.contains(&row.provider) {
+                state.stored_provider_order.push(row.provider.clone());
+            }
+        }
+        state.rows = grouped;
+        state.generation_changed |= changed;
+        Ok(())
     }
     fn load_provider(
         store: &dyn AuthCredentialStore,
@@ -740,6 +828,17 @@ impl AuthStorage {
             .lock()
             .map(|state| state.runtime_keys.contains_key(provider) || state.config_keys.contains_key(provider))
             .unwrap_or(true)
+    }
+    pub(crate) fn runtime_api_key(&self, provider: &str) -> Result<Option<String>, AuthStorageError> {
+        Ok(self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| AuthStorageError::Storage)?
+            .runtime_keys
+            .get(provider)
+            .filter(|key| !key.is_empty())
+            .cloned())
     }
     pub fn set_runtime_api_key(&self, provider: &str, key: String) -> Result<(), AuthStorageError> {
         self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?.runtime_keys.insert(provider.to_owned(), key);
@@ -918,6 +1017,11 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<AuthAccess>, AuthStorageError> {
         check_cancel(cancel)?;
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
+        if context.pool_restricted(provider) {
+            return self.resolve_oauth_selection(provider, context, cancel).await;
+        }
         let override_access = {
             let state = self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?;
             state
@@ -993,7 +1097,7 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<OAuthAccess>, AuthStorageError> {
         check_cancel(cancel)?;
-        if self.suppressed(provider) {
+        if self.suppressed(provider) && !context.pool_restricted(provider) {
             return Ok(None);
         }
         Ok(self.resolve_oauth_selection(provider, context, cancel).await?.and_then(|access| access.oauth))
@@ -1053,6 +1157,72 @@ impl AuthStorage {
                 .collect())
         })
     }
+    pub fn stored_oauth_snapshot_with_context(
+        &self, provider: &str, context: &AuthRequestContext,
+    ) -> Result<Vec<StoredAuthCredential>, AuthStorageError> {
+        Ok(self.stored_oauth_snapshot(provider)?.into_iter().filter(|row| context.allows(provider, row)).collect())
+    }
+    pub fn has_auth_with_context(&self, provider: &str, context: &AuthRequestContext) -> Result<bool, AuthStorageError> {
+        if !context.pool_restricted(provider) { return self.has_auth(provider) }
+        Ok(self.supports_oauth(provider) && !self.stored_oauth_snapshot_with_context(provider, context)?.is_empty())
+    }
+    fn active_oauth_row_with_context(
+        &self, provider: &str, context: &AuthRequestContext,
+    ) -> Result<Option<StoredAuthCredential>, AuthStorageError> {
+        if !context.pool_restricted(provider) { return self.active_oauth_row(provider, context.session_id.as_deref()) }
+        let context = context.scoped_for(provider);
+        self.store_operation(|store, state| {
+            let rows = Self::load_provider(store, state, provider)?;
+            let sticky = state.assignments.read_session_credential(store, provider, context.session_id.as_deref(), &rows);
+            Ok(sticky.filter(|sticky| sticky.kind == CredentialKind::OAuth)
+                .and_then(|sticky| rows.get(sticky.index)).filter(|row| context.allows(provider, row)).cloned()
+                .or_else(|| Self::select_snapshot_credential(store, state, provider, CredentialKind::OAuth,
+                    context.session_id.as_deref(), &rows, self.now(), |row| context.allows(provider, row))))
+        })
+    }
+    pub fn peek_api_key_with_context(
+        &self, provider: &str, context: &AuthRequestContext,
+    ) -> Result<Option<String>, AuthStorageError> {
+        if !context.pool_restricted(provider) { return self.peek_api_key(provider, context.session_id.as_deref()) }
+        self.active_oauth_row_with_context(provider, context)?
+            .filter(|row| access_fresh(row, self.now(), 0.0))
+            .map(|row| self.project_oauth_lease(provider, &row).map(|lease| lease.api_key().map(str::to_owned)))
+            .transpose().map(Option::flatten)
+    }
+    pub fn list_oauth_accounts_with_context(
+        &self, provider: &str, context: &AuthRequestContext,
+    ) -> Result<Vec<OAuthAccountSummary>, AuthStorageError> {
+        if !context.pool_restricted(provider) { return self.list_oauth_accounts(provider, context.session_id.as_deref()) }
+        let context = context.scoped_for(provider);
+        self.store_operation(|store, state| {
+            let rows = Self::load_provider(store, state, provider)?;
+            let allowed: BTreeSet<_> = rows.iter().filter(|row| context.allows(provider, row)).map(|row| row.id).collect();
+            Ok(state.assignments.list_oauth_accounts(store, provider, context.session_id.as_deref(), &rows, false)
+                .into_iter().filter(|row| allowed.contains(&row.credential_id)).collect())
+        })
+    }
+    pub fn get_oauth_account_identity_with_context(
+        &self, provider: &str, context: &AuthRequestContext,
+    ) -> Result<Option<OAuthAccountSummary>, AuthStorageError> {
+        let Some(row) = self.active_oauth_row_with_context(provider, context)? else { return Ok(None) };
+        Ok(self.list_oauth_accounts_with_context(provider, context)?.into_iter().find(|item| item.credential_id == row.id))
+    }
+    pub(crate) fn permits_stored_credential(
+        &self, provider: &str, row: &StoredAuthCredential, context: &AuthRequestContext,
+    ) -> bool {
+        context.allows(provider, row)
+    }
+    pub(crate) fn permits_reset_target(
+        &self, provider: &str, target: &ResetCreditTarget, context: &AuthRequestContext,
+    ) -> Result<bool, AuthStorageError> {
+        if !context.pool_restricted(provider) { return Ok(true) }
+        self.store_operation(|store, state| {
+            let rows = Self::load_provider(store, state, provider)?;
+            Ok(rows.iter().filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }))
+                .find(|row| resets::reset_target_matches(target, row.id, row))
+                .is_some_and(|row| context.allows(provider, row)))
+        })
+    }
     pub fn has_auth(&self, provider: &str) -> Result<bool, AuthStorageError> {
         let has_stored = self.store_operation(|store, state| {
             Ok(state.runtime_keys.contains_key(provider)
@@ -1062,6 +1232,26 @@ impl AuthStorage {
         Ok(has_stored
             || self.inner.options.environment.api_key(provider).is_some_and(|key| !key.value.is_empty())
             || self.inner.options.fallback.api_key(provider).is_some_and(|key| !key.is_empty()))
+    }
+    /// Fixed ai/auth-storage.ts:2822-2839. Presence only: no OAuth refresh or
+    /// command execution. Ambient transport sentinels are not concrete keys.
+    pub fn has_concrete_auth(&self, provider: &str) -> Result<bool, AuthStorageError> {
+        let stored = self.store_operation(|store, state| {
+            Ok(state.runtime_keys.contains_key(provider)
+                || state.config_keys.contains_key(provider)
+                || !Self::load_provider(store, state, provider)?.is_empty())
+        })?;
+        let variable =
+            |name| self.inner.options.environment.variable(name).is_some_and(|value| !value.trim().is_empty());
+        if stored || (matches!(provider, "amazon-bedrock" | "bedrock-mantle") && variable("AWS_BEARER_TOKEN_BEDROCK")) {
+            return Ok(true);
+        }
+        let environment = if provider == "xai-oauth" {
+            variable("XAI_OAUTH_TOKEN")
+        } else {
+            self.inner.options.environment.api_key(provider).is_some_and(|key| key.value != "<authenticated>")
+        };
+        Ok(environment || self.inner.options.fallback.api_key(provider).is_some_and(|key| key != "<authenticated>"))
     }
     /// Offline Registry lookup: commands are never dispatched. A previous
     /// resolved value is reusable only while that exact stored payload remains.
@@ -1367,6 +1557,17 @@ impl AuthStorage {
         force: bool,
         cancel: &CancellationToken,
     ) -> Result<ResolvedOAuth, AuthStorageError> {
+        self.resolve_exact_oauth_with_publication(provider, row, force, OAuthRefreshPublication::Merge, cancel).await
+    }
+
+    async fn resolve_exact_oauth_with_publication(
+        &self,
+        provider: &str,
+        row: StoredAuthCredential,
+        force: bool,
+        publication: OAuthRefreshPublication,
+        cancel: &CancellationToken,
+    ) -> Result<ResolvedOAuth, AuthStorageError> {
         check_cancel(cancel)?;
         let remote = self.inner.store.remote();
         if let Some(store) = &remote {
@@ -1402,24 +1603,36 @@ impl AuthStorage {
                 .ok_or(AuthStorageError::Unavailable)?;
             let peer_rotated = latest.serialized_data != row.serialized_data;
             let force = force && !peer_rotated;
+            let id = latest.id;
             if !force && access_fresh(&latest, self.now(), REFRESH_SKEW_MS) {
-                return Ok(ResolvedOAuth { lease: hook.lease(&latest)?, row: latest });
+                return validate_resolved_oauth(
+                    provider,
+                    id,
+                    ResolvedOAuth { lease: hook.lease(&latest)?, row: latest },
+                );
             }
             if !text_field(&latest, "refresh").is_some_and(|refresh| !refresh.trim().is_empty()) {
                 return Err(AuthStorageError::Unavailable);
             }
-            let id = latest.id;
-            let resolved = hook.resolve(latest, force, cancel).await?;
+            // Only a due installed-provider grant enters the existing per-ID
+            // flight. Broker's first owner calls the unshared body directly.
+            let owner_provider = provider.to_owned();
+            let settled = self
+                .shared_oauth_refresh(id, cancel, move |owner| async move {
+                    owner
+                        .perform_owned_installed_oauth(&owner_provider, latest, force, publication)
+                        .await
+                        .map_err(Into::into)
+                })
+                .await
+                .map_err(|error| match error {
+                    BrokerStorageError::Auth(error) => error,
+                    BrokerStorageError::MissingCredential(_) | BrokerStorageError::NotOAuth { .. } => {
+                        AuthStorageError::Unavailable
+                    }
+                })?;
             check_cancel(cancel)?;
-            if resolved.row.id != id
-                || resolved.row.provider != provider
-                || resolved.row.disabled_cause.is_some()
-                || !matches!(resolved.row.credential, AuthCredential::OAuth { .. })
-                || !matches!(resolved.lease.identity(), CredentialIdentity::Stored { id: lease_id, .. } if *lease_id == id)
-            {
-                return Err(AuthStorageError::Configuration);
-            }
-            return Ok(resolved);
+            return validate_resolved_oauth(provider, id, ResolvedOAuth { lease: hook.lease(&settled)?, row: settled });
         }
         if remote.is_some() {
             let latest = self
@@ -1462,11 +1675,96 @@ impl AuthStorage {
             {
                 return Err(AuthStorageError::Transient);
             }
-            let row = codex.resolve_account_credential(row.id, force, cancel).await.map_err(map_codex_error)?;
+            let row = if publication == OAuthRefreshPublication::BrokerExplicit && force {
+                codex.resolve_broker_account_credential(row.id, latest.serialized_data.clone(), cancel).await
+            } else {
+                codex.resolve_account_credential(row.id, force, cancel).await
+            }
+            .map_err(map_codex_error)?;
             let lease = lease_from_row(row.clone()).map_err(map_codex_error)?;
             return Ok(ResolvedOAuth { row, lease });
         }
         Err(AuthStorageError::Unsupported)
+    }
+
+    /// Runs only inside the existing per-ID owner. No self-join, secondary CAS
+    /// or projection of a returned persisted row. The provider owns grant CAS.
+    async fn perform_owned_installed_oauth(
+        &self,
+        provider: &str,
+        observed: StoredAuthCredential,
+        force: bool,
+        publication: OAuthRefreshPublication,
+    ) -> Result<StoredAuthCredential, AuthStorageError> {
+        let hook = self.oauth_hook(provider).ok_or(AuthStorageError::Unsupported)?;
+        let id = observed.id;
+        let latest = self
+            .provider_rows(provider)
+            .await?
+            .into_iter()
+            .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
+            .ok_or(AuthStorageError::Unavailable)?;
+        let peer_rotated = latest.serialized_data != observed.serialized_data;
+        if peer_rotated {
+            if !access_fresh(&latest, self.now(), REFRESH_SKEW_MS) {
+                return Err(AuthStorageError::Unavailable);
+            }
+            let resolved =
+                validate_resolved_oauth(provider, id, ResolvedOAuth { lease: hook.lease(&latest)?, row: latest })?;
+            return Ok(resolved.row);
+        }
+        if !force && access_fresh(&latest, self.now(), REFRESH_SKEW_MS) {
+            return Ok(validate_resolved_oauth(
+                provider,
+                id,
+                ResolvedOAuth { lease: hook.lease(&latest)?, row: latest },
+            )?
+            .row);
+        }
+        if !text_field(&latest, "refresh").is_some_and(|refresh| !refresh.trim().is_empty()) {
+            return Err(AuthStorageError::Unavailable);
+        }
+        // Consumer cancellation abandons only its wait. Started provider grants
+        // finish on the owner's independent token and existing drain counter.
+        let owner_cancel = CancellationToken::new();
+        let attempted = latest.clone();
+        let result = if publication == OAuthRefreshPublication::BrokerExplicit {
+            hook.resolve_broker_explicit(latest, &owner_cancel).await
+        } else {
+            hook.resolve(latest, force, &owner_cancel).await
+        };
+        if matches!(&result, Err(AuthStorageError::Definitive)) {
+            // Fixed Native refreshStoredOAuthCredential settles the rejected
+            // grant inside its owner. A cancelled ordinary first waiter and a
+            // Broker follower cannot be responsible for this durable failure.
+            let peer = self.handle_oauth_failure(provider, &attempted, AuthStorageError::Definitive, None).await?;
+            let peer = match peer {
+                Some(peer) => Some(peer),
+                None => self.provider_rows(provider).await?.into_iter().find(|peer| {
+                    peer.id == id
+                        && peer.serialized_data != attempted.serialized_data
+                        && access_fresh(peer, self.now(), REFRESH_SKEW_MS)
+                }),
+            };
+            if let Some(peer) = peer {
+                return Ok(validate_resolved_oauth(
+                    provider,
+                    id,
+                    ResolvedOAuth { lease: hook.lease(&peer)?, row: peer },
+                )?
+                .row);
+            }
+            return Err(AuthStorageError::Definitive);
+        }
+        if matches!(&result, Err(AuthStorageError::Unavailable)) {
+            self.reload()?;
+        }
+        let resolved = validate_resolved_oauth(provider, id, result?)?;
+        if !access_fresh(&resolved.row, self.now(), 0.0) {
+            self.reload()?;
+            return Err(AuthStorageError::Unavailable);
+        }
+        Ok(resolved.row)
     }
 
     /// AuthStorage, rather than a caller, owns the native per-ID refresh flight.
@@ -1483,6 +1781,37 @@ impl AuthStorage {
         if remote.is_none() && refresh_override.is_none() {
             return Err(AuthStorageError::Unsupported);
         }
+        let this = self.clone();
+        let owned_provider = provider.to_owned();
+        let row = self
+            .shared_oauth_refresh(id, cancel, move |_owner| async move {
+                this.perform_owned_remote_refresh(&owned_provider, id, OAuthRefreshPublication::Merge)
+                    .await
+                    .map_err(Into::into)
+            })
+            .await
+            .map_err(|error| match error {
+                BrokerStorageError::Auth(error) => error,
+                BrokerStorageError::MissingCredential(_) | BrokerStorageError::NotOAuth { .. } => {
+                    AuthStorageError::Unavailable
+                }
+            })?;
+        if row.id == id && row.provider == provider { Ok(row) } else { Err(AuthStorageError::Configuration) }
+    }
+
+    // One owner and settlement counter shared by native request refresh and
+    // Broker explicit refresh. Error provenance stays typed for the HTTP 404.
+    async fn shared_oauth_refresh<F, Fut>(
+        &self,
+        id: i64,
+        cancel: &CancellationToken,
+        work: F,
+    ) -> Result<StoredAuthCredential, BrokerStorageError>
+    where
+        F: FnOnce(AuthStorage) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<StoredAuthCredential, BrokerStorageError>> + Send + 'static,
+    {
+        check_cancel(cancel)?;
         let mut receiver = {
             let mut flights = self.inner.remote_refresh_flights.lock().map_err(|_| AuthStorageError::Storage)?;
             if let Some(receiver) = flights.get(&id) {
@@ -1493,48 +1822,10 @@ impl AuthStorage {
                 self.inner.usage_pending.fetch_add(1, Ordering::AcqRel);
                 let settlement = RemoteRefreshSettlement { inner: self.inner.clone(), id };
                 let this = self.clone();
-                let provider = provider.to_owned();
                 tokio::spawn(async move {
                     let _settlement = settlement;
-                    let result = async {
-                        if let Some(refresh) = refresh_override {
-                            let current = this.provider_rows(&provider).await?.into_iter()
-                                .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
-                                .ok_or(AuthStorageError::Unavailable)?;
-                            let result = refresh.resolve(current, true, &CancellationToken::new()).await?;
-                            if result.row.id != id || result.row.provider != provider
-                                || result.row.disabled_cause.is_some()
-                                || !matches!(result.row.credential, AuthCredential::OAuth { .. })
-                                || !matches!(result.lease.identity(), CredentialIdentity::Stored { id: lease_id, .. } if *lease_id == id) {
-                                return Err(AuthStorageError::Configuration);
-                            }
-                            // Native replaceCredentialById persists the callback
-                            // result through the same owner. Remote only mirrors
-                            // its projection and sends no additional upload.
-                            this.inner.store.with_store(|store| {
-                                let current = store.list_auth_credentials(Some(&provider))
-                                    .map_err(|_| AuthStorageError::Storage)?
-                                    .into_iter().find(|row| row.id == id)
-                                    .ok_or(AuthStorageError::Unavailable)?;
-                                if current.disabled_cause.is_some()
-                                    || !matches!(current.credential, AuthCredential::OAuth { .. }) {
-                                    return Err(AuthStorageError::Unavailable);
-                                }
-                                store.update_auth_credential(id, &result.row.credential)
-                                    .map_err(|_| AuthStorageError::Storage)?;
-                                store.list_auth_credentials(Some(&provider))
-                                    .map_err(|_| AuthStorageError::Storage)?
-                                    .into_iter().find(|row| row.id == id)
-                                    .ok_or(AuthStorageError::Unavailable)
-                            })
-                        } else {
-                            remote.ok_or(AuthStorageError::Unsupported)?
-                                .refresh_oauth_credential(id, &CancellationToken::new()).await
-                        }
-                    }.await;
+                    let result = work(this).await;
                     let _ = sender.send(Some(result));
-                    // Publish before dropping the map's receiver. The owner remains
-                    // alive even when every consumer has abandoned its wait.
                 });
                 receiver
             }
@@ -1542,18 +1833,74 @@ impl AuthStorage {
         loop {
             check_cancel(cancel)?;
             if let Some(result) = receiver.borrow_and_update().clone() {
-                let row = result?;
-                return if row.id == id && row.provider == provider {
-                    Ok(row)
-                } else {
-                    Err(AuthStorageError::Configuration)
-                };
+                return result;
             }
-            tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Err(AuthStorageError::Cancelled),
-                changed = receiver.changed() => if changed.is_err() { return Err(AuthStorageError::Transient); },
+            tokio::select! { biased; _ = cancel.cancelled() => return Err(AuthStorageError::Cancelled.into()),
+            changed = receiver.changed() => if changed.is_err() { return Err(AuthStorageError::Transient.into()); } }
+        }
+    }
+
+    // Called only by a detached per-ID flight owner. This body does not rejoin
+    // the flight map, so Broker force-refresh keeps override precedence without
+    // waiting on its own slot.
+    async fn perform_owned_remote_refresh(
+        &self,
+        provider: &str,
+        id: i64,
+        publication: OAuthRefreshPublication,
+    ) -> Result<StoredAuthCredential, AuthStorageError> {
+        let remote = self.inner.store.remote();
+        let refresh_override = self.inner.options.oauth_refresh_override.clone();
+        if let Some(refresh) = refresh_override {
+            let current = self
+                .provider_rows(provider)
+                .await?
+                .into_iter()
+                .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
+                .ok_or(AuthStorageError::Unavailable)?;
+            let attempted = current.clone();
+            let result = refresh.resolve(current, true, &CancellationToken::new()).await?;
+            if result.row.id != id
+                || result.row.provider != provider
+                || result.row.disabled_cause.is_some()
+                || !matches!(result.row.credential, AuthCredential::OAuth { .. })
+                || !matches!(result.lease.identity(), CredentialIdentity::Stored { id: lease_id, .. } if *lease_id == id)
+            {
+                return Err(AuthStorageError::Configuration);
             }
+            // This is the native unpersisted grant callback. Publish once,
+            // fencing the attempted row; CAS loss adopts the peer verbatim.
+            // No row returned by a persisted-row resolver is projected here.
+            let mut credential = result.row.credential.clone();
+            if let (AuthCredential::OAuth { fields: old }, AuthCredential::OAuth { fields: new }) =
+                (&attempted.credential, &credential)
+            {
+                let mut merged = old.clone();
+                merged.extend(new.clone());
+                credential = AuthCredential::OAuth { fields: merged };
+            }
+            if publication == OAuthRefreshPublication::BrokerExplicit && access_fresh(&result.row, self.now(), 0.0) {
+                credential = standard_oauth_projection(&credential, &attempted.credential)
+                    .ok_or(AuthStorageError::Configuration)?;
+            }
+            let (persisted, own) = self.inner.store.publish_oauth_override_if_matches(
+                provider,
+                id,
+                &attempted.serialized_data,
+                &credential,
+            )?;
+            // Fixed Native :5359-5373 trusts our own short-lived grant only
+            // while usable; adopted peers must clear the full refresh skew.
+            let skew = if own { 0.0 } else { REFRESH_SKEW_MS };
+            if !access_fresh(&persisted, self.now(), skew) {
+                // Confirmed unusable replacements are durable, never replayed.
+                self.reload()?;
+                return Err(AuthStorageError::Unavailable);
+            }
+            Ok(persisted)
+        } else {
+            // The remote Broker already owns force publication. Mirror its row.
+            remote.ok_or(AuthStorageError::Unsupported)?.refresh_oauth_credential(id, &CancellationToken::new()).await
         }
     }
 
@@ -1627,6 +1974,17 @@ impl AuthStorage {
             }) {
                 return Ok(Some(latest.clone()));
             }
+            if self.inner.store.remote().is_none()
+                && self.inner.options.oauth_refresh_override.is_none()
+                && self.oauth_hook(provider).is_some()
+                && latest.as_ref().is_none_or(|latest| latest.serialized_data != row.serialized_data)
+            {
+                // Installed owners already settle exact-row definitive faults.
+                // A follower sees removal or a changed peer, so it has no CAS
+                // to repeat. A pre-grant/readiness fault on an unchanged row
+                // still follows the existing failure policy below.
+                return Ok(None);
+            }
             let provider = provider.to_owned();
             let row = row.clone();
             let changed = self
@@ -1664,6 +2022,8 @@ impl AuthStorage {
         context: &AuthRequestContext,
         cancel: &CancellationToken,
     ) -> Result<Option<AuthAccess>, AuthStorageError> {
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         if !self.supports_oauth(provider) {
             return Ok(None);
         }
@@ -1673,6 +2033,7 @@ impl AuthStorage {
             .filter(|row| {
                 matches!(row.credential, AuthCredential::OAuth { .. })
                     && !context.excluded_credential_ids.contains(&row.id)
+                    && context.allows(provider, row)
             })
             .cloned()
             .collect();
@@ -1807,6 +2168,7 @@ impl AuthStorage {
         for (row, result) in preflight {
             match result {
                 Ok(result) => {
+                    if !context.allows(provider, &result.row) { failures.insert(row.id); continue; }
                     prepared.insert(row.id, result);
                 }
                 Err(error) => {
@@ -1815,6 +2177,7 @@ impl AuthStorage {
                     {
                         // Lease construction only: this branch never repeats a
                         // refresh already attempted during native preflight.
+                        if !context.allows(provider, &peer) { failures.insert(row.id); continue; }
                         let lease = self.project_oauth_lease(provider, &peer)?;
                         prepared.insert(row.id, ResolvedOAuth { row: peer, lease });
                     } else {
@@ -1862,7 +2225,7 @@ impl AuthStorage {
                 }
                 let Some(result) = prepared.get(&id).cloned() else { continue };
                 let latest = self.provider_rows(provider).await?.into_iter().find(|row| row.id == id);
-                let Some(latest) = latest.filter(|row| matches!(row.credential, AuthCredential::OAuth { .. })) else {
+                let Some(latest) = latest.filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }) && context.allows(provider, row)) else {
                     failures.insert(id);
                     continue;
                 };
@@ -1906,6 +2269,7 @@ impl AuthStorage {
                 } else {
                     result
                 };
+                if !context.allows(provider, &selected.row) { continue; }
                 self.record_selected(provider, context, &selected.row, selected.lease.api_key()).await?;
                 return Ok(Some(AuthAccess {
                     oauth: access_from_row(&selected.row),
@@ -1974,14 +2338,14 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<AuthAccess>, AuthStorageError> {
         check_cancel(cancel)?;
-        if self.suppressed(provider) || !self.supports_oauth(provider) {
+        if (self.suppressed(provider) && !context.pool_restricted(provider)) || !self.supports_oauth(provider) {
             return Ok(None);
         }
         let Some(row) = self
             .provider_rows(provider)
             .await?
             .into_iter()
-            .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }))
+            .find(|row| row.id == id && matches!(row.credential, AuthCredential::OAuth { .. }) && context.allows(provider, row))
         else {
             return Ok(None);
         };
@@ -1992,6 +2356,7 @@ impl AuthStorage {
                 return Ok(None);
             }
         };
+        if !context.allows(provider, &result.row) { return Ok(None) }
         Ok(Some(AuthAccess {
             oauth: access_from_row(&result.row),
             lease: result.lease,
@@ -2006,7 +2371,7 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<AuthAccess>, AuthStorageError> {
         let rows = self.provider_rows(provider).await?;
-        let Some(row) = rows.iter().filter(|row| matches!(row.credential, AuthCredential::OAuth { .. })).nth(position)
+        let Some(row) = rows.iter().filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }) && context.allows(provider, row)).nth(position)
         else {
             return Ok(None);
         };
@@ -2018,11 +2383,11 @@ impl AuthStorage {
         context: &AuthRequestContext,
         cancel: &CancellationToken,
     ) -> Result<Vec<Result<AuthAccess, AuthStorageError>>, AuthStorageError> {
-        if self.suppressed(provider) {
+        if self.suppressed(provider) && !context.pool_restricted(provider) {
             return Ok(Vec::new());
         }
         let rows = self.provider_rows(provider).await?;
-        Ok(join_all(rows.iter().filter(|row| matches!(row.credential, AuthCredential::OAuth { .. })).map(
+        Ok(join_all(rows.iter().filter(|row| matches!(row.credential, AuthCredential::OAuth { .. }) && context.allows(provider, row)).map(
             |row| async move {
                 self.get_oauth_access_by_credential_id(provider, row.id, context, cancel)
                     .await?
@@ -2682,6 +3047,8 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<(StoredAuthCredential, CredentialTarget)>, AuthStorageError> {
         check_cancel(cancel)?;
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         // A wire token's bytes do not give an override/env/fallback lease
         // ownership of a durable row, even when a stored sibling uses them.
         if !matches!(failed.identity(), CredentialIdentity::Stored { .. }) {
@@ -2703,6 +3070,7 @@ impl AuthStorage {
                 }
             }
         }
+        let session_scope = context.session_scope.clone();
         let provider = provider.to_owned();
         let session = context.session_id.clone();
         let bearer = bearer.map(str::to_owned);
@@ -2733,7 +3101,9 @@ impl AuthStorage {
                         None
                     }
                 });
-            Ok(target.and_then(|target| rows.get(target.index).cloned().map(|row| (row, target))))
+            Ok(target.and_then(|target| rows.get(target.index).cloned()
+                .filter(|row| session_scope.as_ref().is_none_or(|scope| scope.allows_credential(&provider, &row.credential)))
+                .map(|row| (row, target))))
         })
         .await
     }
@@ -2744,11 +3114,12 @@ impl AuthStorage {
         kind: CredentialKind,
         scopes: &[String],
         excluded: &BTreeSet<i64>,
+        context: &AuthRequestContext,
     ) -> Result<UsageLimitMarkResult, AuthStorageError> {
         let mut retry_at: Option<f64> = None;
         for row in
             self.provider_rows(provider).await?.into_iter().filter(|row| {
-                row.id != id && CredentialKind::of(&row.credential) == kind && !excluded.contains(&row.id)
+                row.id != id && CredentialKind::of(&row.credential) == kind && !excluded.contains(&row.id) && context.allows(provider, row)
             })
         {
             match self.blocked(provider, row.id, kind, scopes).await? {
@@ -2800,6 +3171,8 @@ impl AuthStorage {
         cancel: &CancellationToken,
     ) -> Result<Option<RecordedUsageLimit>, AuthStorageError> {
         check_cancel(cancel)?;
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         let Some((row, target)) = self.feedback_target(provider, context, failed, true, cancel).await? else {
             return Ok(None);
         };
@@ -2844,6 +3217,7 @@ impl AuthStorage {
             target.kind,
             &routing.sibling_block_scopes,
             &context.excluded_credential_ids,
+            context,
         )
         .await
         .map(|availability| Some(RecordedUsageLimit { availability, credential_kind: target.kind }))
@@ -2856,6 +3230,8 @@ impl AuthStorage {
         exact_model: bool,
         cancel: &CancellationToken,
     ) -> Result<UsageLimitMarkResult, AuthStorageError> {
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         let Some((row, target)) = self.feedback_target(provider, context, failed, false, cancel).await? else {
             return Ok(UsageLimitMarkResult::default());
         };
@@ -2889,6 +3265,7 @@ impl AuthStorage {
             target.kind,
             &routing.sibling_block_scopes,
             &context.excluded_credential_ids,
+            context,
         )
         .await
     }
@@ -2899,10 +3276,12 @@ impl AuthStorage {
         failed: &RequestAuthLease,
         cancel: &CancellationToken,
     ) -> Result<Option<AuthAccess>, AuthStorageError> {
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         let Some((row, target)) = self.feedback_target(provider, context, failed, false, cancel).await? else {
             return Ok(None);
         };
-        if target.kind != CredentialKind::OAuth || self.suppressed(provider) {
+        if target.kind != CredentialKind::OAuth || (self.suppressed(provider) && !context.pool_restricted(provider)) {
             return Ok(None);
         }
         // Peer rotation wins. A failed lease is not permission to exchange the
@@ -2920,6 +3299,8 @@ impl AuthStorage {
         disable: bool,
         cancel: &CancellationToken,
     ) -> Result<bool, AuthStorageError> {
+        let effective_context = context.scoped_for(provider);
+        let context = &effective_context;
         let Some((row, target)) = self.feedback_target(provider, context, failed, false, cancel).await? else {
             return Ok(false);
         };
@@ -2928,7 +3309,7 @@ impl AuthStorage {
             return Ok(false);
         }
         let siblings =
-            self.sibling_availability(provider, row.id, target.kind, &[], &context.excluded_credential_ids).await?;
+            self.sibling_availability(provider, row.id, target.kind, &[], &context.excluded_credential_ids, context).await?;
         self.mark_block(provider, row.id, target.kind, self.now() + policy::DEFAULT_BACKOFF_MS, None).await?;
         if let Some(remote) = self.inner.store.remote() {
             let provider_owned = provider.to_owned();
@@ -3066,7 +3447,7 @@ impl AuthStorage {
         }
     }
     pub fn session_resolver(&self, session_id: Option<String>, base_url: Option<String>) -> Arc<SessionAuthResolver> {
-        Arc::new(SessionAuthResolver { storage: self.clone(), session_id, base_url, environment_key: None })
+        Arc::new(SessionAuthResolver { storage: self.clone(), session_id, base_url, environment_key: None, session_scope: None })
     }
     pub fn list_credential_blocks(&self, ids: &[i64]) -> Result<Vec<StoredCredentialBlock>, AuthStorageError> {
         self.store_operation(|store, state| {
@@ -3090,12 +3471,13 @@ impl AuthStorage {
     }
     pub fn upsert_credential_block(&self, block: &StoredCredentialBlock) -> Result<(), AuthStorageError> {
         self.store_operation(|store, state| {
-            state.assignments.upsert_credential_block(store, block).map_err(|_| AuthStorageError::Storage)
+            state.assignments.upsert_credential_block(store, block).map_err(|_| AuthStorageError::Storage)?;
+            state.generation_changed = true;
+            Ok(())
         })?;
         if let Some(provider) = block.provider_key.strip_suffix(":oauth") {
             self.expire_usage_cache(Some(provider))?;
         }
-        self.bump_generation();
         Ok(())
     }
     pub fn delete_credential_block(&self, id: i64, provider_key: &str, scope: &str) -> Result<(), AuthStorageError> {
@@ -3103,19 +3485,21 @@ impl AuthStorage {
             state
                 .assignments
                 .delete_credential_block(store, id, provider_key, scope)
-                .map_err(|_| AuthStorageError::Storage)
+                .map_err(|_| AuthStorageError::Storage)?;
+            state.generation_changed = true;
+            Ok(())
         })?;
         if let Some(provider) = provider_key.strip_suffix(":oauth") {
             self.expire_usage_cache(Some(provider))?;
         }
-        self.bump_generation();
         Ok(())
     }
     pub fn delete_credential_blocks(&self, id: i64) -> Result<(), AuthStorageError> {
         self.store_operation(|store, state| {
-            state.assignments.delete_credential_blocks(store, id).map_err(|_| AuthStorageError::Storage)
+            state.assignments.delete_credential_blocks(store, id).map_err(|_| AuthStorageError::Storage)?;
+            state.generation_changed = true;
+            Ok(())
         })?;
-        self.bump_generation();
         Ok(())
     }
     pub fn reset_provider_assignments(&self, provider: &str) -> Result<(), AuthStorageError> {
@@ -3147,8 +3531,13 @@ pub struct SessionAuthResolver {
     session_id: Option<String>,
     base_url: Option<String>,
     environment_key: Option<EnvironmentKey>,
+    session_scope: Option<Arc<AuthSessionScope>>,
 }
 impl SessionAuthResolver {
+    pub fn with_session_scope(&self, scope: Arc<AuthSessionScope>) -> Arc<Self> {
+        Arc::new(Self { storage: self.storage.clone(), session_id: self.session_id.clone(),
+            base_url: self.base_url.clone(), environment_key: self.environment_key.clone(), session_scope: Some(scope) })
+    }
     /// Ordinary reference-Host defaults participate after login credentials
     /// and before stored static keys, including custom catalog providers.
     pub fn with_environment_lease(&self, lease: &RequestAuthLease) -> Arc<Self> {
@@ -3163,20 +3552,31 @@ impl SessionAuthResolver {
             session_id: self.session_id.clone(),
             base_url: self.base_url.clone(),
             environment_key,
+            session_scope: self.session_scope.clone(),
         })
     }
     fn context(&self, model: &Model) -> AuthRequestContext {
-        AuthRequestContext {
+        let context = AuthRequestContext {
             session_id: self.session_id.clone(),
             model_id: Some(model.id.clone()),
             base_url: self.base_url.clone().or_else(|| Some(model.base_url.clone())),
             environment_key: self.environment_key.clone(),
+            session_scope: self.session_scope.clone(),
             ..Default::default()
-        }
+        };
+        self.session_scope.as_ref().map(|scope| scope.context_for(&model.provider, &context)).unwrap_or(context)
     }
 }
 #[async_trait]
 impl RequestAuthResolver for SessionAuthResolver {
+    #[cfg(feature = "test-fixture")]
+    fn session_scope_receipt(&self) -> Option<serde_json::Value> {
+        self.session_scope.as_ref().map(|scope| serde_json::json!({
+            "primarySessionId": &scope.primary_session_id,
+            "pools": &scope.oauth_account_pools,
+            "assignmentSessionId": &self.session_id,
+        }))
+    }
     async fn resolve(&self, model: &Model, cancel: &CancellationToken) -> Result<RequestAuthLease, AuthResolveError> {
         self.storage
             .resolve(&model.provider, &self.context(model), cancel)
@@ -3270,12 +3670,18 @@ impl RequestAuthResolver for SessionAuthResolver {
             .map_err(AuthResolveError::from)?
             .map(|access| access.lease))
     }
+    fn for_primary_session(&self, session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        Some(Arc::new(Self { storage: self.storage.clone(), session_id: Some(session_id.to_owned()),
+            base_url: self.base_url.clone(), environment_key: self.environment_key.clone(),
+            session_scope: self.session_scope.as_ref().map(|scope| scope.for_primary(session_id)) }))
+    }
     fn for_session(&self, session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
         Some(Arc::new(Self {
             storage: self.storage.clone(),
             session_id: Some(session_id.to_owned()),
             base_url: self.base_url.clone(),
             environment_key: self.environment_key.clone(),
+            session_scope: self.session_scope.clone(),
         }))
     }
 }
@@ -3584,6 +3990,7 @@ mod tests {
     }
     struct FixtureOAuth {
         store: Arc<Mutex<SqliteCredentialStore>>,
+        clock: Arc<AtomicU64>,
         failures: Mutex<BTreeMap<i64, AuthStorageError>>,
         refreshes: Mutex<Vec<i64>>,
         preparing: AtomicUsize,
@@ -3591,15 +3998,62 @@ mod tests {
         replacements: Mutex<BTreeMap<i64, String>>,
     }
     impl FixtureOAuth {
-        fn new(store: Arc<Mutex<SqliteCredentialStore>>) -> Self {
+        fn new(store: Arc<Mutex<SqliteCredentialStore>>, clock: Arc<AtomicU64>) -> Self {
             Self {
                 store,
+                clock,
                 failures: Mutex::new(BTreeMap::new()),
                 refreshes: Mutex::new(Vec::new()),
                 preparing: AtomicUsize::new(0),
                 max_parallel: AtomicUsize::new(0),
                 replacements: Mutex::new(BTreeMap::new()),
             }
+        }
+        async fn resolve_owned(
+            &self,
+            row: StoredAuthCredential,
+            publication: OAuthRefreshPublication,
+            cancel: &CancellationToken,
+        ) -> Result<ResolvedOAuth, AuthStorageError> {
+            check_cancel(cancel)?;
+            self.refreshes.lock().unwrap().push(row.id);
+            if let Some(error) = self.failures.lock().unwrap().get(&row.id).copied() {
+                return Err(error);
+            }
+            let mut credential = row.credential.clone();
+            if let AuthCredential::OAuth { fields } = &mut credential {
+                fields.insert("access".into(), Value::String(format!("refreshed-{}", row.id)));
+                fields.insert("expires".into(), Value::from(chrono::Utc::now().timestamp_millis() + 7_200_000));
+                if let Some(identity) = self.replacements.lock().unwrap().get(&row.id) {
+                    fields.insert("accountId".into(), Value::String(identity.clone()));
+                    fields.insert("email".into(), Value::String(identity.clone()));
+                }
+            }
+            let usable = match &credential {
+                AuthCredential::OAuth { fields } => fields
+                    .get("expires")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|expires| expires > self.clock.load(Ordering::Acquire) as f64),
+                _ => false,
+            };
+            if publication == OAuthRefreshPublication::BrokerExplicit && usable {
+                credential =
+                    standard_oauth_projection(&credential, &row.credential).ok_or(AuthStorageError::Configuration)?;
+            }
+            let store = self.store.lock().unwrap();
+            let won =
+                store.try_update_auth_credential_if_matches(row.id, &row.serialized_data, &credential, None).unwrap();
+            let row = store
+                .list_auth_credentials(Some(&row.provider))
+                .unwrap()
+                .into_iter()
+                .find(|fresh| fresh.id == row.id)
+                .unwrap();
+            let own = won && row.credential == credential;
+            if !access_fresh(&row, self.clock.load(Ordering::Acquire) as f64, if own { 0.0 } else { REFRESH_SKEW_MS }) {
+                return Err(AuthStorageError::Unavailable);
+            }
+            Ok(ResolvedOAuth { lease: self.lease(&row)?, row })
         }
     }
     #[async_trait]
@@ -3629,33 +4083,268 @@ mod tests {
             _: bool,
             cancel: &CancellationToken,
         ) -> Result<ResolvedOAuth, AuthStorageError> {
-            check_cancel(cancel)?;
-            self.refreshes.lock().unwrap().push(row.id);
-            if let Some(error) = self.failures.lock().unwrap().get(&row.id).copied() {
-                return Err(error);
-            }
-            let mut credential = row.credential.clone();
-            if let AuthCredential::OAuth { fields } = &mut credential {
-                fields.insert("access".into(), Value::String(format!("refreshed-{}", row.id)));
-                fields.insert("expires".into(), Value::from(chrono::Utc::now().timestamp_millis() + 7_200_000));
-                if let Some(identity) = self.replacements.lock().unwrap().get(&row.id) {
-                    fields.insert("accountId".into(), Value::String(identity.clone()));
-                    fields.insert("email".into(), Value::String(identity.clone()));
-                }
-            }
-            let store = self.store.lock().unwrap();
-            assert!(
-                store.try_update_auth_credential_if_matches(row.id, &row.serialized_data, &credential, None).unwrap()
-            );
-            let row = store
-                .list_auth_credentials(Some(&row.provider))
-                .unwrap()
-                .into_iter()
-                .find(|fresh| fresh.id == row.id)
-                .unwrap();
-            Ok(ResolvedOAuth { lease: self.lease(&row)?, row })
+            self.resolve_owned(row, OAuthRefreshPublication::Merge, cancel).await
+        }
+        async fn resolve_broker_explicit(
+            &self,
+            row: StoredAuthCredential,
+            cancel: &CancellationToken,
+        ) -> Result<ResolvedOAuth, AuthStorageError> {
+            self.resolve_owned(row, OAuthRefreshPublication::BrokerExplicit, cancel).await
         }
     }
+
+
+    struct ColdObservedUsage {
+        inner: Arc<FixtureUsage>,
+        seen: Mutex<Vec<i64>>,
+        requests: Mutex<Vec<(i64, String, Option<String>, Option<String>)>>,
+    }
+    #[async_trait]
+    impl UsageProvider for ColdObservedUsage {
+        async fn fetch_usage(&self, request: UsageRequest, cancel: &CancellationToken) -> Result<Option<UsageReport>, UsageFetchError> {
+            let id = request.credential_id.expect("stored OAuth usage input");
+            self.seen.lock().unwrap().push(id);
+            self.requests.lock().unwrap().push((id, request.provider.clone(), request.credential.account_id.clone(), request.base_url.clone()));
+            self.inner.fetch_usage(request, cancel).await
+        }
+    }
+    struct ColdObservedRanking {
+        seen: Mutex<Vec<(String, Option<String>)>>,
+    }
+    impl CredentialRankingStrategy for ColdObservedRanking {
+        fn find_window_limits<'a>(&self, report: &'a UsageReport, context: Option<&CredentialRankingContext>) -> policy::UsageWindowLimits<'a> {
+            self.seen.lock().unwrap().push((report.metadata.as_ref().unwrap()["email"].as_str().unwrap().to_owned(),
+                context.and_then(|context| context.model_id.clone())));
+            policy::CodexRankingStrategy.find_window_limits(report, context)
+        }
+        fn scope_limits<'a>(&self, report: &'a UsageReport, context: Option<&CredentialRankingContext>) -> Vec<&'a policy::UsageLimit> {
+            policy::CodexRankingStrategy.scope_limits(report, context)
+        }
+        fn scope_limits_for_reserve<'a>(&self, report: &'a UsageReport, context: Option<&CredentialRankingContext>) -> Vec<&'a policy::UsageLimit> {
+            policy::CodexRankingStrategy.scope_limits_for_reserve(report, context)
+        }
+        fn block_scope(&self, context: Option<&CredentialRankingContext>) -> Option<String> {
+            policy::CodexRankingStrategy.block_scope(context)
+        }
+        fn block_scopes(&self, context: Option<&CredentialRankingContext>) -> Vec<String> {
+            policy::CodexRankingStrategy.block_scopes(context)
+        }
+        fn healable_block_scopes<'a>(&self, report: &'a UsageReport) -> Vec<policy::HealableBlockScope<'a>> {
+            policy::CodexRankingStrategy.healable_block_scopes(report)
+        }
+        fn window_defaults(&self) -> policy::WindowDefaults { policy::CodexRankingStrategy.window_defaults() }
+        fn has_priority_boost(&self, primary: Option<&policy::UsageLimit>, uncapped: bool, context: Option<&CredentialRankingContext>) -> bool {
+            policy::CodexRankingStrategy.has_priority_boost(primary, uncapped, context)
+        }
+    }
+
+    #[tokio::test]
+    async fn cold_pool_eligible_usage_ranking_model_health_pin_and_rotation_discriminator() {
+        let provider = "openai-codex";
+        for case in ["chat-best", "spark-best", "model-block", "depleted-health", "allowed-pin"] {
+            let at = chrono::Utc::now().timestamp_millis() as f64;
+            let (storage, store, _, _) = setup(provider, &[
+                oauth("a1@fixture", at, false), oauth("a2@fixture", at, false), oauth("b@fixture", at, false),
+            ], Arc::new(AtomicU64::new(at as u64)), false);
+            let rows = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+            let usage = Arc::new(ColdObservedUsage { inner: Arc::new(FixtureUsage::new()), seen: Mutex::new(Vec::new()), requests: Mutex::new(Vec::new()) });
+            let ranking = Arc::new(ColdObservedRanking { seen: Mutex::new(Vec::new()) });
+            for (row, email, chat, spark) in [
+                (&rows[0], "a1@fixture", 0.85, 0.20),
+                (&rows[1], "a2@fixture", 0.20, 0.85),
+                (&rows[2], "b@fixture", 0.0, 0.0),
+            ] {
+                let mut value = report(provider, at, chat, "pro", email);
+                let mut spark_limit = value.limits[0].clone();
+                spark_limit.id = "openai-codex:spark:primary".into();
+                spark_limit.amount.used_fraction = Some(spark);
+                value.limits.push(spark_limit);
+                if case == "depleted-health" && row.id == rows[1].id {
+                    let mut depleted = value.limits[0].clone();
+                    depleted.id = "openai-codex:secondary".into();
+                    depleted.amount.used_fraction = Some(1.0);
+                    depleted.window.as_mut().unwrap().duration_ms = Some(7.0 * 86_400_000.0);
+                    depleted.window.as_mut().unwrap().resets_at = Some(at + 7.0 * 86_400_000.0);
+                    value.limits.push(depleted);
+                }
+                usage.inner.reports.lock().unwrap().insert(row.id, value);
+            }
+            storage.register_usage_provider(provider, usage.clone()).unwrap();
+            storage.register_ranking_strategy(provider, ranking.clone()).unwrap();
+            // B has the best usage and initially owns the sticky assignment,
+            // but neither its usage fetch nor its score may enter this Session.
+            assert!(storage.pin_session_oauth_account(provider, "ranking-primary", rows[2].id, None).unwrap());
+            if case == "allowed-pin" {
+                assert!(storage.pin_session_oauth_account(provider, "ranking-primary", rows[0].id, None).unwrap());
+            }
+            let model = if case == "spark-best" { "gpt-5.3-codex-spark" } else { "gpt-5.6-terra" };
+            let scope = cold_scope(provider, "ranking-primary", &["email:a1@fixture", "email:a2@fixture"]);
+            let context = scope.context_for(provider, &AuthRequestContext { model_id: Some(model.into()), ..Default::default() });
+            if case != "spark-best" {
+                assert_eq!(policy::resolve_codex_plan_requirement(provider, Some(model)), PlanRequirement::None);
+            }
+            if case == "model-block" {
+                storage.upsert_credential_block(&StoredCredentialBlock { credential_id: rows[1].id,
+                    provider_key: provider_type_key(provider, CredentialKind::OAuth),
+                    block_scope: policy::model_account_policy_block_scope(provider, Some(model)).unwrap(),
+                    blocked_until_ms: (at + 60_000.0) as i64, updated_at_ms: at as i64 }).unwrap();
+            }
+            let cancel = CancellationToken::new();
+            let key = storage.get_api_key(provider, &context, &cancel).await.unwrap();
+            let expected = if case == "chat-best" { "access-a2@fixture" } else { "access-a1@fixture" };
+            assert_eq!(key.as_deref(), Some(expected), "{case}");
+            if case == "allowed-pin" {
+                // Fixed select.ts skips whole-pool ranking for an explicit warm pin;
+                // tryOAuth still checks the selected row's usage safety before use.
+                assert_eq!(*usage.seen.lock().unwrap(), vec![rows[0].id], "only the selected allowed pin receives the safety usage check");
+                assert_eq!(*usage.requests.lock().unwrap(), vec![(rows[0].id, provider.to_owned(), text_field(&rows[0], "accountId"), None)], "safety usage retains actual provider/account/base URL");
+                assert!(ranking.seen.lock().unwrap().is_empty(), "warm allowed pin skips ranking");
+            } else {
+                assert_eq!(usage.seen.lock().unwrap().iter().copied().collect::<BTreeSet<_>>(),
+                    [rows[0].id, rows[1].id].into_iter().collect(), "{case}: actual per-account fetch inputs");
+                let seen = ranking.seen.lock().unwrap();
+                assert!(!seen.is_empty());
+                assert_eq!(seen.iter().map(|(email, _)| email.clone()).collect::<BTreeSet<_>>(),
+                    ["a1@fixture".to_owned(), "a2@fixture".to_owned()].into_iter().collect(), "{case}: actual ranking inputs");
+                assert!(seen.iter().all(|(_, actual_model)| actual_model.as_deref() == Some(model)), "{case}: actual model context");
+            }
+            if case == "model-block" {
+                assert!(storage.list_credential_blocks(&[rows[1].id]).unwrap().iter()
+                    .any(|block| block.block_scope == "model-policy:gpt-5.6-terra"));
+            }
+            if case == "depleted-health" {
+                assert!(storage.list_credential_blocks(&[rows[1].id]).unwrap().iter().any(|block| block.block_scope == "chat"));
+            }
+            if case == "chat-best" {
+                let failed = storage.resolve(provider, &context, &cancel).await.unwrap().unwrap().lease;
+                assert_eq!(id(&failed), rows[1].id);
+                let rotated = storage.rotate_session_credential(provider, &context, &failed,
+                    AuthFailureCategory::HardAuth, None, &cancel).await.unwrap();
+                assert!(rotated.switched, "eligible A1 remains a real sibling after A2 failure");
+                let mut retry = context.clone();
+                retry.excluded_credential_ids.insert(rows[1].id);
+                assert_eq!(storage.get_api_key(provider, &retry, &cancel).await.unwrap().as_deref(), Some("access-a1@fixture"));
+                assert!(usage.seen.lock().unwrap().iter().all(|id| *id != rows[2].id));
+                assert!(ranking.seen.lock().unwrap().iter().all(|(email, _)| email != "b@fixture"));
+            }
+        }
+    }
+    fn cold_scope(provider: &str, primary: &str, identities: &[&str]) -> Arc<AuthSessionScope> {
+        AuthSessionScope::new(primary.into(), BTreeMap::from([(provider.into(),
+            identities.iter().map(|identity| (*identity).to_owned()).collect())]))
+    }
+
+    #[tokio::test]
+    async fn cold_pool_model_cascade_exact_and_rotation_boundaries() {
+        let provider = "openai-codex";
+        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let (storage, store, config, _) = setup(provider, &[
+            oauth("a@fixture", now, false), oauth("b@fixture", now, false),
+            AuthCredential::ApiKey { key: "!login".into(), source: Some("login".into()) },
+            AuthCredential::ApiKey { key: "static-key".into(), source: None },
+        ], Arc::new(AtomicU64::new(now as u64)), true);
+        let rows = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap();
+        storage.pin_session_oauth_account(provider, "primary", rows[1].id, None).unwrap();
+        storage.set_runtime_api_key(provider, "runtime-key".into()).unwrap();
+        storage.set_config_api_key(provider, "config-key".into()).unwrap();
+        let scope = cold_scope(provider, "primary", &["email:a@fixture"]);
+        let context = scope.context_for(provider, &AuthRequestContext::default());
+        let cancel = CancellationToken::new();
+        let access = storage.resolve(provider, &context, &cancel).await.unwrap().unwrap();
+        assert_eq!(id(&access.lease), rows[0].id);
+        assert_eq!(storage.peek_api_key_with_context(provider, &context).unwrap().as_deref(), Some("access-a@fixture"));
+        assert!(storage.has_auth_with_context(provider, &context).unwrap());
+        assert_eq!(storage.stored_oauth_snapshot_with_context(provider, &context).unwrap().len(), 1);
+        assert!(storage.get_oauth_access_by_credential_id(provider, rows[1].id, &context, &cancel).await.unwrap().is_none());
+        assert!(storage.get_oauth_access_at(provider, 1, &context, &cancel).await.unwrap().is_none());
+        assert_eq!(storage.get_oauth_accesses(provider, &context, &cancel).await.unwrap().len(), 1);
+        assert!(!storage.invalidate_credential_matching(provider, &context, &access.lease, false, &cancel).await.unwrap());
+        assert_eq!(config.calls.load(Ordering::Acquire), 0);
+        let deny = cold_scope(provider, "primary", &[]).context_for(provider, &AuthRequestContext::default());
+        assert!(storage.resolve(provider, &deny, &cancel).await.unwrap().is_none());
+        assert!(!storage.has_auth_with_context(provider, &deny).unwrap());
+        assert!(storage.peek_api_key_with_context(provider, &deny).unwrap().is_none());
+        assert_eq!(storage.get_api_key(provider, &AuthRequestContext::default(), &cancel).await.unwrap().as_deref(), Some("runtime-key"));
+        storage.set_runtime_api_key("unlisted", "unlisted-key".into()).unwrap();
+        assert_eq!(storage.get_api_key("unlisted", &context, &cancel).await.unwrap().as_deref(), Some("unlisted-key"));
+        let side = scope.context_for(provider, &AuthRequestContext { session_id: Some("side".into()), ..Default::default() });
+        assert_eq!(side.session_id.as_deref(), Some("side"));
+        assert_eq!(side.session_scope.as_ref().unwrap().primary_session_id, "primary");
+        let next = scope.for_primary("next");
+        assert_eq!(next.context_for(provider, &AuthRequestContext::default()).session_id.as_deref(), Some("next"));
+        assert_eq!(scope.primary_session_id, "primary");
+        let resolver = storage.session_resolver(None, None).with_session_scope(scope.clone());
+        let environment = RequestAuthLease::new(CredentialIdentity::Environment { variable: "ENV".into() }, Some("env-key".into()));
+        assert!(Arc::ptr_eq(resolver.with_environment_lease(&environment).session_scope.as_ref().unwrap(), &scope));
+        #[cfg(feature = "test-fixture")]
+        {
+            let side = resolver.for_session("side").unwrap().session_scope_receipt().unwrap();
+            assert_eq!(side["primarySessionId"], "primary");
+            assert_eq!(side["assignmentSessionId"], "side");
+            let primary = resolver.for_primary_session("next").unwrap().session_scope_receipt().unwrap();
+            assert_eq!(primary["primarySessionId"], "next");
+            assert_eq!(primary["assignmentSessionId"], "next");
+            assert_eq!(resolver.session_scope_receipt().unwrap()["primarySessionId"], "primary");
+        }
+    }
+
+    #[tokio::test]
+    async fn cold_pool_refresh_rechecks_actual_identity() {
+        let provider = "openai-codex";
+        for replacement in ["a@fixture", "b@fixture"] {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let (storage, store, _, hook) = setup(provider, &[oauth("a@fixture", now, true)],
+                Arc::new(AtomicU64::new(now as u64)), true);
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            hook.replacements.lock().unwrap().insert(row.id, replacement.into());
+            let context = cold_scope(provider, "primary", &["email:a@fixture"])
+                .context_for(provider, &AuthRequestContext::default());
+            let result = storage.resolve(provider, &context, &CancellationToken::new()).await.unwrap();
+            assert_eq!(result.is_some(), replacement == "a@fixture");
+            assert_eq!(*hook.refreshes.lock().unwrap(), vec![row.id]);
+            // Global publication stays intact; only model admission is scoped.
+            assert_eq!(text_field(&storage.stored_oauth_snapshot(provider).unwrap()[0], "email").as_deref(), Some(replacement));
+        }
+    }
+
+    #[tokio::test]
+    async fn cold_pool_reset_guard_after_refresh_and_credit_list_has_no_unknown_effect() {
+        use crate::codex_reset_receipts::{ResetReceiptStore, SqliteResetReceiptStore};
+        use crate::codex_usage::tests::{HttpReply, fixture, fixture_provider};
+        let provider = "openai-codex";
+        for replacement in ["a@fixture", "b@fixture"] {
+            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let mut http = fixture(vec![
+                HttpReply::json(200, serde_json::json!({"credits":[{"id":"credit"}]})),
+                HttpReply::json(200, serde_json::json!({"code":"reset"})),
+            ]).await;
+            let (storage, store, _, hook) = setup_with_reset_client(provider, &[oauth("a@fixture", now, true)],
+                Arc::new(AtomicU64::new(now as u64)), false,
+                Some(fixture_provider(&http.base, Arc::new(Mutex::new(Vec::new())))));
+            let row = store.lock().unwrap().list_auth_credentials(Some(provider)).unwrap().remove(0);
+            hook.replacements.lock().unwrap().insert(row.id, replacement.into());
+            let scope = cold_scope(provider, "primary", &["email:a@fixture"]);
+            let journal = Arc::new(SqliteResetReceiptStore::memory().unwrap());
+            let outcome = storage.redeem_reset_credit_observed(&RedeemResetCreditOptions {
+                target: ResetCreditTarget { credential_id: Some(row.id), ..Default::default() },
+                admit_resolved_credential: Some(Arc::new(move |row| scope.allows_credential(provider, &row.credential))),
+                ..Default::default()
+            }, journal.clone(), &CancellationToken::new()).await.unwrap();
+            assert_eq!(http.requests.recv().await.unwrap().method, "GET");
+            if replacement == "b@fixture" {
+                assert_eq!(outcome.outcome.code, "account_unavailable");
+                assert!(outcome.operation.is_none());
+                assert!(journal.receipts().unwrap().is_empty());
+                assert!(http.requests.try_recv().is_err());
+            } else {
+                assert!(outcome.operation.unwrap().is_confirmed_reset());
+                assert_eq!(http.requests.recv().await.unwrap().method, "POST");
+                assert_eq!(journal.receipts().unwrap().len(), 1);
+            }
+        }
+    }
+
     type UsageOutcome = (Option<Arc<Semaphore>>, Result<Option<UsageReport>, UsageFetchError>);
     struct FixtureUsage {
         queue: Mutex<VecDeque<UsageOutcome>>,
@@ -3769,6 +4458,47 @@ mod tests {
     ) -> (AuthStorage, Arc<Mutex<SqliteCredentialStore>>, Arc<FixtureConfig>, Arc<FixtureOAuth>) {
         setup_with_reset_client(provider, credentials, now, lower_keys, None)
     }
+    #[test]
+    fn concrete_auth_presence_excludes_ambient_but_preserves_authored_and_dedicated_sources() {
+        struct PresenceEnvironment {
+            key: Option<String>,
+            variable: Option<(&'static str, String)>,
+        }
+        impl Environment for PresenceEnvironment {
+            fn api_key(&self, _: &str) -> Option<EnvironmentKey> {
+                self.key.as_ref().map(|value| EnvironmentKey { variable: "fixture".into(), value: value.clone() })
+            }
+            fn variable(&self, name: &str) -> Option<String> {
+                self.variable.as_ref().filter(|(key, _)| *key == name).map(|(_, value)| value.clone())
+            }
+        }
+        for (provider, key, variable, expected) in [
+            ("amazon-bedrock", Some("<authenticated>"), None, false),
+            ("amazon-bedrock", Some("<authenticated>"), Some(("AWS_BEARER_TOKEN_BEDROCK", " token ")), true),
+            ("bedrock-mantle", None, Some(("AWS_BEARER_TOKEN_BEDROCK", "  ")), false),
+            ("openai", Some("fixture-key"), None, true),
+            ("xai-oauth", Some("paid-xai-key"), None, false),
+            ("xai-oauth", None, Some(("XAI_OAUTH_TOKEN", " fixture-token ")), true),
+        ] {
+            let (original, store, _, _) = setup(provider, &[], Arc::new(AtomicU64::new(1)), false);
+            drop(original);
+            let storage = AuthStorage::new(
+                store,
+                None,
+                AuthStorageOptions {
+                    environment: Arc::new(PresenceEnvironment {
+                        key: key.map(str::to_owned),
+                        variable: variable.map(|(key, value)| (key, value.to_owned())),
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(storage.has_concrete_auth(provider).unwrap(), expected, "{provider}");
+            storage.set_runtime_api_key(provider, "<authenticated>".into()).unwrap();
+            assert!(storage.has_concrete_auth(provider).unwrap(), "authored overrides count by presence");
+        }
+    }
     fn setup_with_reset_client(
         provider: &str,
         credentials: &[AuthCredential],
@@ -3797,7 +4527,7 @@ mod tests {
             ..Default::default()
         };
         let storage = AuthStorage::new(store.clone(), None, options).unwrap();
-        let oauth = Arc::new(FixtureOAuth::new(store.clone()));
+        let oauth = Arc::new(FixtureOAuth::new(store.clone(), now.clone()));
         storage.register_oauth_provider(provider, oauth.clone()).unwrap();
         (storage, store, config, oauth)
     }

@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 ara-ctok.workspace = true
+ara-prompt.workspace = true
 ara-rpc.workspace = true
 bytes.workspace = true
 chrono.workspace = true
@@ -15,6 +16,7 @@ futures.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 regex.workspace = true
+regress.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 httpdate = "1"

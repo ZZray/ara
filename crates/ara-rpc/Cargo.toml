@@ -9,8 +9,9 @@ publish.workspace = true
 [dependencies]
 base64 = "0.22"
 ryu-js = "=1.0.3"
+regress.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 ring.workspace = true

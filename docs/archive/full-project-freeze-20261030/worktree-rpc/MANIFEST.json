@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "state": "RECOVERY_PATCH_AND_UNTRACKED_BYTES_PRESERVED_NOT_APPLIED",
+  "created_utc": "2026-10-29T16:16:29.3054958Z",
+  "source_worktree": "C:/Users/loveu/.codex/worktrees/rpc-owned-skill-verification/ara-github",
+  "base_sha": "6597a062fb95002d717d8b4b7c9014816a1d7ff7",
+  "main_head_at_capture": "8e9b1238e4d778fbdfcde141c27a51cee936f591",
+  "status": [
+    " M crates/ara-agent/src/agent.rs",
+    " M crates/ara-agent/src/agent_loop.rs",
+    " M crates/ara-agent/src/event.rs",
+    " M crates/ara-agent/src/lib.rs",
+    " M crates/ara-agent/tests/agent_loop.rs",
+    " M crates/ara-cli/src/main.rs",
+    " M crates/ara-cli/src/rpc_host.rs",
+    " M crates/ara-cli/tests/e2e.rs",
+    " M crates/ara-cli/tests/rpc_host.rs",
+    " M crates/ara-context/prompts/README.md",
+    " M crates/ara-context/prompts/system-prompt.md",
+    " M crates/ara-context/tests/upstream.rs",
+    " M crates/ara-session/src/lib.rs",
+    " M crates/ara-session/tests/skill_prompt.rs",
+    " M docs/knowledge/INDEX.md",
+    " M docs/upstream/feature-ledger.md",
+    "?? crates/ara-session/tests/session_name.rs",
+    "?? docs/evidence/ara-ps01-problem-solving.md",
+    "?? docs/knowledge/problem-solving.md"
+  ],
+  "staged_paths": [],
+  "tracked_dirty_paths": [
+    "crates/ara-agent/src/agent.rs",
+    "crates/ara-agent/src/agent_loop.rs",
+    "crates/ara-agent/src/event.rs",
+    "crates/ara-agent/src/lib.rs",
+    "crates/ara-agent/tests/agent_loop.rs",
+    "crates/ara-cli/src/main.rs",
+    "crates/ara-cli/src/rpc_host.rs",
+    "crates/ara-cli/tests/e2e.rs",
+    "crates/ara-cli/tests/rpc_host.rs",
+    "crates/ara-context/prompts/README.md",
+    "crates/ara-context/prompts/system-prompt.md",
+    "crates/ara-context/tests/upstream.rs",
+    "crates/ara-session/src/lib.rs",
+    "crates/ara-session/tests/skill_prompt.rs",
+    "docs/knowledge/INDEX.md",
+    "docs/upstream/feature-ledger.md"
+  ],
+  "patch": {
+    "replay": "Create an isolated checkout at base_sha, git apply --binary worktree.diff.patch, then copy each archived untracked file to its original relative path. Do not replay into a dirty checkout.",
+    "sha256": "584bd7fdb862bc63fb7c094f12317e779fe074fe986cc67156c8af2bfd658ae6",
+    "path": "E:\\repos\\ara-github\\docs\\archive\\full-project-freeze-20261030\\worktree-rpc\\worktree.diff.patch",
+    "scope": "Combined tracked staged+unstaged changes relative to the exact base SHA; preserves binary changes",
+    "bytes": 234887
+  },
+  "untracked": [
+    {
+      "path": "crates/ara-session/tests/session_name.rs",
+      "archive_path": "E:\\repos\\ara-github\\docs\\archive\\full-project-freeze-20261030\\worktree-rpc\\untracked\\crates\\ara-session\\tests\\session_name.rs",
+      "source_sha256": "c6dd75927f6df9f1ce122b8f0a377a14e2f49d546d451ea7263dc15245ee1bc6",
+      "archive_sha256": "c6dd75927f6df9f1ce122b8f0a377a14e2f49d546d451ea7263dc15245ee1bc6",
+      "bytes": 14104
+    },
+    {
+      "path": "docs/evidence/ara-ps01-problem-solving.md",
+      "archive_path": "E:\\repos\\ara-github\\docs\\archive\\full-project-freeze-20261030\\worktree-rpc\\untracked\\docs\\evidence\\ara-ps01-problem-solving.md",
+      "source_sha256": "83994951e85fe9bc53280109a9c7c78d5a66d00c44083c506a6743c8f5ca25c3",
+      "archive_sha256": "83994951e85fe9bc53280109a9c7c78d5a66d00c44083c506a6743c8f5ca25c3",
+      "bytes": 17026
+    },
+    {
+      "path": "docs/knowledge/problem-solving.md",
+      "archive_path": "E:\\repos\\ara-github\\docs\\archive\\full-project-freeze-20261030\\worktree-rpc\\untracked\\docs\\knowledge\\problem-solving.md",
+      "source_sha256": "a412e4473997e158bfd2f0acf4fadaa37d11cdc63afca3718388c855ae1a7ccf",
+      "archive_sha256": "a412e4473997e158bfd2f0acf4fadaa37d11cdc63afca3718388c855ae1a7ccf",
+      "bytes": 5182
+    }
+  ],
+  "main_comparison": [
+    {
+      "path": "crates/ara-agent/src/agent.rs",
+      "worktree_sha256": "252fe67bd031bb5d6ea25c3614dade444d6e7636117ded21b2cce0b56ce6adad",
+      "main_sha256": "4f4daa4f18566bdcda034e5c0eef5ab44241ff7f8410a14e6addf253856f9133",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-agent/src/agent_loop.rs",
+      "worktree_sha256": "995cf599cba4f1ee36a78c3025800eac39d2b728f2bb3f13e030a5dda54bd144",
+      "main_sha256": "fc97e900391c3016025fc3ce53c3d1a525133aba23de3ebda0e0035e1986d554",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-agent/src/event.rs",
+      "worktree_sha256": "818eeb27eb2af5fe1310a44e0826ffefeff78a92b945dd26720c8295f889da45",
+      "main_sha256": "10ed2c3a8eceff41099e5d212b4742b7e34d455af12dee093aa2fd2792490038",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-agent/src/lib.rs",
+      "worktree_sha256": "c9f5d401691884b7fc6ba070658f1a9660f98e77ffd641c42e856d90947a491d",
+      "main_sha256": "7c2ed940cece78fedc119a42b7e249bb40956c870ba1dff17b989c5e19dcef9a",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-agent/tests/agent_loop.rs",
+      "worktree_sha256": "ba26d03ac1f8d469f90034c1e1278cf9e4490aff1f7ebf12d01afc5795764854",
+      "main_sha256": "b17da245d66213924df37125ca062f66548728ad1ed5c090c89c944f538bcf3d",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-cli/src/main.rs",
+      "worktree_sha256": "17f2002251e094f2db4fca936e5a44e6ccfbc979ffc9ac8933013e122dde9340",
+      "main_sha256": "a25acf6943a1224ad4668f34c39ad40b66af5bc5b1a4901a4d9fedead28f61ab",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-cli/src/rpc_host.rs",
+      "worktree_sha256": "e02fa006efc887b2850896412d68920983f27a7c6c8cadacd194f136ca614be3",
+      "main_sha256": "4416f45392e45de69f0ad7eadafcb86491574ec1afadcf64492e6046ab6693a8",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-cli/tests/e2e.rs",
+      "worktree_sha256": "283534c27dbde70b0bf23e6d6e956a66dbe5cdc36d53e4aafb2a92625df83c0c",
+      "main_sha256": "e80f7f9823a0fb0701b67d964d6d9f3e02d6df9b0ab506a1da96e6d3a6b0dfc0",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-cli/tests/rpc_host.rs",
+      "worktree_sha256": "34bd6086986bf302500bb23c0bf8f7dc69378d02540f9249d54383888553da5b",
+      "main_sha256": "ebbaef57d1ac145db0abdb38cf7680457beaa9706d8f5afe1747a1420f6b8e30",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-context/prompts/README.md",
+      "worktree_sha256": "b2a27a64de477b8bf74304c2ad0df0698aff8560d0ba7933346c0a15c9d15b3e",
+      "main_sha256": "641b8f7a7e525d560fdfd294d158ad2baebc56bb0b971dd8858777b4f8a3afae",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-context/prompts/system-prompt.md",
+      "worktree_sha256": "fa7378a8b88d0e40bdea7c62e7cff840a8c9ff590868198ce904c664450f42fe",
+      "main_sha256": "0a727dc4d59b3bde7025c77dae803326e591ab7106fdce7514d775b056ec9570",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-context/tests/upstream.rs",
+      "worktree_sha256": "839b8dfd164d172601e236dff54e2fafa3bb1fc726c3b4354d9c9ef4d001d209",
+      "main_sha256": "2c2cbc0e3d8ba9b0566784052ae5c099f7e477d38890f9b84de1ac1aa7b9c2aa",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-session/src/lib.rs",
+      "worktree_sha256": "53ca0f183df957696b402b9e6ccf45dfe8c8a0dd8f08bc9ed84808caf82a7a11",
+      "main_sha256": "a32e88a5ca0f6eda1b225dd9bbf6a40f52c2b46e7de6a6bb4217a03ba3b64b1f",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-session/tests/skill_prompt.rs",
+      "worktree_sha256": "2238a7d4f00b4a43c4576eeb1384d420fe2020f53f5c9045f111dd978ecd914d",
+      "main_sha256": "25b9921bb3b831fb32aa62a489206ffe9248ca926aef37835575a4089ff5ee41",
+      "byte_identical": false
+    },
+    {
+      "path": "docs/knowledge/INDEX.md",
+      "worktree_sha256": "906d9bac83d10043c0ce01548da3ae27eaf89cf88b9d2e856a50eafb72df0896",
+      "main_sha256": "4e07089a2db4a660fa60f4755db8a43b07a9eafa46a3443ba80cb329d7b59cc0",
+      "byte_identical": false
+    },
+    {
+      "path": "docs/upstream/feature-ledger.md",
+      "worktree_sha256": "a56a1e019a0dd2b0bf59834336b8ca02e37df20a75760e6108e0f5f83fa7bce7",
+      "main_sha256": "a1eb0a6f7a41cec06076cad7ac0ecb406b001fd1b66ce5ba3fadcdafb0802ef6",
+      "byte_identical": false
+    },
+    {
+      "path": "crates/ara-session/tests/session_name.rs",
+      "worktree_sha256": "c6dd75927f6df9f1ce122b8f0a377a14e2f49d546d451ea7263dc15245ee1bc6",
+      "main_sha256": "69e6b889da6f6f8bacf0231862d16190095dffaebde4dc025b1575a0aa4341ce",
+      "byte_identical": false
+    },
+    {
+      "path": "docs/evidence/ara-ps01-problem-solving.md",
+      "worktree_sha256": "83994951e85fe9bc53280109a9c7c78d5a66d00c44083c506a6743c8f5ca25c3",
+      "main_sha256": "83994951e85fe9bc53280109a9c7c78d5a66d00c44083c506a6743c8f5ca25c3",
+      "byte_identical": true
+    },
+    {
+      "path": "docs/knowledge/problem-solving.md",
+      "worktree_sha256": "a412e4473997e158bfd2f0acf4fadaa37d11cdc63afca3718388c855ae1a7ccf",
+      "main_sha256": "a412e4473997e158bfd2f0acf4fadaa37d11cdc63afca3718388c855ae1a7ccf",
+      "byte_identical": true
+    }
+  ],
+  "limits": [
+    "Byte differences from the advanced main worktree do not prove semantic changes are absent from main. This archive preserves the original bytes rather than claiming equivalence.",
+    "No patch application, checkout/reset/stash, commit, ref update, process action or deletion was performed.",
+    "The ignored target directory is build output and is not included in this source recovery patch."
+  ]
+}

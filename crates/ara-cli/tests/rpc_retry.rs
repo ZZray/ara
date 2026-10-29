@@ -395,6 +395,62 @@ fn config(env: &Env, enabled: bool, attempts: f64, base_ms: f64, max_ms: f64) {
     )).unwrap();
 }
 
+fn fallback_config(
+    env: &Env,
+    primary: &FakeUpstream,
+    target: &FakeUpstream,
+    attempts: usize,
+    candidates: bool,
+    with_thinking: bool,
+) {
+    config(env, true, attempts as f64, 0.0, 300_000.0);
+    let mut chain = vec!["openai-compatible/fake-model", "absent/missing", "unauthed/no-key", "target/too-small"];
+    if candidates {
+        chain.extend(if with_thinking {
+            ["target/catalog:high", "target/final:high"]
+        } else {
+            ["target/catalog", "target/final"]
+        });
+    }
+    let agent = env.home.path().join("agent");
+    std::fs::write(
+        agent.join("config.yml"),
+        serde_json::to_vec_pretty(&json!({
+            "retry":{"enabled":true,"maxRetries":attempts,"baseDelayMs":0,"maxDelayMs":300000,
+                "modelFallback":true,"fallbackChains":{"default":chain}},
+            "modelRoles":{"default":"openai-compatible/fake-model"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut models = json!({"providers":{
+        "openai-compatible":{"api":"openai-completions","auth":"none","baseUrl":primary.base_url(),
+            "models":[{"id":"fake-model","contextWindow":131072,"maxTokens":8192}]},
+            "unauthed":{"api":"openai-completions","apiKey":"!printf ''","baseUrl":target.base_url(),
+            "models":[{"id":"no-key","contextWindow":131072,"maxTokens":8192}]},
+        "target":{"api":"openai-completions","auth":"none","baseUrl":target.base_url(),"models":[
+            {"id":"too-small","contextWindow":2,"maxTokens":1},
+            {"id":"catalog","contextWindow":131072,"maxTokens":8192,"reasoning":true,
+                    "thinking":{"mode":"effort","efforts":["low","high"],"defaultLevel":"high"}},
+            {"id":"final","contextWindow":131072,"maxTokens":8192,"reasoning":true,
+                    "thinking":{"mode":"effort","efforts":["low","high"],"defaultLevel":"high"}}
+        ]}
+    }});
+    if !with_thinking {
+        for model in models["providers"]["target"]["models"].as_array_mut().unwrap().iter_mut().skip(1) {
+            model["reasoning"] = json!(false);
+            model.as_object_mut().unwrap().remove("thinking");
+        }
+    }
+    ara_cli::models_config::ModelsConfig::validate(models.clone()).expect("valid authored fallback configuration");
+    std::fs::write(agent.join("models.yml"), serde_json::to_vec_pretty(&models).unwrap()).unwrap();
+}
+
+fn hard_model_error() -> Value {
+    json!({"status":400,"body":json!({"error":{"code":"model_not_found",
+        "message":"fixture model not found","type":"invalid_request_error"}}).to_string()})
+}
+
 fn toggle(child: &mut RpcChild, id: &str, enabled: bool) {
     child.send(json!({"id":id,"type":"set_auto_retry","enabled":enabled}));
     child.success(id);
@@ -982,4 +1038,361 @@ async fn rpc_zero_retry_budget_settles_once_without_start_or_rewriting_the_nativ
         "only the existing provider wrapper gets its one replay; Session budget zero sends no third request"
     );
     assert_eq!(journal(&file), entries);
+}
+
+/// One production family, not a separate fixture for every selector detail.
+/// Independent endpoints expose inherited launch auth/URL, ordinary cumulative
+/// hops, final exhausted-budget consult and the actual catalog/thinking wire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_fallback_uses_owned_candidates_budget_and_native_same_session_receipts() {
+    for (budget, two_hops, candidates, with_thinking) in [
+        (3, true, true, true),
+        (1, true, true, true),
+        (0, false, true, true),
+        (2, false, false, true),
+        (3, true, true, false),
+    ] {
+        let env = Env::new();
+        let primary = upstream(vec![hard_model_error(), answer("must not call primary again")]).await;
+        let target = upstream(if two_hops {
+            vec![hard_model_error(), answer("fallback task completed")]
+        } else {
+            vec![answer("fallback task completed")]
+        })
+        .await;
+        fallback_config(&env, &primary, &target, budget, candidates, with_thinking);
+        let mut child = RpcChild::spawn(&env, &primary, &["--provider", "openai-compatible"]);
+        child.ready();
+        let before = child.state("fallback-initial");
+        let session_id = before["sessionId"].clone();
+        // Fixed SDK saves a fresh undefined selection; the Session getter's
+        // default off must not become a runtime selector before the first turn.
+        assert_eq!(before["servingModel"], json!({"selector":"openai-compatible/fake-model","isFallback":false}));
+        child.prompt("fallback-task", "complete this turn through the configured healthy candidate");
+        if candidates {
+            let end = child.until(|frame| frame["type"] == "auto_retry_end");
+            assert_eq!(end["success"], true, "budget={budget}: {end}");
+            let starts: Vec<_> = child
+                .seen
+                .iter()
+                .filter(|frame| frame["type"] == "auto_retry_start")
+                .map(|frame| frame["attempt"].as_u64().unwrap())
+                .collect();
+            assert_eq!(
+                starts,
+                if two_hops && budget > 1 {
+                    vec![1, 2]
+                } else if two_hops {
+                    vec![1, 1]
+                } else {
+                    vec![1]
+                }
+            );
+            let state = child.state("fallback-completed");
+            assert_eq!(state["sessionId"], session_id);
+            let selector = match (two_hops, with_thinking) {
+                (true, true) => "target/final:high",
+                (false, true) => "target/catalog:high",
+                (true, false) => "target/final",
+                (false, false) => "target/catalog",
+            };
+            assert_eq!(state["servingModel"], json!({"selector":selector,"isFallback":true}));
+            let succeeded = child.seen.iter().find(|frame| frame["type"] == "retry_fallback_succeeded").unwrap();
+            assert_eq!(succeeded["model"], selector);
+            assert_eq!(succeeded["role"], "default");
+            assert!(succeeded.get("from").is_none() && succeeded.get("to").is_none());
+            assert_eq!(primary.served(), 1, "hard failure must not resample the primary");
+            let requests = target.requests.lock().await;
+            assert_eq!(
+                requests.len(),
+                if two_hops { 2 } else { 1 },
+                "missing key and insufficient window must not dispatch"
+            );
+            for (index, request) in requests.iter().enumerate() {
+                // Fixed custom-models.ts does not copy authored requestModelId
+                // or effortRouting into a standalone custom model. Catalog
+                // variants with a distinct wire ID require separate coverage.
+                let wire_model = if index == 0 { "catalog" } else { "final" };
+                assert_eq!(request["body"]["model"], wire_model);
+                if with_thinking {
+                    assert_eq!(request["body"]["reasoning_effort"], "high");
+                } else {
+                    assert!(request["body"].get("reasoning_effort").is_none());
+                }
+                assert!(
+                    request["headers"].get("authorization").is_none(),
+                    "candidate must not inherit launch API key: {request}"
+                );
+            }
+            drop(requests);
+            let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+            let entries = journal(&file);
+            let models: Vec<_> =
+                entries.iter().filter(|entry| entry["type"] == "model_change" && entry["role"] == "fallback").collect();
+            assert_eq!(models.len(), if two_hops { 2 } else { 1 });
+            assert!(models.iter().all(|entry| entry["resolvedModelIsFallback"] == true));
+            let thinking: Vec<_> = entries.iter().filter(|entry| entry["type"] == "thinking_level_change").collect();
+            assert_eq!(
+                thinking.len(),
+                if with_thinking { 2 } else { 1 },
+                "only the initial undefined and changed fallback selection are recorded; unchanged high/undefined must not duplicate"
+            );
+            // The journal is materialized at the first User, so inspect the
+            // initial receipt here rather than reading a draft path at ready.
+            assert_eq!(thinking[0]["thinkingLevel"], Value::Null, "fallback preserves the initial undefined receipt");
+            assert_eq!(thinking[0]["configured"], Value::Null);
+            let selected = thinking.last().unwrap();
+            assert_eq!(selected["thinkingLevel"], if with_thinking { json!("high") } else { Value::Null });
+            assert_eq!(selected["configured"], selected["thinkingLevel"]);
+            child.finish();
+            let loaded = ara_session::SessionJournal::open(&file).unwrap();
+            assert_eq!(loaded.current_model().unwrap().as_deref(), Some("openai-compatible/fake-model"));
+            let mut reopened = RpcChild::spawn(
+                &env,
+                &primary,
+                &["--provider", "openai-compatible", "--resume", file.to_str().unwrap()],
+            );
+            reopened.ready();
+            let state = reopened.state("fallback-reopened");
+            assert_eq!(state["sessionId"], session_id);
+            assert_eq!(state["model"]["id"], "fake-model");
+            assert_eq!(state["servingModel"]["isFallback"], false);
+            reopened.finish();
+            assert_eq!(journal(&file), entries, "resume must not rewrite fallback receipts");
+            assert_eq!(primary.served(), 1, "resume alone never dispatches a model call");
+        } else {
+            child.until(|frame| frame["type"] == "agent_end");
+            let state = child.state("fallback-none");
+            assert_eq!(state["model"]["id"], "fake-model");
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+            assert_eq!(primary.served(), 1);
+            assert_eq!(target.served(), 0);
+            child.finish();
+        }
+    }
+}
+
+/// Fixed turn-recovery.ts:1780-1838,2006-2074 and model-controls.ts:501-569:
+/// route changes carry Auto, recompute its provisional effort and honor a pin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_fallback_and_primary_restore_preserve_selector_pin_and_per_route_resolution() {
+    for (initial_auto, explicit_high, user_selection) in
+        [(true, false, None), (true, true, None), (true, false, Some("low")), (false, true, Some("auto"))]
+    {
+        let env = Env::new();
+        let first_effort = if explicit_high { "high" } else { "low" };
+        let error = json!({"status":400,"body":json!({"error":{"code":"model_not_found",
+            "message":"fixture model not found; retry-after-ms:2000","type":"invalid_request_error"}}).to_string()});
+        let primary = upstream(vec![error, answer("restored primary completed")]).await;
+        let target = upstream(vec![answer("fallback completed")]).await;
+        let classifier = upstream(vec![answer(first_effort), answer("invalid-fixture-bucket")]).await;
+        fallback_config(&env, &primary, &target, 1, true, true);
+        let agent = env.home.path().join("agent");
+        let settings_path = agent.join("config.yml");
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(&settings_path).unwrap()).unwrap();
+        settings["retry"]["fallbackRevertPolicy"] = json!("cooldown-expiry");
+        settings["retry"]["fallbackChains"]["default"] = json!([
+            "openai-compatible/fake-model",
+            if explicit_high { "target/catalog:high" } else { "target/catalog" }
+        ]);
+        settings["modelRoles"]["tiny"] = json!(["classifier/bucket"]);
+        settings["features"]["unexpectedStopDetection"] = json!("none");
+        std::fs::write(&settings_path, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+        let models_path = agent.join("models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&models_path).unwrap()).unwrap();
+        models["providers"]["openai-compatible"]["models"][0]["reasoning"] = json!(true);
+        models["providers"]["openai-compatible"]["models"][0]["thinking"] =
+            json!({"mode":"effort","efforts":["low","high"],"defaultLevel":"high"});
+        models["providers"]["classifier"] = json!({"api":"openai-completions","auth":"none",
+            "baseUrl":classifier.base_url(),"compat":{"maxTokensField":"max_tokens"},
+            "models":[{"id":"bucket","contextWindow":131072,"maxTokens":8192,"reasoning":false}]});
+        ara_cli::models_config::ModelsConfig::validate(models.clone()).unwrap();
+        std::fs::write(&models_path, serde_json::to_vec_pretty(&models).unwrap()).unwrap();
+        let mut child = RpcChild::spawn(&env, &primary, &["--provider", "openai-compatible"]);
+        child.ready();
+        child.send(json!({"id":"select-initial","type":"set_thinking_level",
+            "level":if initial_auto { "auto" } else { "high" }}));
+        child.success("select-initial");
+        let initial = child.state("auto-fallback-original");
+        child.prompt("auto-fallback-first", "complete this original task through the configured fallback");
+        assert_eq!(child.until(|frame| frame["type"] == "auto_retry_end")["success"], true);
+        let fallback = child.state("auto-fallback-completed");
+        assert_eq!(fallback["sessionId"], initial["sessionId"]);
+        assert_eq!(fallback["model"]["id"], "catalog");
+        assert_eq!(fallback["thinkingLevel"], "high");
+        let fallback_auto = initial_auto && !explicit_high;
+        assert_eq!(fallback["configuredThinkingLevel"], if fallback_auto { "auto" } else { "high" });
+        assert_eq!(classifier.served(), usize::from(initial_auto), "retry must not classify the failed User again");
+        assert_eq!(
+            target.requests.lock().await[0]["body"]["reasoning_effort"],
+            "high",
+            "fallback must replace the primary classifier's old request wrapper"
+        );
+        if initial_auto && explicit_high {
+            assert!(
+                child.seen.iter().any(|frame| frame["type"] == "thinking_level_changed"
+                    && frame["thinkingLevel"] == "high"
+                    && frame.get("configured").is_none()),
+                "same-effort Auto-to-Concrete must publish its mode change"
+            );
+        }
+        if let Some(selection) = user_selection {
+            child.send(json!({"id":"select-during-fallback","type":"set_thinking_level","level":selection}));
+            child.success("select-during-fallback");
+        }
+        // Exercise the actual registry cooldown expiry, not a fabricated clock.
+        tokio::time::sleep(Duration::from_millis(2005)).await;
+        child.run("auto-fallback-second", "complete this next task after primary recovery");
+        let restored = child.state("auto-fallback-restored");
+        assert_eq!(restored["sessionId"], initial["sessionId"]);
+        assert_eq!(restored["sessionFile"], fallback["sessionFile"]);
+        assert_eq!(restored["model"]["id"], "fake-model");
+        let restored_auto = user_selection != Some("low");
+        let expected_effort = if restored_auto { "high" } else { "low" };
+        assert_eq!(restored["configuredThinkingLevel"], if restored_auto { "auto" } else { "low" });
+        assert_eq!(restored["thinkingLevel"], expected_effort);
+        assert_eq!(restored["servingModel"]["isFallback"], false);
+        assert_eq!(target.served(), 1);
+        assert_eq!(primary.served(), 2);
+        assert_eq!(classifier.served(), usize::from(initial_auto) + usize::from(restored_auto));
+        let requests = primary.requests.lock().await;
+        assert_eq!(requests[0]["body"]["reasoning_effort"], if initial_auto { first_effort } else { "high" });
+        assert_eq!(
+            requests[1]["body"]["reasoning_effort"], expected_effort,
+            "a failed new classification must not retain the previous route's resolution"
+        );
+        assert!(requests[1]["body"]["messages"].to_string().contains("fallback completed"));
+        drop(requests);
+        let file = PathBuf::from(restored["sessionFile"].as_str().unwrap());
+        child.finish();
+        let entries = journal(&file);
+        let model_changes: Vec<_> =
+            entries.iter().filter(|entry| entry["type"] == "model_change" && entry["role"] == "fallback").collect();
+        assert_eq!(model_changes.len(), 2);
+        assert_eq!(model_changes[0]["resolvedModelIsFallback"], true);
+        assert_eq!(model_changes[1]["resolvedModelIsFallback"], false);
+        let last_thinking = entries.iter().rev().find(|entry| entry["type"] == "thinking_level_change").unwrap();
+        assert_eq!(last_thinking["thinkingLevel"], expected_effort);
+        assert_eq!(last_thinking["configured"], if restored_auto { "auto" } else { "low" });
+        let input_count = entries.iter().filter(|entry| entry["message"]["role"] == "user").count();
+        assert_eq!(input_count, 2, "fallback and restoration must retain one User per original prompt");
+    }
+}
+
+/// One actual Host family for the remaining Session grammar and its header
+/// formatter: body-only stream hints, header precedence/suppression, cap and
+/// cancellation. Provider replay is accounted for separately in each case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_session_retry_hint_order_controls_real_wait_cap_and_abort() {
+    for (message, header, action, expected_wait) in [
+        ("service unavailable; retry-after:.5; reset in 2 hours", None, "wait", Some(500.0)),
+        ("service unavailable; x-ratelimit-reset-ms:500", None, "wait", Some(500.0)),
+        ("service unavailable; retry-after:2099-01-01; Please retry in 1ms", None, "cap", None),
+        ("service unavailable; Please retry in 1ms", Some("120000"), "cap", Some(120_000.0)),
+        ("service unavailable; retry-after-ms:500", Some("120000"), "wait", Some(500.0)),
+        ("service unavailable; retry-after-ms=bogus", Some("120000"), "wait", Some(0.0)),
+        ("service unavailable; x-ratelimit-reset-ms:5000", None, "cancel", Some(5000.0)),
+    ] {
+        let env = Env::new();
+        config(&env, true, 1.0, 0.0, if action == "cancel" { 0.0 } else { 1000.0 });
+        let failed = if let Some(header) = header {
+            json!({"status":503,"headers":{"retry-after-ms":header},
+                "body":json!({"error":{"message":message,"type":"server_error"}}).to_string()})
+        } else {
+            streamed_error(message)
+        };
+        let provider_calls = if header.is_some() { 1 } else { 2 };
+        let mut responses = vec![failed; provider_calls];
+        responses.push(answer("hint-controlled task completed"));
+        let up = upstream(responses).await;
+        let mut child = RpcChild::spawn(&env, &up, &[]);
+        child.ready();
+        let initial = child.state("hint-order-original");
+        child.prompt("hint-order-task", "complete this same-Session task after its sourced retry wait");
+        if action == "cap" {
+            let end = child.until(|frame| frame["type"] == "auto_retry_end");
+            assert_eq!(end["success"], false, "{message}: {end}");
+            assert!(end["finalError"].as_str().unwrap().contains("exceeds retry.maxDelayMs"), "{end}");
+            if let Some(wait) = expected_wait {
+                assert!(end["finalError"].as_str().unwrap().contains(&format!("{wait}ms")), "{end}");
+            }
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_retry_start"));
+            assert_eq!(up.served(), provider_calls);
+        } else {
+            let start = child.until(|frame| frame["type"] == "auto_retry_start");
+            assert_eq!(start["delayMs"].as_f64(), expected_wait, "{message}: {start}");
+            if expected_wait.unwrap() > 0.0 {
+                assert_eq!(up.served(), provider_calls, "the live wait starts before another provider request");
+                assert_eq!(child.state("hint-order-waiting")["isRetrying"], true);
+            }
+            if action == "cancel" {
+                let requested = Instant::now();
+                child.send(json!({"id":"hint-order-abort","type":"abort_retry"}));
+                child.success("hint-order-abort");
+                assert!(requested.elapsed() < Duration::from_secs(2));
+            }
+            let end = child
+                .seen
+                .iter()
+                .find(|frame| frame["type"] == "auto_retry_end")
+                .cloned()
+                .unwrap_or_else(|| child.until(|frame| frame["type"] == "auto_retry_end"));
+            assert_eq!(end["success"], action == "wait", "{message}: {end}");
+            assert_eq!(up.served(), provider_calls + usize::from(action == "wait"));
+        }
+        let final_state = child.state("hint-order-final");
+        assert_eq!(final_state["sessionId"], initial["sessionId"]);
+        assert_eq!(final_state["sessionFile"], initial["sessionFile"]);
+        assert_eq!(final_state["isRetrying"], false);
+        let file = PathBuf::from(final_state["sessionFile"].as_str().unwrap());
+        child.finish();
+        assert_eq!(end_count(&child), 1);
+        let entries = journal(&file);
+        assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 1);
+        let failed = failed_entries(&entries);
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0]["message"]["errorMessage"].as_str().unwrap().contains(message));
+        if header.is_some() {
+            assert_eq!(failed[0]["message"]["failureEvidence"]["headerWaitMs"], 120_000.0);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_session_reset_hint_holds_fallback_until_its_actual_cooldown_expires() {
+    let env = Env::new();
+    let error = json!({"status":400,"body":json!({"error":{"code":"model_not_found",
+        "message":"fixture model not found; x-ratelimit-reset-ms:2000","type":"invalid_request_error"}}).to_string()});
+    let primary = upstream(vec![error, answer("primary restored")]).await;
+    let target = upstream(vec![answer("fallback first"), answer("fallback while primary is cooling")]).await;
+    fallback_config(&env, &primary, &target, 1, true, false);
+    let settings_path = env.home.path().join("agent/config.yml");
+    let mut settings: Value = serde_json::from_slice(&std::fs::read(&settings_path).unwrap()).unwrap();
+    settings["retry"]["fallbackRevertPolicy"] = json!("cooldown-expiry");
+    std::fs::write(settings_path, serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+    let mut child = RpcChild::spawn(&env, &primary, &["--provider", "openai-compatible"]);
+    child.ready();
+    let initial = child.state("reset-cooldown-original");
+    child.prompt("reset-cooldown-first", "complete this task through the configured fallback");
+    assert_eq!(child.until(|frame| frame["type"] == "auto_retry_end")["success"], true);
+    let fallback = child.state("reset-cooldown-fallback");
+    assert_eq!(fallback["model"]["id"], "catalog");
+    child.run("reset-cooldown-second", "continue this task while the original provider is still cooling");
+    assert_eq!(child.state("reset-cooldown-held")["model"]["id"], "catalog");
+    assert_eq!(primary.served(), 1);
+    tokio::time::sleep(Duration::from_millis(2005)).await;
+    child.run("reset-cooldown-third", "finish this task after the original provider becomes eligible");
+    let restored = child.state("reset-cooldown-restored");
+    assert_eq!(restored["sessionId"], initial["sessionId"]);
+    assert_eq!(restored["sessionFile"], initial["sessionFile"]);
+    assert_eq!(restored["model"]["id"], "fake-model");
+    assert_eq!(restored["servingModel"]["isFallback"], false);
+    assert_eq!(primary.served(), 2);
+    assert_eq!(target.served(), 2);
+    let request = primary.requests.lock().await;
+    assert!(request[1]["body"]["messages"].to_string().contains("fallback while primary is cooling"));
+    drop(request);
+    let file = PathBuf::from(restored["sessionFile"].as_str().unwrap());
+    child.finish();
+    assert_eq!(journal(&file).iter().filter(|entry| entry["message"]["role"] == "user").count(), 3);
 }

@@ -23,6 +23,7 @@ fn tool_call(id: &str) -> Message {
         name: "bash".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     message.stop_reason = StopReason::ToolUse;
     Message::Assistant(message)
@@ -36,6 +37,8 @@ fn tool_result(id: &str, details: Option<Value>) -> Message {
         details,
         is_error: false,
         timestamp: 1,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -112,7 +115,7 @@ fn summary_precedes_kept_and_later_messages_after_restart_without_erasing_raw_hi
     assert_eq!(summary.source_entry_ids.as_ref().unwrap(), &["q1", "a1"]);
     assert_eq!(summary.tokens_before, 100);
     assert_eq!(journal.branch().len(), 7, "raw entries remain available");
-    assert_eq!(journal.build_context().len(), 6, "existing tolerant projection is unchanged");
+    assert_eq!(journal.build_context().unwrap().len(), 6, "existing tolerant projection is unchanged");
     assert_eq!(
         journal.compaction_source_snapshot(),
         Err(CompactionSourceError::UnsupportedContextEntry { id: "c1".into(), kind: "compaction".into() })
@@ -275,6 +278,8 @@ fn refuses_to_hide_developer_unfinished_or_unknown_effect_turns_but_accepts_comp
     let developer = Message::Developer(DeveloperMessage {
         content: UserContent::Text("priority instruction".into()),
         timestamp: 1,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let cases = [
         vec![

@@ -29,7 +29,8 @@
 // THE SOFTWARE.
 
 use crate::credential_store::{
-    AuthCredential, CredentialRefreshLeaseFence, SqliteCredentialStore, StoredAuthCredential,
+    AuthCredential, CredentialRefreshLeaseFence, OAuthRefreshPublication, SqliteCredentialStore, StoredAuthCredential,
+    standard_oauth_projection,
 };
 use crate::model_route::{AuthResolveError, CredentialIdentity, RequestAuthLease, RequestAuthResolver};
 use ara_ai::Model;
@@ -47,6 +48,9 @@ use tokio_util::sync::CancellationToken;
 #[path = "openai_codex_device_login.rs"]
 mod device_login;
 pub use device_login::OpenAiCodexDeviceLogin;
+#[path = "openai_codex_browser_login.rs"]
+mod browser_login;
+pub use browser_login::{BrowserLoginError, BrowserLoginInfo, OpenAiCodexBrowserLogin};
 
 const PROVIDER: &str = "openai-codex";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -66,7 +70,7 @@ pub struct DeviceLoginInfo {
 
 pub struct LoginIdentity {
     pub credential_id: i64,
-    pub account_id: String,
+    pub account_id: Option<String>,
     pub email: Option<String>,
 }
 
@@ -135,8 +139,15 @@ struct RefreshFlight {
 }
 #[derive(Default)]
 struct RefreshPolicy {
+    publication: OAuthRefreshPublication,
     authorizing: AtomicBool,
     dispatch_data: Mutex<Option<String>>,
+}
+#[derive(Default)]
+struct RefreshIntent {
+    force: bool,
+    publication: OAuthRefreshPublication,
+    observed_data: Option<String>,
 }
 struct RefreshConsumer {
     flights: Arc<Mutex<HashMap<String, RefreshFlight>>>,
@@ -211,7 +222,7 @@ impl OpenAiCodexAuth {
     }
 
     /// Controlled loopback upstream only; unavailable in ordinary CLI builds.
-    #[cfg(feature = "test-fixture")]
+    #[cfg(any(test, feature = "test-fixture"))]
     pub async fn open_with_endpoints(
         db_path: PathBuf,
         client: reqwest::Client,
@@ -280,7 +291,7 @@ impl OpenAiCodexAuth {
         self.db(move |store| {
             let rows = store.upsert_auth_credential_for_provider(PROVIDER, &credential)?;
             let fields = oauth_fields(&credential).expect("login constructs OAuth");
-            let account_id = fields["accountId"].as_str().expect("validated account").to_owned();
+            let account_id = fields.get("accountId").and_then(Value::as_str).map(str::to_owned);
             let access = fields["access"].as_str().expect("validated access");
             let row = rows
                 .iter()
@@ -381,6 +392,27 @@ impl OpenAiCodexAuth {
         self.resolve_owned_with_refresh(CredentialSelection::ExactRow(id), force_refresh, cancel).await
     }
 
+    /// Fixed Broker explicit force uses the same grant owner and exact-row CAS.
+    /// A joined request owner or a peer adoption retains that owner's row.
+    pub(crate) async fn resolve_broker_account_credential(
+        &self,
+        id: i64,
+        observed_data: String,
+        cancel: &CancellationToken,
+    ) -> Result<StoredAuthCredential, CodexAuthError> {
+        self.resolve_shared(
+            CredentialSelection::ExactRow(id),
+            RefreshIntent {
+                force: true,
+                publication: OAuthRefreshPublication::BrokerExplicit,
+                observed_data: Some(observed_data),
+            },
+            false,
+            cancel,
+        )
+        .await
+    }
+
     async fn resolve_owned(
         &self,
         selection: CredentialSelection,
@@ -395,7 +427,8 @@ impl OpenAiCodexAuth {
         force_refresh: bool,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
-        self.resolve_shared(selection, force_refresh, false, cancel).await
+        self.resolve_shared(selection, RefreshIntent { force: force_refresh, ..Default::default() }, false, cancel)
+            .await
     }
 
     /// Usage polling refreshes the same exact account and grant as requests.
@@ -406,16 +439,18 @@ impl OpenAiCodexAuth {
         id: i64,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
-        self.resolve_shared(CredentialSelection::ExactRow(id), false, true, cancel).await.map_err(|error| match error {
-            CodexAuthError::RefreshRejected { definitive: true, .. } => CodexAuthError::LoginRequired,
-            other => other,
-        })
+        self.resolve_shared(CredentialSelection::ExactRow(id), RefreshIntent::default(), true, cancel).await.map_err(
+            |error| match error {
+                CodexAuthError::RefreshRejected { definitive: true, .. } => CodexAuthError::LoginRequired,
+                other => other,
+            },
+        )
     }
 
     async fn resolve_shared(
         &self,
         selection: CredentialSelection,
-        force_refresh: bool,
+        intent: RefreshIntent,
         usage: bool,
         cancel: &CancellationToken,
     ) -> Result<StoredAuthCredential, CodexAuthError> {
@@ -423,7 +458,7 @@ impl OpenAiCodexAuth {
             return Err(CodexAuthError::Cancelled);
         }
         let started = Instant::now();
-        let mut force_observed = None;
+        let mut force_observed = intent.observed_data;
         'acquire: loop {
             if started.elapsed() >= Duration::from_secs(30) {
                 return Err(CodexAuthError::TimedOut);
@@ -432,7 +467,7 @@ impl OpenAiCodexAuth {
                 return Err(CodexAuthError::Cancelled);
             }
             let observed = self.selected(selection).await?;
-            if force_refresh && force_observed.is_none() {
+            if intent.force && force_observed.is_none() {
                 force_observed = Some(observed.serialized_data.clone());
             }
             if fresh(&observed) && force_observed.as_ref() != Some(&observed.serialized_data) {
@@ -447,6 +482,7 @@ impl OpenAiCodexAuth {
                     let identity = uuid::Uuid::new_v4();
                     let child = CancellationToken::new();
                     let policy = Arc::new(RefreshPolicy {
+                        publication: intent.publication,
                         authorizing: AtomicBool::new(!usage),
                         dispatch_data: Mutex::new(None),
                     });
@@ -758,6 +794,19 @@ impl OpenAiCodexAuth {
         let owner = owner.to_owned();
         match updated {
             Ok(credential) => {
+                // Known expired ACKs persist the merged replacement before the
+                // usable check fails. Only this owner's fresh explicit grant
+                // gets standard fields, in the original token/lease CAS below.
+                let usable = oauth_fields(&credential)
+                    .and_then(|fields| fields.get("expires"))
+                    .and_then(Value::as_f64)
+                    .is_some_and(|expires| expires > now_ms() as f64);
+                let credential = if policy.publication == OAuthRefreshPublication::BrokerExplicit && usable {
+                    standard_oauth_projection(&credential, &current.credential)
+                        .ok_or(CodexAuthError::InvalidResponse)?
+                } else {
+                    credential
+                };
                 let submitted = credential.clone();
                 let commit_expected = expected.clone();
                 let commit_owner = owner.clone();
@@ -1046,17 +1095,67 @@ fn token_expiry(token: &Value) -> Result<i64, CodexAuthError> {
     Ok(now_ms().saturating_add((seconds * 1000.0) as i64))
 }
 
+/// One shared authorization-code exchange for browser and explicit device login.
+/// A polled request may have consumed its grant; never retry an unknown outcome.
+async fn exchange_code_credential(
+    client: &reqwest::Client,
+    auth_base_url: &str,
+    redirect_uri: &str,
+    code: &str,
+    verifier: &str,
+    cancel: &CancellationToken,
+) -> Result<AuthCredential, CodexAuthError> {
+    if cancel.is_cancelled() {
+        return Err(CodexAuthError::Cancelled);
+    }
+    let request = client
+        .post(format!("{auth_base_url}/oauth/token"))
+        .timeout(Duration::from_secs(15))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", CLIENT_ID),
+            ("code", code),
+            ("code_verifier", verifier),
+            ("redirect_uri", redirect_uri),
+        ])
+        .build()
+        .map_err(|_| CodexAuthError::Transport)?;
+    let dispatched = AtomicBool::new(false);
+    let operation = async {
+        dispatched.store(true, Ordering::SeqCst);
+        let response = client.execute(request).await.map_err(|_| CodexAuthError::OutcomeUnknown)?;
+        if response.status().is_server_error() {
+            return Err(CodexAuthError::OutcomeUnknown);
+        }
+        if !response.status().is_success() {
+            return Err(CodexAuthError::HttpStatus(response.status().as_u16()));
+        }
+        let token = response.json::<Value>().await.map_err(|_| CodexAuthError::OutcomeUnknown)?;
+        login_credential(&token).map_err(|_| CodexAuthError::OutcomeUnknown)
+    };
+    tokio::select! { biased;
+        _ = cancel.cancelled() => Err(if dispatched.load(Ordering::SeqCst) { CodexAuthError::OutcomeUnknown } else { CodexAuthError::Cancelled }),
+        result = operation => result,
+    }
+}
+
 fn login_credential(token: &Value) -> Result<AuthCredential, CodexAuthError> {
     let access = required(token, "access_token")?;
     let refresh = required(token, "refresh_token")?;
     let (account, email, plan) = profile(access, token.get("id_token").and_then(Value::as_str));
-    let account = account.ok_or(CodexAuthError::InvalidResponse)?;
+    // Fixed OMP b91db66e accepts an email profile without a workspace claim.
+    // Email is an identity fallback, never a fabricated chatgpt-account-id.
+    if account.is_none() && email.is_none() {
+        return Err(CodexAuthError::InvalidResponse);
+    }
     let mut fields = Map::new();
     fields.insert("access".into(), access.into());
     fields.insert("refresh".into(), refresh.into());
     fields.insert("expires".into(), token_expiry(token)?.into());
-    fields.insert("accountId".into(), account.clone().into());
-    fields.insert("orgId".into(), account.into());
+    if let Some(account) = account {
+        fields.insert("accountId".into(), account.clone().into());
+        fields.insert("orgId".into(), account.into());
+    }
     fields.insert("authorizedAt".into(), now_ms().into());
     if let Some(email) = email {
         fields.insert("email".into(), email.into());
@@ -1092,9 +1191,11 @@ pub(crate) fn lease_from_row(row: StoredAuthCredential) -> Result<RequestAuthLea
     let account = profile(access, None)
         .0
         .or_else(|| fields.get("accountId").and_then(Value::as_str).map(str::to_owned))
-        .filter(|v| !v.is_empty())
-        .ok_or(CodexAuthError::LoginRequired)?;
-    let mut headers = vec![("chatgpt-account-id".into(), account)];
+        .filter(|v| !v.is_empty());
+    let mut headers = Vec::new();
+    if let Some(account) = account {
+        headers.push(("chatgpt-account-id".into(), account));
+    }
     if let Some(payload) = decode_jwt(access)
         && let Some(auth) = payload.get(AUTH_CLAIM)
         && let Some(residency) = ["chatgpt_data_residency", "chatgpt_compute_residency"]

@@ -267,7 +267,10 @@ fn map_entries(
 ) -> Result<Vec<ReductionEntry>> {
     let mut entries = Vec::with_capacity(snapshot.entries.len());
     for entry in &snapshot.entries {
-        let raw = &entry.raw;
+        // Native entries retain their original body separately from their
+        // envelope; this checked view is only the reducer's observation.
+        let observed = entry.checked_reduction_raw()?;
+        let raw = &observed;
         if raw["type"].as_str() != Some(entry.kind.as_str()) || raw["id"].as_str() != Some(entry.id.as_str()) {
             bail!("raw reduction entry identity disagrees with its Session receipt: {}", entry.id);
         }

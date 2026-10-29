@@ -1,0 +1,1565 @@
+{
+  "fixedCommit": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "source": "complete pinned original73 static AST extraction; no test/oracle executed by extractor",
+  "originals": [
+    {
+      "id": "B-45983e3ece",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 65,
+      "title": "B+ fast-tail paragraph re-wrap > prose reveal shows new text every frame (no lag)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "This is a plain prose paragraph that streams in one character at a time without any markdown styling markers."
+          ],
+          "source": "assertByteIdentityEveryFrame(\n\t\t\t\"This is a plain prose paragraph that streams in one character at a time without any markdown styling markers.\",\n\t\t)"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-15f0dbb883",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 73,
+      "title": "B+ fast-tail paragraph re-wrap > run-level default style disarms fast path (single ANSI run contract)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "a styled streaming paragraph grows one character at a time",
+            {
+              "defaultTextStyle": {
+                "color": {
+                  "source": "(t: string) => `\\x1b[35m${t}\\x1b[39m`",
+                  "unresolved": true
+                },
+                "italic": true
+              }
+            }
+          ],
+          "source": "assertByteIdentityEveryFrame(\"a styled streaming paragraph grows one character at a time\", {\n\t\t\tdefaultTextStyle: style,\n\t\t})"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-10d81a1e55",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 85,
+      "title": "B+ fast-tail paragraph re-wrap > intraword underscore deltas stay on the fast path (narrowed gate)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "measure the raw_word_delta against the baseline at every frame"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"measure the raw_word_delta against the baseline at every frame\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-5341b42f7d",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 92,
+      "title": "B+ fast-tail paragraph re-wrap > open emphasis closed by a later delta re-lexes the grown row",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "the *whole span* must render emphasized, not stale"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"the *whole span* must render emphasized, not stale\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-ce9c2fd847",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 99,
+      "title": "B+ fast-tail paragraph re-wrap > paragraph completing into a list marker disarms (line-start hazard)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "abc\n1. item"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"abc\\n1. item\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-7a289e77ce",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 106,
+      "title": "B+ fast-tail paragraph re-wrap > finalize after fast-path frames is byte-identical to cold",
+      "helpers": [],
+      "variables": {
+        "full": "finalizing a streaming paragraph must match the cold render exactly"
+      }
+    },
+    {
+      "id": "B-5cd6baf925",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 121,
+      "title": "B+ fast-tail paragraph re-wrap > width change after fast-path frames re-lexes at new width",
+      "helpers": [],
+      "variables": {
+        "full": "a streamed paragraph that must reflow cleanly when the terminal width changes mid-stream"
+      }
+    },
+    {
+      "id": "B-e22a72c39a",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 135,
+      "title": "B+ fast-tail paragraph re-wrap > first frame is cold (no fast path)",
+      "helpers": [],
+      "variables": {}
+    },
+    {
+      "id": "B-637a002a31",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 142,
+      "title": "B+ fast-tail paragraph re-wrap > overflow long word re-wraps identically (break_long_word parity)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "A verylongwordthatcannotfitwithintherowwidthandmustbesplitbysomeheuristicacrossthelines",
+            {
+              "width": 40
+            }
+          ],
+          "source": "assertByteIdentityEveryFrame(\n\t\t\t\"A verylongwordthatcannotfitwithintherowwidthandmustbesplitbysomeheuristicacrossthelines\",\n\t\t\t{ width: 40 },\n\t\t)"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-408aa83636",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 149,
+      "title": "B+ fast-tail paragraph re-wrap > CRLF delta disarms fast path",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "first line\r\nsecond line"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"first line\\r\\nsecond line\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-57c11dfb9d",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 153,
+      "title": "B+ fast-tail paragraph re-wrap > transientRenderCache flip mid-stream drops fast path",
+      "helpers": [],
+      "variables": {
+        "full": "flipping transient off and back on must never serve a stale fast-path row"
+      }
+    },
+    {
+      "id": "B-b9daa92707",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 169,
+      "title": "B+ fast-tail paragraph re-wrap > URL head straddling the seam disarms, then byte-identity re-establishes",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "see the docs at https://example.com/guide for detail"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"see the docs at https://example.com/guide for detail\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-30c639dc78",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 177,
+      "title": "B+ fast-tail paragraph re-wrap > HTML entity split across the seam never half-normalizes",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "fish &amp; chips"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"fish &amp; chips\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-4699fc8503",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 184,
+      "title": "B+ fast-tail paragraph re-wrap > hex swatch across the seam renders atomically, never partial",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "the accent color is #1a2b3c here"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"the accent color is #1a2b3c here\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-39589e55e9",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 192,
+      "title": "B+ fast-tail paragraph re-wrap > paragraph line completing into a ref-def disarms (line-start gate)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "intro words\n\n[label]: https://example.com"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"intro words\\n\\n[label]: https://example.com\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-8a5e23bcfe",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 200,
+      "title": "B+ fast-tail paragraph re-wrap > OSC-8 hyperlink trailing row is skipped by capture, stays byte-identical",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "see \u001b]8;;https://example.com\u0007link\u001b]8;;\u0007 here"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"see \\x1b]8;;https://example.com\\x07link\\x1b]8;;\\x07 here\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-97eb8daf4a",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 207,
+      "title": "B+ fast-tail paragraph re-wrap > unordered `*` marker completing into a list item disarms (line-start hazard)",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "note:\n\n* item one"
+          ],
+          "source": "assertByteIdentityEveryFrame(\"note:\\n\\n* item one\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-db866680f1",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 216,
+      "title": "B+ fast-tail paragraph re-wrap > bgColor signature change between frames re-renders with the new style",
+      "helpers": [
+        {
+          "name": "assertByteIdentityEveryFrame",
+          "args": [
+            "This is a fairly long styled paragraph that wraps onto several rows",
+            {
+              "width": 20,
+              "step": 3,
+              "defaultTextStyle": {
+                "bgColor": {
+                  "source": "(t: string) => `\\x1b[48;5;52m${t}\\x1b[0m`",
+                  "unresolved": true
+                }
+              },
+              "streaming": {
+                "source": "new Markdown(\"\", 0, 0, THEME, style)",
+                "unresolved": true
+              }
+            }
+          ],
+          "source": "assertByteIdentityEveryFrame(base, { width: 20, step: 3, defaultTextStyle: style, streaming })"
+        }
+      ],
+      "variables": {
+        "base": "This is a fairly long styled paragraph that wraps onto several rows",
+        "grown": "This is a fairly long styled paragraph that wraps onto several rows and more"
+      }
+    },
+    {
+      "id": "B-763b101c93",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 251,
+      "title": "B+ fast-tail paragraph re-wrap > closed * pair delta does not re-pair across the seam",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "x *a*",
+              "x *a**b*"
+            ],
+            "x *a**b*"
+          ],
+          "source": "assertSpliceParts([\"x *a*\", \"x *a**b*\"], \"x *a**b*\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-3c248434e9",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 258,
+      "title": "B+ fast-tail paragraph re-wrap > closed ** pair delta does not re-pair",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "x **a**",
+              "x **a****b**"
+            ],
+            "x **a****b**"
+          ],
+          "source": "assertSpliceParts([\"x **a**\", \"x **a****b**\"], \"x **a****b**\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-778fbf2e35",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 264,
+      "title": "B+ fast-tail paragraph re-wrap > closed ~~ pair delta does not re-pair",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "x ~~a~~",
+              "x ~~a~~~~b~~"
+            ],
+            "x ~~a~~~~b~~"
+          ],
+          "source": "assertSpliceParts([\"x ~~a~~\", \"x ~~a~~~~b~~\"], \"x ~~a~~~~b~~\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-ea4586d3bb",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 270,
+      "title": "B+ fast-tail paragraph re-wrap > box-drawing HR completing across the seam disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "abc\n\n\u2550\u2550",
+              "abc\n\n\u2550\u2550\u2550"
+            ],
+            "abc\n\n\u2550\u2550\u2550"
+          ],
+          "source": "assertSpliceParts([\"abc\\n\\n\u2550\u2550\", \"abc\\n\\n\u2550\u2550\u2550\"], \"abc\\n\\n\u2550\u2550\u2550\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-b66fcc2fed",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 277,
+      "title": "B+ fast-tail paragraph re-wrap > numeric entity decoding to # disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "&#35;",
+              "&#35;abc"
+            ],
+            "&#35;abc"
+          ],
+          "source": "assertSpliceParts([\"&#35;\", \"&#35;abc\"], \"&#35;abc\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-0e1d14b4b4",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 283,
+      "title": "B+ fast-tail paragraph re-wrap > image marker completing across the seam disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "x!",
+              "x![a](u)"
+            ],
+            "x![a](u)"
+          ],
+          "source": "assertSpliceParts([\"x!\", \"x![a](u)\"], \"x![a](u)\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-dfdd106996",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 287,
+      "title": "B+ fast-tail paragraph re-wrap > entity-decoded swatch lead mid-row disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "x &#35;ab",
+              "x &#35;abc"
+            ],
+            "x &#35;abc"
+          ],
+          "source": "assertSpliceParts([\"x &#35;ab\", \"x &#35;abc\"], \"x &#35;abc\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-aa05ccf5ee",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 291,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending underscore followed by word delta disarms (intraword re-flank)",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "_foo_",
+              "_foo_b"
+            ],
+            "_foo_b"
+          ],
+          "source": "assertSpliceParts([\"_foo_\", \"_foo_b\"], \"_foo_b\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-81674fa235",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 295,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending star followed by word delta disarms (flank re-eval)",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "*a.*",
+              "*a.*b"
+            ],
+            "*a.*b"
+          ],
+          "source": "assertSpliceParts([\"*a.*\", \"*a.*b\"], \"*a.*b\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-6fff8d7c3b",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 299,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending tilde pair followed by word delta disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "~~a.~~",
+              "~~a.~~b"
+            ],
+            "~~a.~~b"
+          ],
+          "source": "assertSpliceParts([\"~~a.~~\", \"~~a.~~b\"], \"~~a.~~b\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-1751285dd4",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 303,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending math delimiter followed by digit disarms (anti-currency)",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "the value is $x$",
+              "the value is $x$123"
+            ],
+            "the value is $x$123"
+          ],
+          "source": "assertSpliceParts([\"the value is $x$\", \"the value is $x$123\"], \"the value is $x$123\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-e790b977da",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 307,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending underscore after a Unicode word char disarms (intraword re-flank)",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "\u00e9",
+              "\u00e9_foo_"
+            ],
+            "\u00e9_foo_"
+          ],
+          "source": "assertSpliceParts([\"\u00e9\", \"\u00e9_foo_\"], \"\u00e9_foo_\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-a21a9c2fc6",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 314,
+      "title": "B+ fast-tail paragraph re-wrap > row-ending closing star followed by a Unicode format char disarms (CommonMark word class)",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "*a.*",
+              "*a.*\u200b"
+            ],
+            "*a.*\u200b"
+          ],
+          "source": "assertSpliceParts([\"*a.*\", \"*a.*\u200b\"], \"*a.*\u200b\")"
+        },
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "*a.*",
+              "*a.*\u0301"
+            ],
+            "*a.*\u0301"
+          ],
+          "source": "assertSpliceParts([\"*a.*\", \"*a.*\u0301\"], \"*a.*\u0301\")"
+        },
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "*a.*",
+              "*a.*\u00ad"
+            ],
+            "*a.*\u00ad"
+          ],
+          "source": "assertSpliceParts([\"*a.*\", \"*a.*\u00ad\"], \"*a.*\u00ad\")"
+        }
+      ],
+      "variables": {}
+    },
+    {
+      "id": "B-4c0374d970",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 324,
+      "title": "B+ fast-tail paragraph re-wrap > inert delta completing a GFM delimiter row flips the tail to a table \u2014 disarms",
+      "helpers": [
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| --",
+              "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | --"
+            ],
+            "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | --"
+          ],
+          "source": "assertSpliceParts(\n\t\t\t[`${frozen}\\n\\n| col_a | col_b |\\n| --`, `${frozen}\\n\\n| col_a | col_b |\\n| ----- | --`],\n\t\t\t`${frozen}\\n\\n| col_a | col_b |\\n| ----- | --`,\n\t\t)"
+        },
+        {
+          "name": "assertSpliceParts",
+          "args": [
+            [
+              "paragraph\n\n| one |\n|",
+              "paragraph\n\n| one |\n|-"
+            ],
+            "paragraph\n\n| one |\n|-"
+          ],
+          "source": "assertSpliceParts([\"paragraph\\n\\n| one |\\n|\", \"paragraph\\n\\n| one |\\n|-\"], \"paragraph\\n\\n| one |\\n|-\")"
+        }
+      ],
+      "variables": {
+        "frozen": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. "
+      }
+    },
+    {
+      "id": "B-a57c389ade",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 338,
+      "title": "line-start hazard does not fire on prose (char-class range regression)",
+      "helpers": [],
+      "variables": {}
+    },
+    {
+      "id": "B-8953c00fec",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 347,
+      "title": "line-start hazard fires on block markers and HRs",
+      "helpers": [],
+      "variables": {}
+    },
+    {
+      "id": "B-5ed4c45377",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 353,
+      "title": "line-start hazard fires on a ref-def",
+      "helpers": [],
+      "variables": {}
+    },
+    {
+      "id": "B-81ce4b1b96",
+      "file": "packages/tui/test/markdown-bplus-fast-path.test.ts",
+      "line": 357,
+      "title": "fast path engages on a prose reveal (splice counter > 0)",
+      "helpers": [],
+      "variables": {
+        "prose": "This is a plain prose paragraph that streams in one character at a time without any markdown styling markers."
+      }
+    },
+    {
+      "id": "B-fa80e872f1",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 120,
+      "title": "Markdown incremental streaming lex (E2) > prose growth is byte-identical to full lex",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here."
+          ],
+          "source": "assertIdenticalGrowth(PROSE)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-9d304fced6",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 124,
+      "title": "Markdown incremental streaming lex (E2) > fenced code growth (open then close) is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences."
+          ],
+          "source": "assertIdenticalGrowth(FENCED)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-3995e50abc",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 128,
+      "title": "Markdown incremental streaming lex (E2) > list growth is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here."
+          ],
+          "source": "assertIdenticalGrowth(LIST)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-c27072b811",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 132,
+      "title": "Markdown incremental streaming lex (E2) > heading growth is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances."
+          ],
+          "source": "assertIdenticalGrowth(HEADINGS)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-72868353ca",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 136,
+      "title": "Markdown incremental streaming lex (E2) > mixed multi-section corpus growth is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+            80,
+            29
+          ],
+          "source": "assertIdenticalGrowth(MIXED, 80, 29)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-6bf61952cc",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 140,
+      "title": "Markdown incremental streaming lex (E2) > transient render-prefix cache: prose split render is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here."
+          ],
+          "source": "assertIdenticalGrowthTransient(PROSE)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-c831b3be2d",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 144,
+      "title": "Markdown incremental streaming lex (E2) > transient render-prefix cache: fenced code split render is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences."
+          ],
+          "source": "assertIdenticalGrowthTransient(FENCED)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-fc652616ea",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 148,
+      "title": "Markdown incremental streaming lex (E2) > transient render-prefix cache: mixed multi-section split render is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+            80,
+            29
+          ],
+          "source": "assertIdenticalGrowthTransient(MIXED, 80, 29)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-13e110cb91",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 152,
+      "title": "Markdown incremental streaming lex (E2) > transient render-prefix cache: table growing in the tail is byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+            60,
+            7
+          ],
+          "source": "assertIdenticalGrowthTransient(TABLE, 60, 7)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-de07b8dd9d",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 156,
+      "title": "Markdown incremental streaming lex (E2) > a width change mid-stream still matches a cold render at the new width",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-89c288da4b",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 176,
+      "title": "Markdown incremental streaming lex (E2) > reference-link definitions (fallback path) still render correctly while growing",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "See [the docs][d] and [the spec][s] for details on the protocol.\n\nA middle paragraph with ordinary prose that keeps growing here.\n\n[d]: https://example.com/docs\n[s]: https://example.com/spec\n\nClosing paragraph streamed at the tail with extra sentences appended."
+          ],
+          "source": "assertIdenticalGrowth(refDoc)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "refDoc": "See [the docs][d] and [the spec][s] for details on the protocol.\n\nA middle paragraph with ordinary prose that keeps growing here.\n\n[d]: https://example.com/docs\n[s]: https://example.com/spec\n\nClosing paragraph streamed at the tail with extra sentences appended."
+      }
+    },
+    {
+      "id": "B-37b91d764c",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 189,
+      "title": "Markdown incremental streaming lex (E2) > an escaped-bracket reference definition falls back to a correct full render",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "See [a\\]b] for details in the long discussion that follows below.\n\nMore prose streams in before the definition finally arrives down here.\n\n[a\\]b]: https://example.com/escaped\n\nTrailing paragraph after the definition keeps the stream going on.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(escapedRef, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "See [a\\]b] for details in the long discussion that follows below.\n\nMore prose streams in before the definition finally arrives down here.\n\n[a\\]b]: https://example.com/escaped\n\nTrailing paragraph after the definition keeps the stream going on.",
+            60,
+            13
+          ],
+          "source": "assertIdenticalGrowth(escapedRef, 60, 13)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "escapedRef": "See [a\\]b] for details in the long discussion that follows below.\n\nMore prose streams in before the definition finally arrives down here.\n\n[a\\]b]: https://example.com/escaped\n\nTrailing paragraph after the definition keeps the stream going on."
+      }
+    },
+    {
+      "id": "B-a694dec8c7",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 204,
+      "title": "Markdown incremental streaming lex (E2) > two consecutive ordered lists stay merged/renumbered while growing",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. a\n2. b\n\n1. c\n2. d",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(twoLists, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. a\n2. b\n\n1. c\n2. d",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(twoLists, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "twoLists": "1. a\n2. b\n\n1. c\n2. d"
+      }
+    },
+    {
+      "id": "B-5a417f0146",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 210,
+      "title": "Markdown incremental streaming lex (E2) > a loose ordered list (blank lines between items) stays correct while growing",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro line before the numbered list begins here.\n\n1. First point with enough words to wrap nicely.\n\n2. Second point also with sufficient words here.\n\n3. Third and final point streamed at the tail end.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(loose, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro line before the numbered list begins here.\n\n1. First point with enough words to wrap nicely.\n\n2. Second point also with sufficient words here.\n\n3. Third and final point streamed at the tail end.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(loose, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "loose": "Intro line before the numbered list begins here.\n\n1. First point with enough words to wrap nicely.\n\n2. Second point also with sufficient words here.\n\n3. Third and final point streamed at the tail end."
+      }
+    },
+    {
+      "id": "B-3c27c39405",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 220,
+      "title": "Markdown incremental streaming lex (E2) > a loose bullet list stays correct while growing",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Lead-in before the bullets.\n\n- alpha item with several words to wrap\n\n- beta item with several words to wrap\n\n- gamma item streamed at the tail end here.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(loose, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Lead-in before the bullets.\n\n- alpha item with several words to wrap\n\n- beta item with several words to wrap\n\n- gamma item streamed at the tail end here.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(loose, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "loose": "Lead-in before the bullets.\n\n- alpha item with several words to wrap\n\n- beta item with several words to wrap\n\n- gamma item streamed at the tail end here."
+      }
+    },
+    {
+      "id": "B-4b9be5b151",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 230,
+      "title": "Markdown incremental streaming lex (E2) > a non-append change (text replaced) falls back to a correct full render",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-c3c14e0b0b",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 244,
+      "title": "Markdown incremental streaming lex (E2) > a transient non-append replacement with no block boundary is not served stale prefix lines",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences."
+      }
+    },
+    {
+      "id": "B-a5f43bee42",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 261,
+      "title": "Markdown incremental streaming lex (E2) > CRLF text (fallback path) renders identically to a cold lex",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "crlf": "Para one with content.\r\n\r\nPara two with `code`.\r\n\r\nPara three tail.\r\n"
+      }
+    },
+    {
+      "id": "B-c22a38ce70",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 279,
+      "title": "Markdown incremental streaming lex (E2) > bullet list followed by a paragraph grows byte-identically",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha item with words\n- beta item with words\n- gamma item\n\nClosing paragraph that keeps streaming additional words to the end.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha item with words\n- beta item with words\n- gamma item\n\nClosing paragraph that keeps streaming additional words to the end.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        },
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "- alpha item with words\n- beta item with words\n- gamma item\n\nClosing paragraph that keeps streaming additional words to the end.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowthTransient(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- alpha item with words\n- beta item with words\n- gamma item\n\nClosing paragraph that keeps streaming additional words to the end."
+      }
+    },
+    {
+      "id": "B-4c374972e5",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 288,
+      "title": "Markdown incremental streaming lex (E2) > bullet list followed by a different-marker list stays two lists",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n* starred one\n* starred two\n\n+ plus one\n+ plus two",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n* starred one\n* starred two\n\n+ plus one\n+ plus two",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- alpha\n- beta\n\n* starred one\n* starred two\n\n+ plus one\n+ plus two"
+      }
+    },
+    {
+      "id": "B-7f73e08275",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 294,
+      "title": "Markdown incremental streaming lex (E2) > ordered list followed by a paren-delimited list stays two lists",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. dot one\n2. dot two\n\n1) paren one\n2) paren two",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. dot one\n2. dot two\n\n1) paren one\n2) paren two",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        },
+        {
+          "name": "assertIdenticalGrowthTransient",
+          "args": [
+            "1. dot one\n2. dot two\n\n1) paren one\n2) paren two",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowthTransient(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "1. dot one\n2. dot two\n\n1) paren one\n2) paren two"
+      }
+    },
+    {
+      "id": "B-fd39f42e72",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 301,
+      "title": "Markdown incremental streaming lex (E2) > list followed by blockquote grows byte-identically",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n> quoted line one with words\n> quoted line two here",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n> quoted line one with words\n> quoted line two here",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- alpha\n- beta\n\n> quoted line one with words\n> quoted line two here"
+      }
+    },
+    {
+      "id": "B-a9e8f0bb5a",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 307,
+      "title": "Markdown incremental streaming lex (E2) > list followed by heading grows byte-identically",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. one\n2. two\n\n# Heading after the list\n\nTail prose keeps going on.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "1. one\n2. two\n\n# Heading after the list\n\nTail prose keeps going on.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "1. one\n2. two\n\n# Heading after the list\n\nTail prose keeps going on."
+      }
+    },
+    {
+      "id": "B-535dada7f0",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 313,
+      "title": "Markdown incremental streaming lex (E2) > list followed by fenced code grows byte-identically",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\ntail text",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- alpha\n- beta\n\n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\ntail text",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- alpha\n- beta\n\n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\ntail text"
+      }
+    },
+    {
+      "id": "B-348dcb537f",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 319,
+      "title": "Markdown incremental streaming lex (E2) > a same-marker list across a blank line still merges while growing",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- a\n- b\n\n- c\n- d",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(bullets, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "- a\n- b\n\n- c\n- d",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(bullets, 60, 3)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "bullets": "- a\n- b\n\n- c\n- d"
+      }
+    },
+    {
+      "id": "B-600594c2a7",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 325,
+      "title": "Markdown incremental streaming lex (E2) > a list closed by a paragraph freezes at the boundary (streaming perf gate)",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- alpha\n- beta\n- gamma\n\nClosing paragraph after the list keeps going."
+      }
+    },
+    {
+      "id": "B-ee68e3cc05",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 338,
+      "title": "Markdown incremental streaming lex (E2) > orphan-fence repair starting mid-stream keeps growth byte-identical",
+      "helpers": [
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro paragraph before the stray fence lands in the stream.\n\n```\n# Heading after the orphan fence\n\n| col a | col b |\n| --- | --- |\n\nTrailing paragraph that keeps streaming after the table ends.",
+            60,
+            1
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 1)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro paragraph before the stray fence lands in the stream.\n\n```\n# Heading after the orphan fence\n\n| col a | col b |\n| --- | --- |\n\nTrailing paragraph that keeps streaming after the table ends.",
+            60,
+            3
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 3)"
+        },
+        {
+          "name": "assertIdenticalGrowth",
+          "args": [
+            "Intro paragraph before the stray fence lands in the stream.\n\n```\n# Heading after the orphan fence\n\n| col a | col b |\n| --- | --- |\n\nTrailing paragraph that keeps streaming after the table ends.",
+            60,
+            13
+          ],
+          "source": "assertIdenticalGrowth(doc, 60, 13)"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "Intro paragraph before the stray fence lands in the stream.\n\n```\n# Heading after the orphan fence\n\n| col a | col b |\n| --- | --- |\n\nTrailing paragraph that keeps streaming after the table ends."
+      }
+    },
+    {
+      "id": "B-d654fe81a5",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 359,
+      "title": "Markdown incremental streaming lex (E2) > a document that is one still-growing list never freezes mid-list",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "doc": "- one two three\n- four five six\n\n- seven eight nine"
+      }
+    },
+    {
+      "id": "B-23ebb3b936",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 374,
+      "title": "Markdown incremental streaming lex (E2) > flipping transientRenderCache re-derives the guard memo",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "crlfFence": "Intro paragraph before the stray fence with a CRLF line end.\n\n```\r\n# Heading after the fence\n\n| a | b |\n| --- | --- |\n\nTail prose that only streams in after the table.",
+        "grown": "Intro paragraph before the stray fence with a CRLF line end.\n\n```\r\n# Heading after the fence\n\n| a | b |\n| --- | --- |\n\nTail prose that only streams in after the table."
+      }
+    },
+    {
+      "id": "B-a657185374",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 428,
+      "title": "Markdown OSC 8 tail normalization across streaming appends > normalizes an OSC 8 escape split across appends like a cold render",
+      "helpers": [
+        {
+          "name": "assertChunkedGrowth",
+          "args": [
+            [
+              "\u001b]8;;",
+              "https://example.com",
+              "\u001b\\",
+              "`example.ts`",
+              "\u001b]8;;\u001b\\"
+            ]
+          ],
+          "source": "assertChunkedGrowth([\"\\x1b]8;;\", \"https://example.com\", ST, \"`example.ts`\", `\\x1b]8;;${ST}`])"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "ST": "\u001b\\",
+        "LINK": "\u001b]8;;https://example.com"
+      }
+    },
+    {
+      "id": "B-8f90639501",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 438,
+      "title": "Markdown OSC 8 tail normalization across streaming appends > keeps a BEL-terminated escape and an invalid ESC tail byte-identical",
+      "helpers": [
+        {
+          "name": "assertChunkedGrowth",
+          "args": [
+            [
+              "\u001b]8;;https://example.com\u0007",
+              "more",
+              "\u001b]8;;https://example.com\u001bX",
+              "tail"
+            ]
+          ],
+          "source": "assertChunkedGrowth([`${LINK}\\x07`, \"more\", \"\\x1b]8;;https://example.com\\x1bX\", \"tail\"])"
+        }
+      ],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "ST": "\u001b\\",
+        "LINK": "\u001b]8;;https://example.com"
+      }
+    },
+    {
+      "id": "B-1688bc9a84",
+      "file": "packages/tui/test/markdown-incremental-lex.test.ts",
+      "line": 445,
+      "title": "Markdown OSC 8 tail normalization across streaming appends > falls back to the full-document pass on a truncating edit and stays correct",
+      "helpers": [],
+      "variables": {
+        "PROSE": "Para one with **bold** and _italic_ words and a `code span` for flavor.\n\nPara two continues the document with more sentences so the lexer has real\nblock structure to chew on, then a third paragraph grows at the tail end as\n\nthe stream appends additional content token by token over many frames here.",
+        "FENCED": "Intro paragraph before the code block begins streaming in slowly.\n\n```ts\nconst x: number = compute(a, b) + delta;\nfor (let i = 0; i < x; i++) {\n  emit(i);\n}\nreturn x.toFixed(2);\n```\n\nTrailing prose after the fence keeps growing with more and more sentences.",
+        "LIST": "Lead-in sentence before the list.\n\n- first bullet item with `inline`\n- second bullet item in **bold**\n- third bullet item\n\n1. ordered one\n2. ordered two\n3. ordered three\n\nClosing paragraph that keeps streaming additional words to the very end here.",
+        "HEADINGS": "# Title heading\n\nIntro text under the title with some detail.\n\n## Section two\n\nBody of section two grows over time.\n\n### Subsection\n\nDeeper content that streams in at the tail as the reveal advances.",
+        "MIXED": "## Section 1\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 2\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 3\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 4\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 5\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n## Section 6\n\nThe quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. The quick brown fox jumps over the lazy dog while a `code span` and **bold** _italic_ exercise things. \n```ts\nconst x = compute(a, b);\nreturn x;\n```\n\n\n- one\n- two `inline`\n- three\n\n",
+        "TABLE": "Intro paragraph before the table streams in, with a `code span` and **bold** for flavor. \n\n| col_a | col_b |\n| ----- | ----- |\n| row_1_a | row_1_b |\n| row_2_a | row_2_b |\n| row_3_a | row_3_b |\n| row_4_a | row_4_b |\n\n\nTrailing prose after the table keeps growing with more sentences.",
+        "ST": "\u001b\\",
+        "LINK": "\u001b]8;;https://example.com",
+        "full": "\u001b]8;;https://example.com\u001b\\link\u001b]8;;\u001b\\"
+      }
+    },
+    {
+      "id": "B-01788d173a",
+      "file": "packages/tui/test/markdown.test.ts",
+      "line": 1837,
+      "title": "Module-level LRU render cache > keeps an open non-diff fence plain during transient renders without a highlight stream",
+      "helpers": [],
+      "variables": {
+        "highlightCallCount": 0
+      }
+    },
+    {
+      "id": "B-65c8f05d88",
+      "file": "packages/tui/test/markdown.test.ts",
+      "line": 1857,
+      "title": "Module-level LRU render cache > highlights a fence whole-block once it closes, even during transient renders",
+      "helpers": [],
+      "variables": {
+        "highlightCallCount": 0
+      }
+    },
+    {
+      "id": "B-6ff22f0340",
+      "file": "packages/tui/test/markdown.test.ts",
+      "line": 1881,
+      "title": "Module-level LRU render cache > streams completed-line highlighting through the theme's highlight stream",
+      "helpers": [],
+      "variables": {
+        "pushes": []
+      }
+    },
+    {
+      "id": "B-aa66406e0e",
+      "file": "packages/tui/test/markdown.test.ts",
+      "line": 1927,
+      "title": "Module-level LRU render cache > keeps an open fence plain when the highlight stream factory rejects the language",
+      "helpers": [],
+      "variables": {}
+    },
+    {
+      "id": "B-6b88f0d693",
+      "file": "packages/tui/test/markdown.test.ts",
+      "line": 1943,
+      "title": "Module-level LRU render cache > keeps an open fence plain when the highlight stream factory throws",
+      "helpers": [],
+      "variables": {}
+    }
+  ]
+}

@@ -21,6 +21,7 @@ fn read_call(host: &Host, id: &str) -> Message {
         name: "read".into(),
         arguments: json!({"path":"file.ts"}).as_object().unwrap().clone(),
         thought_signature: None,
+        ..Default::default()
     }));
     message.stop_reason = StopReason::ToolUse;
     Message::Assistant(message)
@@ -34,6 +35,8 @@ fn read_result(id: &str, text: &str) -> Message {
         details: None,
         is_error: false,
         timestamp: ara_ai::now_ms(),
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -51,11 +54,14 @@ fn install_raw_history(host: &mut Host, directory: &Path, messages: Vec<Value>) 
     }
     std::fs::write(&path, lines.join("\n") + "\n").unwrap();
     let journal = SessionJournal::open(&path).unwrap();
-    let messages = journal.model_context();
     let header = journal.header().clone();
-    host.session = Session::new(Some(journal), header, &messages).unwrap();
+    host.session = Session::new(Some(journal), header, &[], None, None).unwrap();
+    let messages = {
+        let journal = host.session.journal.try_lock().unwrap();
+        host.route_raw_context(&journal).unwrap()
+    };
     host.artifact_router.bind(host.session.artifacts.clone());
-    host.agent.replace_idle_messages(messages).unwrap();
+    host.agent.replace_idle_raw_messages(messages).unwrap();
 }
 
 async fn append_settled(host: &mut Host, messages: Vec<Message>) {
@@ -64,9 +70,9 @@ async fn append_settled(host: &mut Host, messages: Vec<Message>) {
         for message in messages {
             journal.append_message(&message).unwrap();
         }
-        journal.model_context()
+        host.route_raw_context(&journal).unwrap()
     };
-    host.agent.replace_idle_messages(messages).unwrap();
+    host.agent.replace_idle_raw_messages(messages).unwrap();
 }
 
 #[tokio::test]
@@ -93,7 +99,7 @@ async fn native_host_provider_pending_prune_saved_and_noop_recovery_family() {
     let prune_saved = host.prune_local_history().await.unwrap();
     assert!(prune_saved > 900 && prune_saved < 1_000);
     assert!(
-        !host.recovery_fits(None, Some((11_000, prune_saved)), &[]).await,
+        !host.recovery_fits(None, Some((11_000, prune_saved)), &[]).await.unwrap(),
         "pruning alone remains above the 80 percent recovery band"
     );
     assert!(host.shake_local_history(true, None).await.unwrap());
@@ -110,22 +116,70 @@ async fn native_host_provider_pending_prune_saved_and_noop_recovery_family() {
     assert!(!Arc::ptr_eq(&old_provider, &current_provider), "rewrite closes the retained provider binding");
 
     assert!(
-        host.recovery_fits(None, Some((11_000, prune_saved)), &[]).await,
+        host.recovery_fits(None, Some((11_000, prune_saved)), &[]).await.unwrap(),
         "this turn's prune savings survive the subsequent shake accounting"
     );
     assert!(
-        !host.recovery_fits(None, Some((11_000, 0)), &[]).await,
+        !host.recovery_fits(None, Some((11_000, 0)), &[]).await.unwrap(),
         "the old usage anchor still needs the explicit prune correction"
     );
-    let pending = [Message::User(UserMessage::text("p".repeat(4_000)))];
+    let pending = [AgentMessage::from(Message::User(UserMessage::text("p".repeat(4_000))))];
     assert!(
-        !host.recovery_fits(None, Some((11_000, prune_saved)), &pending).await,
+        !host.recovery_fits(None, Some((11_000, prune_saved)), &pending).await.unwrap(),
         "pending User content belongs in both provider estimate and the 80 percent floor"
     );
     assert!(
         !host.rescue_local_history(None, Some((11_000, prune_saved)), false, &[], None).await.unwrap(),
         "after all regions are elided, a fitting no-op rescue still returns false"
     );
+
+    // A retained, JSON-valid journal may still fail typed public projection.
+    // Exercise the post-publication stop boundary in this existing Host family.
+    for primary_error in [None, Some("original published history failure")] {
+        let fault_directory = tempfile::tempdir().unwrap();
+        let (mut retained, _) = super::tests::fixture();
+        install_raw_history(
+            &mut retained,
+            fault_directory.path(),
+            vec![serde_json::to_value(Message::User(UserMessage::text("retained public input"))).unwrap()],
+        );
+        let session = retained.session.clone();
+        let public_before = session.messages.lock().unwrap().clone();
+        let (path, header) = {
+            let journal = session.journal.lock().await;
+            (journal.path().to_path_buf(), serde_json::to_string(journal.header()).unwrap())
+        };
+        let malformed = json!({"type":"message","id":"malformed","parentId":null,
+            "timestamp":"2026-10-02T00:00:00.000Z",
+            "message":{"role":"assistant","content":"invalid typed assistant content"}});
+        let published_bytes = format!("{header}\n{}\n", serde_json::to_string(&malformed).unwrap()).into_bytes();
+        std::fs::write(&path, &published_bytes).unwrap();
+        *session.journal.lock().await = SessionJournal::open(&path).unwrap();
+        *session.persistence_error.lock().unwrap() = primary_error.map(str::to_owned);
+        retained.agent.steer(Message::User(UserMessage::text("queued input")));
+        retained.drain_queues = true;
+        let error = {
+            let journal = session.journal.lock().await;
+            public_messages_after_publication(&journal, &session, &retained.connection, &mut retained.drain_queues)
+                .unwrap_err()
+        };
+        assert!(error.to_string().contains("Session public projection failed after publication"));
+        let latched = session.persistence_error.lock().unwrap().clone().unwrap();
+        match primary_error {
+            Some(primary) => {
+                assert!(latched.starts_with(primary), "the original publication error remains primary");
+                assert!(
+                    latched.contains("; secondary observation: Session public projection failed after publication")
+                );
+            }
+            None => assert!(latched.starts_with("Session public projection failed after publication")),
+        }
+        assert!(retained.connection.is_cancelled());
+        assert!(!retained.drain_queues);
+        assert!(retained.agent.has_queued_messages(), "projection failure does not replay queued input");
+        assert_eq!(*session.messages.lock().unwrap(), public_before);
+        assert_eq!(std::fs::read(&path).unwrap(), published_bytes, "observation does not rewrite durable history");
+    }
 }
 
 #[tokio::test]
@@ -141,18 +195,20 @@ async fn native_host_images_rebase_stale_prune_and_fresh_total_usage_family() {
         })]),
         synthetic: None,
         timestamp: ara_ai::now_ms(),
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let initial = vec![
         serde_json::to_value(image_user).unwrap(),
         serde_json::to_value(assistant(&host, "done", Some(190_000))).unwrap(),
     ];
     install_raw_history(&mut host, directory.path(), initial);
-    let before = host.context_tokens(&host.agent.messages().await, &[]).await;
+    let before = host.context_tokens(&host.agent.raw_messages().await, &[]).await.unwrap();
     assert_eq!(before, 190_000);
-    assert!(!host.recovery_fits(None, Some((1_000, 0)), &[]).await);
+    assert!(!host.recovery_fits(None, Some((1_000, 0)), &[]).await.unwrap());
     assert!(host.rescue_local_history(None, Some((1_000, 0)), true, &[], None).await.unwrap());
     assert!(host.local_context_rebase.is_some());
-    let rebased = host.context_tokens(&host.agent.messages().await, &[]).await;
+    let rebased = host.context_tokens(&host.agent.raw_messages().await, &[]).await.unwrap();
     assert!(rebased < 100, "actual image rewrite rebases the stale 190k estimate");
     assert_eq!(
         host.session.journal.lock().await.entries()[1].raw["message"]["usage"]["input"],
@@ -170,7 +226,7 @@ async fn native_host_images_rebase_stale_prune_and_fresh_total_usage_family() {
     append_settled(&mut host, settled).await;
     assert!(host.prune_local_history().await.unwrap() > 0);
     assert!(host.local_context_rebase.is_some());
-    let after_prune = host.context_tokens(&host.agent.messages().await, &[]).await;
+    let after_prune = host.context_tokens(&host.agent.raw_messages().await, &[]).await.unwrap();
     assert!(after_prune < 1_000, "body changes during stale pruning cannot resurrect the invalidated 190k anchor");
 
     let mut fresh = match assistant(&host, "fresh usage", None) {
@@ -180,9 +236,9 @@ async fn native_host_images_rebase_stale_prune_and_fresh_total_usage_family() {
     fresh.usage = Usage { total_tokens: Some(1_234), output: Some(10), ..Usage::unknown() };
     append_settled(&mut host, vec![Message::Assistant(fresh)]).await;
     assert_eq!(
-        host.context_tokens(&host.agent.messages().await, &[]).await,
+        host.context_tokens(&host.agent.raw_messages().await, &[]).await.unwrap(),
         1_234,
         "a new valid total-only receipt supersedes the local rebase"
     );
-    assert!(!host.recovery_fits(None, Some((1_000, 0)), &[]).await);
+    assert!(!host.recovery_fits(None, Some((1_000, 0)), &[]).await.unwrap());
 }

@@ -7,12 +7,41 @@
 //! this module does not implement or silently substitute those services.
 
 use ara_ai::{
-    AnthropicMessagesProvider, AssistantMessage, AssistantMessageEvent, AssistantStream, CallOptions, Context, Model,
-    ModelProvider, OpenAICompletionsProvider, OpenAIResponsesProvider, StopReason,
+    ActualAssistantEvent, ActualAssistantStream, AnthropicMessagesProvider, AssistantMessage, AssistantMessageEvent,
+    AssistantStream, CallOptions, Context, GraphProviderContext, Model, ModelProvider, OpenAICompletionsProvider,
+    OpenAIResponsesProvider, StopReason,
+    event::{ActualStreamFailureReceipt, EventSink},
+    graph_values::GraphValueFactory,
+};
+use ara_rpc::{
+    WireString,
+    value_heap::{ValueError, ValueHandle, ValueSnapshot},
 };
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+#[cfg(feature = "test-fixture")]
+#[path = "model_route_actual_observations.rs"]
+mod actual_observations;
+#[cfg(feature = "test-fixture")]
+pub use actual_observations::{cancelled_quota_queue_family, lease_snapshot_matches_fixture};
+
+/// Read-only terminal metadata for actual Host recovery consumers. This is a
+/// classifier result, never a reconstructed message or admission capability.
+pub struct ActualFailureMetadata {
+    pub class: ara_ai::retry_classification::RetryClass,
+    pub error_message: Option<String>,
+    pub context_recovery: Option<ara_ai::ContextRecoveryEvidence>,
+}
+
+pub fn actual_failure_metadata(
+    model: &Model,
+    message: &ValueHandle,
+    factory: &GraphValueFactory,
+) -> Result<Option<ActualFailureMetadata>, ValueError> {
+    Ok(crate::request_auth_retry::actual_failure_facts(message, factory)?.map(|facts| facts.metadata(model)))
+}
 
 /// Actual credential origin. Only a native store row has a database identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,6 +210,14 @@ pub trait RequestAuthResolver: Send + Sync {
     fn for_session(&self, _session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
         None
     }
+    /// A committed logical Session changes the primary id; side requests do not.
+    /// Unscoped resolvers keep their current binding until ordinary post-admission
+    /// for_session runs. Preparing scope must not capture or admit a new epoch.
+    fn for_primary_session(&self, _session_id: &str) -> Option<Arc<dyn RequestAuthResolver>> {
+        None
+    }
+    #[cfg(feature="test-fixture")]
+    fn session_scope_receipt(&self) -> Option<serde_json::Value> { None }
 }
 
 /// An already authorized host override; this does not claim native auth precedence.
@@ -330,7 +367,9 @@ impl ProtocolOptions {
     fn fresh_session(&self) -> Self {
         let mut options = self.clone();
         match &mut options {
-            Self::Completions(_) => {}
+            Self::Completions(options) => {
+                options.provider_session_state = Some(Arc::new(Default::default()));
+            }
             Self::CodexResponses(_) => {}
             Self::Responses(options) => {
                 options.session_state = Some(Arc::new(Default::default()));
@@ -411,6 +450,27 @@ impl PreparedRoute {
         &self.model
     }
 
+    /// Observe the already materialized route policy without rebuilding auth
+    /// or provider state. Host thinking selection owns its own ceiling.
+    pub fn reasoning_policy(&self) -> Option<&ara_ai::OpenAIReasoningPolicy> {
+        match &self.protocol {
+            ProtocolOptions::Completions(options) => options.reasoning_policy.as_ref(),
+            ProtocolOptions::Responses(options) => options.request.reasoning_policy.as_ref(),
+            ProtocolOptions::CodexResponses(options) => options.request.reasoning_policy.as_ref(),
+            ProtocolOptions::Anthropic(_) => None,
+        }
+    }
+
+    /// Clone a side-factory snapshot without owning the main CLI report drain.
+    /// Authentication, usage callbacks, policy and Session assignment are retained.
+    pub fn without_request_text_observer(&self) -> Self {
+        let mut route = self.clone();
+        if let ProtocolOptions::Completions(options) = &mut route.protocol {
+            options.request_text_observer = None;
+        }
+        route
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -441,11 +501,17 @@ impl PreparedRoute {
             ProtocolOptions::Responses(base) => {
                 options.extra_headers.extend(base.extra_headers.clone());
                 options.supports_images = base.request.supports_images;
+                options.supports_computer_use = base.request.supports_computer_use;
+                options.include = base.request.include.clone();
+                options.responses_lite = base.request.responses_lite;
                 options.prompt_cache_key = options.prompt_cache_key.or_else(|| base.request.prompt_cache_key.clone());
             }
             ProtocolOptions::CodexResponses(base) => {
                 options.extra_headers.extend(base.extra_headers.clone());
                 options.supports_images = base.request.supports_images;
+                options.supports_computer_use = base.request.supports_computer_use;
+                options.include = base.request.include.clone();
+                options.responses_lite = base.request.responses_lite;
                 options.session_id = options.session_id.or_else(|| base.session_id.clone());
                 options.prompt_cache_key = options.prompt_cache_key.or_else(|| base.request.prompt_cache_key.clone());
             }
@@ -475,6 +541,41 @@ impl PreparedRoute {
         self.auth.resolve(&self.model, cancel).await.map(|_| ())
     }
 
+    /// A fallback must have its own resolved credentials. The reference Host
+    /// permits an explicitly authored auth:none route for local compatible
+    /// endpoints; that exception cannot inherit an ambient launch credential.
+    pub async fn check_fallback_auth(
+        &self,
+        cancel: &CancellationToken,
+        allow_keyless: bool,
+    ) -> Result<(), AuthResolveError> {
+        let lease = self.auth.resolve(&self.model, cancel).await?;
+        if allow_keyless
+            || lease.api_key.as_ref().is_some_and(|key| !key.is_empty())
+            || lease.headers.iter().any(|(name, value)| is_credential_header(name) && !value.is_empty())
+        {
+            Ok(())
+        } else {
+            Err(AuthResolveError::Unavailable)
+        }
+    }
+
+    /// Fixed edit auto-repair's eager getApiKey gate. Resolve the same private
+    /// Session assignment now, without exporting any credential. Header-only
+    /// authorization does not synthesize an upstream API key.
+    pub async fn check_oneshot_api_key(
+        &self,
+        cancel: &CancellationToken,
+        allow_keyless: bool,
+    ) -> Result<(), AuthResolveError> {
+        let lease = self.auth.resolve(&self.model, cancel).await?;
+        if allow_keyless || lease.api_key.as_ref().is_some_and(|key| !key.is_empty()) {
+            Ok(())
+        } else {
+            Err(AuthResolveError::Unavailable)
+        }
+    }
+
     /// Allocate protocol session state once. Every call on this binding shares it;
     /// a new logical Session or adopted route gets independent state.
     pub fn bind(
@@ -484,7 +585,7 @@ impl PreparedRoute {
     ) -> Arc<dyn ModelProvider> {
         let mut route = self.clone();
         route.protocol = route.protocol.fresh_session();
-        Arc::new(AuthenticatedRouteProvider { client, route, observer })
+        crate::provider_inflight::wrap_model_provider(Arc::new(AuthenticatedRouteProvider { client, route, observer }))
     }
 
     /// Rebind Codex attribution to a new Host Session, retaining the same
@@ -499,15 +600,31 @@ impl PreparedRoute {
         session_id: String,
         observer: Option<Arc<dyn RequestReceiptObserver>>,
     ) -> Arc<dyn ModelProvider> {
+        self.for_session(&session_id).bind(client, observer)
+    }
+
+    /// Rebind the private assignment and epoch after Host admission. This is
+    /// synchronous and does not admit a model or send a request by itself.
+    pub fn for_session(&self, session_id: &str) -> Self {
+        self.rebind_session(session_id, self.auth_for_session(Some(session_id)))
+    }
+
+    /// Prepare primary identity without admitting a Host epoch or dispatching auth.
+    pub fn for_primary_session(&self, session_id: &str) -> Self {
+        let auth = self.auth.for_primary_session(session_id).unwrap_or_else(|| self.auth.clone());
+        self.rebind_session(session_id, auth)
+    }
+
+    fn rebind_session(&self, session_id: &str, auth: Arc<dyn RequestAuthResolver>) -> Self {
         let mut route = self.clone();
-        route.auth = self.auth_for_session(Some(&session_id));
+        route.auth = auth;
         if let Some(owner) = &route.usage_headers {
-            route.usage_headers = Some(Arc::new(owner.for_session(&session_id)));
+            route.usage_headers = Some(Arc::new(owner.for_session(session_id)));
         }
         if let ProtocolOptions::CodexResponses(options) = &mut route.protocol {
-            options.session_id = Some(session_id);
+            options.session_id = Some(session_id.to_owned());
         }
-        route.bind(client, observer)
+        route
     }
 
     /// A handoff reads the live cache prefix on independent protocol state.
@@ -636,6 +753,16 @@ pub trait RequestReceiptObserver: Send + Sync {
     }
     /// Recorded before publishing a model terminal to the Agent.
     fn settled(&self, request: &RequestIdentity, message: &AssistantMessage) -> Result<(), ReceiptError>;
+    /// Same-lineage terminal receipt. Hosts must connect their actual consumer;
+    /// the default never rebuilds a typed message or claims persistence success.
+    fn settled_actual(
+        &self,
+        _request: &RequestIdentity,
+        _message: &ValueHandle,
+        _factory: &GraphValueFactory,
+    ) -> Result<(), ValueError> {
+        Err(ValueError::UnsupportedOperation("Actual request settlement observer"))
+    }
     /// Publish a successfully settled, actual provider quota rejection after
     /// stream output. This is feedback ownership, never replay permission.
     /// The pre-output auth driver retains its separate recording/retry owner.
@@ -646,6 +773,15 @@ pub trait RequestReceiptObserver: Send + Sync {
         _message: &AssistantMessage,
     ) -> Result<bool, ReceiptError> {
         Ok(false)
+    }
+    fn quota_rejected_actual(
+        &self,
+        _request: &RequestIdentity,
+        _lease: &RequestAuthLease,
+        _message: &ValueHandle,
+        _factory: &GraphValueFactory,
+    ) -> Result<bool, ValueError> {
+        Err(ValueError::UnsupportedOperation("Actual request quota feedback observer"))
     }
     /// The receiver disappeared without a terminal proof. No success is implied.
     fn interrupted(&self, request: &RequestIdentity);
@@ -676,6 +812,205 @@ fn error_event(model: &Model, reason: StopReason, text: &str) -> AssistantMessag
     error.stop_reason = reason;
     error.error_message = Some(text.into());
     AssistantMessageEvent::Error { reason, error }
+}
+
+fn actual_put(
+    factory: &GraphValueFactory,
+    root: &ValueHandle,
+    key: &str,
+    value: ValueHandle,
+) -> Result<(), ValueError> {
+    factory.heap().define_own_data(root, key.into(), value, factory.runtime())
+}
+
+pub(crate) fn actual_error_event(
+    model: &Model,
+    factory: &GraphValueFactory,
+    reason: StopReason,
+    text: &str,
+) -> Result<ActualAssistantEvent, ValueError> {
+    let heap = factory.heap();
+    let error = heap.object()?;
+    let reason_text = if reason == StopReason::Aborted { "aborted" } else { "error" };
+    for (key, value) in [
+        ("role", heap.string("assistant".into())?),
+        ("content", heap.array_with_length(0)?),
+        ("api", heap.string(model.api.clone().into())?),
+        ("provider", heap.string(model.provider.clone().into())?),
+        ("model", heap.string(model.id.clone().into())?),
+        ("usage", heap.object()?),
+        ("stopReason", heap.string(reason_text.into())?),
+        ("errorMessage", heap.string(text.into())?),
+        ("timestamp", heap.number(ara_ai::types::now_ms() as f64)?),
+    ] {
+        actual_put(factory, &error, key, value)?;
+    }
+    // A Host/auth failure establishes no provider rejection or replay right.
+    let evidence = heap.object()?;
+    actual_put(
+        factory,
+        &evidence,
+        "kind",
+        heap.string(if reason == StopReason::Aborted { "aborted" } else { "config" }.into())?,
+    )?;
+    actual_put(factory, &evidence, "replayBlocked", heap.boolean(true)?)?;
+    actual_put(factory, &evidence, "sameRouteBlocked", heap.boolean(true)?)?;
+    actual_put(factory, &evidence, "errorId", heap.number(0.0)?)?;
+    actual_put(factory, &error, "failureEvidence", evidence)?;
+    Ok(AssistantMessageEvent::Error { reason, error })
+}
+
+async fn publish_actual_error(
+    sink: &EventSink<ActualAssistantEvent>,
+    failures: &ActualStreamFailureReceipt,
+    model: &Model,
+    factory: &GraphValueFactory,
+    reason: StopReason,
+    text: &str,
+    cancel: &CancellationToken,
+) {
+    match actual_error_event(model, factory, reason, text) {
+        Ok(event) => {
+            failures.retain_terminal(&event);
+            if cancel.is_cancelled() {
+                let _ = sink.try_push(event);
+            } else {
+                let _ = sink.push_or_cancel(event, cancel).await;
+            }
+        }
+        Err(error) => failures.record(error),
+    }
+}
+
+/// Derive an exceptional terminal in this lineage while preserving every
+/// original content/tool/usage handle. An ordinary terminal is never copied.
+fn actual_veto_error(
+    observed: &ValueHandle,
+    factory: &GraphValueFactory,
+    prefix: Option<&str>,
+    quota: bool,
+    publication_fault: bool,
+) -> Result<ActualAssistantEvent, ValueError> {
+    let heap = factory.heap();
+    let runtime = factory.runtime();
+    let error = heap.spread(observed, runtime)?;
+    let old_evidence = heap.get(&error, &"failureEvidence".into(), runtime)?;
+    let evidence = if matches!(heap.snapshot(&old_evidence)?, ValueSnapshot::Undefined | ValueSnapshot::Null) {
+        let evidence = heap.object()?;
+        actual_put(factory, &evidence, "kind", heap.string("config".into())?)?;
+        actual_put(factory, &evidence, "errorId", heap.number(0.0)?)?;
+        evidence
+    } else {
+        heap.spread(&old_evidence, runtime)?
+    };
+    actual_put(factory, &evidence, "replayBlocked", heap.boolean(true)?)?;
+    actual_put(factory, &evidence, "sameRouteBlocked", heap.boolean(true)?)?;
+    if quota {
+        let recovery = heap.get(&evidence, &"contextRecovery".into(), runtime)?;
+        if matches!(heap.snapshot(&recovery)?, ValueSnapshot::Undefined | ValueSnapshot::Null)
+            || matches!(heap.snapshot(&recovery)?, ValueSnapshot::String(value) if value.equals_ascii("contentOnly"))
+        {
+            actual_put(factory, &evidence, "contextRecovery", heap.string("usageAdmission".into())?)?;
+        }
+    }
+    if publication_fault {
+        actual_put(factory, &evidence, "kind", heap.string("config".into())?)?;
+        actual_put(factory, &evidence, "contextRecovery", heap.string("nativeValidation".into())?)?;
+    }
+    if let Some(prefix) = prefix {
+        let previous = heap.get(&error, &"errorMessage".into(), runtime)?;
+        let text = if matches!(heap.snapshot(&previous)?, ValueSnapshot::Undefined | ValueSnapshot::Null) {
+            WireString::from(prefix)
+        } else {
+            let previous = heap.to_string(&previous, runtime)?;
+            let head = WireString::from(format!("{prefix}; provider error: "));
+            WireString::from_units(head.units().iter().chain(previous.units()).copied().collect())
+        };
+        actual_put(factory, &error, "errorMessage", heap.string(text)?)?;
+    }
+    actual_put(factory, &error, "stopReason", heap.string("error".into())?)?;
+    actual_put(factory, &error, "failureEvidence", evidence)?;
+    Ok(AssistantMessageEvent::Error { reason: StopReason::Error, error })
+}
+
+struct ActualCancelledRequest<'a> {
+    identity: &'a RequestIdentity,
+    lease: &'a RequestAuthLease,
+    quota_feedback_owned: bool,
+    observer: Option<&'a Arc<dyn RequestReceiptObserver>>,
+    model: &'a Model,
+    cancel: &'a CancellationToken,
+}
+
+async fn finish_cancelled_actual(
+    inner: &mut ActualAssistantStream,
+    sink: &EventSink<ActualAssistantEvent>,
+    failures: &ActualStreamFailureReceipt,
+    factory: &GraphValueFactory,
+    request: ActualCancelledRequest<'_>,
+    known: Option<ActualAssistantEvent>,
+    already_settled: bool,
+) {
+    let ActualCancelledRequest { identity, lease, quota_feedback_owned, observer, model, cancel } = request;
+    // Close/drain only the controlled guard owner. The independent original
+    // producer may still be unsettled and remains inherited by the receipt.
+    let queued = inner.take_terminal_on_close().await;
+    if let Some(event) = known.or(queued) {
+        failures.retain_terminal(&event);
+        if !already_settled
+            && let Some(observer) = observer
+            && let Err(primary) = observer.settled_actual(identity, event.partial(), factory)
+        {
+            failures.record(primary);
+            match actual_veto_error(
+                event.partial(),
+                factory,
+                Some("request settlement persistence failed"),
+                false,
+                false,
+            ) {
+                Ok(error) => {
+                    failures.retain_terminal(&error);
+                    let _ = sink.try_push(error);
+                }
+                Err(secondary) => failures.record(secondary),
+            }
+            return;
+        }
+        // Only a known error terminal carrying the existing explicit quota
+        // evidence names a rejected account. Cancellation/EOF/unknown effects
+        // do not create that evidence. Keep the original terminal unchanged.
+        // An observer callback or already dispatched auth driver owns feedback
+        // even if its write is unknown; never repeat it after cancellation.
+        if !quota_feedback_owned && let Some(observer) = observer {
+            let feedback = (|| {
+                let Some(facts) = crate::request_auth_retry::actual_failure_facts(event.partial(), factory)? else {
+                    return Ok(());
+                };
+                if (facts.evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Http
+                    || facts.evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Stream
+                        && facts.evidence.code.is_some())
+                    && facts.classify(model).usage_limit
+                {
+                    let _ = observer.quota_rejected_actual(identity, lease, event.partial(), factory)?;
+                }
+                Ok::<_, ValueError>(())
+            })();
+            if let Err(primary) = feedback {
+                failures.record(primary);
+            }
+        }
+        // The caller's Run token remains cancelled. This is preservation of a
+        // known provider outcome and its old attribution, never retry or Run
+        // acceptance. A full/closed queue still retains the original receipt.
+        let _ = sink.try_push(event);
+    } else {
+        if let Some(observer) = observer {
+            observer.interrupted(identity);
+        }
+        publish_actual_error(sink, failures, model, factory, StopReason::Aborted, "provider request cancelled", cancel)
+            .await;
+    }
 }
 
 impl ModelProvider for AuthenticatedRouteProvider {
@@ -956,5 +1291,536 @@ impl ModelProvider for AuthenticatedRouteProvider {
             }
         });
         rx
+    }
+
+    fn stream_actual(
+        &self,
+        model: &Model,
+        context: &GraphProviderContext,
+        factory: Arc<GraphValueFactory>,
+        options: CallOptions,
+    ) -> Result<ActualAssistantStream, ValueError> {
+        context.check_lineage(&factory)?;
+        let (sink, outer, failures) = ActualAssistantStream::channel();
+        let settlement = failures.owner_settlement_guard();
+        let route = self.route.clone();
+        let client = self.client.clone();
+        let model = model.clone();
+        let context = context.clone();
+        let observer = self.observer.clone();
+        let cancel = options.cancel.child_token();
+        tokio::spawn(async move {
+            let _settlement = settlement;
+            let _cancellation = cancel.clone().drop_guard();
+            if model != route.model {
+                publish_actual_error(
+                    &sink,
+                    &failures,
+                    &model,
+                    &factory,
+                    StopReason::Error,
+                    "model does not match the prepared host route",
+                    &cancel,
+                )
+                .await;
+                return;
+            }
+            let call_id = uuid::Uuid::now_v7();
+            let mut receipt_scope = RequestReceiptScope { observer: observer.clone(), call_id };
+            let auth = match observer.as_ref().map(|observer| observer.request_auth(call_id)).transpose() {
+                Ok(Some(Some(auth))) => auth,
+                Ok(_) => route.auth.clone(),
+                Err(_) => {
+                    failures.record(ValueError::UnsupportedOperation("Actual request scope preparation failed"));
+                    publish_actual_error(
+                        &sink,
+                        &failures,
+                        &model,
+                        &factory,
+                        StopReason::Error,
+                        "request scope preparation failed",
+                        &cancel,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let resolving = auth.resolve(&model, &cancel);
+            tokio::pin!(resolving);
+            let lease = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    if model.api == "openai-codex-responses" || auth.requires_settlement() { let _ = resolving.await; }
+                    Err(AuthResolveError::Cancelled)
+                },
+                _ = sink.closed() => {
+                    cancel.cancel();
+                    if model.api == "openai-codex-responses" || auth.requires_settlement() { let _ = resolving.await; }
+                    return;
+                },
+                result = &mut resolving => result,
+            };
+            let lease = match lease {
+                Ok(lease) => lease,
+                Err(error) => {
+                    let reason =
+                        if error == AuthResolveError::Cancelled { StopReason::Aborted } else { StopReason::Error };
+                    let text = match error {
+                        AuthResolveError::Cancelled => "authentication cancelled",
+                        AuthResolveError::Unavailable if model.api == "openai-codex-responses" => {
+                            "OpenAI account is unavailable; run ara login"
+                        }
+                        AuthResolveError::Refresh if model.api == "openai-codex-responses" => {
+                            "OpenAI account refresh failed; run ara login again"
+                        }
+                        AuthResolveError::Unavailable => "no configured authentication for this route",
+                        AuthResolveError::Storage => "authentication storage failed",
+                        AuthResolveError::Command => "authentication command failed",
+                        AuthResolveError::Refresh => "authentication refresh failed",
+                    };
+                    publish_actual_error(&sink, &failures, &model, &factory, reason, text, &cancel).await;
+                    return;
+                }
+            };
+            if cancel.is_cancelled() {
+                publish_actual_error(
+                    &sink,
+                    &failures,
+                    &model,
+                    &factory,
+                    StopReason::Aborted,
+                    "authentication cancelled",
+                    &cancel,
+                )
+                .await;
+                return;
+            }
+            let mut identity = RequestIdentity {
+                call_id,
+                route_generation: route.generation,
+                provider: model.provider.clone(),
+                model_id: model.id.clone(),
+                credential: lease.identity.clone(),
+            };
+            if observer.as_ref().is_some_and(|observer| observer.started(&identity).is_err()) {
+                failures.record(ValueError::UnsupportedOperation("Actual request attribution persistence failed"));
+                publish_actual_error(
+                    &sink,
+                    &failures,
+                    &model,
+                    &factory,
+                    StopReason::Error,
+                    "request attribution persistence failed",
+                    &cancel,
+                )
+                .await;
+                return;
+            }
+            let mut auth_retry = crate::request_auth_retry::AuthRetryState::new(&lease);
+            let mut acquired_lease = lease;
+            let mut options = options;
+            options.cancel = cancel.clone();
+            if let Some(owner) = &route.usage_headers {
+                options.on_response = options.on_response.or_else(|| route.protocol.response_callback());
+                owner.attach(&mut options);
+            }
+            let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
+            let mut inner = match ara_ai::thinking_loop::with_actual_thinking_loop_guard(
+                &model,
+                options.clone(),
+                route.loop_guard_policy,
+                factory.clone(),
+                |options| provider.stream_actual(&model, &context, factory.clone(), options),
+            ) {
+                Ok(inner) => inner,
+                Err(error) => {
+                    failures.record(error);
+                    if let Some(observer) = &observer {
+                        observer.interrupted(&identity);
+                    }
+                    publish_actual_error(
+                        &sink,
+                        &failures,
+                        &model,
+                        &factory,
+                        StopReason::Error,
+                        "actual provider dispatch failed",
+                        &cancel,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            failures.inherit_stream(&inner);
+            let mut emitted = false;
+            let mut quota_feedback_owned = false;
+            loop {
+                let event = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        finish_cancelled_actual(&mut inner, &sink, &failures, &factory,
+                            ActualCancelledRequest { identity: &identity,
+                                lease: &acquired_lease,
+                                quota_feedback_owned, observer: observer.as_ref(), model: &model, cancel: &cancel },
+                            None, false).await;
+                        return;
+                    },
+                    _ = sink.closed() => {
+                        cancel.cancel();
+                        finish_cancelled_actual(&mut inner, &sink, &failures, &factory,
+                            ActualCancelledRequest { identity: &identity,
+                                lease: &acquired_lease,
+                                quota_feedback_owned, observer: observer.as_ref(), model: &model, cancel: &cancel },
+                            None, false).await;
+                        return;
+                    },
+                    event = inner.recv() => event,
+                };
+                let Some(mut event) = event else {
+                    if let Some(observer) = &observer {
+                        observer.interrupted(&identity);
+                    }
+                    publish_actual_error(
+                        &sink,
+                        &failures,
+                        &model,
+                        &factory,
+                        StopReason::Error,
+                        "provider ended without a terminal receipt",
+                        &cancel,
+                    )
+                    .await;
+                    return;
+                };
+                let terminal = event.is_terminal();
+                if terminal {
+                    failures.retain_terminal(&event);
+                    if let Some(observer) = &observer
+                        && let Err(primary) = observer.settled_actual(&identity, event.partial(), &factory)
+                    {
+                        failures.record(primary);
+                        cancel.cancel();
+                        match actual_veto_error(
+                            event.partial(),
+                            &factory,
+                            Some("request settlement persistence failed"),
+                            false,
+                            false,
+                        ) {
+                            Ok(event) => {
+                                failures.retain_terminal(&event);
+                                let _ = sink.try_push(event);
+                            }
+                            Err(secondary) => failures.record(secondary),
+                        }
+                        return;
+                    }
+                    if cancel.is_cancelled() {
+                        finish_cancelled_actual(
+                            &mut inner,
+                            &sink,
+                            &failures,
+                            &factory,
+                            ActualCancelledRequest {
+                                identity: &identity,
+                                lease: &acquired_lease,
+                                quota_feedback_owned,
+                                observer: observer.as_ref(),
+                                model: &model,
+                                cancel: &cancel,
+                            },
+                            Some(event),
+                            true,
+                        )
+                        .await;
+                        return;
+                    }
+                }
+                let facts = if terminal && (emitted || auth.supports_auth_retry()) {
+                    match crate::request_auth_retry::actual_failure_facts(event.partial(), &factory) {
+                        Ok(facts) => facts,
+                        Err(error) => {
+                            failures.record(error);
+                            cancel.cancel();
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if terminal
+                    && emitted
+                    && let Some(facts) = &facts
+                    && (facts.evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Http
+                        || facts.evidence.kind == ara_ai::retry_classification::ProviderErrorKind::Stream
+                            && facts.evidence.code.is_some())
+                    && facts.classify(&model).usage_limit
+                {
+                    let candidate = match actual_veto_error(event.partial(), &factory, None, true, false) {
+                        Ok(candidate) => candidate,
+                        Err(error) => {
+                            failures.record(error);
+                            cancel.cancel();
+                            return;
+                        }
+                    };
+                    // Any callback owns this rejection, including false or
+                    // an uncertain failure; cancellation must not call again.
+                    quota_feedback_owned = observer.is_some();
+                    let handled = observer
+                        .as_ref()
+                        .map(|observer| {
+                            observer.quota_rejected_actual(&identity, &acquired_lease, candidate.partial(), &factory)
+                        })
+                        .unwrap_or(Ok(false));
+                    match handled {
+                        Ok(true) => event = candidate,
+                        Ok(false) => {}
+                        Err(primary) => {
+                            failures.record(primary);
+                            match actual_veto_error(
+                                candidate.partial(),
+                                &factory,
+                                Some("quota feedback publication failed"),
+                                false,
+                                true,
+                            ) {
+                                Ok(event) => {
+                                    failures.retain_terminal(&event);
+                                    let _ = sink.push_or_cancel(event, &cancel).await;
+                                }
+                                Err(secondary) => failures.record(secondary),
+                            }
+                            return;
+                        }
+                    }
+                }
+                if terminal && cancel.is_cancelled() {
+                    finish_cancelled_actual(
+                        &mut inner,
+                        &sink,
+                        &failures,
+                        &factory,
+                        ActualCancelledRequest {
+                            identity: &identity,
+                            lease: &acquired_lease,
+                            quota_feedback_owned,
+                            observer: observer.as_ref(),
+                            model: &model,
+                            cancel: &cancel,
+                        },
+                        Some(event),
+                        true,
+                    )
+                    .await;
+                    return;
+                }
+                // Preserve the existing conservative output boundary: every
+                // published start/thinking/tool event forbids auth replay.
+                if terminal
+                    && !emitted
+                    && auth.supports_auth_retry()
+                    && let Some(facts) = facts
+                {
+                    let failure = match facts.auth_failure(&model, event.partial(), &factory) {
+                        Ok(failure) => failure,
+                        Err(error) => {
+                            failures.record(error);
+                            cancel.cancel();
+                            return;
+                        }
+                    };
+                    if let Some(failure) = failure {
+                        let rejected_lease = acquired_lease.clone();
+                        let next = {
+                            let refreshing = auth_retry.next(auth.as_ref(), &model, &rejected_lease, &failure, &cancel);
+                            tokio::pin!(refreshing);
+                            tokio::select! {
+                                biased;
+                                _ = cancel.cancelled() => { let _ = refreshing.await; Err(AuthResolveError::Cancelled) },
+                                _ = sink.closed() => {
+                                    cancel.cancel();
+                                    let _ = refreshing.await;
+                                    Err(AuthResolveError::Cancelled)
+                                },
+                                result = &mut refreshing => result,
+                            }
+                        };
+                        quota_feedback_owned |= auth_retry.quota_feedback_dispatched();
+                        match next {
+                            Ok(Some(lease)) if !cancel.is_cancelled() => {
+                                let previous = identity;
+                                identity = RequestIdentity {
+                                    call_id: uuid::Uuid::now_v7(),
+                                    route_generation: route.generation,
+                                    provider: model.provider.clone(),
+                                    model_id: model.id.clone(),
+                                    credential: lease.identity.clone(),
+                                };
+                                if observer
+                                    .as_ref()
+                                    .is_some_and(|observer| observer.retry_started(&previous, &identity).is_err())
+                                {
+                                    // The retry callback may have allocated a
+                                    // new private scope before rejecting it.
+                                    // The old scope still drops on this exit.
+                                    if let Some(observer) = &observer {
+                                        observer.finished(identity.call_id);
+                                    }
+                                    failures.record(ValueError::UnsupportedOperation(
+                                        "Actual retry attribution persistence failed",
+                                    ));
+                                    publish_actual_error(
+                                        &sink,
+                                        &failures,
+                                        &model,
+                                        &factory,
+                                        StopReason::Error,
+                                        "request attribution persistence failed",
+                                        &cancel,
+                                    )
+                                    .await;
+                                    return;
+                                }
+                                if cancel.is_cancelled() {
+                                    if let Some(observer) = &observer {
+                                        observer.finished(identity.call_id);
+                                    }
+                                    identity = previous;
+                                    finish_cancelled_actual(
+                                        &mut inner,
+                                        &sink,
+                                        &failures,
+                                        &factory,
+                                        ActualCancelledRequest {
+                                            identity: &identity,
+                                            lease: &acquired_lease,
+                                            quota_feedback_owned,
+                                            observer: observer.as_ref(),
+                                            model: &model,
+                                            cancel: &cancel,
+                                        },
+                                        Some(event),
+                                        true,
+                                    )
+                                    .await;
+                                    return;
+                                }
+                                if let Some(observer) = &observer {
+                                    observer.finished(previous.call_id);
+                                }
+                                receipt_scope.call_id = identity.call_id;
+                                acquired_lease = lease;
+                                quota_feedback_owned = false;
+                                let provider = route.protocol.provider(client.clone(), acquired_lease.clone());
+                                inner = match ara_ai::thinking_loop::with_actual_thinking_loop_guard(
+                                    &model,
+                                    options.clone(),
+                                    route.loop_guard_policy,
+                                    factory.clone(),
+                                    |options| provider.stream_actual(&model, &context, factory.clone(), options),
+                                ) {
+                                    Ok(inner) => inner,
+                                    Err(error) => {
+                                        failures.record(error);
+                                        if let Some(observer) = &observer {
+                                            observer.interrupted(&identity);
+                                        }
+                                        publish_actual_error(
+                                            &sink,
+                                            &failures,
+                                            &model,
+                                            &factory,
+                                            StopReason::Error,
+                                            "actual provider dispatch failed",
+                                            &cancel,
+                                        )
+                                        .await;
+                                        return;
+                                    }
+                                };
+                                failures.inherit_stream(&inner);
+                                continue;
+                            }
+                            Ok(_) => {}
+                            Err(AuthResolveError::Cancelled) => {
+                                finish_cancelled_actual(
+                                    &mut inner,
+                                    &sink,
+                                    &failures,
+                                    &factory,
+                                    ActualCancelledRequest {
+                                        identity: &identity,
+                                        lease: &acquired_lease,
+                                        quota_feedback_owned,
+                                        observer: observer.as_ref(),
+                                        model: &model,
+                                        cancel: &cancel,
+                                    },
+                                    Some(event),
+                                    true,
+                                )
+                                .await;
+                                return;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                }
+                if terminal && cancel.is_cancelled() {
+                    finish_cancelled_actual(
+                        &mut inner,
+                        &sink,
+                        &failures,
+                        &factory,
+                        ActualCancelledRequest {
+                            identity: &identity,
+                            lease: &acquired_lease,
+                            quota_feedback_owned,
+                            observer: observer.as_ref(),
+                            model: &model,
+                            cancel: &cancel,
+                        },
+                        Some(event),
+                        true,
+                    )
+                    .await;
+                    return;
+                }
+                if !terminal {
+                    emitted = true;
+                }
+                if terminal {
+                    failures.retain_terminal(&event);
+                }
+                if !sink.push_or_cancel(event, &cancel).await {
+                    cancel.cancel();
+                    if !terminal {
+                        finish_cancelled_actual(
+                            &mut inner,
+                            &sink,
+                            &failures,
+                            &factory,
+                            ActualCancelledRequest {
+                                identity: &identity,
+                                lease: &acquired_lease,
+                                quota_feedback_owned,
+                                observer: observer.as_ref(),
+                                model: &model,
+                                cancel: &cancel,
+                            },
+                            None,
+                            false,
+                        )
+                        .await;
+                    }
+                    return;
+                }
+                if terminal {
+                    return;
+                }
+            }
+        });
+        Ok(outer)
     }
 }

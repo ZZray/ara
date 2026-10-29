@@ -477,3 +477,47 @@ mod bash_tests {
         );
     }
 }
+
+/// Fixed b91db66e router203-215 native local declared alias, retaining source case.
+/// The caller must reject this proposal when a Host override/tombstone owns it.
+pub fn normalize_native_local_alias(input: &str) -> String {
+    let scheme_prefix = regex::Regex::new(r"(?i)^[a-z][a-z0-9+.-]*:").expect("fixed scheme");
+    let drive_prefix = regex::Regex::new(r"(?i)^[a-z]:[\\/]").expect("fixed drive");
+    if !scheme_prefix.is_match(input) || drive_prefix.is_match(input) {
+        let segments = regex::Regex::new(r"(?i)[\\/]([a-z][a-z0-9+.-]*)://").expect("fixed prefixed URL");
+        for matched in segments.captures_iter(input) {
+            let whole=matched.get(0).unwrap();
+            if input.as_bytes().get(whole.end())==Some(&b'/') { continue; }
+            if matched[1].eq_ignore_ascii_case("local") { return input[whole.start()+1..].into(); }
+        }
+    }
+    let single = regex::Regex::new(r"(?i)^([a-z][a-z0-9+.-]*):/").expect("fixed single slash");
+    if let Some(matched)=single.captures(input) {
+        let whole=matched.get(0).unwrap();
+        if matched[1].eq_ignore_ascii_case("local") && input.as_bytes().get(whole.end())!=Some(&b'/') {
+            return format!("{}://{}",&matched[1],&input[whole.end()..]);
+        }
+    }
+    input.into()
+}
+
+/// Same two-port registration authority for raw and proposed alias forms.
+pub fn normalize_port_fallback(first: &dyn crate::ContentUriPort, second: &dyn crate::ContentUriPort, input: &str) -> String {
+    use crate::ContentUriRoute::{Unregistered, Removed};
+    let canonical=first.normalize_url(input);
+    if first.route(input)==Removed || first.route(&canonical)==Removed { return input.into(); }
+    if first.route(input)!=Unregistered || first.route(&canonical)!=Unregistered { return canonical; }
+    let fallback=second.normalize_url(input);
+    if first.route(&fallback)!=Unregistered { input.into() } else { fallback }
+}
+
+/// Native local is inherited only after raw/canonical Host registrations miss.
+pub fn normalize_plan_uri(port: Option<&dyn crate::ContentUriPort>, input: &str) -> String {
+    use crate::ContentUriRoute::Unregistered;
+    let normalized=port.map_or_else(||input.into(),|port|port.normalize_url(input));
+    if let Some(port)=port {
+        if port.route(input)!=Unregistered || port.route(&normalized)!=Unregistered { return normalized; }
+    }
+    let native=normalize_native_local_alias(&normalized);
+    if port.is_some_and(|port|port.route(&native)!=Unregistered) { normalized } else { native }
+}

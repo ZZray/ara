@@ -1,8 +1,11 @@
-//! Responses text and JSON function-call event state.
+//! Responses text, JSON function and raw custom-tool event state.
 //!
 //! Source: pinned OMP `openai-shared.ts::processResponsesStream` at
 //! 596f2da7101178214aa27a753529d15e6b7ad91d. Native reasoning replay
-//! and provider-hosted tools remain separate parity gaps.
+//! and other provider-hosted tools remain separate parity gaps. Hosted web
+//! search progress and end_turn markers produce Native pause-turn receipts.
+
+pub mod actual;
 
 use crate::error::{ProviderError, envelope_message};
 use crate::event::AssistantMessageEvent;
@@ -19,11 +22,39 @@ pub(crate) fn responses_endpoint_fingerprint(base_url: &str) -> String {
     digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+pub(crate) fn computer_metadata(item: &Value) -> Result<Option<crate::ToolCallProviderMetadata>, ProviderError> {
+    let actions = match item.get("actions") {
+        Some(Value::Array(actions)) if !actions.is_empty() => actions.clone(),
+        None | Some(Value::Array(_)) | Some(Value::Null) => {
+            item.get("action").filter(|action| !action.is_null()).cloned().into_iter().collect()
+        }
+        _ => return Err(ProviderError::Stream("computer actions is not an array".into())),
+    };
+    // A provisional zero-action item has no executable metadata yet.
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    let checks =
+        item.get("pending_safety_checks").filter(|checks| !checks.is_null()).cloned().unwrap_or_else(|| json!([]));
+    serde_json::from_value(json!({"type":"computer", "providerItemId":item.get("id"),
+        "actions":actions, "pendingSafetyChecks":checks}))
+    .map(Some)
+    .map_err(|error| ProviderError::Stream(format!("invalid computer metadata: {error}")))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ItemKind {
     Text,
     Function,
+    Custom,
+    Computer,
     Reasoning,
+}
+
+impl ItemKind {
+    fn tool_call(self) -> bool {
+        matches!(self, Self::Function | Self::Custom | Self::Computer)
+    }
 }
 
 struct OpenItem {
@@ -38,6 +69,7 @@ struct OpenItem {
     summary_parts: Vec<String>,
     summary_parts_done: HashSet<usize>,
     raw_reasoning: String,
+    raw_computer: Option<Value>,
 }
 
 struct CompletedIdentifierless {
@@ -65,10 +97,15 @@ pub(crate) struct ResponsesStreamState {
     native_bytes: usize,
     native_over_limit: bool,
     next_key: usize,
+    last_open_item: Option<usize>,
     identifierless_delta_target: Option<usize>,
     identifierless_scan_work: usize,
+    saw_completed_web_search_call: bool,
     pub(crate) terminal: bool,
     pub(crate) replay_unsafe_wire_event: bool,
+    // Selected by the explicit protocol owner. Codex's visible tool block veto
+    // differs from Compatible Responses' nonempty wire-delta commitment.
+    pub(crate) tool_starts_block_replay: bool,
     // Thinking commits the Provider stream but can be removed by Session
     // recovery. Tool and unknown native effects must still veto that recovery.
     pub(crate) same_route_unsafe_wire_event: bool,
@@ -94,10 +131,13 @@ impl ResponsesStreamState {
             native_bytes: 0,
             native_over_limit: false,
             next_key: 0,
+            last_open_item: None,
             identifierless_delta_target: None,
             identifierless_scan_work: 0,
+            saw_completed_web_search_call: false,
             terminal: false,
             replay_unsafe_wire_event: false,
+            tool_starts_block_replay: false,
             same_route_unsafe_wire_event: false,
             context_recovery_evidence: ContextRecoveryEvidence::ContentOnly,
         }
@@ -213,6 +253,31 @@ impl ResponsesStreamState {
         Ok((self.open.len() == 1).then(|| *self.open.keys().next().expect("one open item")))
     }
 
+    /// Native custom-input lookup filters prefixed aliases by tool kind and
+    /// uses the last registered item only for fully identifierless events.
+    /// Function argument routing keeps its existing ownership rules.
+    fn lookup_custom_input(&self, event: &Value) -> Option<usize> {
+        if let Some(key) = event.get("output_index").and_then(Value::as_u64).and_then(|index| self.by_index.get(&index))
+        {
+            return Some(*key);
+        }
+        if let Some(id) = event.get("item_id").and_then(Value::as_str).filter(|id| !id.is_empty()) {
+            if let Some(key) = self.by_prefixed_call.get(id)
+                && self.open.get(key).is_some_and(|item| item.kind == ItemKind::Custom)
+            {
+                return Some(*key);
+            }
+            if let Some(key) = self.by_id.get(id).or_else(|| self.by_call.get(id)) {
+                return Some(*key);
+            }
+        }
+        // Native hasOpenItemKey regards even null/empty item_id as keyed.
+        if event.get("output_index").is_some_and(Value::is_number) || event.get("item_id").is_some() {
+            return None;
+        }
+        self.last_open_item
+    }
+
     fn identifierless_function(&mut self, delta: Option<&str>) -> Result<Option<usize>, ProviderError> {
         let mut keys = self
             .open
@@ -280,7 +345,7 @@ impl ResponsesStreamState {
         let index = event.get("output_index").and_then(Value::as_u64);
         let id = item.get("id").and_then(Value::as_str).map(str::to_owned);
         let call = item.get("call_id").and_then(Value::as_str).map(str::to_owned);
-        if kind == ItemKind::Function && call.as_deref().is_none_or(str::is_empty) {
+        if kind.tool_call() && call.as_deref().is_none_or(str::is_empty) {
             return Err(ProviderError::Stream("Responses function call has no call_id".into()));
         }
         if call.as_ref().is_some_and(|call| self.seen_call_ids.contains(call)) {
@@ -301,16 +366,35 @@ impl ResponsesStreamState {
                     .push(AssistantBlock::Text(TextContent { text: String::new(), text_signature: None }));
                 events.push(AssistantMessageEvent::TextStart { content_index, partial: self.output.clone() });
             }
-            ItemKind::Function => {
-                self.replay_unsafe_wire_event = true;
+            ItemKind::Function | ItemKind::Custom | ItemKind::Computer => {
+                // Fixed Responses wire retry excludes added records. The b91
+                // outer helper now buffers ToolcallStart as well. Codex keeps
+                // its separate visible tool-block veto via the protocol owner.
+                self.replay_unsafe_wire_event |= self.tool_starts_block_replay;
                 self.same_route_unsafe_wire_event = true;
                 let call_id = call.as_deref().expect("checked above");
-                let stable_id = id.clone().unwrap_or_else(|| format!("fc_ara_{key}"));
+                let prefix = if kind == ItemKind::Custom { "ctc" } else { "fc" };
+                let stable_id = id.clone().unwrap_or_else(|| format!("{prefix}_ara_{key}"));
                 self.output.content.push(AssistantBlock::ToolCall(ToolCall {
                     id: format!("{call_id}|{stable_id}"),
-                    name: item.get("name").and_then(Value::as_str).unwrap_or("").to_owned(),
-                    arguments: Default::default(),
+                    name: if kind == ItemKind::Computer {
+                        "computer".into()
+                    } else {
+                        item.get("name").and_then(Value::as_str).unwrap_or("").to_owned()
+                    },
+                    arguments: if kind == ItemKind::Custom {
+                        json!({"input": item.get("input").and_then(Value::as_str).unwrap_or("")})
+                            .as_object()
+                            .expect("input object")
+                            .clone()
+                    } else {
+                        Default::default()
+                    },
+                    intent: None,
                     thought_signature: None,
+                    custom_wire_name: (kind == ItemKind::Custom)
+                        .then(|| item.get("name").and_then(Value::as_str).unwrap_or("").to_owned()),
+                    provider_metadata: if kind == ItemKind::Computer { computer_metadata(item)? } else { None },
                 }));
                 events.push(AssistantMessageEvent::ToolcallStart { content_index, partial: self.output.clone() });
             }
@@ -331,6 +415,7 @@ impl ResponsesStreamState {
         if let Some(call) = &call {
             self.seen_call_ids.insert(call.clone());
             self.by_call.insert(call.clone(), key);
+            // Native registers the same `fc_` call alias for both tool kinds.
             self.by_prefixed_call.insert(format!("fc_{call}"), key);
         }
         self.open.insert(
@@ -341,22 +426,32 @@ impl ResponsesStreamState {
                 output_index: index,
                 item_id: id,
                 call_id: call,
-                argument_bytes: item.get("arguments").and_then(Value::as_str).unwrap_or("").to_owned(),
+                argument_bytes: item
+                    .get(if kind == ItemKind::Custom { "input" } else { "arguments" })
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
                 final_arguments: None,
                 identifierless_arguments_done: false,
                 summary_parts: Vec::new(),
                 summary_parts_done: HashSet::new(),
                 raw_reasoning: String::new(),
+                raw_computer: (kind == ItemKind::Computer).then(|| item.clone()),
             },
         );
         Ok(key)
     }
 
     fn close(&mut self, key: usize) {
+        if self.last_open_item == Some(key) {
+            self.last_open_item = None;
+        }
         if self.identifierless_delta_target == Some(key) {
             self.identifierless_delta_target = None;
         }
-        let Some(item) = self.open.remove(&key) else { return };
+        let Some(item) = self.open.remove(&key) else {
+            return;
+        };
         if let Some(index) = item.output_index
             && self.by_index.get(&index) == Some(&key)
         {
@@ -379,11 +474,18 @@ impl ResponsesStreamState {
     }
 
     fn finalize_partial_function_arguments(&mut self) {
-        for item in self.open.values().filter(|item| item.kind == ItemKind::Function) {
+        for item in self.open.values().filter(|item| matches!(item.kind, ItemKind::Function | ItemKind::Custom)) {
             if let AssistantBlock::ToolCall(call) = &mut self.output.content[item.content_index] {
                 // The stream has ended. A prefix that can be completed for a
                 // live preview is still invalid as a final tool invocation.
-                call.arguments = parse_final_arguments(&item.argument_bytes);
+                call.arguments = if item.kind == ItemKind::Custom {
+                    json!({"input": item.final_arguments.as_deref().unwrap_or(&item.argument_bytes)})
+                        .as_object()
+                        .expect("input object")
+                        .clone()
+                } else {
+                    parse_final_arguments(&item.argument_bytes)
+                };
             }
         }
     }
@@ -391,6 +493,13 @@ impl ResponsesStreamState {
     fn save_native_history(&mut self) -> Result<(), ProviderError> {
         if self.native_over_limit {
             return Ok(());
+        }
+        // Preserve provisional computer source even when truncation did not
+        // admit execution; no synthetic item.done or completion flag is added.
+        for item in self.open.values().filter(|item| item.kind == ItemKind::Computer) {
+            if let Some(raw) = &item.raw_computer {
+                self.native_items.insert(item.output_index.unwrap_or(item.content_index as u64), raw.clone());
+            }
         }
         let items = self.native_items.values().cloned().collect::<Vec<_>>();
         let size = serde_json::to_vec(&items).map_err(|error| ProviderError::Stream(error.to_string()))?.len();
@@ -403,6 +512,21 @@ impl ResponsesStreamState {
             }));
         }
         Ok(())
+    }
+
+    fn observe_native_item_size(&mut self, item: &Value) {
+        if !self.native_over_limit {
+            self.native_bytes = self.native_bytes.saturating_add(item.to_string().len());
+            if self.native_bytes > 32 * 1024 * 1024 {
+                self.native_over_limit = true;
+                self.native_items.clear();
+                for block in &mut self.output.content {
+                    if let AssistantBlock::Thinking(thinking) = block {
+                        thinking.thinking_signature = None;
+                    }
+                }
+            }
+        }
     }
 
     fn done_item(
@@ -440,24 +564,33 @@ impl ResponsesStreamState {
         {
             return Ok(());
         }
+        if item.get("type").and_then(Value::as_str) == Some("web_search_call") {
+            self.observe_native_item_size(item);
+            if !self.native_over_limit {
+                let native_index = index
+                    .unwrap_or_else(|| self.native_items.keys().next_back().map_or(0, |index| index.saturating_add(1)));
+                self.native_items.insert(native_index, item.clone());
+            }
+            if let Some(index) = index {
+                self.done_indices.insert(index);
+            }
+            if let Some(id) = id {
+                self.done_ids.insert(id.to_owned());
+            }
+            // Provider-hosted search has no client tool block or execution event.
+            return Ok(());
+        }
         let kind = match item.get("type").and_then(Value::as_str) {
             Some("message") => ItemKind::Text,
             Some("function_call") => ItemKind::Function,
+            Some("custom_tool_call") => ItemKind::Custom,
+            Some("computer_call") => ItemKind::Computer,
             Some("reasoning") => ItemKind::Reasoning,
-            _ => return Err(ProviderError::Stream("Unsupported Responses output item".into())),
-        };
-        if !self.native_over_limit {
-            self.native_bytes = self.native_bytes.saturating_add(item.to_string().len());
-            if self.native_bytes > 32 * 1024 * 1024 {
-                self.native_over_limit = true;
-                self.native_items.clear();
-                for block in &mut self.output.content {
-                    if let AssistantBlock::Thinking(thinking) = block {
-                        thinking.thinking_signature = None;
-                    }
-                }
+            _ => {
+                return Err(ProviderError::Stream("Unsupported Responses output item".into()));
             }
-        }
+        };
+        self.observe_native_item_size(item);
         // Done items use exact IDs/call IDs. The `fc_<call_id>` alias is only
         // for argument deltas: it can equal a sibling's real call_id.
         let call_id = item.get("call_id").and_then(Value::as_str);
@@ -468,6 +601,7 @@ impl ResponsesStreamState {
             .or_else(|| call_id.and_then(|id| self.by_call.get(id)).copied());
         let key = match exact {
             Some(key) => key,
+            None if kind == ItemKind::Computer => self.add(kind, event, item, &mut Vec::new())?,
             None => self.add(kind, event, item, events)?,
         };
         let open = self.open.get(&key).ok_or_else(|| ProviderError::Stream("Responses item vanished".into()))?;
@@ -477,13 +611,15 @@ impl ResponsesStreamState {
         if open.item_id.is_some() && id.is_some() && open.item_id.as_deref() != id {
             return Err(ProviderError::Stream("Responses output item id changed before completion".into()));
         }
-        if kind == ItemKind::Function {
+        if kind.tool_call() {
             if item.get("call_id").and_then(Value::as_str).is_some_and(|id| open.call_id.as_deref() != Some(id)) {
                 return Err(ProviderError::Stream("Responses function call_id changed before completion".into()));
             }
             let original_name = match &self.output.content[open.content_index] {
                 AssistantBlock::ToolCall(call) => call.name.as_str(),
-                _ => return Err(ProviderError::Stream("Responses function block changed".into())),
+                _ => {
+                    return Err(ProviderError::Stream("Responses function block changed".into()));
+                }
             };
             if item.get("name").and_then(Value::as_str).is_some_and(|name| name != original_name) {
                 return Err(ProviderError::Stream("Responses function name changed before completion".into()));
@@ -500,6 +636,28 @@ impl ResponsesStreamState {
         }
         let content_index = open.content_index;
         match kind {
+            ItemKind::Computer => {
+                let metadata = computer_metadata(item)?;
+                let executable = metadata.is_some();
+                let call_id = open.call_id.as_deref().expect("validated computer call ID");
+                let stable_id = id
+                    .or(open.item_id.as_deref())
+                    .ok_or_else(|| ProviderError::Stream("computer call has no provider item ID".into()))?;
+                let tool_call = ToolCall {
+                    id: format!("{call_id}|{stable_id}"),
+                    name: "computer".into(),
+                    arguments: Default::default(),
+                    provider_metadata: metadata,
+                    ..Default::default()
+                };
+                self.output.content[content_index] = AssistantBlock::ToolCall(tool_call.clone());
+                self.completed_tool_args.push(executable);
+                events.push(AssistantMessageEvent::ToolcallEnd {
+                    content_index,
+                    tool_call,
+                    partial: self.output.clone(),
+                });
+            }
             ItemKind::Text => {
                 let final_text = item.get("content").and_then(Value::as_array).and_then(|parts| {
                     (!parts.is_empty()).then(|| {
@@ -525,34 +683,57 @@ impl ResponsesStreamState {
                     partial: self.output.clone(),
                 });
             }
-            ItemKind::Function => {
+            ItemKind::Function | ItemKind::Custom => {
                 self.replay_unsafe_wire_event = true;
                 self.same_route_unsafe_wire_event = true;
+                let custom = kind == ItemKind::Custom;
                 let proven_complete = open.final_arguments.is_some()
                     || (terminal_fallback
+                        && !custom
                         && serde_json::from_str::<crate::types::JsonObject>(&open.argument_bytes).is_ok());
-                let raw = open
-                    .final_arguments
-                    .as_deref()
-                    .or_else(|| item.get("arguments").and_then(Value::as_str).filter(|raw| !raw.is_empty()))
-                    .or_else(|| (!open.argument_bytes.is_empty()).then_some(open.argument_bytes.as_str()))
-                    .ok_or_else(|| ProviderError::Stream("Responses function finished without arguments".into()))?;
+                let raw = if custom {
+                    // Native custom input.done updates the live arguments but
+                    // retains the delta buffer. At output_item.done a nonempty
+                    // buffer wins; only an empty buffer uses the final item.
+                    if open.argument_bytes.is_empty() {
+                        item.get("input").and_then(Value::as_str).unwrap_or("")
+                    } else {
+                        &open.argument_bytes
+                    }
+                } else {
+                    open.final_arguments
+                        .as_deref()
+                        .or_else(|| item.get("arguments").and_then(Value::as_str).filter(|raw| !raw.is_empty()))
+                        .or_else(|| (!open.argument_bytes.is_empty()).then_some(open.argument_bytes.as_str()))
+                        .ok_or_else(|| ProviderError::Stream("Responses function finished without arguments".into()))?
+                };
                 let call_id = item
                     .get("call_id")
                     .and_then(Value::as_str)
                     .or(open.call_id.as_deref())
                     .ok_or_else(|| ProviderError::Stream("Responses completed function has no call_id".into()))?;
+                let prefix = if custom { "ctc" } else { "fc" };
                 let stable_id =
-                    id.or(open.item_id.as_deref()).map(str::to_owned).unwrap_or_else(|| format!("fc_ara_{key}"));
+                    id.or(open.item_id.as_deref()).map(str::to_owned).unwrap_or_else(|| format!("{prefix}_ara_{key}"));
                 let original_name = match &self.output.content[content_index] {
                     AssistantBlock::ToolCall(call) => call.name.as_str(),
-                    _ => return Err(ProviderError::Stream("Responses function block changed".into())),
+                    _ => {
+                        return Err(ProviderError::Stream("Responses function block changed".into()));
+                    }
                 };
                 let tool_call = ToolCall {
                     id: format!("{call_id}|{stable_id}"),
                     name: item.get("name").and_then(Value::as_str).unwrap_or(original_name).to_owned(),
-                    arguments: parse_final_arguments(raw),
+                    arguments: if custom {
+                        json!({"input":raw}).as_object().expect("input object").clone()
+                    } else {
+                        parse_final_arguments(raw)
+                    },
+                    intent: None,
                     thought_signature: None,
+                    custom_wire_name: custom
+                        .then(|| item.get("name").and_then(Value::as_str).unwrap_or(original_name).to_owned()),
+                    provider_metadata: None,
                 };
                 if open.identifierless_arguments_done {
                     self.completed_identifierless.push(CompletedIdentifierless {
@@ -564,6 +745,9 @@ impl ResponsesStreamState {
                     });
                 }
                 self.output.content[content_index] = AssistantBlock::ToolCall(tool_call.clone());
+                // Native length handling requires explicit input.done for a
+                // custom call. output_item.done alone can force-close a still
+                // unfinished payload and is not positive completion proof.
                 self.completed_tool_args.push(proven_complete && !tool_call.arguments.contains_key("__parseError"));
                 events.push(AssistantMessageEvent::ToolcallEnd {
                     content_index,
@@ -592,7 +776,9 @@ impl ResponsesStreamState {
                     .unwrap_or_default();
                 let streamed = match &self.output.content[content_index] {
                     AssistantBlock::Thinking(block) => block.thinking.clone(),
-                    _ => return Err(ProviderError::Stream("Responses reasoning block changed".into())),
+                    _ => {
+                        return Err(ProviderError::Stream("Responses reasoning block changed".into()));
+                    }
                 };
                 let thinking = if !summary.is_empty() {
                     summary
@@ -630,6 +816,11 @@ impl ResponsesStreamState {
                 json!(serde_json::to_string(&call.arguments).map_err(|error| ProviderError::Stream(error.to_string()))?)
             };
         }
+        if kind == ItemKind::Custom
+            && let AssistantBlock::ToolCall(call) = &self.output.content[content_index]
+        {
+            native["input"] = call.arguments.get("input").cloned().unwrap_or(Value::String(String::new()));
+        }
         if !self.native_over_limit {
             self.native_items.insert(native_index, native);
         }
@@ -661,22 +852,25 @@ impl ResponsesStreamState {
                 let item = event
                     .get("item")
                     .ok_or_else(|| ProviderError::Stream("Responses added event has no item".into()))?;
-                match item.get("type").and_then(Value::as_str) {
-                    Some("message") => {
-                        self.add(ItemKind::Text, event, item, &mut events)?;
-                    }
-                    Some("function_call") => {
-                        self.add(ItemKind::Function, event, item, &mut events)?;
-                    }
-                    Some("reasoning") => {
-                        self.add(ItemKind::Reasoning, event, item, &mut events)?;
+                let key = match item.get("type").and_then(Value::as_str) {
+                    Some("message") => self.add(ItemKind::Text, event, item, &mut events)?,
+                    Some("function_call") => self.add(ItemKind::Function, event, item, &mut events)?,
+                    Some("custom_tool_call") => self.add(ItemKind::Custom, event, item, &mut events)?,
+                    Some("computer_call") => self.add(ItemKind::Computer, event, item, &mut events)?,
+                    Some("reasoning") => self.add(ItemKind::Reasoning, event, item, &mut events)?,
+                    Some("web_search_call") => {
+                        self.replay_unsafe_wire_event = true;
+                        self.same_route_unsafe_wire_event = true;
+                        return Ok(events);
                     }
                     _ => {
                         self.replay_unsafe_wire_event = true;
                         self.same_route_unsafe_wire_event = true;
                         return Err(ProviderError::Stream("Unsupported Responses output item".into()));
                     }
-                }
+                };
+                // Done-only synthetic reconstruction is not a registration.
+                self.last_open_item = Some(key);
             }
             "response.output_text.delta" | "response.refusal.delta" => {
                 if let Some(key) = self.lookup(event, false)? {
@@ -761,7 +955,9 @@ impl ResponsesStreamState {
                     };
                     let previous = match &self.output.content[index] {
                         AssistantBlock::Thinking(block) => block.thinking.clone(),
-                        _ => return Err(ProviderError::Stream("Responses reasoning block changed".into())),
+                        _ => {
+                            return Err(ProviderError::Stream("Responses reasoning block changed".into()));
+                        }
                     };
                     if previous != thinking
                         && let Some(suffix) = thinking.strip_prefix(&previous)
@@ -796,7 +992,9 @@ impl ResponsesStreamState {
                         return Err(ProviderError::Stream("Responses function arguments exceed size limit".into()));
                     }
                     open.argument_bytes.push_str(delta);
-                    self.replay_unsafe_wire_event = true;
+                    if !delta.is_empty() {
+                        self.replay_unsafe_wire_event = true;
+                    }
                     self.same_route_unsafe_wire_event = true;
                     events.push(AssistantMessageEvent::ToolcallDelta {
                         content_index: open.content_index,
@@ -828,6 +1026,47 @@ impl ResponsesStreamState {
                     self.same_route_unsafe_wire_event = true;
                 }
             }
+            "response.custom_tool_call_input.delta" | "response.custom_tool_call_input.done" => {
+                let final_input = kind == "response.custom_tool_call_input.done";
+                let raw = event
+                    .get(if final_input { "input" } else { "delta" })
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ProviderError::Stream("Responses custom input is missing".into()))?;
+                if let Some(key) = self.lookup_custom_input(event) {
+                    let open = self.open.get_mut(&key).expect("indexed item exists");
+                    if open.kind != ItemKind::Custom {
+                        return Err(ProviderError::Stream("Responses custom input routed to non-custom item".into()));
+                    }
+                    let size =
+                        if final_input { raw.len() } else { open.argument_bytes.len().saturating_add(raw.len()) };
+                    if size > 8 * 1024 * 1024 {
+                        return Err(ProviderError::Stream("Responses custom input exceeds size limit".into()));
+                    }
+                    if final_input {
+                        open.final_arguments = Some(raw.to_owned());
+                    } else {
+                        open.argument_bytes.push_str(raw);
+                    }
+                    let index = open.content_index;
+                    if let AssistantBlock::ToolCall(call) = &mut self.output.content[index] {
+                        call.arguments = json!({"input": if final_input { raw } else { &open.argument_bytes }})
+                            .as_object()
+                            .expect("input object")
+                            .clone();
+                    }
+                    if final_input || !raw.is_empty() {
+                        self.replay_unsafe_wire_event = true;
+                    }
+                    self.same_route_unsafe_wire_event = true;
+                    if !final_input {
+                        events.push(AssistantMessageEvent::ToolcallDelta {
+                            content_index: index,
+                            delta: raw.to_owned(),
+                            partial: self.output.clone(),
+                        });
+                    }
+                }
+            }
             "response.output_item.done" => {
                 self.replay_unsafe_wire_event = true;
                 if event.pointer("/item/type").and_then(Value::as_str) != Some("reasoning") {
@@ -837,6 +1076,11 @@ impl ResponsesStreamState {
                     .get("item")
                     .ok_or_else(|| ProviderError::Stream("Responses done event has no item".into()))?;
                 self.done_item(event, item, &mut events, false)?;
+                if item.get("type").and_then(Value::as_str) == Some("web_search_call")
+                    && (item.get("status").is_none() || item.get("status").and_then(Value::as_str) == Some("completed"))
+                {
+                    self.saw_completed_web_search_call = true;
+                }
             }
             "response.completed" | "response.incomplete" | "response.done" => {
                 let response = event
@@ -860,11 +1104,29 @@ impl ResponsesStreamState {
                 let pending = self
                     .open
                     .iter()
-                    .filter_map(|(&key, item)| (item.kind == ItemKind::Function).then_some(key))
+                    .filter_map(|(&key, item)| item.kind.tool_call().then_some(key))
                     .collect::<Vec<_>>();
                 for key in pending {
                     let open = self.open.get(&key).expect("pending key exists");
+                    if open.kind == ItemKind::Computer {
+                        // Native computer admission uses nonempty actions, not an item.done receipt.
+                        let admissible = status == "completed"
+                            || status == "incomplete"
+                                && response.pointer("/incomplete_details/reason").and_then(Value::as_str)
+                                    == Some("max_output_tokens");
+                        let raw = open.raw_computer.clone().expect("computer raw item");
+                        if admissible && (status == "completed" || computer_metadata(&raw)?.is_some()) {
+                            let event = json!({"output_index":open.output_index});
+                            // No wire item.done arrived: settle the content and
+                            // admission facts without fabricating toolcall_end.
+                            self.done_item(&event, &raw, &mut Vec::new(), false)?;
+                        }
+                        continue;
+                    }
                     let full_args = open.final_arguments.as_deref().or_else(|| {
+                        if open.kind == ItemKind::Custom {
+                            return None;
+                        }
                         serde_json::from_str::<crate::types::JsonObject>(&open.argument_bytes)
                             .ok()
                             .map(|_| open.argument_bytes.as_str())
@@ -872,14 +1134,23 @@ impl ResponsesStreamState {
                     let Some(full_args) = full_args else { continue };
                     let original = match &self.output.content[open.content_index] {
                         AssistantBlock::ToolCall(call) => call,
-                        _ => return Err(ProviderError::Stream("Responses pending function block changed".into())),
+                        _ => {
+                            return Err(ProviderError::Stream("Responses pending function block changed".into()));
+                        }
                     };
-                    let final_item = json!({
-                        "type": "function_call", "id": open.item_id,
+                    let custom = open.kind == ItemKind::Custom;
+                    let mut final_item = json!({
+                        "type": if custom { "custom_tool_call" } else { "function_call" }, "id": open.item_id,
                         "call_id": open.call_id, "name": original.name,
-                        "arguments": full_args,
                     });
+                    final_item[if custom { "input" } else { "arguments" }] = json!(full_args);
                     let event = json!({"output_index": open.output_index});
+                    if custom {
+                        // No output_item.done arrived. Native pending cleanup
+                        // keeps explicit input.done and clears its transient
+                        // buffer, rather than reapplying item-done precedence.
+                        self.open.get_mut(&key).expect("pending key exists").argument_bytes.clear();
+                    }
                     self.done_item(&event, &final_item, &mut events, true)?;
                 }
                 if let Some(id) = response.get("id").and_then(Value::as_str) {
@@ -888,7 +1159,7 @@ impl ResponsesStreamState {
                 self.read_usage(response.get("usage"));
                 match status {
                     "completed" => {
-                        if self.open.values().any(|item| item.kind == ItemKind::Function) {
+                        if self.open.values().any(|item| item.kind.tool_call()) {
                             return Err(ProviderError::Incomplete(
                                 "Responses terminal left a function call unfinished".into(),
                             ));
@@ -903,7 +1174,7 @@ impl ResponsesStreamState {
                         if response.pointer("/incomplete_details/reason").and_then(Value::as_str)
                             == Some("max_output_tokens") =>
                     {
-                        let has_unfinished = self.open.values().any(|item| item.kind == ItemKind::Function);
+                        let has_unfinished = self.open.values().any(|item| item.kind.tool_call());
                         self.output.stop_reason = if !has_unfinished
                             && !self.completed_tool_args.is_empty()
                             && self.completed_tool_args.iter().all(|complete| *complete)
@@ -924,12 +1195,20 @@ impl ResponsesStreamState {
                         self.finalize_partial_function_arguments();
                         self.output.stop_reason = StopReason::Length;
                     }
-                    "failed" | "cancelled" => return Err(ProviderError::Stream(response_error(response))),
+                    "failed" | "cancelled" => {
+                        return Err(ProviderError::Stream(response_error(response)));
+                    }
                     _ => {
                         return Err(ProviderError::Stream(format!(
                             "Responses terminal has unsupported status {status}"
                         )));
                     }
+                }
+                if self.output.stop_reason == StopReason::Stop
+                    && (response.get("end_turn").and_then(Value::as_bool) == Some(false)
+                        || self.saw_completed_web_search_call && !has_visible_assistant_content(&self.output))
+                {
+                    self.output.stop_details = Some(json!({"type":"pause_turn"}));
                 }
                 self.save_native_history()?;
                 self.terminal = true;
@@ -971,6 +1250,18 @@ impl ResponsesStreamState {
         self.output.usage.reasoning_tokens =
             usage.pointer("/output_tokens_details/reasoning_tokens").and_then(Value::as_u64);
     }
+}
+
+fn has_visible_assistant_content(output: &AssistantMessage) -> bool {
+    output.content.iter().any(|block| match block {
+        AssistantBlock::Image(_) | AssistantBlock::ToolCall(_) => true,
+        AssistantBlock::Text(text) => text.text.chars().any(|c| {
+            !matches!(c,
+            '\u{9}'..='\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+                | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+        }),
+        AssistantBlock::Thinking(_) | AssistantBlock::RedactedThinking { .. } => false,
+    })
 }
 
 fn response_error(response: &Value) -> String {

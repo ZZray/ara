@@ -8,7 +8,7 @@ use crate::{catalog_rules, model_identity_wire, model_wire_policy};
 use std::collections::HashSet;
 
 pub const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
-pub const CODEX_CLIENT_VERSION: &str = "0.153.0";
+pub const CODEX_CLIENT_VERSION: &str = "0.159.0";
 
 #[derive(Clone)]
 pub struct CodexModelDiscoveryOptions {

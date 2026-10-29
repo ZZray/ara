@@ -20,6 +20,10 @@ use crate::compaction::{AcceptedSummary, SummaryCallError, SummaryCallErrorKind,
 mod file_ops;
 pub use file_ops::{HandoffFileDetails, PreparedHandoffSummary, prepare_handoff_summary};
 
+#[path = "handoff_actual.rs"]
+mod actual;
+pub use actual::{ActualHandoffError, generate_handoff_from_actual_context};
+
 const HANDOFF_DOCUMENT: &str = include_str!("../prompts/handoff-document.md");
 
 /// Fixed native template, including the post-render formatter and the
@@ -120,11 +124,17 @@ async fn attempt(
         context,
         CallOptions {
             cancel: provider_cancel.clone(),
+            max_in_flight_requests: None,
+            wait_for_terminal_drain: false,
             tool_choice: Some(tool_choice),
             max_tokens,
+            suppress_native_tool_choice: false,
             temperature: None,
             loop_guard: None,
             on_response: None,
+            reasoning: None,
+            include: None,
+            responses_lite: None,
         },
     );
     let timeout = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline));

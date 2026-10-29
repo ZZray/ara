@@ -41,6 +41,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub const API: &str = "openai-completions";
+pub mod actual;
 pub const FIRST_EVENT_TIMEOUT_MESSAGE: &str = "OpenAI completions stream timed out while waiting for the first event";
 pub const IDLE_TIMEOUT_MESSAGE: &str = "OpenAI completions stream stalled while waiting for the next event";
 pub const INCOMPLETE_STREAM_MESSAGE: &str = "OpenAI completions stream closed before a finish_reason was received";
@@ -125,7 +126,9 @@ pub enum MaxTokensField {
     MaxCompletionTokens,
 }
 
-/// Host-selected wire compatibility flags (subset of OMP `ResolvedOpenAICompat`).
+/// Host-selected wire compatibility flags. New history fields follow fixed
+/// OMP ResolvedOpenAICompat/catalog compat 596f2da; selected baked model policy
+/// overlays them before conversion. This is not a URL/model detector.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenAICompat {
     pub supports_developer_role: bool,
@@ -141,6 +144,18 @@ pub struct OpenAICompat {
     pub requires_tool_result_name: bool,
     pub requires_assistant_after_tool_result: bool,
     pub requires_thinking_as_text: bool,
+    pub supports_multiple_system_messages: bool,
+    pub thinking_format: String,
+    pub reasoning_content_field: Option<String>,
+    pub requires_reasoning_content_for_tool_calls: bool,
+    pub allows_synthetic_reasoning_content_for_tool_calls: bool,
+    pub replay_reasoning_content: bool,
+    pub requires_assistant_content_for_tool_calls: bool,
+    pub uses_openai_tool_call_id_limit: bool,
+    pub reasoning_deltas_may_be_cumulative: bool,
+    pub strip_deepseek_special_tokens: bool,
+    pub stream_markup_healing_pattern: Option<actual::markup::HealingPattern>,
+    pub empty_length_finish_is_context_error: bool,
 }
 
 impl Default for OpenAICompat {
@@ -155,6 +170,20 @@ impl Default for OpenAICompat {
             requires_tool_result_name: false,
             requires_assistant_after_tool_result: false,
             requires_thinking_as_text: false,
+            // Fixed detectOpenAICompletionsCompat's unrecognized custom
+            // endpoint baseline. Host-resolved catalog flags override these.
+            supports_multiple_system_messages: false,
+            thinking_format: "openai".into(),
+            reasoning_content_field: Some("reasoning_content".into()),
+            requires_reasoning_content_for_tool_calls: false,
+            allows_synthetic_reasoning_content_for_tool_calls: true,
+            replay_reasoning_content: false,
+            requires_assistant_content_for_tool_calls: false,
+            uses_openai_tool_call_id_limit: false,
+            reasoning_deltas_may_be_cumulative: false,
+            strip_deepseek_special_tokens: false,
+            stream_markup_healing_pattern: None,
+            empty_length_finish_is_context_error: false,
         }
     }
 }
@@ -209,16 +238,73 @@ impl PostRetryPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolStrictMode {
+    #[default]
+    Mixed,
+    AllStrict,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolSchemaFlavor {
+    #[default]
+    None,
+    Grammar,
+    MoonshotMfjs,
+}
+
+/// Host owns the warning transport; AI decides emitted-tool quarantine and
+/// performs the original template's name conversion before calling the Host.
+pub trait CompletionsQuarantinePort: Send + Sync + std::fmt::Debug {
+    fn quarantined(
+        &self,
+        tool_name: &ara_rpc::WireString,
+        path: &ara_rpc::WireString,
+        factory: &crate::graph_values::GraphValueFactory,
+    ) -> Result<(), ara_rpc::value_heap::ValueError>;
+}
+
+/// Portable transient state supplied and scoped by the Host Session. Neither
+/// model identity nor persistence location is inferred by the provider.
+#[derive(Debug, Default)]
+pub struct ProviderSessionState {
+    disabled_strict_scopes: std::sync::Mutex<std::collections::HashSet<(String, String, String)>>,
+}
+
+impl ProviderSessionState {
+    fn scope(model: &Model) -> (String, String, String) {
+        (model.provider.clone(), model.base_url.clone(), model.id.clone())
+    }
+    pub fn strict_tools_disabled(&self, model: &Model) -> bool {
+        self.disabled_strict_scopes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&Self::scope(model))
+    }
+    pub(crate) fn disable_strict_tools(&self, model: &Model) {
+        self.disabled_strict_scopes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(Self::scope(model));
+    }
+    /// Fixed provider state close clears only this Session's transient scopes.
+    pub fn clear(&self) {
+        self.disabled_strict_scopes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StreamOptions {
     pub api_key: Option<String>,
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub tool_choice: Option<ToolChoice>,
+    pub reasoning: Option<crate::ReasoningRequest>,
+    pub reasoning_policy: Option<crate::OpenAIReasoningPolicy>,
     pub cancel: CancellationToken,
     /// `None` disables the watchdog (upstream default 300 s).
     pub first_event_timeout: Option<Duration>,
     pub idle_timeout: Option<Duration>,
+    /// Hold capped completion until the same HTTP body reaches EOF/DONE or grace.
+    pub wait_for_terminal_drain: bool,
     pub extra_headers: Vec<(String, String)>,
     pub compat: OpenAICompat,
     pub retry: RetryPolicy,
@@ -228,6 +314,10 @@ pub struct StreamOptions {
     /// observations without delaying or failing the model request.
     pub request_text_observer: Option<RequestTextObserver>,
     pub on_response: Option<crate::ProviderResponseCallback>,
+    /// Host-materialized PI_NO_STRICT equivalent; AI does not read process env.
+    pub no_strict: bool,
+    pub quarantine_port: Option<Arc<dyn CompletionsQuarantinePort>>,
+    pub provider_session_state: Option<Arc<ProviderSessionState>>,
 }
 
 impl Default for StreamOptions {
@@ -237,15 +327,21 @@ impl Default for StreamOptions {
             max_tokens: None,
             temperature: None,
             tool_choice: None,
+            reasoning: None,
+            reasoning_policy: None,
             cancel: CancellationToken::new(),
             first_event_timeout: Some(Duration::from_secs(300)),
             idle_timeout: Some(Duration::from_secs(300)),
+            wait_for_terminal_drain: false,
             extra_headers: Vec::new(),
             compat: OpenAICompat::default(),
             retry: RetryPolicy::default(),
             accept_empty_response: false,
             request_text_observer: None,
             on_response: None,
+            no_strict: false,
+            quarantine_port: None,
+            provider_session_state: None,
         }
     }
 }
@@ -283,8 +379,9 @@ fn image_url(block: &crate::types::ImageContent) -> Value {
 /// OMP `convertMessages` for the default compat profile.
 pub fn convert_messages(model: &Model, context: &Context, compat: &OpenAICompat) -> Vec<Value> {
     let mut params: Vec<Value> = Vec::new();
+    let system_role = if model.reasoning && compat.supports_developer_role { "developer" } else { "system" };
     for prompt in context.system_prompt.iter().filter(|p| !p.trim().is_empty()) {
-        params.push(json!({"role": "system", "content": prompt}));
+        params.push(json!({"role": system_role, "content": prompt}));
     }
     let transformed = transform_messages(&context.messages);
     let origin_scope = ToolCallOriginScope::collect(&transformed);
@@ -532,12 +629,8 @@ fn has_tool_history(messages: &[Message]) -> bool {
 }
 
 /// OMP `buildParams` for the default compat profile.
-pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Value {
-    let compat = &options.compat;
+pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -> Result<Value, ProviderError> {
     let mut params = json!({"model": model.id, "messages": [], "stream": true});
-    if compat.supports_usage_in_streaming {
-        params["stream_options"] = json!({"include_usage": true});
-    }
     if let Some(t) = options.temperature {
         params["temperature"] = json!(t);
     }
@@ -550,19 +643,33 @@ pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -
     if let Some(choice) = &options.tool_choice {
         let wire = match choice {
             ToolChoice::Auto => Some(json!("auto")),
-            ToolChoice::None | ToolChoice::Required if tool_names.is_empty() => None,
+            ToolChoice::None | ToolChoice::Any | ToolChoice::Required if tool_names.is_empty() => None,
             ToolChoice::None => Some(json!("none")),
-            ToolChoice::Required => Some(json!("required")),
-            ToolChoice::Tool(name) if tool_names.contains(&name.as_str()) => {
+            ToolChoice::Any | ToolChoice::Required => Some(json!("required")),
+            ToolChoice::Function(name) | ToolChoice::FunctionNested(name) | ToolChoice::Tool(name)
+                if tool_names.contains(&name.as_str()) =>
+            {
                 Some(json!({"type": "function", "function": {"name": name}}))
             }
-            ToolChoice::Tool(_) => None,
+            ToolChoice::Function(_) | ToolChoice::FunctionNested(_) | ToolChoice::Tool(_) | ToolChoice::Computer => {
+                None
+            }
         };
         if let Some(wire) = wire {
             params["tool_choice"] = wire;
         }
     }
-    params["messages"] = Value::Array(convert_messages(model, context, compat));
+    let compat = crate::reasoning::apply_chat(
+        &mut params,
+        model,
+        options.reasoning.as_ref(),
+        options.reasoning_policy.as_ref(),
+        &options.compat,
+    )?;
+    if compat.supports_usage_in_streaming {
+        params["stream_options"] = json!({"include_usage": true});
+    }
+    params["messages"] = Value::Array(convert_messages(model, context, &compat));
     if let Some(max) = options.max_tokens {
         let field = match compat.max_tokens_field {
             MaxTokensField::MaxTokens => "max_tokens",
@@ -570,7 +677,7 @@ pub fn build_params(model: &Model, context: &Context, options: &StreamOptions) -
         };
         params[field] = json!(max);
     }
-    params
+    Ok(params)
 }
 
 /// Count only string `messages[*].content` and `content[].text` fields in the
@@ -763,7 +870,133 @@ struct InBandError {
     evidence: crate::retry_classification::ProviderFailureEvidence,
 }
 
+// Fixed OMP b91db66e, packages/ai/src/error/body-error.ts:185-286 (MIT;
+// THIRD_PARTY_NOTICES.md). JSON probe only: the raw non-JSON decoder path is
+// a separate parity item. Keep legacy envelopes and account/replay owners.
+fn in_band_provider_error(chunk: &Value) -> Option<InBandError> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static CAMEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([a-z0-9])([A-Z])").unwrap());
+    static SEPARATORS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[-.\s_]+").unwrap());
+    static NON_RETRYABLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"(?i)insufficient.?quota|usage.?limit|quota.?(?:exceeded|reached|insufficient)|invalid_request|content_filter|context_length|context_window|billing|balance"
+    ).unwrap());
+    static RETRYABLE_TEXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"(?i)\brate.?limit|too many requests|too\s+many\s+concurren|service.{0,20}unavailable|temporarily\s+unavailable|server.?error|internal.?error|overloaded|capacity|throttl|retry\s+(?:your\s+)?request|please\s+retry"
+    ).unwrap());
+    static TAGS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
+    static SPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\x00-\x1f\x7f\s]+").unwrap());
+    static LEADING_STATUS: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"(?i)^\s*(?:HTTP[/.]\d(?:\.\d)?\s+)?([45]\d{2})(?:\b|$)"
+    ).unwrap());
+    fn field_status(value: Option<&Value>) -> Option<u16> {
+        let status = match value? {
+            Value::Number(number) => {
+                let value = number.as_f64()?;
+                if !value.is_finite() || value.fract() != 0.0 || !(100.0..=599.0).contains(&value) { return None; }
+                value as u16
+            },
+            Value::String(text) if text.trim().len() == 3 && text.trim().bytes().all(|b| b.is_ascii_digit()) =>
+                text.trim().parse().ok()?,
+            _ => return None,
+        };
+        (100..=599).contains(&status).then_some(status)
+    }
+    fn nonnull(value: Option<&Value>) -> Option<&Value> { value.filter(|value| !value.is_null()) }
+    fn code_token(value: Option<&Value>) -> Option<String> {
+        let raw = match value? {
+            Value::String(text) => text.trim().to_owned(),
+            Value::Number(number) => {
+                let value = number.as_f64()?;
+                if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e21 {
+                    format!("{value:.0}")
+                } else { number.to_string() }
+            },
+            _ => return None,
+        };
+        let spaced = CAMEL.replace_all(&raw, "${1}_${2}");
+        let code = SEPARATORS.replace_all(&spaced.to_ascii_lowercase(), "_").into_owned();
+        (!code.is_empty()).then_some(code)
+    }
+    fn detail(value: Option<&Value>) -> Option<String> {
+        let raw = value?.as_str()?;
+        let flattened = TAGS.replace_all(raw, " ");
+        let flat = SPACE.replace_all(&flattened, " ");
+        let text = flat.trim();
+        if text.is_empty() { return None; }
+        // OMP bounds synthesized detail to 4096 UTF-16 units. The typed
+        // control string cannot hold a lone surrogate, so retain whole scalars.
+        let mut units = 0;
+        Some(text.chars().take_while(|c| { units += c.len_utf16(); units <= 4096 }).collect())
+    }
+    fn mapped_status(code: &str) -> Option<u16> {
+        match code {
+            "rate_limit_error" | "rate_limit_exceeded" | "rate_limit" | "rate_limit_reached" | "rate_limited"
+            | "ratelimit" | "too_many_requests" | "request_throttled" | "throttled" | "throttling"
+            | "throttling_error" | "throttling_exception" | "throttling_allocation_quota"
+            | "request_limit_exceeded" | "retry_later" => Some(429),
+            "overloaded_error" | "server_overloaded" | "model_overloaded" | "overloaded"
+            | "service_unavailable" | "server_busy" | "high_demand" | "capacity_exceeded" => Some(503),
+            _ => None,
+        }
+    }
+    if !chunk.is_object() { return None; }
+    let nested = nonnull(chunk.get("error")).or_else(|| nonnull(chunk.get("response").and_then(|v| v.get("error"))));
+    let mut error = nested.filter(|value| value.is_object());
+    for _ in 0..2 {
+        let Some(inner) = error.and_then(|value| value.get("error")).filter(|value| value.is_object()) else { break };
+        error = Some(inner);
+    }
+    let code = code_token(nonnull(error.and_then(|v| v.get("code"))).or_else(|| nonnull(chunk.get("code"))))
+        .or_else(|| code_token(nonnull(error.and_then(|v| v.get("type"))).or_else(|| nonnull(chunk.get("type")))));
+    if code.as_deref().is_some_and(|code| NON_RETRYABLE.is_match(code)) { return None; }
+    if !code.as_deref().is_some_and(|code| RETRYABLE_TEXT.is_match(code)) && nested.is_none()
+        && chunk.get("status").is_none() && chunk.get("code").is_none() && chunk.get("message").is_none()
+    { return None; }
+    let detail = detail(error.and_then(|v| v.get("message")))
+        .or_else(|| detail(chunk.get("message"))).or_else(|| detail(nested));
+    let holder = error.unwrap_or(chunk);
+    let status = [holder.get("status"), holder.get("code"), chunk.get("status"), chunk.get("code")]
+        .into_iter().filter_map(field_status).find(|status| *status == 429 || (500..=599).contains(status))
+        .or_else(|| code.as_deref().and_then(mapped_status));
+    if status.is_none() && !detail.as_deref().is_some_and(|detail| RETRYABLE_TEXT.is_match(detail)) { return None; }
+    let placeholder = "Provider returned an in-band provider error";
+    let message = if let Some(status) = status {
+        let body = detail.as_deref().unwrap_or(placeholder);
+        let leading = LEADING_STATUS.captures(body).and_then(|c| c[1].parse::<u16>().ok());
+        let mut message = if leading == Some(status) { body.to_owned() } else { format!("{status} {body}") };
+        if crate::usage_limit::opaque_status_body(&message) { message = format!("{status} {placeholder}"); }
+        if let Some(code) = code.as_deref().filter(|code| !code.bytes().all(|b| b.is_ascii_digit())
+            && !body.to_ascii_lowercase().contains(&code.to_ascii_lowercase()))
+        { message.push_str(&format!(" ({code})")); }
+        message
+    } else {
+        let mut message = detail.unwrap_or_else(|| placeholder.into());
+        if let Some(code) = code.as_deref() { message.push_str(&format!(" ({code})")); }
+        message
+    };
+    // The readable synthesized message, never an opaque placeholder/body,
+    // feeds the existing account-cap owner. Preserve full envelope codes.
+    let retry_blocked = account_usage_limit(status, Some(chunk), &message, None);
+    let cause = match status {
+        Some(status) => ProviderError::Http {
+            status,
+            // Http Display already adds status. Keep an upstream HTTP prefix
+            // when it leads with that status, instead of duplicating metadata.
+            detail: message.strip_prefix(&format!("{status} ")).unwrap_or(&message).to_owned(),
+        },
+        None => ProviderError::Stream(message),
+    };
+    let mut evidence = cause.failure_evidence(retry_blocked);
+    evidence.code = code;
+    evidence.error_id = crate::retry_classification::flag::CLASS | if retry_blocked {
+        crate::retry_classification::flag::USAGE_LIMIT
+    } else { crate::retry_classification::flag::TRANSIENT };
+    Some(InBandError { cause, retry_blocked, evidence })
+}
+
 fn stream_error(chunk: &Value) -> Option<InBandError> {
+    if let Some(error) = in_band_provider_error(chunk) { return Some(error); }
     let error = chunk.get("error");
     let structured = error.is_some_and(Value::is_object);
     let flat = chunk.get("message").is_some_and(Value::is_string) && chunk.get("choices").is_none();
@@ -1194,6 +1427,7 @@ impl ChunkState {
                     name: name.unwrap_or("").to_string(),
                     arguments: JsonObject::new(),
                     thought_signature: None,
+                    ..Default::default()
                 }));
                 let idx = self.output.content.len() - 1;
                 if let Some(si) = stream_index {
@@ -1293,11 +1527,29 @@ pub(crate) struct PostError {
     pub cause: ProviderError,
     pub code: Option<String>,
     pub failure_evidence: Option<crate::retry_classification::ProviderFailureEvidence>,
+    pub captured: Option<CapturedHttpError>,
+}
+
+/// Transient provider decision input. Never added to journals/model content.
+#[derive(Clone)]
+pub(crate) struct CapturedHttpError {
+    pub body_text: String,
+    pub body_json: Option<Value>,
+}
+
+impl std::fmt::Debug for CapturedHttpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CapturedHttpError")
+            .field("body_text", &"<private transient body>")
+            .field("body_json_present", &self.body_json.is_some())
+            .finish()
+    }
 }
 
 impl From<ProviderError> for PostError {
     fn from(cause: ProviderError) -> Self {
-        Self { cause, code: None, failure_evidence: None }
+        Self { cause, code: None, failure_evidence: None, captured: None }
     }
 }
 
@@ -1329,8 +1581,22 @@ pub(crate) async fn post_with_retry_policy(
     cancel: &CancellationToken,
     state: &mut PostRetryState<'_>,
 ) -> Result<reqwest::Response, PostError> {
-    let policy = &retry.policy;
     let bytes = serde_json::to_vec(body).map_err(|e| ProviderError::Config(e.to_string()))?;
+    post_bytes_with_retry_policy(client, url, headers, &bytes, retry, cancel, state).await
+}
+
+/// One HTTP/retry owner for typed and actual JSON encoders. Graph callers
+/// stringify directly to UTF-8 JSON bytes, including escaped lone surrogates.
+pub(crate) async fn post_bytes_with_retry_policy(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(String, String)],
+    bytes: &[u8],
+    retry: &PostRetryPolicy,
+    cancel: &CancellationToken,
+    state: &mut PostRetryState<'_>,
+) -> Result<reqwest::Response, PostError> {
+    let policy = &retry.policy;
     let mut attempt: u32 = 0;
     loop {
         *state.failure_evidence = None;
@@ -1339,7 +1605,7 @@ pub(crate) async fn post_with_retry_policy(
             .post(url)
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
-            .body(bytes.clone());
+            .body(bytes.to_vec());
         for (k, v) in headers {
             req = req.header(k, v);
         }
@@ -1367,6 +1633,7 @@ pub(crate) async fn post_with_retry_policy(
                     resp.headers(),
                     chrono::Utc::now().timestamp_millis() as f64,
                 );
+                let header_wait_ms = session_wait_ms;
                 let admission_header = resp
                     .headers()
                     .get("rate_limit_type")
@@ -1380,6 +1647,7 @@ pub(crate) async fn post_with_retry_policy(
                     ProviderError::Http { status, detail: String::new() }.failure_evidence(*state.retry_blocked);
                 evidence.same_route_blocked = admission_header;
                 evidence.wait_ms = session_wait_ms;
+                evidence.header_wait_ms = header_wait_ms;
                 *state.failure_evidence = Some(evidence);
                 let retryable = matches!(status, 408 | 429 | 500..=599);
                 let body = tokio::select! {
@@ -1430,12 +1698,18 @@ pub(crate) async fn post_with_retry_policy(
                     evidence.same_route_blocked = admission_reject || usage_limit;
                     evidence.code = code.clone();
                     evidence.wait_ms = session_wait_ms;
+                    evidence.header_wait_ms = header_wait_ms;
                     if usage_limit {
                         evidence.error_id =
                             crate::retry_classification::flag::USAGE_LIMIT | crate::retry_classification::flag::CLASS;
                     }
                     *state.failure_evidence = Some(evidence.clone());
-                    return Err(PostError { cause, code, failure_evidence: Some(evidence) });
+                    return Err(PostError {
+                        cause,
+                        code,
+                        failure_evidence: Some(evidence),
+                        captured: Some(CapturedHttpError { body_text: body, body_json: error }),
+                    });
                 }
                 let delay = hint.map(|ms| Duration::from_secs_f64(ms.max(0.0) / 1000.0)).unwrap_or(default_delay);
                 sleep_or_cancel(delay.min(policy.max_delay), cancel).await?;
@@ -1538,64 +1812,164 @@ async fn run(
     if base.is_empty() {
         return Err(ProviderError::Config("OpenAI request setup did not resolve a base URL".into()));
     }
-    let url = format!("{base}/chat/completions");
-    let mut headers: Vec<(String, String)> = Vec::new();
-    if let Some(key) = options.api_key.as_deref().filter(|k| !k.is_empty()) {
-        headers.push(("Authorization".into(), format!("Bearer {key}")));
-    }
-    headers.extend(options.extra_headers.iter().cloned());
-    let params = build_params(model, context, options);
+    let params = build_params(model, context, options)?;
     if let Some(observer) = &options.request_text_observer {
         let sequence = NEXT_REQUEST_OBSERVATION.fetch_add(1, Ordering::Relaxed);
         let measurement = measure_prepared_message_text(model, &params);
         observer.report(PreparedRequestTextObservation { sequence, measurement });
     }
 
+    let bytes = serde_json::to_vec(&params).map_err(|error| ProviderError::Config(error.to_string()))?;
+    run_prepared(client, model, options, &bytes, state, sink).await
+}
+
+pub(crate) trait CompletionsTransportState {
+    type Event: Send;
+    fn retry_state(&mut self) -> PostRetryState<'_>;
+    fn set_failure_evidence(&mut self, evidence: crate::retry_classification::ProviderFailureEvidence);
+    fn capture_http_error(&mut self, _captured: Option<CapturedHttpError>) {}
+    fn block_retry(&mut self);
+    fn start_event(&self) -> Self::Event;
+    fn finished(&self) -> bool;
+    fn mark_done(&mut self);
+    fn raw_frame(&mut self, source: &str, events: &mut Vec<Self::Event>) -> Result<(bool, ChunkFlow), ProviderError>;
+    fn finish_events(&mut self, events: &mut Vec<Self::Event>) -> Result<(), ProviderError>;
+}
+impl CompletionsTransportState for ChunkState {
+    type Event = AssistantMessageEvent;
+    fn retry_state(&mut self) -> PostRetryState<'_> {
+        PostRetryState { retry_blocked: &mut self.retry_blocked, failure_evidence: &mut self.output.failure_evidence }
+    }
+    fn set_failure_evidence(&mut self, evidence: crate::retry_classification::ProviderFailureEvidence) {
+        self.output.failure_evidence = Some(evidence);
+    }
+    fn block_retry(&mut self) {
+        self.retry_blocked = true;
+    }
+    fn start_event(&self) -> Self::Event {
+        AssistantMessageEvent::Start { partial: self.output.clone() }
+    }
+    fn finished(&self) -> bool {
+        self.finished
+    }
+    fn mark_done(&mut self) {
+        self.saw_done = true;
+    }
+    fn raw_frame(&mut self, source: &str, events: &mut Vec<Self::Event>) -> Result<(bool, ChunkFlow), ProviderError> {
+        let chunk = serde_json::from_str::<Value>(source).map_err(|error| {
+            let preview: String = source.chars().take(200).collect();
+            ProviderError::Stream(format!("Malformed OpenAI completions stream frame ({error}): {preview}"))
+        })?;
+        let progress = is_progress_chunk(&chunk);
+        self.handle_chunk(&chunk, events).map(|flow| (progress, flow))
+    }
+    fn finish_events(&mut self, events: &mut Vec<Self::Event>) -> Result<(), ProviderError> {
+        self.finish(events)
+    }
+}
+
+enum AcceptedTailEnd { Done, ParseFailure }
+fn accepted_tail_end(frames: impl IntoIterator<Item = crate::sse::SseEvent>) -> Option<AcceptedTailEnd> {
+    for frame in frames {
+        if frame.data.is_empty() { continue; }
+        if frame.data == "[DONE]" { return Some(AcceptedTailEnd::Done); }
+        // b91 postOpenAIStream uses utils/stream.ts readSseJsonOrText followed
+        // by openai-http.ts decodeStream, not the former OpenAI SDK. Legal
+        // object/error envelopes remain yielded data while the consumer is
+        // stopped. Strings still take the text classifier + second strict
+        // parse lane; malformed data ends this accepted drain immediately.
+        match ara_rpc::WireValue::parse(&frame.data) {
+            Err(_) => return Some(AcceptedTailEnd::ParseFailure),
+            Ok(ara_rpc::WireValue::String(ref text)) => {
+                let detail = String::from_utf16_lossy(text.units());
+                // Reuse the existing source-backed text pattern/detail owner;
+                // this is HTTP wire data, never a Graph/Context export.
+                if in_band_provider_error(&json!({"message": detail})).is_some()
+                    || ara_rpc::WireValue::parse_units(text.units()).is_err()
+                { return Some(AcceptedTailEnd::ParseFailure); }
+            }
+            Ok(_) => {},
+        }
+    }
+    None
+}
+
+/// Discard accepted response tail with its original absolute deadline. Errors
+/// after consumer acceptance cannot alter content/usage or authorize retry.
+async fn drain_accepted_tail<B>(mut body: B, mut decoder: SseDecoder, deadline: Instant)
+where
+    B: futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin + Send + 'static,
+{
+    loop {
+        let next = tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline.into()) => return,
+            next = body.next() => next,
+        };
+        match next {
+            Some(Ok(bytes)) => {
+                if accepted_tail_end(decoder.feed(&bytes)).is_some() { return; }
+            }
+            Some(Err(_)) | None => return,
+        }
+    }
+}
+
+pub(crate) async fn run_prepared<S: CompletionsTransportState>(
+    client: &reqwest::Client,
+    model: &Model,
+    options: &StreamOptions,
+    bytes: &[u8],
+    state: &mut S,
+    sink: &EventSink<S::Event>,
+) -> Result<(), ProviderError> {
+    let cancel = options.cancel.clone();
+    if cancel.is_cancelled() {
+        return Err(ProviderError::Aborted);
+    }
+    let base = model.base_url.trim_end_matches('/');
+    if base.is_empty() {
+        return Err(ProviderError::Config("OpenAI request setup did not resolve a base URL".into()));
+    }
+    let url = format!("{base}/chat/completions");
+    let mut headers = Vec::new();
+    if let Some(key) = options.api_key.as_deref().filter(|key| !key.is_empty()) {
+        headers.push(("Authorization".into(), format!("Bearer {key}")));
+    }
+    headers.extend(options.extra_headers.iter().cloned());
     let started = Instant::now();
     let first_deadline = options.first_event_timeout.map(|d| started + d);
-    let mut retry_state = PostRetryState {
-        retry_blocked: &mut state.retry_blocked,
-        failure_evidence: &mut state.output.failure_evidence,
-    };
+    let retry = PostRetryPolicy::configured(&options.retry);
+    let mut retry_state = state.retry_state();
     let posted = match first_deadline {
         Some(deadline) => tokio::select! {
-            r = post_with_retry_detailed(client, &url, &headers, &params, &options.retry, &cancel, &mut retry_state) => r,
+            r = post_bytes_with_retry_policy(client, &url, &headers, bytes, &retry, &cancel, &mut retry_state) => r,
             _ = tokio::time::sleep_until(deadline.into()) => return Err(ProviderError::Timeout(FIRST_EVENT_TIMEOUT_MESSAGE.into())),
         },
-        None => {
-            post_with_retry_detailed(client, &url, &headers, &params, &options.retry, &cancel, &mut retry_state).await
-        }
+        None => post_bytes_with_retry_policy(client, &url, &headers, bytes, &retry, &cancel, &mut retry_state).await,
     };
     let response = posted.map_err(|error| {
+        state.capture_http_error(error.captured);
         if let Some(evidence) = error.failure_evidence {
-            state.output.failure_evidence = Some(evidence);
+            state.set_failure_evidence(evidence);
         }
         error.cause
     })?;
+    // The headers watchdog ends with the successful POST. The body opens its
+    // own first-item budget after this callback (fixed OMP b91db66e:946-949).
     if let Err(error) =
         crate::provider_response::notify_provider_response(options.on_response.as_ref(), &response, model).await
     {
-        state.retry_blocked = true;
+        state.block_retry();
         let mut evidence = error.failure_evidence(true);
         evidence.same_route_blocked = true;
-        state.output.failure_evidence = Some(evidence);
+        state.set_failure_evidence(evidence);
         return Err(error);
     }
     if cancel.is_cancelled() {
         return Err(ProviderError::Aborted);
     }
-    // Native Completions keeps the headers watchdog alive while awaiting its
-    // callback. Settle the callback before reporting that local timeout; the
-    // successful POST cannot be replayed on this failure.
-    if first_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-        state.retry_blocked = true;
-        let error = ProviderError::Timeout(FIRST_EVENT_TIMEOUT_MESSAGE.into());
-        let mut evidence = error.failure_evidence(true);
-        evidence.same_route_blocked = true;
-        state.output.failure_evidence = Some(evidence);
-        return Err(error);
-    }
-    if !sink.push_or_cancel(AssistantMessageEvent::Start { partial: state.output.clone() }, &cancel).await {
+    if !sink.push_or_cancel(state.start_event(), &cancel).await {
         return Err(ProviderError::Aborted);
     }
 
@@ -1633,34 +2007,55 @@ async fn run(
         let frames = match next {
             None => decoder.finish().into_iter().collect::<Vec<_>>(),
             Some(Ok(bytes)) => decoder.feed(&bytes),
-            Some(Err(_)) if state.finished => break 'outer,
+            Some(Err(_)) if state.finished() => break 'outer,
             Some(Err(err)) => return Err(ProviderError::Transport(format!("stream read failed: {err}"))),
         };
-        for frame in frames {
+        let mut frames = frames.into_iter();
+        while let Some(frame) = frames.next() {
             if frame.data == "[DONE]" {
-                state.saw_done = true;
+                state.mark_done();
                 break 'outer;
             }
-            let chunk = serde_json::from_str::<Value>(&frame.data).map_err(|e| {
-                let preview: String = frame.data.chars().take(200).collect();
-                ProviderError::Stream(format!("Malformed OpenAI completions stream frame ({e}): {preview}"))
-            })?;
-            if is_progress_chunk(&chunk) {
+            let mut events = Vec::new();
+            let flow = state.raw_frame(&frame.data, &mut events);
+            if flow.as_ref().is_ok_and(|(progress, _)| *progress) {
                 progressed = true;
                 last_progress = Instant::now();
             }
-            let mut events = Vec::new();
-            let flow = state.handle_chunk(&chunk, &mut events);
             for e in events {
                 if !sink.push_or_cancel(e, &cancel).await {
                     return Err(ProviderError::Aborted);
                 }
             }
-            if flow? == ChunkFlow::Break {
-                break 'outer;
-            }
-            if state.finished && finished_at.is_none() {
+            let flow = flow?.1;
+            if state.finished() && finished_at.is_none() {
                 finished_at = Some(Instant::now());
+            }
+            if flow == ChunkFlow::Break {
+                // This is the consumer's early return after accepting finish
+                // and usage, not transport EOF. Keep the SAME body/decoder;
+                // do not parse tail into state or reopen/retry the request.
+                if let Some(finished) = finished_at {
+                    match accepted_tail_end(frames) {
+                        Some(AcceptedTailEnd::Done) => state.mark_done(),
+                        Some(AcceptedTailEnd::ParseFailure) => {},
+                        None if !ended => {
+                            let drain = drain_accepted_tail(body, decoder, finished + POST_FINISH_GRACE);
+                            if options.wait_for_terminal_drain {
+                                tokio::select! {
+                                    _ = drain => {},
+                                    _ = cancel.cancelled() => {},
+                                }
+                            } else {
+                                // Transport-only resource: no Graph state/runtime,
+                                // accepted state, model call or Promise driver.
+                                tokio::spawn(drain);
+                            }
+                        }
+                        None => {},
+                    }
+                }
+                break 'outer;
             }
         }
         if ended {
@@ -1671,7 +2066,7 @@ async fn run(
         return Err(ProviderError::Aborted);
     }
     let mut events = Vec::new();
-    let finish = state.finish(&mut events);
+    let finish = state.finish_events(&mut events);
     for e in events {
         sink.push(e).await;
     }
@@ -1748,12 +2143,14 @@ mod tests {
                 name: "write".into(),
                 arguments: JsonObject::new(),
                 thought_signature: None,
+                ..Default::default()
             }),
             AssistantBlock::ToolCall(ToolCall {
                 id: "abcdef_012999".into(),
                 name: "read".into(),
                 arguments: JsonObject::new(),
                 thought_signature: None,
+                ..Default::default()
             }),
         ];
         let context = Context {
@@ -1766,6 +2163,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 1,
+                    provider_metadata: None,
+                    useless: false,
                 }),
                 Message::ToolResult(ToolResultMessage {
                     tool_call_id: "abcdef_012999".into(),
@@ -1774,6 +2173,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 2,
+                    provider_metadata: None,
+                    useless: false,
                 }),
                 Message::User(UserMessage::text("next")),
             ],
@@ -1816,6 +2217,7 @@ mod tests {
             name: "read".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         })];
         let context = Context {
             messages: vec![
@@ -1832,6 +2234,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 1,
+                    provider_metadata: None,
+                    useless: false,
                 }),
                 Message::User(UserMessage::text("continue")),
             ],
@@ -1888,6 +2292,7 @@ mod tests {
             name: "read".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         })];
         let context = Context {
             messages: vec![
@@ -1899,6 +2304,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 1,
+                    provider_metadata: None,
+                    useless: false,
                 }),
             ],
             ..Context::default()
@@ -1928,6 +2335,7 @@ mod tests {
                 name: "read".into(),
                 arguments: serde_json::from_value(json!({"path": "a"})).unwrap(),
                 thought_signature: None,
+                ..Default::default()
             }),
         ];
         let mut text_turn = AssistantMessage::empty(API, "test", "m");
@@ -1962,6 +2370,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 1,
+                    provider_metadata: None,
+                    useless: false,
                 }),
                 Message::Assistant(text_turn),
                 Message::Assistant(reasoning_only),
@@ -2191,6 +2601,7 @@ mod tests {
                 name: "read".into(),
                 arguments: serde_json::from_value(json!({"path": "a"})).unwrap(),
                 thought_signature: None,
+                ..Default::default()
             }),
         ];
         let context = Context {
@@ -2205,12 +2616,15 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 2,
+                    provider_metadata: None,
+                    useless: false,
                 }),
             ],
             tools: Some(vec![Tool {
                 name: "read".into(),
                 description: "Read".into(),
                 parameters: json!({"type": "object"}),
+                ..Default::default()
             }]),
         };
         let opts = StreamOptions {
@@ -2218,7 +2632,7 @@ mod tests {
             max_tokens: Some(64),
             ..Default::default()
         };
-        let params = build_params(&model(), &context, &opts);
+        let params = build_params(&model(), &context, &opts).unwrap();
         assert_eq!(params["stream"], json!(true));
         assert_eq!(params["stream_options"], json!({"include_usage": true}));
         assert_eq!(params["max_tokens"], json!(64));
@@ -2243,12 +2657,13 @@ mod tests {
             name: "x".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         }));
         let context = Context { system_prompt: vec![], messages: vec![Message::Assistant(assistant)], tools: None };
-        let params = build_params(&model(), &context, &StreamOptions::default());
+        let params = build_params(&model(), &context, &StreamOptions::default()).unwrap();
         assert_eq!(params["tools"], json!([]));
         let context = Context { tools: Some(vec![]), ..context };
-        assert!(build_params(&model(), &context, &StreamOptions::default()).get("tools").is_none());
+        assert!(build_params(&model(), &context, &StreamOptions::default()).unwrap().get("tools").is_none());
     }
 
     #[test]
@@ -2260,6 +2675,7 @@ mod tests {
             name: "read".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         }));
         let context = Context {
             system_prompt: vec![],
@@ -2267,6 +2683,8 @@ mod tests {
                 Message::Assistant(assistant),
                 Message::Developer(crate::types::DeveloperMessage {
                     content: crate::types::UserContent::Text("later guidance".into()),
+                    provider_payload: None,
+                    provider_payload_origin: None,
                     timestamp: 2,
                 }),
                 Message::ToolResult(ToolResultMessage {
@@ -2276,6 +2694,8 @@ mod tests {
                     details: None,
                     is_error: false,
                     timestamp: 3,
+                    provider_metadata: None,
+                    useless: false,
                 }),
             ],
             tools: None,
@@ -2301,6 +2721,7 @@ mod tests {
                 name: "read".into(),
                 arguments: JsonObject::new(),
                 thought_signature: None,
+                ..Default::default()
             }));
             messages.push(Message::Assistant(assistant));
             messages.push(Message::ToolResult(ToolResultMessage {
@@ -2310,6 +2731,8 @@ mod tests {
                 details: None,
                 is_error: false,
                 timestamp: 1,
+                provider_metadata: None,
+                useless: false,
             }));
         }
         let context = Context { system_prompt: vec![], messages, tools: None };

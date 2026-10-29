@@ -48,6 +48,7 @@ fn call_block(id: &str, name: &str, args: &Value) -> ToolCall {
         name: name.into(),
         arguments: args.as_object().cloned().unwrap_or_default(),
         thought_signature: None,
+        ..Default::default()
     }
 }
 
@@ -158,6 +159,148 @@ struct StrictEditTool {
     effects: Arc<Mutex<Vec<Value>>>,
 }
 
+struct RawCustomTool {
+    logical_name: &'static str,
+    alias: Option<&'static str>,
+    effects: Arc<Mutex<Vec<Value>>>,
+}
+
+#[async_trait]
+impl AgentTool for RawCustomTool {
+    fn definition(&self) -> Tool {
+        Tool {
+            name: self.logical_name.into(),
+            description: "Record a raw custom invocation".into(),
+            parameters: json!({"type":"object","properties":{"input":{"type":"string","minLength":1}},
+                "required":["input"],"additionalProperties":false}),
+            ..Default::default()
+        }
+    }
+    fn custom_format(&self) -> Option<CustomToolFormat> {
+        self.alias.map(|_| CustomToolFormat { syntax: CustomToolSyntax::Lark, definition: "start: /.+/".into() })
+    }
+    fn custom_wire_name(&self) -> Option<String> {
+        self.alias.map(str::to_owned)
+    }
+    async fn execute(
+        &self,
+        id: &str,
+        args: JsonObject,
+        _cancel: CancellationToken,
+        _update: UpdateFn,
+    ) -> Result<ToolOutput, ToolError> {
+        self.effects.lock().unwrap().push(json!({"logical":self.logical_name,"id":id,"args":args}));
+        Ok(ToolOutput::text(format!("effect:{}", self.logical_name)))
+    }
+}
+
+#[derive(Default)]
+struct CustomApproval {
+    block: bool,
+    seen: Mutex<Vec<Value>>,
+}
+
+#[async_trait]
+impl LoopHooks for CustomApproval {
+    async fn before_tool_call(&self, call: &ToolCall, args: &JsonObject, _cancel: &CancellationToken) -> ToolDecision {
+        self.seen.lock().unwrap().push(json!({"name":call.name,"customWireName":call.custom_wire_name,"args":args}));
+        if self.block { ToolDecision::Block(Some("denied by host policy".into())) } else { ToolDecision::Allow }
+    }
+}
+
+#[tokio::test]
+async fn conditional_freeform_dispatch_schema_approval_and_internal_name_group() {
+    use ara_testkit::{FakeUpstream, Script};
+    for (invalid, blocked, collision) in
+        [(false, false, false), (true, false, false), (false, true, false), (false, false, true)]
+    {
+        let raw = if invalid { "" } else { "*** Begin Patch\n+raw { not JSON } 中文\n*** End Patch" };
+        let script:Script=serde_json::from_value(json!({"responses":[
+            {"events":[
+                {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_dispatch","call_id":"call_dispatch","name":"apply_patch","input":raw}}},
+                {"data":{"type":"response.completed","response":{"status":"completed"}}}
+            ]},
+            {"events":[
+                {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"reviewed"}]}}},
+                {"data":{"type":"response.completed","response":{"status":"completed"}}}
+            ]}
+        ]})).unwrap();
+        let endpoint = FakeUpstream::start(script, None).await.unwrap();
+        let mut opts = ara_ai::providers::openai_responses::StreamOptions::default();
+        opts.request.apply_patch_tool_type = Some("freeform".into());
+        opts.retry.max_attempts = 1;
+        let provider = Arc::new(OpenAIResponsesProvider { client: reqwest::Client::new(), base: opts });
+        let effects = Arc::new(Mutex::new(Vec::new()));
+        let mut tools: Vec<Arc<dyn AgentTool>> = vec![Arc::new(RawCustomTool {
+            logical_name: "edit",
+            alias: Some("apply_patch"),
+            effects: effects.clone(),
+        })];
+        if collision {
+            tools.push(Arc::new(RawCustomTool { logical_name: "apply_patch", alias: None, effects: effects.clone() }));
+        }
+        let hooks = Arc::new(CustomApproval { block: blocked, ..Default::default() });
+        let mut cfg = config(provider, tools, hooks.clone());
+        cfg.model.api = "openai-responses".into();
+        cfg.model.base_url = endpoint.base_url();
+        let sink = Arc::new(RecordingSink::default());
+        let messages = Agent::new(cfg, Vec::new())
+            .prompt(vec![user("apply the raw input")], CancellationToken::new(), sink.clone())
+            .await
+            .unwrap()
+            .model_messages()
+            .unwrap();
+        let results = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::ToolResult(result) => Some(result),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_call_id, "call_dispatch|ctc_dispatch");
+        assert_eq!(results[0].tool_name, "apply_patch", "received wire name stays on receipts");
+        assert_eq!(results[0].is_error, invalid || blocked);
+        assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "reviewed");
+        {
+            let approved = hooks.seen.lock().unwrap();
+            assert_eq!(approved.len(), usize::from(!invalid), "schema validation precedes approval");
+            if !invalid {
+                assert_eq!(
+                    approved[0],
+                    json!({"name":"apply_patch","customWireName":"apply_patch","args":{"input":raw}})
+                );
+            }
+            let effects = effects.lock().unwrap();
+            if invalid || blocked {
+                assert!(effects.is_empty());
+            } else {
+                assert_eq!(
+                    *effects,
+                    vec![
+                        json!({"logical":if collision {"apply_patch"} else {"edit"},"id":"call_dispatch|ctc_dispatch","args":{"input":raw}})
+                    ]
+                );
+            }
+        }
+        let events = sink.events.lock().await;
+        assert!(events.iter().any(|event| matches!(event,AgentEvent::ToolExecutionEnd {tool_name,is_error,..} if tool_name=="apply_patch" && *is_error==(invalid||blocked))));
+        let recorded = endpoint.requests.lock().await;
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(
+            recorded[0]["body"]["tools"][0]["type"], "custom",
+            "tool-owned optional metadata reaches protocol projection"
+        );
+        let input = recorded[1]["body"]["input"].as_array().unwrap();
+        assert!(input.iter().any(|item| item["type"] == "custom_tool_call"
+            && item["call_id"] == "call_dispatch"
+            && item["input"] == raw));
+        assert!(
+            input.iter().any(|item| item["type"] == "custom_tool_call_output" && item["call_id"] == "call_dispatch")
+        );
+    }
+}
+
 #[async_trait]
 impl AgentTool for StrictEditTool {
     fn definition(&self) -> Tool {
@@ -166,6 +309,7 @@ impl AgentTool for StrictEditTool {
             description: "Record a test edit".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}},
                 "required":["path"],"additionalProperties":false}),
+            ..Default::default()
         }
     }
 
@@ -192,6 +336,7 @@ impl AgentTool for WireSchemaTool {
                 "mode":{"anyOf":[{"const":"a","description":"mode"},{"const":"b","description":"mode"}]},
                 "flag":{"enum":[true,false]}
             },"required":["skip","mode","flag"]}),
+            ..Default::default()
         }
     }
 
@@ -226,6 +371,7 @@ impl AgentTool for LegacySchemaTool {
                 "required":["item","pair"],
                 "definitions":{"Item":{"type":"string"}}
             }),
+            ..Default::default()
         }
     }
 
@@ -252,6 +398,7 @@ impl AgentTool for EchoTool {
             name: "echo".into(),
             description: "Echo text".into(),
             parameters: json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": false}),
+            ..Default::default()
         }
     }
     fn concurrency(&self, _args: &JsonObject) -> Concurrency {
@@ -276,7 +423,13 @@ impl AgentTool for EchoTool {
         }
         self.log.lock().unwrap().push(format!("end:{id}"));
         if text == "fail" {
-            return Ok(ToolOutput { content: vec![], details: None, is_error: true });
+            return Ok(ToolOutput {
+                content: vec![],
+                details: None,
+                is_error: true,
+                provider_metadata: None,
+                useless: false,
+            });
         }
         Ok(ToolOutput::text(format!("echo: {text}")).with_details(json!({"len": text.len()})))
     }
@@ -337,6 +490,7 @@ fn config(provider: Arc<dyn ModelProvider>, tools: Vec<Arc<dyn AgentTool>>, hook
         deadline: None,
         max_model_calls: None,
         hooks,
+        interrupt_mode: ara_agent::InterruptMode::Immediate,
     }
 }
 
@@ -353,7 +507,7 @@ async fn types(sink: &RecordingSink) -> Vec<String> {
         .map(|e| {
             let role = match e {
                 AgentEvent::MessageStart { message } | AgentEvent::MessageEnd { message } => {
-                    format!(":{}", message.role())
+                    format!(":{}", message.json().unwrap()["role"].as_str().unwrap())
                 }
                 _ => String::new(),
             };
@@ -417,13 +571,18 @@ struct InputSink {
 #[async_trait]
 impl AgentEventSink for InputSink {
     async fn emit(&self, event: AgentEvent) {
+        if let AgentEvent::MessageStart { message } = &event
+            && let Some(model @ (Message::User(_) | Message::Developer(_))) = message.checked_model_snapshot().unwrap()
+        {
+            self.inputs.lock().unwrap().push(AgentInput { model, provenance: message.source() });
+        }
         self.events.emit(event).await;
     }
 
     async fn emit_input(&self, input: AgentInput) {
         self.inputs.lock().unwrap().push(input.clone());
-        self.emit(AgentEvent::MessageStart { message: input.model.clone() }).await;
-        self.emit(AgentEvent::MessageEnd { message: input.model }).await;
+        self.emit(AgentEvent::MessageStart { message: input.model.clone().into() }).await;
+        self.emit(AgentEvent::MessageEnd { message: input.model.into() }).await;
     }
 }
 
@@ -441,6 +600,74 @@ impl LoopHooks for InputHooks {
 
     async fn follow_up_inputs(&self) -> Vec<AgentInput> {
         std::mem::take(&mut *self.follow_up.lock().unwrap())
+    }
+}
+
+enum AdmissionAction {
+    Allow,
+    Block,
+    Cancel,
+    CancelOnReturn,
+    Wait(Arc<tokio::sync::Notify>),
+    WaitThenAllow(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>),
+}
+
+async fn admission_action(action: AdmissionAction, cancel: &CancellationToken) -> Result<(), AdmissionError> {
+    match action {
+        AdmissionAction::Allow => Ok(()),
+        AdmissionAction::Block => Err(AdmissionError::Blocked("503 admission unavailable".into())),
+        AdmissionAction::Cancel => Err(AdmissionError::Cancelled),
+        AdmissionAction::CancelOnReturn => {
+            cancel.cancel();
+            Ok(())
+        }
+        AdmissionAction::Wait(entered) => {
+            entered.notify_one();
+            std::future::pending().await
+        }
+        AdmissionAction::WaitThenAllow(entered, release) => {
+            entered.notify_one();
+            release.notified().await;
+            Ok(())
+        }
+    }
+}
+
+#[derive(Default)]
+struct AdmissionHooks {
+    queues: InputHooks,
+    queued_admission: Mutex<std::collections::VecDeque<AdmissionAction>>,
+    model_admission: Mutex<std::collections::VecDeque<AdmissionAction>>,
+    dequeues: Mutex<[usize; 2]>,
+    model_admissions: Mutex<usize>,
+}
+
+#[async_trait]
+impl LoopHooks for AdmissionHooks {
+    async fn before_queued_input_dequeue(&self, cancel: &CancellationToken) -> Result<(), AdmissionError> {
+        let action = self.queued_admission.lock().unwrap().pop_front().unwrap_or(AdmissionAction::Allow);
+        admission_action(action, cancel).await
+    }
+
+    async fn before_model_call(
+        &self,
+        snapshot: ExecutionSnapshot,
+        cancel: &CancellationToken,
+    ) -> Result<ExecutionSnapshot, AdmissionError> {
+        *self.model_admissions.lock().unwrap() += 1;
+        let action = self.model_admission.lock().unwrap().pop_front().unwrap_or(AdmissionAction::Allow);
+        admission_action(action, cancel).await?;
+        Ok(snapshot)
+    }
+
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        self.dequeues.lock().unwrap()[0] += 1;
+        self.queues.steering_inputs().await
+    }
+
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        self.dequeues.lock().unwrap()[1] += 1;
+        self.queues.follow_up_inputs().await
     }
 }
 
@@ -479,6 +706,8 @@ async fn owned_inputs_keep_distinct_provenance_for_equal_model_messages_in_all_q
         content: UserContent::Text("identical input".into()),
         synthetic: None,
         timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     for (steering_mode, follow_up_mode, users_per_call) in [
         (QueueMode::OneAtATime, QueueMode::OneAtATime, vec![2, 3, 4, 5, 6, 7]),
@@ -506,18 +735,22 @@ async fn owned_inputs_keep_distinct_provenance_for_equal_model_messages_in_all_q
             &agent.peek_follow_up_inputs(),
             &[follow_a.clone(), follow_b.clone(), model.clone().into()],
         );
-        assert_eq!(agent.peek_steering_queue(), vec![model.clone(); 3]);
-        assert_eq!(agent.peek_follow_up_queue(), vec![model.clone(); 3]);
+        assert_eq!(agent.peek_steering_queue().unwrap(), vec![model.clone(); 3]);
+        assert_eq!(agent.peek_follow_up_queue().unwrap(), vec![model.clone(); 3]);
         let sink = Arc::new(InputSink::default());
         let report = agent.prompt_inputs(vec![initial.clone()], CancellationToken::new(), sink.clone()).await.unwrap();
         let expected = [initial, steer_a, steer_b, model.clone().into(), follow_a, follow_b, model.clone().into()];
         assert_input_identity(&sink.inputs.lock().unwrap(), &expected);
         assert_eq!(report.end, RunEnd::Completed);
-        let report_users: Vec<_> =
-            report.messages.iter().filter(|message| matches!(message, Message::User(_))).collect();
-        assert_eq!(report_users, vec![&model; 7]);
-        assert_eq!(agent.messages().await, report.messages);
-        assert!(!serde_json::to_string(&report.messages).unwrap().contains("private-origin"));
+        let report_users: Vec<_> = report
+            .model_messages()
+            .unwrap()
+            .into_iter()
+            .filter(|message| matches!(message, Message::User(_)))
+            .collect();
+        assert_eq!(report_users, vec![model.clone(); 7]);
+        assert_eq!(agent.messages().await.unwrap(), report.model_messages().unwrap());
+        assert!(!serde_json::to_string(&report.model_messages().unwrap()).unwrap().contains("private-origin"));
         {
             let contexts = provider.contexts.lock().unwrap();
             assert_eq!(
@@ -535,28 +768,39 @@ async fn owned_inputs_keep_distinct_provenance_for_equal_model_messages_in_all_q
             .filter(|event| {
                 matches!(
                     event,
-                    AgentEvent::MessageStart { message: Message::User(_) }
-                        | AgentEvent::MessageEnd { message: Message::User(_) }
+                    AgentEvent::MessageStart { message } | AgentEvent::MessageEnd { message } if message.json().unwrap()["role"] == "user"
                 )
             })
             .collect();
         assert_eq!(inputs.len(), 14);
-        for pair in inputs.as_chunks::<2>().0 {
-            assert_eq!(
-                *pair,
-                [
-                    &AgentEvent::MessageStart { message: model.clone() },
-                    &AgentEvent::MessageEnd { message: model.clone() }
-                ]
-            );
+        for (pair, input) in inputs.as_chunks::<2>().0.iter().zip(&expected) {
+            let raw: AgentMessage = input.clone().into();
+            assert!(matches!((pair[0], pair[1]),
+                (AgentEvent::MessageStart { message: start }, AgentEvent::MessageEnd { message: end })
+                    if ara_agent::checked_record_equal(start, &raw).unwrap()
+                        && ara_agent::checked_record_equal(end, &raw).unwrap()));
+            let (AgentEvent::MessageStart { message: start }, AgentEvent::MessageEnd { message: end }) =
+                (pair[0], pair[1])
+            else {
+                panic!("input start/end order changed");
+            };
+            assert!(start.same_record(end));
+            if let Some(source) = &input.provenance {
+                assert!(Arc::ptr_eq(&start.source().unwrap(), source));
+            }
         }
     }
 }
 
 #[tokio::test]
 async fn owned_native_queues_precede_owned_host_hooks_and_legacy_hooks_adapt() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     let initial = owned_input(&model, "initial");
     let native_steer = owned_input(&model, "native-steer");
     let host_steer = owned_input(&model, "host-steer");
@@ -591,8 +835,13 @@ async fn owned_native_queues_precede_owned_host_hooks_and_legacy_hooks_adapt() {
 
 #[tokio::test]
 async fn owned_idle_continue_skips_the_second_steer_until_the_next_model_turn() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     for empty in [true, false] {
         let provider = ScriptedProvider::new(vec![]);
         let previous =
@@ -615,8 +864,13 @@ async fn owned_idle_continue_skips_the_second_steer_until_the_next_model_turn() 
 
 #[test]
 fn owned_queue_peek_pop_and_old_projection_share_one_queue() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     let agent = Agent::new(config(ScriptedProvider::new(vec![]), vec![], Arc::new(NoHooks)), Vec::new());
     let first = owned_input(&model, "first");
     let second = owned_input(&model, "second");
@@ -635,8 +889,13 @@ fn owned_queue_peek_pop_and_old_projection_share_one_queue() {
 
 #[tokio::test]
 async fn owned_cancelled_idle_dequeue_rolls_back_both_queues_with_exact_provenance() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     for follow_up in [false, true] {
         for mode in [QueueMode::All, QueueMode::OneAtATime] {
             let first = owned_input(&model, "native-first");
@@ -673,7 +932,7 @@ async fn owned_cancelled_idle_dequeue_rolls_back_both_queues_with_exact_provenan
             let expected = if mode == QueueMode::All { vec![first, second, host] } else { vec![first, host, second] };
             let remaining = if follow_up { agent.peek_follow_up_inputs() } else { agent.peek_steering_inputs() };
             assert_input_identity(&remaining, &expected);
-            assert!(agent.messages().await.is_empty());
+            assert!(agent.messages().await.unwrap().is_empty());
             assert!(sink.inputs.lock().unwrap().is_empty());
             assert!(sink.events.events.lock().await.is_empty());
             assert!(provider.contexts.lock().unwrap().is_empty());
@@ -693,8 +952,13 @@ async fn owned_cancelled_idle_dequeue_rolls_back_both_queues_with_exact_provenan
 
 #[tokio::test]
 async fn owned_already_dequeued_inputs_commit_once_at_model_budget_for_both_hooks() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     for follow_up in [false, true] {
         let initial = owned_input(&model, "initial");
         let first = owned_input(&model, "pending-first");
@@ -714,16 +978,28 @@ async fn owned_already_dequeued_inputs_commit_once_at_model_budget_for_both_hook
             agent_loop_inputs(vec![initial.clone()], &mut context, &cfg, &CancellationToken::new(), &sink).await;
         assert_eq!(report.end, RunEnd::ModelCallBudget);
         assert_input_identity(&sink.inputs.lock().unwrap(), &[initial, first, second]);
-        assert_eq!(user_texts(&report.messages), ["same", "same", "same"]);
-        assert_eq!(context, report.messages);
+        assert_eq!(user_texts(&report.model_messages().unwrap()), ["same", "same", "same"]);
+        assert!({
+            let models = report.model_messages().unwrap();
+            context.len() == models.len()
+                && context
+                    .iter()
+                    .zip(&models)
+                    .all(|(record, model)| ara_agent::checked_model_equal(record, model).unwrap())
+        });
         assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(follow_up));
     }
 }
 
 #[tokio::test]
 async fn owned_already_dequeued_inputs_commit_once_after_deadline_for_both_hooks() {
-    let model =
-        Message::User(UserMessage { content: UserContent::Text("same".into()), synthetic: None, timestamp: 42 });
+    let model = Message::User(UserMessage {
+        content: UserContent::Text("same".into()),
+        synthetic: None,
+        timestamp: 42,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     for follow_up in [false, true] {
         let initial = owned_input(&model, "initial");
         let first = owned_input(&model, "pending-first");
@@ -755,8 +1031,15 @@ async fn owned_already_dequeued_inputs_commit_once_after_deadline_for_both_hooks
         let (report, context) = waiting.await.unwrap();
         assert_eq!(report.end, RunEnd::Deadline);
         assert_input_identity(&sink.inputs.lock().unwrap(), &[initial, first, second]);
-        assert_eq!(user_texts(&report.messages), ["same", "same", "same"]);
-        assert_eq!(context, report.messages);
+        assert_eq!(user_texts(&report.model_messages().unwrap()), ["same", "same", "same"]);
+        assert!({
+            let models = report.model_messages().unwrap();
+            context.len() == models.len()
+                && context
+                    .iter()
+                    .zip(&models)
+                    .all(|(record, model)| ara_agent::checked_model_equal(record, model).unwrap())
+        });
         assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(follow_up));
     }
 }
@@ -829,7 +1112,7 @@ async fn run_config_selects_provider_tools_hooks_and_request_options() {
         RunEnd::Completed
     );
     assert!(default_effects.lock().unwrap().is_empty());
-    let messages = agent.messages().await;
+    let messages = agent.messages().await.unwrap();
     assert!(messages.iter().any(|message| matches!(message, Message::ToolResult(result) if result.tool_call_id == "default-tool" && result.is_error)));
     assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "default restored");
     assert_eq!(messages.last().unwrap().as_assistant().unwrap().model, "scripted");
@@ -878,7 +1161,7 @@ async fn run_config_refreshes_deadlines_without_replacing_transcript_queues_or_d
         RunEnd::Completed
     );
     assert_eq!(agent.steering_mode(), QueueMode::All);
-    assert_eq!(user_texts(&agent.messages().await), ["first", "second", "third-a", "third-b"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["first", "second", "third-a", "third-b"]);
     assert!(defaults.contexts.lock().unwrap().is_empty());
     assert_eq!(provider.contexts.lock().unwrap().len(), 3);
     assert_eq!(agent.queued_counts(), (0, 0));
@@ -905,6 +1188,8 @@ async fn run_config_continues_empty_and_native_transcripts_with_supplied_hooks_a
             details: None,
             is_error: false,
             timestamp: 0,
+            provider_metadata: None,
+            useless: false,
         }),
     ];
     let (tool, effects) = echo(0, Concurrency::Shared);
@@ -924,7 +1209,7 @@ async fn run_config_continues_empty_and_native_transcripts_with_supplied_hooks_a
             RunEnd::Completed
         );
         assert_eq!(
-            user_texts(&agent.messages().await),
+            user_texts(&agent.messages().await.unwrap()),
             [if empty { "supplied hook follow-up" } else { "native pending prompt" }]
         );
     }
@@ -961,8 +1246,8 @@ async fn run_config_preserves_cancelled_dequeue_and_unknown_effect_refusal() {
     cancel.cancel();
     gate.release.notify_one();
     assert!(matches!(pending.await.unwrap(), Err(AgentError::CannotContinue(_))));
-    assert_eq!(user_texts(&agent.peek_steering_queue()), ["owned message", "supplied hook message"]);
-    assert!(agent.messages().await.is_empty());
+    assert_eq!(user_texts(&agent.peek_steering_queue().unwrap()), ["owned message", "supplied hook message"]);
+    assert!(agent.messages().await.unwrap().is_empty());
     assert!(provider.contexts.lock().unwrap().is_empty());
     let mut expired = config(provider.clone(), vec![], Arc::new(NoHooks));
     expired.deadline = Some(Instant::now() - Duration::from_secs(1));
@@ -991,7 +1276,7 @@ async fn run_config_preserves_cancelled_dequeue_and_unknown_effect_refusal() {
     assert!(effects.lock().unwrap().is_empty());
     assert!(provider.contexts.lock().unwrap().is_empty());
     assert_eq!(unsafe_agent.queued_counts(), (1, 0));
-    assert_eq!(unsafe_agent.messages().await.len(), 1);
+    assert_eq!(unsafe_agent.messages().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -1000,15 +1285,20 @@ async fn run_config_busy_rejection_and_dropped_waiter_retain_owned_effects_and_r
         recorded: RecordingSink,
         entered: tokio::sync::Notify,
         release: tokio::sync::Notify,
+        completed: tokio::sync::Notify,
     }
     #[async_trait]
     impl AgentEventSink for GatedSink {
         async fn emit(&self, event: AgentEvent) {
             let tool_start = matches!(event, AgentEvent::ToolExecutionStart { .. });
+            let completed = matches!(event, AgentEvent::AgentEnd { .. });
             self.recorded.emit(event).await;
             if tool_start {
                 self.entered.notify_one();
                 self.release.notified().await;
+            }
+            if completed {
+                self.completed.notify_one();
             }
         }
     }
@@ -1023,6 +1313,7 @@ async fn run_config_busy_rejection_and_dropped_waiter_retain_owned_effects_and_r
         recorded: RecordingSink::default(),
         entered: tokio::sync::Notify::new(),
         release: tokio::sync::Notify::new(),
+        completed: tokio::sync::Notify::new(),
     });
     let waiting = {
         let (agent, sink, run) = (agent.clone(), sink.clone(), config(provider.clone(), vec![tool], Arc::new(NoHooks)));
@@ -1043,11 +1334,13 @@ async fn run_config_busy_rejection_and_dropped_waiter_retain_owned_effects_and_r
         agent.continue_run_with_config(rejected, CancellationToken::new(), Arc::new(NullSink)).await,
         Err(AgentError::Busy)
     ));
-    assert_eq!(user_texts(&agent.peek_steering_queue()), ["queued"]);
+    assert_eq!(user_texts(&agent.peek_steering_queue().unwrap()), ["queued"]);
     waiting.abort();
     assert!(waiting.await.unwrap_err().is_cancelled());
     sink.release.notify_one();
-    let messages = tokio::time::timeout(Duration::from_secs(3), agent.messages()).await.unwrap();
+    // messages() is a live snapshot, not a join. Observe the detached Run end.
+    tokio::time::timeout(Duration::from_secs(3), sink.completed.notified()).await.unwrap();
+    let messages = tokio::time::timeout(Duration::from_secs(3), agent.messages()).await.unwrap().unwrap();
     assert_eq!(*effects.lock().unwrap(), ["start:owned-run", "end:owned-run"]);
     assert_eq!(user_texts(&messages), ["initial", "queued"]);
     assert_eq!(messages.last().unwrap().as_assistant().unwrap().text(), "done");
@@ -1057,7 +1350,7 @@ async fn run_config_busy_rejection_and_dropped_waiter_retain_owned_effects_and_r
             .lock()
             .await
             .iter()
-            .any(|event| matches!(event, AgentEvent::MessageEnd { message: Message::ToolResult(_) }))
+            .any(|event| matches!(ended_model_message(event), Some(Message::ToolResult(_))))
     );
     assert!(defaults.contexts.lock().unwrap().is_empty());
 }
@@ -1096,7 +1389,7 @@ async fn stateful_agent_drains_steering_then_follow_up_and_rejects_parallel_prom
     agent.follow_up(user("follow-up"));
     let report = running.await.unwrap().unwrap();
     assert_eq!(report.end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["initial", "steer", "follow-up"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial", "steer", "follow-up"]);
     assert_eq!(*log.lock().unwrap(), vec!["start:one", "end:one"]);
     assert_eq!(provider.contexts.lock().unwrap().len(), 3);
     assert_eq!(agent.queued_counts(), (0, 0));
@@ -1124,7 +1417,7 @@ async fn stateful_agent_queue_modes_control_model_turns_independently() {
         let report = agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
         assert_eq!(report.end, RunEnd::Completed);
         assert!(!agent.has_queued_messages());
-        (user_texts(&agent.messages().await), provider.contexts.lock().unwrap().len())
+        (user_texts(&agent.messages().await.unwrap()), provider.contexts.lock().unwrap().len())
     }
 
     let expected = ["initial", "steer-a", "steer-b", "follow-a", "follow-b"];
@@ -1132,6 +1425,258 @@ async fn stateful_agent_queue_modes_control_model_turns_independently() {
     assert_eq!(run(QueueMode::All, QueueMode::All).await, (expected.map(str::to_string).to_vec(), 2));
     assert_eq!(run(QueueMode::All, QueueMode::OneAtATime).await, (expected.map(str::to_string).to_vec(), 3));
     assert_eq!(run(QueueMode::OneAtATime, QueueMode::All).await, (expected.map(str::to_string).to_vec(), 3));
+}
+
+#[tokio::test]
+async fn idle_continue_admission_preserves_host_and_agent_queues_and_releases_busy() {
+    for follow_up in [false, true] {
+        for failure in 0..4 {
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let action = match failure {
+                0 => AdmissionAction::Block,
+                1 => AdmissionAction::Cancel,
+                2 => AdmissionAction::CancelOnReturn,
+                _ => AdmissionAction::Wait(entered.clone()),
+            };
+            let hooks = Arc::new(AdmissionHooks::default());
+            if follow_up {
+                hooks.queued_admission.lock().unwrap().push_back(AdmissionAction::Allow);
+            }
+            hooks.queued_admission.lock().unwrap().push_back(action);
+            let host_input = owned_input(&user("host queued"), "host");
+            let agent_input = owned_input(&user("agent queued"), "agent");
+            let host_queue = if follow_up { &hooks.queues.follow_up } else { &hooks.queues.steering };
+            host_queue.lock().unwrap().push(host_input.clone());
+            let provider = ScriptedProvider::new(vec![]);
+            let agent = Agent::new(config(provider.clone(), vec![], hooks.clone()), Vec::new());
+            if follow_up {
+                agent.follow_up_input(agent_input.clone());
+            } else {
+                agent.steer_input(agent_input.clone());
+            }
+            let cancel = CancellationToken::new();
+            let running = {
+                let agent = agent.clone();
+                let cancel = cancel.clone();
+                tokio::spawn(async move { agent.continue_run(cancel, Arc::new(NullSink)).await })
+            };
+            if failure == 3 {
+                tokio::time::timeout(Duration::from_secs(3), entered.notified()).await.unwrap();
+                cancel.cancel();
+            }
+            let error = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().unwrap_err();
+            if failure == 0 {
+                assert!(matches!(error, AgentError::Admission(AdmissionError::Blocked(_))));
+            } else {
+                assert!(matches!(error, AgentError::Admission(AdmissionError::Cancelled)));
+            }
+            assert!(!agent.is_busy());
+            assert!(agent.messages().await.unwrap().is_empty());
+            assert!(provider.contexts.lock().unwrap().is_empty());
+            assert_eq!(*hooks.dequeues.lock().unwrap(), [usize::from(follow_up), 0]);
+            assert_input_identity(&host_queue.lock().unwrap(), &[host_input]);
+            let owned = if follow_up { agent.peek_follow_up_inputs() } else { agent.peek_steering_inputs() };
+            assert_input_identity(&owned, &[agent_input]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn running_queue_admission_preserves_inputs_and_emits_distinct_terminal_events() {
+    for follow_up in [false, true] {
+        for blocked in [false, true] {
+            let hooks = Arc::new(AdmissionHooks::default());
+            if follow_up {
+                hooks.queued_admission.lock().unwrap().extend([
+                    AdmissionAction::Allow,
+                    AdmissionAction::Allow,
+                    AdmissionAction::Allow,
+                ]);
+            }
+            hooks.queued_admission.lock().unwrap().push_back(if blocked {
+                AdmissionAction::Block
+            } else {
+                AdmissionAction::Cancel
+            });
+            let host_input = owned_input(&user("host queued"), "host");
+            let agent_input = owned_input(&user("agent queued"), "agent");
+            let host_queue = if follow_up { &hooks.queues.follow_up } else { &hooks.queues.steering };
+            host_queue.lock().unwrap().push(host_input.clone());
+            let provider = ScriptedProvider::new(vec![reply("first", &[], StopReason::Stop)]);
+            let agent = Agent::new(config(provider.clone(), vec![], hooks.clone()), Vec::new());
+            if follow_up {
+                agent.follow_up_input(agent_input.clone());
+            } else {
+                agent.steer_input(agent_input.clone());
+            }
+            let sink = Arc::new(RecordingSink::default());
+            let report = agent.prompt(vec![user("initial")], CancellationToken::new(), sink.clone()).await.unwrap();
+            assert_eq!(report.end, if blocked { RunEnd::Error } else { RunEnd::Aborted });
+            let message = report.model_messages().unwrap().last().unwrap().as_assistant().cloned().unwrap();
+            assert_eq!(message.stop_reason, if blocked { StopReason::Error } else { StopReason::Aborted });
+            if blocked {
+                assert_eq!(message.error_message.as_deref(), Some("503 admission unavailable"));
+                let evidence = message.failure_evidence.as_ref().unwrap();
+                assert_eq!(evidence.kind, ara_ai::retry_classification::ProviderErrorKind::Config);
+                assert!(evidence.replay_blocked && evidence.same_route_blocked);
+                assert!(evidence.context_recovery.is_none());
+                assert!(ara_ai::retry_classification::classify_retry(&message, "openai-completions").replay_blocked);
+            }
+            assert!(!agent.is_busy());
+            assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(follow_up));
+            assert_eq!(*hooks.dequeues.lock().unwrap(), [if follow_up { 3 } else { 0 }, 0]);
+            assert_input_identity(&host_queue.lock().unwrap(), &[host_input]);
+            let owned = if follow_up { agent.peek_follow_up_inputs() } else { agent.peek_steering_inputs() };
+            assert_input_identity(&owned, &[agent_input]);
+            let event_types = types(&sink).await;
+            assert_eq!(event_types.first().unwrap(), "agent_start");
+            assert_eq!(event_types.last().unwrap(), "agent_end");
+            assert_eq!(event_types.iter().filter(|t| t.as_str() == "turn_end").count(), 1 + usize::from(follow_up));
+        }
+    }
+}
+
+#[tokio::test]
+async fn admission_deadline_stops_uncooperative_queue_and_model_hooks_without_dispatch() {
+    for model_gate in [false, true] {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let hooks = Arc::new(AdmissionHooks::default());
+        let actions = if model_gate { &hooks.model_admission } else { &hooks.queued_admission };
+        actions.lock().unwrap().push_back(AdmissionAction::Wait(entered.clone()));
+        let provider = ScriptedProvider::new(vec![]);
+        let mut cfg = config(provider.clone(), vec![], hooks.clone());
+        cfg.deadline = Some(Instant::now() + Duration::from_millis(50));
+        let agent = Agent::new(cfg, Vec::new());
+        if !model_gate {
+            agent.steer(user("still queued"));
+        }
+        let sink = Arc::new(RecordingSink::default());
+        let report = tokio::time::timeout(
+            Duration::from_secs(3),
+            agent.prompt(vec![user("initial")], CancellationToken::new(), sink.clone()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(report.end, RunEnd::Deadline);
+        let message = report.model_messages().unwrap().last().unwrap().as_assistant().cloned().unwrap();
+        assert_eq!(message.stop_reason, StopReason::Aborted);
+        assert_eq!(message.error_message.as_deref(), Some("Deadline exceeded"));
+        assert!(provider.contexts.lock().unwrap().is_empty());
+        assert_eq!(agent.queued_counts(), (usize::from(!model_gate), 0));
+        assert!(!agent.is_busy());
+        assert_eq!(types(&sink).await.last().unwrap(), "agent_end");
+    }
+    let hooks = Arc::new(AdmissionHooks::default());
+    hooks.queued_admission.lock().unwrap().push_back(AdmissionAction::Wait(Arc::new(tokio::sync::Notify::new())));
+    let provider = ScriptedProvider::new(vec![]);
+    let mut cfg = config(provider.clone(), vec![], hooks);
+    cfg.deadline = Some(Instant::now() + Duration::from_millis(50));
+    let agent = Agent::new(cfg, Vec::new());
+    agent.steer(user("idle queued"));
+    let result =
+        tokio::time::timeout(Duration::from_secs(3), agent.continue_run(CancellationToken::new(), Arc::new(NullSink)))
+            .await
+            .unwrap();
+    assert!(matches!(result, Err(AgentError::Admission(AdmissionError::Cancelled))));
+    assert_eq!(agent.queued_counts(), (1, 0));
+    assert!(!agent.is_busy());
+    assert!(agent.messages().await.unwrap().is_empty());
+    assert!(provider.contexts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn follow_up_admission_failure_commits_already_dequeued_late_steering() {
+    let hooks = Arc::new(AdmissionHooks::default());
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    hooks.queued_admission.lock().unwrap().extend([
+        AdmissionAction::Allow,
+        AdmissionAction::Allow,
+        AdmissionAction::WaitThenAllow(entered.clone(), release.clone()),
+        AdmissionAction::Block,
+    ]);
+    let follow_up = owned_input(&user("follow-up retained"), "follow");
+    hooks.queues.follow_up.lock().unwrap().push(follow_up.clone());
+    let provider = ScriptedProvider::new(vec![reply("done", &[], StopReason::Stop)]);
+    let agent = Agent::new(config(provider.clone(), vec![], hooks.clone()), Vec::new());
+    let sink = Arc::new(InputSink::default());
+    let running = {
+        let agent = agent.clone();
+        let sink = sink.clone();
+        tokio::spawn(async move { agent.prompt(vec![user("initial")], CancellationToken::new(), sink).await })
+    };
+    tokio::time::timeout(Duration::from_secs(3), entered.notified()).await.unwrap();
+    let steering = owned_input(&user("late steer accepted"), "steer");
+    agent.steer_input(steering.clone());
+    release.notify_one();
+    let report = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().unwrap();
+    assert_eq!(report.end, RunEnd::Error);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial", "late steer accepted"]);
+    assert_input_identity(&sink.inputs.lock().unwrap()[1..], &[steering]);
+    assert_input_identity(&hooks.queues.follow_up.lock().unwrap(), &[follow_up]);
+    assert_eq!(agent.queued_counts(), (0, 0));
+    assert_eq!(*hooks.dequeues.lock().unwrap(), [3, 0]);
+    assert_eq!(provider.contexts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn model_admission_blocks_first_call_and_tool_continuation_without_provider_replay() {
+    for continuation in [false, true] {
+        for failure in 0..4 {
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let hooks = Arc::new(AdmissionHooks::default());
+            if continuation {
+                hooks.model_admission.lock().unwrap().push_back(AdmissionAction::Allow);
+            }
+            hooks.model_admission.lock().unwrap().push_back(match failure {
+                0 => AdmissionAction::Block,
+                1 => AdmissionAction::Cancel,
+                2 => AdmissionAction::CancelOnReturn,
+                _ => AdmissionAction::Wait(entered.clone()),
+            });
+            let provider = ScriptedProvider::new(vec![reply(
+                "",
+                &[("once", "echo", json!({"text":"once"}))],
+                StopReason::ToolUse,
+            )]);
+            let (tool, effects) = echo(0, Concurrency::Exclusive);
+            let agent = Agent::new(config(provider.clone(), vec![tool], hooks.clone()), Vec::new());
+            let sink = Arc::new(RecordingSink::default());
+            let cancel = CancellationToken::new();
+            let running = {
+                let agent = agent.clone();
+                let cancel = cancel.clone();
+                let sink = sink.clone();
+                tokio::spawn(async move { agent.prompt(vec![user("initial")], cancel, sink).await })
+            };
+            if failure == 3 {
+                tokio::time::timeout(Duration::from_secs(3), entered.notified()).await.unwrap();
+                cancel.cancel();
+            }
+            let report = tokio::time::timeout(Duration::from_secs(3), running).await.unwrap().unwrap().unwrap();
+            assert_eq!(report.end, if failure == 0 { RunEnd::Error } else { RunEnd::Aborted });
+            assert_eq!(provider.contexts.lock().unwrap().len(), usize::from(continuation));
+            assert_eq!(*hooks.model_admissions.lock().unwrap(), 1 + usize::from(continuation));
+            assert_eq!(
+                *effects.lock().unwrap(),
+                if continuation { vec!["start:once", "end:once"] } else { Vec::<&str>::new() }
+            );
+            assert!(!agent.is_busy());
+            assert_eq!(types(&sink).await.last().unwrap(), "agent_end");
+            if continuation {
+                assert_eq!(
+                    report
+                        .model_messages()
+                        .unwrap()
+                        .into_iter()
+                        .filter(|m| matches!(m, Message::ToolResult(_)))
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1152,7 +1697,7 @@ async fn idle_continue_does_not_dequeue_a_second_steer_before_the_first_model_ca
         assert_eq!(user_texts(&contexts[0].messages), ["steer-a"]);
         assert_eq!(user_texts(&contexts[1].messages), ["steer-a", "steer-b"]);
     }
-    assert_eq!(user_texts(&agent.messages().await), ["steer-a", "steer-b"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["steer-a", "steer-b"]);
 }
 
 #[tokio::test]
@@ -1162,8 +1707,8 @@ async fn stateful_agent_queue_peek_pop_and_clear_keep_fifo_order() {
     agent.steer(user("first"));
     agent.steer(user("second"));
     agent.follow_up(user("later"));
-    assert_eq!(user_texts(&agent.peek_steering_queue()), ["first", "second"]);
-    assert_eq!(user_texts(&agent.peek_follow_up_queue()), ["later"]);
+    assert_eq!(user_texts(&agent.peek_steering_queue().unwrap()), ["first", "second"]);
+    assert_eq!(user_texts(&agent.peek_follow_up_queue().unwrap()), ["later"]);
     assert_eq!(agent.queued_counts(), (2, 1));
     assert!(agent.has_queued_messages());
     assert_eq!(user_texts(&[agent.pop_last_steer().unwrap()]), ["second"]);
@@ -1172,7 +1717,7 @@ async fn stateful_agent_queue_peek_pop_and_clear_keep_fifo_order() {
     assert!(agent.pop_last_follow_up().is_none());
     let report = agent.prompt(vec![user("initial")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
     assert_eq!(report.end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["initial", "first"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial", "first"]);
     agent.steer(user("remove"));
     agent.follow_up(user("remove too"));
     agent.clear_steering_queue();
@@ -1208,7 +1753,7 @@ async fn stateful_agent_can_retract_a_follow_up_during_a_running_tool() {
     agent.follow_up(user("withdrawn"));
     assert_eq!(user_texts(&[agent.pop_last_follow_up().unwrap()]), ["withdrawn"]);
     assert_eq!(running.await.unwrap().unwrap().end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["initial"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial"]);
     assert_eq!(provider.contexts.lock().unwrap().len(), 2);
 }
 
@@ -1226,7 +1771,7 @@ async fn stateful_agent_idle_continue_keeps_queue_on_cancel_and_refuses_unknown_
     assert_eq!(agent.queued_counts(), (0, 1));
     let second = agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
     assert_eq!(second.end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["initial", "queued"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial", "queued"]);
     assert_eq!(provider.contexts.lock().unwrap().len(), 2);
 
     let mut tail = AssistantMessage::empty("test", "test", "test");
@@ -1240,7 +1785,7 @@ async fn stateful_agent_idle_continue_keeps_queue_on_cancel_and_refuses_unknown_
         unsafe_agent.prompt(vec![user("new prompt")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap_err();
     assert!(matches!(err, AgentError::CannotContinue(_)));
     assert_eq!(unsafe_agent.queued_counts(), (1, 0));
-    assert_eq!(unsafe_agent.messages().await.len(), 1);
+    assert_eq!(unsafe_agent.messages().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -1256,10 +1801,10 @@ async fn stateful_agent_idle_continue_drains_host_hook_and_requeues_cancelled_de
     hooks.follow_up.lock().unwrap().push(user("from host"));
     let next = agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
     assert_eq!(next.end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["initial", "from host"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["initial", "from host"]);
 
     let slow_hooks = Arc::new(Hooks { slow_dequeue_ms: 100, ..Default::default() });
-    let slow_agent = Agent::new(config(provider.clone(), vec![], slow_hooks.clone()), agent.messages().await);
+    let slow_agent = Agent::new(config(provider.clone(), vec![], slow_hooks.clone()), agent.messages().await.unwrap());
     slow_hooks.steering.lock().unwrap().push(user("from slow hook"));
     let cancel = CancellationToken::new();
     let pending = {
@@ -1280,10 +1825,10 @@ async fn stateful_agent_idle_continue_drains_host_hook_and_requeues_cancelled_de
     cancel.cancel();
     assert!(matches!(pending.await.unwrap(), Err(AgentError::CannotContinue(_))));
     assert_eq!(slow_agent.queued_counts(), (1, 0));
-    assert_eq!(user_texts(&slow_agent.messages().await), ["initial", "from host"]);
+    assert_eq!(user_texts(&slow_agent.messages().await.unwrap()), ["initial", "from host"]);
     let resumed = slow_agent.continue_run(CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
     assert_eq!(resumed.end, RunEnd::Completed);
-    assert_eq!(user_texts(&slow_agent.messages().await), ["initial", "from host", "from slow hook"]);
+    assert_eq!(user_texts(&slow_agent.messages().await.unwrap()), ["initial", "from host", "from slow hook"]);
     assert_eq!(provider.contexts.lock().unwrap().len(), 3);
 }
 
@@ -1322,7 +1867,7 @@ async fn stateful_agent_prefers_steer_enqueued_during_host_hook_wait() {
     .unwrap();
     agent.steer(user("late steer"));
     assert_eq!(pending.await.unwrap().unwrap().end, RunEnd::Completed);
-    assert_eq!(user_texts(&agent.messages().await), ["late steer", "follow-up"]);
+    assert_eq!(user_texts(&agent.messages().await.unwrap()), ["late steer", "follow-up"]);
 }
 
 #[tokio::test]
@@ -1385,7 +1930,7 @@ async fn stateful_agent_survives_dropped_waiter_without_replaying_tool() {
     .await
     .unwrap();
     assert_eq!(*log.lock().unwrap(), vec!["start:one", "end:one"]);
-    assert_eq!(agent.messages().await.last().unwrap().as_assistant().unwrap().text(), "done");
+    assert_eq!(agent.messages().await.unwrap().last().unwrap().as_assistant().unwrap().text(), "done");
 }
 
 #[tokio::test]
@@ -1401,7 +1946,8 @@ async fn simple_prompt_event_sequence() {
         &sink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert_eq!(
         types(&sink).await,
         vec![
@@ -1441,6 +1987,7 @@ async fn stop_with_tool_calls_is_a_completed_compaction_span_after_receipt_and_a
     .await;
     assert_eq!(report.end, RunEnd::Completed);
     assert_eq!(context.len(), 4);
+    let context = checked_model_messages(&context).unwrap();
     assert!(matches!(context[2], Message::ToolResult(_)));
     let ids: Vec<_> = (1..=context.len()).map(|index| format!("e{index}")).collect();
     let sources: Vec<_> =
@@ -1465,7 +2012,8 @@ async fn tool_call_turn_executes_and_continues() {
         &sink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert_eq!(
         types(&sink).await,
         vec![
@@ -1519,7 +2067,8 @@ async fn legacy_schema_validation_blocks_invalid_effect_and_replays_both_results
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     let results = new
         .iter()
         .filter_map(|message| match message {
@@ -1566,7 +2115,8 @@ async fn validation_unknown_tool_blocked_and_empty_error() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     let results: Vec<&Message> = new.iter().filter(|m| m.role() == "toolResult").collect();
     let text_of = |id: &str| {
         results
@@ -1594,9 +2144,63 @@ async fn validation_unknown_tool_blocked_and_empty_error() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert_eq!(result_text(&new[2]), "denied by host policy");
     assert!(log.lock().unwrap().is_empty(), "blocked call has no effect");
+
+    // Fixed edit-auto-generated-regressions.test.ts:305, B-c7cc09c8e7.
+    // A non-throwing self-error must preserve its text and explicit wire flag.
+    struct SelfError;
+    #[async_trait]
+    impl AgentTool for SelfError {
+        fn definition(&self) -> Tool {
+            Tool { name: "edit".into(), parameters: json!({"type":"object"}), ..Default::default() }
+        }
+        async fn execute(
+            &self,
+            _: &str,
+            _: JsonObject,
+            _: CancellationToken,
+            _: UpdateFn,
+        ) -> Result<ToolOutput, ToolError> {
+            let mut result = ToolOutput::text("intentional non-throwing failure");
+            result.details = Some(json!({}));
+            result.is_error = true;
+            Ok(result)
+        }
+    }
+    let provider = ScriptedProvider::new(vec![
+        reply("", &[("call_self_error", "edit", json!({}))], StopReason::ToolUse),
+        reply("done", &[], StopReason::Stop),
+    ]);
+    let sink = RecordingSink::default();
+    let report = agent_loop(
+        vec![user("trigger self-error")],
+        &mut Vec::new(),
+        &config(provider, vec![Arc::new(SelfError)], Arc::new(NoHooks)),
+        &CancellationToken::new(),
+        &sink,
+    )
+    .await;
+    let messages = report.model_messages().unwrap();
+    let result = messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult(result) if result.tool_call_id == "call_self_error" => Some(result),
+            _ => None,
+        })
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result_text(&Message::ToolResult(result.clone())).contains("intentional non-throwing failure"));
+    let events = sink.events.lock().await;
+    let event = events
+        .iter()
+        .find(
+            |event| matches!(event, AgentEvent::ToolExecutionEnd {tool_call_id,..} if tool_call_id=="call_self_error"),
+        )
+        .unwrap();
+    assert_eq!(event.printable().unwrap()["isError"], true);
 }
 
 #[tokio::test]
@@ -1612,7 +2216,8 @@ async fn provider_error_pairs_completed_calls_with_synthetic_results() {
         &sink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert_eq!(new.len(), 3);
     assert_eq!(new[1].as_assistant().unwrap().stop_reason, StopReason::Error);
     assert_eq!(
@@ -1655,7 +2260,8 @@ async fn abort_during_stream_keeps_only_completed_calls() {
         sink.as_ref(),
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     let assistant = new[1].as_assistant().unwrap();
     assert_eq!(assistant.stop_reason, StopReason::Aborted);
     assert_eq!(assistant.error_message.as_deref(), Some("Request was aborted"));
@@ -1689,7 +2295,8 @@ async fn abort_during_tool_execution_stops_before_next_model_call() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(*log.lock().unwrap(), vec!["start:slow", "cancelled:slow"]);
     assert_eq!(result_text(&new[2]), "echo cancelled");
@@ -1713,7 +2320,8 @@ async fn length_stop_pairs_calls_and_resamples() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert!(
         result_text(&new[2]).starts_with("Tool call was not executed because the assistant hit its output token limit")
     );
@@ -1739,7 +2347,8 @@ async fn shared_calls_overlap_and_exclusive_serializes() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     let shared_elapsed = started.elapsed();
     assert!(shared_elapsed < Duration::from_millis(1000), "two batches of overlapping 300ms calls: {shared_elapsed:?}");
 
@@ -1757,7 +2366,8 @@ async fn shared_calls_overlap_and_exclusive_serializes() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     assert!(started.elapsed() >= Duration::from_millis(400));
     assert_eq!(*log.lock().unwrap(), vec!["start:a", "end:a", "start:b", "end:b"]);
 }
@@ -1769,7 +2379,10 @@ async fn deadline_cancels_in_flight_stream() {
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.deadline = Some(Instant::now() + Duration::from_millis(150));
     let started = Instant::now();
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink)
+        .await
+        .model_messages()
+        .unwrap();
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     let a = new[1].as_assistant().unwrap();
     assert_eq!(a.stop_reason, StopReason::Aborted);
@@ -1788,7 +2401,10 @@ async fn deadline_cancels_running_tool() {
     let mut cfg = config(provider.clone(), vec![tool], Arc::new(NoHooks));
     cfg.deadline = Some(Instant::now() + Duration::from_millis(150));
     let started = Instant::now();
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink)
+        .await
+        .model_messages()
+        .unwrap();
     assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(*log.lock().unwrap(), vec!["start:slow", "cancelled:slow"]);
     assert_eq!(result_text(&new[2]), "echo cancelled");
@@ -1811,7 +2427,10 @@ async fn dequeued_steering_survives_deadline() {
         tokio::time::sleep(Duration::from_millis(20)).await;
         h2.steering.lock().unwrap().push(user("late steer"));
     });
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink)
+        .await
+        .model_messages()
+        .unwrap();
     assert!(new.iter().any(|m| matches!(m, Message::User(u) if u.content.plain_text() == "late steer")), "{new:?}");
 }
 
@@ -1821,7 +2440,12 @@ async fn panicking_tool_becomes_error_result() {
     #[async_trait]
     impl AgentTool for Boom {
         fn definition(&self) -> Tool {
-            Tool { name: "boom".into(), description: String::new(), parameters: json!({"type": "object"}) }
+            Tool {
+                name: "boom".into(),
+                description: String::new(),
+                parameters: json!({"type": "object"}),
+                ..Default::default()
+            }
         }
         async fn execute(
             &self,
@@ -1846,7 +2470,8 @@ async fn panicking_tool_becomes_error_result() {
         &NullSink,
     )
     .await
-    .messages;
+    .model_messages()
+    .unwrap();
     let texts: Vec<String> = new.iter().filter(|m| m.role() == "toolResult").map(result_text).collect();
     assert!(texts.contains(&"Tool boom panicked: kaboom".to_string()), "{texts:?}");
     assert!(texts.contains(&"echo: fine".to_string()));
@@ -1892,7 +2517,8 @@ async fn approval_hook_observes_abort() {
     let started = Instant::now();
     let new = agent_loop(vec![user("go")], &mut Vec::new(), &config(provider, vec![tool], hooks), &cancel, &NullSink)
         .await
-        .messages;
+        .model_messages()
+        .unwrap();
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(log.lock().unwrap().is_empty());
     let texts: Vec<String> = new.iter().filter(|m| m.role() == "toolResult").map(result_text).collect();
@@ -1906,6 +2532,7 @@ async fn parse_error_args_are_trimmed_in_events() {
         name: "echo".into(),
         arguments: ara_ai::json::parse_final_arguments(&format!("{{\"text\": \"{}", "x".repeat(10_000))),
         thought_signature: None,
+        ..Default::default()
     };
     let mut msg = AssistantMessage::empty("a", "p", "m");
     msg.stop_reason = StopReason::ToolUse;
@@ -1947,7 +2574,10 @@ async fn steering_and_follow_up_messages() {
     let cfg = config(provider.clone(), vec![tool], hooks.clone());
     // Steering queued before the run starts is injected in the first turn.
     hooks.steering.lock().unwrap().push(user("steer"));
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink)
+        .await
+        .model_messages()
+        .unwrap();
     let roles: Vec<String> = new
         .iter()
         .map(|m| match m {
@@ -1974,7 +2604,7 @@ async fn continue_rules_and_unpaired_tail_resume() {
     let mut done = AssistantMessage::empty("a", "p", "m");
     done.content.push(AssistantBlock::text("fin"));
     let err = agent_loop_continue(
-        &mut vec![user("q"), Message::Assistant(done)],
+        &mut vec![user("q").into(), Message::Assistant(done).into()],
         &cfg,
         &CancellationToken::new(),
         &NullSink,
@@ -1987,7 +2617,7 @@ async fn continue_rules_and_unpaired_tail_resume() {
     let mut tail = AssistantMessage::empty("a", "p", "m");
     tail.stop_reason = StopReason::ToolUse;
     tail.content.push(AssistantBlock::ToolCall(call_block("again", "echo", &json!({"text": "r"}))));
-    let mut ctx = vec![user("q"), Message::Assistant(tail)];
+    let mut ctx: Vec<AgentMessage> = vec![user("q").into(), Message::Assistant(tail).into()];
     let err = agent_loop_continue(&mut ctx.clone(), &cfg, &CancellationToken::new(), &NullSink, UnpairedTail::Refuse)
         .await
         .unwrap_err();
@@ -1996,7 +2626,8 @@ async fn continue_rules_and_unpaired_tail_resume() {
     let new = agent_loop_continue(&mut ctx, &cfg, &CancellationToken::new(), &NullSink, UnpairedTail::Execute)
         .await
         .unwrap()
-        .messages;
+        .model_messages()
+        .unwrap();
     assert_eq!(
         *log.lock().unwrap(),
         vec!["start:again", "end:again"],
@@ -2020,9 +2651,13 @@ async fn real_http_chain_with_fake_upstream() {
     let mut cfg = config(provider, vec![tool], Arc::new(NoHooks));
     cfg.model.base_url = server.base_url();
     let agent = Agent::new(cfg, Vec::new());
-    let new =
-        agent.prompt(vec![user("use echo")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap().messages;
-    assert_eq!(agent.messages().await, new);
+    let new = agent
+        .prompt(vec![user("use echo")], CancellationToken::new(), Arc::new(NullSink))
+        .await
+        .unwrap()
+        .model_messages()
+        .unwrap();
+    assert_eq!(agent.messages().await.unwrap(), new);
     assert_eq!(*log.lock().unwrap(), vec!["start:call_1", "end:call_1"]);
     assert_eq!(new.last().unwrap().as_assistant().unwrap().text(), "all done");
     let reqs = server.requests.lock().await;
@@ -2063,7 +2698,8 @@ async fn real_responses_http_chain_rejects_invalid_legacy_arguments_without_an_e
         .prompt(vec![user("check the pair")], CancellationToken::new(), Arc::new(NullSink))
         .await
         .unwrap()
-        .messages;
+        .model_messages()
+        .unwrap();
     let results = new
         .iter()
         .filter_map(|message| match message {
@@ -2120,7 +2756,8 @@ async fn real_responses_wire_postprocess_matches_tool_argument_validation() {
         .prompt(vec![user("validate wire arguments")], CancellationToken::new(), Arc::new(NullSink))
         .await
         .unwrap()
-        .messages;
+        .model_messages()
+        .unwrap();
     let results = messages
         .iter()
         .filter_map(|message| match message {
@@ -2192,7 +2829,8 @@ async fn real_anthropic_wire_postprocess_matches_tool_argument_validation() {
         .prompt(vec![user("validate wire arguments")], CancellationToken::new(), Arc::new(NullSink))
         .await
         .unwrap()
-        .messages;
+        .model_messages()
+        .unwrap();
     let results = messages
         .iter()
         .filter_map(|message| match message {
@@ -2267,12 +2905,14 @@ async fn agent_replays_responses_tool_history_with_paired_anthropic_wire_ids() {
                 details: None,
                 is_error: false,
                 timestamp: 1,
+                provider_metadata: None,
+                useless: false,
             }),
         ],
     );
     let report = agent.prompt(vec![user("continue")], CancellationToken::new(), Arc::new(NullSink)).await.unwrap();
     assert_eq!(report.end, RunEnd::Completed);
-    assert_eq!(report.messages.last().unwrap().as_assistant().unwrap().text(), "continued");
+    assert_eq!(report.model_messages().unwrap().last().unwrap().as_assistant().cloned().unwrap().text(), "continued");
     assert_eq!(server.served(), 1);
     let requests = server.requests.lock().await;
     let messages = requests[0]["body"]["messages"].as_array().unwrap();
@@ -2339,8 +2979,9 @@ async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
     assert_eq!(report.end, RunEnd::Completed);
     assert_eq!(*effects.lock().unwrap(), vec![json!({"path":"safe.txt"})]);
     let results = report
-        .messages
-        .iter()
+        .model_messages()
+        .unwrap()
+        .into_iter()
         .filter_map(|message| match message {
             Message::ToolResult(result) => Some(result),
             _ => None,
@@ -2350,7 +2991,7 @@ async fn strict_anthropic_fallback_executes_one_tool_and_correlates_followup() {
     assert_eq!(results[0].tool_call_id, "toolu_edit");
     assert!(!results[0].is_error);
     assert_eq!(result_text(&Message::ToolResult(results[0].clone())), "edited");
-    assert_eq!(report.messages.last().unwrap().as_assistant().unwrap().text(), "done");
+    assert_eq!(report.model_messages().unwrap().last().unwrap().as_assistant().cloned().unwrap().text(), "done");
     let events = sink.events.lock().await;
     assert_eq!(events.iter().filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. })).count(), 1);
     assert_eq!(events.iter().filter(|event| matches!(event, AgentEvent::ToolExecutionEnd { .. })).count(), 1);
@@ -2381,7 +3022,10 @@ async fn model_call_budget_stops_before_the_next_call() {
     let (tool, log) = echo(1, Concurrency::Shared);
     let mut cfg = config(provider.clone(), vec![tool], Arc::new(NoHooks));
     cfg.max_model_calls = Some(1);
-    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink).await.messages;
+    let new = agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &CancellationToken::new(), &NullSink)
+        .await
+        .model_messages()
+        .unwrap();
     assert_eq!(provider.contexts.lock().unwrap().len(), 1);
     assert_eq!(*log.lock().unwrap(), vec!["start:c1", "end:c1"], "calls of the last allowed turn still run");
     assert_eq!(new.last().unwrap().role(), "toolResult");
@@ -2411,4 +3055,13 @@ async fn run_end_reasons() {
     cancel.cancel();
     let cfg = config(ScriptedProvider::new(vec![]), vec![], Arc::new(NoHooks));
     assert_eq!(agent_loop(vec![user("go")], &mut Vec::new(), &cfg, &cancel, &NullSink).await.end, RunEnd::Aborted);
+}
+
+// Legacy assertions explicitly inspect owned model snapshots; new raw families
+// below continue to assert canonical record identity and lossless bodies.
+fn ended_model_message(event: &AgentEvent) -> Option<Message> {
+    match event {
+        AgentEvent::MessageEnd { message } => message.checked_model_snapshot().unwrap(),
+        _ => None,
+    }
 }

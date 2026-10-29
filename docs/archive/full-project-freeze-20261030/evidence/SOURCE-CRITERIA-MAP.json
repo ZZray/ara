@@ -1,0 +1,337 @@
+{
+  "state": "COMPLETE_M1_M9_SOURCE_CANDIDATE_AWAITING_ROOT_SOURCE_PLAN_AND_EXECUTION",
+  "original_identity": {
+    "group": "peer",
+    "version": "target",
+    "path": "packages/coding-agent/test/registry/agent-lifecycle.test.ts",
+    "line": 442,
+    "title": "AgentLifecycleManager > keeps owned resources through parking and releases them with the agent",
+    "file_sha256": "ddaf42347df3068029ac8198af40f4b701f30103125970d5178e6a8070c09d2f",
+    "status": "SOURCE_DECLARED_NOT_RUN",
+    "inventory_origin": "preserved-original-peer-identity",
+    "disposition": "REQUIRED_PEER_IMPLEMENTATION_NOT_RUN",
+    "owner": "host_peers registry/inbox/lifecycle/roster/native/agent_uri/wake according to source file"
+  },
+  "fixed_omp": "b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c",
+  "module_criteria": [
+    {
+      "id": "M1",
+      "obligation": "Real production Task execution ownership entry",
+      "content": "Introduce/complete Task isolation runner behind actual Task/native invocation with exact parent+Task+PeerKey generation; reuse ChildHostFactory and ChildContractOwner rather than duplicate Agent loop. Isolated input, mergeMode, keepAlive, backend choice and applyChanges are explicit Host policy. Existing async Task scheduler/batch capabilities are not inferred complete from this owner.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_contract.rs",
+        "crates/ara-cli/src/actual_tools/task_native.rs",
+        "crates/ara-ai/src/validation/graph/driver.rs",
+        "crates/ara-cli/src/task_host.rs",
+        "crates/ara-cli/src/task_print.rs",
+        "crates/ara-cli/src/rpc_host.rs",
+        "crates/ara-cli/src/main.rs",
+        "crates/ara-cli/src/task_agents.rs"
+      ],
+      "centralized_banks": [
+        "task_contract::native_task_schema_shape_identity_and_real_grant_bank",
+        "task_contract::task_policy_depth_schema_modes_and_selected_prose_bank",
+        [
+          "task_agents::fixed_five_agents_preserve_prompt_roles_thinking_tools_and_outputs",
+          "task_agents::actual_native_roots_override_in_order_and_settings_preserve_model_fallbacks",
+          "task_agents::custom_agent_contract_keeps_empty_tools_invalid_schema_and_reserved_names_explicit"
+        ],
+        "rpc_host_settings::task_settings_observations::task_nested_global_project_settings_and_host_only_fields",
+        "validation::graph::driver::observations::declared_lenient_failure_preserves_exact_args_but_not_runtime_errors",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_async_batch_and_actual_wait_bank"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M2",
+      "obligation": "Real isolation backend handle and live ownership marker",
+      "content": "Create sandbox and owner marker before materialization; preserve fixed platform candidate/fallback semantics and compact paths, detach .git/linked-worktree metadata so child Git does not mutate parent HEAD/index/refs. Retain actual backend for teardown. No temp empty directory posing as worktree.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/owner.rs",
+        "crates/ara-cli/src/task_isolation/worktree.rs",
+        "crates/vendor/ara-iso/src",
+        "crates/vendor/ara-task-vcs/src/git"
+      ],
+      "centralized_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "ara-iso --lib current-platform original native bank",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M3",
+      "obligation": "Exact copied baseline and effects capture",
+      "content": "Capture staged/unstaged/untracked/root+nested baseline inside copy. Isolated ChildHost cwd must be actual merged directory, with outside-root tool exposure following fixed isolated policy. Produce binary-safe patch/nested artifacts and history outputs via real writes.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/worktree.rs",
+        "crates/ara-cli/src/task_isolation/capture.rs",
+        "crates/ara-cli/src/child_host.rs"
+      ],
+      "centralized_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M4",
+      "obligation": "Run-end branch/patch result assembly and final release recapture",
+      "content": "Support both fixed merge modes, preserve agent commits/trailing edits and baseline-WIP subtraction, handedOff fingerprint suppresses duplicate unchanged capture, follow-up changes recaptured at release, artifacts remain durable after sandbox cleanup.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/capture.rs",
+        "crates/ara-cli/src/task_isolation/worktree.rs",
+        "crates/ara-cli/src/task_host.rs",
+        "crates/ara-cli/src/peer_host.rs"
+      ],
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M5",
+      "obligation": "Generation-owned resource lease survives park",
+      "content": "Resource owner keyed to stable exact PeerKey/root generation lives independently of transient RuntimeKey and ChildHost. Park drops writer/runtime only; no cleanup callback. Adoption must transfer ownership exactly once. Failures before adoption release or retain actual workspace according to fixed outcome.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/peer_host.rs",
+        "crates/ara-cli/src/task_isolation/owner.rs"
+      ],
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M6",
+      "obligation": "Warm isolated revival versus cold history-only",
+      "content": "While exact retained owner still lives, warm park revival rebuilds Native Session in same isolated cwd and retains baseline/onRelease authority. Current generic cold factory remains history-only for isolated transcript; restart/foreign root/file existence cannot manufacture owner.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/child_host.rs",
+        "crates/ara-cli/src/peer_host.rs",
+        "crates/ara-cli/src/task_print.rs",
+        "crates/ara-cli/src/rpc_host.rs"
+      ],
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M7",
+      "obligation": "Once-only release, lost observer and cross-generation boundaries",
+      "content": "Retained capture+cleanup receipt coalesces repeated/concurrent release/root close and survives dropped observer. Old exact lease can never remove replacement sandbox/ref. Current lifecycle root close joins close/release concurrently: resource owner must require stopped/settled writers before final capture and removal. No lock across external async cleanup.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/owner.rs",
+        "crates/ara-cli/src/peer_host.rs"
+      ],
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M8",
+      "obligation": "Recoverable failures/deferred effects",
+      "content": "Startup cleanup, genuine kill, one-shot cleanup, keepAlive transfer, deferred Bash/hooks settlement, patch write failure, branch commit partial effects, nested persistence errors and backend stop failure each have fixed observable artifact/retained-workspace paths. Unknown external effects are receipts awaiting reconciliation, never automatic replay.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/owner.rs",
+        "crates/ara-cli/src/task_isolation/capture.rs",
+        "crates/ara-cli/src/child_host.rs",
+        "crates/ara-cli/src/task_host.rs",
+        "crates/ara-cli/src/peer_host.rs"
+      ],
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "M9",
+      "obligation": "Requested merge/apply while preserving parent WIP",
+      "content": "Production result integration applies only when policy requests it; serialize parent Git mutations, preserve staged/index/untracked and unrelated stash, retain committed recovery branch on partial failure. Actual Task acceptance still separate from successful Run and effect capture.",
+      "state": "SOURCE_AUTHORED_UNBUILT_UNEXECUTED",
+      "implementation_paths": [
+        "crates/ara-cli/src/task_isolation/worktree.rs",
+        "crates/ara-cli/src/task_isolation/capture.rs",
+        "crates/ara-cli/src/task_isolation/owner.rs",
+        "crates/ara-cli/src/task_host.rs"
+      ],
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention"
+      ],
+      "accepted": false
+    }
+  ],
+  "observable_criteria": [
+    {
+      "id": "O1",
+      "proof": "Ordinary production Task isolated start in private disposable dirty Git root creates actual sandbox, owner marker, detached metadata and child cwd; parent HEAD/index/diffs/untracked remain byte-equivalent during child work.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O2",
+      "proof": "Real child file/Bash edits in sandbox yield root+nested binary-safe patches that exclude baseline WIP; patch/branch output and history artifact paths agree with persisted results.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O3",
+      "proof": "Wait for actual TTL/manual park and writer join; sandbox/owner/baseline stay intact and cleanup count/effect remains zero. Warm revive keeps PeerKey, changes RuntimeKey only and uses same sandbox/capture baseline.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O4",
+      "proof": "After warm follow-up edits, release captures exactly new delta. Unchanged release makes no second commit; changed follow-up preserves new commit/patch. Main parent original WIP remains untouched.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O5",
+      "proof": "Repeated/root/concurrent release or dropped result observer joins one retained capture/cleanup operation; exact resource disappears once after durable artifacts. Delayed old release never deletes successor resource or ref.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O6",
+      "proof": "Cold isolated transcript remains history-only with owner absent/restart, even when retained directory exists. Non-isolated cold revive remains unchanged.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O7",
+      "proof": "Hold real owner effect/writer cleanup and show capture/removal does not race it. Bounded fault hooks on actual Git/FS frontier expose failure receipts without re-running unknown commit/apply/removal.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O8",
+      "proof": "Startup failure/one-shot/genuine kill/adoption rejection release according to owner outcome. Patch/nested persistence failure retains recoverable workspace/branch and reports path; teardown failure must not falsely claim a destroyed or safe-to-delete resource.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+        "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O9",
+      "proof": "Backend preferred/unavailable fallback, linked worktree/private Git metadata, budget limits and path/symlink/literal cleanup rules follow fixed source. Applicable real Windows/Linux cases recorded separately; unsupported runtime cases stay open.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+        "ara-iso --lib current-platform original native bank",
+        "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated"
+      ],
+      "accepted": false
+    },
+    {
+      "id": "O10",
+      "proof": "Requested merge/apply preserves actual disposable parent index/staged/untracked/unrelated stash and records conflicts/partial merged subset; no implicit Task acceptance. Source identity unchanged and final independent source/EXEC/point audit binds actual code/images/artifacts.",
+      "state": "AUTHORED_ASSERTIONS_NOT_OBSERVED",
+      "centralized_banks": [
+        "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+        "task_host::g3_native_task_isolation_park_warm_release_bank",
+        "task_isolation::g5_artifact_ref_and_unknown_close_retention"
+      ],
+      "accepted": false
+    }
+  ],
+  "centralized_bank_names": {
+    "G1": "task_isolation::g1_backend_policy_baseline_budget_and_linked_detachment",
+    "G2": "task_isolation::g2_real_git_binary_nested_history_and_parent_wip",
+    "G3_LIFECYCLE": "task_host::g3_native_task_isolation_park_warm_release_bank",
+    "G3_ASYNC": "task_host::g3_native_async_batch_and_actual_wait_bank",
+    "G3_ENTRY": "task_host::g3_native_task_print_line_rpc_acp_entry_bank",
+    "G4": "task_isolation::g4_exact_resource_admission_release_and_lost_observer",
+    "G5": "task_isolation::g5_artifact_ref_and_unknown_close_retention",
+    "NATIVE": "task_contract::native_task_schema_shape_identity_and_real_grant_bank",
+    "SCHEMA": "task_contract::task_policy_depth_schema_modes_and_selected_prose_bank",
+    "AGENTS": [
+      "task_agents::fixed_five_agents_preserve_prompt_roles_thinking_tools_and_outputs",
+      "task_agents::actual_native_roots_override_in_order_and_settings_preserve_model_fallbacks",
+      "task_agents::custom_agent_contract_keeps_empty_tools_invalid_schema_and_reserved_names_explicit"
+    ],
+    "SETTINGS": "rpc_host_settings::task_settings_observations::task_nested_global_project_settings_and_host_only_fields",
+    "AI_DRIVER": "validation::graph::driver::observations::declared_lenient_failure_preserves_exact_args_but_not_runtime_errors",
+    "ISO_NATIVE": "ara-iso --lib current-platform original native bank",
+    "VCS_NATIVE": "ara-task-vcs --lib all eight original Git modules plus exact_ref_cas_preserves_successor and pure_jj_nearest_root_and_colocated",
+    "PEER_P3": "reuse both existing complete Peer P3/restore integration functions selected by Root BATCH-PLAN-DRAFT"
+  },
+  "remaining_and_coverage_limits": [
+    "--no-session/in-memory parent is explicitly rejected before child/artifact creation because it has no durable owning transcript. No fake parent Session or ParentAdoption is minted. This is an open full Task surface.",
+    "Full Task scheduler/workpool/speculative launch/UI/advisory/name generation/catalog extension discovery are not inferred accepted from M1-M9. Agent autoloadSkills/prewalk/advisor source metadata is preserved; their complete execution behavior is not claimed by this live isolation module.",
+    "Global clear-isolation stale/markerless/corrupt directory and retained-sidecar scanning remains an explicit full Task parity gap (original rows47-49,51 and scanner aspect of50).",
+    "All eight platform backend sources and exact fallback resolver are retained; only current-host applicable native tests are planned. Real Linux/macOS/mount paths and Windows symlink capability remain explicit platform runtime gaps.",
+    "Parent Git mutations serialize within the canonical Host gate. The inherited stash push/restore API preserves existing unrelated stash under that owner; arbitrary external concurrent git stash writes retain an upstream TOCTOU window. Public branch ref publication/deletion separately uses atomic expected-tip CAS.",
+    "Global cargo-deny remains FAIL on 33 existing baseline diagnostics; Root dependency delta audit reports zero newly added package errors. This is not a product/release dependency pass.",
+    "No build/type-check/test/real model/API/account/install/commit/push was performed by Lead or child authors. Root dependency-only metadata/fetch/deny evidence is separate.",
+    "No global OMP accepted counters or full-port marker are changed. Full Peer/Task/Child/History/product/model/UI acceptance remains separate."
+  ],
+  "required_next_gates": [
+    "Root independent exact-source+dependency+batch-plan review",
+    "One delivered-source package/target batch under approved frozen profile",
+    "Actual process/Git/artifact/journal evidence review and point-delivery audit"
+  ],
+  "syntax_only": "FINAL-SYNTAX-PARSE.json"
+}

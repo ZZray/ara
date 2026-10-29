@@ -1,8 +1,9 @@
 //! Replay-safe retries for a provider stream before it reaches the Agent.
 //!
 //! Fixed OMP source: `packages/ai/src/utils/empty-completion-retry.ts` at
-//! 596f2da7101178214aa27a753529d15e6b7ad91d. An attempt becomes
-//! irrevocable as soon as it emits meaningful content or a tool-call event.
+//! 596f2da7101178214aa27a753529d15e6b7ad91d with the bounded b91db66e
+//! commitment/empty-compaction delta. Nonempty tool-call argument deltas
+//! commit; start/end markers alone remain buffered.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,6 +20,7 @@ const MAX_EMPTY_RETRIES: u32 = 2;
 const MAX_ERROR_RETRIES: u32 = 1;
 const BASE_DELAY: Duration = Duration::from_millis(500);
 const MAX_BUFFERED_MARKERS: usize = 64;
+pub(crate) mod actual;
 
 /// The private error side channel preserves a typed transport cause; the
 /// public event protocol deliberately exposes only the final attempt.
@@ -41,9 +43,7 @@ fn meaningful(event: &AssistantMessageEvent) -> bool {
         AssistantMessageEvent::TextEnd { content, .. } | AssistantMessageEvent::ThinkingEnd { content, .. } => {
             !content.is_empty()
         }
-        AssistantMessageEvent::ImageEnd { .. }
-        | AssistantMessageEvent::ToolcallStart { .. }
-        | AssistantMessageEvent::ToolcallEnd { .. } => true,
+        AssistantMessageEvent::ImageEnd { .. } => true,
         _ => false,
     }
 }
@@ -339,6 +339,7 @@ where
                 if !committed
                     && !accept_empty_response
                     && message.stop_details.as_ref().and_then(|v| v.get("type")).and_then(|v| v.as_str()) != Some("pause_turn")
+                    && message.stop_details.as_ref().and_then(|v| v.get("type")).and_then(|v| v.as_str()) != Some("compaction")
                     && message.error_message.is_none()
                     && message.usage.output.is_some_and(|count| count <= 1)
                     && !visible(message)
@@ -417,6 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn image_end_commits_live_and_prevents_error_replay() {
+        actual::observe_carrier_retry_failures(model()).await;
         let model = model();
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted_attempts = attempts.clone();
@@ -468,5 +470,95 @@ mod tests {
         assert!(matches!(terminal, AssistantMessageEvent::Error { error, .. } if error.error_status == Some(503)));
         assert!(tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().is_none());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn upgraded_typed_commitment_and_compaction_group() {
+        for case in 0..3 {
+            let model = model();
+            let attempt_model = model.clone();
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let counted = attempts.clone();
+            let mut stream = with_replay_safe_stream_retry(model, CancellationToken::new(), false, move |_| {
+                let first = counted.fetch_add(1, Ordering::SeqCst) == 0;
+                let failed = case != 2 && first;
+                let (sink, events) = EventSink::channel();
+                let error = Arc::new(Mutex::new(failed.then_some(AttemptError {
+                    cause: ProviderError::Http { status: 503, detail: "temporary".into() },
+                    retry_blocked: false,
+                })));
+                let mut partial = AssistantMessage::empty(
+                    &attempt_model.api, &attempt_model.provider, &attempt_model.id,
+                );
+                // A known tiny output makes compaction the deciding guard;
+                // unknown usage must not accidentally make this test pass.
+                partial.usage.output = Some(0);
+                if case == 2 {
+                    partial.stop_details = Some(serde_json::json!({"type":"compaction"}));
+                }
+                let call: crate::types::ToolCall = serde_json::from_value(serde_json::json!({
+                    "id":"call-1","name":"read","arguments":{}
+                })).unwrap();
+                if case == 1 {
+                    partial.content.push(AssistantBlock::ToolCall(call.clone()));
+                } else if !first {
+                    partial.content.push(serde_json::from_value(serde_json::json!({
+                        "type":"text","text":"recovered"
+                    })).unwrap());
+                }
+                tokio::spawn(async move {
+                    assert!(sink.push(AssistantMessageEvent::Start { partial: partial.clone() }).await);
+                    if first && case != 2 {
+                        assert!(sink.push(AssistantMessageEvent::ToolcallStart {
+                            content_index: 0, partial: partial.clone(),
+                        }).await);
+                        assert!(sink.push(AssistantMessageEvent::ToolcallDelta {
+                            content_index: 0, delta: if case == 0 { "" } else { "{}" }.into(),
+                            partial: partial.clone(),
+                        }).await);
+                        assert!(sink.push(AssistantMessageEvent::ToolcallEnd {
+                            content_index: 0, tool_call: call, partial: partial.clone(),
+                        }).await);
+                    } else if !first {
+                        assert!(sink.push(AssistantMessageEvent::TextDelta {
+                            content_index: 0, delta: "recovered".into(), partial: partial.clone(),
+                        }).await);
+                    }
+                    if failed {
+                        partial.stop_reason = StopReason::Error;
+                        partial.error_status = Some(503);
+                        partial.error_message = Some("503 temporary".into());
+                        assert!(sink.push(AssistantMessageEvent::Error {
+                            reason: StopReason::Error, error: partial,
+                        }).await);
+                    } else {
+                        assert!(sink.push(AssistantMessageEvent::Done {
+                            reason: StopReason::Stop, message: partial,
+                        }).await);
+                    }
+                });
+                AttemptStream { events, error }
+            });
+            let events = tokio::time::timeout(Duration::from_secs(3), async {
+                let mut events = Vec::new();
+                while let Some(event) = stream.recv().await { events.push(event); }
+                events
+            }).await.expect("bounded typed retry loop");
+            assert_eq!(attempts.load(Ordering::SeqCst), if case == 0 { 2 } else { 1 });
+            let kinds = events.iter().map(AssistantMessageEvent::type_name).collect::<Vec<_>>();
+            if case == 0 {
+                assert_eq!(kinds, ["start", "text_delta", "done"]);
+                assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { message, .. })
+                    if message.text() == "recovered"));
+            } else if case == 1 {
+                assert_eq!(kinds, ["start", "toolcall_start", "toolcall_delta", "toolcall_end", "error"]);
+                assert!(matches!(&events[2], AssistantMessageEvent::ToolcallDelta { delta, .. } if delta == "{}"));
+            } else {
+                assert_eq!(kinds, ["start", "done"]);
+                assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { message, .. })
+                    if message.stop_details.as_ref().and_then(|details| details.get("type")).and_then(|kind| kind.as_str()) == Some("compaction")));
+            }
+            eprintln!("ARA-RETRY UPGRADE b91db66e TYPED PASS case={case}");
+        }
     }
 }

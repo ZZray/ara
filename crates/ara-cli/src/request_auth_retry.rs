@@ -9,8 +9,10 @@ use crate::model_route::{
 };
 use ara_ai::{
     AssistantMessage, Model, StopReason,
-    retry_classification::{self, ProviderErrorKind, flag},
+    graph_values::GraphValueFactory,
+    retry_classification::{self, ProviderErrorKind, ProviderFailureEvidence, RetryFacts, flag},
 };
+use ara_rpc::value_heap::{ValueError, ValueHandle, ValueSnapshot};
 use regex::Regex;
 use std::{collections::BTreeSet, sync::LazyLock};
 use tokio_util::sync::CancellationToken;
@@ -40,15 +42,27 @@ pub(crate) fn classify(model: &Model, message: &AssistantMessage) -> Option<Requ
     if message.stop_reason != StopReason::Error || !message.content.is_empty() {
         return None;
     }
+    classify_facts(
+        model,
+        RetryFacts {
+            stop_reason: message.stop_reason,
+            error_message: message.error_message.as_deref(),
+            error_status: message.error_status,
+            failure_evidence: message.failure_evidence.as_ref(),
+        },
+    )
+}
+
+fn classify_facts(model: &Model, facts: RetryFacts<'_>) -> Option<RequestAuthFailure> {
     // Transport, partial stream and unknown dispatch outcomes cannot establish
     // a credential rejection. Never convert their text into replay authority.
-    let evidence = message.failure_evidence.as_ref()?;
+    let evidence = facts.failure_evidence?;
     if evidence.kind != ProviderErrorKind::Http {
         return None;
     }
-    let status = evidence.status.or(message.error_status);
-    let text = message.error_message.as_deref().unwrap_or("");
-    let classification = retry_classification::classify_retry(message, &model.api);
+    let status = evidence.status.or(facts.error_status);
+    let text = facts.error_message.unwrap_or("");
+    let classification = retry_classification::classify_retry_facts(facts, &model.api);
     let denied =
         CODEX_MODEL.captures(text).and_then(|captures| captures.get(1)).and_then(|model| bare_model(model.as_str()));
     let kind = if let Some(denied) = denied {
@@ -92,6 +106,151 @@ pub(crate) fn classify(model: &Model, message: &AssistantMessage) -> Option<Requ
     Some(RequestAuthFailure { kind, retry_after_ms: classification.wait_ms })
 }
 
+/// Read-only classification facts, never a replacement message or transcript.
+/// All Gets run against the original lineage and preserve Native exceptions.
+pub(crate) struct ActualFailureFacts {
+    error_message: Option<String>,
+    error_status: Option<u16>,
+    pub(crate) evidence: ProviderFailureEvidence,
+}
+impl ActualFailureFacts {
+    pub(crate) fn metadata(&self, model: &Model) -> crate::model_route::ActualFailureMetadata {
+        crate::model_route::ActualFailureMetadata {
+            class: self.classify(model),
+            error_message: self.error_message.clone(),
+            context_recovery: self.evidence.context_recovery,
+        }
+    }
+
+    fn facts(&self) -> RetryFacts<'_> {
+        RetryFacts {
+            stop_reason: StopReason::Error,
+            error_message: self.error_message.as_deref(),
+            error_status: self.error_status,
+            failure_evidence: Some(&self.evidence),
+        }
+    }
+    pub(crate) fn classify(&self, model: &Model) -> retry_classification::RetryClass {
+        retry_classification::classify_retry_facts(self.facts(), &model.api)
+    }
+    pub(crate) fn auth_failure(
+        &self,
+        model: &Model,
+        message: &ValueHandle,
+        factory: &GraphValueFactory,
+    ) -> Result<Option<RequestAuthFailure>, ValueError> {
+        let content = actual_get(factory, message, "content")?;
+        let length = actual_get(factory, &content, "length")?;
+        if !matches!(factory.heap().snapshot(&length)?, ValueSnapshot::Number(value) if value == 0.0) {
+            return Ok(None);
+        }
+        Ok(classify_facts(model, self.facts()))
+    }
+}
+
+fn actual_get(factory: &GraphValueFactory, root: &ValueHandle, key: &str) -> Result<ValueHandle, ValueError> {
+    factory.heap().get(root, &key.into(), factory.runtime())
+}
+
+fn actual_string(factory: &GraphValueFactory, value: &ValueHandle) -> Result<Option<String>, ValueError> {
+    match factory.heap().snapshot(value)? {
+        ValueSnapshot::Undefined | ValueSnapshot::Null => Ok(None),
+        ValueSnapshot::String(value) => value.to_utf8().map(Some).map_err(|_| {
+            // Rust's current scalar regex kernel cannot accept an isolated
+            // surrogate. Keep the original value intact and fail explicitly;
+            // never silently repair it into replay authority.
+            ValueError::LegacyBridge("Auth classification requires a Unicode scalar metadata string")
+        }),
+        _ => Err(ValueError::TypeError("Auth classification metadata must be a string".into())),
+    }
+}
+
+fn actual_number(factory: &GraphValueFactory, root: &ValueHandle, key: &str) -> Result<Option<f64>, ValueError> {
+    let value = actual_get(factory, root, key)?;
+    match factory.heap().snapshot(&value)? {
+        ValueSnapshot::Undefined | ValueSnapshot::Null => Ok(None),
+        ValueSnapshot::Number(value) => Ok(Some(value)),
+        _ => Err(ValueError::TypeError("Auth classification metadata must be a number".into())),
+    }
+}
+
+fn actual_status(factory: &GraphValueFactory, root: &ValueHandle, key: &str) -> Result<Option<u16>, ValueError> {
+    actual_number(factory, root, key)?
+        .map(|value| {
+            if value.is_finite() && value.fract() == 0.0 && (0.0..=u16::MAX as f64).contains(&value) {
+                Ok(value as u16)
+            } else {
+                Err(ValueError::TypeError("Auth classification status must be a u16 integer".into()))
+            }
+        })
+        .transpose()
+}
+
+fn actual_bool(factory: &GraphValueFactory, root: &ValueHandle, key: &str) -> Result<bool, ValueError> {
+    let value = actual_get(factory, root, key)?;
+    match factory.heap().snapshot(&value)? {
+        ValueSnapshot::Undefined => Ok(false),
+        ValueSnapshot::Boolean(value) => Ok(value),
+        _ => Err(ValueError::TypeError("Auth classification veto must be a boolean".into())),
+    }
+}
+
+pub(crate) fn actual_failure_facts(
+    message: &ValueHandle,
+    factory: &GraphValueFactory,
+) -> Result<Option<ActualFailureFacts>, ValueError> {
+    factory.heap().adopt(message)?;
+    let stop = actual_get(factory, message, "stopReason")?;
+    if !matches!(factory.heap().snapshot(&stop)?, ValueSnapshot::String(value) if value.equals_ascii("error")) {
+        return Ok(None);
+    }
+    let evidence = actual_get(factory, message, "failureEvidence")?;
+    if matches!(factory.heap().snapshot(&evidence)?, ValueSnapshot::Undefined | ValueSnapshot::Null) {
+        return Ok(None);
+    }
+    let kind = actual_get(factory, &evidence, "kind")?;
+    let kind = match actual_string(factory, &kind)?.as_deref() {
+        Some("http") => ProviderErrorKind::Http,
+        Some("stream") => ProviderErrorKind::Stream,
+        Some("transport") => ProviderErrorKind::Transport,
+        Some("incomplete") => ProviderErrorKind::Incomplete,
+        Some("timeout") => ProviderErrorKind::Timeout,
+        Some("config") => ProviderErrorKind::Config,
+        Some("aborted") => ProviderErrorKind::Aborted,
+        _ => return Err(ValueError::TypeError("Unknown auth failure evidence kind".into())),
+    };
+    let context = actual_get(factory, &evidence, "contextRecovery")?;
+    let context_recovery = match actual_string(factory, &context)?.as_deref() {
+        None => None,
+        Some("contentOnly") => Some(ara_ai::ContextRecoveryEvidence::ContentOnly),
+        Some("nativeOutput") => Some(ara_ai::ContextRecoveryEvidence::NativeOutput),
+        Some("usageAdmission") => Some(ara_ai::ContextRecoveryEvidence::UsageAdmission),
+        Some("nativeValidation") => Some(ara_ai::ContextRecoveryEvidence::NativeValidation),
+        _ => return Err(ValueError::TypeError("Unknown auth context recovery evidence".into())),
+    };
+    let flags = actual_number(factory, &evidence, "errorId")?.unwrap_or(0.0);
+    if !flags.is_finite() || flags.fract() != 0.0 || !(0.0..=u32::MAX as f64).contains(&flags) {
+        return Err(ValueError::TypeError("Auth failure flags must be a u32 integer".into()));
+    }
+    let error = actual_get(factory, message, "errorMessage")?;
+    let code = actual_get(factory, &evidence, "code")?;
+    Ok(Some(ActualFailureFacts {
+        error_message: actual_string(factory, &error)?,
+        error_status: actual_status(factory, message, "errorStatus")?,
+        evidence: ProviderFailureEvidence {
+            kind,
+            status: actual_status(factory, &evidence, "status")?,
+            code: actual_string(factory, &code)?,
+            replay_blocked: actual_bool(factory, &evidence, "replayBlocked")?,
+            same_route_blocked: actual_bool(factory, &evidence, "sameRouteBlocked")?,
+            context_recovery,
+            wait_ms: actual_number(factory, &evidence, "waitMs")?,
+            header_wait_ms: actual_number(factory, &evidence, "headerWaitMs")?,
+            error_id: flags as u32,
+        },
+    }))
+}
+
 fn stored_id(lease: &RequestAuthLease) -> Option<i64> {
     if let CredentialIdentity::Stored { id, .. } = lease.identity() { Some(*id) } else { None }
 }
@@ -104,6 +263,7 @@ pub(crate) struct AuthRetryState {
     legacy_switch_used: bool,
     token_refresh_replay_used: bool,
     quota_reset_attempted: bool,
+    quota_feedback_dispatched: bool,
 }
 impl AuthRetryState {
     pub(crate) fn new(initial: &RequestAuthLease) -> Self {
@@ -114,6 +274,7 @@ impl AuthRetryState {
             legacy_switch_used: false,
             token_refresh_replay_used: false,
             quota_reset_attempted: false,
+            quota_feedback_dispatched: false,
         }
     }
     fn accept(
@@ -141,6 +302,9 @@ impl AuthRetryState {
         self.refreshed_current = refreshed;
         Some(next)
     }
+    pub(crate) fn quota_feedback_dispatched(&self) -> bool {
+        self.quota_feedback_dispatched
+    }
     pub(crate) async fn next(
         &mut self,
         resolver: &dyn RequestAuthResolver,
@@ -149,6 +313,7 @@ impl AuthRetryState {
         failure: &RequestAuthFailure,
         cancel: &CancellationToken,
     ) -> Result<Option<RequestAuthLease>, AuthResolveError> {
+        self.quota_feedback_dispatched = false;
         if cancel.is_cancelled() {
             return Err(AuthResolveError::Cancelled);
         }
@@ -179,6 +344,10 @@ impl AuthRetryState {
                 }
             }
         }
+        // Dispatch ownership is not a positive durable-write receipt. After
+        // cancellation the result can be unknown and must not be re-recorded
+        // by the separate Session quota observer.
+        self.quota_feedback_dispatched = failure.kind == Kind::Quota;
         let next = retry(resolver, model, failed, failure, AuthRetryAction::RotateSibling, cancel).await?;
         let next = next.and_then(|next| self.accept(failed, next, AuthRetryAction::RotateSibling, !direct));
         if next.is_some() && !direct {

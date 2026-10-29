@@ -45,6 +45,7 @@ fn tool_receipt_and_failure_status_survive_summary_input() {
         name: "write".into(),
         arguments: serde_json::from_str::<JsonObject>(r#"{"path":"release.md"}"#).unwrap(),
         thought_signature: Some("private".into()),
+        ..Default::default()
     }));
     let assistant = Message::Assistant(assistant);
     let result = Message::ToolResult(ToolResultMessage {
@@ -54,6 +55,8 @@ fn tool_receipt_and_failure_status_survive_summary_input() {
         details: Some(serde_json::json!({"source":"interrupted_unknown_effect"})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let input = serialize_sources_for_summary(&[
         SummarySource { entry_id: "e0000003", message: &assistant },
@@ -80,6 +83,8 @@ fn images_and_untrusted_source_ids_fail_instead_of_losing_evidence() {
         })]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     assert_eq!(
         serialize_sources_for_summary(&[SummarySource { entry_id: "e0000005", message: &image }]),
@@ -101,6 +106,8 @@ fn long_tool_result_truncation_is_unicode_safe_and_visible() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let input = serialize_sources_for_summary(&[SummarySource { entry_id: "e0000006", message: &result }]).unwrap();
     let row: serde_json::Value = serde_json::from_str(&input).unwrap();
@@ -132,6 +139,8 @@ fn unknown_tool_effect_is_explicit_even_when_receipt_text_is_empty() {
         ),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let input = serialize_sources_for_summary(&[SummarySource { entry_id: "e0000007", message: &result }]).unwrap();
     let row: serde_json::Value = serde_json::from_str(&input).unwrap();
@@ -164,6 +173,8 @@ fn tool_truncation_counts_unicode_scalars_without_splitting_utf8() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let input = serialize_sources_for_summary(&[SummarySource { entry_id: "e0000010", message: &result }]).unwrap();
     assert_eq!(input.matches('😀').count(), 2_000);
@@ -261,6 +272,8 @@ fn prompt_rejects_developer_priority_downgrade_but_raw_serializer_preserves_sour
     let developer = Message::Developer(DeveloperMessage {
         content: UserContent::Text("high-priority constraint".into()),
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let assistant = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
     let user_source = SummarySource { entry_id: "e1", message: &user };
@@ -291,6 +304,7 @@ fn prompt_requires_matched_tool_receipts() {
         name: "write".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     let calling = Message::Assistant(calling);
     let receipt = Message::ToolResult(ToolResultMessage {
@@ -300,6 +314,8 @@ fn prompt_requires_matched_tool_receipts() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let answer = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
     let a = SummarySource { entry_id: "e1", message: &user };
@@ -317,6 +333,8 @@ fn prompt_requires_matched_tool_receipts() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     assert_eq!(
         validate_completed_summary_span(&[a, b, SummarySource { entry_id: "e3", message: &wrong }, d]),
@@ -331,6 +349,8 @@ fn prompt_requires_matched_tool_receipts() {
         ),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     assert_eq!(
         validate_completed_summary_span(&[a, b, SummarySource { entry_id: "e3", message: &unknown }, d]),
@@ -345,6 +365,8 @@ fn prompt_requires_matched_tool_receipts() {
         details: Some(serde_json::json!({"timedOut":true,"timeoutSeconds":1})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let timeout_source = SummarySource { entry_id: "e3", message: &timed_out };
     assert!(build_summary_prompt(&[a, b, timeout_source, d], None).is_ok());
@@ -365,6 +387,7 @@ fn panic_receipts_cannot_be_hidden_by_compaction() {
         name: "bash".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     let calling = Message::Assistant(calling);
     let answer = Message::Assistant(AssistantMessage::empty("openai-completions", "fake", "m"));
@@ -378,6 +401,8 @@ fn panic_receipts_cannot_be_hidden_by_compaction() {
         details: Some(serde_json::json!({"panicked": true})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let c = SummarySource { entry_id: "e3", message: &receipt };
     assert_eq!(validate_completed_summary_span(&[a, b, c, d]), Err(SummaryInputError::UnknownToolEffect));
@@ -393,6 +418,8 @@ fn panic_receipts_cannot_be_hidden_by_compaction() {
         details: Some(serde_json::json!({"exitCode": 1})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let c = SummarySource { entry_id: "e3", message: &completed_failure };
     assert!(build_summary_prompt(&[a, b, c, d], None).is_ok());

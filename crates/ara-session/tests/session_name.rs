@@ -63,7 +63,7 @@ fn lazy_rename_records_title_change_header_and_source_without_creating_file() {
     let reopened = SessionJournal::open(journal.path()).unwrap();
     assert_eq!(reopened.title(), journal.title());
     assert_eq!(reopened.header(), journal.header());
-    assert_eq!(reopened.model_context(), vec![assistant_from(&raw)]);
+    assert_eq!(reopened.model_context().unwrap(), vec![assistant_from(&raw)]);
 }
 
 fn assistant_from(entries: &[Value]) -> Message {
@@ -259,8 +259,8 @@ fn rename_receipts_after_reopen_do_not_block_compaction_or_enter_model_context()
         })
         .collect();
     assert_eq!(kept_ids, [kept.as_str(), kept_answer.as_str()]);
-    assert_eq!(reopened.model_context().len(), 3);
-    assert!(!serde_json::to_string(&reopened.model_context()).unwrap().contains("Name after"));
+    assert_eq!(reopened.model_context().unwrap().len(), 3);
+    assert!(!serde_json::to_string(&reopened.model_context().unwrap()).unwrap().contains("Name after"));
     assert_eq!(
         reopened.entries().iter().filter(|entry| entry.kind == "title_change").count(),
         3,

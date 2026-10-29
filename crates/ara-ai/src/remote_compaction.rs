@@ -51,6 +51,10 @@ pub struct RemoteRequestOptions {
     /// Resolved normal-turn reasoning policy, omitted for Off/unsupported.
     pub reasoning: Option<Value>,
     pub supports_images: bool,
+    pub supports_computer_use: bool,
+    pub include: Vec<String>,
+    /// Codex-native compaction transport opt-in. Unsupported runtime paths fail explicitly.
+    pub responses_lite: bool,
     /// Generic wire model override; authentication still belongs to the
     /// originally selected Host route.
     pub generic_model: Option<String>,
@@ -69,6 +73,9 @@ impl Default for RemoteRequestOptions {
             retained_message_budget: 64_000,
             reasoning: None,
             supports_images: false,
+            supports_computer_use: false,
+            include: Vec::new(),
+            responses_lite: false,
             generic_model: None,
         }
     }
@@ -203,7 +210,24 @@ pub fn native_replacement_payload(model: &Model, items: &[Value]) -> Option<Valu
 /// A checked model-only replay carrier is history, not a completed answer.
 /// Ordinary Assistant turns and unresolved replay tool calls cannot continue.
 pub fn is_native_compaction_carrier(message: &Message, model: &Model) -> bool {
-    matches!(message, Message::Assistant(assistant) if responses::remote_compaction_carrier(assistant, model))
+    match message {
+        Message::Assistant(assistant) => responses::remote_compaction_carrier(assistant, model),
+        Message::User(user)
+            if user.provider_payload.as_ref().is_some_and(|payload| payload["remoteCompaction"] == true) =>
+        {
+            responses::checked_client_history(message, model, true).is_some_and(|history| {
+                history.pending_calls.is_empty() && history.items.iter().any(valid_compaction_item)
+            })
+        }
+        Message::Developer(developer)
+            if developer.provider_payload.as_ref().is_some_and(|payload| payload["remoteCompaction"] == true) =>
+        {
+            responses::checked_client_history(message, model, true).is_some_and(|history| {
+                history.pending_calls.is_empty() && history.items.iter().any(valid_compaction_item)
+            })
+        }
+        _ => false,
+    }
 }
 
 pub fn validate_replacement_for_route(
@@ -280,7 +304,7 @@ fn content_parts(content: &UserContent) -> Vec<Value> {
 
 fn register_calls(items: &[Value], calls: &mut HashSet<String>) {
     for item in items {
-        if item["type"] == "function_call"
+        if matches!(item["type"].as_str(), Some("function_call" | "custom_tool_call" | "computer_call"))
             && let Some(id) = item["call_id"].as_str()
         {
             calls.insert(id.to_owned());
@@ -303,13 +327,56 @@ pub fn build_native_history(
     context: &Context,
     previous: Option<&[Value]>,
 ) -> Result<Vec<Value>, ProviderError> {
+    build_native_history_with_options(model, context, previous, &RemoteRequestOptions::default())
+}
+
+fn computer_history_note(item: &Value, failure: Option<&str>) -> Value {
+    let serialized = item.to_string();
+    let (label, suffix) = if let Some(output) = failure {
+        (
+            "Computer call failed before a screenshot was recorded",
+            if output.is_empty() { String::new() } else { format!("\n{output}") },
+        )
+    } else {
+        ("Previous computer history unavailable to this model", String::new())
+    };
+    json!({"type":"message","id":format!("msg_{}", &endpoint_fingerprint(&format!("{label}:{serialized}:{suffix}"))[..40]),
+        "role":"assistant","content":[{"type":"output_text","text":format!("[{label}]: {serialized}{suffix}"),
+            "annotations":[]}]})
+}
+
+fn build_native_history_with_options(
+    model: &Model,
+    context: &Context,
+    previous: Option<&[Value]>,
+    options: &RemoteRequestOptions,
+) -> Result<Vec<Value>, ProviderError> {
     let mut input = previous.unwrap_or_default().to_vec();
     if input.iter().any(|item| !item.is_object()) {
         return Err(ProviderError::Config("remote replacement history contains a non-object item".into()));
     }
     let mut calls = HashSet::new();
+    let mut computer_calls = HashSet::new();
     register_calls(&input, &mut calls);
+    computer_calls.extend(
+        input
+            .iter()
+            .filter(|item| item["type"] == "computer_call")
+            .filter_map(|item| item["call_id"].as_str().map(str::to_owned)),
+    );
     for (index, message) in crate::transform::transform_messages(&context.messages).iter().enumerate() {
+        if let Some(history) = responses::checked_client_history(message, model, options.supports_images) {
+            register_calls(&history.items, &mut calls);
+            computer_calls.extend(
+                history
+                    .items
+                    .iter()
+                    .filter(|item| item["type"] == "computer_call")
+                    .filter_map(|item| item["call_id"].as_str().map(str::to_owned)),
+            );
+            input.extend(history.items.iter().map(replay_item));
+            continue;
+        }
         match message {
             Message::User(user) => {
                 let parts = content_parts(&user.content);
@@ -344,9 +411,16 @@ pub fn build_native_history(
                     if payload.get("dt") == Some(&Value::Bool(false)) {
                         input.clear();
                         calls.clear();
+                        computer_calls.clear();
                     }
                     input.extend(items.iter().map(replay_item));
                     register_calls(items, &mut calls);
+                    computer_calls.extend(
+                        items
+                            .iter()
+                            .filter(|item| item["type"] == "computer_call")
+                            .filter_map(|item| item["call_id"].as_str().map(str::to_owned)),
+                    );
                     continue;
                 }
                 let mut turn = Vec::new();
@@ -389,6 +463,11 @@ pub fn build_native_history(
                                 return Err(ProviderError::Config("remote function call has no id or name".into()));
                             }
                             calls.insert(call_id.to_owned());
+                            if let Some(metadata) = &call.provider_metadata {
+                                computer_calls.insert(call_id.to_owned());
+                                turn_calls.push(responses::computer_call_item(call_id, metadata));
+                                continue;
+                            }
                             let mut item = json!({"type":"function_call","call_id":call_id,"name":call.name,"arguments":serde_json::to_string(&call.arguments).map_err(|error| ProviderError::Config(error.to_string()))?});
                             if let Some((_, item_id)) = call.id.split_once('|') {
                                 let changed_model = assistant.provider == model.provider
@@ -412,6 +491,26 @@ pub fn build_native_history(
             Message::ToolResult(result) => {
                 let call_id = crate::transform::responses_call_component(&result.tool_call_id);
                 if !calls.contains(call_id) {
+                    if let Some(metadata) = &result.provider_metadata {
+                        input.push(computer_history_note(&responses::computer_output_item(call_id, metadata), None));
+                    }
+                    continue;
+                }
+                if computer_calls.contains(call_id) {
+                    if let Some(metadata) = &result.provider_metadata {
+                        input.push(responses::computer_output_item(call_id, metadata));
+                    } else {
+                        let call = input
+                            .iter()
+                            .find(|item| item["type"] == "computer_call" && item["call_id"] == call_id)
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        input.retain(|item| !(item["type"] == "computer_call" && item["call_id"] == call_id));
+                        input.push(computer_history_note(
+                            &call,
+                            Some(&UserContent::Blocks(result.content.clone()).plain_text()),
+                        ));
+                    }
                     continue;
                 }
                 let blocks = UserContent::Blocks(result.content.clone());
@@ -424,7 +523,19 @@ pub fn build_native_history(
             }
         }
     }
-    Ok(input.into_iter().map(|item| replay_item(&item)).collect())
+    Ok(input
+        .into_iter()
+        .map(|item| {
+            let item = if !options.supports_computer_use
+                && matches!(item["type"].as_str(), Some("computer_call" | "computer_call_output"))
+            {
+                computer_history_note(&item, None)
+            } else {
+                item
+            };
+            replay_item(&item)
+        })
+        .collect())
 }
 
 fn supported_remote_item(item: &Value) -> bool {
@@ -434,6 +545,10 @@ fn supported_remote_item(item: &Value) -> bool {
                 item.get("type").and_then(Value::as_str),
                 Some("message" | "reasoning" | "function_call" | "function_call_output" | "item_reference")
             ))
+        || item["type"] == "computer_call" && crate::responses_stream::computer_metadata(item).is_ok()
+        || item["type"] == "computer_call_output" && serde_json::from_value::<crate::ToolResultProviderMetadata>(json!({
+            "type":"computer","screenshot":item.get("output"),"acknowledgedSafetyChecks":item.get("acknowledged_safety_checks")
+                .filter(|checks| !checks.is_null()).cloned().unwrap_or_else(|| json!([]))})).is_ok()
 }
 
 pub fn build_native_request(
@@ -442,14 +557,19 @@ pub fn build_native_request(
     request: &RemoteNativeRequest,
     options: &RemoteRequestOptions,
 ) -> Result<Value, ProviderError> {
-    let mut input = build_native_history(model, context, request.previous_replacement_history.as_deref())?;
+    let mut input =
+        build_native_history_with_options(model, context, request.previous_replacement_history.as_deref(), options)?;
     let tools = if request.version == RemoteVersion::V2 {
         let mut tools_model = model.clone();
         tools_model.api = responses::API.into();
         responses::build_request(
             &tools_model,
             &Context { tools: context.tools.clone(), ..Default::default() },
-            &responses::RequestOptions::default(),
+            &responses::RequestOptions {
+                supports_computer_use: options.supports_computer_use,
+                include: options.include.clone(),
+                ..Default::default()
+            },
         )?
         .get("tools")
         .cloned()
@@ -458,13 +578,20 @@ pub fn build_native_request(
     };
     input = trim_native_input_to_context_window(model, &input, &request.instructions, tools.as_ref()).input;
     let mut body = json!({"model":request.config.model.as_deref().unwrap_or(&model.id),"input":input,"instructions":request.instructions});
+    if !options.include.is_empty() {
+        let mut seen = HashSet::new();
+        body["include"] = json!(options.include.iter().filter(|item| seen.insert(item.as_str())).collect::<Vec<_>>());
+    }
     if request.version == RemoteVersion::V2 {
         body["input"].as_array_mut().expect("native input array").push(json!({"type":"compaction_trigger"}));
         body["stream"] = json!(true);
         body["store"] = json!(false);
         if let Some(reasoning) = &options.reasoning {
             body["reasoning"] = reasoning.clone();
-            body["include"] = json!(["reasoning.encrypted_content"]);
+            let include = body.as_object_mut().unwrap().entry("include").or_insert_with(|| json!([]));
+            if !include.as_array().unwrap().iter().any(|item| item == "reasoning.encrypted_content") {
+                include.as_array_mut().unwrap().push(json!("reasoning.encrypted_content"));
+            }
         }
         if let Some(key) =
             options.prompt_cache_key.as_deref().or(options.session_id.as_deref()).filter(|key| !key.is_empty())
@@ -474,6 +601,19 @@ pub fn build_native_request(
         if let Some(tools) = tools {
             body["tools"] = tools;
             body["tool_choice"] = json!("auto");
+        }
+    }
+    if options.responses_lite
+        && (model.provider == "openai-codex" || request.config.api.as_deref().unwrap_or(&model.api) == codex::API)
+    {
+        codex::apply_responses_lite_shape(&mut body);
+        if !body.get("reasoning").is_some_and(Value::is_object) {
+            body["reasoning"] = json!({});
+        }
+        body["reasoning"]["context"] = json!("all_turns");
+        let include = body.as_object_mut().unwrap().entry("include").or_insert_with(|| json!([]));
+        if !include.as_array().unwrap().iter().any(|item| item == "reasoning.encrypted_content") {
+            include.as_array_mut().unwrap().push(json!("reasoning.encrypted_content"));
         }
     }
     Ok(body)
@@ -749,7 +889,12 @@ fn native_headers(
         let (_, _, headers) = codex::prepare_request(
             &route,
             &Context::default(),
-            &responses::RequestOptions::default(),
+            &responses::RequestOptions {
+                supports_computer_use: options.supports_computer_use,
+                include: options.include.clone(),
+                responses_lite: options.responses_lite,
+                ..Default::default()
+            },
             options.api_key.as_deref(),
             &options.extra_headers,
             options.session_id.as_deref(),

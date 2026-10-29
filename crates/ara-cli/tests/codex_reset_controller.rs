@@ -733,12 +733,64 @@ struct ProcessHost {
     auth: PathBuf,
     receipts: PathBuf,
     credential_id: i64,
+    evidence: Option<PathBuf>,
+    wire_requests: Arc<Mutex<Vec<codex_reset_host::Request>>>,
+}
+
+impl Drop for ProcessHost {
+    fn drop(&mut self) {
+        if let Some(root) = &self.evidence {
+            let requests: Vec<_> = self.wire_requests.lock().unwrap_or_else(|error| error.into_inner()).iter().map(|request| {
+                let mut headers = request.headers.clone();
+                headers.remove("authorization");
+                json!({"method":request.method,"path":request.path,"headers":headers,"body":request.body})
+            }).collect();
+            let _ = std::fs::write(root.join("wire.json"), serde_json::to_vec_pretty(&requests).unwrap());
+        }
+    }
+}
+
+fn record_reset_frame(evidence: Option<&Path>, frame: &Value) {
+    use std::io::Write as _;
+    if let Some(root) = evidence {
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(root.join("stdout.jsonl")).unwrap();
+        writeln!(file, "{frame}").unwrap();
+    }
+}
+
+fn record_reset_exit(evidence: Option<&Path>, status: Option<&std::process::ExitStatus>) {
+    if let Some(root) = evidence {
+        std::fs::write(root.join("exit.json"), json!({"observed":status.is_some(),"code":status.and_then(|status|status.code()),"status":status.map(ToString::to_string)}).to_string()).unwrap();
+    }
+}
+
+async fn collect_reset_stderr(mut stderr: tokio::process::ChildStderr, evidence: Option<PathBuf>) -> String {
+    use std::io::Write as _;
+    let mut file = evidence.map(|root| std::fs::File::create(root.join("stderr.log")).unwrap());
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let count = stderr.read(&mut chunk).await.unwrap();
+        if count == 0 { break; }
+        bytes.extend_from_slice(&chunk[..count]);
+        if let Some(file) = &mut file { file.write_all(&chunk[..count]).unwrap(); file.flush().unwrap(); }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 impl ProcessHost {
     fn new(fixture: &ResetFixture, account: &str, mode: &str) -> Self {
-        let home = tempfile::Builder::new().prefix("ara-reset-host-home-").tempdir().unwrap();
-        let work = tempfile::Builder::new().prefix("ara-reset-host-work-").tempdir().unwrap();
+        // Reuse the batch's explicit private artifact root; default tests still clean up.
+        let evidence = std::env::var_os("ARA_TEST_SERVICE_ARTIFACT_DIR")
+            .or_else(|| std::env::var_os("ARA_TEST_PEER_ARTIFACT_DIR"))
+            .map(|root| PathBuf::from(root).join(format!("reset-{account}-{}", uuid::Uuid::now_v7())));
+        if let Some(root) = &evidence { std::fs::create_dir_all(root).unwrap(); }
+        let mut home_builder = tempfile::Builder::new();
+        home_builder.prefix("ara-reset-host-home-").disable_cleanup(evidence.is_some());
+        let mut work_builder = tempfile::Builder::new();
+        work_builder.prefix("ara-reset-host-work-").disable_cleanup(evidence.is_some());
+        let home = home_builder.tempdir().unwrap();
+        let work = work_builder.tempdir().unwrap();
         std::fs::create_dir(work.path().join(".git")).unwrap();
         let agent = home.path().join("agent");
         std::fs::create_dir(&agent).unwrap();
@@ -783,7 +835,26 @@ impl ProcessHost {
             .unwrap();
         let sessions = home.path().join("sessions");
         let receipts = agent.join("codex-reset-operations.db");
-        Self { home, work, sessions, auth, receipts, credential_id }
+        if let Some(root) = &evidence {
+            std::fs::write(root.join("host.json"), json!({"home":home.path(),"work":work.path(),"sessions":sessions,"auth":auth,"receipts":receipts,"synthetic":true}).to_string()).unwrap();
+        }
+        Self { home, work, sessions, auth, receipts, credential_id, evidence, wire_requests: fixture.requests.clone() }
+    }
+
+    fn capture(&self, label: &str) -> Option<PathBuf> {
+        self.evidence.as_ref().map(|root| {
+            let path = root.join(format!("{label}-{}", uuid::Uuid::now_v7()));
+            std::fs::create_dir(&path).unwrap();
+            path
+        })
+    }
+
+    fn record_output(&self, label: &str, output: &Output) {
+        if let Some(root) = self.capture(label) {
+            std::fs::write(root.join("stdout.log"), &output.stdout).unwrap();
+            std::fs::write(root.join("stderr.log"), &output.stderr).unwrap();
+            record_reset_exit(Some(&root), Some(&output.status));
+        }
     }
 
     fn command(&self, fixture: &ResetFixture, args: &[&str]) -> Command {
@@ -837,11 +908,13 @@ impl ProcessHost {
     }
 }
 
-async fn output(command: Command) -> Output {
-    tokio::time::timeout(WAIT, tokio::process::Command::from(command).kill_on_drop(true).output())
+async fn output(host: &ProcessHost, command: Command) -> Output {
+    let output = tokio::time::timeout(WAIT, tokio::process::Command::from(command).kill_on_drop(true).output())
         .await
         .expect("reference Host process deadline")
-        .unwrap()
+        .unwrap();
+    host.record_output("cli", &output);
+    output
 }
 
 fn success(output: &Output) -> String {
@@ -858,7 +931,9 @@ async fn repl(host: &ProcessHost, fixture: &ResetFixture, input: &str) -> Output
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(input.as_bytes()).await.unwrap();
-    tokio::time::timeout(WAIT, child.wait_with_output()).await.expect("saved-reset REPL deadline").unwrap()
+    let output = tokio::time::timeout(WAIT, child.wait_with_output()).await.expect("saved-reset REPL deadline").unwrap();
+    host.record_output("repl", &output);
+    output
 }
 
 #[tokio::test]
@@ -867,7 +942,7 @@ async fn real_cli_quota_reset_replays_once_and_persists_the_confirmed_operation_
     state.quota_until_reset = true;
     let (_, wire) = state.start().await;
     let host = ProcessHost::new(&wire, "cli", "yes");
-    let result = output(host.command(&wire, &["--mode", "json", "complete a bounded saved-reset turn"])).await;
+    let result = output(&host, host.command(&wire, &["--mode", "json", "complete a bounded saved-reset turn"])).await;
     assert!(success(&result).contains("Saved reset completed this turn."));
     let diagnostics = String::from_utf8_lossy(&result.stderr);
     assert!(diagnostics.contains("Auto-redeemed"), "{diagnostics}");
@@ -938,18 +1013,22 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let mut stderr = child.stderr.take().unwrap();
-    let errors = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).await.unwrap();
-        String::from_utf8_lossy(&bytes).into_owned()
-    });
+    let evidence = host.capture("rpc");
+    if let Some(root) = &evidence {
+        std::fs::write(root.join("process.json"), json!({"pid":child.id(),"exit_observation":"not yet observed"}).to_string()).unwrap();
+    }
+    let errors = tokio::spawn(collect_reset_stderr(child.stderr.take().unwrap(), evidence.clone()));
     let mut seen = Vec::<Value>::new();
     tokio::time::timeout(WAIT, async {
         loop {
             let frame: Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().expect("RPC ready frame")).unwrap();
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap_or_else(|| {
+                    let status = child.try_wait().unwrap();
+                    record_reset_exit(evidence.as_deref(), status.as_ref());
+                    panic!("RPC ready frame; observed exit={status:?}; evidence={evidence:?}");
+                })).unwrap();
             let ready = frame["type"] == "available_commands_update";
+            record_reset_frame(evidence.as_deref(), &frame);
             seen.push(frame);
             if ready {
                 break;
@@ -967,8 +1046,13 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
     tokio::time::timeout(WAIT, async {
         loop {
             let frame: Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().expect("RPC turn frame")).unwrap();
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap_or_else(|| {
+                    let status = child.try_wait().unwrap();
+                    record_reset_exit(evidence.as_deref(), status.as_ref());
+                    panic!("RPC turn frame; observed exit={status:?}; evidence={evidence:?}");
+                })).unwrap();
             let end = frame["type"] == "agent_end";
+            record_reset_frame(evidence.as_deref(), &frame);
             seen.push(frame);
             if end {
                 break;
@@ -984,9 +1068,14 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
     let new_session = tokio::time::timeout(WAIT, async {
         loop {
             let frame: Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().expect("RPC new Session frame")).unwrap();
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap_or_else(|| {
+                    let status = child.try_wait().unwrap();
+                    record_reset_exit(evidence.as_deref(), status.as_ref());
+                    panic!("RPC new Session frame; observed exit={status:?}; evidence={evidence:?}");
+                })).unwrap();
             let state =
                 (frame["type"] == "response" && frame["id"] == "new-state").then(|| frame["data"]["sessionId"].clone());
+            record_reset_frame(evidence.as_deref(), &frame);
             seen.push(frame);
             if let Some(session) = state {
                 break session;
@@ -1002,8 +1091,13 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
     tokio::time::timeout(WAIT, async {
         loop {
             let frame: Value =
-                serde_json::from_str(&lines.next_line().await.unwrap().expect("RPC new turn frame")).unwrap();
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap_or_else(|| {
+                    let status = child.try_wait().unwrap();
+                    record_reset_exit(evidence.as_deref(), status.as_ref());
+                    panic!("RPC new turn frame; observed exit={status:?}; evidence={evidence:?}");
+                })).unwrap();
             let end = frame["type"] == "agent_end";
+            record_reset_frame(evidence.as_deref(), &frame);
             seen.push(frame);
             if end {
                 break;
@@ -1021,6 +1115,7 @@ async fn real_codex_rpc_route_emits_reset_notice_and_retries_in_the_same_session
     .await
     .expect("RPC shutdown drain deadline");
     let status = tokio::time::timeout(WAIT, child.wait()).await.unwrap().unwrap();
+    record_reset_exit(evidence.as_deref(), Some(&status));
     let diagnostics = errors.await.unwrap();
     assert_eq!(status.code(), Some(0), "{diagnostics}");
     assert!(
@@ -1071,10 +1166,16 @@ enum QuotaContent {
 fn quota_stream(content: QuotaContent, hint: bool) -> Reply {
     let mut events = vec![json!({"type":"response.created","response":{"id":"resp_quota_actual"}})];
     match content {
-        QuotaContent::Thinking => events.push(json!({"type":"response.output_item.done","output_index":0,
-            "item":{"type":"reasoning","id":"reasoning_quota","summary":[{"type":"summary_text","text":"bounded reasoning"}]}})),
+        QuotaContent::Thinking => {
+            events.push(json!({"type":"response.output_item.added","output_index":0,
+                "item":{"type":"reasoning","id":"reasoning_quota","summary":[]}}));
+            events.push(json!({"type":"response.output_item.done","output_index":0,
+                "item":{"type":"reasoning","id":"reasoning_quota","summary":[{"type":"summary_text","text":"bounded reasoning"}]}}));
+        },
         QuotaContent::Whitespace | QuotaContent::Visible | QuotaContent::MixedVisibleTools => {
             let text = if matches!(content, QuotaContent::Whitespace) { " \t\n" } else { "already delivered visible quota output" };
+            events.push(json!({"type":"response.output_item.added","output_index":0,
+                "item":{"type":"message","id":"msg_quota_actual","role":"assistant","content":[]}}));
             events.push(json!({"type":"response.output_item.done","output_index":0,
                 "item":{"type":"message","id":"msg_quota_actual","role":"assistant","content":[{"type":"output_text","text":text}]}}));
         }
@@ -1086,6 +1187,8 @@ fn quota_stream(content: QuotaContent, hint: bool) -> Reply {
         events.push(json!({"type":"response.function_call_arguments.delta","output_index":1,"item_id":"fc_unfinished_quota","delta":"{\"path\":"}));
     }
     if matches!(content, QuotaContent::CompletedTool | QuotaContent::MixedVisibleTools) {
+        events.push(json!({"type":"response.output_item.added","output_index":2,
+            "item":{"type":"function_call","id":"fc_unexecuted_quota","call_id":"unexecuted-quota","name":"write","arguments":""}}));
         events.push(json!({"type":"response.output_item.done","output_index":2,
             "item":{"type":"function_call","id":"fc_unexecuted_quota","call_id":"unexecuted-quota","name":"write",
                 "arguments":"{\"path\":\"must-not-execute.txt\",\"content\":\"quota tool was never admitted\"}"}}));
@@ -1098,6 +1201,8 @@ fn quota_stream(content: QuotaContent, hint: bool) -> Reply {
 fn actual_write_stream() -> Reply {
     Reply::events([
         json!({"type":"response.created","response":{"id":"resp_actual_effect"}}),
+        json!({"type":"response.output_item.added","output_index":0,
+            "item":{"type":"function_call","id":"fc_actual_effect","call_id":"actual-effect","name":"write","arguments":""}}),
         json!({"type":"response.output_item.done","output_index":0,
             "item":{"type":"function_call","id":"fc_actual_effect","call_id":"actual-effect","name":"write",
                 "arguments":"{\"path\":\"quota-effect.txt\",\"content\":\"one retained actual effect\"}"}}),
@@ -1113,6 +1218,7 @@ fn session_retry(host: &ProcessHost, enabled: bool, max_retries: usize, max_dela
 }
 
 struct QuotaRpc {
+    evidence: Option<PathBuf>,
     child: tokio::process::Child,
     stdin: Option<tokio::process::ChildStdin>,
     lines: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
@@ -1132,13 +1238,12 @@ impl QuotaRpc {
             .unwrap();
         let stdin = child.stdin.take();
         let lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let mut stderr = child.stderr.take().unwrap();
-        let errors = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stderr.read_to_end(&mut bytes).await.unwrap();
-            String::from_utf8_lossy(&bytes).into_owned()
-        });
-        let mut host = Self { child, stdin, lines, errors, seen: vec![], deadline: tokio::time::Instant::now() + WAIT };
+        let evidence = host.capture("quota-rpc");
+        if let Some(root) = &evidence {
+            std::fs::write(root.join("process.json"), json!({"pid":child.id(),"exit_observation":"not yet observed"}).to_string()).unwrap();
+        }
+        let errors = tokio::spawn(collect_reset_stderr(child.stderr.take().unwrap(), evidence.clone()));
+        let mut host = Self { evidence, child, stdin, lines, errors, seen: vec![], deadline: tokio::time::Instant::now() + WAIT };
         host.until(|frame| frame["type"] == "available_commands_update").await;
         host
     }
@@ -1158,8 +1263,13 @@ impl QuotaRpc {
                     panic!("quota RPC bounded child observation: {error}; seen={}", json!(self.seen))
                 })
                 .unwrap()
-                .expect("quota RPC frame before EOF");
+                .unwrap_or_else(|| {
+                    let status = self.child.try_wait().unwrap();
+                    record_reset_exit(self.evidence.as_deref(), status.as_ref());
+                    panic!("quota RPC frame before EOF; observed exit={status:?}; evidence={:?}", self.evidence);
+                });
             let frame: Value = serde_json::from_str(&line).unwrap();
+            record_reset_frame(self.evidence.as_deref(), &frame);
             self.seen.push(frame.clone());
             if predicate(&frame) {
                 return frame;
@@ -1208,10 +1318,13 @@ impl QuotaRpc {
             .expect("quota RPC drain deadline")
             .unwrap()
         {
-            self.seen.push(serde_json::from_str(&line).unwrap());
+            let frame = serde_json::from_str(&line).unwrap();
+            record_reset_frame(self.evidence.as_deref(), &frame);
+            self.seen.push(frame);
         }
         let status =
             tokio::time::timeout_at(self.deadline, self.child.wait()).await.expect("quota RPC exit deadline").unwrap();
+        record_reset_exit(self.evidence.as_deref(), Some(&status));
         let diagnostics =
             tokio::time::timeout_at(self.deadline, self.errors).await.expect("quota RPC stderr deadline").unwrap();
         assert_eq!(status.code(), Some(0), "{diagnostics}");
@@ -1548,6 +1661,19 @@ async fn session_quota_preparation_controls_revoke_unadmitted_spend_and_admitted
         rpc.prompt().await;
         preparation.wait_entered().await;
         assert_eq!(wire.count("POST", "/codex/responses"), 1, "stop={stop}: Gate must follow the actual quota");
+        // A server-side request count does not prove the Host has settled
+        // its quota terminal. The preparation Gate can be reached by a
+        // concurrent usage refresh before that terminal arrives. Wait for
+        // the journal-backed receipt before revoking its recovery authority.
+        let quota_terminal = |frame: &Value| {
+            frame["type"] == "message_end"
+                && frame["message"]["role"] == "assistant"
+                && frame["message"]["stopReason"] == "error"
+                && frame["message"]["errorMessage"].as_str().is_some_and(|error| error.contains("usage_limit_reached"))
+        };
+        if !rpc.seen.iter().any(quota_terminal) {
+            rpc.until(quota_terminal).await;
+        }
         assert!(rpc.child.try_wait().unwrap().is_none(), "preparation Gate is observed in a live child");
         if stop == "eof" {
             rpc.stdin.take();
@@ -1677,5 +1803,221 @@ async fn session_quota_preparation_controls_revoke_unadmitted_spend_and_admitted
         let receipts = SqliteResetReceiptStore::open(&host.receipts).unwrap().receipts().unwrap();
         assert_eq!(receipts.len(), 1);
         assert!(receipts[0].is_confirmed_reset(), "already admitted consume must settle its owned durable receipt");
+    }
+}
+
+/// Native reserve policies through the real serial RPC Host and shared account
+/// owner. The target has its own protocol/auth and never inherits the account
+/// route; no reset credit is consumed by a reserve preflight.
+#[tokio::test]
+async fn rpc_usage_reserve_policy_and_owned_fallback_process_family() {
+    use ara_testkit::chunks::{done, finish, text};
+    use ara_testkit::{FakeUpstream, Script};
+    // Like rpc_retry's HttpGate, own and forward the original HTTP bytes.
+    // Validate before the shared recorder redacts credential header values.
+    struct ExactAuthGate {
+        url: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+    impl ExactAuthGate {
+        async fn start(target: std::net::SocketAddr) -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let task = tokio::spawn(async move {
+                let mut connections = tokio::task::JoinSet::new();
+                loop {
+                    let Ok((mut client, _)) = listener.accept().await else { break };
+                    connections.spawn(async move {
+                        let mut request = Vec::new();
+                        let header_end = loop {
+                            let mut buffer = [0; 8192];
+                            let Ok(length) = client.read(&mut buffer).await else { return };
+                            if length == 0 {
+                                return;
+                            }
+                            request.extend_from_slice(&buffer[..length]);
+                            if let Some(position) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                                break position + 4;
+                            }
+                        };
+                        let authorized = String::from_utf8_lossy(&request[..header_end]).lines().any(|line| {
+                            line.split_once(':').is_some_and(|(name, value)| {
+                                name.eq_ignore_ascii_case("authorization")
+                                    && value.trim() == "Bearer synthetic-reserve-key"
+                            })
+                        });
+                        if !authorized {
+                            let _ = client
+                                .write_all(
+                                    b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                                )
+                                .await;
+                            return;
+                        }
+                        let Ok(mut server) = tokio::net::TcpStream::connect(target).await else { return };
+                        if server.write_all(&request).await.is_err() {
+                            return;
+                        }
+                        let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+                    });
+                }
+            });
+            Self { url: format!("http://{address}/v1"), task }
+        }
+    }
+    impl Drop for ExactAuthGate {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+    for (policy, used, enabled, model_fallback, should_switch, blocked) in [
+        ("auto", 95, true, true, true, false),
+        ("confirm", 95, true, true, true, false),
+        ("fail-closed", 95, true, true, false, true),
+        ("fail-closed", 100, true, false, false, true),
+        ("auto", 95, true, false, false, false),
+        ("auto", 10, true, true, false, false),
+        ("fail-closed", 95, false, true, false, false),
+    ] {
+        let (_, wire) = WireState::new(&["reserve"], used, Consume::Reset).start().await;
+        let target = FakeUpstream::start(
+            serde_json::from_value::<Script>(json!({"responses":[{
+                "events":[text("reserve target completed"),finish("stop"),done()]
+            }]}))
+            .unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        let auth_gate = ExactAuthGate::start(target.addr).await;
+        let host = ProcessHost::new(&wire, "reserve", "no");
+        let agent = host.home.path().join("agent");
+        let mut models: Value =
+            serde_json::from_str(&std::fs::read_to_string(agent.join("models.yml")).unwrap()).unwrap();
+        models["providers"]["reserve-target"] = json!({
+            "api":"openai-completions", "baseUrl":auth_gate.url, "apiKey":"synthetic-reserve-key", "authHeader":true,
+            "models":[{"id":"reserve-model", "input":["text"], "contextWindow":1000000}]
+        });
+        ara_cli::models_config::ModelsConfig::validate(models.clone()).unwrap();
+        std::fs::write(agent.join("models.yml"), models.to_string()).unwrap();
+        let mut settings = std::fs::read_to_string(agent.join("config.yml")).unwrap();
+        settings.push_str(&format!("retry:\n  usageAwareFallback: {enabled}\n  usageReservePct: 10\n  usageReservePolicy: '{policy}'\n  modelFallback: {model_fallback}\n  fallbackChains:\n    'openai-codex/reset-model': ['reserve-target/reserve-model']\n"));
+        std::fs::write(agent.join("config.yml"), settings).unwrap();
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        let origin = rpc.state("reserve-origin").await;
+        rpc.prompt_as("reserve-task", "complete the task after Native usage preflight").await;
+        if blocked {
+            let refusal = rpc
+                .until(|frame| frame["type"] == "response" && frame["command"] == "prompt" && frame["success"] == false)
+                .await;
+            assert!(refusal["error"].as_str().unwrap().contains("reserve policy is fail-closed"), "{refusal}");
+        } else {
+            let completed = rpc.until(|frame| frame["type"] == "agent_end").await;
+            assert_eq!(completed["messages"].as_array().unwrap().last().unwrap()["stopReason"], "stop");
+        }
+        let settled = rpc.state("reserve-settled").await;
+        assert_eq!(settled["sessionId"], origin["sessionId"]);
+        assert_eq!(settled["isStreaming"], false);
+        assert_eq!(settled["model"]["provider"], if should_switch { "reserve-target" } else { "openai-codex" });
+        if should_switch {
+            assert_eq!(target.served(), 1);
+            assert_eq!(wire.count("POST", "/codex/responses"), 0);
+            let requests = target.requests.lock().await;
+            assert_eq!(requests[0]["body"]["model"], "reserve-model");
+            assert_eq!(requests[0]["headers"]["authorization"], "<redacted 28 chars>");
+            drop(requests);
+            let entries = quota_journal(Path::new(settled["sessionFile"].as_str().unwrap()));
+            let swap =
+                entries.iter().find(|entry| entry["type"] == "model_change" && entry["role"] == "fallback").unwrap();
+            assert_eq!(swap["model"], "reserve-target/reserve-model");
+            assert_eq!(swap["resolvedModelIsFallback"], true);
+        } else {
+            assert_eq!(target.served(), 0);
+            assert_eq!(wire.count("POST", "/codex/responses"), if blocked { 0 } else { 1 });
+        }
+        assert_eq!(wire.count("POST", "/consume"), 0);
+        let frames = rpc.finish().await;
+        assert_eq!(
+            frames.iter().filter(|frame| frame["type"] == "retry_fallback_applied").count(),
+            usize::from(should_switch)
+        );
+        assert!(!frames.iter().any(|frame| frame["type"] == "auto_retry_start"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_reserve_terminal_empty_poll_and_actual_queue_ownership_family() {
+    for queue_kind in [None, Some("steer"), Some("follow_up")] {
+        let response_gate = Arc::new(Gate::default());
+        let state = WireState::new(&["terminal-reserve"], 0, Consume::Reset);
+        state.model_replies.lock().unwrap().push_back(
+            Reply::text("The final response completed successfully.")
+                .header("x-codex-primary-used-percent", "95")
+                .header("x-codex-primary-window-minutes", "300")
+                .header("x-codex-primary-reset-at", &((ara_ai::now_ms() / 1000) + 3600).to_string())
+                .held(&response_gate),
+        );
+        let (state, wire) = state.start().await;
+        let host = ProcessHost::new(&wire, "terminal-reserve", "no");
+        let settings_path = host.home.path().join("agent/config.yml");
+        let mut settings = std::fs::read_to_string(&settings_path).unwrap();
+        settings.push_str("retry:\n  usageAwareFallback: true\n  usageReservePct: 10\n  usageReservePolicy: fail-closed\n  modelFallback: false\n");
+        std::fs::write(settings_path, settings).unwrap();
+        let mut rpc = QuotaRpc::start(&host, &wire, "").await;
+        let origin = rpc.state("terminal-origin").await;
+        let original_file = PathBuf::from(origin["sessionFile"].as_str().unwrap());
+        assert_eq!(origin["messageCount"], 0);
+        assert!(!original_file.exists(), "a fresh Session is lazy until its first Assistant");
+        let original_model =
+            format!("{}/{}", origin["model"]["provider"].as_str().unwrap(), origin["model"]["id"].as_str().unwrap());
+        rpc.prompt_as("terminal-task", "complete one response without an unnecessary next input").await;
+        response_gate.wait_entered().await;
+        if let Some(kind) = queue_kind {
+            rpc.send(json!({"id":"owned-next","type":kind,"message":"retain this input when reserve blocks"})).await;
+            assert_eq!(rpc.response("owned-next").await["success"], true);
+        }
+        // Native ordinary Codex SSE does not forward onResponse. Expire only
+        // this synthetic account's cached report, so the next input must query
+        // the now-reserved account while an empty poll still stays idle.
+        state.used.store(95, Ordering::Release);
+        let database = rusqlite::Connection::open(&host.auth).unwrap();
+        let (key, payload): (String, String) = database
+            .query_row("SELECT key,value FROM cache WHERE key LIKE 'usage_cache:report:%'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        let mut cache: Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(cache["value"]["metadata"]["accountId"], "terminal-reserve");
+        assert_eq!(cache["value"]["limits"][0]["amount"]["used"].as_f64(), Some(0.0));
+        cache["expiresAt"] = json!(0);
+        assert_eq!(database.execute("UPDATE cache SET value=?1 WHERE key=?2", [cache.to_string(), key]).unwrap(), 1);
+        drop(database);
+        response_gate.release();
+        let completed = rpc.until(|frame| frame["type"] == "agent_end").await;
+        let last = completed["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["stopReason"], if queue_kind.is_some() { "error" } else { "stop" }, "{completed}");
+        if queue_kind.is_some() {
+            assert!(last["errorMessage"].as_str().unwrap().contains("reserve policy is fail-closed"), "{last}");
+        }
+        let settled = rpc.state("terminal-settled").await;
+        assert_eq!(settled["sessionId"], origin["sessionId"]);
+        assert_eq!(settled["sessionFile"], origin["sessionFile"]);
+        assert_eq!(settled["model"], origin["model"]);
+        assert_eq!(settled["queuedMessageCount"], usize::from(queue_kind.is_some()));
+        assert_eq!(wire.count("POST", "/codex/responses"), 1);
+        assert_eq!(wire.count("POST", "/consume"), 0);
+        let entries = quota_journal(&original_file);
+        assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 1);
+        let models: Vec<_> = entries.iter().filter(|entry| entry["type"] == "model_change").collect();
+        assert_eq!(models.len(), 1, "the task must not add any model selection");
+        assert_eq!(models[0]["model"], original_model);
+        assert_eq!(models[0]["resolvedModelIsFallback"], false);
+        assert!(models[0].get("role").is_none(), "only the initial default selection may exist");
+        let frames = rpc.finish().await;
+        assert!(
+            !frames
+                .iter()
+                .any(|frame| frame["type"] == "retry_fallback_applied" || frame["type"] == "auto_retry_start")
+        );
     }
 }

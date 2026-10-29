@@ -25,10 +25,9 @@
 
 use super::{
     AuthCredential, CLIENT_ID, CodexAuthError, DEVICE_AUTH_URL, DeviceLoginInfo, REDIRECT_URI, cancellable_sleep,
-    interval_seconds, login_credential, required, response_json,
+    exchange_code_credential, interval_seconds, required, response_json,
 };
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -114,41 +113,6 @@ impl OpenAiCodexDeviceLogin {
         verifier: &str,
         cancel: &CancellationToken,
     ) -> Result<AuthCredential, CodexAuthError> {
-        if cancel.is_cancelled() {
-            return Err(CodexAuthError::Cancelled);
-        }
-        // Build first: configuration/encoding failure cannot dispatch a grant.
-        let request = self
-            .client
-            .post(format!("{}/oauth/token", self.auth_base_url))
-            .timeout(Duration::from_secs(15))
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("client_id", CLIENT_ID),
-                ("code", code),
-                ("code_verifier", verifier),
-                ("redirect_uri", REDIRECT_URI),
-            ])
-            .build()
-            .map_err(|_| CodexAuthError::Transport)?;
-        let dispatched = AtomicBool::new(false);
-        let operation = async {
-            // Once execute is polled, a connection/proxy error cannot prove
-            // the authorization code was not consumed by the authorized peer.
-            dispatched.store(true, Ordering::SeqCst);
-            let response = self.client.execute(request).await.map_err(|_| CodexAuthError::OutcomeUnknown)?;
-            if response.status().is_server_error() {
-                return Err(CodexAuthError::OutcomeUnknown);
-            }
-            if !response.status().is_success() {
-                return Err(CodexAuthError::HttpStatus(response.status().as_u16()));
-            }
-            let token = response.json::<Value>().await.map_err(|_| CodexAuthError::OutcomeUnknown)?;
-            login_credential(&token).map_err(|_| CodexAuthError::OutcomeUnknown)
-        };
-        tokio::select! { biased;
-            _ = cancel.cancelled() => Err(if dispatched.load(Ordering::SeqCst) { CodexAuthError::OutcomeUnknown } else { CodexAuthError::Cancelled }),
-            result = operation => result,
-        }
+        exchange_code_credential(&self.client, &self.auth_base_url, REDIRECT_URI, code, verifier, cancel).await
     }
 }

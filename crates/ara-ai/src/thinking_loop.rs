@@ -7,12 +7,18 @@
 //! execution Model does not contain the upstream catalogue's identity/compat.
 //! Result-path re-sampling and Gemini header reminders belong to their caller.
 
-use crate::event::{AssistantMessageEvent, AssistantStream};
+use crate::actual_provider::{GraphBuilder, new_assistant};
+use crate::event::{
+    ActualAssistantEvent, ActualAssistantStream, ActualStreamFailureReceipt, AssistantMessageEvent, AssistantStream,
+    EventSink,
+};
+use crate::graph_values::GraphValueFactory;
 use crate::retry_classification::{ProviderErrorKind, ProviderFailureEvidence, flag};
 use crate::{AssistantMessage, CallOptions, Context, Model, ModelProvider, ProviderError, StopReason};
+use ara_rpc::value_heap::{ValueError, ValueHandle};
 use regex::Regex;
 use std::collections::{HashSet, VecDeque};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -111,11 +117,16 @@ impl ThinkingLoopDetector {
     }
 
     pub fn push(&mut self, delta: &str) -> Option<String> {
-        if delta.is_empty() {
+        self.push_units(&delta.encode_utf16().collect::<Vec<_>>())
+    }
+
+    /// Actual deltas retain JavaScript UTF-16, including isolated surrogates.
+    /// The existing semantic detector observes text; it never replaces a delta.
+    pub fn push_units(&mut self, units: &[u16]) -> Option<String> {
+        if units.is_empty() {
             return None;
         }
-        let units: Vec<u16> = delta.encode_utf16().collect();
-        self.tail.extend_from_slice(&units);
+        self.tail.extend_from_slice(units);
         if self.tail.len() > EXACT_TAIL_WINDOW {
             self.tail.drain(..self.tail.len() - EXACT_TAIL_WINDOW);
         }
@@ -129,7 +140,7 @@ impl ThinkingLoopDetector {
         if !self.semantic_heuristics {
             return None;
         }
-        self.pending.extend_from_slice(&units);
+        self.pending.extend_from_slice(units);
         loop {
             let raw = if let Some((start, end)) = blank_line_boundary(&self.pending) {
                 let raw = self.pending[..start].to_vec();
@@ -350,33 +361,61 @@ pub fn is_reasoning_summary_header(line: &str) -> bool {
     BOLD_TITLE.is_match(line)
 }
 
+// The fixed non-Unicode regexes inspect String code units. Both surrogate
+// kinds remain ordinary non-whitespace title content; no scalar bridge applies.
+fn is_reasoning_summary_header_utf16(line: &[u16]) -> bool {
+    let heading = line.iter().take_while(|unit| **unit == u16::from(b'#')).count();
+    if (1..=6).contains(&heading) {
+        let rest = &line[heading..];
+        let spaces = rest.iter().take_while(|unit| matches!(**unit, 0x0020 | 0x0009)).count();
+        if spaces > 0 && rest.get(spaces).is_some_and(|unit| !js_whitespace(*unit)) {
+            return true;
+        }
+    }
+    line.len() >= 5
+        && line.starts_with(&[0x002a, 0x002a])
+        && line.ends_with(&[0x002a, 0x002a])
+        && !line.iter().any(|unit| matches!(*unit, 0x000a | 0x000d | 0x2028 | 0x2029))
+}
+
 /// Independent summary-header runaway detector, as exported by fixed OMP.
 /// Paragraphs between titles do not reset its run. A Host resets on a fresh
 /// thinking block/prose/tool call and owns any tool-call reminder.
 #[derive(Default)]
 pub struct GeminiHeaderRunDetector {
-    pending: String,
+    pending: Vec<u16>,
     count: usize,
     fired: bool,
 }
 
 impl GeminiHeaderRunDetector {
     pub fn push(&mut self, delta: &str) -> bool {
+        self.push_utf16(&delta.encode_utf16().collect::<Vec<_>>())
+    }
+
+    /// Original JavaScript String units, including split/lone surrogates.
+    pub fn push_utf16(&mut self, delta: &[u16]) -> bool {
         if self.fired || delta.is_empty() {
             return false;
         }
-        self.pending.push_str(delta);
-        while let Some(newline) = self.pending.find('\n') {
-            let line = self.pending[..newline]
-                .trim_matches(|character: char| character as u32 <= 0xffff && js_whitespace(character as u16));
-            if !line.is_empty() && is_reasoning_summary_header(line) {
+        self.pending.extend_from_slice(delta);
+        while let Some(newline) = self.pending.iter().position(|unit| *unit == 0x000a) {
+            let mut line = &self.pending[..newline];
+            while line.first().is_some_and(|unit| js_whitespace(*unit)) {
+                line = &line[1..];
+            }
+            while line.last().is_some_and(|unit| js_whitespace(*unit)) {
+                line = &line[..line.len() - 1];
+            }
+            let header = is_reasoning_summary_header_utf16(line);
+            self.pending.drain(..newline + 1);
+            if header {
                 self.count += 1;
                 if self.count >= GEMINI_HEADER_RUNAWAY_THRESHOLD {
                     self.fired = true;
                     return true;
                 }
             }
-            self.pending.drain(..newline + 1);
         }
         false
     }
@@ -407,6 +446,205 @@ pub fn with_thinking_loop_guard(
     let controller = options.cancel.child_token();
     options.cancel = controller.clone();
     guard_thinking_loop_stream(dispatch(options), model, controller, policy)
+}
+
+/// Same fixed stream guard for an actual dispatch. The wrapper does not import
+/// typed events, re-encode partial messages, or coerce native content indices.
+pub fn with_actual_thinking_loop_guard(
+    model: &Model,
+    mut options: CallOptions,
+    policy: LoopGuardPolicy,
+    factory: Arc<GraphValueFactory>,
+    dispatch: impl FnOnce(CallOptions) -> Result<ActualAssistantStream, ValueError>,
+) -> Result<ActualAssistantStream, ValueError> {
+    let policy = policy.with_overrides(options.loop_guard.as_ref());
+    if std::env::var("ARA_NO_THINKING_LOOP_GUARD").is_ok_and(|value| value == "1") || !policy.enabled {
+        return dispatch(options);
+    }
+    let controller = options.cancel.child_token();
+    options.cancel = controller.clone();
+    let inner = dispatch(options)?;
+    Ok(guard_actual_thinking_loop_stream(inner, model, controller, policy, factory))
+}
+
+pub fn guard_actual_thinking_loop_stream(
+    mut inner: ActualAssistantStream,
+    model: &Model,
+    controller: CancellationToken,
+    policy: LoopGuardPolicy,
+    factory: Arc<GraphValueFactory>,
+) -> ActualAssistantStream {
+    let (sink, outer, failures) = ActualAssistantStream::channel_with_close_drain();
+    failures.inherit_stream(&inner);
+    let settlement = failures.owner_settlement_guard();
+    let model = model.clone();
+    tokio::spawn(async move {
+        let _settlement = settlement;
+        let _cancellation = controller.clone().drop_guard();
+        let mut thinking_detector = ThinkingLoopDetector::new(policy.semantic_heuristics);
+        let mut text_detector = ThinkingLoopDetector::new(policy.semantic_heuristics);
+        let mut thinking_armed = true;
+        let mut text_armed = policy.check_assistant_content;
+        let mut text_started = false;
+        loop {
+            // Release a closed receiver even while the provider emits nothing.
+            // Its independent receipt retains the operation until that original
+            // owner actually settles; caller cancellation remains its own event.
+            let event = tokio::select! {
+                biased;
+                _ = sink.closed() => {
+                    retain_ready_actual_terminal(&mut inner, &sink, &failures, None).await;
+                    return;
+                },
+                _ = controller.cancelled() => {
+                    retain_ready_actual_terminal(&mut inner, &sink, &failures, None).await;
+                    return;
+                },
+                event = inner.recv() => event,
+            };
+            let Some(event) = event else {
+                let builder = GraphBuilder(factory.clone());
+                let error = (|| {
+                    let (root, _) = new_assistant(&builder, &model)?;
+                    builder.put(&root, "stopReason", builder.text("error")?)?;
+                    builder.put(
+                        &root,
+                        "errorMessage",
+                        builder.text("Provider stream ended without a terminal event")?,
+                    )?;
+                    let evidence = ProviderFailureEvidence::from_error(
+                        &ProviderError::Incomplete("Provider stream ended without a terminal event".into()),
+                        true,
+                    );
+                    builder.put(&root, "failureEvidence", builder.derived(&evidence)?)?;
+                    Ok::<_, ValueError>(root)
+                })();
+                match error {
+                    Ok(error) => {
+                        let event = AssistantMessageEvent::Error { reason: StopReason::Error, error };
+                        failures.retain_terminal(&event);
+                        let _ = sink.push_or_cancel(event, &controller).await;
+                    }
+                    Err(error) => failures.record(error),
+                }
+                return;
+            };
+            if controller.is_cancelled() {
+                let known = event.is_terminal().then_some(event);
+                retain_ready_actual_terminal(&mut inner, &sink, &failures, known).await;
+                return;
+            }
+            let detail = match &event {
+                AssistantMessageEvent::ThinkingDelta { delta, .. } if !text_started => {
+                    thinking_armed = true;
+                    thinking_detector.push_units(delta.units())
+                }
+                AssistantMessageEvent::ThinkingEnd { .. } if thinking_armed => thinking_detector.flush(),
+                AssistantMessageEvent::TextDelta { delta, .. } => {
+                    if !delta.units().is_empty() {
+                        thinking_armed = false;
+                        text_started = true;
+                    }
+                    if text_armed { text_detector.push_units(delta.units()) } else { None }
+                }
+                AssistantMessageEvent::ToolcallStart { .. } | AssistantMessageEvent::ToolcallDelta { .. } => {
+                    text_armed = false;
+                    None
+                }
+                AssistantMessageEvent::Done { .. } => {
+                    let thinking = if thinking_armed { thinking_detector.flush() } else { None };
+                    thinking.or_else(|| if text_armed { text_detector.flush() } else { None })
+                }
+                _ => None,
+            };
+            if let Some(detail) = detail {
+                controller.cancel();
+                match build_actual_thinking_loop_error(&model, &detail, event.partial(), &factory) {
+                    Ok(error) => {
+                        // The loop controller is already cancelled. A full
+                        // consumer queue cannot park this owner's settlement;
+                        // receipt/EOF still cannot be treated as success.
+                        let event = AssistantMessageEvent::Error { reason: StopReason::Error, error };
+                        failures.retain_terminal(&event);
+                        if !sink.try_push(event) {
+                            failures.record(ValueError::UnsupportedOperation(
+                                "Actual thinking-loop terminal delivery failed",
+                            ));
+                        }
+                    }
+                    Err(error) => failures.record(error),
+                }
+                return;
+            }
+            let terminal = event.is_terminal();
+            if terminal {
+                failures.retain_terminal(&event);
+            }
+            if !sink.push_or_cancel(event, &controller).await {
+                retain_ready_actual_terminal(&mut inner, &sink, &failures, None).await;
+                return;
+            }
+            if terminal {
+                return;
+            }
+        }
+    });
+    outer
+}
+
+async fn retain_ready_actual_terminal(
+    inner: &mut ActualAssistantStream,
+    sink: &EventSink<ActualAssistantEvent>,
+    failures: &ActualStreamFailureReceipt,
+    known: Option<ActualAssistantEvent>,
+) {
+    // The input is closed and only its ready queue is read. Its original owner
+    // may still be running; inherit_stream keeps that unknown settlement open.
+    let queued = inner.take_terminal_on_close().await;
+    if let Some(event) = known.or(queued) {
+        failures.retain_terminal(&event);
+        let _ = sink.try_push(event);
+    }
+}
+
+fn build_actual_thinking_loop_error(
+    model: &Model,
+    detail: &str,
+    observed: &ValueHandle,
+    factory: &Arc<GraphValueFactory>,
+) -> Result<ValueHandle, ValueError> {
+    let builder = GraphBuilder(factory.clone());
+    factory.heap().adopt(observed)?;
+    let (error, _) = new_assistant(&builder, model)?;
+    // Match the typed guard's explicit ARA billing difference. These are the
+    // observed original handles; unknown/undefined stays unknown/undefined.
+    for key in ["usage", "duration", "ttft"] {
+        builder.put(&error, key, builder.get(observed, key)?)?;
+    }
+    builder.put(&error, "stopReason", builder.text("error")?)?;
+    builder.put(&error, "errorMessage", builder.text(format!(
+        "{THINKING_LOOP_ERROR_MARKER}: the model repeated near-identical content ({detail}). Treating as a stream stall and retrying."
+    ))?)?;
+    // The source guard attaches AIError.create(Flag.ThinkingLoop) directly to
+    // the original root; native completeSimple reads this field, not ARA facts.
+    builder.put(
+        &error,
+        "errorId",
+        factory.heap().number(f64::from(flag::THINKING_LOOP | flag::CLASS))?,
+    )?;
+    let evidence = ProviderFailureEvidence {
+        kind: ProviderErrorKind::Stream,
+        status: None,
+        code: None,
+        replay_blocked: false,
+        same_route_blocked: false,
+        context_recovery: None,
+        wait_ms: None,
+        header_wait_ms: None,
+        error_id: flag::THINKING_LOOP | flag::CLASS,
+    };
+    builder.put(&error, "failureEvidence", builder.derived(&evidence)?)?;
+    Ok(error)
 }
 
 /// Wrap an already-dispatched stream whose cancellation was wired to this
@@ -445,6 +683,7 @@ pub fn guard_thinking_loop_stream(
                     same_route_blocked: true,
                     context_recovery: None,
                     wait_ms: None,
+                    header_wait_ms: None,
                     error_id: 0,
                 });
                 let _ = tx.send(AssistantMessageEvent::Error { reason: StopReason::Error, error }).await;
@@ -507,6 +746,7 @@ fn build_thinking_loop_error(model: &Model, detail: &str, observed: &AssistantMe
         same_route_blocked: false,
         context_recovery: None,
         wait_ms: None,
+        header_wait_ms: None,
         error_id: flag::THINKING_LOOP | flag::CLASS,
     });
     error

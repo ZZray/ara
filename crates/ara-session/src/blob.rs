@@ -64,6 +64,35 @@ fn image_extension(mime: Option<&str>) -> Option<String> {
     normalized_extension(extension)
 }
 
+/// Existing tolerant Buffer-compatible image decoder, shared by persistence and attachment materialization.
+pub fn decode_image_base64(data: &str) -> io::Result<Vec<u8>> {
+    // Fixed Buffer.from(data, "base64") accepts URL-safe/unpadded input,
+    // ignores whitespace/junk and stops at padding. Reopening canonicalizes
+    // to standard padded base64 like Buffer.toString("base64").
+    let mut cleaned = data
+        .bytes()
+        .take_while(|byte| *byte != b'=')
+        .filter_map(|byte| match byte {
+        b'-' => Some(b'+'),
+        b'_' => Some(b'/'),
+        byte if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/') => Some(byte),
+        _ => None,
+        })
+        .collect::<Vec<_>>();
+    if cleaned.len() % 4 == 1 {
+        cleaned.pop();
+    }
+    let decoder = GeneralPurpose::new(
+        &alphabet::STANDARD,
+        GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
+    );
+    let bytes =
+        decoder.decode(cleaned).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid image base64"))?;
+    Ok(bytes)
+}
+
 impl BlobStore {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self { directory: directory.into() }
@@ -80,7 +109,9 @@ impl BlobStore {
         let path = self.directory.join(&hash);
         let exists = match fs::metadata(&path) {
             Ok(metadata) if metadata.is_file() => true,
-            Ok(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "canonical blob path is not a file")),
+            Ok(_) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "canonical blob path is not a file"));
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) => return Err(error),
         };
@@ -129,34 +160,56 @@ impl BlobStore {
         }
     }
 
+    /// Fixed b91 session/blob-store.ts sizeSync: price without opening payload.
+    pub fn size(&self, hash: &str) -> io::Result<Option<u64>> {
+        if parse_blob_ref(&format!("{BLOB_PREFIX}{hash}")).is_none() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid blob hash"));
+        }
+        match fs::metadata(self.directory.join(hash)) {
+            Ok(metadata) => Ok(Some(metadata.len())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The archive selector owns newest-first admission; this port only stats
+    /// now and performs IO when its selected frame calls `read`.
+    pub fn lazy_frame_data_utf16<'a>(
+        &'a self,
+        data: &ara_snapcompact::Utf16Text,
+    ) -> ara_snapcompact::Result<Option<ara_snapcompact::LazyFrameData<'a>>> {
+        use ara_snapcompact::{Error, LazyFrameData, Utf16Text};
+        if !data.as_units().starts_with(&BLOB_PREFIX.encode_utf16().collect::<Vec<_>>()) {
+            let data = data.clone();
+            return Ok(Some(LazyFrameData { bytes: data.len(), read: Box::new(move || Ok(data)) }));
+        }
+        let Ok(data) = data.to_scalar() else { return Ok(None) };
+        let Some(hash) = parse_blob_ref(&data) else { return Ok(None) };
+        let Some(size) = self.size(hash).map_err(|error| Error::from_reason(error.to_string()))? else {
+            return Ok(None);
+        };
+        let bytes = usize::try_from(size)
+            .ok()
+            .and_then(|size| size.div_ceil(3).checked_mul(4))
+            .ok_or_else(|| Error::from_reason("snapcompact blob encoded size overflow"))?;
+        let hash = hash.to_owned();
+        let reference = data;
+        Ok(Some(LazyFrameData {
+            bytes,
+            read: Box::new(move || {
+                let bytes = self.get(&hash).map_err(|error| Error::from_reason(error.to_string()))?;
+                // Fixed resolveImageDataSync returns its original reference if
+                // the blob vanished after sizeSync. Keep that observable race.
+                Ok(Utf16Text::from(bytes.map_or(reference, |bytes| STANDARD.encode(bytes))))
+            }),
+        }))
+    }
+
     fn encode_image(&self, data: &str, mime: Option<&str>) -> io::Result<String> {
         if data.starts_with(BLOB_PREFIX) {
             return Ok(data.to_owned());
         }
-        // Fixed Buffer.from(data, "base64") accepts URL-safe/unpadded input,
-        // ignores whitespace/junk and stops at padding. Reopening canonicalizes
-        // to standard padded base64 like Buffer.toString("base64").
-        let mut cleaned = data
-            .bytes()
-            .take_while(|byte| *byte != b'=')
-            .filter_map(|byte| match byte {
-                b'-' => Some(b'+'),
-                b'_' => Some(b'/'),
-                byte if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/') => Some(byte),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if cleaned.len() % 4 == 1 {
-            cleaned.pop();
-        }
-        let decoder = GeneralPurpose::new(
-            &alphabet::STANDARD,
-            GeneralPurposeConfig::new()
-                .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-                .with_decode_allow_trailing_bits(true),
-        );
-        let bytes =
-            decoder.decode(cleaned).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid image base64"))?;
+        let bytes = decode_image_base64(data)?;
         Ok(self.put(&bytes, image_extension(mime).as_deref())?.reference)
     }
 
@@ -263,7 +316,7 @@ fn resolve_tree(
     warnings: &mut Vec<BlobWarning>,
     key: Option<&str>,
 ) -> io::Result<()> {
-    if image_position(value, key) {
+    if key != Some("frames") && image_position(value, key) {
         value["data"] = Value::String(store.resolve(value["data"].as_str().expect("image data"), false, warnings)?);
         return Ok(());
     }
@@ -317,6 +370,249 @@ pub(crate) fn repair_truncated_archive(entry: &mut Value) {
     }
 }
 
+/// The existing blob persistence walk on Wire data. Only the image/blob
+/// positions are rewritten; unrelated archive UTF16 and extension fields stay
+/// exact. Store IO completes before the journal publishes this candidate.
+pub(crate) fn prepare_native_entry(value: &ara_rpc::WireValue, store: &BlobStore) -> io::Result<ara_rpc::WireValue> {
+    use ara_rpc::{WireString, WireValue as W};
+    enum Work {
+        Visit(W, Option<WireString>),
+        Array(usize),
+        Object(Vec<WireString>),
+    }
+    fn prefix(value: &WireString, text: &str) -> bool {
+        value.units().iter().copied().take(text.len()).eq(text.encode_utf16())
+    }
+    fn image_position(value: &W, key: Option<&WireString>) -> bool {
+        if value.get("data").and_then(W::as_string).is_none() {
+            return false;
+        }
+        let image = value.get("type").and_then(W::as_string).is_some_and(|kind| kind.equals_ascii("image"));
+        let image_mime = value.get("mimeType").and_then(W::as_string).is_some_and(|mime| {
+            mime.len() >= 6
+                && mime
+                    .units()
+                    .iter()
+                    .take(6)
+                    .copied()
+                    .zip("image/".bytes())
+                    .all(|(unit, byte)| unit <= 0x7f && (unit as u8).eq_ignore_ascii_case(&byte))
+        });
+        (image || image_mime)
+            && key.is_some_and(|key| {
+                (key.equals_ascii("content") && image) || key.equals_ascii("images") || key.equals_ascii("frames")
+            })
+    }
+    fn atomic(value: &W) -> bool {
+        let nonempty = |key| value.get(key).and_then(W::as_string).is_some_and(|text| !text.is_empty());
+        let Some(kind) = value.get("type").and_then(W::as_string) else {
+            return false;
+        };
+        if kind.equals_ascii("thinking") {
+            nonempty("thinkingSignature")
+        } else if kind.equals_ascii("text") {
+            nonempty("textSignature")
+        } else if kind.equals_ascii("toolCall") {
+            nonempty("thoughtSignature")
+        } else if kind.equals_ascii("redactedThinking") {
+            nonempty("data")
+        } else if kind.equals_ascii("reasoning") {
+            nonempty("encrypted_content")
+        } else {
+            kind.equals_ascii("anthropicServerTool")
+        }
+    }
+    fn encode(value: &WireString, mime: Option<&WireString>, store: &BlobStore) -> io::Result<W> {
+        // Buffer.from(base64) ignores non-base64 units. Filtering non-ASCII is
+        // confined to this existing image encoding boundary, not archive text.
+        let data = value.units().iter().filter_map(|unit| u8::try_from(*unit).ok()).map(char::from).collect::<String>();
+        let mime = mime.and_then(|value| value.to_utf8().ok());
+        store.encode_image(&data, mime.as_deref()).map(|value| W::String(value.into()))
+    }
+    let mut work = vec![Work::Visit(crate::native_message::clone_wire(value), None)];
+    let mut output = Vec::new();
+    while let Some(next) = work.pop() {
+        match next {
+            Work::Visit(mut value, key) => {
+                if value
+                    .get("type")
+                    .and_then(W::as_string)
+                    .is_some_and(|kind| kind.equals_ascii("image_generation_call"))
+                    && let Some(data) = value
+                        .get("result")
+                        .and_then(W::as_string)
+                        .filter(|data| !prefix(data, BLOB_PREFIX) && data.len() >= BLOB_EXTERNALIZE_THRESHOLD)
+                {
+                    let encoded = encode(data, None, store)?;
+                    value.insert("result", encoded);
+                    output.push(value);
+                    continue;
+                }
+                if image_position(&value, key.as_ref()) {
+                    let data = value.get("data").and_then(W::as_string).expect("image data");
+                    if !prefix(data, BLOB_PREFIX) && data.len() >= BLOB_EXTERNALIZE_THRESHOLD {
+                        let encoded = encode(data, value.get("mimeType").and_then(W::as_string), store)?;
+                        value.insert("data", encoded);
+                    }
+                    output.push(value);
+                    continue;
+                }
+                if atomic(&value) {
+                    output.push(value);
+                    continue;
+                }
+                match &mut value {
+                    W::String(data)
+                        if key.as_ref().is_some_and(|key| key.equals_ascii("image_url"))
+                            && prefix(data, "data:image/")
+                            && data
+                                .units()
+                                .windows(8)
+                                .any(|window| window.iter().copied().eq(";base64,".encode_utf16())) =>
+                    {
+                        // Fixed data-url blob encoding is UTF8 Buffer text.
+                        let bytes = String::from_utf16_lossy(data.units()).into_bytes();
+                        *data = store.put(&bytes, None)?.reference.into();
+                        output.push(value);
+                    }
+                    W::Array(values) => {
+                        let values = std::mem::take(values);
+                        work.push(Work::Array(values.len()));
+                        work.extend(values.into_iter().rev().map(|value| Work::Visit(value, key.clone())));
+                    }
+                    W::Object(values) => {
+                        let values = std::mem::take(values);
+                        work.push(Work::Object(values.iter().map(|(key, _)| key.clone()).collect()));
+                        work.extend(values.into_iter().rev().map(|(key, value)| Work::Visit(value, Some(key))));
+                    }
+                    _ => output.push(value),
+                }
+            }
+            Work::Array(count) => {
+                let values = output.split_off(output.len() - count);
+                output.push(W::Array(values));
+            }
+            Work::Object(keys) => {
+                let values = output.split_off(output.len() - keys.len());
+                output.push(W::Object(keys.into_iter().zip(values).collect()));
+            }
+        }
+    }
+    output.pop().ok_or_else(|| crate::native_message::invalid("missing native persistence candidate"))
+}
+
+/// Fixed session-loader.ts:334-362 on already parsed native data. This walks
+/// Wire values directly, so unrelated lone UTF16 strings/Number bits survive
+/// blob resolution. The whole candidate is adopted only after successful IO.
+pub(crate) fn resolve_native_entry(
+    value: &mut ara_rpc::WireValue,
+    store: &BlobStore,
+    warnings: &mut Vec<BlobWarning>,
+) -> io::Result<()> {
+    use ara_rpc::{WireString, WireValue as W};
+    enum Work {
+        Visit(W, Option<WireString>),
+        Array(usize),
+        Object(Vec<WireString>),
+    }
+    fn ref_string(value: &WireString) -> bool {
+        value.units().iter().copied().take(BLOB_PREFIX.len()).eq(BLOB_PREFIX.encode_utf16())
+    }
+    fn resolved(
+        value: &WireString,
+        url: bool,
+        store: &BlobStore,
+        warnings: &mut Vec<BlobWarning>,
+    ) -> io::Result<WireString> {
+        if !ref_string(value) {
+            return Ok(value.clone());
+        }
+        let Ok(source) = value.to_utf8() else {
+            warnings.push(BlobWarning::MalformedReference);
+            return Ok(value.clone());
+        };
+        store.resolve(&source, url, warnings).map(WireString::from)
+    }
+    fn image_position(value: &W, key: Option<&WireString>) -> bool {
+        if value.get("data").and_then(W::as_string).is_none() {
+            return false;
+        }
+        let image = value.get("type").and_then(W::as_string).is_some_and(|value| value.equals_ascii("image"));
+        let image_mime = value.get("mimeType").and_then(W::as_string).is_some_and(|value| {
+            value
+                .units()
+                .iter()
+                .take(6)
+                .copied()
+                .zip("image/".bytes())
+                .all(|(left, right)| left <= 0x7f && (left as u8).eq_ignore_ascii_case(&right))
+                && value.len() >= 6
+        });
+        (image || image_mime)
+            && key.is_some_and(|key| {
+                (key.equals_ascii("content") && image) || key.equals_ascii("images") || key.equals_ascii("frames")
+            })
+    }
+    let mut work = vec![Work::Visit(crate::native_message::clone_wire(value), None)];
+    let mut output = Vec::new();
+    while let Some(next) = work.pop() {
+        match next {
+            Work::Visit(mut value, key) => {
+                if !key.as_ref().is_some_and(|key| key.equals_ascii("frames"))
+                    && image_position(&value, key.as_ref())
+                    && value.get("data").and_then(W::as_string).is_some_and(ref_string)
+                {
+                    let data = resolved(
+                        value.get("data").and_then(W::as_string).expect("image data"),
+                        false,
+                        store,
+                        warnings,
+                    )?;
+                    value.insert("data", W::String(data));
+                    output.push(value);
+                    continue;
+                }
+                if value
+                    .get("type")
+                    .and_then(W::as_string)
+                    .is_some_and(|kind| kind.equals_ascii("image_generation_call"))
+                    && let Some(data) = value.get("result").and_then(W::as_string).filter(|data| ref_string(data))
+                {
+                    let data = resolved(data, false, store, warnings)?;
+                    value.insert("result", W::String(data));
+                }
+                if let Some(data) = value.get("image_url").and_then(W::as_string).filter(|data| ref_string(data)) {
+                    let data = resolved(data, true, store, warnings)?;
+                    value.insert("image_url", W::String(data));
+                }
+                match &mut value {
+                    W::Array(values) => {
+                        let values = std::mem::take(values);
+                        work.push(Work::Array(values.len()));
+                        work.extend(values.into_iter().rev().map(|value| Work::Visit(value, key.clone())));
+                    }
+                    W::Object(values) => {
+                        let values = std::mem::take(values);
+                        work.push(Work::Object(values.iter().map(|(key, _)| key.clone()).collect()));
+                        work.extend(values.into_iter().rev().map(|(key, value)| Work::Visit(value, Some(key))));
+                    }
+                    _ => output.push(value),
+                }
+            }
+            Work::Array(count) => {
+                let values = output.split_off(output.len() - count);
+                output.push(W::Array(values));
+            }
+            Work::Object(keys) => {
+                let values = output.split_off(output.len() - keys.len());
+                output.push(W::Object(keys.into_iter().zip(values).collect()));
+            }
+        }
+    }
+    *value = output.pop().ok_or_else(|| crate::native_message::invalid("missing native blob candidate"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,7 +660,10 @@ mod tests {
         let mut warnings = Vec::new();
         resolve_entry(&mut persisted, &store, &mut warnings).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(persisted, original);
+        let mut expected = original.clone();
+        expected["preserveData"]["snapcompact"]["frames"][0]["data"] =
+            Value::String(store.put(&bytes, Some("png")).unwrap().reference);
+        assert_eq!(persisted, expected, "ordinary image positions hydrate, archive frames remain lazy");
         let result = store.put(&bytes, None).unwrap();
         fs::remove_file(&result.path).unwrap();
         fs::create_dir(&result.path).unwrap();

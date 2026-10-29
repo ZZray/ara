@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "state": "FULL_MAINTENANCE_FROZEN_CANDIDATE_NOT_ADOPTED_NOT_COMPILED_NOT_EXECUTED",
+  "created_utc": "2026-10-29T16:15:12.3897198Z",
+  "user_decision": "Full暂不维护；由Root另行提交推送主仓并按实核清单清理Full工作树/cache，本归档步骤不执行这些动作",
+  "fixed_omp": "b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c",
+  "scope": "Task module minimal source/evidence continuation archive, not complete Full delivery",
+  "historical_execution": {
+    "original_criteria": 19,
+    "complete_point_accepted": false,
+    "new_complete_modules": 6,
+    "passed": 15,
+    "ported_through_commit": null,
+    "original_function_identities_passed": 89,
+    "old_accepted": "7/111",
+    "failed": 0,
+    "partial": [
+      "M5",
+      "M8",
+      "O1",
+      "O8"
+    ],
+    "ignored": 0,
+    "original_groups": 9
+  },
+  "baseline_and_reconstruction": [
+    {
+      "candidate_sha256": "569ab9a4deacba996e57480b2e6adb19e4a89e563282b8395a9063aba49f402f",
+      "path": "crates/ara-cli/src/child_host.rs",
+      "current_main_sha256": "7ccf7a15766b784e267ee6ad004bc6dd9b76fb0db47037f3280cc98776919edd",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "42a1dd2ad7be0dfe33ba07a8dfbd268340b536b5289ae8049e1e017ab832c2e2",
+      "path": "crates/ara-cli/src/main.rs",
+      "current_main_sha256": "a25acf6943a1224ad4668f34c39ad40b66af5bc5b1a4901a4d9fedead28f61ab",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "6b1e36051f41ba0d11482e2e81be7820ef00ab5517cebf41962dee8d6b5498a4",
+      "path": "crates/ara-cli/src/peer_host.rs",
+      "current_main_sha256": "bfb6c2b0e8ae225fce1dad8ccb799ef3db5964e8bcab82e5828a5c71689717a4",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "6b7bdb188e2f508eebaa152a10e9c0bb0fe64345dbf31a371d5a2de808b5813d",
+      "path": "crates/ara-cli/src/task_host.rs",
+      "current_main_sha256": "3b57921570fe985ba5c9a5bca09c86a02ef5ccaa46ed81a7324c40f0dc70e948",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "66c29a90487f882b4111358febcb1a59b029cf7312e6a6885e584d901db7259b",
+      "path": "crates/ara-cli/src/task_isolation/capture.rs",
+      "current_main_sha256": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "08cc4d5ba5e66b8716389e9ae060fdb83eec0ca74f47a9e3468dc541997c107d",
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+      "current_main_sha256": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "986cfcc7ae4bd97c669d99439863974539904b5912fa54e03fb92256fb6f08d6",
+      "path": "crates/ara-cli/tests/task_host.rs",
+      "current_main_sha256": "6af99d96f423bdb370e2d97338f3574a78b9d81a405c237400f385050de32168",
+      "in_memory_reconstruction_verified": true
+    },
+    {
+      "candidate_sha256": "56c66ffc4bb0b7141f45b28ea074c8f14877b94a360a71f9ccf5fb6ee710ebde",
+      "path": "crates/ara-cli/tests/support/task_host_cases.rs",
+      "current_main_sha256": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+      "in_memory_reconstruction_verified": true
+    }
+  ],
+  "exact_copies": [
+    {
+      "original_sha256": "0a58bf692de7e8915e5a75d75840f8dbfc655da1abb13d37de2413dc930f929b",
+      "bytes": 70300,
+      "copy_sha256": "0a58bf692de7e8915e5a75d75840f8dbfc655da1abb13d37de2413dc930f929b",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/SOURCE-DIFF.json",
+      "archive_path": "candidate/SOURCE-DIFF.json"
+    },
+    {
+      "original_sha256": "4900cc9eb6e299fd28c461fc08d878ca93c4fabea69c91dafbddf1faa59731c5",
+      "bytes": 10603,
+      "copy_sha256": "4900cc9eb6e299fd28c461fc08d878ca93c4fabea69c91dafbddf1faa59731c5",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/F6-CANDIDATE-FRAGMENT.rs",
+      "archive_path": "candidate/F6-CANDIDATE-FRAGMENT.rs"
+    },
+    {
+      "original_sha256": "22a5b338d0ce617b8519a4fa3d6867e8eae260a464a57ab9066f47d2737d8b65",
+      "bytes": 12882,
+      "copy_sha256": "22a5b338d0ce617b8519a4fa3d6867e8eae260a464a57ab9066f47d2737d8b65",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/F6-AUTHOR-MANIFEST.json",
+      "archive_path": "candidate/F6-AUTHOR-MANIFEST.json"
+    },
+    {
+      "original_sha256": "c8198ef505f9faa60b56780e3b0bf0c499b608a4afc035a6fe4adc60e1c81b76",
+      "bytes": 12024,
+      "copy_sha256": "c8198ef505f9faa60b56780e3b0bf0c499b608a4afc035a6fe4adc60e1c81b76",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/F6-ROUTE-NOTES.json",
+      "archive_path": "candidate/F6-ROUTE-NOTES.json"
+    },
+    {
+      "original_sha256": "eb9cfbbd326915a8c4d1194a520527f4341bc72b0fceaab39057b7802e51c10a",
+      "bytes": 20947,
+      "copy_sha256": "eb9cfbbd326915a8c4d1194a520527f4341bc72b0fceaab39057b7802e51c10a",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/candidate/HELPER-MANIFEST.json",
+      "archive_path": "candidate/HELPER-MANIFEST.json"
+    },
+    {
+      "original_sha256": "025b6d4c8053cb4f85caddc29fbab2eac2930885bc9805eff826ff9d27ccc3ec",
+      "bytes": 12321,
+      "copy_sha256": "025b6d4c8053cb4f85caddc29fbab2eac2930885bc9805eff826ff9d27ccc3ec",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/PLAN.json",
+      "archive_path": "review/PLAN.json"
+    },
+    {
+      "original_sha256": "889c45bc00ebe2bd96b052fe1a2d0cf70d39eff95d3d939e80cdb6c141242dfb",
+      "bytes": 18025,
+      "copy_sha256": "889c45bc00ebe2bd96b052fe1a2d0cf70d39eff95d3d939e80cdb6c141242dfb",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/PRE-REVIEW.json",
+      "archive_path": "review/PRE-REVIEW.json"
+    },
+    {
+      "original_sha256": "f7a4906413dd912c814029ae3cbf3d5cd835ff0b95d12c6de04cd06558a6e963",
+      "bytes": 11439,
+      "copy_sha256": "f7a4906413dd912c814029ae3cbf3d5cd835ff0b95d12c6de04cd06558a6e963",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/HELPER-POST.json",
+      "archive_path": "review/HELPER-POST.json"
+    },
+    {
+      "original_sha256": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5",
+      "bytes": 85075,
+      "copy_sha256": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-exec-v4/EXEC-REVIEW.json",
+      "archive_path": "evidence/EXEC-REVIEW.json"
+    },
+    {
+      "original_sha256": "9fc19281a970cdca97e8ed9c7e30846ead6edc94fd9d2421cf0662bbcb5d2d2d",
+      "bytes": 53551,
+      "copy_sha256": "9fc19281a970cdca97e8ed9c7e30846ead6edc94fd9d2421cf0662bbcb5d2d2d",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/final-point-v4/POINT-AUDIT.json",
+      "archive_path": "evidence/POINT-AUDIT.json"
+    },
+    {
+      "original_sha256": "271309db38a0c0386dd1e778d6e4acd48dd06b817fba9042ae612aeda7af64d1",
+      "bytes": 1774,
+      "copy_sha256": "271309db38a0c0386dd1e778d6e4acd48dd06b817fba9042ae612aeda7af64d1",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/ROOT-RECOVERY-DECISION-V4.json",
+      "archive_path": "evidence/ROOT-RECOVERY-DECISION-V4.json"
+    },
+    {
+      "original_sha256": "3f0ab15dcd403a1a18a9cd8c1f1bed8f5cc4db92d22b820a9520d5352298a039",
+      "bytes": 20694,
+      "copy_sha256": "3f0ab15dcd403a1a18a9cd8c1f1bed8f5cc4db92d22b820a9520d5352298a039",
+      "copy_exact": true,
+      "original_path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/peer-owned-resource-implementation-v1/SOURCE-CRITERIA-MAP.json",
+      "archive_path": "evidence/SOURCE-CRITERIA-MAP.json"
+    }
+  ],
+  "generated_files": [
+    {
+      "archive_path": "README.md",
+      "bytes": 4154,
+      "sha256": "bda25077c142fc9eb27ef0831f03bff34ad881c78fa1b459a1a961f302e04329",
+      "kind": "generated"
+    },
+    {
+      "archive_path": "candidate/CANDIDATE.patch",
+      "bytes": 55164,
+      "sha256": "c37c27507b2ef80b5046a8cf6ef2fe139c352174d90564f6ad6828ddb98d39be",
+      "kind": "generated"
+    },
+    {
+      "archive_path": ".gitattributes",
+      "kind": "generated",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    }
+  ],
+  "verification": {
+    "E_existing_source_changes": 0,
+    "tests": 0,
+    "credential_scan": "Selected text: bounded credential-token/private-key patterns zero after identifier-boundary filtering; no account config/raw requests selected",
+    "git_apply_performed": false,
+    "in_memory_candidate_reconstruction_hashes_match_8": true,
+    "hash_policy": "SHA256 exact original/copy bytes. MANIFEST does not self-hash; its final hash is reported to Root.",
+    "builds": 0,
+    "models": 0,
+    "current_main_8_files_match_V4": true,
+    "deletions": 0,
+    "target_or_P_changes": 0,
+    "git_apply_check_exit_code": 0
+  },
+  "remaining": [
+    "Candidate source is unadopted/unbuilt/unexecuted; whole-package API/type/borrow/runtime/independent review pending.",
+    "F6 fragment not merged/called; exact-owner None/foreign remain OPEN.",
+    "Original raw runtime/image payloads are intentionally not copied; full raw evidence cannot be re-audited from this archive after cache deletion.",
+    "Complete M1-M9/Full/OMP product/release gates and counters unchanged."
+  ]
+}

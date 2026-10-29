@@ -72,7 +72,13 @@ async fn repeated_tools_commit_notice_before_steering_and_keep_original_restart(
         next.iter().position(|message| message["content"].to_string().contains("tool_call_loop_detected")).unwrap();
     let steer = next.iter().position(|message| message["content"] == "queued steering marker").unwrap();
     assert!(redirect < steer, "Notice is committed before user steering in the request too");
-    assert!(next[redirect]["content"].as_str().unwrap().contains("identical arguments"));
+    // Fixed Chat Completions projects custom developer input to user wire
+    // content as one text block; retain the original reminder assertion.
+    assert_eq!(next[redirect]["role"], "user");
+    let redirect_content = next[redirect]["content"].as_array().unwrap();
+    assert_eq!(redirect_content.len(), 1);
+    assert_eq!(redirect_content[0]["type"], "text");
+    assert!(redirect_content[0]["text"].as_str().unwrap().contains("identical arguments"));
     assert_eq!(requests[4]["body"]["tools"].as_array().map_or(0, Vec::len), 0);
     assert!(
         requests[4]["body"]["messages"]
@@ -117,7 +123,7 @@ async fn policy_and_terminal_boundaries_keep_completed_effects_without_extra_cal
         child.finish();
         assert_eq!(up.served(), if matches!(mode, "budget" | "utf16") { 2 } else { 3 });
         let restored = ara_session::SessionJournal::open(&path).unwrap();
-        assert_eq!(restored.model_context().iter().filter(|message| {
+        assert_eq!(restored.model_context().unwrap().iter().filter(|message| {
             matches!(message, ara_ai::Message::Developer(message) if message.content.plain_text().contains("tool_call_loop_detected"))
         }).count(), usize::from(mode == "budget"));
     }

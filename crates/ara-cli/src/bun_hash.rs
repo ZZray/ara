@@ -84,36 +84,7 @@ pub fn hash_string_base36(value: &WireString) -> String {
 /// A final isolated surrogate is emitted as WTF-8. Keep this distinct from
 /// Bun.hash/TextEncoder's USVString conversion. Bind these bytes as SQLite TEXT.
 pub fn sqlite_text_bytes(value: &WireString) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut units = value.units().iter().copied();
-    while let Some(unit) = units.next() {
-        let point = if (0xd800..=0xdfff).contains(&unit) {
-            units
-                .next()
-                .map_or(u32::from(unit), |next| 0x10000 + ((u32::from(unit) & 0x3ff) << 10) + (u32::from(next) & 0x3ff))
-        } else {
-            u32::from(unit)
-        };
-        if point < 0x80 {
-            out.push(point as u8);
-        } else if point < 0x800 {
-            out.extend_from_slice(&[(0xc0 | (point >> 6)) as u8, (0x80 | (point & 0x3f)) as u8]);
-        } else if point < 0x10000 {
-            out.extend_from_slice(&[
-                (0xe0 | (point >> 12)) as u8,
-                (0x80 | ((point >> 6) & 0x3f)) as u8,
-                (0x80 | (point & 0x3f)) as u8,
-            ]);
-        } else {
-            out.extend_from_slice(&[
-                (0xf0 | (point >> 18)) as u8,
-                (0x80 | ((point >> 12) & 0x3f)) as u8,
-                (0x80 | ((point >> 6) & 0x3f)) as u8,
-                (0x80 | (point & 0x3f)) as u8,
-            ]);
-        }
-    }
-    out
+    value.sqlite_text_bytes()
 }
 
 #[cfg(test)]

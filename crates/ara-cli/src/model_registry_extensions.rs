@@ -201,12 +201,16 @@ pub trait ExtensionModifierHost: Send + Sync {
 #[derive(Default)]
 struct ExtensionState {
     snapshot: ExtensionSnapshot,
+    // Builtin module overrides belong to this Host, not extension sources.
+    // Fixed register-builtins.ts:setBedrockProviderModule is independent of
+    // api-registry.ts custom registrations and their cleanup callbacks.
+    builtin_modules: Vec<(WireString, OpaqueExtensionHandle)>,
     last_modifier_warnings: Vec<(WireString, WireString)>,
     suppressed: Vec<(WireString, f64)>,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ExtensionRegistry {
-    state: Mutex<ExtensionState>,
+    state: Arc<Mutex<ExtensionState>>,
 }
 
 fn set_entry<V>(entries: &mut Vec<(WireString, V)>, key: &WireString, value: V) {
@@ -342,6 +346,25 @@ impl ExtensionRegistry {
     pub fn snapshot(&self) -> ExtensionSnapshot {
         self.state.lock().expect("extension store poisoned").snapshot.clone()
     }
+    /// Host-scoped port of the fixed Bedrock module override setter. Replacing
+    /// the slot affects subsequent dispatches; active dispatches retain their
+    /// original Arc. Custom/source cleanup never owns this module.
+    pub(crate) fn set_bedrock_provider_module(&self, module: OpaqueExtensionHandle) {
+        set_entry(
+            &mut self.state.lock().expect("extension store poisoned").builtin_modules,
+            &"bedrock-converse-stream".into(),
+            module,
+        );
+    }
+    pub(crate) fn builtin_provider_module(&self, api: &WireString) -> Option<OpaqueExtensionHandle> {
+        self.state
+            .lock()
+            .expect("extension store poisoned")
+            .builtin_modules
+            .iter()
+            .find(|(name, _)| name == api)
+            .map(|(_, module)| module.clone())
+    }
     pub fn runtime_provider_ids(&self) -> OrderedProviderSet {
         let mut providers = OrderedProviderSet::default();
         for manager in self.snapshot().managers {
@@ -386,6 +409,25 @@ impl ExtensionRegistry {
         }
     }
 
+    /// Register an executable custom API in the existing owner. All callers,
+    /// including the provider registration first stage, keep the builtin guard.
+    /// Publication happens after releasing the state mutex, preserving reentry.
+    pub fn register_custom_api(&self, entry: RuntimeApiRegistration, host: &dyn ExtensionRegistryHost) -> ExtensionResult<()> {
+        if BUILTIN_APIS.iter().any(|builtin| entry.api.equals_ascii(builtin)) {
+            return Err(wire_error(&["Cannot register custom API \"".into(), entry.api.clone(), "\": built-in API names are reserved.".into()]));
+        }
+        {
+            let mut state = self.state.lock().expect("extension store poisoned");
+            if let Some(current) = state.snapshot.custom_apis.iter_mut().find(|current| current.api == entry.api) {
+                *current = entry.clone();
+            } else {
+                state.snapshot.custom_apis.push(entry.clone());
+            }
+        }
+        host.custom_api_registered(&entry);
+        Ok(())
+    }
+
     pub fn register_provider(
         &self,
         provider: WireString,
@@ -397,24 +439,7 @@ impl ExtensionRegistry {
         if let Some(handle) = &config.custom_api {
             let api = text(config.fields(), "api")
                 .ok_or_else(|| CollapseError::new("Runtime API must be a string".into()))?;
-            if BUILTIN_APIS.iter().any(|builtin| api.equals_ascii(builtin)) {
-                return Err(wire_error(&[
-                    "Cannot register custom API \"".into(),
-                    api,
-                    "\": built-in API names are reserved.".into(),
-                ]));
-            }
-            let entry =
-                RuntimeApiRegistration { api: api.clone(), handle: handle.clone(), source_id: source_id.clone() };
-            {
-                let mut state = self.state.lock().expect("extension store poisoned");
-                if let Some(current) = state.snapshot.custom_apis.iter_mut().find(|current| current.api == api) {
-                    *current = entry.clone();
-                } else {
-                    state.snapshot.custom_apis.push(entry.clone());
-                }
-            }
-            host.custom_api_registered(&entry);
+            self.register_custom_api(RuntimeApiRegistration { api, handle: handle.clone(), source_id: source_id.clone() }, host)?;
         }
         if let Some(registration) = &config.oauth {
             let entry = RuntimeOAuthEntry {

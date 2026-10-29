@@ -207,6 +207,8 @@ impl SessionJournal {
         for ((entry_id, target), actions) in targets {
             let index = *candidate_indexes.get(&entry_id).expect("pinned branch entry exists");
             let entry = &mut candidate[index];
+            let before = entry.checked_reduction_raw()?;
+            entry.raw = before.clone();
             if actions.iter().all(|action| matches!(action, SessionReductionAction::ReplaceTextRange { .. })) {
                 let ReductionTarget::Raw(slot) = target else {
                     unreachable!("text edit has a raw slot");
@@ -218,11 +220,15 @@ impl SessionJournal {
                 }
                 apply_action(&mut entry.raw, &entry_id, actions[0])?;
             }
+            if let Some(source) = &entry.native_message {
+                entry.native_message =
+                    Some(source.checked_edit_entry(&before, &entry.raw).map_err(SessionError::from)?);
+            }
         }
         let changed_entry_ids: Vec<String> = snapshot
             .entries
             .iter()
-            .filter(|entry| candidate[candidate_indexes[&entry.id]].raw != entry.raw)
+            .filter(|entry| candidate[candidate_indexes[&entry.id]] != **entry)
             .map(|entry| entry.id.clone())
             .collect();
         let mut receipt = SessionReductionReceipt {
@@ -240,7 +246,14 @@ impl SessionJournal {
             let raw = json!({"type":"branch_summary","id":id,"parentId":parent_id,"timestamp":crate::now_iso(),
                 "fromId":parent_id.as_deref().unwrap_or("root"),"summary":"",
                 "details":{"kind":crate::DISCARDED_ENTRY_BRANCH_MARKER,"discardedEntryId":owner.failed_entry.id}});
-            candidate.push(Entry { id: id.clone(), parent_id, kind: "branch_summary".into(), raw });
+            candidate.push(Entry {
+                id: id.clone(),
+                parent_id,
+                kind: "branch_summary".into(),
+                raw,
+                native_message: None,
+                snapcompact_source: None,
+            });
             Some(id)
         } else {
             None
@@ -666,7 +679,7 @@ mod tests {
         let reopened = SessionJournal::open(journal.path()).unwrap();
         assert_eq!(journal.entries, reopened.entries);
         assert_eq!(journal.leaf, reopened.leaf);
-        assert_eq!(journal.model_context(), reopened.model_context());
+        assert_eq!(journal.model_context().unwrap(), reopened.model_context().unwrap());
         assert_eq!(journal.raw_reduction_snapshot().unwrap(), reopened.raw_reduction_snapshot().unwrap());
 
         let mut failed = AssistantMessage::empty("openai-completions", "fixture", "m");

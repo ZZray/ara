@@ -6,8 +6,9 @@
 use crate::js_regex::JsRegExp;
 use crate::model_collapse::{SpecRef, VariantSpec, lower, trim, truthy};
 use ara_rpc::{WireString, WireValue};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub fn text(model: &VariantSpec, key: &str) -> Option<WireString> {
     model.get(key).and_then(WireValue::as_string).cloned()
@@ -201,26 +202,46 @@ pub fn bare_model_id(id: &WireString) -> WireString {
     let start = id.units().iter().rposition(|&unit| unit == 0x2f).map_or(0, |index| index + 1);
     WireString::from_units(id.units()[start..].to_vec())
 }
-fn regex_remove(id: &WireString, pattern: &str) -> WireString {
-    let mut regex = JsRegExp::new(pattern.into(), "").expect("fixed reference regex");
-    let Some(matched) = regex.exec(id) else {
-        return id.clone();
-    };
-    let mut units = id.units()[..matched.index].to_vec();
-    units.extend_from_slice(&id.units()[matched.end..]);
-    WireString::from_units(units)
+fn regex_remove(id: &WireString, pattern: &'static str) -> WireString {
+    // Native identity/id.ts and metrics.ts retain their fixed expressions.
+    // These private workers never share a template RegExp's mutable identity.
+    thread_local! {
+        static REMOVE_REGEXES: RefCell<HashMap<&'static str, JsRegExp>> = RefCell::new(HashMap::new());
+    }
+    REMOVE_REGEXES.with(|regexes| {
+        let mut regexes = regexes.borrow_mut();
+        let regex =
+            regexes.entry(pattern).or_insert_with(|| JsRegExp::new(pattern.into(), "").expect("fixed reference regex"));
+        regex.set_last_index(0.0);
+        let Some(matched) = regex.exec(id) else {
+            return id.clone();
+        };
+        let mut units = id.units()[..matched.index].to_vec();
+        units.extend_from_slice(&id.units()[matched.end..]);
+        WireString::from_units(units)
+    })
 }
 fn segments(id: &WireString) -> Vec<WireString> {
     let id = lower(&normalized_whitespace(id));
-    let mut pattern = JsRegExp::new("[a-z0-9.:-]+".into(), "g").expect("fixed reference regex");
-    let mut family = JsRegExp::new("^(claude|gemini|gpt|grok|glm|qwen|deepseek|kimi|mimo|doubao|ernie|gpt-oss|gemma|minimax|step|command|jamba|llama|o[1345])".into(), "").expect("fixed reference family");
     let mut out = Vec::new();
-    while let Some(found) = pattern.exec(&id) {
-        let value = found.captures[0].clone().expect("full match");
-        if family.exec(&value).is_some() && value.units().iter().any(|unit| (0x30..=0x39).contains(unit)) {
-            out.push(value);
-        }
+    thread_local! {
+        static SEGMENT_REGEXES: RefCell<(JsRegExp, JsRegExp)> = RefCell::new((
+            JsRegExp::new("[a-z0-9.:-]+".into(), "g").expect("fixed reference regex"),
+            JsRegExp::new("^(claude|gemini|gpt|grok|glm|qwen|deepseek|kimi|mimo|doubao|ernie|gpt-oss|gemma|minimax|step|command|jamba|llama|o[1345])".into(), "").expect("fixed reference family"),
+        ));
     }
+    SEGMENT_REGEXES.with(|regexes| {
+        let mut regexes = regexes.borrow_mut();
+        let (pattern, family) = &mut *regexes;
+        pattern.set_last_index(0.0);
+        family.set_last_index(0.0);
+        while let Some(found) = pattern.exec(&id) {
+            let value = found.captures[0].clone().expect("full match");
+            if family.exec(&value).is_some() && value.units().iter().any(|unit| (0x30..=0x39).contains(unit)) {
+                out.push(value);
+            }
+        }
+    });
     fn weight(unit: u16) -> u16 {
         match unit {
             0x2d => 0,
@@ -328,7 +349,14 @@ fn canonical_key(id: &WireString) -> WireString {
         lower(&bare_model_id(id)).units().iter().map(|&u| if matches!(u, 0x2e | 0x3a) { 0x2d } else { u }).collect(),
     )
 }
-fn metric_candidates(id: &WireString) -> Vec<WireString> {
+fn metric_candidates(id: &WireString) -> Arc<Vec<WireString>> {
+    // Fixed metrics.ts memoizes the bounded catalog/discovery ID set, without
+    // eviction. Candidate generation depends only on the exact wire ID.
+    static CANDIDATES: OnceLock<Mutex<HashMap<WireString, Arc<Vec<WireString>>>>> = OnceLock::new();
+    let candidates = CANDIDATES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = candidates.lock().expect("metric candidate cache poisoned").get(id).cloned() {
+        return cached;
+    }
     let mut queue = VecDeque::from(reference_candidate_ids(id));
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -346,7 +374,12 @@ fn metric_candidates(id: &WireString) -> Vec<WireString> {
             }
         }
     }
-    out
+    candidates
+        .lock()
+        .expect("metric candidate cache poisoned")
+        .entry(id.clone())
+        .or_insert_with(|| Arc::new(out))
+        .clone()
 }
 fn identities_agree(left: Option<VariantSpec>, right: Option<VariantSpec>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
@@ -424,8 +457,8 @@ impl CatalogMetricsIndex {
             ids.push(logical);
         }
         for id in ids {
-            for key in metric_candidates(&id) {
-                if let Some(metrics) = self.canonical.get(&key)
+            for key in metric_candidates(&id).iter() {
+                if let Some(metrics) = self.canonical.get(key)
                     && identities_agree(identity.clone(), metrics.record("identity"))
                 {
                     return Some(metrics.clone());

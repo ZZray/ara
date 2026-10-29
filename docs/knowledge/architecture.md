@@ -12,6 +12,38 @@ The first wire protocols are OpenAI-compatible Chat Completions/Responses and An
 
 This is an architecture target. Source-backed Rust behavior and host tests are required before any part can be marked implemented. See [verification](verification.md).
 
+## Windows reference Host executable stack budget
+
+**Source and actual binary verified, 2026-10-19; Host module remains open:** the
+`ara` executable for `x86_64-pc-windows-msvc` declares an8MiB virtual stack
+reserve and retains the measured4KiB initial commit in its CLI build script.
+The former1MiB value is the Windows executable's previous linker default,
+not an OMP protocol requirement or a shared-Core API. Repeated command-future
+boxing reduced individual frames but did not make the complete debug command
+path fit that old budget. Do not alter domain behavior to satisfy an accidental
+platform resource default.
+
+The script uses Cargo's target OS/environment/architecture, not the build host,
+and emits only an `ara` binary-specific MSVC link argument. Other targets,
+libraries and helper binaries receive no such argument. It changes no thread
+count or explicit Rust/Tokio worker stack setting. Native OS-created threads
+using an executable-default stack may inherit the new reserve. Extra reserve
+is virtual address space; deeper execution can commit additional pages.
+
+Acceptance requires the current source-built ordinary image's actual PE
+reserve/commit, current Cargo/build-script scope, unchanged protocol/effect
+assertions and executed Host evidence. Old1MiB receipts remain historical;
+the privately patched diagnostic image is never a delivered artifact. This
+platform decision accepts neither a full module nor release. See the current
+[Child/Peer evidence](../evidence/omp-upgrade-child-native-contract-20261018.md).
+
+The v10 source-built ordinary image and Cargo build-script output satisfy that
+gate:8MiB reserve/4KiB commit, while both emitted helper bins retain1MiB/4KiB.
+All8previous RPC stack-overflow scenarios cross their old failure in the actual
+20-function Reset family;19functions pass, with one later retry-wait assertion
+still failing. This verifies the platform intervention in those executions,
+not every call path, release profile or full Host acceptance.
+
 ## Rust crate layout
 
 **Implemented boundary, 2026-09-30:** Core `LoopHooks::execution_snapshot` optionally
@@ -385,10 +417,13 @@ the selected external callback, preserving per-call/default precedence.
 Fixed ordinary OpenAI Completions and Responses notify only after successful
 POST dispatch. A callback failure is local evidence and cannot authorize
 credential refresh or model replay. Their body first-item budgets start after
-the callback; Responses disarms its request watchdog before notification,
-while Completions still settles callback work before reporting an elapsed
-request deadline. The exact Completions body-disconnect timing and precedence
-of a latched timeout over a callback rejection remain open.
+the callback. At the original596f2da target, Responses disarms its request
+watchdog before notification while Completions settles callback work before
+reporting an elapsed request deadline. The b91db66e upgrade disarms the Chat
+headers watchdog before notification as well. The corresponding six-path
+delta has independent source/runtime/point approval for the bounded ordinary
+JSON/watchdog behavior in the [Chat upgrade evidence](../evidence/omp-upgrade-chat-20261014.md).
+Complete body-disconnect timing and notification-owner parity remain open.
 Fixed ordinary Codex SSE has no generic response-notification producer;
 retaining a callback option must not silently add one.
 

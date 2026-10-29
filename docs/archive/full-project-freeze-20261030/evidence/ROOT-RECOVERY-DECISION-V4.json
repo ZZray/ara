@@ -1,0 +1,53 @@
+{
+  "state": "RECOVERY_EXECUTION_ACCEPTED_COMPLETE_POINT_PARTIAL",
+  "created_utc": "2026-10-29T15:31:28.4069025+00:00",
+  "reviewer": "root / 01a0ed6f",
+  "fixed_omp": "b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c",
+  "source_provenance": "P/source original3960505c plus frozen dirty inputs and reviewed V4 repairs; not current E HEAD acceptance",
+  "exec_review": "fda054bc0d1d12a2842f001122a07ab0a92e731b778ba33ead6bffb773ada9e5",
+  "point_audit": "9fc19281a970cdca97e8ed9c7e30846ead6edc94fd9d2421cf0662bbcb5d2d2d",
+  "result": "b73ed67c23b65c547ef9151bc6c9758a074d0a7a5320046a6840dac21886cbad",
+  "observed": {
+    "original_groups": 9,
+    "passed": 89,
+    "failed": 0,
+    "ignored": 0,
+    "build_seconds": 490.566,
+    "execution_seconds": 207.108,
+    "source_inputs": 1551,
+    "runtime_pins": 2558,
+    "runtime_payload": 2557,
+    "runtime_manifests": 1,
+    "retained_artifacts": 2479,
+    "root_sample": "g3-async-batch-01a18830-c20a-70a3-bc44-ab864153db27",
+    "sample_process_pid": 40868,
+    "sample_process_exit": 0,
+    "sample_request_counts": [
+      4,
+      2,
+      2
+    ],
+    "sample_root_shutdown_settled": true,
+    "sample_root_effects_empty": true
+  },
+  "remaining": [
+    "M5",
+    "M8",
+    "O1",
+    "O8",
+    "actual MCP/RPC grant transfer"
+  ],
+  "unchanged_counters": {
+    "old": "7/111",
+    "new_complete_modules": 6,
+    "ported_through_commit": null
+  },
+  "next": "One combined fault/observation candidate; same target and original assertions; no full-workspace test requested",
+  "tick": {
+    "session_id": "s_706e0e",
+    "archived": false,
+    "ui_directly_observed": true,
+    "visible_title": "ARA Agent｜Task M1–M9 对齐与验证",
+    "visible_progress": "7/8"
+  }
+}

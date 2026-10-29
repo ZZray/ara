@@ -98,6 +98,7 @@ fn history_preserve_budget_and_retained_user_families() {
             name: "read".into(),
             arguments: json!({"path":"a"}).as_object().unwrap().clone(),
             thought_signature: None,
+            ..Default::default()
         }),
         AssistantBlock::text("trailing text"),
     ];
@@ -111,6 +112,8 @@ fn history_preserve_budget_and_retained_user_families() {
                 details: None,
                 is_error: false,
                 timestamp: 1,
+                provider_metadata: None,
+                useless: false,
             }),
         ],
         ..Default::default()
@@ -421,4 +424,70 @@ async fn generic_json_chat_formats_and_codex_negotiation_family() {
     )
     .unwrap();
     assert_eq!(encoded["input"][0]["type"], "compaction");
+}
+
+#[tokio::test]
+async fn computer_remote_capability_and_lite_wire_family() {
+    for (computer, lite) in [(false, false), (true, false), (false, true), (true, true)] {
+        let compact = json!({"type":"compaction","encrypted_content":"computer-compact"});
+        let fake = server(vec![compaction_stream(vec![compact], Some(completion()))]).await;
+        let mut route = model(&fake.base_url());
+        route.api = codex::API.into();
+        route.provider = "openai-codex".into();
+        let mut assistant = AssistantMessage::empty(&route.api, &route.provider, &route.id);
+        assistant.stop_reason = StopReason::ToolUse;
+        let call:ara_ai::ToolCall=serde_json::from_value(json!({"id":"call_remote|cu_remote","name":"computer","arguments":{},
+            "providerMetadata":{"type":"computer","providerItemId":"cu_remote","actions":[{"type":"screenshot"}],"pendingSafetyChecks":[]}})).unwrap();
+        assistant.content.push(AssistantBlock::ToolCall(call));
+        let result:ToolResultMessage=serde_json::from_value(json!({"toolCallId":"call_remote|cu_remote","toolName":"computer",
+            "content":[],"isError":false,"timestamp":0,"providerMetadata":{"type":"computer",
+                "screenshot":{"type":"computer_screenshot","image_url":"data:image/png;base64,AQ=="},"acknowledgedSafetyChecks":[]}})).unwrap();
+        let ctx = Context {
+            messages: vec![Message::Assistant(assistant), Message::ToolResult(result)],
+            tools: Some(vec![ara_ai::Tool {
+                name: "computer".into(),
+                parameters: json!({"type":"object"}),
+                native: Some(ara_ai::NativeToolMarker::Computer),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        let mut req = request(RemoteVersion::V2);
+        req.config.v2_endpoint = Some(format!("{}/responses", fake.base_url()));
+        let mut opts = options();
+        opts.supports_computer_use = computer;
+        opts.supports_images = true;
+        opts.responses_lite = lite;
+        opts.include =
+            vec!["computer_call_output.output.image_url".into(), "computer_call_output.output.image_url".into()];
+        opts.extra_headers = vec![(codex::ACCOUNT_HEADER.into(), "fixture-account".into())];
+        remote::request_native(reqwest::Client::new(), route, ctx, req, opts).await.unwrap();
+        let records = fake.requests.lock().await;
+        let body = &records[0]["body"];
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.iter().filter(|item| item["type"] == "computer_call").count(), usize::from(computer));
+        assert_eq!(input.iter().filter(|item| item["type"] == "computer_call_output").count(), usize::from(computer));
+        if !computer {
+            assert!(input.iter().any(|item| item.to_string().contains("Previous computer history unavailable")));
+        }
+        assert_eq!(
+            body["include"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| **item == json!("computer_call_output.output.image_url"))
+                .count(),
+            1
+        );
+        if lite {
+            assert_eq!(input[0]["type"], "additional_tools");
+            assert_eq!(body["parallel_tool_calls"], false);
+            assert_eq!(body["reasoning"]["context"], "all_turns");
+            assert_eq!(records[0]["headers"]["x-openai-internal-codex-responses-lite"], "true");
+            assert!(body.get("tools").is_none() && body.get("instructions").is_none());
+        } else {
+            assert_eq!(body["tools"][0]["type"], if computer { "computer" } else { "function" });
+        }
+        assert_eq!(fake.served(), 1);
+    }
 }

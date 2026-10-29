@@ -1,6 +1,12 @@
 //! Upgrade raw JSON tool schemas before provider encoding and argument validation.
 //! Port of pinned OMP `utils/schema/draft.ts` for acyclic JSON values.
 
+pub(crate) mod graph;
+pub use graph::upgrade_graph_json_schema_to_202012;
+pub(crate) use graph::upgrade_graph_json_schema_to_202012_with_execution;
+#[allow(unused_imports)]
+pub use graph::upgrade_graph_json_schema_to_202012_with_runtime;
+
 use serde_json::{Map, Value, json};
 
 // Arrays are JSON containers in `anyOf`/tuple forms, so this is twice the

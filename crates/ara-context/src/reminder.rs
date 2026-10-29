@@ -119,6 +119,8 @@ impl DateCwdReminder {
                     let developer = Message::Developer(DeveloperMessage {
                         content: UserContent::Text(reminder.clone()),
                         timestamp: ara_ai::now_ms(),
+                        provider_payload: None,
+                        provider_payload_origin: None,
                     });
                     state.controls.push((anchor, context.messages[anchor].clone(), developer));
                 }

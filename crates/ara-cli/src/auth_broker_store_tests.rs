@@ -1051,4 +1051,59 @@ async fn explicit_refresh_override_local_and_remote_consumers_publish_and_settle
             bounded(storage.close_and_wait()).await;
         }
     }
+    // The callback mirror CAS and standard projection share one owner. A
+    // snapshot peer winning while the callback is pending remains verbatim;
+    // successful callback publication sends no Broker mutation or refresh.
+    for (peer_wins, peer_short) in [(false, false), (true, false), (true, true)] {
+        let broker = LoopbackBroker::start(|_| Reply::json(503, json!({}))).await;
+        let mut initial = oauth(1, "override-account", "initial-access");
+        initial["credential"]["custom"] = json!("initial-extension");
+        let release = Arc::new(Semaphore::new(0));
+        let callback = Arc::new(ReturningOverride {
+            calls: AtomicUsize::new(0),
+            entered: Arc::new(Semaphore::new(0)),
+            release: Some(release.clone()),
+        });
+        let remote = Arc::new(
+            RemoteAuthCredentialStore::new(broker.client(), options(snapshot(1, vec![initial.clone()]))).unwrap(),
+        );
+        let storage = Arc::new(
+            AuthStorage::for_remote(
+                remote.clone(),
+                AuthStorageOptions {
+                    oauth_refresh_override: Some(callback.clone()),
+                    clock: Arc::new(|| NOW),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let facade = crate::auth_storage::BrokerStorageFacade::new(storage.clone());
+        let pending = tokio::spawn(async move { facade.force_refresh(1, &CancellationToken::new()).await });
+        bounded(callback.entered.acquire()).await.unwrap().forget();
+        if peer_wins {
+            initial["credential"]["access"] = json!("peer-access");
+            initial["credential"]["refresh"] = json!("__remote__");
+            initial["credential"]["custom"] = json!("peer-extension");
+            if peer_short {
+                initial["credential"]["expires"] = json!(NOW + 30_000.0);
+            }
+            remote.apply_snapshot(parse_snapshot(&snapshot(2, vec![initial])).unwrap(), 2, false);
+        }
+        release.add_permits(1);
+        assert_eq!(bounded(pending).await.unwrap().is_ok(), !peer_short);
+        let row = remote.rows(Some("openai-codex")).unwrap().remove(0);
+        let AuthCredential::OAuth { fields } = row.credential else { panic!("remote OAuth") };
+        if peer_wins {
+            assert_eq!(fields["access"], "peer-access");
+            assert_eq!(fields["refresh"], "__remote__");
+            assert_eq!(fields["custom"], "peer-extension");
+        } else {
+            assert_eq!(fields["access"], "override-fresh");
+            assert!(!fields.contains_key("custom"));
+        }
+        assert_eq!(callback.calls.load(Ordering::SeqCst), 1);
+        assert!(broker.requests.lock().unwrap().is_empty());
+        bounded(storage.close_and_wait()).await;
+    }
 }

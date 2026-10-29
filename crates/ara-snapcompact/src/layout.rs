@@ -1,4 +1,5 @@
 //! Fixed OMP wide-cell/grid/doc pagination and bounded local rendering.
+use crate::utf16::{Utf16CodePoint, Utf16Text};
 use crate::{
     DIM_OFF, DIM_ON, Geometry, HistoryBlock, NormalizeOptions, RenderManyOptions, RenderedFrame, Result, Shape,
 };
@@ -6,39 +7,42 @@ use crate::{
 pub(crate) fn is_wide(c: char) -> bool {
     matches!(c as u32, 0x1100..=0x115f | 0x2e80..=0x2eff | 0x2f00..=0x2fdf | 0x3000..=0x303e | 0x3041..=0x33ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xa000..=0xa4cf | 0xac00..=0xd7a3 | 0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xff60 | 0xffe0..=0xffe6 | 0x20000..=0x2fffd | 0x30000..=0x3fffd)
 }
-fn char_cells(c: char, wide: bool) -> usize {
-    if c == DIM_ON || c == DIM_OFF {
+fn char_cells(c: Utf16CodePoint, wide: bool) -> usize {
+    if matches!(c, Utf16CodePoint::Scalar(DIM_ON | DIM_OFF)) {
         0
-    } else if wide && is_wide(c) {
+    } else if wide && matches!(c, Utf16CodePoint::Scalar(c) if is_wide(c)) {
         2
     } else {
         1
     }
 }
-fn cell_length(text: &str, wide: bool) -> usize {
-    text.chars().map(|c| char_cells(c, wide)).sum()
+fn cell_length(text: &Utf16Text, wide: bool) -> usize {
+    text.codepoints().map(|c| char_cells(c, wide)).sum()
 }
-fn slice_cells(text: &str, width: usize, wide: bool) -> usize {
+fn slice_cells(text: &Utf16Text, width: usize, wide: bool) -> usize {
     let mut cells = 0;
     let mut placed = false;
     let mut end = 0;
-    for (at, c) in text.char_indices() {
+    for c in text.codepoints() {
         let count = char_cells(c, wide);
         if placed && cells + count > width {
             break;
         }
         cells += count;
-        end = at + c.len_utf8();
+        end += c.len_utf16();
         placed |= count > 0;
     }
     end
 }
-pub(crate) fn paginate_cells(text: &str, capacity: usize, cols: usize, wide: bool) -> Vec<String> {
+pub(crate) fn paginate_cells_utf16(text: &Utf16Text, capacity: usize, cols: usize, wide: bool) -> Vec<Utf16Text> {
     let mut pages = Vec::new();
     let mut start = 0;
     let mut cell = 0;
     let mut has_cell = false;
-    for (at, c) in text.char_indices() {
+    let mut at = 0;
+    for c in text.codepoints() {
+        let point_start = at;
+        at += c.len_utf16();
         let count = char_cells(c, wide);
         if count == 0 {
             continue;
@@ -48,47 +52,57 @@ pub(crate) fn paginate_cells(text: &str, capacity: usize, cols: usize, wide: boo
             target += 1;
         }
         if has_cell && target + count > capacity {
-            pages.push(text[start..at].into());
-            start = at;
+            pages.push(text.slice(start, point_start));
+            start = point_start;
             target = 0;
         }
         cell = target + count;
         has_cell = true;
     }
     if has_cell {
-        pages.push(text[start..].into());
+        pages.push(text.slice(start, text.len()));
     }
     pages
 }
-pub fn wrap(text: &str, width: usize, wide: bool) -> Vec<String> {
+pub(crate) fn paginate_cells(text: &str, capacity: usize, cols: usize, wide: bool) -> Vec<String> {
+    paginate_cells_utf16(&Utf16Text::from(text), capacity, cols, wide)
+        .into_iter()
+        .map(|s| s.to_lossy_string())
+        .collect()
+}
+pub fn wrap_utf16(text: &Utf16Text, width: usize, wide: bool) -> Vec<Utf16Text> {
     let mut lines = Vec::new();
-    let mut current = String::new();
+    let mut current = Utf16Text::default();
     let mut current_cells = 0;
-    for token in text.split(ara_prompt::js::is_space).filter(|s| !s.is_empty()) {
-        let mut word = token;
-        let mut word_cells = cell_length(word, wide);
+    for token in text
+        .as_units()
+        .split(|&unit| char::from_u32(u32::from(unit)).is_some_and(ara_prompt::js::is_space))
+        .filter(|s| !s.is_empty())
+    {
+        let mut word = Utf16Text::from_units(token.to_vec());
+        let mut word_cells = cell_length(&word, wide);
         while word_cells > width {
             if !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
                 current_cells = 0;
             }
-            let end = slice_cells(word, width, wide);
+            let end = slice_cells(&word, width, wide);
             if end == 0 {
                 break;
             }
-            lines.push(word[..end].into());
-            word = &word[end..];
-            word_cells = cell_length(word, wide);
+            lines.push(word.slice(0, end));
+            word = word.slice(end, word.len());
+            word_cells = cell_length(&word, wide);
         }
         if current.is_empty() {
-            current = word.into();
+            current = word;
             current_cells = word_cells;
         } else if current_cells + 1 + word_cells <= width {
-            current.push(' ');
-            current.push_str(word);
+            current.push_str(" ");
+            current.append(&word);
             current_cells += 1 + word_cells;
         } else {
-            lines.push(std::mem::replace(&mut current, word.into()));
+            lines.push(std::mem::replace(&mut current, word));
             current_cells = word_cells;
         }
     }
@@ -97,12 +111,18 @@ pub fn wrap(text: &str, width: usize, wide: bool) -> Vec<String> {
     }
     lines
 }
-pub(crate) fn doc_pages(text: &str, geo: Geometry, wide: bool) -> Vec<String> {
+pub fn wrap(text: &str, width: usize, wide: bool) -> Vec<String> {
+    wrap_utf16(&Utf16Text::from(text), width, wide).into_iter().map(|s| s.to_lossy_string()).collect()
+}
+pub(crate) fn doc_pages_utf16(text: &Utf16Text, geo: Geometry, wide: bool) -> Vec<Utf16Text> {
     let per_page = 2 * geo.rows;
     if per_page == 0 {
         return Vec::new();
     }
-    wrap(text, geo.cols, wide).chunks(per_page).map(|lines| lines.join("\n")).collect()
+    wrap_utf16(text, geo.cols, wide).chunks(per_page).map(|lines| Utf16Text::join(lines, "\n")).collect()
+}
+pub(crate) fn doc_pages(text: &str, geo: Geometry, wide: bool) -> Vec<String> {
+    doc_pages_utf16(&Utf16Text::from(text), geo, wide).into_iter().map(|s| s.to_lossy_string()).collect()
 }
 pub fn geometry(shape: &Shape, size: Option<u32>) -> Geometry {
     let size = size.map(f64::from).unwrap_or(shape.frame_size);
@@ -115,13 +135,17 @@ pub fn geometry(shape: &Shape, size: Option<u32>) -> Geometry {
         Geometry { cols: grid_cols, rows, capacity: grid_cols * rows }
     }
 }
-fn rendered_chars(text: &str, shape: &Shape, geo: Geometry) -> usize {
+fn rendered_chars(text: &Utf16Text, shape: &Shape, geo: Geometry) -> usize {
     if shape.columns == Some(2) {
-        return text.chars().filter(|&c| c != DIM_ON && c != DIM_OFF && c != '\n').count().min(geo.capacity);
+        return text
+            .codepoints()
+            .filter(|&c| !matches!(c, Utf16CodePoint::Scalar(DIM_ON | DIM_OFF | '\n')))
+            .count()
+            .min(geo.capacity);
     }
     let mut cell = 0;
     let mut count = 0;
-    for c in text.chars() {
+    for c in text.codepoints() {
         let width = char_cells(c, shape.font != "silver");
         if width == 0 {
             continue;
@@ -138,10 +162,12 @@ fn rendered_chars(text: &str, shape: &Shape, geo: Geometry) -> usize {
     }
     count
 }
-pub fn render(text: &str, shape: &Shape, size: Option<u32>) -> Result<RenderedFrame> {
+pub fn render_utf16(text: &Utf16Text, shape: &Shape, size: Option<u32>) -> Result<RenderedFrame> {
     let geo = geometry(shape, size);
     let data = crate::native::render_snapcompact_png(
-        text.into(),
+        // Fixed upstream napi accepts Rust String. Convert only at this native
+        // UTF8 boundary; archive and pagination retain their original units.
+        text.to_lossy_string(),
         crate::native::SnapcompactRenderOptions {
             size: size.unwrap_or(shape.frame_size as u32),
             font: Some(shape.font.clone()),
@@ -155,17 +181,24 @@ pub fn render(text: &str, shape: &Shape, size: Option<u32>) -> Result<RenderedFr
     )?;
     Ok(RenderedFrame { data, cols: geo.cols, rows: geo.rows, chars: rendered_chars(text, shape, geo) })
 }
-pub(crate) fn dim_open(text: &str) -> bool {
-    text.rfind(DIM_ON) > text.rfind(DIM_OFF)
+pub fn render(text: &str, shape: &Shape, size: Option<u32>) -> Result<RenderedFrame> {
+    render_utf16(&Utf16Text::from(text), shape, size)
 }
-pub(crate) fn render_pages(pages: &[(String, Shape)], size: Option<u32>) -> Result<Vec<RenderedFrame>> {
+pub(crate) fn dim_open_utf16(text: &Utf16Text) -> bool {
+    text.as_units().iter().rposition(|&u| u == DIM_ON as u16)
+        > text.as_units().iter().rposition(|&u| u == DIM_OFF as u16)
+}
+pub(crate) fn dim_open(text: &str) -> bool {
+    dim_open_utf16(&Utf16Text::from(text))
+}
+pub(crate) fn render_pages_utf16(pages: &[(Utf16Text, Shape)], size: Option<u32>) -> Result<Vec<RenderedFrame>> {
     // Intentional Host resource limit: at most two concurrent frame renders.
     // Order and error propagation retain the fixed Promise.all result contract.
     let mut frames = Vec::with_capacity(pages.len());
     for pair in pages.chunks(2) {
         let rendered = std::thread::scope(|scope| {
             let jobs: Vec<_> =
-                pair.iter().map(|(text, shape)| scope.spawn(move || render(text, shape, size))).collect();
+                pair.iter().map(|(text, shape)| scope.spawn(move || render_utf16(text, shape, size))).collect();
             jobs.into_iter()
                 .map(|job| job.join().map_err(|_| crate::Error::from_reason("snapcompact renderer panicked"))?)
                 .collect::<Result<Vec<_>>>()
@@ -173,6 +206,10 @@ pub(crate) fn render_pages(pages: &[(String, Shape)], size: Option<u32>) -> Resu
         frames.extend(rendered);
     }
     Ok(frames)
+}
+pub(crate) fn render_pages(pages: &[(String, Shape)], size: Option<u32>) -> Result<Vec<RenderedFrame>> {
+    let pages: Vec<_> = pages.iter().map(|(text, shape)| (Utf16Text::from(text.as_str()), shape.clone())).collect();
+    render_pages_utf16(&pages, size)
 }
 pub fn render_many(text: &str, options: RenderManyOptions) -> Result<Vec<HistoryBlock>> {
     let shape = match options.shape {

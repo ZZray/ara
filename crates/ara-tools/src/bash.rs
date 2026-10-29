@@ -48,7 +48,8 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
@@ -287,6 +288,36 @@ impl WindowsJob {
         Ok(job)
     }
 
+    fn terminate(&self) -> io::Result<()> {
+        if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    async fn wait_empty(&self) -> io::Result<()> {
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&accounting) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if accounting.ActiveProcesses == 0 {
+                return Ok(());
+            }
+            // The caller bounds this together with child reap and pipe EOF.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     fn assign_and_resume(&self, child: &tokio::process::Child) -> io::Result<()> {
         let process = child.raw_handle().ok_or_else(|| io::Error::other("suspended Bash has no process handle"))?;
         let pid = child.id().ok_or_else(|| io::Error::other("suspended Bash has no process ID"))?;
@@ -399,6 +430,16 @@ impl Drop for GroupGuard {
     }
 }
 
+/// Runner-owned dispatch phase, including calls that return an OS error.
+/// Tool error text and foreign outputs cannot assert that spawn never happened.
+#[derive(Default)]
+pub struct BashProcessDispatchReceipt(std::sync::atomic::AtomicBool);
+impl BashProcessDispatchReceipt {
+    pub fn was_launched(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// Typed process facts (OMP `exec/bash-executor.ts` `BashResult`). Counts
 /// describe decoded UTF-8 output, including a final empty newline segment;
 /// display notices are not included. This fresh process runner does not report
@@ -416,8 +457,11 @@ pub struct BashResult {
     pub output_bytes: u64,
     pub working_dir: Option<String>,
     wall_time_ms: u64,
-    timeout_seconds: Option<u64>,
+    timeout_seconds: Option<f64>,
     truncation_notice: Option<String>,
+    // Native runner fact only. A cancelled ToolError or model-facing details
+    // cannot assert contained process settlement.
+    process_settlement_confirmed: bool,
 }
 
 /// A live typed snapshot. Until settlement its exit code is unknown; callers
@@ -444,11 +488,18 @@ impl OutputSink {
             wall_time_ms: 0,
             timeout_seconds: None,
             truncation_notice,
+            process_settlement_confirmed: false,
         }
     }
 }
 
 impl BashResult {
+    /// No process was dispatched, or the contained Windows Job, child and
+    /// output reader all settled under the runner's bounded cleanup.
+    pub fn process_settlement_confirmed(&self) -> bool {
+        self.process_settlement_confirmed
+    }
+
     /// Fixed `OutputSink.dump(notice)` prefixes terminal status for native
     /// user-shell receipts. Output counters continue to describe captured
     /// process bytes/lines, excluding this status line.
@@ -466,6 +517,17 @@ impl BashResult {
         }
     }
 
+    /// Status-aware body for the native source formatter, retaining the bounded
+    /// tail notice that the established typed tool_text already emitted.
+    pub fn native_output_text(&self) -> String {
+        let mut text = self.output_with_status_notice();
+        if let Some(notice) = &self.truncation_notice {
+            text.push_str("\n\n");
+            text.push_str(notice);
+        }
+        text
+    }
+
     fn tool_text(&self) -> String {
         let body = self.output.trim_end_matches('\n');
         let mut text = if body.is_empty() { "(no output)".to_owned() } else { body.to_owned() };
@@ -476,11 +538,14 @@ impl BashResult {
         text
     }
 
-    fn into_tool_output(self) -> Result<ToolOutput, ToolError> {
+    pub fn into_tool_output(self) -> Result<ToolOutput, ToolError> {
         let mut text = self.tool_text();
         let mut details = json!({"wallTimeMs": self.wall_time_ms});
         match self.timeout_seconds {
-            Some(seconds) => details["timeoutSeconds"] = json!(seconds),
+            Some(seconds) => {
+                details["timeoutSeconds"] =
+                    if seconds.is_finite() && seconds.fract() == 0.0 { json!(seconds as u64) } else { json!(seconds) }
+            }
             None => details["timeoutDisabled"] = json!(true),
         }
         if self.truncated {
@@ -544,6 +609,7 @@ impl AgentTool for BashTool {
                 "required": ["command"],
                 "additionalProperties": false
             }),
+            ..Default::default()
         }
     }
 
@@ -568,26 +634,111 @@ pub async fn execute_bash(
     cancel: CancellationToken,
     update: BashUpdateFn,
 ) -> Result<BashResult, ToolError> {
-    let timeout = resolve_timeout(args.get("timeout").and_then(Value::as_f64));
+    let environment = args
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|env| {
+            env.iter()
+                .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    execute_bash_os_values(
+        ctx,
+        args.get("command").and_then(Value::as_str).unwrap_or_default(),
+        args.get("cwd").and_then(Value::as_str),
+        &environment,
+        args.get("timeout").and_then(Value::as_f64),
+        cancel,
+        update,
+    )
+    .await
+}
+
+/// Same contained-process owner and settlement as execute_bash, with explicit
+/// process/OS scalar inputs. The actual Host keeps original Graph inputs and IDs.
+pub async fn execute_bash_os_values(
+    ctx: &ToolContext,
+    raw_command: &str,
+    raw_cwd: Option<&str>,
+    environment: &[(String, String)],
+    requested_timeout: Option<f64>,
+    cancel: CancellationToken,
+    update: BashUpdateFn,
+) -> Result<BashResult, ToolError> {
+    let timeout = resolve_timeout(requested_timeout).map(|value| value as f64);
     if cancel.is_cancelled() {
         let mut result = OutputSink::default().snapshot();
         result.cancelled = true;
         result.timeout_seconds = timeout;
         return Ok(result);
     }
-    // `skill://` URLs in the command, env values and cwd resolve to paths
-    // (OMP `expandInternalUrls`).
+    let prepared = prepare_bash_os_values(ctx, raw_command, raw_cwd, environment).await?;
+    execute_bash_prepared_os_values(prepared, timeout, cancel, update).await
+}
+
+/// Native OS inputs produced after the original URL-expansion/working-directory
+/// await, before the Graph driver's original timeout coercion continuation.
+#[derive(Clone, Debug)]
+pub struct BashPreparedOsValues {
+    pub command: String,
+    pub cwd: std::path::PathBuf,
+    pub environment: Vec<(String, String)>,
+}
+
+pub async fn prepare_bash_os_values(
+    ctx: &ToolContext,
+    raw_command: &str,
+    raw_cwd: Option<&str>,
+    environment: &[(String, String)],
+) -> Result<BashPreparedOsValues, ToolError> {
     let skills = ctx.skills.read().unwrap_or_else(|e| e.into_inner()).clone();
     let expand = |text: &str, no_escape: bool| crate::internal_urls::expand_skill_urls(text, &skills, no_escape);
-    let command = expand(args.get("command").and_then(Value::as_str).unwrap_or_default(), false);
-    let cwd = args
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(|c| ctx.resolve(&expand(c, true)))
-        .unwrap_or_else(|| ctx.cwd.clone());
-    if !cwd.is_dir() {
-        return Err(ToolError(format!("Working directory does not exist: {}", ctx.display(&cwd))));
+    let command = expand(raw_command, false);
+    let environment = environment.iter().map(|(key, value)| (key.clone(), expand(value, true))).collect();
+    let cwd = raw_cwd.map(|c| ctx.resolve(&expand(c, true))).unwrap_or_else(|| ctx.cwd.clone());
+    let metadata = tokio::fs::metadata(&cwd).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ToolError(format!("Working directory does not exist: {}", ctx.display(&cwd)))
+        } else {
+            ToolError(error.to_string())
+        }
+    })?;
+    if !metadata.is_dir() {
+        return Err(ToolError(format!("Working directory is not a directory: {}", ctx.display(&cwd))));
     }
+    Ok(BashPreparedOsValues { command, cwd, environment })
+}
+
+/// The same contained process owner, with the original resolved (fractional)
+/// seconds. A disabled value reaches the executor without a command deadline;
+/// the Graph formatter retains its Number semantics independently of serde.
+pub async fn execute_bash_prepared_os_values(
+    prepared: BashPreparedOsValues,
+    timeout: Option<f64>,
+    cancel: CancellationToken,
+    update: BashUpdateFn,
+) -> Result<BashResult, ToolError> {
+    let dispatch = BashProcessDispatchReceipt::default();
+    execute_bash_prepared_os_values_with_receipt(prepared, timeout, cancel, update, &dispatch).await
+}
+
+/// The same runner with a private native dispatch receipt retained on errors.
+pub async fn execute_bash_prepared_os_values_with_receipt(
+    prepared: BashPreparedOsValues,
+    timeout: Option<f64>,
+    cancel: CancellationToken,
+    update: BashUpdateFn,
+    dispatch: &BashProcessDispatchReceipt,
+) -> Result<BashResult, ToolError> {
+    if cancel.is_cancelled() {
+        let mut result = OutputSink::default().snapshot();
+        result.cancelled = true;
+        result.timeout_seconds = timeout;
+        result.process_settlement_confirmed = true; // authoritative no-dispatch
+        return Ok(result);
+    }
+    let BashPreparedOsValues { command, cwd, environment } = prepared;
     let (reader, writer) = std::io::pipe().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
     let writer_err = writer.try_clone().map_err(|e| ToolError(format!("Failed to create pipe: {e}")))?;
     let mut cmd = tokio::process::Command::new("bash");
@@ -595,12 +746,8 @@ pub async fn execute_bash(
     for (k, v) in NON_INTERACTIVE_ENV {
         cmd.env(k, v);
     }
-    if let Some(Value::Object(env)) = args.get("env") {
-        for (k, v) in env {
-            if let Some(v) = v.as_str() {
-                cmd.env(k, expand(v, true));
-            }
-        }
+    for (key, value) in environment {
+        cmd.env(key, value);
     }
     #[cfg(unix)]
     cmd.process_group(0);
@@ -611,6 +758,7 @@ pub async fn execute_bash(
     let job = WindowsJob::new().map_err(|e| ToolError(format!("Failed to create Bash process job: {e}")))?;
     let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| ToolError(format!("Failed to start bash: {e}")))?;
+    dispatch.0.store(true, std::sync::atomic::Ordering::Release);
     drop(cmd); // release the parent's copies of the pipe's write end
     #[cfg(windows)]
     if let Err(e) = job.assign_and_resume(&child) {
@@ -621,7 +769,7 @@ pub async fn execute_bash(
     }
     // Unix only needs the guard's Drop; Windows also kills through it below.
     #[cfg_attr(not(windows), allow(unused_mut, unused_variables))]
-    let mut group = GroupGuard {
+    let group = GroupGuard {
         #[cfg(unix)]
         pid: child.id(),
         #[cfg(windows)]
@@ -630,21 +778,26 @@ pub async fn execute_bash(
     #[cfg(unix)]
     let pid = child.id();
     let sink = Arc::new(Mutex::new(OutputSink::default()));
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<std::io::Result<()>>();
     let reader_sink = sink.clone();
     std::thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 16 * 1024];
-        loop {
+        let terminal = loop {
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break Ok(()),
+                Err(error) => break Err(error),
                 Ok(n) => reader_sink.lock().unwrap().push_bytes(&buf[..n]),
             }
-        }
-        let _ = done_tx.send(());
+        };
+        let _ = done_tx.send(terminal);
     });
 
-    let deadline = timeout.map(|t| started + Duration::from_secs(t));
+    // The fixed executor's Math.max(1000, timeoutMs) watchdog installs a
+    // setTimeout even for NaN. JS timers normalize that delay to one millisecond.
+    let deadline = timeout.map(|seconds| {
+        started + if seconds.is_nan() { Duration::from_millis(1) } else { Duration::from_secs_f64(seconds.max(0.001)) }
+    });
     let mut ticker = tokio::time::interval(UPDATE_INTERVAL);
     ticker.tick().await;
     let mut last_sent = 0u64;
@@ -664,17 +817,42 @@ pub async fn execute_bash(
     };
     // End of call: the whole group goes (including background children
     // still holding the pipe), then the reader sees EOF.
-    #[cfg(unix)]
-    kill_group(pid);
     #[cfg(windows)]
-    group.kill_windows();
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(Duration::from_secs(2), done_rx).await;
+    let process_settlement_confirmed = {
+        // Retain the Job handle until all three native facts are observed.
+        // KILL_ON_JOB_CLOSE alone is a cleanup request, not its receipt.
+        let contained_stop = group.job.as_ref().is_some_and(|job| job.terminate().is_ok());
+        let _ = child.start_kill();
+        let settled = tokio::time::timeout(Duration::from_secs(2), async {
+            let tree = async {
+                match group.job.as_ref() {
+                    Some(job) => job.wait_empty().await,
+                    None => Err(io::Error::other("Bash process Job is absent")),
+                }
+            };
+            let (reaped, pipe, tree) = tokio::join!(child.wait(), done_rx, tree);
+            reaped.is_ok() && matches!(pipe, Ok(Ok(()))) && tree.is_ok()
+        })
+        .await
+        .unwrap_or(false);
+        contained_stop && settled
+    };
+    #[cfg(not(windows))]
+    let process_settlement_confirmed = {
+        #[cfg(unix)]
+        kill_group(pid);
+        let _ = child.start_kill();
+        let _ = tokio::time::timeout(Duration::from_secs(2), done_rx).await;
+        // An arbitrary Unix command can escape its process group. Group kill
+        // and pipe EOF cannot mint a whole-tree cancellation confirmation.
+        false
+    };
     let mut result = {
         let mut sink = sink.lock().unwrap();
         sink.finish();
         sink.snapshot()
     };
+    result.process_settlement_confirmed = process_settlement_confirmed;
     result.wall_time_ms = started.elapsed().as_millis() as u64;
     result.timeout_seconds = timeout;
     let exit_code = match &ending {

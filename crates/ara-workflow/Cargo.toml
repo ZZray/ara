@@ -1,0 +1,26 @@
+[package]
+name = "ara-workflow"
+description = "Host-reviewed, bounded workflows over the shared ARA Agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ara-agent.workspace = true
+ara-ai.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+ara-tools.workspace = true
+ara-session.workspace = true
+uuid.workspace = true
+ara-testkit.workspace = true
+tempfile.workspace = true
+reqwest.workspace = true
+ring.workspace = true

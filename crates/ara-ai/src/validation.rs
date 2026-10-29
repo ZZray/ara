@@ -4,25 +4,42 @@
 //! Ported subset: parse-error reporting, optional-null stripping, scalar and
 //! JSON-string coercion driven by validation issues, and the upstream error
 //! format (`Validation failed for tool "<name>":` + `  - <path>: <message>`
-//! lines + received arguments). The JSON Schema validator covers `type`,
-//! `properties`, `required`, `additionalProperties: false`, `enum`, `const`,
-//! `items`/`prefixItems`, local `$ref`, `allOf`, dependencies, boolean schemas,
-//! `minimum`/`maximum`, `minLength`/`maxLength`, and `anyOf`/`oneOf`.
-//! Not yet ported (open in the ledger): double-encoded key repair, flattened
-//! array properties, enum/identifier whitespace normalization, single-string
-//! remap, in-band arg-spill healing, ArkType-specific narrowing.
+//! lines + received arguments). Pure JSON Schema checking is delegated to
+//! the complete fixed Native checker in `schema_validator`; this facade's
+//! serde inputs convert only their representable domain. The normalizers and
+//! argument-origin contract below remain the existing subset.
+//! The separate Graph APIs below retain actual values through key/flattened
+//! repair, schema and identifier normalizations, coercion rounds and spill.
+//! The JSON-context Graph driver does not replace this existing serde facade.
+//! Ark runtime and production Graph Session/dispatch remain open.
+
+mod context;
+mod graph;
+pub use crate::schema_draft::upgrade_graph_json_schema_to_202012;
+pub use context::{
+    GraphValidationContext, get_graph_validation_context, graph_context_normalization_schema, validate_graph_context,
+};
+pub use graph::{
+    GraphContextValidation, GraphNormalization, GraphToolValidationError, coerce_graph_args_from_issues,
+    delete_graph_value_at_pointer, format_graph_issue_path, format_graph_issue_path_with_runtime,
+    get_graph_value_at_pointer, heal_graph_inband_arg_spill, normalize_graph_double_encoded_keys,
+    normalize_graph_enum_string_whitespace, normalize_graph_flattened_array_properties,
+    normalize_graph_identifier_string_whitespace, normalize_graph_optional_nulls_for_schema,
+    normalize_graph_single_string_field, normalize_graph_string_encoded_array_unions, path_to_graph_pointer,
+    path_to_graph_pointer_with_runtime, set_graph_value_at_pointer, truncate_graph_args_for_error,
+    try_parse_graph_json_for_types, validate_graph_json_context, validate_graph_tool_arguments,
+    validate_graph_tool_call,
+};
 
 use crate::json::json_kind;
 use crate::schema_draft::upgrade_json_schema;
+use crate::schema_validator::{JsonSchemaPathSegment, validate_serde_json_schema_value};
 use crate::types::{JsonObject, Tool};
 use serde_json::Value;
-use std::collections::HashSet;
 
 const MAX_COERCION_PASSES: usize = 3;
 const RAW_JSON_PREVIEW: usize = 512;
 const ARG_STRING_PREVIEW: usize = 2000;
-const MAX_VALIDATION_DEPTH: usize = 256;
-const MAX_PRIMITIVE_REF_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Issue {
@@ -31,14 +48,33 @@ struct Issue {
     expected: Option<Vec<String>>,
 }
 
-struct ValidationContext<'a> {
-    root: &'a Value,
-    ref_pairs: HashSet<(String, usize)>,
-    primitive_ref_depth: usize,
+/// Native reference identity, separate from Rust DTO allocation or value equality.
+/// `Unproven` retains the declared gap for currently unported Native normalizers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolArgumentsOrigin {
+    InputReference,
+    NormalizedCopy,
+    Unproven,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatedToolArguments {
+    pub args: JsonObject,
+    pub origin: ToolArgumentsOrigin,
 }
 
 /// Validate and normalize arguments; `Err` carries the model-facing message.
 pub fn validate_tool_arguments(tool: &Tool, call_name: &str, args: &JsonObject) -> Result<JsonObject, String> {
+    validate_tool_arguments_with_origin(tool, call_name, args).map(|validated| validated.args)
+}
+
+/// Return source-backed Native identity for the admitted flat string-schema
+/// shape. Other currently unported normalization shapes remain `Unproven`.
+pub fn validate_tool_arguments_with_origin(
+    tool: &Tool,
+    call_name: &str,
+    args: &JsonObject,
+) -> Result<ValidatedToolArguments, String> {
     if let Some(parse_error) = args.get("__parseError") {
         let raw = args.get("__rawJson").and_then(Value::as_str).unwrap_or("");
         let preview = if raw.chars().count() <= RAW_JSON_PREVIEW {
@@ -54,19 +90,14 @@ pub fn validate_tool_arguments(tool: &Tool, call_name: &str, args: &JsonObject) 
     }
     let schema = upgrade_json_schema(&tool.parameters, 0)
         .map_err(|()| format!("Validation failed for tool \"{call_name}\": schema nesting exceeds upgrade limit"))?;
+    let native_identity_proven = native_flat_string_identity_proven(&schema, args);
     let original = Value::Object(args.clone());
     let mut value = original.clone();
     let mut changed = strip_optional_nulls(&schema, &mut value);
 
-    let mut issues = validate(
-        &schema,
-        &value,
-        &mut Vec::new(),
-        &mut ValidationContext { root: &schema, ref_pairs: HashSet::new(), primitive_ref_depth: 0 },
-        0,
-    );
+    let (mut success, mut issues) = validate(&schema, &value);
     let mut pass = 0;
-    while !issues.is_empty() && pass < MAX_COERCION_PASSES {
+    while !success && pass < MAX_COERCION_PASSES {
         pass += 1;
         let mut coerced = false;
         for issue in &issues {
@@ -77,17 +108,20 @@ pub fn validate_tool_arguments(tool: &Tool, call_name: &str, args: &JsonObject) 
         }
         changed = true;
         strip_optional_nulls(&schema, &mut value);
-        issues = validate(
-            &schema,
-            &value,
-            &mut Vec::new(),
-            &mut ValidationContext { root: &schema, ref_pairs: HashSet::new(), primitive_ref_depth: 0 },
-            0,
-        );
+        (success, issues) = validate(&schema, &value);
     }
-    if issues.is_empty() {
+    if success {
         return match value {
-            Value::Object(map) => Ok(map),
+            Value::Object(map) => Ok(ValidatedToolArguments {
+                args: map,
+                origin: if !native_identity_proven {
+                    ToolArgumentsOrigin::Unproven
+                } else if changed {
+                    ToolArgumentsOrigin::NormalizedCopy
+                } else {
+                    ToolArgumentsOrigin::InputReference
+                },
+            }),
             other => Err(format!(
                 "Validation failed for tool \"{call_name}\":\n  - root: expected object, got {}",
                 json_kind(&other)
@@ -124,12 +158,80 @@ fn truncate_strings(value: &Value) -> Value {
     }
 }
 
-fn schema_types(schema: &Value) -> Vec<String> {
-    match schema.get("type") {
-        Some(Value::String(t)) => vec![t.clone()],
-        Some(Value::Array(ts)) => ts.iter().filter_map(|t| t.as_str().map(str::to_string)).collect(),
-        _ => Vec::new(),
+// Fixed Native validation.ts:1930-2021 runs copy-on-change normalizers before
+// plain JSON-schema validation returns its input reference (1724-1725). The
+// existing Rust subset cannot infer all their identities from `changed=false`.
+// This admitted shape proves every unported normalizer inert; optional-null
+// removal is already ported and supplies its actual branch-origin flag.
+fn native_flat_string_identity_proven(schema: &Value, args: &JsonObject) -> bool {
+    let Some(root) = schema.as_object() else {
+        return false;
+    };
+    if root.get("type").and_then(Value::as_str) != Some("object")
+        || root.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "type" | "properties" | "required" | "additionalProperties" | "description" | "title"
+            )
+        })
+    {
+        return false;
     }
+    if root.get("additionalProperties").is_some_and(|value| !value.is_boolean()) {
+        return false;
+    }
+    let Some(properties) = root.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    if properties.iter().any(|(key, property)| {
+        !plain_identity_key(key)
+            || property.as_object().is_none_or(|property| {
+                property.get("type").and_then(Value::as_str) != Some("string")
+                    || property.keys().any(|key| !matches!(key.as_str(), "type" | "description" | "title"))
+            })
+    }) {
+        return false;
+    }
+    if root.get("required").is_some_and(|required| {
+        required.as_array().is_none_or(|required| {
+            required.iter().any(|key| key.as_str().is_none_or(|key| !properties.contains_key(key)))
+        })
+    }) {
+        return false;
+    }
+    args.iter().all(|(key, value)| {
+        if !plain_identity_key(key) {
+            return false;
+        }
+        match value {
+            Value::String(text) => {
+                // Native's content keys are exempt; identifier keys trim only
+                // trailing CR/LF, not spaces. Such missing-normalizer inputs
+                // remain Unproven rather than silently assuming an alias.
+                !matches!(
+                    key.as_str(),
+                    "path"
+                        | "paths"
+                        | "file"
+                        | "file_path"
+                        | "filePath"
+                        | "filepath"
+                        | "url"
+                        | "uri"
+                        | "title"
+                        | "label"
+                ) || !(text.ends_with('\r') || text.ends_with('\n'))
+            }
+            Value::Null => properties.contains_key(key),
+            _ => false,
+        }
+    })
+}
+
+fn plain_identity_key(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    bytes.next().is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 /// Remove `null` / `"null"` placeholders from optional properties whose schema
@@ -151,7 +253,9 @@ fn strip_optional_nulls(schema: &Value, value: &mut Value) -> bool {
         .unwrap_or_default();
     let keys: Vec<String> = map.keys().cloned().collect();
     for key in keys {
-        let Some(prop_schema) = props.get(&key) else { continue };
+        let Some(prop_schema) = props.get(&key) else {
+            continue;
+        };
         let is_null_placeholder = matches!(map.get(&key), Some(Value::Null))
             || matches!(map.get(&key), Some(Value::String(s)) if s == "null");
         if is_null_placeholder && !required.contains(&key.as_str()) {
@@ -164,224 +268,30 @@ fn strip_optional_nulls(schema: &Value, value: &mut Value) -> bool {
     changed
 }
 
-fn type_matches(t: &str, value: &Value) -> bool {
-    match t {
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "string" => value.is_string(),
-        "boolean" => value.is_boolean(),
-        "null" => value.is_null(),
-        "number" => value.is_number(),
-        "integer" => {
-            value.as_i64().is_some() || value.as_u64().is_some() || value.as_f64().is_some_and(|f| f.fract() == 0.0)
-        }
-        _ => true,
-    }
-}
-
-fn validate(
-    schema: &Value,
-    value: &Value,
-    path: &mut Vec<String>,
-    context: &mut ValidationContext<'_>,
-    depth: usize,
-) -> Vec<Issue> {
-    let mut issues = Vec::new();
-    let issue = |path: &Vec<String>, message: String, expected: Option<Vec<String>>| Issue {
-        path: path.clone(),
-        message,
-        expected,
-    };
-    if depth > MAX_VALIDATION_DEPTH {
-        issues.push(issue(path, "schema recursion limit exceeded".into(), None));
-        return issues;
-    }
-    if schema.as_bool() == Some(true) || schema.as_object().is_some_and(|o| o.is_empty()) {
-        return issues;
-    }
-    if schema.as_bool() == Some(false) {
-        issues.push(issue(path, "must not match false schema".into(), None));
-        return issues;
-    }
-    let Some(object) = schema.as_object() else {
-        issues.push(issue(path, "schema must be an object or boolean".into(), None));
-        return issues;
-    };
-    if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
-        let root = context.root;
-        let resolved = reference.strip_prefix('#').and_then(|pointer| {
-            if pointer.is_empty() || pointer.starts_with('/') { root.pointer(pointer) } else { None }
-        });
-        let Some(resolved) = resolved else {
-            issues.push(issue(path, format!("unresolved reference {reference}"), None));
-            return issues;
-        };
-        if value.is_object() || value.is_array() {
-            let pair = (reference.to_owned(), value as *const Value as usize);
-            if !context.ref_pairs.insert(pair.clone()) {
-                return issues;
-            }
-            issues.extend(validate(resolved, value, path, context, depth + 1));
-            context.ref_pairs.remove(&pair);
-        } else if context.primitive_ref_depth >= MAX_PRIMITIVE_REF_DEPTH {
-            issues.push(issue(path, "reference depth exceeded".into(), None));
-        } else {
-            context.primitive_ref_depth += 1;
-            issues.extend(validate(resolved, value, path, context, depth + 1));
-            context.primitive_ref_depth -= 1;
-        }
-        return issues;
-    }
-    if let Some(Value::Array(branches)) = object.get("allOf") {
-        for branch in branches {
-            issues.extend(validate(branch, value, &mut path.clone(), context, depth + 1));
-        }
-    }
-    for key in ["anyOf", "oneOf"] {
-        if let Some(Value::Array(branches)) = schema.get(key) {
-            let mut matched = 0;
-            let mut first_branch_issues = None;
-            for branch in branches {
-                let branch_issues = validate(branch, value, &mut path.clone(), context, depth + 1);
-                if branch_issues.is_empty() {
-                    matched += 1;
-                } else if first_branch_issues.is_none() {
-                    first_branch_issues = Some(branch_issues);
-                }
-            }
-            let ok = if key == "anyOf" { matched >= 1 } else { matched == 1 };
-            if !ok {
-                if matched == 0
-                    && let Some(branch_issues) = first_branch_issues
-                {
-                    issues.extend(branch_issues);
-                    return issues;
-                }
-                let expected: Vec<String> = branches.iter().flat_map(schema_types).collect();
-                issues.push(issue(
-                    path,
-                    format!(
-                        "must match {} schema in {key}",
-                        if key == "anyOf" { "at least one" } else { "exactly one" }
-                    ),
-                    Some(expected),
-                ));
-                return issues;
-            }
-        }
-    }
-    let types = schema_types(schema);
-    if !types.is_empty() && !types.iter().any(|t| type_matches(t, value)) {
-        issues.push(issue(path, format!("must be {} (was {})", types.join(" | "), json_kind(value)), Some(types)));
-        return issues;
-    }
-    if let Some(expected) = schema.get("const")
-        && expected != value
-    {
-        issues.push(issue(path, format!("must be {expected}"), None));
-    }
-    if let Some(Value::Array(options)) = schema.get("enum")
-        && !options.contains(value)
-    {
-        let rendered: Vec<String> = options.iter().map(Value::to_string).collect();
-        issues.push(issue(path, format!("must be one of {}", rendered.join(", ")), None));
-    }
-    match value {
-        Value::Object(map) => {
-            let props = schema.get("properties").and_then(Value::as_object);
-            if let Some(Value::Array(required)) = schema.get("required") {
-                for key in required.iter().filter_map(Value::as_str) {
-                    if !map.contains_key(key) {
-                        path.push(key.to_string());
-                        issues.push(issue(path, "is required".to_string(), None));
-                        path.pop();
-                    }
-                }
-            }
-            if let Some(dependencies) = schema.get("dependentRequired").and_then(Value::as_object) {
-                for (key, required) in dependencies {
-                    if !map.contains_key(key) {
-                        continue;
-                    }
-                    if let Some(required) = required.as_array() {
-                        for dependent in required.iter().filter_map(Value::as_str) {
-                            if !map.contains_key(dependent) {
-                                path.push(dependent.to_owned());
-                                issues.push(issue(path, format!("is required when \"{key}\" is present"), None));
-                                path.pop();
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(dependencies) = schema.get("dependentSchemas").and_then(Value::as_object) {
-                for (key, dependent_schema) in dependencies {
-                    if map.contains_key(key) {
-                        issues.extend(validate(dependent_schema, value, &mut path.clone(), context, depth + 1));
-                    }
-                }
-            }
-            for (key, child) in map {
-                if let Some(child_schema) = props.and_then(|p| p.get(key)) {
-                    path.push(key.clone());
-                    issues.extend(validate(child_schema, child, path, context, depth + 1));
-                    path.pop();
-                } else if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
-                    path.push(key.clone());
-                    issues.push(issue(path, "is not an allowed property".to_string(), None));
-                    path.pop();
-                } else if let Some(extra) = schema.get("additionalProperties").filter(|v| v.is_object()) {
-                    path.push(key.clone());
-                    issues.extend(validate(extra, child, path, context, depth + 1));
-                    path.pop();
-                }
-            }
-        }
-        Value::Array(items) => {
-            let prefix = schema.get("prefixItems").and_then(Value::as_array);
-            if schema.get("items").is_some_and(Value::is_array) {
-                issues.push(issue(path, "array-valued items is not valid in JSON Schema 2020-12".into(), None));
-            }
-            for (index, item) in items.iter().enumerate() {
-                let item_schema = prefix
-                    .and_then(|prefix| prefix.get(index))
-                    .or_else(|| schema.get("items").filter(|schema| !schema.is_array()));
-                if let Some(item_schema) = item_schema {
-                    path.push(index.to_string());
-                    issues.extend(validate(item_schema, item, path, context, depth + 1));
-                    path.pop();
-                }
-            }
-        }
-        Value::String(s) => {
-            let len = s.chars().count() as u64;
-            if let Some(min) = schema.get("minLength").and_then(Value::as_u64)
-                && len < min
-            {
-                issues.push(issue(path, format!("must have at least {min} characters"), None));
-            }
-            if let Some(max) = schema.get("maxLength").and_then(Value::as_u64)
-                && len > max
-            {
-                issues.push(issue(path, format!("must have at most {max} characters"), None));
-            }
-        }
-        Value::Number(n) => {
-            let v = n.as_f64().unwrap_or(0.0);
-            if let Some(min) = schema.get("minimum").and_then(Value::as_f64)
-                && v < min
-            {
-                issues.push(issue(path, format!("must be >= {min}"), None));
-            }
-            if let Some(max) = schema.get("maximum").and_then(Value::as_f64)
-                && v > max
-            {
-                issues.push(issue(path, format!("must be <= {max}"), None));
-            }
-        }
-        _ => {}
-    }
-    issues
+// This adapter retains the legacy facade's UTF-8 error/coercion interface.
+// Every source string came from serde; the direct Wire API owns the wider
+// UTF-16 domain and rich keyword/union provenance.
+fn validate(schema: &Value, value: &Value) -> (bool, Vec<Issue>) {
+    let result = validate_serde_json_schema_value(schema, value);
+    let issues = result
+        .issues
+        .into_iter()
+        .map(|issue| Issue {
+            path: issue
+                .path
+                .into_iter()
+                .map(|part| match part {
+                    JsonSchemaPathSegment::Property(key) => key.to_utf8().expect("serde facade key is valid UTF-16"),
+                    JsonSchemaPathSegment::Index(index) => index.to_string(),
+                })
+                .collect(),
+            message: issue.message.to_utf8().expect("serde facade issue message is valid UTF-16"),
+            expected: issue.expected_types.map(|types| {
+                types.into_iter().map(|kind| kind.to_utf8().expect("serde facade type is valid UTF-16")).collect()
+            }),
+        })
+        .collect();
+    (result.success, issues)
 }
 
 fn value_at_mut<'a>(value: &'a mut Value, path: &[String]) -> Option<&'a mut Value> {
@@ -399,8 +309,12 @@ fn value_at_mut<'a>(value: &'a mut Value, path: &[String]) -> Option<&'a mut Val
 /// Coerce a scalar or JSON-string value toward the expected type
 /// (OMP `coerceArgsFromIssues`, subset).
 fn coerce_at(root: &mut Value, path: &[String], expected: Option<&[String]>) -> bool {
-    let Some(expected) = expected else { return false };
-    let Some(slot) = value_at_mut(root, path) else { return false };
+    let Some(expected) = expected else {
+        return false;
+    };
+    let Some(slot) = value_at_mut(root, path) else {
+        return false;
+    };
     let Value::String(s) = slot else { return false };
     let trimmed = s.trim();
     for t in expected {
@@ -436,7 +350,7 @@ mod tests {
     use serde_json::json;
 
     fn tool(params: Value) -> Tool {
-        Tool { name: "t".into(), description: String::new(), parameters: params }
+        Tool { name: "t".into(), description: String::new(), parameters: params, ..Default::default() }
     }
 
     fn obj(v: Value) -> JsonObject {
@@ -445,15 +359,42 @@ mod tests {
 
     #[test]
     fn accepts_valid_and_strips_optional_nulls() {
+        graph::tests::aliases_defaults_entries_and_context();
+        context::tests::cache_draft_and_live_fields();
+        context::tests::authored_ark_context_family();
+        crate::schema_wire::observe_graph_wire_family();
+        graph::observe_remaining_normalizers_family();
         let t = tool(
             json!({"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "number"}}, "required": ["path"]}),
         );
         let out = validate_tool_arguments(&t, "read", &obj(json!({"path": "a", "limit": null}))).unwrap();
         assert_eq!(Value::Object(out), json!({"path": "a"}));
+        let same = validate_tool_arguments_with_origin(
+            &tool(json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]})),
+            "echo",
+            &obj(json!({"text":"preserve content\n"})),
+        )
+        .unwrap();
+        assert_eq!(same.origin, ToolArgumentsOrigin::InputReference);
+        let copy = validate_tool_arguments_with_origin(
+            &tool(json!({"type":"object","properties":{"text":{"type":"string"},"optional":{"type":"string"}},"required":["text"]})),
+            "echo",
+            &obj(json!({"text":"original","optional":null})),
+        )
+        .unwrap();
+        assert_eq!(copy.origin, ToolArgumentsOrigin::NormalizedCopy);
+        let unproven = validate_tool_arguments_with_origin(
+            &tool(json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]})),
+            "read",
+            &obj(json!({"path":"unported-identifier\n"})),
+        )
+        .unwrap();
+        assert_eq!(unproven.origin, ToolArgumentsOrigin::Unproven);
     }
 
     #[test]
     fn coerces_numeric_and_boolean_strings() {
+        graph::tests::numeric_and_array_domain();
         let t = tool(json!({"type": "object", "properties": {"n": {"type": "integer"}, "b": {"type": "boolean"}}}));
         let out = validate_tool_arguments(&t, "x", &obj(json!({"n": "42", "b": "true"}))).unwrap();
         assert_eq!(Value::Object(out), json!({"n": 42, "b": true}));
@@ -467,7 +408,7 @@ mod tests {
         let err = validate_tool_arguments(&t, "read", &obj(json!({"file": "a"}))).unwrap_err();
         assert!(err.starts_with("Validation failed for tool \"read\":\n"), "{err}");
         assert!(err.contains("  - path: is required"), "{err}");
-        assert!(err.contains("  - file: is not an allowed property"), "{err}");
+        assert!(err.contains("  - file: must not be present"), "{err}");
         assert!(err.contains("Received arguments:\n{\n  \"file\": \"a\"\n}"), "{err}");
     }
 
@@ -489,7 +430,7 @@ mod tests {
     fn type_mismatch_without_coercion_fails() {
         let t = tool(json!({"type": "object", "properties": {"n": {"type": "integer"}}}));
         let err = validate_tool_arguments(&t, "x", &obj(json!({"n": "abc"}))).unwrap_err();
-        assert!(err.contains("  - n: must be integer (was string)"), "{err}");
+        assert!(err.contains("  - n: expected integer, received string"), "{err}");
     }
 
     #[test]
@@ -515,7 +456,7 @@ mod tests {
             })),
         )
         .unwrap_err();
-        assert!(bad_type.contains("pair/1: must be integer"), "{bad_type}");
+        assert!(bad_type.contains("pair/1: expected integer"), "{bad_type}");
         let extra = validate_tool_arguments(
             &t,
             "legacy",
@@ -552,7 +493,7 @@ mod tests {
             })),
         )
         .unwrap_err();
-        assert!(wrong_ref.contains("value: must be integer"), "{wrong_ref}");
+        assert!(wrong_ref.contains("value: expected integer"), "{wrong_ref}");
 
         let merged_schemas = tool(json!({
             "type":"object",
@@ -581,7 +522,7 @@ mod tests {
             })),
         )
         .unwrap_err();
-        assert!(bad.contains("node/child/name: must be string"), "{bad}");
+        assert!(bad.contains("node/child/name: expected string"), "{bad}");
         let missing = validate_tool_arguments(
             &recursive,
             "tree",
@@ -596,8 +537,8 @@ mod tests {
         let err = validate_tool_arguments(&external, "external", &obj(json!({"x":1}))).unwrap_err();
         assert!(err.contains("unresolved reference https://example.test/schema"), "{err}");
         let loop_schema = json!({"$ref":"#"});
-        let mut context = ValidationContext { root: &loop_schema, ref_pairs: HashSet::new(), primitive_ref_depth: 0 };
-        let issues = validate(&loop_schema, &json!("x"), &mut Vec::new(), &mut context, 0);
+        let (success, issues) = validate(&loop_schema, &json!("x"));
+        assert!(!success);
         assert!(issues.iter().any(|issue| issue.message == "reference depth exceeded"));
     }
 
@@ -617,16 +558,37 @@ mod tests {
         }));
         assert_eq!(validate_tool_arguments(&t, "union", &obj(json!({"n":"42"}))).unwrap(), obj(json!({"n":42})));
         let err = validate_tool_arguments(&t, "union", &obj(json!({"n":"not-a-number"}))).unwrap_err();
-        assert!(err.contains("n: must be integer"), "{err}");
+        assert!(err.contains("n: expected integer"), "{err}");
     }
 
     #[test]
     fn all_of_strips_optional_null_placeholders_before_validation() {
+        graph::tests::unions_iterators_and_failures();
+        context::tests::stamps_methods_and_failures();
         let t = tool(json!({
             "type":"object",
             "allOf":[{"type":"object","properties":{"optional":{"type":"string"}}}]
         }));
         assert_eq!(validate_tool_arguments(&t, "allOf", &obj(json!({"optional":null}))).unwrap(), obj(json!({})));
         assert_eq!(validate_tool_arguments(&t, "allOf", &obj(json!({"optional":"null"}))).unwrap(), obj(json!({})));
+    }
+
+    #[test]
+    fn full_pure_checker_keywords_are_reached_through_legacy_facade() {
+        let cases = [
+            (json!({"propertyNames":{"pattern":"^[a-z]+$"}}), json!({"BAD":1}), "BAD: must match pattern"),
+            (json!({"patternProperties":{"^x":{"type":"boolean"}}}), json!({"x":1}), "x: expected boolean"),
+            (json!({"if":true,"then":false}), json!({}), "root: must not match false schema"),
+            (
+                json!({"properties":{"x":{"contains":{"type":"number"}}}}),
+                json!({"x":["a"]}),
+                "x: must contain at least 1",
+            ),
+            (json!({"properties":{"x":{"maxLength":1}}}), json!({"x":"😀"}), "x: must be at most 1 characters"),
+        ];
+        for (schema, args, expected) in cases {
+            let error = validate_tool_arguments(&tool(schema), "facade", &obj(args)).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 }

@@ -4,9 +4,22 @@
 use super::*;
 
 impl Host {
-    pub(super) fn route_model_context(&self, journal: &SessionJournal) -> Result<Vec<Message>> {
-        ara_cli::remote_compaction::route_context(
+    pub(super) fn budget_messages(&self, messages: &[AgentMessage]) -> Result<Vec<Message>> {
+        Ok(self.session.projector.estimate_current(messages, &self.config.model)?)
+    }
+
+    pub(super) fn budget_message_tokens(
+        &self,
+        messages: &[AgentMessage],
+        options: ara_agent::tokenizer::MessageCountOptions,
+    ) -> Result<usize> {
+        Ok(self.session.projector.count_current(messages, &self.config.model, options)?)
+    }
+
+    pub(super) fn route_raw_context(&self, journal: &SessionJournal) -> Result<Vec<AgentMessage>> {
+        ara_cli::remote_compaction::route_raw_context(
             journal,
+            &self.session.projector,
             &self.config.model,
             self.sessions.provider.metadata.as_ref(),
             &self.compaction_policy.recovery_settings()?.remote,
@@ -15,11 +28,23 @@ impl Host {
     }
 
     pub(super) fn maintenance_stop_requested(&self) -> bool {
-        self.connection.is_cancelled() || self.handoff_control.lock().unwrap().stop_requested()
+        let control = self.handoff_control.lock().unwrap();
+        self.connection.is_cancelled()
+            || if self.accepted_auto_allows_maintenance_eof() {
+                control.abort_requested()
+            } else {
+                control.stop_requested()
+            }
     }
 
-    pub(super) fn adopt_route_context(&self, journal: &SessionJournal) -> Result<()> {
-        self.agent.replace_idle_messages(self.route_model_context(journal)?)?;
+    pub(super) async fn adopt_route_context(&self, journal: &SessionJournal) -> Result<()> {
+        let selected = self.route_raw_context(journal)?;
+        let current = self.agent.raw_messages().await;
+        let context = self.session.projector.reconcile_owned_context(&current, selected)?;
+        self.agent.replace_idle_raw_messages(context)?;
+        if let Some(plan) = &self.sessions.acp_plan {
+            plan.reset_reference_after_history_rewrite();
+        }
         Ok(())
     }
 
@@ -65,7 +90,7 @@ impl Host {
         if !ara_agent::remote::remote_available(&self.config.model, &remote_config, &settings.remote) {
             return Ok(None);
         }
-        let guard = handoff::HandoffControl::begin(&self.handoff_control, &self.connection);
+        let guard = self.maintenance_guard();
         if guard.cancel.is_cancelled() {
             return Err(ara_cli::handoff::cancelled());
         }
@@ -73,9 +98,10 @@ impl Host {
         let generation = self.prompt_generation;
         let route_generation = self.sessions.provider.route.generation();
         let model = self.config.model.clone();
-        let messages = self.agent.messages().await;
+        let messages = self.agent.raw_messages().await;
+        let expected_bodies = self.session.projector.current_body_receipts(&messages)?;
         // Reject invalid Agent admission before issuing a billable side call.
-        self.agent.replace_idle_messages(messages.clone())?;
+        self.agent.replace_idle_raw_messages(messages.clone())?;
         let snapshot = {
             let journal = session.journal.lock().await;
             let available = ara_cli::remote_compaction::native_replay_available(
@@ -144,13 +170,12 @@ impl Host {
             || !Arc::ptr_eq(&session, &self.session)
             || route_generation != self.sessions.provider.route.generation()
             || model != self.config.model
-            || messages != self.agent.messages().await
+            || expected_bodies != self.session.projector.current_body_receipts(&self.agent.raw_messages().await)?
         {
             bail!("Context or route changed during remote compaction");
         }
-        let tokens_before = ara_cli::context_budget::tokenizer(&model)
-            .count_messages(&messages, ara_agent::tokenizer::MessageCountOptions::default())
-            as u64;
+        let tokens_before =
+            self.budget_message_tokens(&messages, ara_agent::tokenizer::MessageCountOptions::default())? as u64;
         let mut journal = session.journal.lock().await;
         if guard.cancel.is_cancelled() {
             return Err(ara_cli::handoff::cancelled());
@@ -158,12 +183,14 @@ impl Host {
         let old_leaf = journal.leaf_id().map(str::to_owned);
         if let Err(error) = prepared.commit(&mut journal, &snapshot, tokens_before) {
             if error.history_published() {
-                *session.persistence_error.lock().unwrap() = Some(error.to_string());
+                session.persistence_error.lock().unwrap().get_or_insert_with(|| error.to_string());
                 self.connection.cancel();
-                if let Ok(context) = self.route_model_context(&journal) {
-                    let _ = self.agent.replace_idle_messages(context);
+                self.drain_queues = false;
+                let _ = self.adopt_route_context(&journal).await;
+                match public_messages_after_publication(&journal, &session, &self.connection, &mut self.drain_queues) {
+                    Ok(messages) => *session.messages.lock().unwrap() = messages,
+                    Err(_) => return Err(error.into()),
                 }
-                *session.messages.lock().unwrap() = Session::public_messages(&journal);
                 self.config.provider = self
                     .sessions
                     .provider
@@ -173,12 +200,13 @@ impl Host {
             }
             return Err(error.into());
         }
-        if let Err(error) = self.adopt_route_context(&journal) {
+        if let Err(error) = self.adopt_route_context(&journal).await {
             *session.persistence_error.lock().unwrap() = Some(error.to_string());
             self.connection.cancel();
             return Err(error);
         }
-        *session.messages.lock().unwrap() = Session::public_messages(&journal);
+        *session.messages.lock().unwrap() =
+            public_messages_after_publication(&journal, &session, &self.connection, &mut self.drain_queues)?;
         self.maintenance_bash_transition(old_leaf);
         self.config.provider = self
             .sessions

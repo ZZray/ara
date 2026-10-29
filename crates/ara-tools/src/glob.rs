@@ -70,6 +70,14 @@ struct Target {
     has_glob: bool,
 }
 
+/// OS scalars selected after the Host's original field observations.
+pub struct GlobOsValues {
+    pub path: Option<String>,
+    pub limit: f64,
+    pub include_hidden: bool,
+    pub use_gitignore: bool,
+}
+
 pub struct GlobTool {
     pub ctx: ToolContext,
     /// Scan budget; upstream `DEFAULT_GLOB_TIMEOUT_MS`.
@@ -82,9 +90,46 @@ impl GlobTool {
     }
 
     fn execute_blocking(&self, args: &JsonObject, cancel: &CancellationToken) -> Result<ToolOutput, ToolError> {
+        let input = GlobOsValues {
+            path: args.get("path").and_then(Value::as_str).map(str::to_owned),
+            limit: match args.get("limit") {
+                None | Some(Value::Null) => DEFAULT_LIMIT as f64,
+                Some(value) => value.as_f64().unwrap_or(f64::NAN),
+            },
+            include_hidden: args.get("hidden").and_then(Value::as_bool).unwrap_or(true),
+            use_gitignore: args.get("gitignore").and_then(Value::as_bool).unwrap_or(true),
+        };
+        self.execute_blocking_os_values(&input, cancel)
+    }
+
+    /// Native workers settle before their original invocation owner is released.
+    pub async fn execute_os_values(
+        &self,
+        input: GlobOsValues,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let tool = Self { ctx: self.ctx.clone(), timeout: self.timeout };
+        let work = cancel.child_token();
+        let _stop_on_drop = work.clone().drop_guard();
+        tokio::task::spawn_blocking(move || {
+            let result = tool.execute_blocking_os_values(&input, &work);
+            // A direct-file target may never enter the walk budget. Settle the
+            // worker first, then reject a cancelled caller instead of publishing
+            // that fast-path result as success (fixed glob.ts:446/506).
+            if work.is_cancelled() { Err(ToolError("Glob was aborted".into())) } else { result }
+        })
+        .await
+        .map_err(|error| ToolError(format!("Glob failed: {error}")))?
+    }
+
+    fn execute_blocking_os_values(
+        &self,
+        input: &GlobOsValues,
+        cancel: &CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
         let ctx = &self.ctx;
         let err = |s: String| ToolError(s);
-        let mut inputs = paths::to_path_list(args.get("path").and_then(Value::as_str));
+        let mut inputs = paths::to_path_list(input.path.as_deref());
         if inputs.is_empty() {
             inputs.push(".".into());
         }
@@ -155,16 +200,13 @@ impl GlobTool {
         if targets.iter().any(|t| t.search_path == std::path::Path::new("/")) {
             return Err(ToolError("Searching from root directory '/' is not allowed".into()));
         }
-        let limit = match args.get("limit") {
-            None | Some(Value::Null) => DEFAULT_LIMIT as f64,
-            Some(v) => v.as_f64().unwrap_or(f64::NAN),
-        };
+        let limit = input.limit;
         if !limit.is_finite() || limit <= 0.0 {
             return Err(ToolError("Limit must be a positive number".into()));
         }
         let limit = (limit.floor() as usize).clamp(1, MAX_LIMIT);
-        let include_hidden = args.get("hidden").and_then(Value::as_bool).unwrap_or(true);
-        let use_gitignore = args.get("gitignore").and_then(Value::as_bool).unwrap_or(true);
+        let include_hidden = input.include_hidden;
+        let use_gitignore = input.use_gitignore;
         let budget = Budget { cancel: cancel.clone(), deadline: Instant::now() + self.timeout };
 
         // Stat every target first (upstream prepares all targets before scanning).
@@ -310,6 +352,7 @@ impl AgentTool for GlobTool {
                 },
                 "additionalProperties": false
             }),
+            ..Default::default()
         }
     }
 

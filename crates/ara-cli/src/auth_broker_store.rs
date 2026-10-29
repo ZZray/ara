@@ -273,6 +273,35 @@ impl RemoteAuthCredentialStore {
     pub fn projection_revision(&self) -> u64 {
         self.inner.state.lock().unwrap().projection_revision
     }
+    /// Native override publication only updates this in-memory projection. The
+    /// same lock compares the attempted row and publishes, with no remote write.
+    pub(crate) fn publish_oauth_override_if_matches(
+        &self,
+        provider: &str,
+        id: i64,
+        expected_data: &str,
+        credential: &AuthCredential,
+    ) -> Result<(StoredAuthCredential, bool), AuthStorageError> {
+        self.ensure_open()?;
+        self.note_activity();
+        let mut state = self.inner.state.lock().map_err(|_| AuthStorageError::Storage)?;
+        let position = state
+            .snapshot
+            .credentials
+            .iter()
+            .position(|entry| {
+                entry.id == id && entry.provider == provider && matches!(entry.credential, AuthCredential::OAuth { .. })
+            })
+            .ok_or(AuthStorageError::Unavailable)?;
+        let current = stored_row(&state.snapshot.credentials[position], state.broker_generation)?;
+        if current.serialized_data != expected_data {
+            return Ok((current, false));
+        }
+        let previous = state.snapshot.clone();
+        state.snapshot.credentials[position].credential = credential.clone();
+        self.publish_projection(&mut state, &previous);
+        Ok((stored_row(&state.snapshot.credentials[position], state.broker_generation)?, true))
+    }
     pub fn subscribe_projection_changes(&self) -> watch::Receiver<u64> {
         self.inner.projection_changed.subscribe()
     }

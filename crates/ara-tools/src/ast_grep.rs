@@ -2,8 +2,8 @@
 //! `crates/pi-natives/src/ast.rs` at 596f2da7101178214aa27a753529d15e6b7ad91d).
 //!
 //! This is an opt-in, read-only tool. Its supported scope is local files,
-//! directories, globs, delimited path lists, and loaded `skill://` paths.
-//! Other upstream URL transports and the TUI renderer are not part of this port.
+//! directories, globs, delimited path lists, loaded `skill://` paths and
+//! registered Host URI backing paths. The TUI renderer is a separate owner.
 //! ARA rejects `skip > 10_000` to bound retained search memory; fixed OMP
 //! accepts any finite non-negative skip.
 
@@ -45,6 +45,20 @@ pub const DESCRIPTION: &str = r"Structural code search: use when syntax shape ma
 - Parse issues mean the query may be wrong or mis-scoped; fix the pattern or path before concluding absence.
 </critical>";
 
+/// Native action inputs; pattern is the result of the original trim Call.
+pub struct AstGrepOsValues {
+    pub pattern: String,
+    pub language: Option<String>,
+    pub path: Option<String>,
+    pub skip: f64,
+}
+
+/// Actual Native reads remain on the original Graph driver at call sites.
+/// Only language scalars cross this port; typed callers supply a frozen value.
+#[async_trait]
+pub trait AstGrepLanguagePort:Send+Sync {
+    async fn language(&self,explicit_acquisition:bool)->Result<Option<String>,ToolError>;
+}
 pub struct AstGrepTool {
     pub ctx: ToolContext,
 }
@@ -98,6 +112,8 @@ struct SearchResult {
     sequence: u64,
     seen_files: HashSet<PathBuf>,
     compiled: HashMap<SupportLang, Result<Pattern, String>>,
+    missing_grammars: Vec<String>,
+    language: Option<String>,
 }
 
 impl SearchResult {
@@ -121,22 +137,28 @@ impl SearchResult {
     ) -> Result<(), ToolError> {
         budget.check().map_err(walk_error)?;
         let absolute = crate::normalize(absolute);
-        if !self.seen_files.insert(absolute.clone()) || !ops::is_supported_file(&absolute, None) {
+        if !self.seen_files.insert(absolute.clone()) || !ops::is_supported_file(&absolute, self.language.as_deref()) {
             return Ok(());
         }
-        self.files_searched = self.files_searched.saturating_add(1);
         // The walker canonicalizes roots. Windows may add a `\\?\` prefix,
         // which is a filesystem spelling rather than a useful model path.
         let display_path = PathBuf::from(internal_urls::search_path_string(&absolute));
         let display_cwd = PathBuf::from(internal_urls::search_path_string(&ctx.cwd));
         let display = paths::format_path_relative_to_cwd(&display_path, &display_cwd, false);
-        let language = match ops::resolve_language(None, &absolute) {
+        let language = match ops::resolve_language(self.language.as_deref(), &absolute) {
             Ok(language) => language,
             Err(error) => {
+                self.files_searched=self.files_searched.saturating_add(1);
                 self.error(format!("{display}: {error}"));
                 return Ok(());
             }
         };
+        if language.wasm_grammar().is_some_and(|grammar| !grammar.is_installed()) {
+            let name=language.canonical_name().to_owned();
+            if !self.missing_grammars.contains(&name) {self.missing_grammars.push(name);}
+            return Ok(());
+        }
+        self.files_searched = self.files_searched.saturating_add(1);
         let compiled = self
             .compiled
             .entry(language)
@@ -314,22 +336,155 @@ fn render_parse_errors(errors: &[String], total: u64) -> String {
 }
 
 impl AstGrepTool {
+    async fn resolve_host_paths(
+        &self,
+        raw_path: Option<&str>,
+        cancel: CancellationToken,
+    ) -> Result<(Option<String>, Vec<PathBuf>), ToolError> {
+        let Some(raw_path) = raw_path else {
+            return Ok((None, Vec::new()));
+        };
+        let Some(port) = self.ctx.content_uri_port() else {
+            return Ok((Some(raw_path.into()), Vec::new()));
+        };
+        let entries = paths::to_path_list(Some(raw_path));
+        let entries =
+            paths::expand_delimited_entries(&self.ctx, &entries, paths::Splitter::Search).map_err(ToolError)?;
+        let mut resolved = Vec::new();
+        let mut changed = false;
+        let mut immutable = Vec::new();
+        for entry in entries {
+            if cancel.is_cancelled() {
+                return Err(ToolError("AST grep was aborted".into()));
+            }
+            match port.route(&entry) {
+                crate::ContentUriRoute::Unregistered => resolved.push(entry),
+                crate::ContentUriRoute::Removed => {
+                    let scheme = internal_urls::hierarchical_scheme(&entry).unwrap_or("");
+                    return Err(ToolError(format!("Unknown protocol: {}://", scheme.to_ascii_lowercase())));
+                }
+                crate::ContentUriRoute::Registered { writable } => {
+                    let (url, selector) = internal_urls::split_content_url_selector(&entry);
+                    if selector.is_some() {
+                        return Err(ToolError(format!("Line selectors are not supported for ast_grep: {entry}")));
+                    }
+                    if paths::has_glob_path_chars(&url) {
+                        return Err(ToolError(format!("Glob patterns are not supported for internal URLs: {entry}")));
+                    }
+                    let path = port.search_path_only(&url, cancel.clone()).await?.ok_or_else(|| {
+                        ToolError(format!("Cannot search internal URL without a backing file: {entry}"))
+                    })?;
+                    if !writable {
+                        immutable.push(tokio::fs::canonicalize(&path).await.unwrap_or_else(|_| path.clone()));
+                    }
+                    resolved.push(internal_urls::search_path_string(&path));
+                    changed = true;
+                }
+            }
+        }
+        Ok((
+            Some(if changed {
+                serde_json::to_string(&resolved).map_err(|error| ToolError(error.to_string()))?
+            } else {
+                raw_path.into()
+            }),
+            immutable,
+        ))
+    }
+    #[cfg(test)]
     fn execute_blocking(&self, args: &JsonObject, cancel: &CancellationToken) -> Result<ToolOutput, ToolError> {
         let pattern = args.get("pat").and_then(Value::as_str).unwrap_or_default().trim();
         if pattern.is_empty() {
             return Err(ToolError("`pat` must be a non-empty pattern".into()));
         }
         let skip = parse_skip(args)?;
-        let (scope, immutable) = resolve_scope(&self.ctx, args.get("path").and_then(Value::as_str))?;
+        self.execute_prepared_os_values(pattern, args.get("path").and_then(Value::as_str), skip, &[], cancel)
+    }
+
+    /// The Host observes pat.trim/skip/path before entering this action owner.
+    pub async fn execute_os_values(
+        &self,
+        input: AstGrepOsValues,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        self.execute_os_values_with_language(input,cancel,None).await
+    }
+    pub async fn execute_os_values_with_language(
+        &self,mut input:AstGrepOsValues,cancel:CancellationToken,language_port:Option<std::sync::Arc<dyn AstGrepLanguagePort>>,
+    )->Result<ToolOutput,ToolError> {
+        if input.pattern.is_empty() {
+            return Err(ToolError("`pat` must be a non-empty pattern".into()));
+        }
+        if !input.skip.is_finite() || input.skip < 0.0 || input.skip >= MAX_SKIP as f64 + 1.0 {
+            return Err(ToolError(format!("skip must be a non-negative number up to {MAX_SKIP}")));
+        }
+        let (path, immutable) = self.resolve_host_paths(input.path.as_deref(), cancel.clone()).await?;
+        input.path = path;
+        let tool=Self {ctx:self.ctx.clone()};let raw_path=input.path.clone();
+        let (scope,mut resolved_immutable)=tokio::task::spawn_blocking(move ||resolve_scope(&tool.ctx,raw_path.as_deref()))
+            .await.map_err(|error|ToolError(format!("AST grep failed: {error}")))??;
+        resolved_immutable.extend(immutable);
+        // The full scope await settles before the original `params.lang` Gets.
+        let explicit=match &language_port {Some(port)=>port.language(true).await?,None=>input.language.clone()};
+        // Explicit language acquisition precedes searching; a search still
+        // aggregates every missing language and retries only once afterward.
+        if let Some(language)=&explicit {
+            crate::grammars::ensure_missing(&self.ctx,std::slice::from_ref(language),cancel.clone()).await?;
+        }
+        let mut retries=0;
+        loop {
+            let tool=Self {ctx:self.ctx.clone()};
+            let pattern=input.pattern.clone();let scope=scope.clone();
+            let language=match &language_port {Some(port)=>port.language(false).await?,None=>input.language.clone()};
+            let immutable=resolved_immutable.clone();
+            let skip=input.skip.floor() as usize;let work=cancel.child_token();
+            let _stop_on_drop=work.clone().drop_guard();
+            let searched=tokio::task::spawn_blocking(move ||
+                tool.search_resolved_scope(scope,&pattern,skip,immutable,language.as_deref(),&work)
+            ).await.map_err(|error|ToolError(format!("AST grep failed: {error}")))??;
+            if cancel.is_cancelled() {return Err(ToolError("AST grep was aborted".into()));}
+            if retries==0 && crate::grammars::ensure_missing(&self.ctx,&searched.2.missing_grammars,cancel.clone()).await? {
+                retries+=1;continue;
+            }
+            // Render/seen recording has no further await or detached worker:
+            // it follows the final cancellation gate on this action owner.
+            return self.render_search_result(searched.0,searched.1,searched.2,skip);
+        }
+    }
+
+    fn execute_prepared_os_values(
+        &self,
+        pattern: &str,
+        raw_path: Option<&str>,
+        skip: usize,
+        host_immutable: &[PathBuf],
+        cancel: &CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let (scope,immutable,result)=self.search_prepared_os_values(pattern,raw_path,skip,host_immutable,None,cancel)?;
+        self.render_search_result(scope,immutable,result,skip)
+    }
+    fn search_prepared_os_values(
+        &self,pattern:&str,raw_path:Option<&str>,skip:usize,host_immutable:&[PathBuf],language:Option<&str>,cancel:&CancellationToken,
+    )->Result<(SearchScope,Vec<PathBuf>,SearchResult),ToolError> {
+        let (scope, mut immutable) = resolve_scope(&self.ctx, raw_path)?;
+        immutable.extend_from_slice(host_immutable);
+        self.search_resolved_scope(scope,pattern,skip,immutable,language,cancel)
+    }
+    fn search_resolved_scope(
+        &self,scope:SearchScope,pattern:&str,skip:usize,immutable:Vec<PathBuf>,language:Option<&str>,cancel:&CancellationToken,
+    )->Result<(SearchScope,Vec<PathBuf>,SearchResult),ToolError> {
         let capacity = skip + LIMIT + 1;
         let budget = Budget { cancel: cancel.clone(), deadline: Instant::now() + TIMEOUT };
-        let mut result = SearchResult::default();
+        let language=language.map(str::trim).filter(|value|!value.is_empty());
+        let mut result = SearchResult {language:language.map(str::to_owned),..Default::default()};
         if let Some(files) = &scope.exact_file_paths {
             for file in files {
                 result.file(file, pattern, &self.ctx, capacity, &budget)?;
             }
+            result.missing_grammars.sort();
         } else if let Some(targets) = &scope.multi_targets {
             for target in targets {
+                let missing_start=result.missing_grammars.len();
                 search_target(
                     &target.base,
                     target.glob.as_deref(),
@@ -339,6 +494,9 @@ impl AstGrepTool {
                     &budget,
                     &mut result,
                 )?;
+                // Native target output is sorted; TS keeps a stable union
+                // across targets rather than globally sorting all targets.
+                result.missing_grammars[missing_start..].sort();
             }
         } else {
             search_target(
@@ -350,7 +508,12 @@ impl AstGrepTool {
                 &budget,
                 &mut result,
             )?;
+            result.missing_grammars.sort();
         }
+        Ok((scope,immutable,result))
+    }
+    fn render_search_result(&self,scope:SearchScope,immutable:Vec<PathBuf>,result:SearchResult,skip:usize)->Result<ToolOutput,ToolError> {
+        let grammar_note=(!result.missing_grammars.is_empty()).then(||crate::grammars::missing_grammars_note(&result.missing_grammars));
         let mut retained = result.retained.into_sorted_vec();
         let visible = if skip < retained.len() { retained.split_off(skip) } else { Vec::new() };
         let limit_reached = visible.len() > LIMIT;
@@ -373,6 +536,7 @@ impl AstGrepTool {
             "files": files,
             "fileMatches": files.iter().map(|path| json!({"path": path, "count": by_file[path].len()})).collect::<Vec<_>>(),
         });
+        if !result.missing_grammars.is_empty() {details["missingGrammars"]=json!(result.missing_grammars);}
         if result.parse_errors_total > 0 {
             details["parseErrors"] = json!(result.parse_errors);
             details["parseErrorsTotal"] = json!(result.parse_errors_total);
@@ -385,6 +549,7 @@ impl AstGrepTool {
                 "No matches found"
             };
             let text = if parse_text.is_empty() { lead.to_string() } else { format!("{lead}\n{parse_text}") };
+            let text=if let Some(note)=grammar_note {format!("{text}\n{note}")} else {text};
             return Ok(ToolOutput::text(text).with_details(details));
         }
         let mut bodies: HashMap<String, Vec<String>> = HashMap::new();
@@ -440,6 +605,7 @@ impl AstGrepTool {
             output.push_str("\n\n");
             output.push_str(&parse_text);
         }
+        if let Some(note)=grammar_note {output.push_str("\n\n");output.push_str(&note);}
         let truncated = crate::output::truncate_head(&output, usize::MAX, DEFAULT_MAX_BYTES);
         // The formatter can reorder grouped files. If output is truncated, a
         // partially displayed body cannot safely be attributed to a file, so
@@ -475,12 +641,14 @@ impl AgentTool for AstGrepTool {
                 "type": "object",
                 "properties": {
                     "pat": {"type": "string", "description": "AST pattern"},
+                    "lang": {"type": "string", "description": "language override (alias)"},
                     "path": {"type": "string", "description": "file, directory, glob, or internal URL; several as semicolon-delimited list"},
                     "skip": {"type": "number", "description": "matches to skip"}
                 },
                 "required": ["pat"],
                 "additionalProperties": false
             }),
+            ..Default::default()
         }
     }
 
@@ -491,8 +659,21 @@ impl AgentTool for AstGrepTool {
         cancel: CancellationToken,
         _update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
-        let tool = AstGrepTool { ctx: self.ctx.clone() };
-        crate::run_blocking("AST grep", cancel, move |work| tool.execute_blocking(&args, &work)).await
+        let pattern = args.get("pat").and_then(Value::as_str).unwrap_or_default().trim().to_owned();
+        if pattern.is_empty() {
+            return Err(ToolError("`pat` must be a non-empty pattern".into()));
+        }
+        let skip = parse_skip(&args)?;
+        self.execute_os_values(
+            AstGrepOsValues {
+                pattern,
+                language: args.get("lang").and_then(Value::as_str).map(str::to_owned),
+                path: args.get("path").and_then(Value::as_str).map(str::to_owned),
+                skip: skip as f64,
+            },
+            cancel,
+        )
+        .await
     }
 }
 
@@ -641,5 +822,33 @@ mod tests {
         .unwrap();
         let output = call(&ToolContext::new(temp.path()), json!({"pat": "x", "path": "algo.tla"})).unwrap();
         assert!(output.details.as_ref().unwrap()["matchCount"].as_u64().unwrap() > 0);
+    }
+}
+
+#[cfg(test)]
+mod grammar_source_review_tests {
+    use super::*;
+    #[tokio::test]
+    async fn target_language_filter_count_and_missing_order_bank() {
+        let dir=tempfile::tempdir().unwrap();let cache=tempfile::tempdir().unwrap();
+        ara_ast::language::grammar::set_grammar_dir(cache.path().to_owned());
+        let ctx=ToolContext::new(dir.path());let tool=AstGrepTool{ctx:ctx.clone()};
+        std::fs::write(dir.path().join("calls.ts"),"foo(1);\n").unwrap();
+        std::fs::write(dir.path().join("README.txt"),"plain text").unwrap();
+        for language in ["","   "] {
+            let result=tool.execute_os_values(AstGrepOsValues{pattern:"foo($A)".into(),language:Some(language.into()),path:Some(".".into()),skip:0.0},CancellationToken::new()).await.unwrap();
+            let details=result.details.as_ref().unwrap();assert_eq!(details["filesSearched"],1);assert!(details.get("parseErrors").is_none());
+        }
+        let result=tool.execute_os_values(AstGrepOsValues{pattern:"foo($A)".into(),language:Some("not-a-language".into()),path:Some("calls.ts".into()),skip:0.0},CancellationToken::new()).await.unwrap();
+        let details=result.details.as_ref().unwrap();assert_eq!(details["filesSearched"],1);assert_eq!(details["parseErrorsTotal"],1);
+        for directory in ["first","second"] {std::fs::create_dir(dir.path().join(directory)).unwrap();}
+        let ini=dir.path().join("first/z.ini");let hcl=dir.path().join("second/a.tf");let repeated=dir.path().join("second/z.ini");
+        std::fs::write(&ini,"[core]\nx=1\n").unwrap();std::fs::write(&hcl,"name = 1\n").unwrap();std::fs::write(&repeated,"[core]\nx=2\n").unwrap();
+        let scope=SearchScope{search_path:dir.path().to_owned(),scope_path:".".into(),glob:None,is_directory:true,multi_targets:None,exact_file_paths:Some(vec![ini.clone(),hcl.clone()]),missing_paths:Vec::new()};
+        let (_,_,result)=tool.search_resolved_scope(scope,"foo($A)",0,Vec::new(),None,&CancellationToken::new()).unwrap();
+        assert_eq!(result.files_searched,0);assert_eq!(result.missing_grammars,vec!["hcl","ini"]);
+        let scope=SearchScope{search_path:dir.path().to_owned(),scope_path:".".into(),glob:None,is_directory:true,multi_targets:Some(vec![paths::SearchTarget{base:ini,glob:None},paths::SearchTarget{base:dir.path().join("second"),glob:None}]),exact_file_paths:None,missing_paths:Vec::new()};
+        let (_,_,result)=tool.search_resolved_scope(scope,"foo($A)",0,Vec::new(),None,&CancellationToken::new()).unwrap();
+        assert_eq!(result.files_searched,0);assert_eq!(result.missing_grammars,vec!["ini","hcl"]);
     }
 }

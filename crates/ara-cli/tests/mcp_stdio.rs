@@ -23,6 +23,9 @@ use windows_sys::Win32::System::Threading::{
 const CLI: &str = env!("CARGO_BIN_EXE_ara");
 const MCP: &str = env!("CARGO_BIN_EXE_ara-mcp-fixture");
 
+#[path = "support/native_mcp.rs"]
+mod native_mcp;
+
 fn config(mode: &str, record: &Path) -> ServerConfig {
     ServerConfig {
         name: "fixture".into(),
@@ -171,6 +174,7 @@ async fn grants_protocol_and_client_capabilities_are_bounded() {
     assert_eq!(receipt["ambient_key_present"], false);
     assert_eq!(receipt["call"]["name"], "echo");
     assert_eq!(receipt["root_denied"], true);
+    native_mcp::observe().await;
 }
 
 #[tokio::test]
@@ -557,7 +561,12 @@ async fn cli_resume_keeps_unknown_mcp_effect_without_replaying_it() {
         session_dir.clone(),
     );
     let first = tokio::task::spawn_blocking(move || first.output().unwrap()).await.unwrap();
-    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    // The joined Native driver reports the uncertain entered effect as failure.
+    // Its receipt remains available to the same-Session resume, without replay.
+    assert_eq!(first.status.code(), Some(2), "{}", String::from_utf8_lossy(&first.stderr));
+    let error = String::from_utf8_lossy(&first.stderr);
+    assert!(error.contains("Native entered effects have unknown outcomes"), "{error}");
+    assert!(error.contains("outcome_unknown"), "{error}");
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "dispatched");
     let files: Vec<_> = std::fs::read_dir(&session_dir).unwrap().map(|e| e.unwrap().path()).collect();
     assert_eq!(files.len(), 1);

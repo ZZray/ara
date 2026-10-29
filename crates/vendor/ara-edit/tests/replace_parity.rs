@@ -1,5 +1,7 @@
 mod common;
 
+use std::collections::HashMap;
+
 use common::run_fixture;
 #[cfg(unix)]
 use ara_edit::EditStore;
@@ -70,8 +72,9 @@ fn path_policy(cwd: &std::path::Path, home: &std::path::Path) -> PathPolicy {
 	PathPolicy {
 		cwd:                  cwd.to_owned(),
 		home_dir:             home.to_owned(),
-		local_sandbox_root:   None,
-		vault_roots:          None,
+		url_schemes:          Vec::new(),
+		url_alias_schemes:    Vec::new(),
+		plan_writable_roots:  Vec::new(),
 		plan_active:          false,
 		block_auto_generated: true,
 	}
@@ -85,7 +88,13 @@ fn resolves_parent_targets_outside_cwd() {
 	std::fs::create_dir_all(&cwd).expect("workspace");
 	let policy = path_policy(&cwd, &home);
 
-	assert_eq!(policy.resolve("../outside.txt").unwrap().absolute, root.path().join("outside.txt"));
+	assert_eq!(
+		policy
+			.resolve("../outside.txt", &HashMap::new())
+			.unwrap()
+			.absolute,
+		root.path().join("outside.txt")
+	);
 }
 
 #[test]
@@ -97,7 +106,13 @@ fn preserves_absolute_targets_outside_cwd() {
 	let policy = path_policy(&cwd, &home);
 	let absolute = root.path().join("absolute.txt");
 
-	assert_eq!(policy.resolve(absolute.to_str().unwrap()).unwrap().absolute, absolute);
+	assert_eq!(
+		policy
+			.resolve(absolute.to_str().unwrap(), &HashMap::new())
+			.unwrap()
+			.absolute,
+		absolute
+	);
 }
 
 #[test]
@@ -110,7 +125,10 @@ fn expands_home_targets_outside_cwd() {
 	let policy = path_policy(&cwd, &home);
 
 	assert_eq!(
-		policy.resolve("~/.claude/settings.json").unwrap().absolute,
+		policy
+			.resolve("~/.claude/settings.json", &HashMap::new())
+			.unwrap()
+			.absolute,
 		home.join(".claude/settings.json")
 	);
 }

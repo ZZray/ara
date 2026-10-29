@@ -1,4 +1,14 @@
 //! Shared raw JSON tool-wire postprocessing from fixed OMP `utils/schema/wire.ts`.
+mod graph;
+pub(crate) use graph::flatten_graph_exclusive_required_root_union_with_execution;
+pub(crate) use graph::graph_tool_wire_schema_with_execution;
+#[cfg(test)]
+pub(crate) use graph::observe_graph_wire_family;
+pub(crate) use graph::prepare_graph_wire_module;
+pub use graph::{
+    flatten_graph_exclusive_required_root_union, graph_ark_to_wire_schema, graph_tool_wire_schema, graph_tool_wire_schema_in, strip_graph_schema_descriptions_in, is_graph_ark_schema,
+    normalize_graph_empty_schemas, strip_graph_schema_descriptions, strip_graph_tool_descriptions,
+};
 
 use serde_json::{Value, json};
 

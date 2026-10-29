@@ -3,13 +3,19 @@
 //! Connection-owned Host tool requests. Registry publication belongs to Host.
 
 use ara_agent::{AgentTool, ToolError, ToolOutput, UpdateFn};
-use ara_ai::{JsonObject, Tool, UserBlock};
+use ara_ai::{JsonObject, Tool};
+use ara_cli::native_rpc_host::{
+    NativeRpcHostOutcome, NativeRpcHostOwner, NativeRpcHostPreparation, NativeRpcHostPublicationGrant,
+    NativeRpcHostRawUpdate, NativeRpcHostRequest,
+};
+use ara_rpc::value_heap::ValueError;
 use ara_rpc::{WireString, WireValue};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -23,6 +29,8 @@ pub struct HostToolDefinition {
     pub hidden: bool,
     pub load_mode: String,
     pub schema: Tool,
+    /// Retain the accepted connection JSON schema for the actual graph owner.
+    pub native_parameters: WireValue,
 }
 
 fn string(value: Option<&WireValue>) -> Option<String> {
@@ -85,6 +93,7 @@ pub fn normalize_host_tool_definitions(tools: &WireValue) -> Result<Vec<HostTool
                 .get("parameters")
                 .filter(|value| value.is_object())
                 .ok_or_else(|| format!("Host tool \"{name}\" must provide a JSON Schema object"))?;
+            let native_parameters = parameters.clone();
             let parameters: Value = serde_json::from_str(&parameters.stringify())
                 .map_err(|error| format!("Host tool \"{name}\" schema cannot enter typed Core: {error}"))?;
             let label = string(raw.get("label")).unwrap_or_default();
@@ -96,7 +105,8 @@ pub fn normalize_host_tool_definitions(tools: &WireValue) -> Result<Vec<HostTool
                 label: if label.is_empty() { name.clone() } else { label.to_owned() },
                 hidden: matches!(raw.get("hidden"), Some(WireValue::Bool(true))),
                 load_mode,
-                schema: Tool { name: name.clone(), description, parameters },
+                schema: Tool { name: name.clone(), description, parameters, ..Default::default() },
+                native_parameters,
                 name,
             })
         })
@@ -104,14 +114,13 @@ pub fn normalize_host_tool_definitions(tools: &WireValue) -> Result<Vec<HostTool
 }
 
 enum Reply {
-    Output(ToolOutput),
-    HostError(String),
+    Complete { result: WireValue, is_error: bool },
     Interrupted { message: String, dispatched: bool },
 }
 
 struct Pending {
     reply: oneshot::Sender<Reply>,
-    update: UpdateFn,
+    update: NativeRpcHostRawUpdate,
     dispatched: bool,
 }
 
@@ -121,24 +130,76 @@ struct State {
     closed: Option<String>,
 }
 
+struct ToolOwnership {
+    definition: Arc<HostToolDefinition>,
+    adapter: Weak<HostToolAdapter>,
+    native: Weak<NativeHostOwner>,
+}
+
 pub struct ToolBridge {
     output: BridgeOutput,
     state: Mutex<State>,
+    // Full accepted definition equality within this exact connection owner.
+    // Weak adapter edges avoid Bridge -> adapter -> Bridge owner cycles.
+    ownership: Mutex<Vec<ToolOwnership>>,
 }
 
 impl ToolBridge {
     pub fn new(output: BridgeOutput) -> Arc<Self> {
-        Arc::new(Self { output, state: Mutex::new(State::default()) })
+        Arc::new(Self { output, state: Mutex::new(State::default()), ownership: Mutex::new(Vec::new()) })
     }
 
     /// Adapters capture their definition. A Host registry replacement must not
     /// retarget calls already admitted from an older model-response snapshot.
     pub fn adapters(self: &Arc<Self>, definitions: &[HostToolDefinition]) -> Vec<Arc<dyn AgentTool>> {
+        let mut ownership = self.ownership.lock().unwrap();
         definitions
             .iter()
             .map(|definition| {
-                Arc::new(HostToolAdapter { definition: Arc::new(definition.clone()), bridge: self.clone() })
-                    as Arc<dyn AgentTool>
+                let index =
+                    ownership.iter().position(|entry| entry.definition.as_ref() == definition).unwrap_or_else(|| {
+                        ownership.push(ToolOwnership {
+                            definition: Arc::new(definition.clone()),
+                            adapter: Weak::new(),
+                            native: Weak::new(),
+                        });
+                        ownership.len() - 1
+                    });
+                let entry = &mut ownership[index];
+                let adapter = entry.adapter.upgrade().unwrap_or_else(|| {
+                    let adapter =
+                        Arc::new(HostToolAdapter { definition: entry.definition.clone(), bridge: self.clone() });
+                    entry.adapter = Arc::downgrade(&adapter);
+                    adapter
+                });
+                adapter as Arc<dyn AgentTool>
+            })
+            .collect()
+    }
+
+    /// Same connection/pending owner; every adapter captures its original definition.
+    pub fn native_owners(self: &Arc<Self>, definitions: &[HostToolDefinition]) -> Vec<Arc<dyn NativeRpcHostOwner>> {
+        let mut ownership = self.ownership.lock().unwrap();
+        definitions
+            .iter()
+            .map(|definition| {
+                let index =
+                    ownership.iter().position(|entry| entry.definition.as_ref() == definition).unwrap_or_else(|| {
+                        ownership.push(ToolOwnership {
+                            definition: Arc::new(definition.clone()),
+                            adapter: Weak::new(),
+                            native: Weak::new(),
+                        });
+                        ownership.len() - 1
+                    });
+                let entry = &mut ownership[index];
+                let owner = entry.native.upgrade().unwrap_or_else(|| {
+                    let owner =
+                        Arc::new(NativeHostOwner { definition: entry.definition.clone(), bridge: self.clone() });
+                    entry.native = Arc::downgrade(&owner);
+                    owner
+                });
+                owner as Arc<dyn NativeRpcHostOwner>
             })
             .collect()
     }
@@ -146,7 +207,9 @@ impl ToolBridge {
     /// Exactly the fixed structural guard; unknown/late valid IDs are consumed
     /// without ACK. Malformed recognized-looking input remains ordinary input.
     pub fn consume(&self, frame: &WireValue) -> bool {
-        let Some(kind) = frame.get("type").and_then(WireValue::as_string) else { return false };
+        let Some(kind) = frame.get("type").and_then(WireValue::as_string) else {
+            return false;
+        };
         let result_key = if kind.equals_ascii("host_tool_result") {
             "result"
         } else if kind.equals_ascii("host_tool_update") {
@@ -154,7 +217,9 @@ impl ToolBridge {
         } else {
             return false;
         };
-        let Some(id) = frame.get("id").and_then(WireValue::as_string) else { return false };
+        let Some(id) = frame.get("id").and_then(WireValue::as_string) else {
+            return false;
+        };
         let Some(result) =
             frame.get(result_key).filter(|result| result.get("content").and_then(WireValue::as_array).is_some())
         else {
@@ -164,36 +229,13 @@ impl ToolBridge {
             let update = self.state.lock().unwrap().pending.get(id).map(|pending| pending.update.clone());
             if let Some(update) = update {
                 // User callbacks may themselves settle or clear the bridge.
-                if let Ok(output) = decode_output(result) {
-                    update(output);
-                }
+                update(result.clone());
             }
         } else {
             let pending = self.state.lock().unwrap().pending.remove(id);
             if let Some(pending) = pending {
-                let reply = if frame.get("isError").is_some_and(wire_truthy) {
-                    let text = result
-                        .get("content")
-                        .and_then(WireValue::as_array)
-                        .unwrap()
-                        .iter()
-                        .filter(|block| {
-                            block
-                                .get("type")
-                                .and_then(WireValue::as_string)
-                                .is_some_and(|kind| kind.equals_ascii("text"))
-                        })
-                        .filter_map(|block| string(block.get("text")))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let text = ara_prompt::js::trim(&text);
-                    Reply::HostError(if text.is_empty() { "Host tool execution failed".into() } else { text.into() })
-                } else {
-                    match decode_output(result) {
-                        Ok(output) => Reply::Output(output),
-                        Err(message) => Reply::Interrupted { message, dispatched: pending.dispatched },
-                    }
-                };
+                let reply =
+                    Reply::Complete { result: result.clone(), is_error: frame.get("isError").is_some_and(wire_truthy) };
                 let _ = pending.reply.send(reply);
             }
         }
@@ -221,6 +263,47 @@ impl ToolBridge {
         }
     }
 
+    fn prepare_raw(
+        self: &Arc<Self>,
+        definition: &HostToolDefinition,
+        call_id: &WireString,
+        cancel: CancellationToken,
+        update: NativeRpcHostRawUpdate,
+        encode: &mut dyn FnMut(&WireString) -> Result<WireValue, ValueError>,
+    ) -> Result<NativeRpcHostPreparation, ValueError> {
+        let aborted = format!("Host tool \"{}\" was aborted", definition.name);
+        if cancel.is_cancelled() {
+            return Ok(NativeRpcHostPreparation::NotDispatched(aborted));
+        }
+        let mut id = WireString::from(uuid::Uuid::now_v7().to_string());
+        while &id == call_id {
+            id = uuid::Uuid::now_v7().to_string().into();
+        }
+        let (reply, received) = oneshot::channel();
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Some(message) = &state.closed {
+                return Ok(NativeRpcHostPreparation::NotDispatched(message.clone()));
+            }
+            if cancel.is_cancelled() {
+                return Ok(NativeRpcHostPreparation::NotDispatched(aborted));
+            }
+            state.pending.insert(id.clone(), Pending { reply, update, dispatched: false });
+        }
+        // The original pending owner exists before any getter/toJSON can reenter.
+        // The encoder is synchronous and never escapes or runs under State's lock.
+        let guard = RequestGuard { bridge: self.clone(), id: id.clone() };
+        let frame = encode(&id)?;
+        Ok(NativeRpcHostPreparation::Ready(Box::new(PreparedHostRequest {
+            bridge: self.clone(),
+            id,
+            frame,
+            received,
+            aborted,
+            _guard: guard,
+        })))
+    }
+
     async fn execute(
         self: &Arc<Self>,
         definition: &HostToolDefinition,
@@ -229,72 +312,36 @@ impl ToolBridge {
         cancel: CancellationToken,
         update: UpdateFn,
     ) -> Result<ToolOutput, ToolError> {
-        let aborted = format!("Host tool \"{}\" was aborted", definition.name);
-        if cancel.is_cancelled() {
-            return Ok(not_dispatched(aborted));
-        }
-        let mut id = uuid::Uuid::now_v7().to_string();
-        while id == call_id {
-            id = uuid::Uuid::now_v7().to_string();
-        }
-        let id = WireString::from(id);
-        let (reply, mut received) = oneshot::channel();
-        {
-            let mut state = self.state.lock().unwrap();
-            if let Some(message) = &state.closed {
-                return Ok(not_dispatched(message.clone()));
+        let raw_update: NativeRpcHostRawUpdate = Arc::new(move |raw| {
+            if let Ok(output) = decode_output(&raw) {
+                update(output);
             }
-            if cancel.is_cancelled() {
-                return Ok(not_dispatched(aborted));
-            }
-            state.pending.insert(id.clone(), Pending { reply, update, dispatched: false });
-        }
-        let _guard = RequestGuard { bridge: self.clone(), id: id.clone() };
-        // Mark the publication boundary while holding the pending owner. Never
-        // call the output actor under that lock (it can synchronously reply).
-        let dispatch = {
-            let mut state = self.state.lock().unwrap();
-            if cancel.is_cancelled() {
-                if let Some(pending) = state.pending.remove(&id) {
-                    let _ = pending.reply.send(Reply::Interrupted { message: aborted.clone(), dispatched: false });
-                }
-                false
-            } else if let Some(pending) = state.pending.get_mut(&id) {
-                pending.dispatched = true;
-                true
-            } else {
-                false
-            }
+        });
+        let prepared = self
+            .prepare_raw(definition, &call_id.into(), cancel.clone(), raw_update, &mut |id| {
+                Ok(WireValue::object(vec![
+                    ("type", WireValue::String("host_tool_call".into())),
+                    ("id", WireValue::String(id.clone())),
+                    ("toolCallId", WireValue::String(call_id.into())),
+                    ("toolName", WireValue::String(definition.name.clone().into())),
+                    (
+                        "arguments",
+                        WireValue::parse(&Value::Object(args.clone()).to_string()).expect("typed arguments serialize"),
+                    ),
+                ]))
+            })
+            .map_err(|error| ToolError(format!("Host tool prepare: {error:?}")))?;
+        let outcome = match prepared {
+            NativeRpcHostPreparation::Ready(request) => request.dispatch(cancel, Arc::new(|| true)).await,
+            NativeRpcHostPreparation::NotDispatched(message) => NativeRpcHostOutcome::NotDispatched(message),
         };
-        if dispatch {
-            (self.output)(WireValue::object(vec![
-                ("type", WireValue::String("host_tool_call".into())),
-                ("id", WireValue::String(id.clone())),
-                ("toolCallId", WireValue::String(call_id.into())),
-                ("toolName", WireValue::String(definition.name.clone().into())),
-                ("arguments", WireValue::parse(&Value::Object(args).to_string()).expect("typed arguments serialize")),
-            ]));
-        }
-        let reply = tokio::select! {
-            biased;
-            reply = &mut received => reply,
-            _ = cancel.cancelled() => {
-                let pending = self.state.lock().unwrap().pending.remove(&id);
-                if let Some(pending) = pending {
-                    if pending.dispatched { self.emit_cancel(&id); }
-                    let _ = pending.reply.send(Reply::Interrupted { message: aborted, dispatched: pending.dispatched });
-                }
-                // If another path removed it first, await that path's winning
-                // reply rather than replacing a known result with cancellation.
-                received.await
+        match outcome {
+            NativeRpcHostOutcome::Complete { result, is_error: true } => Err(ToolError(typed_host_error(&result))),
+            NativeRpcHostOutcome::Complete { result, is_error: false } => {
+                Ok(decode_output(&result).unwrap_or_else(unknown_effect))
             }
-        };
-        match reply {
-            Ok(Reply::Output(output)) => Ok(output),
-            Ok(Reply::HostError(error)) => Err(ToolError(error)),
-            Ok(Reply::Interrupted { message, dispatched: true }) => Ok(unknown_effect(message)),
-            Ok(Reply::Interrupted { message, dispatched: false }) => Ok(not_dispatched(message)),
-            Err(_) => Ok(unknown_effect("Host tool request owner dropped after publication".into())),
+            NativeRpcHostOutcome::NotDispatched(message) => Ok(not_dispatched(message)),
+            NativeRpcHostOutcome::Unknown(message) => Ok(unknown_effect(message)),
         }
     }
 
@@ -321,6 +368,118 @@ impl Drop for RequestGuard {
     }
 }
 
+struct PreparedHostRequest {
+    bridge: Arc<ToolBridge>,
+    id: WireString,
+    frame: WireValue,
+    received: oneshot::Receiver<Reply>,
+    aborted: String,
+    _guard: RequestGuard,
+}
+impl NativeRpcHostRequest for PreparedHostRequest {
+    fn dispatch(
+        self: Box<Self>,
+        cancel: CancellationToken,
+        grant: NativeRpcHostPublicationGrant,
+    ) -> BoxFuture<'static, NativeRpcHostOutcome> {
+        Box::pin(async move {
+            let Self { bridge, id, frame, mut received, aborted, _guard } = *self;
+            let dispatch = {
+                let mut state = bridge.state.lock().unwrap();
+                if cancel.is_cancelled() {
+                    if let Some(pending) = state.pending.remove(&id) {
+                        let _ = pending.reply.send(Reply::Interrupted { message: aborted.clone(), dispatched: false });
+                    }
+                    false
+                } else if !grant() {
+                    if let Some(pending) = state.pending.remove(&id) {
+                        let _ = pending.reply.send(Reply::Interrupted {
+                            message: "RPC Host tool grant revoked before publication".into(),
+                            dispatched: false,
+                        });
+                    }
+                    false
+                } else if let Some(pending) = state.pending.get_mut(&id) {
+                    pending.dispatched = true;
+                    true
+                } else {
+                    false
+                }
+            };
+            // Output may synchronously settle this exact pending request.
+            if dispatch {
+                (bridge.output)(frame);
+            }
+            let reply = tokio::select! {
+                biased;
+                reply = &mut received => reply,
+                _ = cancel.cancelled() => {
+                    let pending = bridge.state.lock().unwrap().pending.remove(&id);
+                    if let Some(pending) = pending {
+                        if pending.dispatched { bridge.emit_cancel(&id); }
+                        let _ = pending.reply.send(Reply::Interrupted { message: aborted, dispatched: pending.dispatched });
+                    }
+                    received.await
+                }
+            };
+            match reply {
+                Ok(Reply::Complete { result, is_error }) => NativeRpcHostOutcome::Complete { result, is_error },
+                Ok(Reply::Interrupted { message, dispatched: true }) => NativeRpcHostOutcome::Unknown(message),
+                Ok(Reply::Interrupted { message, dispatched: false }) => NativeRpcHostOutcome::NotDispatched(message),
+                Err(_) if dispatch => {
+                    NativeRpcHostOutcome::Unknown("Host tool request owner dropped after publication".into())
+                }
+                Err(_) => {
+                    NativeRpcHostOutcome::NotDispatched("Host tool request owner dropped before publication".into())
+                }
+            }
+        })
+    }
+}
+
+struct NativeHostOwner {
+    definition: Arc<HostToolDefinition>,
+    bridge: Arc<ToolBridge>,
+}
+impl NativeRpcHostOwner for NativeHostOwner {
+    fn definition(&self) -> Tool {
+        self.definition.schema.clone()
+    }
+    fn graph_definition(&self) -> WireValue {
+        WireValue::object(vec![
+            ("name", WireValue::String(self.definition.name.clone().into())),
+            ("label", WireValue::String(self.definition.label.clone().into())),
+            ("description", WireValue::String(self.definition.schema.description.clone().into())),
+            ("parameters", self.definition.native_parameters.clone()),
+            ("loadMode", WireValue::String(self.definition.load_mode.clone().into())),
+            ("hidden", WireValue::Bool(self.definition.hidden)),
+        ])
+    }
+    fn prepare_native(
+        &self,
+        call_id: &WireString,
+        cancel: CancellationToken,
+        update: NativeRpcHostRawUpdate,
+        encode: &mut dyn FnMut(&WireString) -> Result<WireValue, ValueError>,
+    ) -> Result<NativeRpcHostPreparation, ValueError> {
+        self.bridge.prepare_raw(&self.definition, call_id, cancel, update, encode)
+    }
+}
+
+fn typed_host_error(result: &WireValue) -> String {
+    let text = result
+        .get("content")
+        .and_then(WireValue::as_array)
+        .unwrap()
+        .iter()
+        .filter(|block| block.get("type").and_then(WireValue::as_string).is_some_and(|kind| kind.equals_ascii("text")))
+        .filter_map(|block| string(block.get("text")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = ara_prompt::js::trim(&text);
+    if text.is_empty() { "Host tool execution failed".into() } else { text.into() }
+}
+
 struct HostToolAdapter {
     definition: Arc<HostToolDefinition>,
     bridge: Arc<ToolBridge>,
@@ -344,14 +503,11 @@ impl AgentTool for HostToolAdapter {
 }
 
 fn decode_output(result: &WireValue) -> Result<ToolOutput, String> {
-    let content: Vec<UserBlock> = serde_json::from_str(&result.get("content").expect("guarded content").stringify())
-        .map_err(|error| format!("Host tool content cannot enter typed Core: {error}"))?;
-    let details = result
-        .get("details")
-        .map(|details| serde_json::from_str(&details.stringify()))
-        .transpose()
-        .map_err(|error| format!("Host tool details cannot enter typed Core: {error}"))?;
-    Ok(ToolOutput { content, details, is_error: false })
+    // Keep the complete untyped Native result until Core's single coercion
+    // boundary. A details key is not canonical providerMetadata.
+    let raw: Value = serde_json::from_str(&result.stringify())
+        .map_err(|error| format!("Host tool result cannot enter typed Core: {error}"))?;
+    Ok(ara_agent::coerce_raw_tool_result(&raw))
 }
 
 fn wire_truthy(value: &WireValue) -> bool {
@@ -493,10 +649,108 @@ mod tests {
                 {"type":"image","data":"AA==","mimeType":"image/png"}],"details":{"proof":true}}}))));
         let output = pending.await.unwrap().unwrap();
         assert_eq!(output.content.len(), 2);
-        assert!(matches!(&output.content[1], UserBlock::Image(image) if image.mime_type == "image/png"));
+        assert!(matches!(&output.content[1], ara_ai::UserBlock::Image(image) if image.mime_type == "image/png"));
         assert_eq!(output.details, Some(json!({"proof":true})));
         assert!(!output.is_error);
         assert!(bridge.consume(&wire(json!({"type":"host_tool_result","id":request_id,"result":{"content":[]}}))));
+        assert!(bridge.state.lock().unwrap().pending.is_empty());
+        assert!(frames.try_recv().is_err());
+
+        // Same coarse entrance checks the raw owner seam; no second registry.
+        let definitions = normalize_host_tool_definitions(&wire(json!([
+            {"name":"original","description":"raw fixture","parameters":{"type":"object"}}
+        ])))
+        .unwrap();
+        let owner = bridge.native_owners(&definitions).remove(0);
+        let raw_updates = Arc::new(Mutex::new(Vec::new()));
+        let captured = raw_updates.clone();
+        let call_id = WireString::from_units(vec![0xd800, 0x61]);
+        let prepared = owner
+            .prepare_native(
+                &call_id,
+                CancellationToken::new(),
+                Arc::new(move |value| {
+                    captured.lock().unwrap().push(value);
+                }),
+                &mut |id| {
+                    assert!(bridge.state.lock().unwrap().pending.contains_key(id), "pending precedes encoder");
+                    Ok(WireValue::object(vec![
+                        ("type", WireValue::String("host_tool_call".into())),
+                        ("id", WireValue::String(id.clone())),
+                        ("toolCallId", WireValue::String(call_id.clone())),
+                        ("toolName", WireValue::String("original".into())),
+                        ("arguments", WireValue::parse(r#"{"text":"\ud800","__proto__":{"kept":true}}"#).unwrap()),
+                    ]))
+                },
+            )
+            .unwrap();
+        let NativeRpcHostPreparation::Ready(prepared) = prepared else { panic!("raw ready") };
+        let raw_pending = tokio::spawn(prepared.dispatch(CancellationToken::new(), Arc::new(|| true)));
+        let raw_call = next(&mut frames).await;
+        assert_eq!(raw_call.get("toolCallId").and_then(WireValue::as_string).unwrap(), &call_id);
+        assert_eq!(
+            raw_call.get("arguments").unwrap().get("text").and_then(WireValue::as_string).unwrap().units(),
+            &[0xd800]
+        );
+        let raw_id = raw_call.get("id").unwrap().clone();
+        let partial = WireValue::parse(r#"{"content":[{"type":"text","text":"\ud800","textSignature":"raw"}],"details":{"__proto__":{"kept":true}}}"#).unwrap();
+        assert!(bridge.consume(&WireValue::object(vec![
+            ("type", WireValue::String("host_tool_update".into())),
+            ("id", raw_id.clone()),
+            ("partialResult", partial.clone())
+        ])));
+        assert_eq!(raw_updates.lock().unwrap().as_slice(), &[partial]);
+        let terminal = WireValue::parse(r#"{"content":[{"type":"text","text":"\ud800","textSignature":"signed"},{"type":"image","data":"AA==","mimeType":"image/png"}],"providerMetadata":{"opaque":"\udfff"},"details":{"proof":true}}"#).unwrap();
+        assert!(bridge.consume(&WireValue::object(vec![
+            ("type", WireValue::String("host_tool_result".into())),
+            ("id", raw_id),
+            ("result", terminal.clone()),
+            ("isError", WireValue::Bool(true))
+        ])));
+        let NativeRpcHostOutcome::Complete { result, is_error } = raw_pending.await.unwrap() else {
+            panic!("raw complete")
+        };
+        assert!(is_error);
+        assert_eq!(result, terminal);
+        assert!(bridge.state.lock().unwrap().pending.is_empty());
+
+        // Synchronous known reply during encode is retained and never republished.
+        let reentrant_cancel = CancellationToken::new();
+        let prepared = owner
+            .prepare_native(&"reentrant".into(), reentrant_cancel.clone(), Arc::new(|_| {}), &mut |id| {
+                assert!(bridge.consume(&WireValue::object(vec![
+                    ("type", WireValue::String("host_tool_result".into())),
+                    ("id", WireValue::String(id.clone())),
+                    ("result", wire(json!({"content":[]}))),
+                    ("isError", WireValue::Bool(true))
+                ])));
+                Ok(wire(json!({"type":"host_tool_call","id":id.to_utf8().unwrap()})))
+            })
+            .unwrap();
+        let NativeRpcHostPreparation::Ready(prepared) = prepared else { panic!("reentrant ready") };
+        reentrant_cancel.cancel();
+        assert!(matches!(
+            prepared.dispatch(reentrant_cancel, Arc::new(|| false)).await,
+            NativeRpcHostOutcome::Complete { is_error: true, .. }
+        ));
+        assert!(frames.try_recv().is_err());
+
+        // Encoder throw and revoked final grant stay known before publication.
+        let failure = owner.prepare_native(&"throw".into(), CancellationToken::new(), Arc::new(|_| {}), &mut |_| {
+            Err(ValueError::TypeError("controlled encoder throw".into()))
+        });
+        assert!(failure.is_err());
+        assert!(bridge.state.lock().unwrap().pending.is_empty());
+        let prepared = owner
+            .prepare_native(&"denied".into(), CancellationToken::new(), Arc::new(|_| {}), &mut |id| {
+                Ok(wire(json!({"type":"host_tool_call","id":id.to_utf8().unwrap()})))
+            })
+            .unwrap();
+        let NativeRpcHostPreparation::Ready(prepared) = prepared else { panic!("denied ready") };
+        assert!(matches!(
+            prepared.dispatch(CancellationToken::new(), Arc::new(|| false)).await,
+            NativeRpcHostOutcome::NotDispatched(_)
+        ));
         assert!(bridge.state.lock().unwrap().pending.is_empty());
         assert!(frames.try_recv().is_err());
     }

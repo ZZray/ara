@@ -108,6 +108,7 @@ async fn foreign_tool_history_uses_valid_unique_anthropic_ids_with_paired_result
                 name: (*name).to_owned(),
                 arguments: serde_json::Map::new(),
                 thought_signature: None,
+                ..Default::default()
             })
         })
         .collect();
@@ -124,6 +125,8 @@ async fn foreign_tool_history_uses_valid_unique_anthropic_ids_with_paired_result
                     details: None,
                     is_error: false,
                     timestamp: 1,
+                    provider_metadata: None,
+                    useless: false,
                 })
             }))
             .chain(std::iter::once(Message::User(UserMessage::text("continue"))))
@@ -472,6 +475,7 @@ async fn text_tool_usage_and_followup_wire_are_preserved() {
             name: "write".into(),
             description: "Write a file".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}}}),
+            ..Default::default()
         }]),
     };
     let events =
@@ -506,6 +510,8 @@ async fn text_tool_usage_and_followup_wire_are_preserved() {
         details: None,
         is_error: false,
         timestamp: 1,
+        provider_metadata: None,
+        useless: false,
     }));
     let params = anthropic::build_params(&model(&server.base_url()), &context, &options()).unwrap();
     assert_eq!(params["messages"][1]["content"][1]["type"], "tool_use");
@@ -555,6 +561,7 @@ async fn actual_messages_request_normalizes_legacy_and_nested_tool_schemas() {
             name: "inspect".into(),
             description: "Inspect input".into(),
             parameters: original.clone(),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -620,6 +627,7 @@ async fn actual_messages_request_applies_shared_tool_wire_postprocessing() {
             name: "schema_wire".into(),
             description: "check".into(),
             parameters: original.clone(),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -647,8 +655,13 @@ fn empty_and_open_tool_objects_keep_their_non_strict_wire_meaning() {
     let context = Context {
         messages: vec![Message::User(UserMessage::text("hi"))],
         tools: Some(vec![
-            Tool { name: "empty".into(), description: String::new(), parameters: json!({}) },
-            Tool { name: "open".into(), description: String::new(), parameters: json!({"additionalProperties":{}}) },
+            Tool { name: "empty".into(), description: String::new(), parameters: json!({}), ..Default::default() },
+            Tool {
+                name: "open".into(),
+                description: String::new(),
+                parameters: json!({"additionalProperties":{}}),
+                ..Default::default()
+            },
             Tool {
                 name: "union".into(),
                 description: String::new(),
@@ -657,6 +670,7 @@ fn empty_and_open_tool_objects_keep_their_non_strict_wire_meaning() {
                     "anyOf":[{"required":["anything"]}],
                     "required":["anything"]
                 }),
+                ..Default::default()
             },
         ]),
         ..Default::default()
@@ -688,6 +702,7 @@ fn official_anthropic_route_selects_bounded_strict_tools_without_changing_custom
             "path":{"type":"string"},
             "content":{"type":"string"}
         },"required":["path"]}),
+        ..Default::default()
     };
     let bash_open = Tool {
         name: "bash".into(),
@@ -696,6 +711,7 @@ fn official_anthropic_route_selects_bounded_strict_tools_without_changing_custom
             "command":{"type":"string"},
             "env":{"type":"object","additionalProperties":{"type":"string"}}
         },"required":["command"]}),
+        ..Default::default()
     };
     let incompatible = Tool {
         name: "find".into(),
@@ -703,6 +719,7 @@ fn official_anthropic_route_selects_bounded_strict_tools_without_changing_custom
         parameters: json!({"type":"object","properties":{
             "query":{"oneOf":[{"type":"string"},{"type":"number"}]}
         }}),
+        ..Default::default()
     };
     let context = Context {
         messages: vec![Message::User(UserMessage::text("edit"))],
@@ -749,6 +766,7 @@ fn official_strict_tool_budget_demotes_unrepresentable_schemas() {
         name: "edit".into(),
         description: "Edit".into(),
         parameters: json!({"type":"object","properties":properties}),
+        ..Default::default()
     };
     let mut unions = serde_json::Map::new();
     for index in 0..17 {
@@ -758,6 +776,7 @@ fn official_strict_tool_budget_demotes_unrepresentable_schemas() {
         name: "find".into(),
         description: "Find".into(),
         parameters: json!({"type":"object","properties":unions}),
+        ..Default::default()
     };
     let context = Context {
         messages: vec![Message::User(UserMessage::text("use a tool"))],
@@ -797,6 +816,7 @@ async fn public_stream_recovers_from_strict_400_before_emitting_one_successful_t
             name: "edit".into(),
             description: "Edit a file".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -835,6 +855,7 @@ async fn public_stream_does_not_replay_an_unrelated_strict_400() {
             name: "edit".into(),
             description: "Edit".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -885,6 +906,7 @@ async fn strict_rejection_is_remembered_only_for_its_session_endpoint_and_model(
             name: "edit".into(),
             description: "Edit".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -943,6 +965,7 @@ async fn strict_rejection_survives_failed_fallback_and_outer_retry() {
             name: "edit".into(),
             description: "Edit".into(),
             parameters: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -971,6 +994,7 @@ fn excessively_deep_tool_schema_fails_before_sending_a_request() {
             name: "deep".into(),
             description: String::new(),
             parameters: json!({"type":"object","properties":{"value":nested}}),
+            ..Default::default()
         }]),
         ..Default::default()
     };
@@ -1194,6 +1218,7 @@ fn replay_repairs_tool_tail_adjacent_assistants_and_error_images() {
             name: "read".into(),
             arguments: serde_json::Map::new(),
             thought_signature: None,
+            ..Default::default()
         }),
         AssistantBlock::text("After the call."),
     ];
@@ -1219,6 +1244,8 @@ fn replay_repairs_tool_tail_adjacent_assistants_and_error_images() {
                 details: None,
                 is_error: true,
                 timestamp: 2,
+                provider_metadata: None,
+                useless: false,
             }),
             Message::Assistant(second.clone()),
             Message::User(UserMessage::text("")),
@@ -1272,11 +1299,15 @@ async fn actual_messages_request_normalizes_images_and_keeps_unsupported_mime_vi
                 ]),
                 synthetic: None,
                 timestamp: 1,
+                provider_payload: None,
+                provider_payload_origin: None,
             }),
             Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::text(" \n ")]),
                 synthetic: None,
                 timestamp: 2,
+                provider_payload: None,
+                provider_payload_origin: None,
             }),
         ],
         ..Default::default()
@@ -1324,6 +1355,7 @@ async fn actual_messages_request_keeps_error_image_hints_and_unsupported_text_in
                 name: "read".into(),
                 arguments: serde_json::Map::new(),
                 thought_signature: None,
+                ..Default::default()
             })
         })
         .collect();
@@ -1336,6 +1368,8 @@ async fn actual_messages_request_keeps_error_image_hints_and_unsupported_text_in
             details: None,
             is_error,
             timestamp: 2,
+            provider_metadata: None,
+            useless: false,
         })
     };
     let context = Context {

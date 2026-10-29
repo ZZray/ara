@@ -2,8 +2,9 @@
 //! Source: agent compaction/messages.ts, compaction.ts, session-context.ts and
 //! session-maintenance.ts (MIT; THIRD_PARTY_NOTICES.md).
 use crate::{
-    CompactionCommitError, CompactionSummaryView, Entry, NativeProjectedCompactionSnapshot, RewritePhaseError,
-    SessionError, SessionJournal, SessionReductionError, SessionReductionSnapshot,
+    CompactionCommitError, CompactionSummaryView, Entry, NativeMessageSource, NativeProjectedCompactionSnapshot,
+    NativeSnapcompactArchiveSource, RewritePhaseError, SessionError, SessionJournal, SessionReductionError,
+    SessionReductionSnapshot,
 };
 use ara_ai::{ImageContent, Message, UserBlock, UserContent, UserMessage};
 use ara_snapcompact::{HistoryBlock, HistoryBlockOptions};
@@ -23,6 +24,8 @@ pub struct NativeSnapcompactSummary {
     pub summary: String,
     pub short_summary: Option<String>,
     pub preserve_data: Option<Value>,
+    /// Exact canonical result; the scalar slot is only a checked mirror.
+    pub preserve_source: Option<NativeSnapcompactArchiveSource>,
     pub read_files: Vec<String>,
     pub modified_files: Vec<String>,
 }
@@ -55,6 +58,76 @@ impl NativeSnapcompactError {
     }
 }
 
+impl From<std::io::Error> for NativeSnapcompactError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Storage(SessionError::Io(error))
+    }
+}
+
+// Fixed session-context.ts:26-65. This is Session request policy, not package
+// archive admission. Transcript owners retain the original archive unchanged.
+fn model_archive_history_options(
+    has_legacy_frames: bool,
+    frame_count: usize,
+    frame_bytes: impl FnOnce() -> usize,
+    truncated_chars: f64,
+    archive_text_units: impl FnOnce() -> usize,
+) -> HistoryBlockOptions {
+    let risk = has_legacy_frames
+        && (frame_count >= 16 || frame_bytes() >= FRAME_DATA_BYTES_BUDGET)
+        && (frame_count >= 16 || truncated_chars >= 1_000_000.0 || archive_text_units() >= 250_000);
+    HistoryBlockOptions { max_frame_data_bytes: Some(if risk { 0 } else { FRAME_DATA_BYTES_BUDGET }) }
+}
+
+pub(super) fn native_model_archive_history_options(
+    archive: &ara_snapcompact::ArchiveUtf16,
+) -> std::io::Result<HistoryBlockOptions> {
+    native_model_archive_history_options_with_store(archive, None, None)
+}
+
+pub(super) fn native_model_archive_history_options_with_store(
+    archive: &ara_snapcompact::ArchiveUtf16,
+    store: Option<&crate::BlobStore>,
+    requested: Option<HistoryBlockOptions>,
+) -> std::io::Result<HistoryBlockOptions> {
+    let mut has_legacy_frames = false;
+    for frame in &archive.frames {
+        // JSON null is a present value. Only absent fields correspond to the
+        // fixed persisted-source font/variant === undefined checks.
+        let source = ara_rpc::WireValue::parse(frame.source.get())
+            .map_err(|error| crate::native_message::invalid(error.to_string()))?;
+        if source.get("font").is_none() && source.get("variant").is_none() {
+            has_legacy_frames = true;
+            break;
+        }
+    }
+    let bytes = if has_legacy_frames && archive.frames.len() < 16 {
+        archive.frames.iter().try_fold(0usize, |total, frame| {
+            let bytes = match store {
+                Some(store) => store
+                    .lazy_frame_data_utf16(&frame.data)
+                    .map_err(|error| crate::native_message::invalid(error.to_string()))?
+                    .map_or(frame.data.len(), |lazy| lazy.bytes),
+                None => frame.data.len(),
+            };
+            Ok::<_, std::io::Error>(total.saturating_add(bytes))
+        })?
+    } else {
+        0
+    };
+    let legacy = model_archive_history_options(
+        has_legacy_frames,
+        archive.frames.len(),
+        || bytes,
+        archive.truncated_chars,
+        || ara_snapcompact::archive_source_text_utf16(archive).map_or(0, |text| text.len()),
+    );
+    if legacy.max_frame_data_bytes == Some(0) {
+        return Ok(legacy);
+    }
+    Ok(requested.unwrap_or(legacy))
+}
+
 /// One converter is shared by pre-publication sizing and reopened replay.
 /// Markers are runtime-only; archived frames never become original user input.
 pub fn model_message_from_summary(summary: &str, preserve_data: Option<&Value>) -> Message {
@@ -63,7 +136,16 @@ pub fn model_message_from_summary(summary: &str, preserve_data: Option<&Value>) 
         content.extend(
             ara_snapcompact::history_blocks(
                 &archive,
-                HistoryBlockOptions { max_frame_data_bytes: Some(FRAME_DATA_BYTES_BUDGET) },
+                model_archive_history_options(
+                    archive
+                        .frames
+                        .iter()
+                        .any(|frame| !frame.metadata.contains_key("font") && !frame.metadata.contains_key("variant")),
+                    archive.frames.len(),
+                    || ara_snapcompact::frame_data_bytes(&archive.frames),
+                    archive.truncated_chars,
+                    || ara_snapcompact::archive_source_text(&archive).map_or(0, |text| text.encode_utf16().count()),
+                ),
             )
             .into_iter()
             .map(|block| match block {
@@ -74,10 +156,180 @@ pub fn model_message_from_summary(summary: &str, preserve_data: Option<&Value>) 
             }),
         );
     }
-    Message::User(UserMessage { content: UserContent::Blocks(content), synthetic: None, timestamp: 0 })
+    Message::User(UserMessage {
+        content: UserContent::Blocks(content),
+        synthetic: None,
+        timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
+    })
+}
+
+pub(super) fn native_archive_history_blocks(
+    archive: &ara_snapcompact::ArchiveUtf16,
+    options: HistoryBlockOptions,
+) -> std::io::Result<Vec<ara_rpc::WireValue>> {
+    native_archive_history_blocks_with_store(archive, options, None)
+}
+
+pub(super) fn native_archive_history_blocks_with_store(
+    archive: &ara_snapcompact::ArchiveUtf16,
+    options: HistoryBlockOptions,
+    store: Option<&crate::BlobStore>,
+) -> std::io::Result<Vec<ara_rpc::WireValue>> {
+    use ara_rpc::{WireString, WireValue as W};
+    let blocks = match store {
+        Some(store) => ara_snapcompact::history_blocks_with_resolver_utf16(archive, options, |data| {
+            store.lazy_frame_data_utf16(data)
+        }),
+        None => ara_snapcompact::history_blocks_utf16(archive, options),
+    }
+    .map_err(|error| crate::native_message::invalid(error.to_string()))?;
+    blocks
+        .into_iter()
+        .map(|block| {
+            Ok(match block {
+                ara_snapcompact::HistoryBlockUtf16::Text { text } => W::object(vec![
+                    ("type", W::String("text".into())),
+                    ("text", W::String(WireString::from_units(text.as_units().to_vec()))),
+                ]),
+                ara_snapcompact::HistoryBlockUtf16::Image { data, mime_type, detail } => {
+                    let mut image = W::object(vec![
+                        ("type", W::String("image".into())),
+                        ("data", W::String(WireString::from_units(data.as_units().to_vec()))),
+                        ("mimeType", W::String(WireString::from_units(mime_type.as_units().to_vec()))),
+                        ("compactionFrame", W::Bool(true)),
+                    ]);
+                    if let Some(detail) = detail {
+                        image.insert(
+                            "detail",
+                            W::parse(detail.get())
+                                .map_err(|error| crate::native_message::invalid(error.to_string()))?,
+                        );
+                    }
+                    image
+                }
+            })
+        })
+        .collect()
+}
+
+/// Exact model history on the existing archive/history algorithm. Wire strings
+/// never pass through UserBlock's scalar String field before Graph import.
+pub fn model_source_from_summary(
+    summary: &str,
+    preserve_data: Option<&serde_json::value::RawValue>,
+) -> std::io::Result<NativeMessageSource> {
+    model_source_from_summary_with_blob_store(summary, preserve_data, None, None, true, None)
+}
+
+pub fn model_source_from_summary_with_blob_store(
+    summary: &str,
+    preserve_data: Option<&serde_json::value::RawValue>,
+    store: Option<&crate::BlobStore>,
+    requested: Option<HistoryBlockOptions>,
+    include_thinking: bool,
+    details: Option<&ara_snapcompact::CompactionDetails>,
+) -> std::io::Result<NativeMessageSource> {
+    use ara_rpc::{WireString, WireValue as W};
+    let text_block =
+        |text: WireString| W::Object(vec![("type".into(), W::String("text".into())), ("text".into(), W::String(text))]);
+    let mut view_summary = ara_snapcompact::Utf16Text::from(summary);
+    let archive = ara_snapcompact::get_preserved_archive_utf16(preserve_data)
+        .map_err(|error| crate::native_message::invalid(error.to_string()))?;
+    let archive = if !include_thinking {
+        archive
+            .map(|archive| ara_snapcompact::view_without_thinking_utf16(&view_summary, &archive, details))
+            .transpose()
+            .map_err(|error| crate::native_message::invalid(error.to_string()))?
+            .map(|view| {
+                view_summary = view.summary;
+                view.archive
+            })
+    } else {
+        archive
+    };
+    let mut content = vec![text_block(WireString::from_units(view_summary.as_units().to_vec()))];
+    if let Some(archive) = archive {
+        let options = native_model_archive_history_options_with_store(&archive, store, requested)?;
+        content.extend(native_archive_history_blocks_with_store(&archive, options, store)?);
+    }
+    Ok(NativeMessageSource::persisted(W::Object(vec![
+        ("role".into(), W::String("user".into())),
+        ("content".into(), W::Array(content)),
+        ("timestamp".into(), W::Number(0.0)),
+        ("attribution".into(), W::String("agent".into())),
+    ])))
+}
+
+pub(super) fn model_message_from_summary_with_blob_store(
+    summary: &str,
+    preserve_data: Option<&Value>,
+    store: Option<&crate::BlobStore>,
+) -> std::io::Result<Message> {
+    let preserve = preserve_data
+        .map(serde_json::value::to_raw_value)
+        .transpose()
+        .map_err(|error| crate::native_message::invalid(error.to_string()))?;
+    let source = model_source_from_summary_with_blob_store(summary, preserve.as_deref(), store, None, true, None)?;
+    let value = crate::native_message::checked_serde(source.observe()?.as_ref())?;
+    let mut message: Message =
+        serde_json::from_value(value).map_err(|error| crate::native_message::invalid(error.to_string()))?;
+    // This DTO is derived solely from the admitted archive history. The AI
+    // serde boundary deliberately omits runtime-only compaction_frame, so
+    // restore it here just as the original manual archive converter does.
+    if let Message::User(user) = &mut message
+        && let UserContent::Blocks(blocks) = &mut user.content
+    {
+        for block in blocks {
+            if let UserBlock::Image(image) = block {
+                image.compaction_frame = true;
+            }
+        }
+    }
+    Ok(message)
 }
 
 impl CompactionSummaryView {
+    pub fn exact_preserve_json(&self) -> std::io::Result<Option<Box<serde_json::value::RawValue>>> {
+        match &self.preserve_source {
+            Some(source) => source.exact_preserve_json().map(Some),
+            None => self
+                .preserve_data
+                .as_ref()
+                .map(serde_json::value::to_raw_value)
+                .transpose()
+                .map_err(|error| crate::native_message::invalid(error.to_string())),
+        }
+    }
+    pub fn exact_archive(&self) -> std::io::Result<Option<ara_snapcompact::ArchiveUtf16>> {
+        ara_snapcompact::get_preserved_archive_utf16(self.exact_preserve_json()?.as_deref())
+            .map_err(|error| crate::native_message::invalid(error.to_string()))
+    }
+    pub fn has_archive(&self) -> bool {
+        self.exact_archive().ok().flatten().is_some()
+    }
+    pub fn archive_migration_text_utf16(&self) -> std::io::Result<Option<ara_snapcompact::Utf16Text>> {
+        Ok(self.exact_archive()?.as_ref().and_then(ara_snapcompact::archive_source_text_utf16))
+    }
+    pub fn previous_summary_for_text_compaction_utf16(&self) -> std::io::Result<ara_snapcompact::Utf16Text> {
+        let mut output = ara_snapcompact::Utf16Text::from(self.summary.as_str());
+        if let Some(text) = self.archive_migration_text_utf16()? {
+            output.push_str("\n\n");
+            let prompt = include_str!("../prompts/snapcompact-archive-context.md");
+            for (index, part) in prompt.split("{{archiveText}}").enumerate() {
+                if index > 0 {
+                    output.append(&text);
+                }
+                output.push_str(part);
+            }
+        }
+        Ok(output)
+    }
+    pub fn preserve_data_without_archive_utf16(&self) -> std::io::Result<Option<Box<serde_json::value::RawValue>>> {
+        ara_snapcompact::strip_preserved_archive_utf16(self.exact_preserve_json()?.as_deref())
+            .map_err(|error| crate::native_message::invalid(error.to_string()))
+    }
     /// Bounded retained archive source, including its imaged middle, supplied
     /// to a replacement summarizer rather than its display-only caption.
     pub fn archive_migration_text(&self) -> Option<String> {
@@ -154,7 +406,7 @@ impl SessionJournal {
         let previous = current
             .previous_summary
             .as_ref()
-            .filter(|summary| summary.archive.is_some())
+            .filter(|summary| summary.has_archive())
             .ok_or(NativeSnapcompactError::StaleArchive)?;
         self.publish_snapcompact(
             prepared,
@@ -179,10 +431,7 @@ impl SessionJournal {
         let entry = candidate
             .iter_mut()
             .find(|entry| entry.id == entry_id)
-            .filter(|entry| {
-                entry.kind == "compaction"
-                    && ara_snapcompact::get_preserved_archive(entry.raw.get("preserveData")).is_some()
-            })
+            .filter(|entry| entry.kind == "compaction" && entry.has_archive())
             .ok_or(NativeSnapcompactError::StaleArchive)?;
         entry.raw["warning"] = json!(warning);
         self.publish_snapcompact_candidate(
@@ -207,8 +456,22 @@ impl SessionJournal {
         if prepared.summary.trim().is_empty() || prepared.summary.len() > 1_000_000 {
             return Err(CompactionCommitError::InvalidSummary.into());
         }
-        if ara_snapcompact::get_preserved_archive(prepared.preserve_data.as_ref()).is_none()
-            || prepared.preserve_data.as_ref().and_then(|data| data.get("openaiRemoteCompaction")).is_some()
+        let preserve_source = match (&prepared.preserve_source, &prepared.preserve_data) {
+            (Some(source), Some(mirror)) => {
+                let mirror = crate::native_message::wire_from_serde(mirror)?;
+                if !source.observe().deep_equal(&mirror) {
+                    return Err(NativeSnapcompactError::InvalidArchive);
+                }
+                Some(source.clone())
+            }
+            (Some(source), None) => Some(source.clone()),
+            (None, Some(preserve)) => {
+                Some(NativeSnapcompactArchiveSource::from_wire(crate::native_message::wire_from_serde(preserve)?))
+            }
+            (None, None) => None,
+        };
+        if preserve_source.as_ref().map(|source| source.exact_archive()).transpose()?.flatten().is_none()
+            || preserve_source.as_ref().is_some_and(|source| source.observe().get("openaiRemoteCompaction").is_some())
         {
             return Err(NativeSnapcompactError::InvalidArchive);
         }
@@ -222,6 +485,12 @@ impl SessionJournal {
             "method":"snapcompact","summary":prepared.summary,"firstKeptEntryId":kept,
             "tokensBefore":tokens_before,"fromExtension":false,
             "preserveData":prepared.preserve_data,"details":details});
+        raw.as_object_mut().expect("compaction object").remove("preserveData");
+        if let Some(source) = &preserve_source {
+            if let Ok(preserve) = source.checked_preserve() {
+                raw["preserveData"] = preserve;
+            }
+        }
         if let Some(sources) = sources {
             raw["sourceEntryIds"] = json!(sources);
         }
@@ -232,7 +501,14 @@ impl SessionJournal {
             raw["shortSummary"] = json!(short);
         }
         let mut candidate = self.entries.clone();
-        candidate.push(Entry { id: id.clone(), parent_id, kind: "compaction".into(), raw });
+        candidate.push(Entry {
+            id: id.clone(),
+            parent_id,
+            kind: "compaction".into(),
+            raw,
+            native_message: None,
+            snapcompact_source: preserve_source,
+        });
         let mut ids = self.ids.clone();
         ids.insert(id.clone());
         self.publish_snapcompact_candidate(candidate, id.clone(), Some(id), ids, directory_sync)
@@ -299,6 +575,7 @@ mod tests {
             preserve_data: Some(
                 json!({"snapcompact":{"frames":[],"text":"full retained source","textHead":"full retained source"}}),
             ),
+            preserve_source: None,
             read_files: vec![],
             modified_files: vec![],
         };
@@ -314,7 +591,7 @@ mod tests {
         assert_eq!(&journal.entries[..old.len()], old);
         let reopened = SessionJournal::open(journal.path()).unwrap();
         assert_eq!(reopened.entries(), journal.entries());
-        assert_eq!(reopened.model_context(), journal.model_context());
+        assert_eq!(reopened.model_context().unwrap(), journal.model_context().unwrap());
         assert!(!journal.rewrite_required, "later writers must retain the published candidate");
     }
 }

@@ -66,11 +66,74 @@ pub async fn prepare_handoff(
     deadline: Instant,
     cancel: &CancellationToken,
 ) -> Result<Option<PreparedHandoff>> {
+    prepare_handoff_request(
+        snapshot,
+        HandoffMessages::Typed(messages),
+        config,
+        provider,
+        keep_tokens,
+        focus,
+        auto,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+/// Production side request keeps original Graph messages throughout conversion.
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_actual_handoff(
+    snapshot: &NativeHandoffSnapshot,
+    messages: &[ara_agent::AgentMessage],
+    config: &AgentConfig,
+    provider: &dyn ModelProvider,
+    keep_tokens: usize,
+    focus: Option<&str>,
+    auto: bool,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<Option<PreparedHandoff>> {
+    prepare_handoff_request(
+        snapshot,
+        HandoffMessages::Actual(messages),
+        config,
+        provider,
+        keep_tokens,
+        focus,
+        auto,
+        deadline,
+        cancel,
+    )
+    .await
+}
+
+enum HandoffMessages<'a> {
+    Typed(&'a [Message]),
+    Actual(&'a [ara_agent::AgentMessage]),
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn prepare_handoff_request(
+    snapshot: &NativeHandoffSnapshot,
+    messages: HandoffMessages<'_>,
+    config: &AgentConfig,
+    provider: &dyn ModelProvider,
+    keep_tokens: usize,
+    focus: Option<&str>,
+    auto: bool,
+    deadline: Instant,
+    cancel: &CancellationToken,
+) -> Result<Option<PreparedHandoff>> {
     if cancel.is_cancelled() {
         return Err(cancelled());
     }
+    // One active owned snapshot supplies model, prompt, tools and context binding.
+    let execution =
+        config.hooks.execution_snapshot().unwrap_or_else(|| ara_agent::ExecutionSnapshot::from_config(config));
+    let model = execution.model.as_ref().map(|selected| selected.model.clone()).unwrap_or_else(|| config.model.clone());
+    let max_tokens = execution.model.as_ref().map_or(config.max_tokens, |selected| selected.max_tokens);
     let projection = &snapshot.projection;
-    let sources = crate::native_compaction::sources_for_model(&projection.entries, &config.model);
+    let sources = crate::native_compaction::sources_for_model(&projection.entries, &model);
     let previous = projection.previous_summary.as_ref();
     let cut = select_native_entry_compaction_cut(&sources, keep_tokens, previous.map(|entry| entry.summary.as_str()))
         .map_err(|error| anyhow::anyhow!("{error}"))?
@@ -78,19 +141,68 @@ pub async fn prepare_handoff(
     if cut.first_kept_index == 0 {
         bail!("Nothing to hand off (no earlier message prefix)");
     }
-    let mut context = Context {
-        system_prompt: config.system_prompt.clone(),
-        messages: messages.to_vec(),
-        tools: Some(config.tools.iter().map(|tool| tool.definition()).collect()),
+    let cap = (model.api != "openai-codex-responses").then_some(max_tokens).flatten();
+    let invocation = match messages {
+        HandoffMessages::Typed(messages) => {
+            let mut side_messages = messages.to_vec();
+            side_messages.push(Message::User(UserMessage::text(ara_agent::handoff::render_handoff_prompt(focus))));
+            let context = ara_agent::build_side_request_context_from_snapshot(config, execution, side_messages, None)
+                .await
+                .map_err(anyhow::Error::new)?;
+            ara_agent::handoff::generate_handoff_from_context(&context, &model, provider, cap, deadline, cancel)
+                .await
+                .map_err(anyhow::Error::new)
+                .context("Handoff generation failed")?
+        }
+        HandoffMessages::Actual(messages) => {
+            let values = execution
+                .provider_context
+                .as_ref()
+                .and_then(|binding| binding.actual_values.clone())
+                .context("Actual handoff has no Session values")?;
+            // Fresh Host-created raw User, admitted before the same converter
+            // that consumes the complete live history. It is request-only.
+            let trailing = values
+                .heap()
+                .import_serde(&serde_json::json!({
+                    "role":"user", "content":[{"type":"text", "text":ara_agent::handoff::render_handoff_prompt(focus)}],
+                    "attribution":"agent", "timestamp":ara_ai::now_ms(),
+                }))
+                .map_err(anyhow::Error::new)?;
+            let mut raw = messages.to_vec();
+            raw.push(ara_agent::AgentMessage::from_graph(trailing, None).map_err(anyhow::Error::new)?);
+            let prepare = async {
+                let converted = config
+                    .hooks
+                    .convert_agent_messages_to_llm_actual(&raw, &values)
+                    .await
+                    .map_err(anyhow::Error::new)?;
+                ara_agent::provider_context::build_actual_side_request_context_from_snapshot(
+                    config,
+                    execution,
+                    converted,
+                    Some(config.system_prompt.clone()),
+                )
+                .await
+                .map_err(anyhow::Error::new)
+            };
+            let context = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(cancelled()),
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                    bail!("Handoff preparation deadline elapsed")
+                }
+                prepared = prepare => prepared?,
+            };
+            ara_agent::handoff::generate_handoff_from_actual_context(&context, &model, provider, cap, deadline, cancel)
+                .await
+                .map_err(|error| match error {
+                    ara_agent::handoff::ActualHandoffError::Summary(error) => anyhow::Error::new(error),
+                    ara_agent::handoff::ActualHandoffError::Native(error) => anyhow::Error::new(error),
+                })
+                .context("Handoff generation failed")?
+        }
     };
-    context.messages.push(Message::User(UserMessage::text(ara_agent::handoff::render_handoff_prompt(focus))));
-    let context = config.hooks.transform_provider_context(context, &config.model).await;
-    let cap = (config.model.api != "openai-codex-responses").then_some(config.max_tokens).flatten();
-    let invocation =
-        ara_agent::handoff::generate_handoff_from_context(&context, &config.model, provider, cap, deadline, cancel)
-            .await
-            .map_err(anyhow::Error::new)
-            .context("Handoff generation failed")?;
     if cancel.is_cancelled() {
         return Err(cancelled());
     }

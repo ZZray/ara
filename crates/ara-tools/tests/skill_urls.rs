@@ -227,7 +227,7 @@ async fn write_skill_urls_are_read_only() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let demo = write_skill(&root.join("skills"), "demo", "original\n");
-    let write = write::WriteTool { ctx: ToolContext::new(&root).with_skills(vec![demo.clone()]) };
+    let write = write::WriteTool::new(ToolContext::new(&root).with_skills(vec![demo.clone()]));
     for path in ["skill://demo", "skill://demo:raw", "skill://demo/scripts/new.txt", "SKILL://demo/SKILL.md"] {
         let err = write
             .execute("c", args(json!({"path": path, "content": "replacement"})), CancellationToken::new(), noop())

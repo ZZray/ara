@@ -36,7 +36,14 @@ fn snapshot(raws: Vec<Value>) -> SessionReductionSnapshot {
             raw["id"] = json!(id);
             raw["parentId"] = json!(parent_id);
             raw["timestamp"] = json!("2026-10-02T00:00:00.000Z");
-            Entry { id, parent_id, kind: raw["type"].as_str().unwrap().into(), raw }
+            Entry {
+                id,
+                parent_id,
+                kind: raw["type"].as_str().unwrap().into(),
+                raw,
+                native_message: None,
+                snapcompact_source: None,
+            }
         })
         .collect();
     SessionReductionSnapshot {
@@ -162,6 +169,7 @@ fn raw_source_and_host_window_family() {
 
 #[tokio::test]
 async fn native_artifact_and_anchor_family() {
+    observe_current_budget_anchor_arithmetic();
     let text = format!("😀 head\n{}\nmiddle\n{}\ntail", fence(), fence());
     let mut tool = result("read", &"original result\n".repeat(200));
     tool["message"]["content"]
@@ -250,6 +258,69 @@ async fn native_artifact_and_anchor_family() {
             }
         }
     }
+}
+
+/// Exercise the common budget arithmetic with an exact UTF16 counter, without
+/// claiming that this observer substitutes for the actual Host archive chain.
+fn observe_current_budget_anchor_arithmetic() {
+    use ara_agent::tokenizer::{MessageCountOptions, TokenCountMode};
+    use ara_cli::context_budget::context_tokens_with_observer;
+    use std::cell::RefCell;
+
+    let mut journal = SessionJournal::in_memory(json!({"type":"session","version":3,"id":"budget"})).unwrap();
+    let mut assistant =
+        message(json!({"role":"assistant","content":[{"type":"text","text":"observed"}],"timestamp":1000}))["message"]
+            .clone();
+    assistant["usage"]["contextTokens"] = json!(100);
+    assistant["contextSnapshot"] = json!({"promptTokens":200,"nonMessageTokens":10,"historyRewriteTokensRemoved":40});
+    let anchor_id = journal.append_agent_message_body(&assistant).unwrap();
+    // (entry ID, exact text fragment, encrypted reasoning estimate)
+    let messages = vec![
+        ("archive".to_owned(), vec![0xD800], 0usize),
+        (anchor_id.clone(), vec![65; 8], 0),
+        ("tail".to_owned(), vec![65; 12], 7),
+    ];
+    let pending = vec![("pending".to_owned(), vec![0xDC00], 11usize)];
+    let tokenizer = ara_agent::tokenizer::Tokenizer::for_model(&model());
+    let options_seen = RefCell::new(Vec::new());
+    let count = |messages: &[(String, Vec<u16>, usize)], options: MessageCountOptions| {
+        options_seen.borrow_mut().push(options.exclude_encrypted_reasoning);
+        Ok(messages.iter().fold(0usize, |total, (_, text, encrypted)| {
+            total
+                + tokenizer.count_utf16_fragments([text.as_slice()], TokenCountMode::Approximate)
+                + if options.exclude_encrypted_reasoning { 0 } else { *encrypted }
+        }))
+    };
+    let locate = |messages: &[(String, Vec<u16>, usize)], entry: &Entry| {
+        Ok(messages.iter().rposition(|(id, _, _)| id == &entry.id))
+    };
+    // Provider residual: 200 - 40 + (12 - 10) + (3 + 7) + 1.
+    assert_eq!(context_tokens_with_observer(&journal, &messages, &pending, 12, &count, locate).unwrap(), 173);
+    assert_eq!(*options_seen.borrow(), [true, true, false]);
+    options_seen.borrow_mut().clear();
+    // No matching current body leaves only the independently counted floor.
+    assert_eq!(context_tokens_with_observer(&journal, &messages, &pending, 12, &count, |_, _| Ok(None)).unwrap(), 19);
+    assert_eq!(*options_seen.borrow(), [true, true]);
+    // A larger current transcript still wins over retained provider occupancy.
+    let mut grown = messages.clone();
+    grown[0].1 = vec![65; 1_000];
+    assert_eq!(context_tokens_with_observer(&journal, &grown, &pending, 12, &count, locate).unwrap(), 268);
+    // Failed observations remain errors rather than dropping the provider anchor.
+    let error = context_tokens_with_observer(&journal, &messages, &pending, 12, &count, |_, _| {
+        Err(std::io::Error::other("current anchor observation failed").into())
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("current anchor observation failed"));
+    let error = context_tokens_with_observer(
+        &journal,
+        &messages,
+        &pending,
+        12,
+        |_, _| Err(std::io::Error::other("current fragment count failed").into()),
+        locate,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("current fragment count failed"));
 }
 
 #[test]

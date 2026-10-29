@@ -28,6 +28,8 @@
 //! partials are not visible inside a partial.
 
 use crate::js;
+#[path = "template_actual.rs"]
+pub(crate) mod actual;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;

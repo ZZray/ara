@@ -152,13 +152,19 @@ async fn write_artifact(destination: &Path, content: &str) -> Result<()> {
 /// Explicit RPC registrations and tombstones take precedence over the native
 /// handler. The selected store is captured before each asynchronous read.
 pub struct ArtifactUriRouter {
-    current: RwLock<Arc<SessionArtifacts>>,
+    current: Arc<RwLock<Arc<SessionArtifacts>>>,
     fallback: Option<Arc<dyn ContentUriPort>>,
 }
 
 impl ArtifactUriRouter {
     pub fn new(store: Arc<SessionArtifacts>, fallback: Option<Arc<dyn ContentUriPort>>) -> Arc<Self> {
-        Arc::new(Self { current: RwLock::new(store), fallback })
+        Arc::new(Self { current: Arc::new(RwLock::new(store)), fallback })
+    }
+    /// Fork only the prepared fallback snapshot. The same logical Session's
+    /// central store binding remains shared; admitted requests capture their
+    /// original store before awaiting, exactly as with the established router.
+    pub fn fork_with_fallback(&self, fallback: Option<Arc<dyn ContentUriPort>>) -> Arc<Self> {
+        Arc::new(Self { current: self.current.clone(), fallback })
     }
     pub fn bind(&self, store: Arc<SessionArtifacts>) {
         *self.current.write().unwrap_or_else(|error| error.into_inner()) = store;
@@ -186,6 +192,45 @@ fn artifact_id(url: &str) -> Result<&str> {
 
 #[async_trait]
 impl ContentUriPort for ArtifactUriRouter {
+    fn write_selection(&self,url:&str)->ara_tools::ContentUriWriteSelection {
+        if !self.native_route(url) {
+            if let Some(port)=&self.fallback{return port.write_selection(url);}
+        }
+        ara_tools::ContentUriWriteSelection {owner:self as *const Self as usize,epoch:0,route:self.route(url),policy:self.write_policy(url)}
+    }
+    async fn write_result_selected(&self,url:&str,content:&str,selection:&ara_tools::ContentUriWriteSelection,cancel:CancellationToken)->Result<Option<ara_agent::ToolOutput>,ara_tools::ContentUriWriteDispatchError> {
+        if &self.write_selection(url)!=selection{return Err(ara_tools::ContentUriWriteDispatchError::NotDispatched(ToolError("Artifact route selected leaf changed; not dispatched".into())));}
+        if !self.native_route(url) {
+            if let Some(port)=&self.fallback{return port.write_result_selected(url,content,selection,cancel).await;}
+        }
+        self.write_result(url,content,cancel).await.map_err(Into::into)
+    }
+    fn write_policy(&self, url: &str) -> ara_tools::ContentUriWritePolicy {
+        if self.native_route(url) { return ara_tools::ContentUriWritePolicy::default(); }
+        self.fallback.as_ref().map_or_else(ara_tools::ContentUriWritePolicy::default, |port| port.write_policy(url))
+    }
+    fn edit_specs(&self)->Vec<ara_tools::ContentUriEditSpec> {
+        let mut specs=self.fallback.as_ref().map(|port|port.edit_specs()).unwrap_or_default();
+        if !specs.iter().any(|spec|spec.scheme.eq_ignore_ascii_case("artifact")) {
+            specs.push(ara_tools::ContentUriEditSpec {scheme:"artifact".into(),single_slash_alias:false,line_selectors:true,port_authority:false,immutable:true,policy:ara_tools::ContentUriEditPolicy::ReadOnly});
+        }
+        specs
+    }
+    fn edit_sandbox_roots(&self)->Vec<(String,PathBuf)> {self.fallback.as_ref().map(|port|port.edit_sandbox_roots()).unwrap_or_default()}
+    async fn resolve_edit_file(&self,url:&str,cancel:CancellationToken)->Result<Option<UriFileResource>,ToolError> {
+        if self.native_route(url) {return Err(ToolError("artifact:// resources are immutable".into()));}
+        match &self.fallback {Some(port)=>port.resolve_edit_file(url,cancel).await,None=>Ok(None)}
+    }
+    fn normalize_url(&self, input: &str) -> String {
+        self.fallback.as_ref().map_or_else(|| input.into(), |port| port.normalize_url(input))
+    }
+    fn locate_sync(&self, url: &str) -> Result<Option<PathBuf>, ToolError> {
+        // Native artifact has async backing, but no fixed locateSync handler.
+        if !self.native_route(url) {
+            return self.fallback.as_ref().map_or(Ok(None), |port| port.locate_sync(url));
+        }
+        Ok(None)
+    }
     fn route(&self, url: &str) -> ContentUriRoute {
         if let Some(port) = &self.fallback {
             let route = port.route(url);
@@ -222,7 +267,17 @@ impl ContentUriPort for ArtifactUriRouter {
             path,
             content_type: "text/plain".into(),
             max_inline_bytes: Some(MAX_INLINE_ARTIFACT_BYTES),
+            immutable: true,
         }))
+    }
+    async fn search_path_only(&self, url: &str, cancel: CancellationToken) -> Result<Option<PathBuf>, ToolError> {
+        if !self.native_route(url) {
+            return match &self.fallback {
+                Some(port) => port.search_path_only(url, cancel).await,
+                None => Ok(None),
+            };
+        }
+        Ok(self.read_file(url, cancel).await?.map(|file| file.path))
     }
     async fn read(&self, url: &str, cancel: CancellationToken) -> Result<UriResource, ToolError> {
         if !self.native_route(url) {
@@ -264,6 +319,21 @@ impl ContentUriPort for ArtifactUriRouter {
             .as_ref()
             .ok_or_else(|| ToolError("Unknown artifact route".into()))?
             .write(url, content, cancel)
+            .await
+    }
+    async fn write_result(
+        &self,
+        url: &str,
+        content: &str,
+        cancel: CancellationToken,
+    ) -> Result<Option<ara_agent::ToolOutput>, ToolError> {
+        if self.native_route(url) {
+            return Err(ToolError("artifact:// resources are immutable".into()));
+        }
+        self.fallback
+            .as_ref()
+            .ok_or_else(|| ToolError("Unknown artifact route".into()))?
+            .write_result(url, content, cancel)
             .await
     }
 }

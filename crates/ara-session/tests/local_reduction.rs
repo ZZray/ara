@@ -120,7 +120,7 @@ fn raw_slots_full_branch_and_provider_projections_reopen_without_losing_receipts
     assert!(snapshot.entries.iter().any(|entry| entry.id == "user"), "image shake scans before reset");
     assert!(!snapshot.entries.iter().any(|entry| entry.id == "offbranch"));
     let original_file = journal.entries().iter().find(|entry| entry.id == "file").unwrap();
-    let fragments = original_file.model_messages().unwrap();
+    let fragments = original_file.model_messages().unwrap().unwrap();
     assert!(matches!(fragments.as_slice(), [Message::Developer(_), Message::User(_)]));
     let first_start = text.find("```rust").unwrap();
     let first_end = text.find("```\nbetween").unwrap() + 3;
@@ -182,7 +182,7 @@ fn raw_slots_full_branch_and_provider_projections_reopen_without_losing_receipts
         "compactionEpoch":0,"opaqueSnapshot":"keep","historyRewriteTokensRemoved":100})
     );
     let file = journal.entries().iter().find(|entry| entry.id == "file").unwrap();
-    let Some(Message::Developer(file_context)) = file.message() else {
+    let Some(Message::Developer(file_context)) = file.message().unwrap() else {
         panic!("shaken file mentions move to Developer");
     };
     assert_eq!(
@@ -191,23 +191,31 @@ fn raw_slots_full_branch_and_provider_projections_reopen_without_losing_receipts
     );
     let mut empty = file.clone();
     empty.raw["message"]["files"] = json!([]);
-    assert_eq!(empty.model_messages(), Some(Vec::new()));
+    assert_eq!(
+        empty.model_messages().unwrap(),
+        file.model_messages().unwrap(),
+        "a checked mirror edit cannot mutate the native canonical body"
+    );
+    empty.native_message = Some(ara_session::NativeMessageSource::persisted(
+        ara_session::native_wire_from_serde(&empty.raw["message"]).unwrap(),
+    ));
+    assert_eq!(empty.model_messages().unwrap(), Some(Vec::new()));
     assert_eq!(raw(&journal, "summary"), &rows[7], "native image shake leaves legacy summaries untouched");
     assert_eq!(raw(&journal, "offbranch"), &rows[8]);
     let custom = journal.entries().iter().find(|entry| entry.id == "custom").unwrap();
     assert_eq!(custom.raw["content"][0]["textSignature"], "keep");
     assert!(!custom.raw["content"][0]["text"].as_str().unwrap().contains("Images attached"));
-    assert_eq!(custom.model_messages().unwrap().len(), 2);
+    assert_eq!(custom.model_messages().unwrap().unwrap().len(), 2);
     let steering = journal.entries().iter().find(|entry| entry.id == "steer").unwrap();
     assert!(!steering.raw["content"].as_str().unwrap().contains("User interjection"));
-    let Some(Message::User(projected)) = steering.message() else {
+    let Some(Message::User(projected)) = steering.message().unwrap() else {
         panic!("steering retains its user projection");
     };
     assert!(projected.content.plain_text().contains("User interjection"));
     let reopened = SessionJournal::open(&path).unwrap();
     assert_eq!(reopened.entries(), journal.entries());
     assert_eq!(reopened.raw_reduction_snapshot().unwrap(), journal.raw_reduction_snapshot().unwrap());
-    assert_eq!(reopened.model_context(), journal.model_context());
+    assert_eq!(reopened.model_context().unwrap(), journal.model_context().unwrap());
     let second = journal.raw_reduction_snapshot().unwrap();
     journal
         .commit_reduction(
@@ -243,7 +251,10 @@ fn raw_slots_full_branch_and_provider_projections_reopen_without_losing_receipts
         result["prunedAt"] = Value::Null;
         let mut entry = journal.entries().iter().find(|entry| entry.id == "elide").unwrap().clone();
         entry.raw["message"] = result;
-        let Some(Message::ToolResult(projected)) = entry.message() else {
+        entry.native_message = Some(ara_session::NativeMessageSource::persisted(
+            ara_session::native_wire_from_serde(&entry.raw["message"]).unwrap(),
+        ));
+        let Some(Message::ToolResult(projected)) = entry.message().unwrap() else {
             panic!("pruned tool result");
         };
         let mut actual = serde_json::to_value(projected.content).unwrap();
@@ -291,7 +302,7 @@ fn raw_slots_full_branch_and_provider_projections_reopen_without_losing_receipts
     assert_eq!(raw(&rescue, &failed), &original_failed);
     let restarted = SessionJournal::open(rescue.path()).unwrap();
     assert_eq!(restarted.leaf_id(), Some(marker.as_str()));
-    assert_eq!(restarted.model_context(), rescue.model_context());
+    assert_eq!(restarted.model_context().unwrap(), rescue.model_context().unwrap());
     assert!(!restarted.branch().iter().any(|entry| entry.id == failed));
     let source = rescue.raw_reduction_snapshot().unwrap();
     let again = rescue
@@ -401,7 +412,7 @@ fn reserved_notice_reduction_reopens_public_views_without_resurrection_and_rejec
             panic!("trusted reduced notice");
         };
         assert_eq!(model.content.plain_text(), actual);
-        assert_eq!(entry.message(), Some(notice.model_message()));
+        assert_eq!(entry.message().unwrap(), Some(notice.model_message()));
         assert!(notice.event_message().get("araNoticeReduction").is_none(), "original stays outside public view");
         assert!(
             LoopGuardNotice::from_event_message(&notice.event_message()).is_none(),
@@ -447,7 +458,7 @@ fn reserved_notice_reduction_reopens_public_views_without_resurrection_and_rejec
         write_rows(&path, reopened.header(), &rows);
         let damaged = SessionJournal::open(&path).unwrap();
         assert!(damaged.entries()[0].loop_guard_notice().is_none());
-        assert!(damaged.entries()[0].message().is_none());
+        assert!(damaged.entries()[0].message().unwrap().is_none());
         assert!(damaged.native_projected_compaction_snapshot().is_err());
     }
 }

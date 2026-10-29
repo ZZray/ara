@@ -50,7 +50,7 @@ fn two_soft_summaries(journal: &mut SessionJournal) {
     assert_eq!(summary.first_kept_entry_id, third[0]);
     assert_eq!(summary.summary, "first and second completed");
     assert_eq!(journal.entries().len(), 8, "six raw observations and both derived summaries remain");
-    let context = journal.model_context();
+    let context = journal.model_context().unwrap();
     assert_eq!(context.len(), 3);
     let Message::User(summary_message) = &context[0] else { panic!("lower trust summary projection") };
     assert!(summary_message.content.plain_text().contains("first and second completed"));
@@ -95,6 +95,8 @@ fn verified_archive_migrates_opaque_metadata_across_two_soft_summaries_without_a
                 ]),
                 synthetic: None,
                 timestamp: 1,
+                provider_payload: None,
+                provider_payload_origin: None,
             }))
             .unwrap(),
         journal.append_message(&assistant("prior source read")).unwrap(),
@@ -109,6 +111,7 @@ fn verified_archive_migrates_opaque_metadata_across_two_soft_summaries_without_a
             "frames":[{"data":"AQI=","mimeType":"image/png","chars":1,"cols":1,"rows":1}]},
             "opaqueHostState":{"marker":"unchanged","nested":[1,2,3]}}),
         ),
+        preserve_source: None,
         read_files: vec![],
         modified_files: vec![],
     };
@@ -154,6 +157,8 @@ fn verified_archive_migrates_opaque_metadata_across_two_soft_summaries_without_a
             content: UserContent::Blocks(vec![UserBlock::Image(picture())]),
             synthetic: None,
             timestamp: 1,
+            provider_payload: None,
+            provider_payload_origin: None,
         }))
         .unwrap();
     let new_answer_id = journal.append_message(&assistant("new picture processed")).unwrap();
@@ -340,6 +345,7 @@ fn call() -> Message {
         name: "bash".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     message.stop_reason = StopReason::ToolUse;
     Message::Assistant(message)
@@ -353,6 +359,8 @@ fn receipt(id: &str, details: Option<Value>) -> Message {
         details,
         is_error: true,
         timestamp: 3,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -364,6 +372,8 @@ fn commit_cannot_hide_images_unpaired_calls_or_unknown_effect_receipts() {
         content: UserContent::Blocks(vec![UserBlock::Image(image.clone())]),
         synthetic: None,
         timestamp: 1,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let mut image_assistant = AssistantMessage::empty("openai-completions", "fixture", "model");
     image_assistant.content.push(AssistantBlock::Image(image));
@@ -464,12 +474,18 @@ fn excluded_native_bash_is_retained_raw_and_never_added_to_summary_sources_or_pr
     journal.commit_projected_compaction(&snapshot, "first and second completed", &third[0], &second, 80).unwrap();
     let reopened = SessionJournal::open(journal.path()).unwrap();
     assert_eq!(reopened.projected_compaction_snapshot().unwrap().messages.len(), 2);
-    assert_eq!(reopened.model_context().len(), 3);
+    assert_eq!(reopened.model_context().unwrap().len(), 3);
     assert!(
-        reopened.entries().iter().any(|entry| entry.id == hidden1 && entry.bash_execution() == Some(hidden.clone()))
+        reopened
+            .entries()
+            .iter()
+            .any(|entry| entry.id == hidden1 && entry.bash_execution().unwrap() == Some(hidden.clone()))
     );
     assert!(
-        reopened.entries().iter().any(|entry| entry.id == hidden2 && entry.bash_execution() == Some(hidden.clone()))
+        reopened
+            .entries()
+            .iter()
+            .any(|entry| entry.id == hidden2 && entry.bash_execution().unwrap() == Some(hidden.clone()))
     );
     let sources = reopened.projected_compaction_snapshot().unwrap().previous_summary.unwrap().source_entry_ids.unwrap();
     assert!(!sources.contains(&hidden1) && !sources.contains(&hidden2));
@@ -582,9 +598,9 @@ fn native_reset_boundaries_follow_fixed_compaction_input_families() {
         assert_eq!(reopened.branch().len(), reopened.entries().len(), "full transcript keeps pre-clear entries");
         assert_eq!(reopened.header(), journal.header());
         assert_eq!(reopened.title(), journal.title());
-        assert_eq!(reopened.current_model().as_deref(), Some("fixture/retained-model"));
-        assert_eq!(reopened.model_context().len(), 2);
-        assert_eq!(reopened.model_context()[1], assistant("NEXT"));
+        assert_eq!(reopened.current_model().unwrap().as_deref(), Some("fixture/retained-model"));
+        assert_eq!(reopened.model_context().unwrap().len(), 2);
+        assert_eq!(reopened.model_context().unwrap()[1], assistant("NEXT"));
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 }
@@ -596,8 +612,8 @@ fn reset_boundaries_handle_empty_context_stale_summaries_and_failed_storage() {
             .unwrap();
     memory.append_reset_boundary().unwrap();
     memory.append_reset_boundary().unwrap();
-    assert!(memory.build_context().is_empty());
-    assert!(memory.model_context().is_empty());
+    assert!(memory.build_context().unwrap().is_empty());
+    assert!(memory.model_context().unwrap().is_empty());
     assert!(memory.projected_compaction_snapshot().unwrap().messages.is_empty());
     assert!(!memory.is_on_disk());
     let directory = tempfile::tempdir().unwrap();
@@ -613,7 +629,7 @@ fn reset_boundaries_handle_empty_context_stale_summaries_and_failed_storage() {
     assert!(journal.append_reset_boundary().is_err());
     assert_eq!(journal.entries(), entries);
     assert_eq!(journal.leaf_id(), Some(stale.leaf_id.as_str()));
-    assert_eq!(journal.build_context().len(), 4, "failed clear preserves the active conversation");
+    assert_eq!(journal.build_context().unwrap().len(), 4, "failed clear preserves the active conversation");
     fs::remove_dir(&path).unwrap();
     fs::write(&path, &bytes).unwrap();
     journal.materialize().unwrap();
@@ -635,7 +651,7 @@ fn reset_boundaries_handle_empty_context_stale_summaries_and_failed_storage() {
     assert!(first.iter().all(|id| !prefix_ids(&active, 2).contains(id)));
     let bytes = fs::read(&path).unwrap();
     let reopened = SessionJournal::open(&path).unwrap();
-    assert_eq!(reopened.model_context(), [user("only active turn"), assistant("only active turn")]);
+    assert_eq!(reopened.model_context().unwrap(), [user("only active turn"), assistant("only active turn")]);
     assert_eq!(reopened.projected_compaction_snapshot().unwrap(), active);
     assert_eq!(reopened.entries(), journal.entries());
     assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -645,7 +661,7 @@ fn reset_boundaries_handle_empty_context_stale_summaries_and_failed_storage() {
         Err(CompactionProjectionError::SourceIdsMismatch { id: invalid })
     );
     assert_eq!(
-        journal.model_context(),
+        journal.model_context().unwrap(),
         [user("only active turn"), assistant("only active turn")],
         "invalid active compaction falls back only to the post-reset suffix"
     );
@@ -679,10 +695,16 @@ fn reset_boundaries_preserve_raw_unknown_effects_without_recovering_cleared_call
     // A cleared result with this same call ID cannot answer the active call.
     let mut reopened = SessionJournal::open(journal.path()).unwrap();
     let recovery = reopened.recover_interrupted_tool_calls().unwrap();
-    assert_eq!(recovery.paired, ["call-1"]);
+    assert_eq!(recovery.paired, [ara_rpc::WireString::from("call-1")]);
     assert!(recovery.unpaired_earlier.is_empty());
-    assert_eq!(reopened.entries().iter().find(|entry| entry.id == unknown_id).unwrap().message(), Some(unknown));
-    assert_eq!(reopened.entries().iter().find(|entry| entry.id == pending_id).unwrap().message(), Some(pending));
+    assert_eq!(
+        reopened.entries().iter().find(|entry| entry.id == unknown_id).unwrap().message().unwrap(),
+        Some(unknown)
+    );
+    assert_eq!(
+        reopened.entries().iter().find(|entry| entry.id == pending_id).unwrap().message().unwrap(),
+        Some(pending)
+    );
     assert_eq!(
         reopened
             .entries()
@@ -799,7 +821,7 @@ fn native_entry_groups_preserve_metadata_kept_ids_split_cuts_and_reopen_sources(
                 100,
             )
             .unwrap();
-        let context = journal.model_context();
+        let context = journal.model_context().unwrap();
         assert_eq!(context.len(), if split { 2 } else { 3 });
         assert_eq!(context.last().unwrap(), &assistant("second"));
         let next = turn(&mut journal, "next");
@@ -901,7 +923,9 @@ fn native_entry_origins_keep_custom_branch_skill_steering_and_legacy_projection(
             NativeEntryOrigin::CustomMessage
             | NativeEntryOrigin::LoopGuardNotice
             | NativeEntryOrigin::HookMessage
-            | NativeEntryOrigin::LegacyCustomMessage => assert!(matches!(group.messages[0], Message::Developer(_))),
+            | NativeEntryOrigin::LegacyCustomMessage => {
+                assert!(matches!(group.messages[0], Message::Developer(_)))
+            }
             _ => assert!(matches!(group.messages[0], Message::User(_))),
         }
     }
@@ -934,7 +958,7 @@ fn native_entry_origins_keep_custom_branch_skill_steering_and_legacy_projection(
         sources
     );
     assert_eq!(reopened.entries(), journal.entries());
-    assert_eq!(reopened.model_context().len(), 3);
+    assert_eq!(reopened.model_context().unwrap().len(), 3);
 }
 
 #[test]
@@ -971,7 +995,7 @@ fn native_multi_fragments_stay_one_raw_group_and_images_cannot_be_hidden() {
         assert_eq!(text.content.plain_text(), "one\ntwo");
         let Message::User(images) = &mixed.messages[1] else { panic!("images User") };
         assert_eq!(images.content.plain_text(), "Images attached to mixed-attachment.");
-        assert!(journal.entries()[3].message().is_none(), "single-message API must not drop a fragment");
+        assert!(journal.entries()[3].message().unwrap().is_none(), "single-message API must not drop a fragment");
         assert!(matches!(
             journal.projected_compaction_snapshot(),
             Err(CompactionProjectionError::Source(CompactionSourceError::MultipleMessageProjection { .. }))
@@ -999,7 +1023,7 @@ fn native_multi_fragments_stay_one_raw_group_and_images_cannot_be_hidden() {
                 .count(),
             2
         );
-        assert_eq!(reopened.model_context().len(), 6);
+        assert_eq!(reopened.model_context().unwrap().len(), 6);
         assert_eq!(reopened.entries(), journal.entries());
     }
 }
@@ -1016,10 +1040,15 @@ fn native_entry_validation_keeps_genuine_developer_and_malformed_special_rejecti
     for candidate in candidates {
         let (_directory, journal) = native_fixture(&[candidate, json!({"type":"message","message":assistant("done")})]);
         let bytes = fs::read(journal.path()).unwrap();
-        assert!(matches!(
-            journal.native_projected_compaction_snapshot(),
-            Err(CompactionProjectionError::Source(CompactionSourceError::UnsupportedContextEntry { .. }))
-        ));
+        let projected = journal.native_projected_compaction_snapshot();
+        assert!(
+            matches!(
+                &projected,
+                Err(CompactionProjectionError::Source(CompactionSourceError::UnsupportedContextEntry { .. }))
+            ),
+            "candidate={:?}, actual={projected:?}",
+            journal.entries()[0].raw
+        );
         assert_eq!(fs::read(journal.path()).unwrap(), bytes);
     }
     let (_directory, mut journal) = native_fixture(&[
@@ -1046,7 +1075,7 @@ fn native_entry_validation_keeps_genuine_developer_and_malformed_special_rejecti
     let bytes = fs::read(journal.path()).unwrap();
     let recovery = journal.recover_interrupted_tool_calls().unwrap();
     assert!(recovery.paired.is_empty());
-    assert_eq!(recovery.unpaired_earlier, ["call-1"]);
+    assert_eq!(recovery.unpaired_earlier, [ara_rpc::WireString::from("call-1")]);
     assert_eq!(
         fs::read(journal.path()).unwrap(),
         bytes,

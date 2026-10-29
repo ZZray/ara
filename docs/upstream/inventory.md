@@ -8,9 +8,9 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 
 | Scope | Surfaces | Files | Source lines | Test cases |
 | --- | ---: | ---: | ---: | ---: |
-| core | 36 | 1547 | 186350 | 7693 |
+| core | 36 | 1546 | 186350 | 7685 |
 | host | 15 | 763 | 132695 | 3268 |
-| host-ui | 6 | 955 | 146777 | 3641 |
+| host-ui | 6 | 956 | 146777 | 3649 |
 | native | 5 | 825 | 253407 | 2973 |
 | provider | 19 | 857 | 113144 | 3913 |
 | repo | 5 | 688 | 65227 | 823 |
@@ -21,7 +21,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | REPO-PKG-META | Package manifests, changelogs, READMEs, licenses, tsconfig | repo | - | none | 93 (0/0) | 0 | 0 | open |
 | AGT-LOOP | Agent loop: turns, streaming assistant messages, tool execution, abort | core | P1 | ara-agent::agent_loop | 15 (4/11) | 3291 | 139 | implementing |
 | AGT-AGENT | Stateful Agent: prompt/continue, subscriptions, queues, pause gate | core | P1 | ara-agent::agent | 6 (4/2) | 2827 | 51 | implementing |
-| AGT-APPEND-CTX | Append-only context mode | core | P1 | ara-agent::context | 2 (1/1) | 374 | 59 | open |
+| AGT-APPEND-CTX | Append-only context mode | core | P1 | ara-agent::append_only_context | 2 (1/1) | 374 | 59 | accepted |
 | AGT-COMPACTION | Compaction, branch summaries, pruning, handoff, shake | core | P1 | ara-agent::compaction | 50 (15/20) | 6133 | 199 | implementing |
 | AGT-PROXY | Proxy stream function (remote agent transport) | core | P2 | tbd | 3 (1/2) | 391 | 13 | open |
 | AGT-TELEMETRY | Agent telemetry and run collector | core | P2 | tbd | 5 (2/3) | 2744 | 63 | open |
@@ -39,14 +39,14 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | AI-OLLAMA | Ollama provider | provider | P3 | tbd | 8 (2/6) | 817 | 18 | open |
 | AI-KIMI | Kimi provider | provider | P3 | tbd | 5 (2/3) | 365 | 25 | open |
 | AI-PROVIDERS-MISC | Other provider transports and shared request helpers | provider | P3 | tbd | 39 (8/30) | 1089 | 184 | open |
-| AI-MOCK | Mock provider | core | P1 | ara-testkit | 2 (1/1) | 520 | 25 | implementing |
+| AI-MOCK | Mock provider | core | P1 | ara-ai::providers::mock / ara-cli::mock_provider_host | 2 (1/1) | 520 | 25 | accepted |
 | AI-TRANSFORM | Cross-provider message transform and vision guard | core | P1 | ara-ai::transform | 13 (2/11) | 1299 | 48 | implementing |
 | AI-REGISTRY | API/provider registry | provider | P2 | tbd | 10 (3/7) | 706 | 33 | open |
 | AI-SERVERS | Wire-protocol servers and auth gateway | host | P3 | tbd | 20 (6/14) | 2342 | 119 | open |
 | AI-AUTH | Credential storage, OAuth/API-key login, auth broker | host | P3 | ara-cli AuthStorage / shared Registry and request Host (bounded WIP) | 132 (55/76) | 19342 | 613 | implementing |
 | AI-DIALECT | In-band tool-call dialects | provider | P2 | tbd | 46 (26/8) | 6094 | 76 | open |
 | AI-ERROR | Provider error classification | core | P1 | ara-ai::error | 23 (15/8) | 2146 | 175 | implementing |
-| AI-RETRY | Retry, timeouts, empty completion recovery | core | P1 | tbd | 10 (6/4) | 1194 | 41 | implementing |
+| AI-RETRY | Retry, timeouts, empty completion recovery | core | P1 | ara-ai::retry / ara-cli::retry_host | 10 (6/4) | 1194 | 41 | accepted |
 | AI-STREAM-GUARDS | Stream healing and loop guards | provider | P2 | tbd | 13 (7/5) | 2497 | 89 | open |
 | AI-TOOLSCHEMA | Tool schema normalization and argument validation | core | P1 | ara-ai::validation | 35 (19/15) | 8031 | 381 | implementing |
 | AI-USAGE | Provider usage/quota reporting | service | P3 | tbd | 16 (10/6) | 2678 | 70 | open |
@@ -63,9 +63,9 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-SESSION-EXTRAS | Session reminders, stats, advisors, todos, workspace and bridges | service | P3 | tbd | 26 (18/8) | 5673 | 82 | open |
 | CA-TOOL-FRAMEWORK | Tool registry, results, errors, approval, rendering contract | core | P1 | ara-tools::registry | 58 (21/37) | 7314 | 473 | implementing |
 | CA-TOOL-READ | read tool | core | P1 | ara-tools::read | 33 (10/23) | 5252 | 152 | implementing |
-| CA-TOOL-WRITE | write tool | core | P1 | ara-tools::write | 18 (6/12) | 3159 | 204 | implementing |
+| CA-TOOL-WRITE | write tool | core | P1 | ara-tools::write | 17 (6/11) | 3159 | 196 | accepted |
 | CA-TOOL-BASH | bash tool and execution | core | P1 | ara-tools::bash | 31 (12/19) | 4408 | 240 | implementing |
-| CA-TOOL-EDIT | edit/patch tools | core | P1 | tbd (pi-edit vendoring candidate) | 24 (9/14) | 3114 | 92 | implementing |
+| CA-TOOL-EDIT | edit/patch tools | core | P1 | ara-tools::edit/ast_edit; ara-cli::actual_tools/terminal | 24 (9/14) | 3114 | 92 | accepted |
 | CA-TOOL-SEARCH | grep, glob, ast-grep tools | core | P1 | tbd (pi-walker vendoring candidate) | 17 (5/12) | 3459 | 133 | implementing |
 | CA-TOOL-INTERACT | ask, think, todo, yield, checkpoint tools | core | P2 | tbd | 15 (6/9) | 3777 | 250 | open |
 | CA-TOOL-GH | GitHub tools | service | P3 | tbd | 21 (12/9) | 5804 | 164 | open |
@@ -88,7 +88,7 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | CA-PRINT-MODE | Non-interactive print mode | host | P1 | ara-cli | 7 (1/6) | 247 | 20 | implementing |
 | CA-RPC | RPC mode (JSON lines over stdio) | host | P2 | tbd | 44 (15/24) | 9194 | 183 | open |
 | CA-ACP | Agent Client Protocol mode | host | P2 | tbd | 14 (6/8) | 4179 | 218 | open |
-| CA-TUI-MODE | Interactive terminal mode, components, controllers, themes, setup wizard | host-ui | P3 | host | 556 (210/240) | 82568 | 1868 | open |
+| CA-TUI-MODE | Interactive terminal mode, components, controllers, themes, setup wizard | host-ui | P3 | host | 557 (210/241) | 82568 | 1876 | open |
 | CA-CLI | CLI entry, argument parsing and subcommands | host | P1 | ara-cli | 123 (78/45) | 31096 | 445 | implementing |
 | CA-SDK | SDK entry (createAgentSession) | core | P2 | tbd | 20 (2/18) | 4394 | 171 | open |
 | CA-MCP | MCP client manager and transports | host | P2 | tbd | 80 (26/54) | 10299 | 302 | open |
@@ -117,14 +117,14 @@ Totals: 7038 files, 2071427 text lines (1120719 source lines), 27404 upstream te
 | PKG-WIRE | Shared wire protocol types | host | P2 | tbd | 2 (1/1) | 444 | 1 | open |
 | PKG-TUI | Terminal UI library | host-ui | P3 | host | 151 (59/92) | 30173 | 1390 | open |
 | PKG-NATIVES | N-API native bindings package | native | P3 | not needed in Rust | 34 (19/14) | 5965 | 120 | open |
-| PKG-SNAPCOMPACT | Snapcompact bitmap context compression | service | P3 | ara-snapcompact | 112 (82/1) | 31757 | 94 | implementing |
+| PKG-SNAPCOMPACT | Snapcompact bitmap context compression | service | P3 | ara-snapcompact | 112 (82/1) | 31757 | 94 | accepted |
 | PKG-MNEMOPI | mnemopi memory engine | service | P3 | tbd | 144 (67/76) | 19944 | 464 | open |
 | PKG-STATS | Stats dashboard | host-ui | P3 | host | 100 (72/26) | 16119 | 119 | open |
 | PKG-COLLAB-WEB | Collab web client | host-ui | P3 | host | 96 (67/10) | 9459 | 94 | open |
 | PKG-BROWSER-RELAY | Browser relay extension | service | P3 | tbd | 7 (5/0) | 588 | 0 | open |
 | REPO-BENCH | Benchmarks and harnesses | repo | - | none | 189 (96/43) | 36855 | 726 | open |
 | CRATE-PI-SHELL | pi-shell embedded shell | native | P2 | vendoring candidate | 415 (266/52) | 154621 | 2104 | open |
-| CRATE-PI-EDIT | pi-edit | native | P1 | vendoring candidate for CA-TOOL-EDIT | 169 (37/120) | 22185 | 286 | tested |
+| CRATE-PI-EDIT | pi-edit | native | P1 | vendoring candidate for CA-TOOL-EDIT | 169 (37/120) | 22185 | 286 | accepted |
 | CRATE-PI-WALKER | pi-walker | native | P1 | vendoring candidate for CA-TOOL-SEARCH | 7 (2/2) | 5596 | 38 | implementing |
 | CRATE-PI-OTHER | pi-ast, pi-vcs, pi-iso, pi-voice, pi-natives | native | P3 | vendoring candidate | 200 (139/6) | 65040 | 425 | open |
 | REPO-DOCS | Upstream documentation | repo | - | none | 140 (3/0) | 62 | 0 | open |

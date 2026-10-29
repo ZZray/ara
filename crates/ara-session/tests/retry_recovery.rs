@@ -44,7 +44,7 @@ fn exact_failed_entry_is_rewritten_and_survives_restart_without_losing_receipt()
     journal.update_retry_recovery(&[(id.clone(), recovery("recovered"))]).unwrap();
     assert_eq!(journal.leaf_id(), Some(final_leaf.as_str()));
     let reopened = SessionJournal::open(journal.path()).unwrap();
-    let mut updated = reopened.entries().iter().find(|entry| entry.id == id).unwrap().message().unwrap();
+    let mut updated = reopened.entries().iter().find(|entry| entry.id == id).unwrap().message().unwrap().unwrap();
     let Message::Assistant(message) = &mut updated else { panic!("assistant receipt") };
     assert_eq!(message.retry_recovery.take(), Some(recovery("recovered")));
     assert_eq!(updated, original);
@@ -73,6 +73,7 @@ fn invalid_or_duplicate_target_does_not_partially_mutate_valid_receipt() {
                 .unwrap()
                 .message()
                 .unwrap()
+                .unwrap()
                 .as_assistant()
                 .unwrap()
                 .retry_recovery
@@ -90,11 +91,11 @@ fn failed_atomic_rewrite_restores_memory_and_preserves_original_raw_bytes() {
     std::fs::remove_file(journal.path()).unwrap();
     std::fs::create_dir(journal.path()).unwrap();
     assert!(journal.update_retry_recovery(&[(id, recovery("recovered"))]).is_err());
-    assert!(journal.entries()[0].message().unwrap().as_assistant().unwrap().retry_recovery.is_none());
+    assert!(journal.entries()[0].message().unwrap().unwrap().as_assistant().unwrap().retry_recovery.is_none());
     std::fs::remove_dir(journal.path()).unwrap();
     std::fs::write(journal.path(), &original).unwrap();
     let reopened = SessionJournal::open(journal.path()).unwrap();
-    assert!(reopened.entries()[0].message().unwrap().as_assistant().unwrap().retry_recovery.is_none());
+    assert!(reopened.entries()[0].message().unwrap().unwrap().as_assistant().unwrap().retry_recovery.is_none());
 }
 
 #[test]
@@ -104,8 +105,8 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
         let projection = journal.compacted_context_projection().unwrap();
         assert_eq!(reopened.compacted_context_projection().unwrap(), projection);
         assert!(matches!(projection.items.first(), Some(ara_session::CompactedContextItem::Summary(_))));
-        let expected = journal.model_context();
-        let mut actual = reopened.model_context();
+        let expected = journal.model_context().unwrap();
+        let mut actual = reopened.model_context().unwrap();
         // Only the first synthetic summary projection gets a fresh timestamp.
         // Source IDs, raw receipts and all real message timestamps stay exact.
         let (Some(Message::User(projected)), Some(Message::User(original))) = (actual.first_mut(), expected.first())
@@ -183,8 +184,8 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
         assert_eq!(*restored_message, message);
         assert_eq!(appended_entry_id.is_some(), signature.is_some());
         let reopened = SessionJournal::open(journal.path()).unwrap();
-        assert_eq!(reopened.build_context().last(), Some(&Message::Assistant(message.clone())));
-        assert_eq!(reopened.model_context().last() == Some(&Message::Assistant(message)), signature.is_some());
+        assert_eq!(reopened.build_context().unwrap().last(), Some(&Message::Assistant(message.clone())));
+        assert_eq!(reopened.model_context().unwrap().last() == Some(&Message::Assistant(message)), signature.is_some());
     }
 
     // Imported sibling metadata children are chained in physical order.
@@ -224,7 +225,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     let reopened = SessionJournal::open(&path).unwrap();
     assert_eq!(reopened.leaf_id(), Some(marker.as_str()));
     assert_reopened_context(&journal, &reopened);
-    assert!(!reopened.model_context().iter().any(|message| message.as_assistant() == Some(&partial)));
+    assert!(!reopened.model_context().unwrap().iter().any(|message| message.as_assistant() == Some(&partial)));
 
     // A late Bash child retains its original ownership and raw off-branch subtree.
     let discarded = journal.append_message(&Message::Assistant(partial.clone())).unwrap();
@@ -334,6 +335,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
             name: "write".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         })],
     ] {
         let mut actionable = empty_stop.clone();
@@ -347,7 +349,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     let reopened = SessionJournal::open(stops.path()).unwrap();
     assert_eq!(reopened.entries(), stops.entries());
     assert_eq!(reopened.leaf_id(), Some(dropped.as_str()));
-    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.model_context().unwrap(), vec![request_message.clone()]);
     assert_eq!(reopened.compaction_source_snapshot().unwrap().messages[0].entry_id, request);
     assert!(reopened.compacted_context_projection().is_ok());
 
@@ -373,6 +375,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
             name: "write".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         }),
     ] {
         let mut anchored = orphan.clone();
@@ -386,7 +389,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
         stops.discard_empty_assistant_terminal_durably(Some(&orphan_id), &orphan_id, &orphan).unwrap().unwrap();
     let reopened = SessionJournal::open(stops.path()).unwrap();
     assert_eq!(reopened.leaf_id(), Some(dropped.as_str()));
-    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.model_context().unwrap(), vec![request_message.clone()]);
     assert_eq!(reopened.entries(), stops.entries());
     assert!(!reopened.entries().iter().any(|entry| entry.id == stopped));
 
@@ -405,7 +408,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     assert!(!stops.branch().iter().any(|entry| entry.id == stopped));
     let reopened = SessionJournal::open(stops.path()).unwrap();
     assert_eq!(reopened.entries(), stops.entries());
-    assert_eq!(reopened.model_context(), vec![request_message.clone()]);
+    assert_eq!(reopened.model_context().unwrap(), vec![request_message.clone()]);
     assert_eq!(reopened.compaction_source_snapshot().unwrap(), stops.compaction_source_snapshot().unwrap());
     assert_eq!(reopened.compacted_context_projection().unwrap(), stops.compacted_context_projection().unwrap());
 
@@ -424,7 +427,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
     let reopened = SessionJournal::open(stops.path()).unwrap();
     assert_eq!(reopened.entries(), stops.entries());
     assert_eq!(reopened.leaf_id(), Some(accepted_custom.as_str()));
-    assert_eq!(reopened.model_context(), vec![request_message]);
+    assert_eq!(reopened.model_context().unwrap(), vec![request_message]);
     assert!(reopened.compaction_source_snapshot().is_ok());
     assert!(reopened.compacted_context_projection().is_ok());
 
@@ -480,6 +483,7 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
         name: "write".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     let tool_id = protected.append_message(&Message::Assistant(tool_turn.clone())).unwrap();
     let receipt = protected
@@ -490,6 +494,8 @@ fn failed_assistant_recovery_transaction_preserves_native_ownership_durability_a
             details: Some(json!({"executed":"unknown","panicked":true})),
             is_error: true,
             timestamp: 10,
+            provider_metadata: None,
+            useless: false,
         }))
         .unwrap();
     let protected_entries = protected.entries().to_vec();

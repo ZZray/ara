@@ -2,9 +2,9 @@
 //!
 //! Adapted from fixed OMP `packages/ai/src/error/{rate-limit,flags,retryable}.ts`
 //! and `packages/utils/src/fetch-retry.ts`
-//! at 596f2da7101178214aa27a753529d15e6b7ad91d (MIT). This private
-//! classifier governs only the outer OpenAI Chat replay; credential rotation
-//! and the inner HTTP retry policy belong to other layers.
+//! at 596f2da7101178214aa27a753529d15e6b7ad91d (MIT). The same classifier
+//! governs outer OpenAI Chat replay and the Host's fallback-selector cooldown;
+//! credential rotation and the inner HTTP retry policy belong to other layers.
 
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -52,6 +52,10 @@ regex!(STATUS_FRAMING, r"(?i)\b(?:429|402|http|https|status|error|code|response|
 regex!(INFORMATIVE_LATIN, r"(?i)[a-z\d]{3,}");
 regex!(PAYMENT_CAP, r"(?i)\b(?:payment(?:\s+is)?[-_.\s]*required|deactivated_workspace|insufficient.?balance)\b");
 regex!(SPEND_LIMIT, r"(?i)spend.?limit");
+regex!(INSUFFICIENT_BALANCE, r"(?i)insufficient.?balance");
+regex!(TRANSIENT_INTERVAL_RATE_LIMIT, r"(?i)\bper\s+(?:second|minute)\b");
+regex!(RESOURCE_EXHAUSTED, r"(?i)resource.?exhausted");
+regex!(ANTIGRAVITY_MODEL_QUOTA, r"(?i)\bexhausted your capacity on this model\b");
 regex!(RESET_AFTER, r"(?i)reset after (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s");
 regex!(
     RESET_AT,
@@ -64,14 +68,31 @@ regex!(PLEASE_RETRY, r"(?i)please retry in ([0-9.]+)(ms|s)");
 regex!(RETRY_DELAY_FIELD, r#"(?i)"retryDelay":\s*"([0-9.]+)(ms|s)""#);
 regex!(TRY_AGAIN, r"(?i)try again in\s+~?\s*([0-9.]+)\s*(ms|sec|s|minutes?|mins?|m|hours?|hrs?|h)\b");
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reason {
     Quota,
+    InsufficientG1CreditsBalance,
     Rate,
     Concurrent,
     Capacity,
     Server,
     Unknown,
+}
+
+impl Reason {
+    fn is_quota(self) -> bool {
+        matches!(self, Self::Quota | Self::InsufficientG1CreditsBalance)
+    }
+
+    fn backoff_ms(self, random: f64) -> f64 {
+        match self {
+            Self::Quota | Self::InsufficientG1CreditsBalance | Self::Unknown => 1_800_000.0,
+            Self::Rate => 30_000.0,
+            Self::Concurrent => 5_000.0,
+            Self::Capacity => 45_000.0 + random * 30_000.0,
+            Self::Server => 20_000.0,
+        }
+    }
 }
 
 fn dashscope_token_throttle(message: &str) -> bool {
@@ -83,13 +104,20 @@ fn chinese_quota(message: &str) -> bool {
 }
 
 fn subscription_cap(message: &str) -> bool {
-    SUBSCRIPTION_CAP.is_match(message)
-        && !message.to_ascii_lowercase().contains("per minute")
-        && !message.to_ascii_lowercase().contains("per second")
+    SUBSCRIPTION_CAP.is_match(message) && !TRANSIENT_INTERVAL_RATE_LIMIT.is_match(message)
 }
 
-fn reason(message: &str) -> Reason {
-    let lower = message.to_ascii_lowercase();
+fn reason(message: &str, now_ms: f64) -> Reason {
+    if let Some(reason) = parsed_embedded_json(message)
+        .as_ref()
+        .and_then(|body| body.get("error"))
+        .and_then(|error| google_rpc_reason(error, message, now_ms))
+    {
+        return reason;
+    }
+    let lower_with_status = message.to_ascii_lowercase();
+    let lower = RESOURCE_EXHAUSTED.replace_all(&lower_with_status, "");
+    let has_resource_exhausted_status = lower != lower_with_status;
     if lower.contains("quota will reset") || lower.contains("exhausted your capacity") || chinese_quota(message) {
         return Reason::Quota;
     }
@@ -116,6 +144,7 @@ fn reason(message: &str) -> Reason {
     if ["exhausted", "quota", "usage limit", "run out of credits", "out of credits", "spending-limit", "spending limit"]
         .iter()
         .any(|part| lower.contains(part))
+        || INSUFFICIENT_BALANCE.is_match(message)
         || CREDITS_EXHAUSTED.is_match(message)
     {
         return Reason::Quota;
@@ -123,7 +152,24 @@ fn reason(message: &str) -> Reason {
     if lower.contains("500") || lower.contains("internal error") || lower.contains("internal server error") {
         return Reason::Server;
     }
+    if has_resource_exhausted_status {
+        return Reason::Capacity;
+    }
     Reason::Unknown
+}
+
+/// Delay before a failed selector may be considered by the Host fallback chain.
+///
+/// A positive server hint wins. Otherwise this follows fixed OMP's
+/// `turn-recovery.ts::noteRetryFallbackCooldown`, including its shorter UNKNOWN
+/// default. `now_ms` is Unix epoch milliseconds and `random` is the caller's
+/// sample in `[0, 1)`, making absolute reset classification and jitter pure.
+pub fn fallback_cooldown_ms(message: &str, retry_after_ms: Option<f64>, now_ms: f64, random: f64) -> f64 {
+    if let Some(ms) = retry_after_ms.filter(|ms| *ms > 0.0) {
+        return ms;
+    }
+    let reason = reason(message, now_ms);
+    if reason == Reason::Unknown { 300_000.0 } else { reason.backoff_ms(random) }
 }
 
 fn matches_usage_text(message: &str) -> bool {
@@ -137,7 +183,7 @@ fn matches_usage_text(message: &str) -> bool {
             || OPENROUTER_FREE_DAY.is_match(message))
 }
 
-fn opaque_status_body(body: &str) -> bool {
+pub(crate) fn opaque_status_body(body: &str) -> bool {
     let cleaned = STATUS_FRAMING.replace_all(body, "");
     !INFORMATIVE_LATIN.is_match(&cleaned)
         && !CN_QUOTA.is_match(&cleaned)
@@ -148,6 +194,9 @@ fn opaque_status_body(body: &str) -> bool {
 fn parsed_embedded_json(text: &str) -> Option<Value> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
+    if end < start {
+        return None;
+    }
     serde_json::from_str(&text[start..=end]).ok()
 }
 
@@ -161,7 +210,7 @@ fn unit_ms(unit: &str) -> Option<f64> {
     }
 }
 
-fn absolute_reset_ms(body: &str) -> Option<f64> {
+fn absolute_reset_ms(body: &str, now_ms: f64) -> Option<f64> {
     for pattern in [&*RESET_AT, &*CN_RESET_AT] {
         let Some(parts) = pattern.captures(body) else { continue };
         let mut value = parts.get(1)?.as_str().replace(' ', "T");
@@ -176,16 +225,16 @@ fn absolute_reset_ms(body: &str) -> Option<f64> {
         {
             value.insert(position + 3, ':');
         }
-        let reset = DateTime::parse_from_rfc3339(&value).ok()?;
-        let ms = reset.signed_duration_since(Utc::now()).num_milliseconds();
-        if ms > 0 {
-            return Some(ms as f64);
+        let Ok(reset) = DateTime::parse_from_rfc3339(&value) else { continue };
+        let ms = reset.timestamp_millis() as f64 - now_ms;
+        if ms > 0.0 {
+            return Some(ms);
         }
     }
     None
 }
 
-pub(crate) fn retry_hint_ms(body: &str) -> Option<f64> {
+fn retry_hint_ms_at(body: &str, now_ms: f64) -> Option<f64> {
     if let Some(parts) = RESET_AFTER.captures(body) {
         let hours = parts.get(1).and_then(|part| part.as_str().parse::<f64>().ok()).unwrap_or(0.0);
         let minutes = parts.get(2).and_then(|part| part.as_str().parse::<f64>().ok()).unwrap_or(0.0);
@@ -195,7 +244,7 @@ pub(crate) fn retry_hint_ms(body: &str) -> Option<f64> {
             return Some(ms);
         }
     }
-    if let Some(ms) = absolute_reset_ms(body) {
+    if let Some(ms) = absolute_reset_ms(body, now_ms) {
         return Some(ms);
     }
     if let Some(parts) = RESET_IN.captures(body) {
@@ -221,7 +270,7 @@ pub(crate) fn retry_hint_ms(body: &str) -> Option<f64> {
     None
 }
 
-fn google_rpc_quota(error: &Value, full_body: &str) -> Option<bool> {
+fn google_rpc_reason(error: &Value, full_body: &str, now_ms: f64) -> Option<Reason> {
     if !error.get("status")?.as_str()?.trim().eq_ignore_ascii_case("RESOURCE_EXHAUSTED") {
         return None;
     }
@@ -231,12 +280,15 @@ fn google_rpc_quota(error: &Value, full_body: &str) -> Option<bool> {
             continue;
         }
         match detail.get("reason").and_then(Value::as_str).map(|reason| reason.trim().to_ascii_uppercase()).as_deref() {
-            Some("QUOTA_EXHAUSTED" | "INSUFFICIENT_G1_CREDITS_BALANCE") => return Some(true),
+            Some("QUOTA_EXHAUSTED") => return Some(Reason::Quota),
+            Some("INSUFFICIENT_G1_CREDITS_BALANCE") => return Some(Reason::InsufficientG1CreditsBalance),
             Some("RATE_LIMIT_EXCEEDED") => {
-                let model_quota = error.get("message").and_then(Value::as_str).is_some_and(|message| {
-                    message.to_ascii_lowercase().contains("exhausted your capacity on this model")
-                });
-                return Some(model_quota || retry_hint_ms(full_body).is_some_and(|ms| ms >= 300_000.0));
+                let model_quota = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| ANTIGRAVITY_MODEL_QUOTA.is_match(message));
+                let quota = model_quota || retry_hint_ms_at(full_body, now_ms).is_some_and(|ms| ms >= 300_000.0);
+                return Some(if quota { Reason::Quota } else { Reason::Rate });
             }
             _ => {}
         }
@@ -265,13 +317,14 @@ pub(crate) fn account_usage_limit(
     let error = body.or(parsed.as_ref()).and_then(|value| value.get("error").or(Some(value)));
     let owned_body = body.map(Value::to_string);
     let full_body = raw_body.or(owned_body.as_deref()).unwrap_or(detail);
-    if let Some(quota) = error.and_then(|error| google_rpc_quota(error, full_body)) {
-        return quota;
+    let now_ms = Utc::now().timestamp_millis() as f64;
+    if let Some(reason) = error.and_then(|error| google_rpc_reason(error, full_body, now_ms)) {
+        return reason.is_quota();
     }
     if dashscope_token_throttle(detail) {
         return false;
     }
-    let reason = reason(detail);
+    let reason = reason(detail, now_ms);
     if has_code(
         error,
         &[
@@ -301,9 +354,10 @@ pub(crate) fn account_usage_limit(
     if status == Some(402) {
         return opaque_status_body(raw)
             || PAYMENT_CAP.is_match(detail)
-            || matches!(reason, Reason::Quota | Reason::Concurrent);
+            || reason.is_quota()
+            || reason == Reason::Concurrent;
     }
-    status == Some(429) && (opaque_status_body(raw) || reason == Reason::Quota)
+    status == Some(429) && (opaque_status_body(raw) || reason.is_quota())
 }
 
 #[cfg(test)]
@@ -323,6 +377,7 @@ mod tests {
         for body in [
             "Too many requests",
             "Requests per minute limit reached",
+            "Your subscription rate limit is throttled per  minute",
             "Concurrent requests quota exceeded",
             "Please retry in 5s",
             "Service overloaded 529",
@@ -340,6 +395,8 @@ mod tests {
     fn account_text_and_billing() {
         for body in [
             "quota reached",
+            "Insufficient Balance",
+            "resource_exhausted",
             "Your account's rate limit was reached",
             "You've exceeded your subscription rate limits",
             "free-models-per-day",
@@ -384,6 +441,10 @@ mod tests {
         for reason in ["QUOTA_EXHAUSTED", "INSUFFICIENT_G1_CREDITS_BALANCE"] {
             let body = google(reason, None, "Too many requests");
             assert!(account_usage_limit(Some(429), Some(&body), "Too many requests", None));
+            let expected =
+                if reason == "QUOTA_EXHAUSTED" { Reason::Quota } else { Reason::InsufficientG1CreditsBalance };
+            assert_eq!(super::reason(&body.to_string(), 0.0), expected);
+            assert_eq!(fallback_cooldown_ms(&body.to_string(), None, 0.0, 0.5), 1_800_000.0);
         }
         let short = google("RATE_LIMIT_EXCEEDED", Some("30s"), "Too many requests");
         assert!(!account_usage_limit(Some(429), Some(&short), "Too many requests", None));
@@ -406,6 +467,48 @@ mod tests {
         assert!(!account_usage_limit(Some(429), Some(&past_reset), "Too many requests", None));
         let model = google("RATE_LIMIT_EXCEEDED", None, "You have exhausted your capacity on this model");
         assert!(account_usage_limit(Some(429), Some(&model), "Too many requests", None));
+        let non_model =
+            google("RATE_LIMIT_EXCEEDED", None, "You have exhausted your capacity on this modeling endpoint");
+        assert!(!account_usage_limit(Some(429), Some(&non_model), "Too many requests", None));
+
+        let now_ms = DateTime::parse_from_rfc3339("2026-10-04T00:00:00Z").unwrap().timestamp_millis() as f64;
+        for (delay, expected) in [("299.999s", Reason::Rate), ("300s", Reason::Quota), ("300000ms", Reason::Quota)] {
+            // Structured ErrorInfo is authoritative even when the display text
+            // contains a conflicting quota or server error signal.
+            let body = google("RATE_LIMIT_EXCEEDED", Some(delay), "quota exceeded internal error").to_string();
+            assert_eq!(super::reason(&format!("HTTP 429: {body}"), now_ms), expected);
+        }
+        let reset = google("RATE_LIMIT_EXCEEDED", None, "Your limit will reset in 10 minutes. Please retry in 5s");
+        assert_eq!(super::reason(&reset.to_string(), now_ms), Reason::Quota);
+        for (timestamp, expected) in [
+            ("2026-10-04 00:04:59Z", Reason::Rate),
+            ("2026-10-04 00:05:00Z", Reason::Quota),
+            ("2026-10-04 08:05:00+0800", Reason::Quota),
+            ("2026-10-04 00:05:00", Reason::Quota),
+            ("2026-10-03 23:59:00Z", Reason::Rate),
+        ] {
+            let body = google(
+                "RATE_LIMIT_EXCEEDED",
+                None,
+                &format!("Your limit will reset at {timestamp}. Please retry in 5s"),
+            );
+            assert_eq!(super::reason(&body.to_string(), now_ms), expected);
+        }
+        let reset = google("RATE_LIMIT_EXCEEDED", None, "您的限额将在 2026-10-04 00:05:00 重置");
+        assert_eq!(super::reason(&reset.to_string(), now_ms), Reason::Quota);
+        let reset =
+            google("RATE_LIMIT_EXCEEDED", None, "reset at 2026-99-04 00:05:00Z; 您的限额将在 2026-10-04 00:05:00 重置");
+        assert_eq!(super::reason(&reset.to_string(), now_ms), Reason::Quota);
+        // Unknown/malformed details fall through to native text classification.
+        let body = google("UNRECOGNIZED", None, "internal server error");
+        assert_eq!(super::reason(&body.to_string(), now_ms), Reason::Server);
+        let body = json!({"error": {
+            "status": "RESOURCE_EXHAUSTED", "message": "Too many requests", "details": [
+                {"@type": "another.type", "reason": "QUOTA_EXHAUSTED"},
+                {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": " rate_limit_exceeded "}
+            ]
+        }});
+        assert_eq!(super::reason(&body.to_string(), now_ms), Reason::Rate);
     }
 
     #[test]
@@ -416,5 +519,58 @@ mod tests {
         let throttled = format!("{message} https://help.aliyun.com/zh/model-studio/error-code#token-limit");
         assert!(!account_usage_limit(Some(429), Some(&body), &throttled, None));
         assert!(classify(Some(429), "Free allocated quota exceeded https://help.aliyun.com/error-code#token-limit"));
+    }
+
+    #[test]
+    fn fallback_cooldown_preserves_reason_priority_and_positive_hint() {
+        // Fixed OMP parseRateLimitReason + calculateRateLimitBackoffMs, with
+        // turn-recovery's specific UNKNOWN override and caller-sampled jitter.
+        for (message, expected_reason, expected_ms) in [
+            ("quota will reset after 1h2m3s, capacity overloaded", Reason::Quota, 1_800_000.0),
+            ("已达到 5 小时的使用上限", Reason::Quota, 1_800_000.0),
+            (
+                "You exceeded your current quota, please check your plan and billing details https://help.aliyun.com/error-code#token-limit",
+                Reason::Rate,
+                30_000.0,
+            ),
+            ("Too many concurrent requests, quota exceeded, capacity", Reason::Concurrent, 5_000.0),
+            ("Concurrent invocation is not supported", Reason::Unknown, 300_000.0),
+            ("overloaded, quota exceeded", Reason::Capacity, 60_000.0),
+            ("HTTP 503", Reason::Capacity, 60_000.0),
+            ("HTTP 529", Reason::Capacity, 60_000.0),
+            ("Your account's rate limit was reached", Reason::Quota, 1_800_000.0),
+            ("Spend limit reached", Reason::Quota, 1_800_000.0),
+            ("You've exceeded your subscription rate limits", Reason::Quota, 1_800_000.0),
+            ("Your subscription rate limit is throttled per  minute", Reason::Rate, 30_000.0),
+            ("Your subscription rate limit is throttled per\tsecond", Reason::Rate, 30_000.0),
+            ("free-models-per-day", Reason::Quota, 1_800_000.0),
+            ("clinepass limit reached", Reason::Quota, 1_800_000.0),
+            ("Free limit reached on model x/y", Reason::Quota, 1_800_000.0),
+            ("Requests per minute limit reached", Reason::Rate, 30_000.0),
+            ("Too many requests, quota exceeded", Reason::Rate, 30_000.0),
+            ("presque", Reason::Rate, 30_000.0),
+            ("Insufficient Balance", Reason::Quota, 1_800_000.0),
+            ("Available credits depleted", Reason::Quota, 1_800_000.0),
+            ("HTTP 500", Reason::Server, 20_000.0),
+            ("internal error", Reason::Server, 20_000.0),
+            ("resource_exhausted", Reason::Capacity, 60_000.0),
+            ("RESOURCE EXHAUSTED: rate limit exceeded", Reason::Rate, 30_000.0),
+            ("resource exhausted: quota exceeded", Reason::Quota, 1_800_000.0),
+            ("resource exhausted: internal server error", Reason::Server, 20_000.0),
+            ("request declined", Reason::Unknown, 300_000.0),
+            ("malformed } before {", Reason::Unknown, 300_000.0),
+        ] {
+            assert_eq!(reason(message, 0.0), expected_reason, "{message:?}");
+            for hint in [None, Some(0.0), Some(-1.0), Some(f64::NAN)] {
+                assert_eq!(fallback_cooldown_ms(message, hint, 0.0, 0.5), expected_ms, "{message:?} {hint:?}");
+            }
+            assert_eq!(fallback_cooldown_ms(message, Some(123.0), 0.0, 0.5), 123.0, "{message:?}");
+        }
+        assert_eq!(fallback_cooldown_ms("request declined", Some(f64::INFINITY), 0.0, 0.0), f64::INFINITY);
+        assert_eq!(fallback_cooldown_ms("Service overloaded", None, 0.0, 0.0), 45_000.0);
+        assert_eq!(fallback_cooldown_ms("Service overloaded", None, 0.0, 0.999), 74_970.0);
+        // A body retry hint informs Google classification; the Host-provided
+        // retry hint is the only delay override for this cooldown function.
+        assert_eq!(fallback_cooldown_ms("Please retry in 5s", None, 0.0, 0.5), 300_000.0);
     }
 }

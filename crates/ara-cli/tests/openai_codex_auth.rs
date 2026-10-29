@@ -8,7 +8,10 @@ use ara_cli::auth_storage_policy::UsageReport;
 use ara_cli::codex_usage::CodexUsageProvider;
 use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore, StoredAuthCredential};
 use ara_cli::model_route::{AuthResolveError, CredentialIdentity, PreparedRoute, ProtocolOptions, RequestAuthResolver};
-use ara_cli::openai_codex_auth::{CodexAuthError, OpenAiCodexAuth, OpenAiCodexDeviceLogin};
+use ara_cli::openai_codex_auth::{
+    BrowserLoginError, BrowserLoginInfo, CodexAuthError, OpenAiCodexAuth, OpenAiCodexBrowserLogin,
+    OpenAiCodexDeviceLogin,
+};
 use ara_testkit::{FakeUpstream, Script};
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -19,6 +22,280 @@ use tokio_util::sync::CancellationToken;
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap()
+}
+
+// Browser contracts stay in the existing issuance/fault/publication families.
+async fn start_browser(
+    fake: &FakeUpstream,
+    manual: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    timeout: Duration,
+) -> (tokio::task::JoinHandle<Result<AuthCredential, BrowserLoginError>>, BrowserLoginInfo, CancellationToken) {
+    let issuer = OpenAiCodexBrowserLogin::with_endpoints(client(), &format!("http://{}", fake.addr), 0)
+        .unwrap()
+        .with_callback_timeout(timeout);
+    let cancel = CancellationToken::new();
+    let caller = cancel.clone();
+    let (ready, info) = tokio::sync::oneshot::channel();
+    let operation = tokio::spawn(async move {
+        let mut ready = Some(ready);
+        issuer
+            .issue(
+                &caller,
+                manual,
+                move |info| {
+                    let _ = ready.take().unwrap().send(info);
+                },
+                |_| {},
+            )
+            .await
+    });
+    let info = tokio::time::timeout(Duration::from_secs(2), info).await.unwrap().unwrap();
+    (operation, info, cancel)
+}
+
+fn browser_parameters(info: &BrowserLoginInfo) -> std::collections::BTreeMap<String, String> {
+    reqwest::Url::parse(&info.url).unwrap().query_pairs().into_owned().collect()
+}
+
+async fn browser_callback(info: &BrowserLoginInfo, code: &str) -> reqwest::Response {
+    let parameters = browser_parameters(info);
+    client()
+        .get(&parameters["redirect_uri"])
+        .query(&[("code", code), ("state", parameters["state"].as_str())])
+        .send()
+        .await
+        .unwrap()
+}
+
+fn browser_token() -> Value {
+    response(json!({"access_token":access_with_email("browser-account", "eu", " Browser@Example.com "),
+        "refresh_token":"browser-refresh", "expires_in":3600}))
+}
+
+async fn browser_callback_manual_and_profile_contracts() {
+    let mut delayed = browser_token();
+    delayed["delay_ms"] = json!(200);
+    let fake = upstream(vec![delayed]).await;
+    let (sender, manual) = tokio::sync::mpsc::unbounded_channel();
+    let (operation, info, _) = start_browser(&fake, Some(manual), Duration::from_secs(3)).await;
+    let parameters = browser_parameters(&info);
+    assert_eq!(parameters["client_id"], "app_EMoamEEZ73f0CkXaXp7hrann");
+    assert_eq!(parameters["response_type"], "code");
+    assert_eq!(parameters["scope"], "openid profile email offline_access api.connectors.read api.connectors.invoke");
+    assert_eq!(parameters["code_challenge_method"], "S256");
+    assert_eq!(parameters["originator"], "omp");
+    assert_eq!(parameters["id_token_add_organizations"], "true");
+    assert_eq!(parameters["codex_cli_simplified_flow"], "true");
+    assert_eq!(parameters["state"].len(), 32);
+    assert!(parameters["state"].bytes().all(|value| value.is_ascii_hexdigit()));
+    let redirect = reqwest::Url::parse(&parameters["redirect_uri"]).unwrap();
+    assert_eq!(redirect.host_str(), Some("localhost"));
+    assert_eq!(redirect.path(), "/auth/callback");
+    assert_eq!(info.launch_url, format!("http://localhost:{}/launch", redirect.port().unwrap()));
+    let launch = client().get(&info.launch_url).send().await.unwrap();
+    assert_eq!(launch.status(), 302);
+    assert_eq!(launch.headers()["location"], info.url);
+    assert_eq!(
+        client().get(format!("http://127.0.0.1:{}/stray", redirect.port().unwrap())).send().await.unwrap().status(),
+        404
+    );
+    if let Ok(probe) = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await {
+        drop(probe);
+        let launch = client().get(format!("http://[::1]:{}/launch", redirect.port().unwrap())).send().await.unwrap();
+        assert_eq!(launch.status(), 302, "IPv6 must not receive another process's callback");
+    }
+    for query in [vec![], vec![("code", "wrong"), ("state", "wrong-state")], vec![("error", "access_denied")]] {
+        let invalid = client().get(redirect.clone()).query(&query).send().await.unwrap();
+        assert_eq!(invalid.status(), 500);
+        assert_eq!(invalid.headers()["content-type"], "text/html");
+        assert!(invalid.text().await.unwrap().contains("ARA"));
+        assert!(!operation.is_finished(), "untrusted callback cannot settle this login");
+    }
+    let accepted = browser_callback(&info, "http-winner").await;
+    assert_eq!(accepted.status(), 200);
+    let html = accepted.text().await.unwrap();
+    assert!(
+        html.ends_with("</html>\n") || html.trim_end().ends_with("</html>"),
+        "complete feedback must arrive before issuer closes"
+    );
+    assert!(html.contains("http-winner"));
+    assert!(html.contains("Please close this tab manually."));
+    wait_requests(&fake, 1).await;
+    let _ = sender.send("manual-loser".into());
+    let repeated = client()
+        .get(&parameters["redirect_uri"])
+        .query(&[("code", "http-loser"), ("state", parameters["state"].as_str())])
+        .send()
+        .await;
+    if let Ok(repeated) = repeated {
+        assert_eq!(repeated.status(), 200);
+        let _ = repeated.text().await.unwrap();
+    } else {
+        assert!(operation.is_finished(), "listener may close only after the winning issuer settles");
+    }
+    let credential = operation.await.unwrap().unwrap();
+    let AuthCredential::OAuth { fields } = credential else { panic!("browser issuer must produce OAuth") };
+    assert_eq!(fields["accountId"], "browser-account");
+    assert_eq!(fields["email"], "browser@example.com");
+    assert_eq!(fields["refresh"], "browser-refresh");
+    assert!(fields["expires"].as_i64().unwrap() > now_ms());
+    assert!(client().get(&info.launch_url).send().await.is_err(), "no stale launch listener after completion");
+    let requests = fake.requests.lock().await;
+    assert_eq!(requests.len(), 1, "first valid callback/manual winner exchanges once");
+    assert_eq!(requests[0]["request"], "POST /oauth/token HTTP/1.1");
+    assert_eq!(requests[0]["headers"]["content-type"], "application/x-www-form-urlencoded");
+    let form =
+        reqwest::Url::parse(&format!("http://fixture.invalid/?{}", requests[0]["body"].as_str().unwrap())).unwrap();
+    let form: std::collections::BTreeMap<_, _> = form.query_pairs().into_owned().collect();
+    assert_eq!(form["code"], "http-winner");
+    assert_eq!(form["redirect_uri"], parameters["redirect_uri"]);
+    assert_eq!(form["grant_type"], "authorization_code");
+    assert_eq!(form["client_id"], parameters["client_id"]);
+    assert_eq!(form["code_verifier"].len(), 128);
+    assert_eq!(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&form["code_verifier"]).unwrap().len(), 96);
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(ring::digest::digest(&ring::digest::SHA256, form["code_verifier"].as_bytes()).as_ref());
+    assert_eq!(challenge, parameters["code_challenge"]);
+    drop(requests);
+
+    for format in 0..6 {
+        let fake = upstream(vec![browser_token()]).await;
+        let (sender, manual) = tokio::sync::mpsc::unbounded_channel();
+        let (operation, info, _) = start_browser(&fake, Some(manual), Duration::from_secs(3)).await;
+        let state = browser_parameters(&info)["state"].clone();
+        sender.send(" ".into()).unwrap();
+        sender.send("http://localhost/callback?state=missing-code".into()).unwrap();
+        sender.send("?code=invalid&state=wrong-state".into()).unwrap();
+        let input = match format {
+            0 => "pasted-code".into(),
+            1 => format!("pasted-code#{state}"),
+            2 => format!("http://arbitrary.example/path?code=pasted-code&state={state}"),
+            3 => format!("?code=pasted-code&state={state}"),
+            4 => format!("#code=pasted-code&state={state}"),
+            _ => "custom:redirect?code=pasted-code".into(),
+        };
+        sender.send(input).unwrap();
+        operation.await.unwrap().unwrap();
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0]["body"].as_str().unwrap().contains("code=pasted-code"));
+        assert!(!requests[0]["body"].as_str().unwrap().contains("invalid"));
+    }
+    let fake = upstream(vec![browser_token()]).await;
+    let (sender, manual) = tokio::sync::mpsc::unbounded_channel();
+    drop(sender);
+    let (operation, info, _) = start_browser(&fake, Some(manual), Duration::from_secs(3)).await;
+    let _ = browser_callback(&info, "callback-after-input-closed").await.text().await.unwrap();
+    operation.await.unwrap().unwrap();
+}
+
+async fn browser_failures_and_exchange_cancellation_never_replay() {
+    let fake = upstream(vec![]).await;
+    let issuer = OpenAiCodexBrowserLogin::with_endpoints(client(), &format!("http://{}", fake.addr), 0).unwrap();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert_eq!(
+        issuer.issue(&cancel, None, |_| panic!("pre-cancel cannot advertise"), |_| {}).await.err(),
+        Some(CodexAuthError::Cancelled.into())
+    );
+    let blocker = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = blocker.local_addr().unwrap().port();
+    let issuer = OpenAiCodexBrowserLogin::with_endpoints(client(), &format!("http://{}", fake.addr), port).unwrap();
+    assert_eq!(
+        issuer.issue(&CancellationToken::new(), None, |_| panic!("bind failure cannot advertise"), |_| {}).await.err(),
+        Some(BrowserLoginError::CallbackPortInUse(port))
+    );
+    drop(blocker);
+    if let Ok(blocker) = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await {
+        let port = blocker.local_addr().unwrap().port();
+        let issuer = OpenAiCodexBrowserLogin::with_endpoints(client(), &format!("http://{}", fake.addr), port).unwrap();
+        assert_eq!(
+            issuer
+                .issue(&CancellationToken::new(), None, |_| panic!("companion collision cannot advertise"), |_| {})
+                .await
+                .err(),
+            Some(BrowserLoginError::CallbackPortInUse(port))
+        );
+        let released = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await.unwrap();
+        drop(released);
+        drop(blocker);
+    }
+    let (operation, info, cancel) = start_browser(&fake, None, Duration::from_secs(3)).await;
+    cancel.cancel();
+    assert_eq!(operation.await.unwrap().err(), Some(CodexAuthError::Cancelled.into()));
+    assert!(client().get(info.launch_url).send().await.is_err());
+    let (operation, info, _) = start_browser(&fake, None, Duration::from_millis(20)).await;
+    assert_eq!(operation.await.unwrap().err(), Some(CodexAuthError::TimedOut.into()));
+    assert!(client().get(info.launch_url).send().await.is_err());
+    assert_eq!(fake.served(), 0);
+    let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+    let parameters = browser_parameters(&info);
+    let denied = client()
+        .get(&parameters["redirect_uri"])
+        .query(&[
+            ("error", "access_denied"),
+            ("error_description", "Denied </script>"),
+            ("code", "not-a-success"),
+            ("state", parameters["state"].as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 500, "error wins over code");
+    let html = denied.text().await.unwrap();
+    assert!(html.contains("Authorization failed: Denied \\u003c/script\\u003e"));
+    assert_eq!(operation.await.unwrap().err(), Some(BrowserLoginError::AuthorizationDenied));
+    assert_eq!(fake.served(), 0);
+
+    for (reply, expected) in [
+        (json!({"status":400,"body":"private rejected code"}), CodexAuthError::HttpStatus(400)),
+        (json!({"status":503,"body":"private server failure"}), CodexAuthError::OutcomeUnknown),
+        (json!({"body":"{truncated-token"}), CodexAuthError::OutcomeUnknown),
+        (
+            response(json!({"access_token":"opaque-no-account","refresh_token":"private-refresh","expires_in":3600})),
+            CodexAuthError::OutcomeUnknown,
+        ),
+    ] {
+        let fake = upstream(vec![reply]).await;
+        let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+        let _ = browser_callback(&info, "fault-code").await.text().await.unwrap();
+        let error = operation.await.unwrap().err().unwrap();
+        assert_eq!(error, BrowserLoginError::from(expected));
+        assert_eq!(fake.served(), 1, "no replay or automatic device fallback");
+        assert!(!format!("{error:?} {error}").contains("private"));
+        assert!(client().get(info.launch_url).send().await.is_err());
+    }
+    let fake = upstream(vec![json!({"delay_ms":500,"body":"{}"})]).await;
+    let (operation, info, cancel) = start_browser(&fake, None, Duration::from_secs(3)).await;
+    let _ = browser_callback(&info, "cancelled-code").await.text().await.unwrap();
+    wait_requests(&fake, 1).await;
+    cancel.cancel();
+    assert_eq!(operation.await.unwrap().err(), Some(CodexAuthError::OutcomeUnknown.into()));
+    assert_eq!(fake.served(), 1);
+    assert!(client().get(info.launch_url).send().await.is_err());
+}
+
+async fn browser_credential_publication_uses_the_existing_owner() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("auth.db");
+    let fake = upstream(vec![browser_token()]).await;
+    let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+    let _ = browser_callback(&info, "published-browser-code").await.text().await.unwrap();
+    let credential = operation.await.unwrap().unwrap();
+    assert!(!path.exists(), "standalone browser issuance has no database owner");
+    let service = Arc::new(auth(&path, &fake).await);
+    let storage = AuthStorage::for_codex(service.clone(), AuthStorageOptions::default()).unwrap();
+    storage.upsert_oauth_credential("openai-codex", &credential, &CancellationToken::new()).await.unwrap();
+    let store = SqliteCredentialStore::open(&path).unwrap();
+    let saved = store.list_auth_credentials(Some("openai-codex")).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(fields(&path, saved[0].id)["accountId"], "browser-account");
+    let target = model(format!("http://{}/backend-api", fake.addr));
+    let lease = service.resolve(&target, &CancellationToken::new()).await.unwrap();
+    assert!(matches!(lease.identity(), CredentialIdentity::Stored { id, .. } if *id == saved[0].id));
+    storage.remove("openai-codex", &CancellationToken::new()).await.unwrap();
+    assert!(matches!(service.resolve(&target, &CancellationToken::new()).await, Err(AuthResolveError::Unavailable)));
+    storage.close_and_wait().await;
 }
 
 fn now_ms() -> i64 {
@@ -247,6 +524,11 @@ async fn standalone_device_issuer_native_wire_and_profile_without_a_store() {
     assert_eq!(fields["code"], "remote-code");
     assert_eq!(fields["code_verifier"], "remote-verifier");
     assert_eq!(fields["redirect_uri"], "https://auth.openai.com/deviceauth/callback");
+    drop(requests);
+    browser_callback_manual_and_profile_contracts().await;
+    email_only_issuer_profile_matrix_without_a_store().await;
+    email_only_public_login_identity_is_optional().await;
+    codex_discovery_client_version_default_and_override().await;
 }
 
 #[tokio::test]
@@ -321,6 +603,7 @@ async fn standalone_device_issuer_failures_and_exchange_cancellation_never_repla
     assert_eq!(operation.await.unwrap().err(), Some(CodexAuthError::OutcomeUnknown));
     assert_eq!(fake.requests.lock().await.len(), 3);
     assert_eq!(CodexAuthError::OutcomeUnknown.to_string(), "OpenAI Codex authentication outcome unknown");
+    browser_failures_and_exchange_cancellation_never_replay().await;
 }
 
 #[test]
@@ -335,6 +618,10 @@ fn standalone_device_fixture_endpoints_retain_the_local_wrapper_admission_rule()
     ] {
         assert_eq!(
             OpenAiCodexDeviceLogin::with_endpoints(client(), endpoint).err(),
+            Some(CodexAuthError::InvalidEndpoint)
+        );
+        assert_eq!(
+            OpenAiCodexBrowserLogin::with_endpoints(client(), endpoint, 0).err(),
             Some(CodexAuthError::InvalidEndpoint)
         );
     }
@@ -374,7 +661,7 @@ async fn device_profile_persistence_private_wire_identity_and_logout() {
         })
         .await
         .unwrap();
-    assert_eq!(identity.account_id, "workspace-a");
+    assert_eq!(identity.account_id.as_deref(), Some("workspace-a"));
     assert_eq!(identity.email.as_deref(), Some("user@example.com"));
     assert_eq!(&*shown.lock().unwrap(), &[("https://auth.openai.com/codex/device", "ABCD-EFGH".into())]);
     let stored = fields(&path, identity.credential_id);
@@ -417,6 +704,8 @@ async fn device_profile_persistence_private_wire_identity_and_logout() {
     assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
     assert_eq!(store.list_disabled_credentials(Some("openai-codex")).unwrap().len(), 1);
     assert_eq!(fake.served(), 6);
+    browser_credential_publication_uses_the_existing_owner().await;
+    email_only_publication_cold_exact_row_refresh_and_wire().await;
 }
 
 #[tokio::test]
@@ -758,6 +1047,7 @@ async fn cancellation_before_dispatch_preserves_credentials_after_dispatch_disab
     let reopened = auth(&path, &fake).await;
     assert!(matches!(reopened.resolve(&target, &CancellationToken::new()).await, Err(AuthResolveError::Unavailable)));
     assert_eq!(fake.served(), 1);
+    email_only_cancellation_and_unknown_refresh_fence_cold_restart().await;
 }
 
 #[tokio::test]
@@ -1498,4 +1788,469 @@ async fn builtin_usage_peer_unknown_deadline_and_shared_refresh_flights() {
         );
         assert_eq!(requests[2]["headers"]["authorization"], format!("<redacted {} chars>", token.len() + 7));
     }
+}
+
+
+// Fixed b91db66e openai-codex.test.ts accepts email-only access/id-token
+// profiles. sub/user_id/poid are deliberately present and never workspace ids.
+async fn email_only_issuer_profile_matrix_without_a_store() {
+    let temp = tempfile::tempdir().unwrap();
+    for browser in [false, true] {
+        for id_fallback in [false, true] {
+            let no_identity = jwt(json!({"sub":"email-user", "https://api.openai.com/auth":{
+                "user_id":"email-user","poid":"not-a-workspace", "chatgpt_data_residency":"eu"
+            }}));
+            let email_access = jwt(json!({"sub":"email-user", "https://api.openai.com/auth":{
+                "user_id":"email-user","poid":"not-a-workspace", "chatgpt_data_residency":"eu"
+            },"https://api.openai.com/profile":{"email":"  Email.Only@EXAMPLE.com  "}}));
+            let mut token = json!({"access_token":if id_fallback { &no_identity } else { &email_access },
+                "refresh_token":"email-only-refresh","expires_in":3600});
+            if id_fallback {
+                token["id_token"] = json!(jwt(json!({"https://api.openai.com/profile":{
+                    "email":"  Email.Only@EXAMPLE.com  "}})));
+            }
+            let replies = if browser {
+                vec![response(token)]
+            } else {
+                vec![
+                    response(
+                        json!({"device_auth_id":"email-device","user_code":"EMAIL-CODE","interval":-3}),
+                    ),
+                    response(
+                        json!({"authorization_code":"email-code","code_verifier":"email-verifier"}),
+                    ),
+                    response(token),
+                ]
+            };
+            let fake = upstream(replies).await;
+            let credential = if browser {
+                let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+                let _ = browser_callback(&info, "email-code")
+                    .await
+                    .text()
+                    .await
+                    .unwrap();
+                operation.await.unwrap().unwrap()
+            } else {
+                OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr))
+                    .unwrap()
+                    .issue(&CancellationToken::new(), |_| {})
+                    .await
+                    .unwrap()
+            };
+            let AuthCredential::OAuth { fields } = credential else {
+                panic!("OAuth issuance")
+            };
+            assert_eq!(fields["email"], "email.only@example.com");
+            assert_eq!(
+                fields["access"],
+                if id_fallback {
+                    no_identity
+                } else {
+                    email_access
+                }
+            );
+            assert_eq!(fields["refresh"], "email-only-refresh");
+            for absent in ["accountId", "orgId", "orgName", "sub", "poid", "user_id"] {
+                assert!(
+                    !fields.contains_key(absent),
+                    "{absent} cannot be fabricated from identity hints"
+                );
+            }
+            assert!(fields["expires"].as_i64().unwrap() > now_ms());
+            assert_eq!(fake.served(), if browser { 1 } else { 3 });
+            let requests = fake.requests.lock().await;
+            assert_eq!(
+                requests.last().unwrap()["request"],
+                "POST /oauth/token HTTP/1.1"
+            );
+            assert!(
+                requests.last().unwrap()["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains("grant_type=authorization_code")
+            );
+        }
+    }
+    for browser in [false, true] {
+        let token = json!({"access_token":jwt(json!({"sub":"not-a-workspace",
+            "https://api.openai.com/auth":{"user_id":"not-a-workspace","poid":"not-an-org"}
+        })),"refresh_token":"identityless-refresh","expires_in":3600});
+        let fake=upstream(if browser { vec![response(token)] } else { vec![
+            response(json!({"device_auth_id":"identityless-device","user_code":"NONE","interval":-3})),
+            response(json!({"authorization_code":"identityless-code","code_verifier":"identityless-verifier"})),
+            response(token),
+        ]}).await;
+        if browser {
+            let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+            let _ = browser_callback(&info, "identityless-code")
+                .await
+                .text()
+                .await
+                .unwrap();
+            assert_eq!(
+                operation.await.unwrap().err(),
+                Some(CodexAuthError::OutcomeUnknown.into())
+            );
+        } else {
+            let issuer =
+                OpenAiCodexDeviceLogin::with_endpoints(client(), &format!("http://{}", fake.addr))
+                    .unwrap();
+            assert_eq!(
+                issuer.issue(&CancellationToken::new(), |_| {}).await.err(),
+                Some(CodexAuthError::OutcomeUnknown)
+            );
+        }
+        assert_eq!(
+            fake.served(),
+            if browser { 1 } else { 3 },
+            "issued identityless exchange is observed once and never replayed"
+        );
+        assert_eq!(
+            fake.requests.lock().await.last().unwrap()["request"],
+            "POST /oauth/token HTTP/1.1"
+        );
+    }
+    assert!(
+        std::fs::read_dir(temp.path()).unwrap().next().is_none(),
+        "issuers own no credential database"
+    );
+}
+
+async fn codex_discovery_client_version_default_and_override() {
+    use ara_cli::catalog_discovery::{
+        CatalogContext, NativeDiscoveryTransport,
+        codex::{CODEX_CLIENT_VERSION, CodexModelDiscoveryOptions, fetch_codex_models},
+    };
+    assert_eq!(CODEX_CLIENT_VERSION, "0.159.0");
+    let context = CatalogContext::new(Arc::new(
+        NativeDiscoveryTransport::with_extra_ca(None).unwrap(),
+    ))
+    .unwrap();
+    for (configured, expected) in [
+        (None, "0.159.0"),
+        (Some("malformed"), "0.159.0"),
+        (Some(" 9.8.7 "), "9.8.7"),
+    ] {
+        let fake = upstream(vec![response(
+            json!({"models":[{"slug":"email-discovered"}]}),
+        )])
+        .await;
+        let options = CodexModelDiscoveryOptions {
+            access_token: "synthetic-discovery-access".into(),
+            account_id: None,
+            base_url: Some(format!("http://{}", fake.addr).into()),
+            client_version: configured.map(Into::into),
+            ..Default::default()
+        };
+        let result = fetch_codex_models(&context, &options)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.models.len(), 1);
+        let requests = fake.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0]["request"],
+            format!("GET /codex/models?client_version={expected} HTTP/1.1")
+        );
+        assert_eq!(requests[0]["headers"]["version"], expected);
+        assert!(requests[0]["headers"].get("chatgpt-account-id").is_none());
+        assert_eq!(requests[0]["headers"]["originator"], "omp");
+        assert_eq!(
+            requests[0]["headers"]["authorization"],
+            "<redacted 33 chars>"
+        );
+    }
+}
+
+async fn email_only_publication_cold_exact_row_refresh_and_wire() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("auth.db");
+    let token = jwt(json!({"sub":"email-user", "https://api.openai.com/auth":{
+        "user_id":"email-user","poid":"not-an-org", "chatgpt_data_residency":"eu", "chatgpt_plan_type":" TEAM "
+    },"https://api.openai.com/profile":{"email":" EMAIL@Example.com "}}));
+    let filled = jwt(json!({"https://api.openai.com/auth":{
+        "chatgpt_account_id":"filled-workspace", "chatgpt_data_residency":"us"
+    }}));
+    let fake = upstream(vec![
+        response(json!({"access_token":token,"refresh_token":"email-refresh","expires_in":3600})),
+        completed(),
+        response(json!({"access_token":filled,"refresh_token":"email-refresh-rotated","expires_in":3600})),
+        completed(),
+    ]).await;
+    let (operation, info, _) = start_browser(&fake, None, Duration::from_secs(3)).await;
+    let _ = browser_callback(&info, "email-publish")
+        .await
+        .text()
+        .await
+        .unwrap();
+    let credential = operation.await.unwrap().unwrap();
+    assert!(!path.exists());
+    let service = Arc::new(auth(&path, &fake).await);
+    let storage = AuthStorage::for_codex(service.clone(), AuthStorageOptions::default()).unwrap();
+    let cancel = CancellationToken::new();
+    // Fixed storage upgrades an existing unscoped email row when a scoped
+    // login arrives. Create the scoped sibling first to exercise the reverse:
+    // an unscoped email login coexists and replaces only its exact email row.
+    let sibling = AuthCredential::oauth(json!({"access":access_with_email("sibling-workspace", "eu", "email@example.com"),
+        "refresh":"sibling-refresh","expires":now_ms()+3_600_000,"email":"email@example.com",
+        "accountId":"sibling-workspace","orgId":"sibling-workspace","orgName":"sibling-plan","authorizedAt":1
+    }).as_object().unwrap().clone());
+    storage
+        .upsert_oauth_credential("openai-codex", &sibling, &cancel)
+        .await
+        .unwrap();
+    let sibling_id = storage.stored_oauth_snapshot("openai-codex").unwrap()[0].id;
+    let sibling_before = fields(&path, sibling_id);
+    storage
+        .upsert_oauth_credential("openai-codex", &credential, &cancel)
+        .await
+        .unwrap();
+    let id = storage.stored_oauth_snapshot("openai-codex").unwrap().iter()
+        .find(|row| fields(&path, row.id).get("accountId").is_none()).unwrap().id;
+    storage
+        .upsert_oauth_credential("openai-codex", &credential, &cancel)
+        .await
+        .unwrap();
+    let rows = storage.stored_oauth_snapshot("openai-codex").unwrap();
+    assert_eq!(rows.len(), 2);
+    let email_id = rows
+        .iter()
+        .find(|row| fields(&path, row.id).get("accountId").is_none())
+        .unwrap()
+        .id;
+    assert_eq!(
+        email_id, id,
+        "same email login replaces its exact durable row"
+    );
+    assert_eq!(fields(&path, sibling_id), sibling_before);
+    storage.close_and_wait().await;
+    drop(storage);
+    drop(service);
+    let reopened = Arc::new(auth(&path, &fake).await);
+    let storage = AuthStorage::for_codex(reopened.clone(), AuthStorageOptions::default()).unwrap();
+    assert!(
+        storage
+            .pin_session_oauth_account("openai-codex", "email-cold-session", id, None)
+            .unwrap()
+    );
+    let context = AuthRequestContext {
+        session_id: Some("email-cold-session".into()),
+        ..Default::default()
+    };
+    let exact = storage
+        .get_oauth_access_by_credential_id("openai-codex", id, &context, &cancel)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(exact.lease.identity(), CredentialIdentity::Stored { id: actual, .. } if *actual==id)
+    );
+    assert_eq!(exact.oauth.unwrap().account_id, None);
+    let target = model(format!("http://{}/backend-api", fake.addr));
+    for refreshing in [false, true] {
+        if refreshing {
+            let refreshed = storage
+                .get_oauth_access_by_credential_id(
+                    "openai-codex",
+                    id,
+                    &AuthRequestContext {
+                        force_refresh: true,
+                        ..context.clone()
+                    },
+                    &cancel,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                refreshed.oauth.unwrap().account_id.as_deref(),
+                Some("filled-workspace")
+            );
+            let saved = fields(&path, id);
+            assert_eq!(saved["email"], "email@example.com");
+            assert_eq!(saved["orgName"], "team");
+            assert!(
+                saved.get("orgId").is_none(),
+                "refresh cannot invent an organization"
+            );
+            assert_eq!(saved["refresh"], "email-refresh-rotated");
+            assert_eq!(fields(&path, sibling_id), sibling_before);
+        }
+        let resolver = storage.session_resolver(
+            Some("email-cold-session".into()),
+            Some(target.base_url.clone()),
+        );
+        let route = PreparedRoute::new(
+            target.clone(),
+            ProtocolOptions::CodexResponses(Default::default()),
+            resolver,
+            1,
+        )
+        .unwrap();
+        let provider = route.bind(client(), None);
+        let conversation = Context {
+            system_prompt: vec![],
+            messages: vec![Message::User(UserMessage::text("hello"))],
+            tools: None,
+        };
+        let mut stream = provider.stream(&target, &conversation, CallOptions::default());
+        let mut terminal = None;
+        while let Some(event) = stream.recv().await {
+            if event.is_terminal() {
+                terminal = Some(event.partial().clone());
+            }
+        }
+        assert_eq!(terminal.unwrap().stop_reason, StopReason::Stop);
+    }
+    let requests = fake.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert!(requests[1]["headers"].get("chatgpt-account-id").is_none());
+    assert_eq!(
+        requests[1]["headers"]["x-openai-internal-codex-residency"],
+        "eu"
+    );
+    assert_eq!(
+        requests[1]["headers"]["authorization"],
+        format!("<redacted {} chars>", token.len() + 7)
+    );
+    assert_eq!(
+        requests[3]["headers"]["chatgpt-account-id"],
+        "filled-workspace"
+    );
+    assert_eq!(
+        requests[3]["headers"]["authorization"],
+        format!("<redacted {} chars>", filled.len() + 7)
+    );
+    assert_eq!(
+        requests[3]["headers"]["x-openai-internal-codex-residency"],
+        "us"
+    );
+    for index in [1, 3] {
+        assert_eq!(requests[index]["headers"]["version"], "0.159.0");
+    }
+    assert!(
+        requests[2]["body"]
+            .as_str()
+            .unwrap()
+            .contains("grant_type=refresh_token")
+    );
+    drop(requests);
+    storage.remove("openai-codex", &cancel).await.unwrap();
+    assert!(
+        storage
+            .get_oauth_access_by_credential_id("openai-codex", id, &context, &cancel)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    storage.close_and_wait().await;
+    drop(storage);
+    drop(reopened);
+    let final_service = auth(&path, &fake).await;
+    assert!(matches!(
+        final_service.resolve(&target, &cancel).await,
+        Err(AuthResolveError::Unavailable)
+    ));
+    assert_eq!(fake.served(), 4);
+}
+
+async fn email_only_cancellation_and_unknown_refresh_fence_cold_restart() {
+    for cancel_after_dispatch in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("auth.db");
+        let credential=AuthCredential::oauth(json!({"access":jwt(json!({
+            "https://api.openai.com/profile":{"email":"email.fence@example.com"}})),
+            "email":"email.fence@example.com","refresh":"email-fence-refresh","expires":1,"authorizedAt":42
+        }).as_object().unwrap().clone());
+        let store = SqliteCredentialStore::open(&path).unwrap();
+        let id = store
+            .upsert_auth_credential_for_provider("openai-codex", &credential)
+            .unwrap()[0]
+            .id;
+        let fake = upstream(vec![if cancel_after_dispatch {
+            json!({"delay_ms":1000,"body":"{}"})
+        } else {
+            json!({"body":"{truncated-success"})
+        }])
+        .await;
+        let service = Arc::new(auth(&path, &fake).await);
+        let target = model(format!("http://{}/backend-api", fake.addr));
+        let before = CancellationToken::new();
+        before.cancel();
+        assert!(matches!(
+            service.resolve(&target, &before).await,
+            Err(AuthResolveError::Cancelled)
+        ));
+        assert_eq!(fake.served(), 0);
+        assert_eq!(fields(&path, id)["refresh"], "email-fence-refresh");
+        let cancel = CancellationToken::new();
+        let worker = service.clone();
+        let worker_cancel = cancel.clone();
+        let worker_target = target.clone();
+        let operation =
+            tokio::spawn(async move { worker.resolve(&worker_target, &worker_cancel).await });
+        wait_requests(&fake, 1).await;
+        if cancel_after_dispatch {
+            cancel.cancel();
+        }
+        let error = operation
+            .await
+            .unwrap()
+            .err()
+            .expect("unknown/cancelled refresh must fail");
+        if cancel_after_dispatch {
+            assert!(matches!(error, AuthResolveError::Cancelled));
+        } else {
+            assert!(matches!(error, AuthResolveError::Refresh));
+        }
+        service.wait_for_settlement().await;
+        assert!(
+            store
+                .list_auth_credentials(Some("openai-codex"))
+                .unwrap()
+                .is_empty()
+        );
+        let disabled = store
+            .list_disabled_credentials(Some("openai-codex"))
+            .unwrap();
+        assert_eq!(disabled.len(), 1);
+        assert_eq!(disabled[0].id, id);
+        drop(service);
+        let reopened = auth(&path, &fake).await;
+        assert!(matches!(
+            reopened.resolve(&target, &CancellationToken::new()).await,
+            Err(AuthResolveError::Unavailable)
+        ));
+        assert_eq!(
+            fake.served(),
+            1,
+            "cold restart cannot replay an email-only unknown grant"
+        );
+    }
+}
+
+
+async fn email_only_public_login_identity_is_optional() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("auth.db");
+    let token =
+        jwt(json!({"https://api.openai.com/profile":{"email":" Public.Email@EXAMPLE.com "}}));
+    let fake = upstream(vec![
+        response(json!({"device_auth_id":"public-email-device","user_code":"PUBLIC-EMAIL","interval":-3})),
+        response(json!({"authorization_code":"public-email-code","code_verifier":"public-email-verifier"})),
+        response(json!({"access_token":token,"refresh_token":"public-email-refresh","expires_in":3600})),
+    ]).await;
+    let service = auth(&path, &fake).await;
+    let identity = service
+        .login_device(&CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(identity.account_id, None);
+    assert_eq!(identity.email.as_deref(), Some("public.email@example.com"));
+    let saved = fields(&path, identity.credential_id);
+    assert!(saved.get("accountId").is_none());
+    assert!(saved.get("orgId").is_none());
+    assert_eq!(fake.served(), 3);
 }

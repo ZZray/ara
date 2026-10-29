@@ -1,19 +1,12 @@
-//! Narrow REPL Skill host adapter. Core sees the user projection; Session
-//! and host events retain the original Skill custom message.
+//! Registered Skill preparation. Actual Host ingress is a canonical raw
+//! custom record; the retained converter derives its provider fragment.
 
-use super::{HostSink, Mode};
-use ara_agent::{AgentEvent, AgentEventSink};
-use ara_ai::{Message, UserContent};
+use ara_ai::UserContent;
 use ara_context::build_skill_prompt;
 use ara_discovery::{LoadedSkill, parse_skill_invocation};
 use ara_session::UserSkillPrompt;
-use async_trait::async_trait;
 use serde_json::json;
-use std::{
-    future::pending,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
-};
+use std::{future::pending, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
@@ -68,70 +61,11 @@ pub async fn prepare(
     Ok(Some(UserSkillPrompt::new(UserContent::Text(built.message), Some(built.details))))
 }
 
-/// One adapter per turn: only its initial projected prompt is persisted as
-/// custom. Subsequent messages, tool receipts and Run outcomes use HostSink.
-pub struct SkillPromptSink<'a> {
-    pub host: &'a HostSink,
-    pub prompt: &'a UserSkillPrompt,
-    pub projected: &'a Message,
-    pub recorded: AtomicBool,
-}
-
-impl SkillPromptSink<'_> {
-    fn public_event(&self, event: &AgentEvent) -> serde_json::Value {
-        // Redact provider payloads/signatures before adapting host provenance.
-        let mut public = event.printable();
-        match event {
-            AgentEvent::MessageStart { .. } | AgentEvent::MessageEnd { .. } => {
-                public["message"] = self.prompt.event_message();
-            }
-            AgentEvent::AgentEnd { .. } => public["messages"][0] = self.prompt.event_message(),
-            _ => {}
-        }
-        public
-    }
-}
-
-#[async_trait]
-impl AgentEventSink for SkillPromptSink<'_> {
-    async fn emit(&self, event: AgentEvent) {
-        let initial = match &event {
-            AgentEvent::MessageStart { message } | AgentEvent::MessageEnd { message } => {
-                message == self.projected && !self.recorded.load(Ordering::SeqCst)
-            }
-            _ => false,
-        };
-        if initial {
-            if matches!(event, AgentEvent::MessageEnd { .. })
-                && !self.recorded.swap(true, Ordering::SeqCst)
-                && let Some(journal) = self.host.journal.lock().await.as_mut()
-                && let Err(error) = journal.append_skill_prompt(self.prompt)
-            {
-                self.host.persistence_failure(&error);
-            }
-            if self.host.stream {
-                self.host.stream_progress(&event);
-            }
-            if self.host.mode == Mode::Json {
-                self.host.write_line(&self.public_event(&event).to_string());
-            }
-            return;
-        }
-        if let AgentEvent::AgentEnd { messages } = &event
-            && messages.first() == Some(self.projected)
-            && self.host.mode == Mode::Json
-        {
-            self.host.write_line(&self.public_event(&event).to_string());
-            return;
-        }
-        self.host.emit(event).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ara_ai::{AssistantBlock, AssistantMessage, ThinkingContent};
+    use ara_agent::{AgentEvent, AgentMessage};
+    use ara_ai::{AssistantBlock, AssistantMessage, Message, ThinkingContent};
     use ara_discovery::{Level, SourceMeta};
 
     #[tokio::test]
@@ -161,29 +95,17 @@ mod tests {
 
     #[test]
     fn custom_agent_end_preserves_provider_payload_redaction() {
-        let cancel = CancellationToken::new();
-        let journal = ara_session::SessionJournal::in_memory(
-            json!({"type":"session","version":3,"id":"redaction-fixture","cwd":".","timestamp":"2026-10-02T00:00:00Z"}),
-        )
-        .unwrap();
-        let artifacts = ara_cli::session_artifacts::ArtifactUriRouter::new(
-            ara_cli::session_artifacts::SessionArtifacts::for_journal(&journal),
-            None,
-        );
-        let host = HostSink::new(Mode::Json, false, None, cancel, ara_edit::EditMode::Hashline, artifacts);
         let prompt =
             UserSkillPrompt::new(UserContent::Text("body".into()), Some(json!({"originalText":"/skill:proof\n"})));
-        let projected = prompt.model_message();
-        let sink =
-            SkillPromptSink { host: &host, prompt: &prompt, projected: &projected, recorded: AtomicBool::new(true) };
+        let raw = ara_cli::agent_message_projection::raw_custom_input(prompt.event_message()).unwrap();
         let mut assistant = AssistantMessage::empty("openai-responses", "fixture", "model");
         assistant.provider_payload = Some(json!({"native":"private provider data"}));
         assistant.content.push(AssistantBlock::Thinking(ThinkingContent {
             thinking: "public thought".into(),
             thinking_signature: Some("private signature".into()),
         }));
-        let event = AgentEvent::AgentEnd { messages: vec![projected.clone(), Message::Assistant(assistant)] };
-        let value = sink.public_event(&event);
+        let event = AgentEvent::AgentEnd { messages: vec![raw, AgentMessage::from(Message::Assistant(assistant))] };
+        let value = event.printable().unwrap();
         assert_eq!(value["messages"][0]["role"], "custom");
         assert_eq!(value["messages"][0]["attribution"], "user");
         assert_eq!(value["messages"][1]["content"][0]["thinking"], "public thought");

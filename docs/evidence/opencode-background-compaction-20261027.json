@@ -1,0 +1,148 @@
+{
+  "schema": "ara.context-optimization-research.v1",
+  "candidate": "CTX-OPT-BG-01",
+  "decision": "deferred; research only; not in active delivery requirements or task counts",
+  "observed_at": "2026-10-27T03:22:29.804661+00:00",
+  "ara_head": "56d55d209ecea00e80dfefecdd3e9d47fb62c47a",
+  "ara_dirty": true,
+  "upstream_repository": "anomalyco/opencode",
+  "license": "MIT",
+  "sources": [
+    {
+      "path": "packages/core/src/session/compaction.ts",
+      "commit": "560b11bfc264f9b1925e6d2015666d1cabe8a5ca",
+      "url": "https://github.com/anomalyco/opencode/blob/560b11bfc264f9b1925e6d2015666d1cabe8a5ca/packages/core/src/session/compaction.ts",
+      "cache": "D:\\WorkSpace\\tmp\\ara-opencode-background-20261027\\upstream\\packages\\core\\src\\session\\compaction.ts",
+      "sha256": "4399c5172afcca9aba1dd6d48f8e3c75c2e20a945409b702ce20cfc6f370e48b",
+      "bytes": 57312
+    },
+    {
+      "path": "packages/core/src/config/plugin/compaction.ts",
+      "commit": "560b11bfc264f9b1925e6d2015666d1cabe8a5ca",
+      "url": "https://github.com/anomalyco/opencode/blob/560b11bfc264f9b1925e6d2015666d1cabe8a5ca/packages/core/src/config/plugin/compaction.ts",
+      "cache": "D:\\WorkSpace\\tmp\\ara-opencode-background-20261027\\upstream\\packages\\core\\src\\config\\plugin\\compaction.ts",
+      "sha256": "4ab00c26c9afb4f93cb136fde600e2b68fe6d28650f62e18bb81f1a391866f51",
+      "bytes": 1275
+    },
+    {
+      "path": "packages/core/test/session-compaction.test.ts",
+      "commit": "560b11bfc264f9b1925e6d2015666d1cabe8a5ca",
+      "url": "https://github.com/anomalyco/opencode/blob/560b11bfc264f9b1925e6d2015666d1cabe8a5ca/packages/core/test/session-compaction.test.ts",
+      "cache": "D:\\WorkSpace\\tmp\\ara-opencode-background-20261027\\upstream\\packages\\core\\test\\session-compaction.test.ts",
+      "sha256": "538c567536b6d281014ecb4f57d73ddb6f2df51b7ef6831b7325ed7d5c44d5cc",
+      "bytes": 48786
+    },
+    {
+      "path": "CHANGELOG.md",
+      "commit": "560b11bfc264f9b1925e6d2015666d1cabe8a5ca",
+      "url": "https://github.com/anomalyco/opencode/blob/560b11bfc264f9b1925e6d2015666d1cabe8a5ca/CHANGELOG.md",
+      "cache": "D:\\WorkSpace\\tmp\\ara-opencode-background-20261027\\upstream\\CHANGELOG.md",
+      "sha256": "1d7914fd62cb1f12806a2397700a7beebab4575b88d80b41478da3f22dd0ba2a",
+      "bytes": 55190
+    },
+    {
+      "path": "LICENSE",
+      "commit": "560b11bfc264f9b1925e6d2015666d1cabe8a5ca",
+      "url": "https://github.com/anomalyco/opencode/blob/560b11bfc264f9b1925e6d2015666d1cabe8a5ca/LICENSE",
+      "cache": "D:\\WorkSpace\\tmp\\ara-opencode-background-20261027\\upstream\\LICENSE",
+      "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+      "bytes": 1065
+    }
+  ],
+  "release_crosscheck": {
+    "tag": "v2.1.4",
+    "commit": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
+    "cached_compaction_sha256": "080f9a667198be21fd10decd6ebbfdc62fd4df81e357f29f4d21cffac620ecbd",
+    "scope": "precompute entry/default off/0.85 ratio/64000 floor present; released source differs from inspected dev"
+  },
+  "feature_commits": [
+    "6a5973d2636936317de15726ab37e3681f678be3",
+    "f523f7713816163b75be81d17186ab539a56f76a"
+  ],
+  "documentation": "https://dev.opencode.ai/v2/docs/compaction/#background-compaction",
+  "issue": {
+    "number": 58818,
+    "state_at_observation": "open",
+    "classification": "external issue; fixed-source floor also observed; runtime reproduction not executed"
+  },
+  "local_sources": {
+    "crates/ara-agent-lite-core/src/agent.rs": {
+      "sha256": "68493d7482e685255e390dcd297af6548c9b0c29043d8f06c6f46ab717e06ec2",
+      "coverage": "task-specific source ranges, not a complete file/code audit"
+    },
+    "crates/ara-agent-lite-core/src/context_memory.rs": {
+      "sha256": "3573a4958212c23a2c7901f6f01332b6e760408e57f79feb3c4816ec64481447",
+      "coverage": "task-specific source ranges, not a complete file/code audit"
+    },
+    "crates/ara-agent-lite-harness/src/runner.rs": {
+      "sha256": "d71877c076bba31da94f7227a2067153b1648163420d0b4124f6791de2b20615",
+      "coverage": "task-specific source ranges, not a complete file/code audit"
+    },
+    "crates/ara-session/src/lib.rs": {
+      "sha256": "a32e88a5ca0f6eda1b225dd9bbf6a40f52c2b46e7de6a6bb4217a03ba3b64b1f",
+      "coverage": "task-specific source ranges, not a complete file/code audit"
+    }
+  },
+  "verification": {
+    "source_read": true,
+    "opencode_tests_run": false,
+    "ara_tests_run": false,
+    "real_model_calls": 0,
+    "runtime_or_dependency_changes": false,
+    "performance_or_quality_acceptance": false
+  },
+  "review": {
+    "reviewer": "/root/estimate_review",
+    "native_session_uuid": null,
+    "status": "source/document review complete; no runtime acceptance",
+    "findings": [
+      {
+        "topic": "old-key compatibility",
+        "disposition": "narrowed to inspected plugin reads new key; full old-key parse/migration not audited"
+      }
+    ],
+    "scope": [
+      "fixed upstream compaction/config/test definitions",
+      "current ARA bounded source contracts",
+      "deferred project documentation"
+    ],
+    "runtime_tests_executed_by_reviewer": false
+  },
+  "documentation_checks": {
+    "tasks_only_added_deferred_note": true,
+    "task_graph_unchanged": true,
+    "task_and_requirement_counts_unchanged": true,
+    "local_links": [
+      {
+        "file": "docs/knowledge/context-optimization-options.md",
+        "target": "../evidence/opencode-background-compaction-20261027.json",
+        "exists": true
+      },
+      {
+        "file": "docs/knowledge/INDEX.md",
+        "target": "context-optimization-options.md",
+        "exists": true
+      },
+      {
+        "file": "docs/knowledge/context.md",
+        "target": "context-optimization-options.md",
+        "exists": true
+      }
+    ],
+    "cached_and_local_source_hashes_match": true,
+    "research_only": true,
+    "git_diff_check_exit": 0,
+    "whole_repository_bootstrap": {
+      "exit_code": null,
+      "timed_out": true,
+      "limit_seconds": 180
+    },
+    "bootstrap_pass": false
+  },
+  "document_hashes": {
+    "E:\\repos\\ara-github\\docs\\knowledge\\context-optimization-options.md": "d526482c9ebf2c078a4f607d15afec6a66c0ac9bfce103a4c156161237eb4553",
+    "E:\\repos\\ara-github\\docs\\knowledge\\INDEX.md": "a889749f38be64d3808434848215b50703d486f50bad2f24f5c94939a4d185b8",
+    "E:\\repos\\ara-github\\docs\\knowledge\\context.md": "799aa5086bce16a883f585298a61d7aed0ec35608134314d252114bebfb082df",
+    "E:\\repos\\.kiro\\specs\\ara-lite-core-capability\\tasks.md": "33dfc7d7a0b62cb742c559c640e88016d30e0ea99d098c2dfa4e30fa0f7b39ac"
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "reviewer": "independent Codex /root/task_owner_complete_review",
+  "created_utc": "2026-10-29T15:38:48.709Z",
+  "verdict": "APPROVE_MINIMAL_F1_F5_CANDIDATE_PREPARATION_WITH_CFG_ASYNC_HOOK_SCOPE_F6_TRACE_PENDING",
+  "scope": "Read-only plan review and exact existing-seam feasibility. Author may prepare a small edited-file candidate only under Root authorization; this is not source adoption or execution approval.",
+  "reviewed_plan": {
+    "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/PLAN.json",
+    "sha256": "025b6d4c8053cb4f85caddc29fbab2eac2930885bc9805eff826ff9d27ccc3ec"
+  },
+  "plan_authority_supplement": {
+    "source": "Direct parent /root message after plan review",
+    "authorization": "Root approved F2-F5 candidate preparation and main.rs cfg-only actual after-hook callback; F6 exact-owner wiring remains trace first.",
+    "quote": "我已读PLAN并批准F2–F5候选以及你建议的main.rs cfg-only实际after-hook callback；F6 exact owner先trace。",
+    "plan_state_note": "The JSON still says awaiting confirmation except F1. This review binds both exact PLAN025b... and the later direct scope supplement; it does not silently rewrite PLAN."
+  },
+  "source_binding": {
+    "plan_sha256": "025b6d4c8053cb4f85caddc29fbab2eac2930885bc9805eff826ff9d27ccc3ec",
+    "source_hashes": [
+      {
+        "path": "crates/ara-cli/tests/support/task_host_cases.rs",
+        "expected": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6",
+        "actual": "03445dc80b3cc667fc8c6ed8d3282a0cc59fa9c843ffadb70e7296d41f1526c6"
+      },
+      {
+        "path": "crates/ara-cli/tests/task_host.rs",
+        "expected": "6af99d96f423bdb370e2d97338f3574a78b9d81a405c237400f385050de32168",
+        "actual": "6af99d96f423bdb370e2d97338f3574a78b9d81a405c237400f385050de32168"
+      },
+      {
+        "path": "crates/ara-cli/src/child_host.rs",
+        "expected": "7ccf7a15766b784e267ee6ad004bc6dd9b76fb0db47037f3280cc98776919edd",
+        "actual": "7ccf7a15766b784e267ee6ad004bc6dd9b76fb0db47037f3280cc98776919edd"
+      },
+      {
+        "path": "crates/ara-cli/src/peer_host.rs",
+        "expected": "bfb6c2b0e8ae225fce1dad8ccb799ef3db5964e8bcab82e5828a5c71689717a4",
+        "actual": "bfb6c2b0e8ae225fce1dad8ccb799ef3db5964e8bcab82e5828a5c71689717a4"
+      },
+      {
+        "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+        "expected": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc",
+        "actual": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc"
+      },
+      {
+        "path": "crates/ara-cli/src/task_isolation/capture.rs",
+        "expected": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527",
+        "actual": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527"
+      }
+    ],
+    "extra_source": [
+      {
+        "path": "crates/ara-cli/src/main.rs",
+        "sha256": "a25acf6943a1224ad4668f34c39ad40b66af5bc5b1a4901a4d9fedead28f61ab"
+      },
+      {
+        "path": "crates/ara-agent/src/agent_loop/actual_execute.rs",
+        "sha256": "daed0c63929e3e5398bc11e68cd276b41710cbc89331b2b5b7aa0fcb4467e6ed"
+      },
+      {
+        "path": "crates/ara-cli/src/mcp_native.rs",
+        "sha256": "cfab3136084294ab53c8df20a4f78f3d9742aad58200574df5d9278615f91cfb"
+      },
+      {
+        "path": "crates/ara-cli/src/native_rpc_host.rs",
+        "sha256": "04fe792ada415a1e4df4a5ab2aff8e388b39ef28f6f49913134a4548b496ebba"
+      },
+      {
+        "path": "crates/ara-cli/src/rpc_host_tools.rs",
+        "sha256": "0e51612a45c7bfaa40361d6dc0cf74a0025cd26d1ba6b9ede5f679d432ce5566"
+      },
+      {
+        "path": "crates/ara-cli/src/actual_tools/bash_native.rs",
+        "sha256": "c9e09d4cd672188467b33a7e14687493751c12d84dc9b6a2d74adc92b2995ed5"
+      }
+    ]
+  },
+  "principle": "Exercise the existing Task/ChildHost/Core await/resource path with real private Git/FS/process effects and bounded observation pauses. A test-only pause may expose an exact existing transition; it must not fabricate the desired production error, ownership receipt or side effect.",
+  "scenario_decisions": [
+    {
+      "id": "F1-native-parent-interval",
+      "decision": "READY_FOR_TEST_ONLY_CANDIDATE",
+      "production_new_code": "None",
+      "existing_sources": [
+        "tests/support/task_host_cases.rs::Bank",
+        "RoutedUpstream::start_gated",
+        "WireProcess"
+      ],
+      "constraints": [
+        "Hold the child's second model response after the real first isolated write ToolResult, not before any native child work. Identify exact child/session/cwd/resource from raw journal and runtime receipts.",
+        "Before dispatch and while held compare exact parent HEAD, raw .git/index bytes, staged and unstaged binary diffs and every fixture untracked path+bytes. Use side-effect-free read paths; retain snapshots and comparison inputs.",
+        "Use apply=false for the interval scenario and preserve exact final parent snapshot after completion. An apply=true bank has authorized final changes and cannot use final-only WIP as a substitute.",
+        "Save real isolated file and child ToolResult/HTTP request evidence. No new model or command target is needed; finite routed script and existing whole-bank assertions remain."
+      ]
+    },
+    {
+      "id": "F2-materialized-pre-spawn-and-rejected-attachment",
+      "decision": "APPROVE_CANDIDATE_WITH_EXACT_REJECTION_INPUT_REQUIRED",
+      "source_chain": "task_host.rs prepare164-183 allocates lease, then ChildHostFactory::create_isolated349-371 finalizes prepared errors as known stopped and seed.spawn errors as uncertain. PreparedChildHost::spawn413-429 starts the actual Native actor before waiting for State; rpc_host7429 peer-before-bind pauses before actual bind_actor.",
+      "constraints": [
+        "F2a invalid route/model config must be pinned to a specific current source rejection occurring after backend/lease materialization and before actor spawn. Do not assume an arbitrary unknown model fails instead of routing/falling back.",
+        "A source-backed cheaper fallback is the actual parent persisted spawns policy: ChildHostFactory::authorize_spawn331-335 is called inside create_isolated prepared after Task lease allocation. If used, construct the actual parent Session init/contract through the existing fixture owner, preserve policy-depth semantics, and prove backend/marker existed before the real authorize_spawn error. This is not an injected error return.",
+        "F2b may reuse peer-before-bind and a cfg-only exact pending-lease seal. Require the real pending lease Arc/resource/id, then let prepare_publish fail on its existing sealed-admission contract. Read pending/failed/owned tables before/after; do not fabricate a child result.",
+        "coldDisplayName='Main' is not sufficient: publish_attachment(Absent) checks root/slot/expected runtime, not display label. A plain failAfterRelease error proves only the controlled frontier error, not actual attachment rejection.",
+        "For a postspawn error require actual spawned actor/State failure and original close/join outcome; source policy conservatively finalizes Err/retains even if actor shutdown later succeeds. Do not change that policy to make cleanup green.",
+        "Known-stopped pre-spawn failure and postspawn uncertainty need separate disposable scenarios/receipts. Never replay the first failed resource to obtain a second expected outcome."
+      ]
+    },
+    {
+      "id": "F3-active-Bash-cancel-and-dropped-release-observer",
+      "decision": "APPROVE_REAL_BASH_AND_CORE_HOOK_CANDIDATE",
+      "source_chain": "ChildHost::followup273-289 awaits actual SessionBashOwner effects and refuses accepted result with pending delivery; Core actual_execute1404 awaits after_tool_call_actual before publishing its original tool result; release_task_resource seals/joins actual runtime before lease.finalize.",
+      "constraints": [
+        "Run a real Native Bash job using async=true and a private gate/proof file. Preserve actual process/job/effect identity, original ToolResult and session owner. A sleep or callback counter alone is insufficient.",
+        "Consume the real Bash result through existing NativeWait where required. Current CliHooks aside_messages only handles edit/service/peer; automatic Bash aside consumption is not established by a comment. Do not create an async delivery framework just to satisfy the bank.",
+        "For hook evidence add only cfg(test-fixture) callback inside the existing CliHooks::after_tool_call_actual after its original checks/delegation, before it returns to Core. Keep native/value/args/result validation and original child-yield behavior intact. Avoid a new LoopHooks wrapper that silently drops required delegation.",
+        "The nonempty async callback must perform an actual write in the exact isolated cwd and block on its own private file gate. Record original call ID/session/cwd/resource and hook entry/exit. The real Core awaits this callback; no generic extension registry, public config or production callback is added.",
+        "Hold Bash and hook independently. Show actual Bash owner settled while hook remains held and the same Task has not captured, applied or removed its resource. Release hook, observe its proof file then original turn completion and same-resource capture. Do not merely hold a gate after the hook returned.",
+        "Exercise actual task cancel/abort while the original Bash is live and preserve its process/effect settlement or Unknown receipt. Dropping a release observer is not the task kill scenario.",
+        "Drop only the observer of the retained original release flight, then join the same flight; inspect durable started/settled effect IDs and physical cwd. Do not invoke an alternate finalizer.",
+        "This proves the actual Core async-hook/Host Task settlement contract under the declared fixture Host binding. It does not implement or accept the OMP extension product surface."
+      ]
+    },
+    {
+      "id": "F4-real-Git-completed-prefix-partial-failure",
+      "decision": "APPROVE_EXACT_CFG_FS_FRONTIER_CANDIDATE",
+      "source_chain": "worktree::commit_to_branch dirty-baseline history loop560-591 rewrites each real commit and CAS-publishes a rescue prefix before the next risky stage.",
+      "constraints": [
+        "The real parent must have baseline WIP so the dirty-history branch is taken, and the real isolated child must create at least two commits. A clean branch path uses fetch and cannot prove this loop.",
+        "Pause only after first real rewritten commit and successful rescue CAS. Include exact resource/scratch/rescue/tip in readback and independently inspect the real parent Git object/ref before inducing failure.",
+        "After gate readback, obstruct only the lease-private scratch path required by the next actual operation. Let the original Git/FS call fail; no gate failAfterRelease or callback-manufactured error replaces the failure.",
+        "Require the already persisted root patch, completed rescue prefix commit/ref and original workspace to survive, with an explicit failed effect/error/path and no successful capture/Task acceptance.",
+        "Subsequent observer/join inspection must not perform a new capture, retry a commit or repair the resource in place. The prior public-ref CAS bank remains distinct."
+      ]
+    },
+    {
+      "id": "F5-real-nested-capture-file-persistence-error",
+      "decision": "APPROVE_EXACT_CFG_FS_FRONTIER_CANDIDATE",
+      "source_chain": "capture::persist_capture112-145 writes root.patch, then nested-i.patch, before capture.json and branch publication.",
+      "constraints": [
+        "Create a real nested Git repository and child nested edit through the ordinary isolated path; require a nonempty nested patch.",
+        "Pause after root.patch is durable and immediately before the original nested-0.patch write. Readback must identify the current resource/capture directory, not a guessed UUID.",
+        "Create a directory at that exact nested-0.patch path in the private candidate fixture; the unchanged write_new(create_new) must produce the actual OS error.",
+        "Require root.patch and nested working bytes intact, the nested file error/path preserved, capture.json absent or explicitly failed rather than a false successful receipt, and no backend stop/removal/replay.",
+        "A top-level artifact-directory obstruction or a nested stash restore conflict does not satisfy this persistence frontier."
+      ]
+    },
+    {
+      "id": "F6-exact-native-MCP-RPC-grants",
+      "decision": "TRACE_AND_EXACT_SCOPE_REVIEW_REQUIRED_BEFORE_ADDITIONAL_WIRING",
+      "existing_seams": [
+        "NativeMcpSource::set_enabled(index,bool) already exists at mcp_native.rs213; NativeRpcHostSource::set_enabled at native_rpc_host.rs250. Public setters can revoke the actual source without production grant APIs.",
+        "NativeCliOwner::mcp_grant/rpc_grant first require exact Arc owner lineage, then call permission on the actual source/binding. A matching tool name is not exact authority.",
+        "Existing support/native_mcp.rs prepares actual NativeMcpSource with real MCP dependencies/transport; ordinary --mcp-config/--mcp-allow connects genuine owned stdio tools.",
+        "Production rpc_host_tools::ToolBridge owns pending ID, encode/dispatch and NativeHostOwner response; ordinary mode=rpc alone supplies no RPC tool capability."
+      ],
+      "constraints": [
+        "True grant must execute the selected actual capability and retain real stdio/ToolBridge request+response and child ToolResult. False grant must mutate/read the actual original source, not only JSON metadata.",
+        "Absent and foreign owner must exercise exact lineage rejection. If a direct getter proves None but the actual Task preflight still uses the original owner, do not call that a full-batch rejection test.",
+        "Use one two-item request with a valid first item and invalid second authority; require one parent journal/no child lease or effect. Preserve original preflight-before-creation assertions.",
+        "Any cfg-only owner connection/swap must preserve actual prepared realm/source/binding provenance and ordinary bridge behavior, with a reviewed exact file/path. No new RPC backend or capability fabricated as successful.",
+        "If source reachability cannot be made through current narrow owner injection, retain that specific gap instead of enlarging production architecture."
+      ]
+    }
+  ],
+  "shared_library_gate": {
+    "issue": "Library capture/worktree cannot call binary main/peer_host private functions without invalid dependency direction.",
+    "minimal_solution": "One #[cfg(feature=\"test-fixture\")] pub(crate) synchronous file checkpoint in existing task_isolation/worktree.rs, reused from capture.rs. It operates only at the two named actual Git/FS frontiers, records exact current identity/path and performs a bounded wait for a private release file. Binary fixture writes the existing style of frontiers config/release files; no new harness module/registry is needed.",
+    "constraints": [
+      "Called in the existing spawn_blocking capture worker, with the same retained admission and parent gate; do not move real Git/FS effects onto an unrelated thread/owner or release guards for the test.",
+      "Fixed finite names and per-run private resource/path matching; bounded wait and explicit timeout/Unknown. No production environment option, fallback success or error-swallowing.",
+      "For F4/F5 the helper returns after observation release and the real filesystem call supplies failure; it must not manufacture a completed commit, capture or stop result.",
+      "Keep helper compiled out when test-fixture is absent. Scope is existing worktree.rs/capture.rs only."
+    ]
+  },
+  "approved_candidate_file_scope": [
+    "crates/ara-cli/tests/support/task_host_cases.rs",
+    "crates/ara-cli/tests/task_host.rs",
+    "crates/ara-cli/src/peer_host.rs only existing cfg fixture actions/readback",
+    "crates/ara-cli/src/child_host.rs only exact cfg startup/readback if existing seams cannot observe",
+    "crates/ara-cli/src/task_isolation/worktree.rs only bounded cfg checkpoint/helper",
+    "crates/ara-cli/src/task_isolation/capture.rs only bounded cfg nested-write checkpoint",
+    "crates/ara-cli/src/main.rs only cfg actual after-tool async callback per Root supplemental authorization"
+  ],
+  "conditional_scope": "F6 exact grant/bridge files are not finalized by this report. Trace and get Root exact-scope confirmation before proposing those additional paths.",
+  "candidate_and_execution_gates": [
+    "Copy only edited relative files into gap-bank-v1/candidate; do not modify P/source, E, target or previous EXEC/POINT.",
+    "Preserve all original19 criteria, nine group specifications and89 test identities/assertion bodies/timeouts. Add one combined bank with finite explicit subscenario outcomes and failure evidence; do not shrink coverage denominators.",
+    "Bind actual before/after hashes and exact hunks; no production runtime change is silently authorized by a cfg test observation plan.",
+    "Independent exact diff review precedes adoption. One frozen candidate build/affected batch later; this review runs no build/test/process/model.",
+    "Final evidence must distinguish source, controlled callback/owner, real process/Git/FS and product/platform boundaries. A snapshot containing only final WIP or callback counts cannot close criteria."
+  ],
+  "remaining_acceptance": "M5/M8/O1/O8 and actual MCP/RPC grant execution remain open until delivered candidate execution and independent raw-effect audit. Existing V4 EXEC/POINT stay unchanged.",
+  "activity": {
+    "source_writes": 0,
+    "builds": 0,
+    "tests": 0,
+    "models": 0,
+    "replays": 0,
+    "new_process_probes": 0,
+    "only_written_report": "gap-bank-v1/PRE-REVIEW.json"
+  }
+}
+

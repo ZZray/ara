@@ -5,6 +5,11 @@ The authoritative upstream is `https://github.com/can1357/oh-my-pi.git`, version
 ## Marker meanings
 
 - `baseline_commit`: immutable first target. Never rewrite it to hide a version change.
+- `sync_target_commit`: exact current user-authorized upgrade target; fetching
+  source or setting this target makes no review or implementation claim.
+  `sync_target_version` is the descriptive version of that same SHA. On
+  2026-10-14 the target is `b91db66e9b0b65a2c977e6a5bc74b0f4b1d58d1c`
+  (`v18.10.4-13-gb91db66e9b`), frozen from the upstream HEAD observed that day.
 - `reviewed_upstream_commit`: latest exact upstream commit whose source and change list have been inspected. This is **not** an implementation claim.
 - `ported_through_commit`: latest exact upstream commit for which the complete selected behavior inventory has been implemented and tested in Rust. It starts `null` because this new repository has no Agent runtime.
 
@@ -29,5 +34,31 @@ Read source in `packages/agent`, `packages/ai`, and `packages/coding-agent` plus
 3. For a vendored crate, copy the new upstream crate into `crates/vendor/ara-*` and apply the [ARA rename](knowledge/naming.md) recorded in `crates/vendor/README.md` before comparing. Update source maps and the feature ledger. Implement one bounded group in Rust; run direct comparison, actual Rust host tests, negative cases, and selected real-model trials. Record intentional differences and reasons.
 4. Advance `reviewed_upstream_commit` after source review. Advance `ported_through_commit` to the new SHA **only when all selected differences through that SHA pass the full acceptance gate**. Partial work remains visible in the ledger without claiming the marker.
 5. Keep ARA-specific behavior behind explicit interfaces or documented differences so an upstream change can be evaluated rather than blindly merged.
+
+When `ported_through_commit` is still null, compare the prior exact baseline
+and reviewed source SHA with the new target. Retain old accepted receipts as
+evidence for their original SHA, then reconcile changed behavior module by
+module. A whole-file change or inventory classification alone proves neither
+equivalence nor lost acceptance. The old baseline inventory remains intact;
+added, moved and removed contracts need a separate upgrade delta record before
+new-target acceptance is reported.
+
+Group related changes before one affected-package/explicit-target build. Reuse
+the existing target/profile/features/toolchain and unchanged executable evidence.
+Do not rerun the workspace for source fetching, documentation or external driver
+edits. Run broader gates only for demonstrated shared impact or complete
+integration/release acceptance; record the reason and coverage.
+
+The2026-10-14 [bounded Retry upgrade](evidence/omp-upgrade-retry-20261014.md)
+executes20 distinct tests with an explicit19-historical/1-fresh source bridge;
+final independent EXEC2591a4dc approves the bounded delta. Complete upgraded
+AI-MOCK subsequently passed7/7 and independent complete-point audit841eedea;
+corrected READ8/8 passed bounded independent EXECd2a865a3. Six selected Host
+groups and owner1/1 subsequently close the bounded URI/READ/ACP/autosave delta
+with independent final point audit8cb953c1; full READ/ACP remain open. See
+[final module receipts and limits](evidence/omp-upgrade-uri-mock-20261014.md).
+Mock is the first complete new-target module; Retry/READ/ACP and the complete
+new inventory remain open. Old7/111 and baseline/reviewed/ported-through markers
+remain unchanged.
 
 Never import the OMP `.git` directory, old ARA commits, local credentials, or copied generated artifacts into this new repository. Upstream source may be reused under MIT terms with attribution; see [third-party notices](../THIRD_PARTY_NOTICES.md).

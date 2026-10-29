@@ -118,7 +118,7 @@ async fn codex_account_setup_failure_returns_while_sibling_discovery_continues()
         async fn fetch(&self, request: DiscoveryRequest) -> Result<DiscoveryReply, DiscoveryError> {
             assert_eq!(
                 request.url.to_utf8().unwrap(),
-                "https://chatgpt.com/backend-api/codex/models?client_version=0.153.0"
+                "https://chatgpt.com/backend-api/codex/models?client_version=0.159.0"
             );
             assert!(
                 request

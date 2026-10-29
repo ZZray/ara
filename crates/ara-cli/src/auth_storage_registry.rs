@@ -53,6 +53,15 @@ impl RegistryCredentials for AuthStorageRegistryCredentials {
     fn has_auth(&self, provider: &WireString) -> bool {
         Self::provider(provider).is_ok_and(|provider| self.storage.has_auth(&provider).unwrap_or(false))
     }
+    fn has_concrete_auth(&self, provider: &WireString) -> bool {
+        Self::provider(provider).is_ok_and(|provider| self.storage.has_concrete_auth(&provider).unwrap_or(false))
+    }
+    fn peek_runtime_key(&self, provider: &WireString) -> RegistryRuntimeResult<Option<WireString>> {
+        self.storage
+            .runtime_api_key(&Self::provider(provider)?)
+            .map(|key| key.map(Into::into))
+            .map_err(|_| DiscoveryError::new("authentication runtime key lookup failed"))
+    }
     fn has_oauth_credentials(&self, provider: &WireString) -> bool {
         Self::provider(provider)
             .is_ok_and(|provider| self.storage.list_oauth_accounts(&provider, None).is_ok_and(|rows| !rows.is_empty()))
@@ -88,6 +97,18 @@ impl RegistryCredentials for AuthStorageRegistryCredentials {
             .map_err(|_| DiscoveryError::new("authentication receipt failed"))?
             .insert((provider, key.clone()), access.lease);
         Ok(Some(key.into()))
+    }
+    async fn resolve_key_with_context(
+        &self,
+        provider: &WireString,
+        context: &AuthRequestContext,
+        cancel: &CancellationToken,
+    ) -> RegistryRuntimeResult<Option<WireString>> {
+        self.storage
+            .get_api_key(&Self::provider(provider)?, context, cancel)
+            .await
+            .map(|key| key.map(Into::into))
+            .map_err(|_| DiscoveryError::new("authentication resolution failed"))
     }
     async fn refresh_rejected_key(
         &self,

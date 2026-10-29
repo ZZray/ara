@@ -181,7 +181,7 @@ fn rejects_lossy_utf8_source_even_when_json_still_decodes() {
 
     let journal = SessionJournal::open(&path).unwrap();
     assert_eq!(journal.report.malformed_records, 0);
-    assert_eq!(journal.build_context().len(), 1, "ordinary tolerant read is unchanged");
+    assert_eq!(journal.build_context().unwrap().len(), 1, "ordinary tolerant read is unchanged");
     assert_eq!(journal.compaction_source_snapshot(), Err(CompactionSourceError::InvalidUtf8));
     assert_eq!(fs::read(&path).unwrap(), bytes);
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);

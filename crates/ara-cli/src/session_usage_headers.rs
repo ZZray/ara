@@ -81,4 +81,14 @@ impl ModelProvider for SessionResponseProvider {
         self.owner.attach(&mut options);
         self.provider.stream(model, context, options)
     }
+    fn stream_actual(
+        &self,
+        model: &Model,
+        context: &ara_ai::GraphProviderContext,
+        factory: Arc<ara_ai::graph_values::GraphValueFactory>,
+        mut options: CallOptions,
+    ) -> Result<ara_ai::ActualAssistantStream, ara_rpc::value_heap::ValueError> {
+        self.owner.attach(&mut options);
+        self.provider.stream_actual(model, context, factory, options)
+    }
 }

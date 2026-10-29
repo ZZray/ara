@@ -1,0 +1,72 @@
+{
+  "original_files": [
+    {
+      "path": "src/lib.rs",
+      "sha256": "a29ead0dd6a7acf3ceb529c21472152642a06ffc5f663676c8bd2769e9848738"
+    },
+    {
+      "path": "src/grapheme.rs",
+      "sha256": "7218145be9c2b1a673b1248c328cf316cf4f76dd2effa4066bad6c0f84da373c"
+    },
+    {
+      "path": "src/width.rs",
+      "sha256": "13102413126f5812d99093063dda5927d8df6c0dc41d7afbe06e36e48ef11c6b"
+    },
+    {
+      "path": "src/props.rs",
+      "sha256": "77ca50b04323af5562322440281ad8228d7396ffbd1ab38839784022cd89cd35"
+    },
+    {
+      "path": "src/props_bmp.bin",
+      "sha256": "37a0e280750c3f57526278570054f3b147a6c6c7c2380fcc7c5285b6452ecd92"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "5eec9f565870931fbb0655d9eebb6ba00e7312717a15301ab24b1cd32df9e92a"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "fdc54b6d1a7154cfad94e6ea0969670e3cb329fc74f1a2821352af6176c3be90"
+    },
+    {
+      "path": "tests/width.rs",
+      "sha256": "35e6526c9ab392f09ce16fa11db0b1240dffe42e30843612f83341e4f6ea8b2f"
+    },
+    {
+      "path": "tests/graphemes.rs",
+      "sha256": "15eb12d66f41a6d7ed59a704493f90eb8caf91e358b524dc128ce6820e37ea9b"
+    },
+    {
+      "path": "src/simd.rs",
+      "sha256": "4d1cfed459be448d936fa91ee08f1bfddc7eda27df182e7d4e2a799e7a15d908"
+    },
+    {
+      "path": "src/utf8.rs",
+      "sha256": "5685cf463cce7713f63ad7073a6c64dbb7fd5e482c1fc4df34dad1115719574c"
+    }
+  ],
+  "fixed_omp": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "adapter_boundary": "Valid UTF-8 only. Grapheme boundaries use the original scalar state. String widths use the fixed flat width.rs scanner, preserving ASCII admission/hold-back and scalar transition order; UTF-8 decoding and printable-prefix acceleration are specialized to stable scalar helpers. No full xutf API claim.",
+  "scalar_changes": [
+    "module imports relocated",
+    "two documentation links changed to plain descriptions"
+  ],
+  "crate_sha256": "990cc0159ef1d38b900524ac2308778ce60de2d32af70f40a71517c6b299fe8a",
+  "dependency": "xutf 1.5.0",
+  "unicode_properties": "17.0.0",
+  "scalar_origin": "src/grapheme.rs:340-476",
+  "copied_verbatim": [
+    "props.rs",
+    "props_bmp.bin",
+    "LICENSE.xutf"
+  ],
+  "width_origin": "src/width.rs:29-180; printable ASCII prefix predicate src/simd.rs:275-317",
+  "width_specialization_changes": [
+    "Generic Encoding/Unit inputs specialized to valid UTF-8 str",
+    "E::FOREIGN folded to false for UTF-8, preserving the original control flow",
+    "E::decode replaced by next char and its UTF-8 byte count",
+    "plain_prefix SIMD acceleration replaced by the same scalar printable ASCII predicate",
+    "width entry kept private and width_str delegated directly; unused API wrappers not exported",
+    "No changes to original flat scanner state/commit/boundary order"
+  ]
+}

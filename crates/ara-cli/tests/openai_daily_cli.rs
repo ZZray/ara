@@ -53,10 +53,13 @@ impl Host {
             "ARA_API_KEY",
             "ARA_TEST_API_KEY",
             "ARA_API",
+            "ARA_NO_STRICT",
             "ARA_TOKENIZER",
             "OPENROUTER_BASE_URL",
             "OPENROUTER_API_KEY",
             "ARA_TEST_CODEX_AUTH_BASE_URL",
+            "ARA_TEST_CODEX_CALLBACK_PORT",
+            "ARA_TEST_CODEX_CALLBACK_TIMEOUT_MS",
             "CLAUDE_CONFIG_DIR",
             "WSL_DISTRO_NAME",
             "WSL_INTEROP",
@@ -93,6 +96,216 @@ impl Host {
             .find(|path| path.extension().is_some_and(|extension| extension == "jsonl"))
             .unwrap()
     }
+}
+
+impl Host {
+    fn thinking_config(&self, endpoint: &str, model_default: bool) {
+        let agent = self.home.path().join("agent");
+        std::fs::create_dir_all(&agent).unwrap();
+        std::fs::write(
+            agent.join("config.yml"),
+            serde_json::to_vec(&json!({
+                "defaultThinkingLevel":"auto", "modelRoles":{"tiny":"custom/classifier"},
+                "providers":{"autoThinkingModel":"online","autoThinkingMaxEffort":"xhigh"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut model = json!({"id":"daily-model","reasoning":true,"contextWindow":131072,"maxTokens":8192,
+            "thinking":{"mode":"effort","efforts":["low","medium","high","xhigh","max"]}});
+        if model_default {
+            model["thinking"]["defaultLevel"] = json!("high");
+        }
+        std::fs::write(
+            agent.join("models.yml"),
+            serde_json::to_vec(&json!({"providers":{"custom":{
+                "api":"openai-completions","baseUrl":endpoint,"auth":"none","compat":{"maxTokensField":"max_tokens"},
+                "models":[model,{"id":"classifier","maxTokens":4096,"reasoning":false}]
+            }}}))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn chat_answer(answer: &str) -> Value {
+    json!({"events":[text(answer),finish("stop"),
+        {"data":{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}},done()]})
+}
+
+async fn line_output(command: Command, input: &str) -> Output {
+    use tokio::io::AsyncWriteExt;
+    let mut command = tokio::process::Command::from(command);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = command.spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await.expect("bounded line host").unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thinking_cli_fixed_initial_resume_and_native_flag_precedence() {
+    for repl in [false, true] {
+        let host = Host::new();
+        let up = upstream(json!([
+            chat_answer("first"),
+            chat_answer("saved"),
+            chat_answer("override"),
+            chat_answer("still saved")
+        ]))
+        .await;
+        host.thinking_config(&up.base_url(), true);
+        let settings = std::fs::read(host.home.path().join("agent/config.yml")).unwrap();
+        let initial = if repl {
+            line_output(
+                host.command("custom", &["--repl", "--thinking", "me", "--thinking", "inherit"]),
+                "first User\n/exit\n",
+            )
+            .await
+        } else {
+            output(host.command("custom", &["--thinking", "me", "--thinking", "inherit", "first User"])).await
+        };
+        success(&initial);
+        assert!(String::from_utf8_lossy(&initial.stderr).contains("invalid --thinking"));
+        let path = host.session();
+        let thinking_entries = |path: &std::path::Path| {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|entry| entry["type"] == "thinking_level_change")
+                .collect::<Vec<_>>()
+        };
+        let saved = thinking_entries(&path);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0]["thinkingLevel"], "medium");
+        for (value, expected) in [(None, "medium"), (Some("hi"), "high"), (None, "medium")] {
+            let mut command = host.command("custom", &["--resume", path.to_str().unwrap()]);
+            if let Some(value) = value {
+                command.args(["--thinking", value]);
+            }
+            let answer = if repl {
+                command.arg("--repl");
+                line_output(command, "resumed User\n/exit\n").await
+            } else {
+                command.arg("resumed User");
+                output(command).await
+            };
+            success(&answer);
+            assert_eq!(up.requests.lock().await.last().unwrap()["body"]["reasoning_effort"], expected);
+            assert_eq!(thinking_entries(&path), saved, "resume keeps original selection receipts");
+        }
+        assert_eq!(std::fs::read(host.home.path().join("agent/config.yml")).unwrap(), settings);
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        assert!(requests.iter().all(|request| request["body"]["model"] == "daily-model"));
+        assert_eq!(requests[0]["body"]["reasoning_effort"], "medium");
+    }
+    // The selected model's default precedes a global Auto setting.
+    let host = Host::new();
+    let up = upstream(json!([chat_answer("model default")])).await;
+    host.thinking_config(&up.base_url(), true);
+    success(&output(host.command("custom", &["model default User"])).await);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["body"]["reasoning_effort"], "high", "model default precedes global Auto");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thinking_cli_auto_actual_tool_usage_and_last_resolution() {
+    use ara_testkit::chunks::tool_call;
+    for repl in [false, true] {
+        let host = Host::new();
+        let up = upstream(json!([
+            chat_answer("low"),
+            {"events":[tool_call(0,"thinking-write","write",r#"{"path":"thinking.txt","content":"owned"}"#),finish("tool_calls"),done()]},
+            chat_answer("wrote owned"), chat_answer("unparseable classification"),chat_answer("kept low"),chat_answer("maximum requested")
+        ])).await;
+        host.thinking_config(&up.base_url(), !repl);
+        let answer = if repl {
+            // Global Auto startup (no model default); context/provider reset
+            // and /new retain the resolved Auto effort and its fallback.
+            line_output(
+                host.command("custom", &["--repl"]),
+                "first User\n/clear\n/new\nsecond User\nultrathink third User\n/exit\n",
+            )
+            .await
+        } else {
+            output(
+                host.command("custom", &["--thinking", "auto", "first User", "second User", "ultrathink third User"]),
+            )
+            .await
+        };
+        success(&answer);
+        assert_eq!(std::fs::read_to_string(host.work.path().join("thinking.txt")).unwrap(), "owned");
+        let requests = up.requests.lock().await;
+        assert_eq!(
+            requests.len(),
+            6,
+            "repl={repl}; model/effort={:?}; stderr={}",
+            requests
+                .iter()
+                .map(|request| (&request["body"]["model"], &request["body"]["reasoning_effort"]))
+                .collect::<Vec<_>>(),
+            String::from_utf8_lossy(&answer.stderr)
+        );
+        assert_eq!(requests[0]["body"]["model"], "classifier");
+        assert_eq!(requests[3]["body"]["model"], "classifier");
+        for index in [1, 2, 4] {
+            assert_eq!(requests[index]["body"]["reasoning_effort"], "low");
+        }
+        assert_eq!(requests[5]["body"]["reasoning_effort"], "max", "ultrathink bypasses classifier ceiling");
+        let files = std::fs::read_dir(&host.sessions)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "jsonl"))
+            .collect::<Vec<_>>();
+        let entries = files
+            .iter()
+            .flat_map(|path| {
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let usage = entries.iter().filter(|entry| entry["type"] == "model_usage").collect::<Vec<_>>();
+        assert_eq!(usage.len(), 2);
+        assert!(usage.iter().all(|entry| entry["purpose"] == "auto-thinking"
+            && entry["model"] == "classifier"
+            && entry["usage"]["input"] == 3));
+        assert_eq!(
+            entries.iter().filter(|entry| entry["type"] == "message" && entry["message"]["role"] == "user").count(),
+            3
+        );
+        assert_eq!(files.len(), if repl { 2 } else { 1 });
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thinking_cli_auto_timeout_keeps_provisional_and_primary_task() {
+    let host = Host::new();
+    let up = upstream(json!([
+        {"events":[{"sleep_ms":4500},text("low"),finish("stop"),done()]},chat_answer("primary fallback")
+    ]))
+    .await;
+    host.thinking_config(&up.base_url(), true);
+    success(&output(host.command("custom", &["--thinking", "auto", "timeout fallback User"])).await);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["body"]["model"], "classifier");
+    assert_eq!(requests[1]["body"]["model"], "daily-model");
+    assert_eq!(requests[1]["body"]["reasoning_effort"], "high");
+    let journal = std::fs::read_to_string(host.session()).unwrap();
+    assert!(journal.contains("timeout fallback User"));
+    assert!(
+        !journal
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|entry| entry["type"] == "thinking_level_change" && entry["configured"] == "auto"),
+        "unchanged provisional classification does not persist an Auto selector"
+    );
 }
 
 async fn upstream(responses: Value) -> FakeUpstream {
@@ -133,6 +346,37 @@ fn response_write() -> Value {
 
 #[tokio::test]
 async fn custom_chat_configuration_and_explicit_overrides_reach_the_wire() {
+    for (raw, expected) in [(None, false), (Some("true"), true), (Some("True"), false)] {
+        let host = Host::new();
+        let up = upstream(json!([chat_answer("schema startup")])).await;
+        host.config("openai-completions", &up.base_url(), "none");
+        // Native loopback Host compat defaults to supportsStrictMode:false.
+        // Author support in this fixture; NO_STRICT then controls its wire use.
+        let path = host.home.path().join("agent/models.yml");
+        let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        config["providers"]["custom"]["compat"] = json!({"supportsStrictMode":true});
+        std::fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let mut command = host.command("custom", &["--tools", "read", "schema startup User"]);
+        if let Some(raw) = raw {
+            command.env("ARA_NO_STRICT", raw);
+        }
+        assert!(success(&output(command).await).contains("schema startup"));
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 1, "startup policy never triggers a retry");
+        let tool = &requests[0]["body"]["tools"][0]["function"];
+        eprintln!("ARA-NO-STRICT CLI_WIRE raw={raw:?} fixture_supports_strict=true tool={tool}");
+        assert_eq!(tool["name"], "read");
+        assert_eq!(tool.get("strict").and_then(Value::as_bool), if expected { None } else { Some(true) });
+        let required = tool["parameters"]["required"].as_array().unwrap();
+        assert!(required.contains(&json!("path")));
+        assert!(required.contains(&json!("i")), "native Agent injects required concise intent");
+        assert_eq!(
+            required,
+            &if expected { vec![json!("path"), json!("i")] } else { vec![json!("i"), json!("path")] },
+            "strict adaptation enumerates intent-first properties; NO_STRICT keeps original required order"
+        );
+    }
+    eprintln!("ARA-NO-STRICT CLI_STARTUP PASS 3/3");
     // Reuse the named SSE wire framing from e2e::anthropic_messages_runs_tool_and_replays_after_restart.
     fn frame(value: Value) -> Value {
         let name = value["type"].as_str().unwrap();
@@ -638,6 +882,126 @@ async fn ordinary_openai_shared_storage_precedence_overrides_and_session_restart
         && request["body"]["model"] == "daily-model"));
 }
 
+/// Fixed bundled capability -> actual CLI/socket -> alias -> EditSession ->
+/// native journal -> same-Session restart without a second file effect.
+#[tokio::test]
+async fn bundled_freeform_custom_edit_socket_and_restart_preserve_original_receipts() {
+    let host = Host::new();
+    let raw = "*** Begin Patch\n*** Update File: custom.txt\n@@\n-alpha\n+beta 中文\n*** End Patch";
+    std::fs::write(host.work.path().join("custom.txt"), "alpha\n").unwrap();
+    let up = upstream(json!([
+        {"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,
+                "item":{"type":"custom_tool_call","id":"ctc_host","call_id":"call_host",
+                    "name":"apply_patch","input":""}}},
+            {"data":{"type":"response.custom_tool_call_input.delta","output_index":0,"delta":raw}},
+            {"data":{"type":"response.custom_tool_call_input.done","output_index":0,"input":raw}},
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"custom_tool_call","id":"ctc_host","call_id":"call_host",
+                    "name":"apply_patch","input":raw}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        response_text("Custom edit complete."),
+        response_text("Original custom receipt retained.")
+    ]))
+    .await;
+    let config = host.home.path().join("agent/models.yml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    // Override only the route of a fixed bundled donor. Auth is synthetic/keyless;
+    // freeform metadata is not invented inside an authored custom definition.
+    std::fs::write(
+        &config,
+        serde_json::to_vec(&json!({"providers":{"openai":{
+            "api":"openai-responses", "baseUrl":up.base_url(), "auth":"none", "models":[]
+        }}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let arguments = [
+        "--mode",
+        "json",
+        "--thinking",
+        "off",
+        "--tools",
+        "edit",
+        "--edit-mode",
+        "apply_patch",
+        "apply the custom edit",
+    ];
+    let mut command = host.command_for_model("openai", "gpt-5.4", &arguments);
+    command.env_remove("OPENAI_API_KEY");
+    let first = success(&output(command).await);
+    let frames: Vec<Value> = first.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let original = frames.iter().find(|frame| frame["type"] == "session").unwrap()["id"].clone();
+    assert!(frames.iter().any(|frame| frame["type"] == "tool_execution_end"
+        && frame["toolName"] == "apply_patch"
+        && frame["toolCallId"] == "call_host|ctc_host"
+        && frame["isError"] == false));
+    assert_eq!(std::fs::read_to_string(host.work.path().join("custom.txt")).unwrap(), "beta 中文\n");
+    let session = host.session();
+    let before = std::fs::read(&session).unwrap();
+    let mut command = host.command_for_model(
+        "openai",
+        "gpt-5.4",
+        &[
+            "--mode",
+            "json",
+            "--thinking",
+            "off",
+            "--tools",
+            "edit",
+            "--edit-mode",
+            "apply_patch",
+            "--resume",
+            session.to_str().unwrap(),
+            "continue from our original custom receipt",
+        ],
+    );
+    command.env_remove("OPENAI_API_KEY");
+    let resumed = success(&output(command).await);
+    let frames: Vec<Value> = resumed.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(frames.iter().find(|frame| frame["type"] == "session").unwrap()["id"], original);
+    assert!(!frames.iter().any(|frame| frame["type"] == "tool_execution_start"));
+    assert_eq!(std::fs::read_to_string(host.work.path().join("custom.txt")).unwrap(), "beta 中文\n");
+    let after = std::fs::read(&session).unwrap();
+    assert!(after.starts_with(&before), "restart only appends to the original journal");
+    let entries: Vec<Value> =
+        String::from_utf8(after).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let calls: Vec<&Value> = entries
+        .iter()
+        .filter_map(|entry| entry["message"]["content"].as_array())
+        .flatten()
+        .filter(|part| part["type"] == "toolCall")
+        .collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["name"], "apply_patch");
+    assert_eq!(calls[0]["customWireName"], "apply_patch");
+    assert_eq!(calls[0]["arguments"]["input"], raw);
+    let results: Vec<&Value> = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["message"]["toolCallId"], "call_host|ctc_host");
+    assert_eq!(results[0]["message"]["isError"], false);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        assert_eq!(request["request"], "POST /v1/responses HTTP/1.1");
+        assert_eq!(request["body"]["model"], "gpt-5.4");
+        assert_eq!(request["body"]["tools"][0]["type"], "custom");
+        assert_eq!(request["body"]["tools"][0]["name"], "apply_patch");
+    }
+    for index in [1, 2] {
+        let input = requests[index]["body"]["input"].as_array().unwrap();
+        let calls: Vec<&Value> = input.iter().filter(|item| item["type"] == "custom_tool_call").collect();
+        let outputs: Vec<&Value> = input.iter().filter(|item| item["type"] == "custom_tool_call_output").collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(calls[0]["call_id"], "call_host");
+        assert_eq!(calls[0]["input"], raw);
+        assert_eq!(outputs[0]["call_id"], "call_host");
+        assert!(!input.iter().any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_host"));
+    }
+}
+
 #[tokio::test]
 async fn configured_responses_stream_tool_artifact_and_restart_use_the_original_session() {
     let host = Host::new();
@@ -1041,194 +1405,773 @@ async fn native_catalog_tokenizer_executes_without_an_override_and_rejects_unkno
 #[cfg(feature = "test-fixture")]
 #[tokio::test]
 async fn device_login_tool_resume_compaction_and_logout_close_the_cli_account_workflow() {
+    native_codex_compaction_observation_regression().await;
     use base64::Engine as _;
-    let host = Host::new();
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-        serde_json::to_vec(&json!({
-            "https://api.openai.com/auth":{"chatgpt_account_id":"synthetic-account","chatgpt_data_residency":"eu"},
-            "https://api.openai.com/profile":{"email":"fixture@example.invalid"}
-        }))
-        .unwrap(),
-    );
-    let token = format!("e30.{payload}.synthetic");
-    let mut oversized_summary = response_text("Oversized hidden reasoning summary.");
-    oversized_summary["events"][1]["data"]["response"]["usage"] = json!({"output_tokens":14_000});
-    // Both parallel requests must reach the fixture before either branch fails.
-    oversized_summary["delay_ms"] = json!(200);
-    let up = upstream(json!([
-        {"body":json!({"device_auth_id":"device-fixture","user_code":"CLI-FIXTURE","interval":1}).to_string()},
-        {"status":404,"body":"{}"},
-        {"body":json!({"authorization_code":"synthetic-code","code_verifier":"synthetic-verifier"}).to_string()},
-        {"body":json!({"access_token":token,"refresh_token":"synthetic-refresh","expires_in":3600}).to_string()},
-        response_write(), response_text("Written."), response_text("Continued."),
-        // Native split cuts issue history/prefix summaries concurrently. Equal
-        // branch responses keep the script independent of request arrival order.
-        oversized_summary.clone(), oversized_summary,
-        response_text("Summary preserves daily.txt."), response_text("Summary preserves daily.txt."),
-        response_text("Cleared context."), response_text("Fresh Session."),
-        {"events":[],"end":"hang"}
-    ]))
-    .await;
-    // A valid stored grant lets usage and Responses use independent fixture
-    // routes. Background usage may interleave with model/summary calls without
-    // consuming an ordered model response. Login/expired refresh still use up.
-    let usage = upstream(json!([
+    for browser in [false, true] {
+        let host = Host::new();
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "https://api.openai.com/auth":{"chatgpt_account_id":"synthetic-account","chatgpt_data_residency":"eu"},
+                "https://api.openai.com/profile":{"email":"fixture@example.invalid"}
+            }))
+            .unwrap(),
+        );
+        let token = format!("e30.{payload}.synthetic");
+        let mut oversized_summary = codex_account_text_response("Oversized hidden reasoning summary.");
+        oversized_summary["events"][2]["data"]["response"]["usage"] = json!({"output_tokens":14_000});
+        // Both parallel requests must reach the fixture before either branch fails.
+        oversized_summary["delay_ms"] = json!(200);
+        // Fixed Codex treats output_item.done arguments as authoritative.
+        // Keep the Compatible fixture's conflicting final frame in its own cases.
+        let mut codex_write = response_write();
+        codex_write["events"][2]["data"]["item"]["arguments"] = codex_write["events"][1]["data"]["arguments"].clone();
+        let grant = json!({"body":json!({"access_token":token,"refresh_token":"synthetic-refresh","expires_in":3600}).to_string()});
+        let mut replies = if browser {
+            vec![grant]
+        } else {
+            vec![
+                json!({"body":json!({"device_auth_id":"device-fixture","user_code":"CLI-FIXTURE","interval":1}).to_string()}),
+                json!({"status":404,"body":"{}"}),
+                json!({"body":json!({"authorization_code":"synthetic-code","code_verifier":"synthetic-verifier"}).to_string()}),
+                grant,
+            ]
+        };
+        let auth_requests = replies.len();
+        replies.extend([
+            codex_write,
+            codex_account_text_response("Written."),
+            codex_account_text_response("Continued."),
+            // Native split cuts issue history/prefix summaries concurrently. Equal
+            // branch responses keep the script independent of request arrival order.
+            oversized_summary.clone(),
+            oversized_summary,
+            codex_account_text_response("Summary preserves daily.txt."),
+            codex_account_text_response("Summary preserves daily.txt."),
+            codex_account_text_response("Cleared context."),
+            codex_account_text_response("Fresh Session."),
+            json!({"events":[],"end":"hang"}),
+        ]);
+        let up = upstream(Value::Array(replies)).await;
+        // A valid stored grant lets usage and Responses use independent fixture
+        // routes. Background usage may interleave with model/summary calls without
+        // consuming an ordered model response. Login/expired refresh still use up.
+        let usage = upstream(json!([
         {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
             "primary_window":{"used_percent":11,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
         {"body":json!({"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
             "primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":600}}}).to_string()},
     ]))
     .await;
-    // Login/logout must succeed independently of broken model configuration.
-    let broken = host.home.path().join("agent/models.yml");
-    std::fs::create_dir_all(broken.parent().unwrap()).unwrap();
-    std::fs::write(&broken, "providers: [").unwrap();
-    let mut login = host.command("openai-codex", &["login"]);
-    login.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
-    let login = output(login).await;
-    success(&login);
-    assert!(String::from_utf8_lossy(&login.stderr).contains("CLI-FIXTURE"));
-    assert!(!host.sessions.exists());
-    host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
-    // This controlled account/Responses workflow starts with a fresh real
-    // catalog cache. Cold per-account discovery is exercised by the Registry
-    // module; synthetic account tokens must not reach the public catalog.
-    let cache = ara_cli::model_cache::SqliteModelCache::for_path(host.home.path().join("agent/model-cache.db"));
-    let bundled = ara_cli::model_identity_wire::bundled_provider_models(&"openai-codex".into());
-    let fingerprint = ara_cli::model_manager::fingerprint_static_models(
-        &ara_cli::model_manager::ModelArray::new(bundled.clone()),
-        true,
-    );
-    cache
-        .write_model_cache_wire(
-            &"openai-codex".into(),
-            chrono::Utc::now().timestamp_millis() as f64,
-            &[],
-            ara_cli::model_cache::WireModelCacheWriteOptions {
-                authoritative: true,
-                static_fingerprint: &fingerprint,
-                static_header_sources: &bundled,
-                restorable_header_fallback: None,
-            },
-        )
-        .unwrap();
-    // This account workflow serves ordinary Responses and soft summaries.
-    // Native remote endpoints have their own grouped Host fixture.
-    std::fs::write(host.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
-    let mut first = host.command("openai-codex", &["--mode", "json", "--tools", "write", "write daily.txt"]);
-    first.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
-    let first = success(&output(first).await);
-    let original: Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
-    let session = host.session();
-    let mut resumed = host.command(
-        "openai-codex",
-        &["--mode", "json", "--resume", session.to_str().unwrap(), "--repl", "--compact-keep-tokens", "0"],
-    );
-    resumed.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
-    let mut child = tokio::process::Command::from(resumed)
-        .kill_on_drop(true)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
+        // Login/logout must succeed independently of broken model configuration.
+        let broken = host.home.path().join("agent/models.yml");
+        std::fs::create_dir_all(broken.parent().unwrap()).unwrap();
+        std::fs::write(&broken, "providers: [").unwrap();
+        let mut login =
+            host.command("openai-codex", if browser { &["login"] } else { &["login", "--method", "device"] });
+        login.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+        let login = if browser { browser_login_output(login).await } else { output(login).await };
+        success(&login);
+        if browser {
+            assert!(String::from_utf8_lossy(&login.stderr).contains("Waiting for browser authentication"));
+        } else {
+            assert!(String::from_utf8_lossy(&login.stderr).contains("CLI-FIXTURE"));
+        }
+        assert!(!host.sessions.exists());
+        host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
+        // This controlled account/Responses workflow starts with a fresh real
+        // catalog cache. Cold per-account discovery is exercised by the Registry
+        // module; synthetic account tokens must not reach the public catalog.
+        let cache = ara_cli::model_cache::SqliteModelCache::for_path(host.home.path().join("agent/model-cache.db"));
+        let bundled = ara_cli::model_identity_wire::bundled_provider_models(&"openai-codex".into());
+        let fingerprint = ara_cli::model_manager::fingerprint_static_models(
+            &ara_cli::model_manager::ModelArray::new(bundled.clone()),
+            true,
+        );
+        cache
+            .write_model_cache_wire(
+                &"openai-codex".into(),
+                chrono::Utc::now().timestamp_millis() as f64,
+                &[],
+                ara_cli::model_cache::WireModelCacheWriteOptions {
+                    authoritative: true,
+                    static_fingerprint: &fingerprint,
+                    static_header_sources: &bundled,
+                    restorable_header_fallback: None,
+                },
+            )
+            .unwrap();
+        // This account workflow serves ordinary Responses and soft summaries.
+        // Native remote endpoints have their own grouped Host fixture.
+        std::fs::write(host.home.path().join("agent/config.yml"), "compaction:\n  methodOrder: [soft]\n").unwrap();
+        let mut first = host.command("openai-codex", &["--mode", "json", "--tools", "write", "write daily.txt"]);
+        first.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
+        let first = success(&output(first).await);
+        let original: Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+        let session = host.session();
+        let mut resumed = host.command(
+            "openai-codex",
+            &["--mode", "json", "--resume", session.to_str().unwrap(), "--repl", "--compact-keep-tokens", "0"],
+        );
+        resumed.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", usage.addr));
+        let mut child = tokio::process::Command::from(resumed)
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
         .stdin
         .take()
         .unwrap()
         .write_all(b"continue\n/compact\n/compact\n/clear\ncleared turn\n/new\nfresh turn\n/usage\n/usage\n/usage refresh\n/usage\n/exit\n")
         .await
         .unwrap();
-    let resumed = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await.unwrap().unwrap();
-    let stdout = success(&resumed);
-    let continued: Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
-    assert_eq!(continued["id"], original["id"]);
-    assert!(String::from_utf8_lossy(&resumed.stderr).contains("summary persisted"));
-    assert!(String::from_utf8_lossy(&resumed.stderr).contains("local adoption budget"));
-    assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("11.00% used (89.0% left)").count(), 2);
-    assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("12.00% used (88.0% left)").count(), 2);
-    assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
-    let requests = up.requests.lock().await;
-    assert_eq!(requests.len(), 13, "background usage never consumes an auth/model/summary fixture response");
-    let usage_requests = usage.requests.lock().await;
-    assert_eq!(
-        usage_requests.len(),
-        2,
-        "warm /usage reuses the background full report; explicit refresh starts one new GET"
-    );
-    for request in usage_requests.iter() {
-        assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
-        assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
-    }
-    drop(usage_requests);
-    for request in &requests[4..11] {
-        assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
-        assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
-        assert_eq!(request["headers"]["session_id"], original["id"]);
-        assert_eq!(request["body"]["store"], false);
-        assert!(request["body"].get("max_output_tokens").is_none());
-        assert!(request["body"].get("temperature").is_none());
-    }
-    let fresh: Value = stdout
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|value| value["type"] == "session" && value["id"] != original["id"])
-        .unwrap();
-    let runtime = requests[11]["headers"]["session_id"].as_str().unwrap();
-    assert_ne!(runtime, original["id"].as_str().unwrap());
-    assert_ne!(runtime, fresh["id"].as_str().unwrap());
-    for name in ["session_id", "conversation_id", "x-client-request-id"] {
-        assert_eq!(requests[11]["headers"][name], runtime);
-        assert_eq!(requests[12]["headers"][name], fresh["id"]);
-    }
-    assert_eq!(requests[11]["body"]["prompt_cache_key"], runtime);
-    assert!(!requests[11]["body"].to_string().contains("daily.txt"));
-    assert_eq!(requests[12]["body"]["prompt_cache_key"], fresh["id"]);
-    drop(requests);
-    let journal = std::fs::read_to_string(session).unwrap();
-    assert!(journal.contains("openai-codex-responses"));
-    assert!(journal.contains("\"type\":\"compaction\""));
-    assert!(journal.contains("\"type\":\"reset_boundary\""));
-    assert!(!journal.contains("Oversized hidden reasoning summary."));
-    assert!(!journal.contains("synthetic-refresh"));
-    assert!(!journal.contains(&token));
-    std::fs::write(broken, "providers: [").unwrap();
-    let mut logout = host.command("openai-codex", &["logout"]);
-    logout.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
-    success(&output(logout).await);
-    host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
-    let mut denied = host.command("openai-codex", &["after logout"]);
-    denied.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
-    let denied = output(denied).await;
-    assert_eq!(denied.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
-    assert_eq!(up.served(), 13, "logout and rejected post-logout turn add no auth/model request");
-    assert_eq!(usage.served(), 2, "logout and rejection add no usage GET");
+        let resumed = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output()).await.unwrap().unwrap();
+        let stdout = success(&resumed);
+        let continued: Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+        assert_eq!(continued["id"], original["id"]);
+        assert!(String::from_utf8_lossy(&resumed.stderr).contains("summary persisted"));
+        assert!(String::from_utf8_lossy(&resumed.stderr).contains("local adoption budget"));
+        assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("11.00% used (89.0% left)").count(), 2);
+        assert_eq!(String::from_utf8_lossy(&resumed.stderr).matches("12.00% used (88.0% left)").count(), 2);
+        assert_eq!(std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(), "daily proof\n");
+        let requests = up.requests.lock().await;
+        assert_eq!(
+            requests.len(),
+            auth_requests + 9,
+            "background usage never consumes an auth/model/summary fixture response"
+        );
+        let usage_requests = usage.requests.lock().await;
+        assert_eq!(
+            usage_requests.len(),
+            2,
+            "warm /usage reuses the background full report; explicit refresh starts one new GET"
+        );
+        for request in usage_requests.iter() {
+            assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
+            assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
+        }
+        drop(usage_requests);
+        for request in &requests[auth_requests..auth_requests + 7] {
+            assert_eq!(request["request"], "POST /codex/responses HTTP/1.1");
+            assert_eq!(request["headers"]["chatgpt-account-id"], "synthetic-account");
+            assert_eq!(request["headers"]["session_id"], original["id"]);
+            assert_eq!(request["body"]["store"], false);
+            assert!(request["body"].get("max_output_tokens").is_none());
+            assert!(request["body"].get("temperature").is_none());
+        }
+        let fresh: Value = stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|value| value["type"] == "session" && value["id"] != original["id"])
+            .unwrap();
+        let runtime = requests[auth_requests + 7]["headers"]["session_id"].as_str().unwrap();
+        assert_ne!(runtime, original["id"].as_str().unwrap());
+        assert_ne!(runtime, fresh["id"].as_str().unwrap());
+        for name in ["session_id", "conversation_id", "x-client-request-id"] {
+            assert_eq!(requests[auth_requests + 7]["headers"][name], runtime);
+            assert_eq!(requests[auth_requests + 8]["headers"][name], fresh["id"]);
+        }
+        assert_eq!(requests[auth_requests + 7]["body"]["prompt_cache_key"], runtime);
+        assert!(!requests[auth_requests + 7]["body"].to_string().contains("daily.txt"));
+        assert_eq!(requests[auth_requests + 8]["body"]["prompt_cache_key"], fresh["id"]);
+        drop(requests);
+        let journal = std::fs::read_to_string(session).unwrap();
+        assert!(journal.contains("openai-codex-responses"));
+        assert!(journal.contains("\"type\":\"compaction\""));
+        assert!(journal.contains("\"type\":\"reset_boundary\""));
+        assert!(!journal.contains("Oversized hidden reasoning summary."));
+        assert!(!journal.contains("synthetic-refresh"));
+        assert!(!journal.contains(&token));
+        std::fs::write(broken, "providers: [").unwrap();
+        let mut logout = host.command("openai-codex", &["logout"]);
+        logout.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+        success(&output(logout).await);
+        host.config("openai-codex-responses", &format!("http://{}", up.addr), "oauth");
+        let mut denied = host.command("openai-codex", &["after logout"]);
+        denied.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+        let denied = output(denied).await;
+        assert_eq!(denied.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("ara login"));
+        assert_eq!(up.served(), auth_requests + 9, "logout and rejected post-logout turn add no auth/model request");
+        assert_eq!(usage.served(), 2, "logout and rejection add no usage GET");
 
-    // Expired account preflight runs before the turn's --max-time deadline.
-    // Its own OAuth transport timeout must settle before normal process exit;
-    // a new process must not automatically replay the unknown refresh grant.
-    let database = host.home.path().join("agent/auth.db");
-    {
-        use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};
-        let store = SqliteCredentialStore::open(&database).unwrap();
-        let mut fields = serde_json::Map::new();
-        fields.insert("access".into(), json!(token));
-        fields.insert("refresh".into(), json!("synthetic-cancelled-refresh"));
-        fields.insert("expires".into(), json!(1));
-        fields.insert("authorizedAt".into(), json!(chrono::Utc::now().timestamp_millis()));
-        fields.insert("accountId".into(), json!("synthetic-account"));
-        store.upsert_auth_credential_for_provider("openai-codex", &AuthCredential::oauth(fields)).unwrap();
+        // Expired account preflight runs before the turn's --max-time deadline.
+        // Its own OAuth transport timeout must settle before normal process exit;
+        // a new process must not automatically replay the unknown refresh grant.
+        let database = host.home.path().join("agent/auth.db");
+        {
+            use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};
+            let store = SqliteCredentialStore::open(&database).unwrap();
+            let mut fields = serde_json::Map::new();
+            fields.insert("access".into(), json!(token));
+            fields.insert("refresh".into(), json!("synthetic-cancelled-refresh"));
+            fields.insert("expires".into(), json!(1));
+            fields.insert("authorizedAt".into(), json!(chrono::Utc::now().timestamp_millis()));
+            fields.insert("accountId".into(), json!("synthetic-account"));
+            store.upsert_auth_credential_for_provider("openai-codex", &AuthCredential::oauth(fields)).unwrap();
+        }
+        let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
+        cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+        assert_eq!(output(cancelled).await.status.code(), Some(1));
+        assert_eq!(up.served(), auth_requests + 10);
+        let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
+        assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
+        let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
+        restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+        assert_eq!(output(restarted).await.status.code(), Some(1));
+        assert_eq!(up.served(), auth_requests + 10, "restart must not replay the unknown refresh");
+        assert_eq!(usage.served(), 2);
+        if browser {
+            browser_cli_explicit_method_and_failure_owners(&token).await;
+        }
     }
-    let mut cancelled = host.command("openai-codex", &["--max-time", "0.5", "refresh then cancel"]);
-    cancelled.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
-    assert_eq!(output(cancelled).await.status.code(), Some(1));
-    assert_eq!(up.served(), 14);
-    let store = ara_cli::credential_store::SqliteCredentialStore::open(&database).unwrap();
-    assert!(store.list_auth_credentials(Some("openai-codex")).unwrap().is_empty());
-    let mut restarted = host.command("openai-codex", &["after unknown refresh"]);
-    restarted.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
-    assert_eq!(output(restarted).await.status.code(), Some(1));
-    assert_eq!(up.served(), 14, "restart must not replay the unknown refresh");
-    assert_eq!(usage.served(), 2);
+    email_only_cli_login_tool_readback_refresh_restart_and_logout().await;
+}
+
+#[cfg(feature = "test-fixture")]
+async fn browser_login_output(mut command: Command) -> Output {
+    use tokio::io::AsyncBufReadExt;
+    command.env("ARA_TEST_CODEX_CALLBACK_PORT", "0").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let mut child = tokio::process::Command::from(command).kill_on_drop(true).spawn().unwrap();
+        let mut lines = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+        let mut captured = String::new();
+        let url = loop {
+            let line = lines.next_line().await.unwrap().expect("browser URL before exit");
+            captured.push_str(&line);
+            captured.push('\n');
+            if let Some(url) = line.strip_prefix("ara: http://").filter(|value| value.contains("/oauth/authorize?")) {
+                break reqwest::Url::parse(&format!("http://{url}")).unwrap();
+            }
+        };
+        let parameters: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(parameters["originator"], "omp");
+        assert_eq!(parameters["code_challenge_method"], "S256");
+        let redirect = reqwest::Url::parse(&parameters["redirect_uri"]).unwrap();
+        let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let launch = http.get(format!("http://localhost:{}/launch", redirect.port().unwrap())).send().await.unwrap();
+        assert_eq!(launch.status(), 302, "active launch URL published before Host notification");
+        assert_eq!(launch.headers()["location"], url.as_str());
+        let invalid =
+            http.get(redirect.clone()).query(&[("code", "bad"), ("state", "wrong-state")]).send().await.unwrap();
+        assert_eq!(invalid.status(), 500);
+        let _ = invalid.text().await.unwrap();
+        let accepted = http
+            .get(redirect.clone())
+            .query(&[("code", "synthetic-code"), ("state", parameters["state"].as_str())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), 200);
+        let html = accepted.text().await.unwrap();
+        assert!(html.trim_end().ends_with("</html>"), "complete success feedback before process exits");
+        while let Some(line) = lines.next_line().await.unwrap() {
+            captured.push_str(&line);
+            captured.push('\n');
+        }
+        let mut result = child.wait_with_output().await.unwrap();
+        result.stderr = captured.into_bytes();
+        assert!(http.get(redirect).send().await.is_err(), "process releases its callback listeners");
+        result
+    })
+    .await
+    .expect("bounded browser login Host process")
+}
+
+#[cfg(feature = "test-fixture")]
+async fn browser_cli_explicit_method_and_failure_owners(token: &str) {
+    let host = Host::new();
+    let up = upstream(json!([{ "body":json!({"access_token":token,"refresh_token":"explicit-browser-refresh","expires_in":3600}).to_string() }])).await;
+    let mut login = host.command("openai-codex", &["login", "--method", "browser"]);
+    login.env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", up.addr));
+    success(&browser_login_output(login).await);
+    assert_eq!(up.served(), 1);
+    let database = host.home.path().join("agent/auth.db");
+    let before = ara_cli::credential_store::SqliteCredentialStore::open(&database)
+        .unwrap()
+        .list_auth_credentials(Some("openai-codex"))
+        .unwrap();
+    assert_eq!(before.len(), 1);
+    let empty = upstream(json!([])).await;
+    let blocker = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut blocked = host.command("openai-codex", &["login", "--method", "browser"]);
+    blocked
+        .env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", empty.addr))
+        .env("ARA_TEST_CODEX_CALLBACK_PORT", blocker.local_addr().unwrap().port().to_string());
+    let blocked = output(blocked).await;
+    assert_eq!(blocked.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("callback port"));
+    assert!(!String::from_utf8_lossy(&blocked.stderr).contains("/oauth/authorize?"));
+    drop(blocker);
+    let mut timed = host.command("openai-codex", &["login"]);
+    timed
+        .env("ARA_TEST_CODEX_AUTH_BASE_URL", format!("http://{}", empty.addr))
+        .env("ARA_TEST_CODEX_CALLBACK_PORT", "0")
+        .env("ARA_TEST_CODEX_CALLBACK_TIMEOUT_MS", "25");
+    let timed = output(timed).await;
+    assert_eq!(timed.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&timed.stderr);
+    assert!(stderr.contains("authentication timed out"));
+    let url = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("ara: http://").filter(|value| value.contains("/oauth/authorize?")))
+        .map(|value| reqwest::Url::parse(&format!("http://{value}")).unwrap())
+        .unwrap();
+    let redirect = url.query_pairs().find(|(key, _)| key == "redirect_uri").unwrap().1.into_owned();
+    assert!(reqwest::Client::new().get(redirect).send().await.is_err());
+    let after = ara_cli::credential_store::SqliteCredentialStore::open(&database)
+        .unwrap()
+        .list_auth_credentials(Some("openai-codex"))
+        .unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].id, before[0].id);
+    assert!(after[0].credential == before[0].credential, "failed issuance preserves the saved grant");
+    assert_eq!(empty.served(), 0, "no token exchange, retry or automatic device fallback");
+    assert!(!host.sessions.exists());
+}
+
+
+// Same ordinary executable and shared SQLite owner as the identified workflow.
+// These loopback OAuth/SSE receipts cannot establish live OpenAI authorization.
+#[cfg(feature = "test-fixture")]
+async fn email_only_cli_login_tool_readback_refresh_restart_and_logout() {
+    use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};
+    use base64::Engine as _;
+    let jwt = |payload: Value| {
+        format!(
+            "fixture.{}.signature",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string())
+        )
+    };
+    let usage_reply = json!({"body":json!({"plan_type":"team","rate_limit":{
+        "allowed":true,"limit_reached":false,"primary_window":{
+            "used_percent":1,"limit_window_seconds":18000,"reset_after_seconds":600
+        }}}).to_string()});
+    for browser in [false, true] {
+        let host = Host::new();
+        let token = jwt(json!({"sub":"email-user","https://api.openai.com/auth":{
+            "user_id":"email-user","poid":"not-a-workspace","chatgpt_plan_type":" TEAM ","chatgpt_data_residency":"eu"
+        },"https://api.openai.com/profile":{"email":" CLI.Email@EXAMPLE.com "}}));
+        let filled = jwt(json!({"https://api.openai.com/auth":{
+            "chatgpt_account_id":"cli-filled-workspace","chatgpt_data_residency":"us"
+        }}));
+        let grant = json!({"body":json!({"access_token":token,"refresh_token":"email-cli-refresh","expires_in":3600}).to_string()});
+        let login_replies = if browser {
+            vec![grant]
+        } else {
+            vec![
+                json!({"body":json!({"device_auth_id":"email-device","user_code":"EMAIL-CLI","interval":-3}).to_string()}),
+                json!({"body":json!({"authorization_code":"email-code","code_verifier":"email-verifier"}).to_string()}),
+                grant,
+            ]
+        };
+        let issuer = upstream(Value::Array(login_replies)).await;
+        let mut login = host.command(
+            "openai-codex",
+            if browser {
+                &["login"]
+            } else {
+                &["login", "--method", "device"]
+            },
+        );
+        login.env(
+            "ARA_TEST_CODEX_AUTH_BASE_URL",
+            format!("http://{}", issuer.addr),
+        );
+        let login = if browser {
+            browser_login_output(login).await
+        } else {
+            output(login).await
+        };
+        success(&login);
+        assert_eq!(issuer.served(), if browser { 1 } else { 3 });
+        assert!(!host.sessions.exists());
+        let database = host.home.path().join("agent/auth.db");
+        let store = SqliteCredentialStore::open(&database).unwrap();
+        let rows = store.list_auth_credentials(Some("openai-codex")).unwrap();
+        assert_eq!(rows.len(), 1);
+        let id = rows[0].id;
+        let AuthCredential::OAuth { fields } = &rows[0].credential else {
+            panic!("OAuth")
+        };
+        assert_eq!(fields["email"], "cli.email@example.com");
+        assert_eq!(fields["orgName"], "team");
+        assert!(!fields.contains_key("accountId"));
+        assert!(!fields.contains_key("orgId"));
+        let mut write = response_write();
+        write["events"][2]["data"]["item"]["arguments"] =
+            write["events"][1]["data"]["arguments"].clone();
+        let read = json!({"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{
+                "type":"function_call","id":"fc_read","call_id":"call_read","name":"read"}}},
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{
+                "type":"function_call","id":"fc_read","call_id":"call_read","name":"read","arguments":"{\"path\":\"daily.txt\"}"}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]});
+        let models = upstream(json!([
+            write,
+            codex_account_text_response("Email wrote."),
+            read,
+            codex_account_text_response("Email read."),
+            codex_account_text_response("Refreshed original Session.")
+        ]))
+        .await;
+        let usage = upstream(Value::Array(vec![usage_reply.clone(); 8])).await;
+        host.config(
+            "openai-codex-responses",
+            &format!("http://{}", models.addr),
+            "oauth",
+        );
+        // Account auth is real SQLite; only model metadata is warmed so a
+        // synthetic access token cannot escape to the public catalog.
+        let cache = ara_cli::model_cache::SqliteModelCache::for_path(
+            host.home.path().join("agent/model-cache.db"),
+        );
+        let bundled = ara_cli::model_identity_wire::bundled_provider_models(&"openai-codex".into());
+        let fingerprint = ara_cli::model_manager::fingerprint_static_models(
+            &ara_cli::model_manager::ModelArray::new(bundled.clone()),
+            true,
+        );
+        cache
+            .write_model_cache_wire(
+                &"openai-codex".into(),
+                chrono::Utc::now().timestamp_millis() as f64,
+                &[],
+                ara_cli::model_cache::WireModelCacheWriteOptions {
+                    authoritative: true,
+                    static_fingerprint: &fingerprint,
+                    static_header_sources: &bundled,
+                    restorable_header_fallback: None,
+                },
+            )
+            .unwrap();
+        let mut first = host.command(
+            "openai-codex",
+            &["--mode", "json", "--tools", "write", "write daily.txt"],
+        );
+        first.env(
+            "ARA_TEST_CODEX_AUTH_BASE_URL",
+            format!("http://{}", usage.addr),
+        );
+        let first = success(&output(first).await);
+        let original: Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+        let session = host.session();
+        assert_eq!(
+            std::fs::read_to_string(host.work.path().join("daily.txt")).unwrap(),
+            "daily proof\n"
+        );
+        let mut reopened = host.command(
+            "openai-codex",
+            &[
+                "--mode",
+                "json",
+                "--resume",
+                session.to_str().unwrap(),
+                "--tools",
+                "read",
+                "read daily.txt",
+            ],
+        );
+        reopened.env(
+            "ARA_TEST_CODEX_AUTH_BASE_URL",
+            format!("http://{}", usage.addr),
+        );
+        let reopened = success(&output(reopened).await);
+        let resumed: Value = serde_json::from_str(reopened.lines().next().unwrap()).unwrap();
+        assert_eq!(resumed["id"], original["id"]);
+        let requests = models.requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        for request in requests.iter() {
+            assert!(request["headers"].get("chatgpt-account-id").is_none());
+            assert_eq!(
+                request["headers"]["authorization"],
+                format!("<redacted {} chars>", token.len() + 7)
+            );
+            assert_eq!(
+                request["headers"]["x-openai-internal-codex-residency"],
+                "eu"
+            );
+            assert_eq!(request["headers"]["version"], "0.159.0");
+            assert_eq!(request["headers"]["session_id"], original["id"]);
+        }
+        assert!(
+            requests[1]["body"].to_string().contains("call_daily"),
+            "actual WRITE tool receipt returned to model"
+        );
+        assert!(
+            requests[3]["body"].to_string().contains("daily proof"),
+            "actual READ readback returned to model"
+        );
+        drop(requests);
+        for request in usage.requests.lock().await.iter() {
+            assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
+            assert!(request["headers"].get("chatgpt-account-id").is_none());
+        }
+        // Only expire this row. Next ordinary process must refresh that grant,
+        // fill its real workspace, preserve its email/plan and original Session.
+        let row = store
+            .list_auth_credentials(Some("openai-codex"))
+            .unwrap()
+            .remove(0);
+        let AuthCredential::OAuth { mut fields } = row.credential else {
+            panic!("OAuth")
+        };
+        fields.insert("expires".into(), json!(1));
+        assert!(
+            store
+                .try_update_auth_credential_if_matches(
+                    id,
+                    &row.serialized_data,
+                    &AuthCredential::oauth(fields),
+                    None
+                )
+                .unwrap()
+        );
+        let refresh = upstream(Value::Array(
+            std::iter::once(json!({"body":json!({
+            "access_token":filled,"refresh_token":"email-cli-rotated","expires_in":3600
+        }).to_string()}))
+            .chain(std::iter::repeat_n(usage_reply.clone(), 8))
+            .collect(),
+        ))
+        .await;
+        let mut refreshed = host.command(
+            "openai-codex",
+            &[
+                "--mode",
+                "json",
+                "--resume",
+                session.to_str().unwrap(),
+                "after refresh",
+            ],
+        );
+        refreshed.env(
+            "ARA_TEST_CODEX_AUTH_BASE_URL",
+            format!("http://{}", refresh.addr),
+        );
+        let refreshed = success(&output(refreshed).await);
+        let resumed: Value = serde_json::from_str(refreshed.lines().next().unwrap()).unwrap();
+        assert_eq!(resumed["id"], original["id"]);
+        let rows = store.list_auth_credentials(Some("openai-codex")).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, id);
+        let AuthCredential::OAuth { fields } = &rows[0].credential else {
+            panic!("OAuth")
+        };
+        assert_eq!(fields["email"], "cli.email@example.com");
+        assert_eq!(fields["orgName"], "team");
+        assert_eq!(fields["accountId"], "cli-filled-workspace");
+        assert!(!fields.contains_key("orgId"));
+        let requests = refresh.requests.lock().await;
+        assert!(
+            requests[0]["request"]
+                .as_str()
+                .unwrap()
+                .starts_with("POST /oauth/token ")
+        );
+        assert!(
+            requests[0]["body"]
+                .as_str()
+                .unwrap()
+                .contains("refresh_token=email-cli-refresh")
+        );
+        for request in &requests[1..] {
+            assert_eq!(request["request"], "GET /backend-api/wham/usage HTTP/1.1");
+            assert_eq!(
+                request["headers"]["chatgpt-account-id"],
+                "cli-filled-workspace"
+            );
+        }
+        drop(requests);
+        let requests = models.requests.lock().await;
+        assert_eq!(requests.len(), 5);
+        assert_eq!(
+            requests[4]["headers"]["chatgpt-account-id"],
+            "cli-filled-workspace"
+        );
+        assert_eq!(
+            requests[4]["headers"]["authorization"],
+            format!("<redacted {} chars>", filled.len() + 7)
+        );
+        assert_eq!(requests[4]["headers"]["session_id"], original["id"]);
+        drop(requests);
+        let journal = std::fs::read_to_string(&session).unwrap();
+        assert!(journal.contains("call_read"));
+        assert!(journal.contains("call_daily"));
+        for secret in [
+            &token,
+            &filled,
+            &"email-cli-refresh".to_owned(),
+            &"email-cli-rotated".to_owned(),
+        ] {
+            assert!(!journal.contains(secret));
+        }
+        success(&output(host.command("openai-codex", &["logout"])).await);
+        let before = models.served();
+        let auth_before = refresh.served();
+        let mut denied = host.command("openai-codex", &["after logout"]);
+        denied.env(
+            "ARA_TEST_CODEX_AUTH_BASE_URL",
+            format!("http://{}", refresh.addr),
+        );
+        assert_eq!(output(denied).await.status.code(), Some(1));
+        assert_eq!(models.served(), before);
+        assert_eq!(refresh.served(), auth_before);
+        assert!(
+            store
+                .list_auth_credentials(Some("openai-codex"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+// This local guard extends the existing real CLI account workflow. The actual
+// Responses router constructs and settles its private tool-call Symbol; no
+// typed substitute is used to manufacture the offending native message.
+#[cfg(feature = "test-fixture")]
+async fn native_codex_compaction_observation_regression() {
+    use ara_ai::providers::openai_codex_responses::{self as codex, StreamOptions};
+    use ara_ai::providers::openai_responses::actual::GraphResponsesOptions;
+    use ara_cli::{actual_session::GraphJournalEncoder, native_realm::NativeRealm};
+    use ara_rpc::value_heap::ValueSnapshot;
+    use ara_session::{NativeJournalEncoder, NativeMessageSource, SessionJournal};
+    use std::sync::Arc;
+
+    let realm = NativeRealm::prepare().unwrap();
+    let heap = realm.values.heap();
+    let runtime = realm.values.runtime();
+    let model = ara_ai::Model {
+        id: "native-compaction-guard".into(),
+        provider: "openai-codex".into(),
+        api: "openai-codex-responses".into(),
+        base_url: "http://fixture.invalid/backend-api".into(),
+        reasoning: false,
+        max_tokens: None,
+        context_window: None,
+        tokenizer: None,
+    };
+    let mut response = response_write();
+    response["events"][2]["data"]["item"]["arguments"] = response["events"][1]["data"]["arguments"].clone();
+    let up = upstream(json!([response])).await;
+    let mut routed = model.clone();
+    routed.base_url = up.base_url();
+    let body = heap.import_serde(&json!({"model":routed.id,"input":[],"stream":true,"store":false})).unwrap();
+    let mut options = StreamOptions {
+        api_key: Some("synthetic-native-guard".into()),
+        first_event_timeout: Some(Duration::from_secs(2)),
+        idle_timeout: Some(Duration::from_secs(2)),
+        ..Default::default()
+    };
+    options.retry.max_attempts = 1;
+    let mut stream = codex::stream_actual_prepared(
+        reqwest::Client::new(), routed, body, realm.values.factory().clone(), options, GraphResponsesOptions::default(),
+    )
+    .unwrap();
+    let receipt = stream.failure_receipt();
+    let events = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut events = Vec::new();
+        while let Some(event) = stream.recv().await { events.push(event); }
+        events
+    }).await.expect("native compaction guard SSE drain");
+    drop(stream);
+    let failures = tokio::time::timeout(Duration::from_secs(2), receipt.wait_settled()).await.expect("native guard settlement");
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(matches!(events.last(), Some(ara_ai::ActualAssistantEvent::Done { reason: ara_ai::StopReason::ToolUse, .. })));
+    assert_eq!(up.served(), 1);
+    let root = events.last().unwrap().partial().clone();
+    let content = heap.get(&root, &"content".into(), runtime).unwrap();
+    let block = heap.get(&content, &"0".into(), runtime).unwrap();
+    let arguments = heap.get(&block, &"arguments".into(), runtime).unwrap();
+    let partial = heap.module_symbol("ara-ai.block-symbols", "provider.block.partialJson").unwrap();
+    assert!(heap.has_own(&block, &partial, runtime).unwrap());
+    let settled_partial = heap.get(&block, &partial, runtime).unwrap();
+    assert!(matches!(heap.snapshot(&settled_partial).unwrap(), ValueSnapshot::Undefined));
+
+    let encoder = Arc::new(GraphJournalEncoder::new(realm.values.clone(), None).unwrap());
+    let source = NativeMessageSource::live(root.clone(), encoder.clone());
+    assert!(source.checked_body().is_err(), "the strict raw bridge still rejects private Symbols");
+    let dir = tempfile::tempdir().unwrap();
+    let mut journal = SessionJournal::create(dir.path(), dir.path()).unwrap();
+    let id = journal.append_native_message(source).unwrap();
+    assert!(journal.entries().last().unwrap().checked_raw().is_err());
+    let snapshot = journal.native_projected_compaction_snapshot_for_route(&model, true).unwrap();
+    let group = snapshot.entries.iter().find(|entry| entry.entry_id == id).unwrap();
+    let ara_ai::Message::Assistant(message) = &group.messages[0] else { panic!("assistant compaction fragment") };
+    assert_eq!(message.stop_reason, ara_ai::StopReason::ToolUse);
+    assert_eq!(message.tool_calls().next().unwrap().arguments["path"], "daily.txt");
+    assert_eq!(message.tool_calls().next().unwrap().arguments["content"], "daily proof\n");
+    assert_eq!(serde_json::to_value(&message.usage).unwrap(), json!({}), "unknown usage is retained");
+    assert_eq!(message.provider_payload.as_ref().unwrap()["items"][0]["id"], "fc_daily");
+    assert_eq!(group.raw_token_message.as_ref().unwrap(), &group.messages[0]);
+    assert!(journal.entries().last().unwrap().checked_raw().is_err(), "snapshot does not relax raw observation");
+    let current = journal.entries().last().unwrap().native_message.as_ref().unwrap().live_body().unwrap();
+    assert!(root.same_identity(current));
+    assert!(block.same_identity(&heap.get(&content, &"0".into(), runtime).unwrap()));
+    assert!(arguments.same_identity(&heap.get(&block, &"arguments".into(), runtime).unwrap()));
+    assert!(settled_partial.same_identity(&heap.get(&block, &partial, runtime).unwrap()));
+
+    // A selected argument remains a strict domain boundary. Do not drop it,
+    // stringify it, or replace it with zero/empty data to pass compaction.
+    heap.define_own_data(&arguments, "nativeOnly".into(), heap.bigint_decimal("17").unwrap(), runtime).unwrap();
+    assert!(journal.native_projected_compaction_snapshot_for_route(&model, true).is_err());
+    assert!(heap.delete_own(&arguments, &"nativeOnly".into(), runtime).unwrap());
+    assert!(journal.native_projected_compaction_snapshot_for_route(&model, true).is_ok());
+
+    // Match the actual emit_result shape after a normal Write: its optional
+    // providerMetadata is an own Undefined even though JSON persistence omits it.
+    let tool_result = heap.import_serde(&json!({
+        "role":"toolResult", "toolCallId":"call_daily|fc_daily", "toolName":"write",
+        "content":[{"type":"text","text":"Successfully wrote 12 bytes to daily.txt"}],
+        "details":{"resolvedPath":"daily.txt"}, "useless":true, "isError":false, "timestamp":2
+    })).unwrap();
+    heap.define_own_data(&tool_result, "providerMetadata".into(), heap.undefined().unwrap(), runtime).unwrap();
+    let original_details = heap.get(&tool_result, &"details".into(), runtime).unwrap();
+    let tool_source = NativeMessageSource::live(tool_result.clone(), encoder.clone());
+    assert!(tool_source.checked_body().is_err(), "own Undefined remains outside the strict raw domain");
+    let tool_entry_id = journal.append_native_message(tool_source).unwrap();
+    assert!(journal.entries().last().unwrap().checked_raw().is_err());
+    let snapshot = journal.native_projected_compaction_snapshot_for_route(&model, true).unwrap();
+    let tool_group = snapshot.entries.iter().find(|entry| entry.entry_id == tool_entry_id).unwrap();
+    let ara_ai::Message::ToolResult(result) = &tool_group.messages[0] else { panic!("tool-result compaction fragment") };
+    assert_eq!(result.tool_call_id, "call_daily|fc_daily");
+    assert_eq!(result.tool_name, "write");
+    assert_eq!(result.details, Some(json!({"resolvedPath":"daily.txt"})));
+    assert!(result.useless, "compaction DTO must retain this consumed field");
+    assert!(result.provider_metadata.is_none());
+    assert!(!result.is_error);
+    assert_eq!(tool_group.raw_token_message.as_ref().unwrap(), &tool_group.messages[0]);
+    assert!(journal.entries().last().unwrap().checked_raw().is_err());
+    let retained = journal.entries().last().unwrap().native_message.as_ref().unwrap().live_body().unwrap();
+    assert!(tool_result.same_identity(retained));
+    assert!(original_details.same_identity(&heap.get(&tool_result, &"details".into(), runtime).unwrap()));
+    assert!(heap.has_own(&tool_result, &"providerMetadata".into(), runtime).unwrap());
+    assert!(matches!(heap.snapshot(&heap.get(&tool_result, &"providerMetadata".into(), runtime).unwrap()).unwrap(), ValueSnapshot::Undefined));
+    heap.define_own_data(&original_details, "nativeOnly".into(), heap.bigint_decimal("19").unwrap(), runtime).unwrap();
+    assert!(journal.native_projected_compaction_snapshot_for_route(&model, true).is_err(), "selected details cannot be dropped to accept unsupported data");
+    assert!(heap.delete_own(&original_details, &"nativeOnly".into(), runtime).unwrap());
+    assert!(journal.native_projected_compaction_snapshot_for_route(&model, true).is_ok());
+
+    // Other roles and custom envelopes retain their original strict behavior.
+    let custom = heap.import_serde(&json!({"role":"custom","customType":"guard","content":"kept", "timestamp":1})).unwrap();
+    heap.define_own_data(&custom, partial.clone(), heap.undefined().unwrap(), runtime).unwrap();
+    assert!(encoder.observe_compaction_message_body(&custom).is_err());
+    let mut custom_journal = SessionJournal::in_memory(json!({"type":"session","version":3,"id":"custom-strict-guard","timestamp":"2026-10-14T00:00:00.000Z","cwd":"."})).unwrap();
+    custom_journal.append_native_message(NativeMessageSource::live(custom, encoder)).unwrap();
+    assert_eq!(custom_journal.entries()[0].kind, "custom_message");
+    assert!(custom_journal.native_projected_compaction_snapshot().is_err());
+}
+
+// Only the account workflow uses this registered Graph message fixture.
+#[cfg(feature = "test-fixture")]
+fn codex_account_text_response(message: &str) -> Value {
+    let mut response = response_text(message);
+    response["events"].as_array_mut().unwrap().insert(0, json!({"data":{
+        "type":"response.output_item.added","output_index":0,"item":{
+            "type":"message","id":"msg_daily","role":"assistant","status":"in_progress","content":[]
+        }
+    }}));
+    response
 }

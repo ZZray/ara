@@ -8,12 +8,16 @@ use ara_ai::{AssistantBlock, AssistantMessage, ImageContent, StopReason, ToolCal
 use ara_rpc::{WireString, WireValue};
 use serde_json::{Value, json};
 
+#[path = "support/actual_tool_loop_guard.rs"]
+mod actual_tool_loop_guard;
+
 fn call(id: &str, name: &str, arguments: Value) -> ToolCall {
     ToolCall {
         id: id.into(),
         name: name.into(),
         arguments: arguments.as_object().unwrap().clone(),
         thought_signature: None,
+        ..Default::default()
     }
 }
 
@@ -32,6 +36,8 @@ fn result(id: &str, tool: &str, text: &str) -> ToolResultMessage {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     }
 }
 
@@ -58,6 +64,7 @@ fn expected(name: &str, count: f64, result: &str, arguments: &str) -> RepeatedTo
 
 #[test]
 fn fixed_tool_call_loop_module_corpus() {
+    actual_tool_loop_guard::observe_original_value_consumer();
     // Fifth identical call, ignoring IDs and matching the reported call's result.
     let mut repeated = guard(5.0, &["job", "irc"]);
     for index in 0..6 {

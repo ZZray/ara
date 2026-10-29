@@ -145,7 +145,7 @@ async fn fetch_bounded(
     bounded(timeout_ms, &signal, fetch.fetch(provider, request)).await
 }
 
-async fn bounded<T>(
+pub(crate) async fn bounded<T>(
     timeout_ms: f64,
     signal: &DiscoverySignal,
     future: impl Future<Output = Result<T, DiscoveryError>>,
@@ -161,7 +161,7 @@ async fn bounded<T>(
     }
 }
 
-async fn fetch_json(
+pub(crate) async fn fetch_json(
     fetch: &dyn RegistryDiscoveryFetch,
     provider: &WireString,
     request: DiscoveryRequest,
@@ -717,7 +717,7 @@ pub fn ensure_llama_cpp_v1_base_url(base: &WireString) -> WireString {
     base
 }
 
-fn llama_native_base(base: &WireString) -> WireString {
+pub(crate) fn llama_native_base(base: &WireString) -> WireString {
     let mut base = normalize_llama_cpp_base_url(Some(base));
     if base.units().ends_with(&[47, 118, 49]) {
         base = base.slice_prefix(base.len() - 3);
@@ -815,7 +815,7 @@ fn llama_unlimited(payload: &VariantSpec) -> bool {
     })
 }
 
-async fn llama_server_metadata(
+pub(crate) async fn llama_server_metadata(
     config: &RegistryDiscoveryConfig,
     base: &WireString,
     headers: &[(WireString, WireString)],
@@ -832,6 +832,60 @@ async fn llama_server_metadata(
     .await
     .ok()?;
     matches!(payload.value, WireValue::Object(_)).then_some(payload)
+}
+
+/// Shared Native row/runtime parser. Missing metadata remains absent here;
+/// catalog discovery supplies its defaults, selected-model refresh does not.
+pub(crate) fn llama_row_runtime_metadata(row: &VariantSpec, server: Option<&VariantSpec>) -> VariantSpec {
+    let generation = server
+        .and_then(|server| server.record("default_generation_settings"))
+        .filter(|value| matches!(value.value, WireValue::Object(_)));
+    let server_window = generation
+        .as_ref()
+        .and_then(|generation| positive(generation.get("n_ctx")))
+        .or_else(|| server.and_then(|server| positive(server.get("n_ctx"))));
+    let server_input = server
+        .and_then(|server| server.record("modalities"))
+        .filter(|value| matches!(value.value, WireValue::Object(_)))
+        .map(|modalities| input(boolean(&modalities, "vision") == Some(true)));
+    let meta = row.record("meta").filter(|value| matches!(value.value, WireValue::Object(_)));
+    let window = meta
+        .as_ref()
+        .and_then(|meta| positive(meta.get("n_ctx")))
+        .or_else(|| llama_configured_window(row))
+        .or(server_window)
+        .or_else(|| meta.as_ref().and_then(|meta| positive(meta.get("n_ctx_train"))));
+    let modality = row
+        .record("architecture")
+        .filter(|value| matches!(value.value, WireValue::Object(_)))
+        .and_then(|architecture| {
+            architecture.get("input_modalities").and_then(WireValue::as_array).map(|modalities| {
+                input(
+                    modalities
+                        .iter()
+                        .filter_map(WireValue::as_string)
+                        .map(js_lower)
+                        .any(|value| value.equals_ascii("image")),
+                )
+            })
+        })
+        .or(server_input);
+    let mut result = VariantSpec::from_wire(WireValue::Object(Vec::new()));
+    if let Some(window) = window {
+        result.set("contextWindow", WireValue::Number(window));
+        result.set(
+            "maxTokens",
+            WireValue::Number(if server.is_some_and(llama_unlimited) {
+                window
+            } else {
+                window.min(OPENAI_COMPAT_DISCOVERY_DEFAULT_MAX_TOKENS)
+            }),
+        );
+    }
+    if let Some(modality) = modality {
+        result.set("input", modality);
+    }
+    result
 }
 
 async fn discover_llama_cpp_models(
@@ -853,19 +907,6 @@ async fn discover_llama_cpp_models(
         return Ok(Vec::new());
     }
     let Some(rows) = payload.get("data").and_then(WireValue::as_array) else { return Ok(Vec::new()) };
-    let generation = metadata
-        .as_ref()
-        .and_then(|metadata| metadata.record("default_generation_settings"))
-        .filter(|value| matches!(value.value, WireValue::Object(_)));
-    let server_window = generation
-        .as_ref()
-        .and_then(|generation| positive(generation.get("n_ctx")))
-        .or_else(|| metadata.as_ref().and_then(|metadata| positive(metadata.get("n_ctx"))));
-    let server_input = metadata
-        .as_ref()
-        .and_then(|metadata| metadata.record("modalities"))
-        .filter(|value| matches!(value.value, WireValue::Object(_)))
-        .map(|modalities| input(boolean(&modalities, "vision") == Some(true)));
     let unlimited = metadata.as_ref().is_some_and(llama_unlimited);
     let headers = settled_sidecar(config, fetch, &headers)?;
     let model_base = ensure_llama_cpp_v1_base_url(&base);
@@ -876,30 +917,9 @@ async fn discover_llama_cpp_models(
         }
         let row = VariantSpec::from_wire(row.clone());
         let Some(id) = text(&row, "id").filter(|id| !id.is_empty()) else { continue };
-        let meta = row.record("meta").filter(|value| matches!(value.value, WireValue::Object(_)));
-        let window = meta
-            .as_ref()
-            .and_then(|meta| positive(meta.get("n_ctx")))
-            .or_else(|| llama_configured_window(&row))
-            .or(server_window)
-            .or_else(|| meta.as_ref().and_then(|meta| positive(meta.get("n_ctx_train"))))
-            .unwrap_or(OPENAI_COMPAT_DISCOVERY_DEFAULT_CONTEXT_WINDOW);
-        let modality = row
-            .record("architecture")
-            .filter(|value| matches!(value.value, WireValue::Object(_)))
-            .and_then(|architecture| {
-                architecture.get("input_modalities").and_then(WireValue::as_array).map(|modalities| {
-                    input(
-                        modalities
-                            .iter()
-                            .filter_map(WireValue::as_string)
-                            .map(js_lower)
-                            .any(|modality| modality.equals_ascii("image")),
-                    )
-                })
-            })
-            .or_else(|| server_input.clone())
-            .unwrap_or_else(|| input(false));
+        let runtime = llama_row_runtime_metadata(&row, metadata.as_ref());
+        let window = number(&runtime, "contextWindow").unwrap_or(OPENAI_COMPAT_DISCOVERY_DEFAULT_CONTEXT_WINDOW);
+        let modality = runtime.get("input").cloned().unwrap_or_else(|| input(false));
         let mut spec = base_spec(config, &id, &model_base);
         spec.set("input", modality);
         spec.set("imageInputDecoder", WireValue::String("stb".into()));

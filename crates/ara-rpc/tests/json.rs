@@ -131,3 +131,51 @@ fn rejects_invalid_json() {
         assert!(WireValue::parse(text).is_err(), "accepted invalid JSON: {text:?}");
     }
 }
+
+#[test]
+fn raw_utf16_strict_input_and_legacy_utf8_grammar_family() {
+    for text in [
+        r#"{"x":[true,false,null,-0,1e400,9007199254740993],"__proto__":2}"#,
+        r#"{"a":1,"a":2,"\ud800":"\udc00"}"#,
+        "\"é😀\"",
+        " \t[0,1.5e-2]\r\n",
+    ] {
+        let units = text.encode_utf16().collect::<Vec<_>>();
+        let legacy = WireValue::parse(text).unwrap();
+        let exact = WireValue::parse_units(&units).unwrap();
+        assert!(exact.deep_equal(&legacy), "{text}");
+        assert_eq!(exact.stringify(), legacy.stringify());
+    }
+    let exact = WireValue::parse_units(&[
+        123, 34, 0xd800, 34, 58, 34, 0xdc00, 34, 44, 34, 0xd800, 34, 58, 34, 0xd83d, 0xde00, 34, 125,
+    ])
+    .unwrap();
+    assert_eq!(exact.entries().unwrap().len(), 1);
+    assert_eq!(exact.entries().unwrap()[0].0.units(), &[0xd800]);
+    assert_eq!(exact.entries().unwrap()[0].1.as_string().unwrap().units(), &[0xd83d, 0xde00]);
+    assert_eq!(
+        WireValue::parse_units(&[34, 0xd800, 0xdc00, 0xd800, 34]).unwrap().as_string().unwrap().units(),
+        &[0xd800, 0xdc00, 0xd800]
+    );
+    for unit in [0x0122, 0x015c, 0x0130, 0x0120] {
+        assert!(WireValue::parse_units(&[unit]).is_err());
+        assert_eq!(WireValue::parse_units(&[34, unit, 34]).unwrap().as_string().unwrap().units(), &[unit]);
+    }
+    for text in
+        ["", "true false", "[1,]", "01", "1e+", "{\"x\" 1}", "\"\\q\"", "\"\\u12x4\"", "\"raw\n\"", "null\u{a0}"]
+    {
+        let legacy = WireValue::parse(text).unwrap_err();
+        let exact = WireValue::parse_units(&text.encode_utf16().collect::<Vec<_>>()).unwrap_err();
+        assert_eq!(exact.message, legacy.message, "{text}");
+        // All malformed prefixes here are ASCII, even when the final unit is not.
+        assert_eq!(exact.offset, legacy.offset, "{text}");
+        assert!(legacy.to_string().starts_with("JSON at byte "));
+        assert!(exact.to_string().starts_with("JSON at UTF-16 unit "));
+    }
+    assert!(WireValue::parse_units(&[34, 92, 0xd800, 34]).is_err());
+    assert!(WireValue::parse_units(&[34, 0x1f, 34]).is_err());
+    let text = "\"é😀\"?";
+    assert_eq!(WireValue::parse(text).unwrap_err().offset, 8);
+    assert_eq!(WireValue::parse_units(&text.encode_utf16().collect::<Vec<_>>()).unwrap_err().offset, 5);
+    assert_eq!(WireValue::parse_units(&[34, 0xd800, 34, 32, 63]).unwrap_err().offset, 4);
+}

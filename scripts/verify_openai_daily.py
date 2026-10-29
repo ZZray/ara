@@ -49,6 +49,7 @@ def main() -> int:
     parser.add_argument("--module", choices=(*MODULES, "all"), default="all")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--full", action="store_true", help="Also run fmt, Clippy, all target/doc tests, inventory, deny and build")
+    parser.add_argument("--keep-going", action="store_true", help="Collect all independent module failures after one compilation")
     args = parser.parse_args()
     selected = MODULES if args.module == "all" else {args.module: MODULES[args.module]}
     env = windows_test_env() or os.environ.copy()
@@ -101,6 +102,7 @@ def main() -> int:
     compile_command.extend(("--all-features", "--locked", "--no-run", "--message-format=json"))
     code, compiler = run("compile", compile_command)
     binaries = {}
+    executable_pins = {}
     if code == 0:
         metadata = json.loads(subprocess.check_output(
             ["cargo", "metadata", "--no-deps", "--format-version=1", "--locked"], cwd=ROOT, env=env))
@@ -112,14 +114,23 @@ def main() -> int:
                 target = "@lib" if "lib" in kind else (
                     "@bin:" + message["target"]["name"] if "bin" in kind else message["target"]["name"])
                 binaries[(package_names[message["package_id"]], target)] = message["executable"]
+        module_code = 0
         for module, (package, target) in selected.items():
             if (package, target) not in binaries:
-                code = 126
+                module_code = 126
                 print("Missing compiled module target: " + target, flush=True)
                 break
-            code, _ = run(module, [binaries[(package, target)], "--nocapture"])
-            if code:
+            binary = Path(binaries[(package, target)])
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            executable_pins[module] = {"path": str(binary), "sha256": digest}
+            result, _ = run(module, [str(binary), "--nocapture"])
+            if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
+                result = 125
+            if result:
+                module_code = result
+            if result and not args.keep_going:
                 break
+        code = module_code
     if code == 0 and args.full:
         for name, command in (
             ("backend", ["python", "-X", "utf8", "scripts/verify_backend.py"]),
@@ -137,6 +148,7 @@ def main() -> int:
         "startedAt": stamp, "module": args.module, "seconds": round(time.monotonic() - started, 3),
         "exitCode": code, "sourceUnchanged": before == after, "before": before, "after": after,
         "steps": steps, "fullGateRequested": args.full,
+        "executablePins": executable_pins,
         "liveAccountTrial": "not run by this deterministic module runner",
     }
     path = output / "receipt.json"

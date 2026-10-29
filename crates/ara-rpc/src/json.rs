@@ -53,6 +53,40 @@ impl WireString {
             && self.0.iter().zip(ascii.bytes()).all(|(&unit, byte)| unit == u16::from(byte))
     }
 
+    /// Bun 1.4.0 SQLite TEXT binding, preserving its malformed UTF-16 boundary.
+    pub fn sqlite_text_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut units = self.units().iter().copied();
+        while let Some(unit) = units.next() {
+            let point = if (0xd800..=0xdfff).contains(&unit) {
+                units.next().map_or(u32::from(unit), |next| {
+                    0x10000 + ((u32::from(unit) & 0x3ff) << 10) + (u32::from(next) & 0x3ff)
+                })
+            } else {
+                u32::from(unit)
+            };
+            if point < 0x80 {
+                out.push(point as u8);
+            } else if point < 0x800 {
+                out.extend_from_slice(&[(0xc0 | (point >> 6)) as u8, (0x80 | (point & 0x3f)) as u8]);
+            } else if point < 0x10000 {
+                out.extend_from_slice(&[
+                    (0xe0 | (point >> 12)) as u8,
+                    (0x80 | ((point >> 6) & 0x3f)) as u8,
+                    (0x80 | (point & 0x3f)) as u8,
+                ]);
+            } else {
+                out.extend_from_slice(&[
+                    (0xf0 | (point >> 18)) as u8,
+                    (0x80 | ((point >> 12) & 0x3f)) as u8,
+                    (0x80 | ((point >> 6) & 0x3f)) as u8,
+                    (0x80 | (point & 0x3f)) as u8,
+                ]);
+            }
+        }
+        out
+    }
+
     pub fn to_utf8(&self) -> Result<String, std::string::FromUtf16Error> {
         String::from_utf16(&self.0)
     }
@@ -71,6 +105,14 @@ pub enum WireValue {
 impl WireValue {
     pub fn parse(input: &str) -> Result<Self, JsonError> {
         Parser::new(input).parse()
+    }
+
+    /// Parse exact UTF-16 source units; error offsets count code units.
+    /// This shares the strict grammar used by `parse`, without lossy decoding.
+    pub fn parse_units(input: &[u16]) -> Result<Self, Utf16JsonError> {
+        Parser { input: ParserInput::Utf16(input), position: 0 }
+            .parse()
+            .map_err(|error| Utf16JsonError { offset: error.offset, message: error.message })
     }
 
     pub fn stringify(&self) -> String {
@@ -361,8 +403,37 @@ impl fmt::Display for JsonError {
 
 impl std::error::Error for JsonError {}
 
+/// A strict UTF-16 parse error. Unlike `JsonError`, offsets count source units.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Utf16JsonError {
+    pub offset: usize,
+    pub message: &'static str,
+}
+
+impl fmt::Display for Utf16JsonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "JSON at UTF-16 unit {}: {}", self.offset, self.message)
+    }
+}
+
+impl std::error::Error for Utf16JsonError {}
+
+enum ParserInput<'a> {
+    Utf8(&'a str),
+    Utf16(&'a [u16]),
+}
+
+impl ParserInput<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Utf8(input) => input.len(),
+            Self::Utf16(input) => input.len(),
+        }
+    }
+}
+
 struct Parser<'a> {
-    input: &'a str,
+    input: ParserInput<'a>,
     position: usize,
 }
 
@@ -408,7 +479,7 @@ enum Started {
 
 impl<'a> Parser<'a> {
     fn new(input: &'a str) -> Self {
-        Self { input, position: 0 }
+        Self { input: ParserInput::Utf8(input), position: 0 }
     }
 
     fn parse(mut self) -> Result<WireValue, JsonError> {
@@ -593,10 +664,18 @@ impl<'a> Parser<'a> {
                 units.push(unit);
                 continue;
             }
-            let character = self.input[self.position..].chars().next().expect("valid UTF-8 input");
-            let mut buffer = [0u16; 2];
-            units.extend_from_slice(character.encode_utf16(&mut buffer));
-            self.position += character.len_utf8();
+            match &self.input {
+                ParserInput::Utf8(input) => {
+                    let character = input[self.position..].chars().next().expect("valid UTF-8 input");
+                    let mut buffer = [0u16; 2];
+                    units.extend_from_slice(character.encode_utf16(&mut buffer));
+                    self.position += character.len_utf8();
+                }
+                ParserInput::Utf16(input) => {
+                    units.push(input[self.position]);
+                    self.position += 1;
+                }
+            }
         }
     }
 
@@ -649,11 +728,26 @@ impl<'a> Parser<'a> {
                 return Err(self.error("invalid exponent"));
             }
         }
-        self.input[start..self.position].parse::<f64>().map_err(|_| self.error("invalid number"))
+        match &self.input {
+            ParserInput::Utf8(input) => input[start..self.position].parse::<f64>(),
+            ParserInput::Utf16(input) => {
+                // The shared number grammar consumes ASCII units only.
+                debug_assert!(input[start..self.position].iter().all(|unit| *unit <= 0x7f));
+                let text = input[start..self.position].iter().map(|unit| char::from(*unit as u8)).collect::<String>();
+                text.parse::<f64>()
+            }
+        }
+        .map_err(|_| self.error("invalid number"))
     }
 
     fn literal(&mut self, text: &str) -> Result<(), JsonError> {
-        if self.input[self.position..].starts_with(text) {
+        let matches = match &self.input {
+            ParserInput::Utf8(input) => input[self.position..].starts_with(text),
+            ParserInput::Utf16(input) => input
+                .get(self.position..self.position + text.len())
+                .is_some_and(|units| units.iter().copied().eq(text.bytes().map(u16::from))),
+        };
+        if matches {
             self.position += text.len();
             Ok(())
         } else {
@@ -668,7 +762,17 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> Option<u8> {
-        self.input.as_bytes().get(self.position).copied()
+        match &self.input {
+            ParserInput::Utf8(input) => input.as_bytes().get(self.position).copied(),
+            ParserInput::Utf16(input) => input.get(self.position).map(|unit| {
+                // Non-ASCII must never masquerade as syntax via its low byte.
+                if *unit <= 0x7f {
+                    *unit as u8
+                } else {
+                    0xff
+                }
+            }),
+        }
     }
 
     fn consume(&mut self, byte: u8) -> bool {

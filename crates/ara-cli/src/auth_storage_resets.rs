@@ -63,6 +63,9 @@ pub struct RedeemResetCreditOptions {
     /// before journal admission/POST. Manual callers already have explicit
     /// authority; automatic Hosts can revoke an earlier consent or route.
     pub admit_consume: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// Optional Session admission over the actual refreshed row. No credentials
+    /// leave this local callback; denial occurs before journal admission/POST.
+    pub admit_resolved_credential: Option<Arc<dyn Fn(&StoredAuthCredential) -> bool + Send + Sync>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,6 +106,12 @@ pub struct ResetCreditRedeemOutcome {
 pub struct ResetRedemption {
     pub outcome: ResetCreditRedeemOutcome,
     pub operation: Option<ResetOperationReceipt>,
+}
+
+pub(super) fn reset_target_matches(target: &ResetCreditTarget, original_id: i64, row: &StoredAuthCredential) -> bool {
+    target.credential_id == Some(original_id)
+        || target.account_id.as_ref().is_some_and(|target| !target.is_empty() && text_field(row, "accountId").as_ref() == Some(target))
+        || target.email.as_ref().is_some_and(|target| !target.is_empty() && text_field(row, "email").as_ref() == Some(target))
 }
 
 struct ExactOAuthResolution {
@@ -301,19 +310,10 @@ impl AuthStorage {
         } else {
             self.reset_account_accesses(provider).await?
         };
-        let matched =
-            accesses.into_iter().find(|access| {
-                let row = access.result.as_ref().map(|resolved| &resolved.row).unwrap_or(&access.row);
-                options.target.credential_id == Some(access.row.id)
-                    || options.target.account_id.as_ref().is_some_and(|target| {
-                        !target.is_empty() && text_field(row, "accountId").as_ref() == Some(target)
-                    })
-                    || options
-                        .target
-                        .email
-                        .as_ref()
-                        .is_some_and(|target| !target.is_empty() && text_field(row, "email").as_ref() == Some(target))
-            });
+        let matched = accesses.into_iter().find(|access| {
+            let row = access.result.as_ref().map(|resolved| &resolved.row).unwrap_or(&access.row);
+            reset_target_matches(&options.target, access.row.id, row)
+        });
         let mut outcome = ResetCreditRedeemOutcome {
             ok: false,
             code: "no_account".into(),
@@ -360,6 +360,10 @@ impl AuthStorage {
                 credit.id.clone()
             }
         };
+        if options.admit_resolved_credential.as_ref().is_some_and(|admit| !admit(&resolved.row)) {
+            outcome.code = "account_unavailable".into();
+            return Ok(ResetRedemption { outcome, operation: None });
+        }
         if receipts.is_some() && options.admit_consume.as_ref().is_some_and(|admit| !admit()) {
             return Err(AuthStorageError::Cancelled);
         }

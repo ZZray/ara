@@ -495,9 +495,13 @@ async fn text_answer_is_printed_and_journaled() {
     assert_eq!(files.len(), 1);
     let entries = journal(&files[0]);
     assert_eq!(entries[0]["type"], json!("session"));
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant"]);
+    assert_eq!(roles(&entries), vec!["model_change", "thinking_level_change", "user", "assistant"]);
     assert_eq!(entries[1]["model"], json!("openai-compatible/fake-model"));
-    assert_eq!(entries[3]["message"]["usage"]["input"], json!(40));
+    // Fixed sdk.ts persists initial non-Auto thinking even when the model
+    // exposes no reasoning metadata. Keep it in the complete sequence.
+    assert_eq!(entries[2]["type"], json!("thinking_level_change"));
+    assert_eq!(entries[2]["thinkingLevel"], Value::Null);
+    assert_eq!(entries[4]["message"]["usage"]["input"], json!(40));
     let reqs = up.requests.lock().await;
     assert!(reqs[0]["headers"]["authorization"].as_str().unwrap().starts_with("<redacted"));
     // System blocks (main prompt + project footer), then the prompt with the
@@ -510,7 +514,7 @@ async fn text_answer_is_printed_and_journaled() {
     assert!(first_user.starts_with("<system-reminder>\nToday: "), "{first_user}");
     assert!(first_user.ends_with("</system-reminder>\n\nSay hello"), "{first_user}");
     // The stored transcript keeps the prompt without the reminder.
-    assert_eq!(entries[2]["message"]["content"], json!("Say hello"));
+    assert_eq!(entries[3]["message"]["content"], json!("Say hello"));
 }
 
 #[tokio::test]
@@ -1512,52 +1516,112 @@ async fn tool_task_produces_file_and_receipts() {
     let entries = journal(&env.session_files()[0]);
     assert_eq!(
         roles(&entries),
-        vec!["model_change", "user", "assistant", "toolResult", "assistant", "toolResult", "assistant"]
+        vec![
+            "model_change",
+            "thinking_level_change",
+            "user",
+            "assistant",
+            "toolResult",
+            "assistant",
+            "toolResult",
+            "assistant"
+        ]
     );
     // Hashline mode (the default edit mode) returns a fresh snapshot header.
     let tag = ara_edit::store::file_hash("hi from ara\n");
     assert_eq!(
-        entries[4]["message"]["content"][0]["text"],
+        entries[5]["message"]["content"][0]["text"],
         json!(format!("[hello.txt#{tag}]\nSuccessfully wrote 12 bytes to hello.txt"))
     );
-    assert_eq!(entries[6]["message"]["content"][0]["text"], json!("hi from ara\ndone"));
+    let wall_ms = entries[7]["message"]["details"]["wallTimeMs"].as_u64().unwrap();
+    let bash_output = format!("hi from ara\ndone\n\n\nWall time: {:.2} seconds", wall_ms as f64 / 1000.0);
+    assert_eq!(entries[7]["message"]["content"][0]["text"], json!(bash_output));
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 3);
     let last = reqs[2]["body"]["messages"].as_array().unwrap();
-    assert!(
-        last.iter().any(|m| m == &json!({"role": "tool", "content": "hi from ara\ndone", "tool_call_id": "call_b"}))
-    );
+    assert!(last.iter().any(|m| m == &json!({"role": "tool", "content": bash_output, "tool_call_id": "call_b"})));
 }
 
 #[tokio::test]
 async fn object_streamed_write_arguments_reach_tool_and_journal_once() {
+    for mode in ["text", "json"] {
+        let env = Env::new();
+        let tool_frame = |arguments: Value| {
+            json!({"data": {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_object_write", "function": {"name": "write", "arguments": arguments}}
+            ]}}]}})
+        };
+        let up = upstream(json!({"responses": [
+            {"events": [
+                tool_frame(json!({"path": "fragment.txt", "content": "hello "})),
+                tool_frame(json!({"content": "world\n"})),
+                finish("tool_calls"), done()
+            ]},
+            {"events": [text("Wrote fragment.txt."), finish("stop"), done()]}
+        ]}))
+        .await;
+        let out = output(env.cmd(
+            &up.base_url(),
+            &["--api", "openai-completions", "--tools", "write", "--mode", mode, "Write fragment.txt"],
+        ))
+        .await;
+        let (stdout, stderr) = text_of(&out);
+        assert_eq!(out.status.code(), Some(0), "{stderr}");
+        if mode == "text" {
+            assert_eq!(stdout, "Wrote fragment.txt.\n");
+        } else {
+            let events: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            let updates: Vec<_> = events.iter().filter(|event| event["type"] == "tool_execution_update").collect();
+            // Native partial delivery cannot acknowledge a throwing original
+            // callback before an OS write. This batch preserves its old no-
+            // progress flow; typed direct callbacks are tested in tools.rs.
+            assert!(updates.is_empty(), "Native progress remains open: {events:?}");
+            assert_eq!(events.iter().filter(|event| event["type"] == "tool_execution_end").count(), 1);
+        }
+        assert_eq!(std::fs::read_to_string(env.work.path().join("fragment.txt")).unwrap(), "hello world\n");
+        assert_eq!(up.served(), 2);
+        let entries = journal(&env.session_files()[0]);
+        assert_eq!(
+            roles(&entries),
+            vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "assistant"]
+        );
+        assert_eq!(entries[4]["message"]["content"][0]["arguments"]["content"], json!("hello world\n"));
+        assert_eq!(entries[5]["message"]["toolCallId"], json!("call_object_write"));
+    }
+
+    // The same real process/error-result loop exercises the local guards;
+    // failed writes leave original bytes and produce no Writing/success event.
     let env = Env::new();
-    let tool_frame = |arguments: Value| {
-        json!({"data": {"choices": [{"delta": {"tool_calls": [
-            {"index": 0, "id": "call_object_write", "function": {"name": "write", "arguments": arguments}}
-        ]}}]}})
-    };
+    let generated = "// Code generated by sqlc. DO NOT EDIT.\nexport const original = 1;\n";
+    std::fs::write(env.work.path().join("guard.ts"), generated).unwrap();
     let up = upstream(json!({"responses": [
-        {"events": [
-            tool_frame(json!({"path": "fragment.txt", "content": "hello "})),
-            tool_frame(json!({"content": "world\n"})),
-            finish("tool_calls"), done()
-        ]},
-        {"events": [text("Wrote fragment.txt."), finish("stop"), done()]}
-    ]}))
+        {"events": [tool_call(0, "guarded_write", "write", "{\"path\":\"guard.ts\",\"content\":\"replacement\"}"), finish("tool_calls"), done()]},
+        {"events": [tool_call(0, "selector_write", "write", "{\"path\":\"misfire.txt:1-2:raw\",\"content\":\"\"}"), finish("tool_calls"), done()]},
+        {"events": [text("Guards observed."), finish("stop"), done()]}
+    ]})).await;
+    let out = output(env.cmd(
+        &up.base_url(),
+        &["--api", "openai-completions", "--tools", "write", "--mode", "json", "Attempt both guarded writes"],
+    ))
     .await;
-    let out =
-        output(env.cmd(&up.base_url(), &["--api", "openai-completions", "--tools", "write", "Write fragment.txt"]))
-            .await;
     let (stdout, stderr) = text_of(&out);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert_eq!(stdout, "Wrote fragment.txt.\n");
-    assert_eq!(std::fs::read_to_string(env.work.path().join("fragment.txt")).unwrap(), "hello world\n");
-    assert_eq!(up.served(), 2);
+    assert_eq!(std::fs::read_to_string(env.work.path().join("guard.ts")).unwrap(), generated);
+    assert!(!env.work.path().join("misfire.txt:1-2:raw").exists());
+    assert_eq!(up.served(), 3);
+    let events: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert!(!events.iter().any(|event| event["type"] == "tool_execution_update"));
     let entries = journal(&env.session_files()[0]);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
-    assert_eq!(entries[3]["message"]["content"][0]["arguments"]["content"], json!("hello world\n"));
-    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_object_write"));
+    let results: Vec<_> = entries.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect();
+    assert_eq!(results.len(), 2);
+    for (result, call, message) in
+        [(results[0], "guarded_write", "auto-generated"), (results[1], "selector_write", "read-tool selector")]
+    {
+        assert_eq!(result["message"]["toolCallId"], json!(call));
+        assert_eq!(result["message"]["isError"], json!(true));
+        let text = result["message"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(message) && !text.contains("Successfully wrote"), "{text}");
+    }
 }
 
 #[tokio::test]
@@ -1592,10 +1656,13 @@ async fn required_chat_reasoning_replays_tool_and_text_turns_after_restart() {
     let session = env.session_files().pop().unwrap();
     let before = std::fs::read(&session).unwrap();
     let entries = journal(&session);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
-    assert_eq!(entries[3]["message"]["content"][0]["type"], "thinking");
-    assert_eq!(entries[3]["message"]["content"][0]["thinking"], "write the file once");
-    assert_eq!(entries[3]["message"]["content"][0]["thinkingSignature"], "reasoning_content");
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "assistant"]
+    );
+    assert_eq!(entries[4]["message"]["content"][0]["type"], "thinking");
+    assert_eq!(entries[4]["message"]["content"][0]["thinking"], "write the file once");
+    assert_eq!(entries[4]["message"]["content"][0]["thinkingSignature"], "reasoning_content");
     std::fs::write(env.work.path().join("reason.txt"), "sentinel\n").unwrap();
 
     let resumed = output(env.cmd(
@@ -1736,9 +1803,12 @@ async fn empty_stream_retry_reaches_one_tool_task_without_duplicate_effects() {
     assert_eq!(std::fs::read_to_string(env.work.path().join("retry.txt")).unwrap(), "once\n");
     assert_eq!(up.served(), 3, "one empty retry, one tool turn, one final turn");
     let entries = journal(&env.session_files()[0]);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
-    assert_eq!(entries[3]["message"]["content"][0]["id"], json!("call_w"));
-    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_w"));
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "assistant"]
+    );
+    assert_eq!(entries[4]["message"]["content"][0]["id"], json!("call_w"));
+    assert_eq!(entries[5]["message"]["toolCallId"], json!("call_w"));
 }
 
 #[tokio::test]
@@ -1768,10 +1838,13 @@ async fn retried_usage_reaches_json_and_journal_with_one_tool_effect() {
     assert_eq!(receipt["attempts"][1]["usage"]["input"], 5);
     assert_eq!(assistant_ends[1]["message"]["retryAccounting"], Value::Null);
     let entries = journal(&env.session_files()[0]);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
-    assert_eq!(entries[3]["message"]["retryAccounting"], *receipt);
-    assert_eq!(entries[3]["message"]["content"][0]["id"], "call_w");
-    assert_eq!(entries[4]["message"]["toolCallId"], "call_w");
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "assistant"]
+    );
+    assert_eq!(entries[4]["message"]["retryAccounting"], *receipt);
+    assert_eq!(entries[4]["message"]["content"][0]["id"], "call_w");
+    assert_eq!(entries[5]["message"]["toolCallId"], "call_w");
 }
 
 #[tokio::test]
@@ -1799,9 +1872,12 @@ async fn pre_start_http_retry_reaches_one_tool_task_without_duplicate_effects() 
     assert_eq!(std::fs::read_to_string(env.work.path().join("retry.txt")).unwrap(), "once\n");
     assert_eq!(up.served(), 8, "six inner attempts, one replay with a tool turn, one final turn");
     let entries = journal(&env.session_files()[0]);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "assistant"]);
-    assert_eq!(entries[3]["message"]["content"][0]["id"], json!("call_w"));
-    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_w"));
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "assistant"]
+    );
+    assert_eq!(entries[4]["message"]["content"][0]["id"], json!("call_w"));
+    assert_eq!(entries[5]["message"]["toolCallId"], json!("call_w"));
 }
 
 fn spawn_json(c: &mut Command) -> Child {
@@ -2220,7 +2296,10 @@ async fn repl_runs_turns_in_one_journal_and_exits_on_eof() {
     let files = env.session_files();
     assert_eq!(files.len(), 1, "both turns share one Session");
     let entries = journal(&files[0]);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "user", "assistant"]);
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "user", "assistant"]
+    );
     assert_eq!(journal_user_texts(&entries), vec!["alpha-turn", "beta-turn"]);
     assert!(stderr.contains(&format!("ara: session {}", files[0].display())), "{stderr}");
     let reqs = up.requests.lock().await;
@@ -2263,9 +2342,9 @@ async fn repl_new_starts_a_fresh_session_file() {
     let first = journal(&files[0]);
     let second = journal(&files[1]);
     assert_eq!(journal_user_texts(&first), vec!["alpha-turn"]);
-    assert_eq!(roles(&first), vec!["model_change", "user", "assistant"]);
+    assert_eq!(roles(&first), vec!["model_change", "thinking_level_change", "user", "assistant"]);
     assert_eq!(journal_user_texts(&second), vec!["beta-turn"]);
-    assert_eq!(roles(&second), vec!["model_change", "user", "assistant"]);
+    assert_eq!(roles(&second), vec!["model_change", "thinking_level_change", "user", "assistant"]);
     assert!(
         stderr.contains(&format!("ara: new session; the previous one stays at {}", files[0].display())),
         "{stderr}"
@@ -2454,14 +2533,23 @@ async fn repl_interrupt_during_bash_returns_to_prompt() {
     let entries = journal(&files[0]);
     assert_eq!(
         roles(&entries),
-        vec!["model_change", "user", "assistant", "toolResult", "assistant", "user", "assistant"]
+        vec![
+            "model_change",
+            "thinking_level_change",
+            "user",
+            "assistant",
+            "toolResult",
+            "assistant",
+            "user",
+            "assistant"
+        ]
     );
     // Windows: Ctrl+Break reaches the whole process group, Bash included, so
     // the tool may report its own exit instead of `[Command aborted]`; the
     // turn-level abort below is deterministic on both platforms.
     #[cfg(unix)]
-    assert!(entries[4]["message"]["content"][0]["text"].as_str().unwrap().ends_with("[Command aborted]"));
-    assert_eq!(entries[5]["message"]["stopReason"], json!("aborted"));
+    assert!(entries[5]["message"]["content"][0]["text"].as_str().unwrap().ends_with("[Command aborted]"));
+    assert_eq!(entries[6]["message"]["stopReason"], json!("aborted"));
     assert_eq!(journal_user_texts(&entries), vec!["run something slow", "after"]);
 }
 
@@ -2642,7 +2730,10 @@ async fn continue_and_stdin_prompt() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "two\n");
     let files = env.session_files();
     assert_eq!(files.len(), 1, "continued the same session");
-    assert_eq!(roles(&journal(&files[0])), vec!["model_change", "user", "assistant", "user", "assistant"]);
+    assert_eq!(
+        roles(&journal(&files[0])),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "user", "assistant"]
+    );
     let reqs = up.requests.lock().await;
     assert_eq!(reqs[1]["body"]["messages"].as_array().unwrap().len(), 5, "2 system + prior turn + new prompt");
     // The reminder stays on the first user turn; later turns are unchanged.
@@ -2801,16 +2892,33 @@ async fn search_and_hashline_edit_fix_a_seeded_bug() {
     assert_eq!(stdout, "Fixed add() in src/math.py.\n");
     assert_eq!(std::fs::read_to_string(w.join("src/math.py")).unwrap(), "def add(a, b):\n    return a + b\n");
     let entries = journal(&env.session_files()[0]);
+    assert_eq!(
+        roles(&entries),
+        vec![
+            "model_change",
+            "thinking_level_change",
+            "user",
+            "assistant",
+            "toolResult",
+            "assistant",
+            "toolResult",
+            "assistant",
+            "toolResult",
+            "assistant",
+            "toolResult",
+            "assistant"
+        ]
+    );
     let result = |i: usize| entries[i]["message"]["content"][0]["text"].as_str().unwrap().to_string();
-    let mut listed: Vec<String> = result(4).lines().map(str::to_string).collect();
+    let mut listed: Vec<String> = result(5).lines().map(str::to_string).collect();
     listed.sort();
     assert_eq!(listed, ["# src/", "math.py", "util.py"]);
-    assert_eq!(result(6), "# src/\n## math.py#450E\n 1:def add(a, b):\n*2:    return a - b  # BUG");
-    let edited = result(8);
+    assert_eq!(result(7), "# src/\n## math.py#450E\n 1:def add(a, b):\n*2:    return a - b  # BUG");
+    let edited = result(9);
     assert!(edited.starts_with("[src/math.py#") && edited.contains("return a + b"), "{edited}");
     assert!(!edited.contains("#450E"), "the tag changes after an edit: {edited}");
     let new_tag = &edited[13..17];
-    assert_eq!(result(10), format!("[src/math.py#{new_tag}]\n1:def add(a, b):\n2:    return a + b"));
+    assert_eq!(result(11), format!("[src/math.py#{new_tag}]\n1:def add(a, b):\n2:    return a + b"));
     let reqs = up.requests.lock().await;
     let tool_names: Vec<&str> =
         reqs[0]["body"]["tools"].as_array().unwrap().iter().map(|t| t["function"]["name"].as_str().unwrap()).collect();
@@ -3396,7 +3504,10 @@ async fn repl_continue_replays_the_prior_turn_in_the_model_request() {
     assert!(stderr.contains(&format!("ara: session {}", session.display())), "{stderr}");
     assert_eq!(env.session_files(), vec![session.clone()], "still exactly one Session file");
     let entries = journal(&session);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "user", "assistant"]);
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "user", "assistant"]
+    );
     assert_eq!(journal_user_texts(&entries), vec!["alpha-turn", "beta-turn"]);
     let reqs = up.requests.lock().await;
     assert_eq!(reqs.len(), 2);
@@ -3517,10 +3628,13 @@ async fn repl_resume_after_interrupted_tool_reports_unknown_effect_without_repla
     );
     assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\n", "the command was not replayed");
     let entries = journal(&session);
-    assert_eq!(roles(&entries), vec!["model_change", "user", "assistant", "toolResult", "user", "assistant"]);
-    assert_eq!(entries[4]["message"]["toolCallId"], json!("call_crash"));
-    assert_eq!(entries[4]["message"]["details"]["source"], json!("interrupted_unknown_effect"));
-    assert!(entries[4]["message"]["isError"].as_bool().unwrap_or(false), "{entries:?}");
+    assert_eq!(
+        roles(&entries),
+        vec!["model_change", "thinking_level_change", "user", "assistant", "toolResult", "user", "assistant"]
+    );
+    assert_eq!(entries[5]["message"]["toolCallId"], json!("call_crash"));
+    assert_eq!(entries[5]["message"]["details"]["source"], json!("interrupted_unknown_effect"));
+    assert!(entries[5]["message"]["isError"].as_bool().unwrap_or(false), "{entries:?}");
     assert_eq!(journal_user_texts(&entries), vec!["do the long thing", "continue carefully"]);
     let reqs = up2.requests.lock().await;
     let msgs = reqs[0]["body"]["messages"].as_array().unwrap();
@@ -4454,4 +4568,535 @@ async fn skill_sources_invalid_selection_exits_two_without_a_model_request_or_se
             .unwrap();
         }
     }
+}
+
+// Append to crates/ara-cli/tests/e2e.rs; preserves fixed Native and ARA baseline
+// REPL /clear and /new store lifetime, unlike the existing fresh-store RPC path.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repl_clear_and_new_keep_retained_edit_snapshots() {
+    for (boundary, input) in [
+        ("/clear", "read nested\n/clear\nuse retained snapshot\n"),
+        ("/new", "read nested\n/new\nuse retained snapshot\n"),
+    ] {
+        let env = Env::new();
+        std::fs::create_dir_all(env.work.path().join("src")).unwrap();
+        std::fs::write(env.work.path().join("src/math.py"), "def add(a, b):\n    return a - b  # BUG\n").unwrap();
+        let edit = json!({"input":"[math.py#450E]\nPUT 2.=2:\n+    return a + b\n"}).to_string();
+        let up = upstream(json!({"responses":[
+            {"events":[tool_call(0,"retained-repl-read","read","{\"path\":\"src/math.py\"}"),finish("tool_calls"),done()]},
+            {"events":[text("Read done."),finish("stop"),done()]},
+            {"events":[tool_call(0,"retained-repl-edit","edit",&edit),finish("tool_calls"),done()]},
+            {"events":[text("Edit done."),finish("stop"),done()]}
+        ]})).await;
+        let mut command = env.cmd(&up.base_url(), &["--repl", "--tools", "read,edit", "--compact-threshold", "0"]);
+        command.env_remove("ARA_EDIT_VARIANT").env_remove("ARA_STRICT_EDIT_MODE");
+        let out = repl_output(command, input).await;
+        let (stdout, stderr) = text_of(&out);
+        assert_eq!(out.status.code(), Some(0), "{boundary}: {stderr}");
+        assert_eq!(stdout, "Read done.\nEdit done.\n");
+        let receipts: Vec<_> = env.session_files().iter().flat_map(|path| journal(path)).collect();
+        let edit_receipt = receipts.iter().find(|entry| entry["message"]["toolCallId"] == "retained-repl-edit");
+        let same_session=boundary=="/clear";
+        let expected=if same_session {"def add(a, b):\n    return a + b\n"} else {"def add(a, b):\n    return a - b  # BUG\n"};
+        assert_eq!(std::fs::read_to_string(env.work.path().join("src/math.py")).unwrap(),expected,
+            "{boundary}: current source Session Store boundary; receipt {edit_receipt:?}; stderr {stderr}");
+        let receipt = receipts.iter().find(|entry| entry["message"]["toolCallId"] == "retained-repl-edit").unwrap();
+        assert_eq!(receipt["message"]["isError"],!same_session,"{boundary}: {receipt}");
+        assert_eq!(env.session_files().len(),if same_session {1} else {2},"/clear keeps logical Session; /new adopts a new ID");
+        assert_eq!(up.requests.lock().await.len(), 4);
+    }
+    #[cfg(feature = "test-fixture")]
+    observe_lsp_cross_process_supplier().await;
+}
+
+// Existing ara-cli @test:e2e target: real binary -> controlled Responses HTTP
+// -> Core continuation -> real write/read -> journal -> same Session reopen.
+#[tokio::test]
+async fn responses_pause_turn_continues_real_tools_journal_and_restart_group() {
+    let search_a = json!({"type":"web_search_call","id":"ws_pause_a","status":"completed",
+        "action":{"type":"search","queries":["pause source A"],"sources":[{"url":"https://fixture.invalid/a","title":"Source A"}]},
+        "provider_trace":{"source":"SOURCE_A","sequence":1}});
+    let search_b = json!({"type":"web_search_call","id":"ws_pause_b","status":"completed",
+        "action":{"type":"search","queries":["pause source B"],"sources":[{"url":"https://fixture.invalid/b","title":"Source B"}]},
+        "provider_trace":{"source":"SOURCE_B","sequence":2}});
+    let mut wire_a = search_a.clone();
+    wire_a.as_object_mut().unwrap().remove("id");
+    let mut wire_b = search_b.clone();
+    wire_b.as_object_mut().unwrap().remove("id");
+    let client_call = |name: &str, call_id: &str, item_id: &str, arguments: &str| {
+        json!({"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,
+                "item":{"type":"function_call","id":item_id,"call_id":call_id,"name":name}}},
+            {"data":{"type":"response.function_call_arguments.done","output_index":0,"arguments":arguments}},
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"function_call","id":item_id,"call_id":call_id,"name":name,"arguments":"{}"}}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]})
+    };
+    let reply = |text: &str| {
+        json!({"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,
+                "item":{"type":"message","content":[{"type":"output_text","text":text}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed","end_turn":true}}}
+        ]})
+    };
+    let env = Env::new();
+    let up = upstream(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":search_a}},
+            {"data":{"type":"response.output_item.done","output_index":1,
+                "item":{"type":"message","id":"msg_pause_visible","phase":"commentary",
+                    "content":[{"type":"output_text","text":"Searching before the write."}]}}},
+            {"data":{"type":"response.completed","response":{"status":"completed","end_turn":false}}}
+        ]},
+        {"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":search_b}},
+            {"data":{"type":"response.completed","response":{"status":"completed"}}}
+        ]},
+        client_call("write", "call_pause_write", "fc_pause_write", "{\"path\":\"pause-artifact.txt\",\"content\":\"pause artifact\\n\"}"),
+        client_call("read", "call_pause_read", "fc_pause_read", "{\"path\":\"pause-artifact.txt\"}"),
+        reply("Pause artifact verified."),
+        reply("Reopened without tool replay.")
+    ]})).await;
+    let first = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--mode",
+            "json",
+            "--api",
+            "openai-responses",
+            "--tools",
+            "write,read",
+            "--compact-threshold",
+            "0",
+            "--max-time",
+            "8",
+            "Create and read pause-artifact.txt",
+        ],
+    ))
+    .await;
+    let (stdout, stderr) = text_of(&first);
+    assert_eq!(first.status.code(), Some(0), "{stderr}");
+    assert_eq!(
+        up.served(),
+        5,
+        "both pause terminals must continue to the actual client write/read and ordinary final stop"
+    );
+    let artifact = env.work.path().join("pause-artifact.txt");
+    let written_artifact = std::fs::read_to_string(&artifact).unwrap();
+    assert_eq!(written_artifact, "pause artifact\n");
+    let events: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let tool_starts = events.iter().filter(|event| event["type"] == "tool_execution_start").collect::<Vec<_>>();
+    assert_eq!(tool_starts.len(), 2, "hosted search must never become a client ToolCall");
+    assert_eq!(tool_starts[0]["toolName"], "write");
+    assert_eq!(tool_starts[1]["toolName"], "read");
+    assert!(!stdout.contains("providerPayload") && !stdout.contains("SOURCE_A") && !stdout.contains("SOURCE_B"));
+    let sessions = env.session_files();
+    assert_eq!(sessions.len(), 1);
+    let before = journal(&sessions[0]);
+    let paused =
+        before.iter().filter(|entry| entry["message"]["stopDetails"]["type"] == "pause_turn").collect::<Vec<_>>();
+    assert_eq!(paused.len(), 2);
+    for (entry, source) in paused.iter().zip([&search_a, &search_b]) {
+        assert_eq!(entry["message"]["stopReason"], "stop");
+        assert_eq!(&entry["message"]["providerPayload"]["items"][0], source);
+        assert!(entry["message"]["content"].as_array().unwrap().iter().all(|block| block["type"] != "toolCall"));
+    }
+    assert!(
+        paused[1]["message"]["content"].as_array().unwrap().is_empty(),
+        "done-only search has no visible assistant block"
+    );
+    let results = before.iter().filter(|entry| entry["message"]["role"] == "toolResult").collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["message"]["toolCallId"], "call_pause_write|fc_pause_write");
+    assert_eq!(results[1]["message"]["toolCallId"], "call_pause_read|fc_pause_read");
+    assert_eq!(results[1]["message"]["isError"], false);
+    assert!(
+        results[1]["message"]["content"].to_string().contains("pause artifact"),
+        "readback must come from the real file tool receipt"
+    );
+    assert_eq!(before.last().unwrap()["message"]["stopReason"], "stop");
+    assert!(before.last().unwrap()["message"].get("stopDetails").is_none());
+
+    let requests = up.requests.lock().await;
+    let first_warm = requests[1]["body"]["input"].as_array().unwrap();
+    let a = first_warm.iter().position(|item| item == &wire_a).unwrap();
+    assert_eq!(first_warm[a + 1]["phase"], "commentary");
+    assert_eq!(first_warm[a + 1]["content"][0]["text"], "Searching before the write.");
+    let second_warm = requests[2]["body"]["input"].as_array().unwrap();
+    let a = second_warm.iter().position(|item| item == &wire_a).unwrap();
+    let b = second_warm.iter().position(|item| item == &wire_b).unwrap();
+    assert_eq!(b, a + 2, "source search A, visible commentary, then hidden search B retain source order");
+    let settled = requests[4]["body"]["input"].as_array().unwrap();
+    let ordered = [
+        ("function_call", "call_pause_write"),
+        ("function_call_output", "call_pause_write"),
+        ("function_call", "call_pause_read"),
+        ("function_call_output", "call_pause_read"),
+    ]
+    .map(|(kind, id)| settled.iter().position(|item| item["type"] == kind && item["call_id"] == id).unwrap());
+    assert!(ordered.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(settled[ordered[3]]["output"].as_str().unwrap().contains("pause artifact"));
+    drop(requests);
+
+    // A cold ordinary hosted Session deliberately disables opaque replay. Its
+    // retained raw receipt and readable client call/result history survive;
+    // restarting is not permission to execute the already settled tools again.
+    std::fs::write(&artifact, "sentinel after completed process\n").unwrap();
+    let resumed = output(env.cmd(
+        &up.base_url(),
+        &[
+            "--api",
+            "openai-responses",
+            "--tools",
+            "write,read",
+            "--compact-threshold",
+            "0",
+            "--max-time",
+            "8",
+            "--resume",
+            sessions[0].to_str().unwrap(),
+            "Confirm the prior artifact",
+        ],
+    ))
+    .await;
+    assert_eq!(resumed.status.code(), Some(0), "{}", text_of(&resumed).1);
+    assert_eq!(text_of(&resumed).0, "Reopened without tool replay.\n");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "sentinel after completed process\n");
+    assert_eq!(env.session_files(), sessions, "same Session reopen must not create a replacement conversation");
+    let after = journal(&sessions[0]);
+    assert_eq!(
+        &after[..before.len()],
+        before.as_slice(),
+        "raw source journal prefix stays immutable across process restart"
+    );
+    assert_eq!(after.iter().filter(|entry| entry["message"]["role"] == "toolResult").count(), 2);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 6);
+    let cold = requests[5]["body"]["input"].as_array().unwrap();
+    assert!(cold.iter().all(|item| item["type"] != "web_search_call"));
+    for (kind, id) in [
+        ("function_call", "call_pause_write"),
+        ("function_call_output", "call_pause_write"),
+        ("function_call", "call_pause_read"),
+        ("function_call_output", "call_pause_read"),
+    ] {
+        assert!(cold.iter().any(|item| item["type"] == kind && item["call_id"] == id));
+    }
+    assert!(requests.iter().all(|request| request["request"] == "POST /v1/responses HTTP/1.1"
+        && request["body"]["store"] == false
+        && request["body"].get("previous_response_id").is_none()));
+    if let Some(directory) = std::env::var_os("ARA_PAUSE_PROCESS_RECEIPTS") {
+        let directory = PathBuf::from(directory).join("normal-and-reopen");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("stdout.jsonl"), &stdout).unwrap();
+        std::fs::write(directory.join("stderr.txt"), &stderr).unwrap();
+        std::fs::write(directory.join("reopen.stdout.txt"), &resumed.stdout).unwrap();
+        std::fs::write(directory.join("requests.json"), serde_json::to_vec_pretty(&*requests).unwrap()).unwrap();
+        std::fs::copy(&sessions[0], directory.join("session.jsonl")).unwrap();
+        std::fs::write(directory.join("artifact.first.txt"), &written_artifact).unwrap();
+        std::fs::write(directory.join("artifact.after-reopen.txt"), std::fs::read(&artifact).unwrap()).unwrap();
+    }
+    drop(requests);
+
+    for failure in ["error", "disconnect"] {
+        let env = Env::new();
+        let mut failed_events =
+            vec![json!({"data":{"type":"response.output_item.done","output_index":0,"item":search_b}})];
+        if failure == "error" {
+            failed_events.push(json!({"data":{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"search failed after hosted progress"}}}}));
+        } else {
+            // Let the completed hosted receipt reach the process before RST.
+            failed_events.push(json!({"sleep_ms":50}));
+        }
+        let up = upstream(
+            json!({"responses":[{"events":failed_events,"end":if failure=="disconnect" {"drop"} else {"close"}}]}),
+        )
+        .await;
+        let out = output(env.cmd(
+            &up.base_url(),
+            &[
+                "--mode",
+                "json",
+                "--api",
+                "openai-responses",
+                "--tools",
+                "write,read",
+                "--compact-threshold",
+                "0",
+                "--max-time",
+                "3",
+                "--stream-idle-timeout",
+                "0.3",
+                "Continue hosted search",
+            ],
+        ))
+        .await;
+        let (stdout, stderr) = text_of(&out);
+        assert_eq!(out.status.code(), Some(1), "{failure}: {stderr}");
+        assert_eq!(up.served(), 1, "{failure}: hosted progress is not authorization for request replay");
+        let events = stdout.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).collect::<Vec<_>>();
+        assert!(events.iter().all(|event| event["type"] != "tool_execution_start"));
+        assert!(!env.work.path().join("pause-artifact.txt").exists());
+        let sessions = env.session_files();
+        assert_eq!(sessions.len(), 1);
+        let entries = journal(&sessions[0]);
+        assert!(entries.iter().all(|entry| entry["message"]["role"] != "toolResult"));
+        let assistant = &entries.last().unwrap()["message"];
+        assert_eq!(assistant["stopReason"], "error");
+        assert_ne!(assistant["stopDetails"]["type"], "pause_turn");
+        assert!(assistant["content"].as_array().unwrap().iter().all(|block| block["type"] != "toolCall"));
+        if let Some(directory) = std::env::var_os("ARA_PAUSE_PROCESS_RECEIPTS") {
+            let directory = PathBuf::from(directory).join(failure);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("stdout.jsonl"), stdout).unwrap();
+            std::fs::write(directory.join("stderr.txt"), stderr).unwrap();
+            std::fs::copy(&sessions[0], directory.join("session.jsonl")).unwrap();
+            std::fs::write(
+                directory.join("requests.json"),
+                serde_json::to_vec_pretty(&*up.requests.lock().await).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+}
+
+// Functional shared-LSP scenarios remain in the original retained-repl group.
+#[cfg(feature = "test-fixture")]
+async fn observe_lsp_cross_process_supplier() {
+    let started = Instant::now();
+    let stage = |name: &str| eprintln!("Shared LSP stage: {name} ({:.3}s)", started.elapsed().as_secs_f64());
+    stage("begin");
+    struct OwnedChild(Child);
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn frames(path: &Path) -> Vec<Value> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+    fn pids(path: &Path) -> Vec<u32> {
+        frames(path)
+            .into_iter()
+            .filter(|frame| frame["frame"]["event"] == "spawn")
+            .map(|frame| frame["pid"].as_u64().unwrap() as u32)
+            .collect()
+    }
+    fn alive(pid: u32) -> bool {
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::{
+                Foundation::CloseHandle,
+                System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+            };
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return false;
+            }
+            let mut code = 0;
+            let known = GetExitCodeProcess(process, &mut code) != 0;
+            CloseHandle(process);
+            known && code == 259
+        }
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid as i32, 0) == 0
+                || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+        }
+    }
+    let env = Env::new();
+    let log = env.work.path().join("shared-lsp-frames.jsonl");
+    let agent = env._home.path().join("agent");
+    std::fs::create_dir(&agent).unwrap();
+    std::fs::write(agent.join("config.yml"), "lsp:\n  enabled: true\n  shared: true\n  lazy: true\n").unwrap();
+    std::fs::write(
+        env.work.path().join("lsp.json"),
+        serde_json::to_vec(&json!({"servers":{"fixture":{
+            "command":env!("CARGO_BIN_EXE_ara-lsp-fixture"),"args":["--mode","mux-state","--log",log],
+            "fileTypes":["fixture"],"rootMarkers":["."]
+        }}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let unused =
+        upstream(json!({"responses":[{"events":[text("Holding project presence."),finish("stop"),done()]}]})).await;
+    let mut command =
+        env.cmd(&unused.base_url(), &["--repl", "--mode", "json", "--tools", "write", "--compact-threshold", "0"]);
+    // Same canonical project, separate config root: its independent presence
+    // must be visible to the winning project-scoped mux owner's runtime.
+    let other_config_root = env._home.path().join("unused-config-root");
+    std::fs::create_dir_all(other_config_root.join("agent")).unwrap();
+    command.env("ARA_HOME", &other_config_root);
+    let mut presence = OwnedChild(spawn_repl(&mut command));
+    let mut presence_input = presence.0.stdin.take().unwrap();
+    let presence_log = StderrLog::reading(presence.0.stdout.take().unwrap());
+    let presence_stderr = StderrLog::start(&mut presence.0);
+    tokio::task::block_in_place(|| {
+        writeln!(presence_input, "keep project alive without LSP").unwrap();
+        assert!(presence_log.wait_for("agent_end", Duration::from_secs(10)));
+    });
+    assert!(pids(&log).is_empty(), "project presence alone must not spawn language server");
+    stage("unused presence ready");
+    let active=upstream(json!({"responses":[
+        {"events":[tool_call(0,"active-lsp-write","write",&json!({"path":"active.fixture","content":"ERROR active\n"}).to_string()),finish("tool_calls"),done()]},
+        {"events":[text("Active holder done."),finish("stop"),done()]}
+    ]})).await;
+    let mut command =
+        env.cmd(&active.base_url(), &["--repl", "--mode", "json", "--tools", "write", "--compact-threshold", "0"]);
+    let mut holder = OwnedChild(spawn_repl(&mut command));
+    let mut holder_input = holder.0.stdin.take().unwrap();
+    let holder_log = StderrLog::reading(holder.0.stdout.take().unwrap());
+    let holder_stderr = StderrLog::start(&mut holder.0);
+    tokio::task::block_in_place(|| {
+        writeln!(holder_input, "use LSP and remain alive").unwrap();
+        assert!(holder_log.wait_for("agent_end", Duration::from_secs(10)));
+    });
+    assert_eq!(pids(&log).len(), 1);
+    stage("active holder ready");
+    let work=upstream(json!({"responses":[
+        {"events":[tool_call(0,"independent-lsp-write","write",&json!({"path":"alpha.fixture","content":"ERROR alpha\n"}).to_string()),finish("tool_calls"),done()]},
+        {"events":[text("Independent child done."),finish("stop"),done()]}
+    ]})).await;
+    let out = output(env.cmd(
+        &work.base_url(),
+        &[
+            "-p",
+            "--mode",
+            "json",
+            "--tools",
+            "write",
+            "--compact-threshold",
+            "0",
+            "--max-time",
+            "10",
+            "independent LSP write",
+        ],
+    ))
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    let isolated = pids(&log);
+    assert_eq!(isolated.len(), 2, "simultaneously active links require distinct real LS processes");
+    assert_ne!(isolated[0], isolated[1]);
+    stage("independent write finished; closing holder");
+    tokio::task::block_in_place(|| {
+        drop(holder_input);
+        assert_eq!(wait_exit(&mut holder.0, Duration::from_secs(10)), Some(0));
+    });
+    stage("holder exited; collecting stderr EOF");
+    assert!(!holder_stderr.finish().contains("LSP shutdown failed"));
+    stage("holder stderr EOF; collecting stdout EOF");
+    let _ = holder_log.finish();
+    stage("holder stdout EOF; presence-only linger");
+    // Presence of the separate non-LSP ARA process keeps the worker and idle
+    // instances alive beyond the fixed last-client 3-second grace.
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    assert!(
+        isolated.iter().all(|pid| alive(*pid)),
+        "unused process with a distinct ARA_HOME keeps the same project's idle server processes alive"
+    );
+    stage("presence-only linger observed; reusing idle server");
+    let reuse=upstream(json!({"responses":[
+        {"events":[tool_call(0,"reuse-lsp-write","write",&json!({"path":"reuse.fixture","content":"clean reused\n"}).to_string()),finish("tool_calls"),done()]},
+        {"events":[text("Reused child done."),finish("stop"),done()]}
+    ]})).await;
+    let out = output(env.cmd(
+        &reuse.base_url(),
+        &["-p", "--mode", "json", "--tools", "write", "--compact-threshold", "0", "--max-time", "10", "reuse idle LSP"],
+    ))
+    .await;
+    assert_eq!(out.status.code(), Some(0), "{}", text_of(&out).1);
+    assert_eq!(pids(&log), isolated, "later ARA process adopts an idle LS without spawning a third process");
+    stage("idle reuse finished; cancelling formatting");
+    std::fs::write(agent.join("config.yml"), "lsp:\n  shared: true\n  formatOnWrite: true\n").unwrap();
+    let aborted=upstream(json!({"responses":[{"events":[tool_call(0,"cancel-lsp-format","write",&json!({"path":"cancelled.fixture","content":"UNFORMATTED HANG_FORMAT\n"}).to_string()),finish("tool_calls"),done()]}]})).await;
+    let out = output(env.cmd(
+        &aborted.base_url(),
+        &[
+            "-p",
+            "--mode",
+            "json",
+            "--tools",
+            "write",
+            "--compact-threshold",
+            "0",
+            "--max-time",
+            "0.3",
+            "cancel formatting",
+        ],
+    ))
+    .await;
+    assert_ne!(out.status.code(), Some(0));
+    // Fixed b91db66e writethrough.ts commits a newly created file before
+    // formatting so LSP sees it on disk. Caller cancellation settles that
+    // admitted write and must never apply a later formatting response.
+    assert_eq!(std::fs::read(env.work.path().join("cancelled.fixture")).unwrap(),
+        b"UNFORMATTED HANG_FORMAT\n", "cancel preserves the exact admitted create, without formatter output");
+    stage("cancelled formatting finished");
+    let protocol = frames(&log);
+    let incoming = protocol
+        .iter()
+        .filter(|frame| frame["frame"]["direction"] == "in")
+        .map(|frame| &frame["frame"]["message"])
+        .collect::<Vec<_>>();
+    assert!(
+        incoming.iter().any(|message| message["id"] == "fixture-config" && message.get("result").is_some()),
+        "server request ID survives bidirectional mux relay"
+    );
+    let admitted_format = incoming.iter().find(|request|
+        request["method"] == "textDocument/formatting"
+            && request["params"]["textDocument"]["uri"].as_str()
+                .is_some_and(|uri| uri.ends_with("/cancelled.fixture")))
+        .expect("the existing deadline must cancel an actually admitted formatting request for this file");
+    let cancelled = incoming
+        .iter()
+        .find(|message| message["method"] == "$/cancelRequest"
+            && message["params"]["id"] == admitted_format["id"])
+        .expect("actual cancellation reaches LS over mux for this admitted request");
+    assert_eq!(admitted_format["id"], cancelled["params"]["id"],
+        "cancel ID maps to the admitted server request");
+    assert!(
+        incoming.iter().any(|message| message["method"] == "textDocument/didClose"
+            && message["params"]["textDocument"]["uri"] == admitted_format["params"]["textDocument"]["uri"]),
+        "cancelled link teardown closes its own document"
+    );
+    assert_eq!(
+        incoming.iter().filter(|message| message["method"] == "initialize").count(),
+        2,
+        "cached initialize is reused for later links"
+    );
+    stage("protocol assertions passed; closing unused presence");
+    tokio::task::block_in_place(|| {
+        drop(presence_input);
+        assert_eq!(wait_exit(&mut presence.0, Duration::from_secs(10)), Some(0));
+    });
+    stage("unused presence exited; collecting stderr EOF");
+    let _ = presence_stderr.finish();
+    stage("unused presence stderr EOF; collecting stdout EOF");
+    let _ = presence_log.finish();
+    stage("unused presence stdout EOF; waiting for server reaping");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while isolated.iter().any(|pid| alive(*pid)) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        isolated.iter().all(|pid| !alive(*pid)),
+        "last independent process presence releases owned LS subtree after 3-second grace"
+    );
+    stage("server reaping observed");
+    assert_eq!(unused.served(), 1);
+    assert_eq!(active.served(), 2);
+    assert_eq!(work.served(), 2);
+    assert_eq!(reuse.served(), 2);
+    assert_eq!(aborted.served(), 1, "a cancelled tool turn cannot request a follow-up model response");
+    eprintln!(
+        "Shared LSP real-process receipt: {}",
+        json!({"pids":isolated,"activeIsolation":true,"idleReuse":true,"unusedProcessPresence":true,"lastPresenceReaped":true,"initializes":2,"bidirectionalId":true,"cancelRelay":true,"boundary":"registration/diagnostic/unfinished-progress replay state and 5/15min linger still require dedicated bounded observations; no full shared parent acceptance"})
+    );
 }

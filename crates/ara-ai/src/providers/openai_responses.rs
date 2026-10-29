@@ -8,6 +8,8 @@
 //! Stream decoding and host selection remain separate. Native reasoning replay
 //! is limited to same-model history after the provider session has warmed.
 
+pub mod actual;
+
 use crate::error::ProviderError;
 use crate::event::{AssistantMessageEvent, AssistantStream, EventSink};
 use crate::responses_sse::ResponsesSseDecoder;
@@ -38,15 +40,116 @@ const CHAIN_STALE_FAILURE_LIMIT: u8 = 3;
 /// Request fields supported by the stateless Responses path.
 #[derive(Clone, Debug, Default)]
 pub struct RequestOptions {
+    /// Host-materialized NO_STRICT policy, shared with Codex; AI never reads env.
+    pub no_strict: bool,
     pub max_tokens: Option<u64>,
     pub temperature: Option<f64>,
     pub tool_choice: Option<ToolChoice>,
+    pub reasoning: Option<crate::ReasoningRequest>,
+    pub reasoning_policy: Option<crate::OpenAIReasoningPolicy>,
     /// Host cache identity may differ from a side request's transport Session.
     pub prompt_cache_key: Option<String>,
     /// Host-confirmed input capability; unknown defaults to text only.
     pub supports_images: bool,
+    /// Host materializes the selected catalog donor; names/endpoints never infer it.
+    pub supports_computer_use: bool,
+    /// Explicit caller-owned include items, deduplicated in request order.
+    pub include: Vec<String>,
+    /// Codex transport opt-in only. Ordinary Responses does not read this field.
+    pub responses_lite: bool,
     /// `None` preserves stateless direct-call replay; a hosted cold session sets `false`.
     pub native_history_replay: Option<bool>,
+    /// Capability of the selected catalog donor, never inferred from endpoint.
+    pub apply_patch_tool_type: Option<String>,
+}
+
+fn supports_custom_tools(options: &RequestOptions) -> bool {
+    options.apply_patch_tool_type.as_deref() == Some("freeform")
+}
+
+// Fixed Native providers/grammar.ts. Retain leading indentation, quoted // and
+// regex slashes; only Lark line comments/blank lines/trailing JS whitespace go.
+fn compact_grammar_definition(format: &crate::CustomToolFormat) -> String {
+    if format.syntax != crate::CustomToolSyntax::Lark {
+        return format.definition.clone();
+    }
+    fn js_whitespace(c: char) -> bool {
+        matches!(c, '\u{9}'..='\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+    }
+    format
+        .definition
+        .split('\n')
+        .filter_map(|line| {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let mut string = None;
+            let mut regex = false;
+            let mut escaped = false;
+            let mut end = line.len();
+            let mut chars = line.char_indices().peekable();
+            while let Some((index, c)) = chars.next() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if c == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if let Some(quote) = string {
+                    if c == quote {
+                        string = None;
+                    }
+                    continue;
+                }
+                if regex {
+                    if c == '/' {
+                        regex = false;
+                    }
+                    continue;
+                }
+                if c == '/' && chars.peek().is_some_and(|(_, next)| *next == '/') {
+                    end = index;
+                    break;
+                }
+                if matches!(c, '\'' | '"') {
+                    string = Some(c);
+                } else if c == '/' {
+                    regex = true;
+                }
+            }
+            let uncommented = line[..end].trim_end_matches(js_whitespace);
+            (!uncommented.trim_matches(js_whitespace).is_empty()).then_some(uncommented)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn resolve_replay_custom_tool_name(wire_name: &str, tools: Option<&[crate::Tool]>) -> String {
+    // Native Map.set means the last matching advertised alias owns the mapping.
+    tools
+        .and_then(|tools| tools.iter().rev().find(|tool| tool.custom_wire_name.as_deref() == Some(wire_name)))
+        .map(|tool| tool.name.clone())
+        .unwrap_or_else(|| if wire_name == "apply_patch" { "edit".into() } else { wire_name.into() })
+}
+
+fn adapt_custom_replay_item(item: &mut Value, options: &RequestOptions, tools: Option<&[crate::Tool]>) {
+    if supports_custom_tools(options) {
+        return;
+    }
+    match item.get("type").and_then(Value::as_str) {
+        Some("custom_tool_call") => {
+            let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+            let name = resolve_replay_custom_tool_name(name, tools);
+            let input = item.get("input").cloned().unwrap_or(Value::String(String::new()));
+            item["type"] = json!("function_call");
+            item["name"] = json!(name);
+            item["arguments"] = json!(json!({"input": input}).to_string());
+            item.as_object_mut().expect("replay item object").remove("input");
+        }
+        Some("custom_tool_call_output") => item["type"] = json!("function_call_output"),
+        _ => {}
+    }
 }
 
 /// Host-owned, transient replay warmup for one Responses session.
@@ -63,9 +166,15 @@ struct ChainBaseline {
     response_id: String,
 }
 
+#[derive(Debug, Clone)]
+enum ChainSnapshot {
+    Typed(Arc<ChainBaseline>),
+    Native(Arc<actual::chain::NativeChainBaseline>),
+}
+
 #[derive(Debug, Default)]
 struct ChainEntry {
-    baseline: Option<Arc<ChainBaseline>>,
+    baseline: Option<ChainSnapshot>,
     active: u32,
     generation: u64,
     stale_failures: u8,
@@ -76,8 +185,9 @@ struct ChainLease {
     state: Arc<ProviderSessionState>,
     key: String,
     generation: u64,
-    baseline: Option<Arc<ChainBaseline>>,
+    baseline: Option<ChainSnapshot>,
     completed: bool,
+    holds_active: bool,
 }
 
 impl ChainLease {
@@ -96,7 +206,7 @@ impl ChainLease {
         }
         let generation = entry.generation;
         drop(chains);
-        Some(Self { state, key, generation, baseline, completed: false })
+        Some(Self { state, key, generation, baseline, completed: false, holds_active: true })
     }
 
     fn stale_rejection(&mut self, zero_data_retention: bool) {
@@ -114,26 +224,54 @@ impl ChainLease {
     }
 
     fn complete(&mut self, request: Value, output: &AssistantMessage, model: &Model, chained: bool) {
-        let response_items =
-            native_history(output, model).and_then(|items| items.into_iter().collect::<Option<Vec<_>>>());
+        let response_items = incremental_native_history(output, model)
+            .and_then(|items| items.into_iter().map(|item| item.wire).collect::<Option<Vec<_>>>());
         let baseline = output.response_id.as_ref().filter(|id| !id.is_empty()).and_then(|id| {
             let items = response_items.filter(|items| !items.is_empty())?;
             let bytes = serde_json::to_vec(&request).ok()?.len();
             if bytes > MAX_CHAIN_BASELINE_BYTES {
                 return None;
             }
-            Some(Arc::new(ChainBaseline { request, response_items: items, response_id: id.clone() }))
+            Some(ChainSnapshot::Typed(Arc::new(ChainBaseline {
+                request,
+                response_items: items,
+                response_id: id.clone(),
+            })))
         });
+        self.publish_baseline(baseline, chained, false);
+    }
+
+    // A failed final publication invalidates only this lease's generation.
+    // A newer concurrent branch owns its own baseline and must survive.
+    fn fail_completion(&mut self) {
+        self.completed = false;
         let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(entry) = chains.get_mut(&self.key)
             && entry.generation == self.generation
-            && entry.active == 1
         {
-            entry.baseline = if entry.disabled { None } else { baseline };
-            if chained && entry.baseline.is_some() {
-                entry.stale_failures = 0;
+            entry.baseline = None;
+        }
+    }
+
+    fn publish_baseline(&mut self, baseline: Option<ChainSnapshot>, chained: bool, release_active: bool) {
+        let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = chains.get_mut(&self.key) {
+            if entry.generation == self.generation && entry.active == 1 {
+                entry.baseline = if entry.disabled { None } else { baseline };
+                if chained && entry.baseline.is_some() {
+                    entry.stale_failures = 0;
+                }
+                self.completed = true;
             }
-            self.completed = true;
+            // Native terminal publication settles its own occupancy before
+            // Done wakes the next turn. Publication and release share this
+            // mutex; typed completion retains its original Drop settlement.
+            if release_active && self.holds_active {
+                entry.active = entry.active.saturating_sub(1);
+            }
+        }
+        if release_active {
+            self.holds_active = false;
         }
     }
 }
@@ -142,7 +280,9 @@ impl Drop for ChainLease {
     fn drop(&mut self) {
         let mut chains = self.state.chains.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(entry) = chains.get_mut(&self.key) {
-            entry.active = entry.active.saturating_sub(1);
+            if self.holds_active {
+                entry.active = entry.active.saturating_sub(1);
+            }
             if !self.completed && entry.generation == self.generation {
                 entry.baseline = None;
             }
@@ -190,8 +330,10 @@ fn chain_delta(baseline: &ChainBaseline, current: &Value) -> Option<Vec<Value>> 
     Some(now[prefix_len..].to_vec())
 }
 
-fn stale_previous_response(error: &PostError) -> Option<bool> {
-    let ProviderError::Http { detail, .. } = &error.cause else { return None };
+pub(crate) fn stale_previous_response(error: &PostError) -> Option<bool> {
+    let ProviderError::Http { detail, .. } = &error.cause else {
+        return None;
+    };
     let lower = detail.to_ascii_lowercase();
     let compact = lower.chars().filter(|ch| !matches!(ch, ' ' | '_' | '-')).collect::<String>();
     if compact.contains("previousresponse") && compact.contains("zerodataretention") {
@@ -226,7 +368,9 @@ impl ProviderSessionState {
 
 fn content_parts(content: &UserContent, supports_images: bool) -> Vec<Value> {
     match content {
-        UserContent::Text(text) if !text.trim().is_empty() => vec![json!({"type": "input_text", "text": text})],
+        UserContent::Text(text) if !text.trim().is_empty() => {
+            vec![json!({"type": "input_text", "text": text})]
+        }
         UserContent::Text(_) => Vec::new(),
         UserContent::Blocks(blocks) => {
             let mut parts = Vec::new();
@@ -324,14 +468,33 @@ fn same_responses_origin(message: &AssistantMessage, model: &Model) -> bool {
         && matches!(message.stop_reason, StopReason::Stop | StopReason::ToolUse | StopReason::Length)
 }
 
+struct IncrementalNativeItem {
+    // Hosted output has no client block; visible blocks retain their exact index.
+    content_index: Option<usize>,
+    wire: Option<Value>,
+}
+
+fn hosted_search_replay(item: &Value) -> Option<Value> {
+    if item.get("type")?.as_str()? != "web_search_call" {
+        return None;
+    }
+    let mut wire = item.clone();
+    // Fixed OMP strips only output identity from this hosted family.
+    wire.as_object_mut()?.remove("id");
+    Some(wire)
+}
+
 fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Option<Value>>> {
-    if !same_responses_origin(message, model)
-        || model.api != super::openai_codex_responses::API
-            && !message.content.iter().any(|block| {
-                matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
-                    || matches!(block, AssistantBlock::ToolCall(_))
-            })
-    {
+    Some(
+        incremental_native_history(message, model)?
+            .into_iter()
+            .filter_map(|item| item.content_index.map(|_| item.wire))
+            .collect(),
+    )
+}
+
+fn incremental_native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<IncrementalNativeItem>> {
+    if !same_responses_origin(message, model) {
         return None;
     }
     let payload = message.provider_payload.as_ref()?;
@@ -347,16 +510,37 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
         return None;
     }
     let items = payload.get("items")?.as_array()?;
-    if items.len() > message.content.len() || message.content.len() > 1024 {
+    let has_hosted_search =
+        items.iter().any(|item| item.get("type").and_then(Value::as_str) == Some("web_search_call"));
+    if items.len() > MAX_NATIVE_SNAPSHOT_ITEMS
+        || serde_json::to_vec(items).ok()?.len() > MAX_NATIVE_SNAPSHOT_BYTES
+        || items.iter().filter(|item| item.get("type").and_then(Value::as_str) != Some("web_search_call")).count()
+            > message.content.len()
+        || message.content.len() > 1024
+        || model.api != super::openai_codex_responses::API
+            && !has_hosted_search
+            && !message.content.iter().any(|block| {
+                matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                    || matches!(block, AssistantBlock::ToolCall(_))
+            })
+    {
         return None;
     }
     let mut sanitized = Vec::with_capacity(message.content.len());
-    let mut native_items = items.iter().peekable();
-    for block in &message.content {
+    let computer_reasoning = computer_linked_reasoning_indices(items, false);
+    let mut native_items = items.iter().enumerate().peekable();
+    for (content_index, block) in message.content.iter().enumerate() {
+        while native_items
+            .peek()
+            .is_some_and(|(_, item)| item.get("type").and_then(Value::as_str) == Some("web_search_call"))
+        {
+            let (_, item) = native_items.next()?;
+            sanitized.push(IncrementalNativeItem { content_index: None, wire: Some(hosted_search_replay(item)?) });
+        }
         if let AssistantBlock::ToolCall(call) = block
             && call.arguments.contains_key("__parseError")
         {
-            if let Some(item) = native_items.peek()
+            if let Some((_, item)) = native_items.peek()
                 && item.get("type").and_then(Value::as_str) == Some("function_call")
                 && item.get("call_id").and_then(Value::as_str) == Some(responses_call_component(&call.id))
                 && item.get("name").and_then(Value::as_str) == Some(call.name.as_str())
@@ -371,16 +555,19 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
                 }
                 native_items.next();
             }
-            sanitized.push(None);
+            sanitized.push(IncrementalNativeItem { content_index: Some(content_index), wire: None });
             continue;
         }
-        let item = native_items.next()?;
+        let (item_index, item) = native_items.next()?;
         let wire = match (item.get("type")?.as_str()?, block) {
             ("reasoning", AssistantBlock::Thinking(thinking)) => {
                 if serde_json::from_str::<Value>(thinking.thinking_signature.as_ref()?).ok()? != *item {
                     return None;
                 }
                 let mut wire = json!({"type": "reasoning"});
+                if computer_reasoning.contains(&item_index) && item.get("id").is_some_and(Value::is_string) {
+                    wire["id"] = item["id"].clone();
+                }
                 for field in ["summary", "content", "encrypted_content"] {
                     if let Some(value) = item.get(field) {
                         let valid = if field == "encrypted_content" {
@@ -411,6 +598,21 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
                 }
                 wire
             }
+            ("computer_call", AssistantBlock::ToolCall(call)) => {
+                let metadata = crate::responses_stream::computer_metadata(item).ok()?;
+                if call.name != "computer"
+                    || !call.arguments.is_empty()
+                    || call.provider_metadata.as_ref() != metadata.as_ref()
+                    || item.get("call_id")?.as_str()? != responses_call_component(&call.id)
+                    || call
+                        .id
+                        .split_once('|')
+                        .is_some_and(|(_, item_id)| item.get("id").and_then(Value::as_str) != Some(item_id))
+                {
+                    return None;
+                }
+                raw_computer_call_item(&call.id, item)?
+            }
             ("function_call", AssistantBlock::ToolCall(call)) => {
                 let id = item.get("call_id")?.as_str()?;
                 let args = item.get("arguments")?.as_str()?;
@@ -422,16 +624,38 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
                 }
                 json!({"type": "function_call", "call_id": id, "name": call.name, "arguments": args})
             }
+            ("custom_tool_call", AssistantBlock::ToolCall(call)) => {
+                let id = item.get("call_id")?.as_str()?;
+                let input = item.get("input")?.as_str()?;
+                let name = call.custom_wire_name.as_deref()?;
+                if id != responses_call_component(&call.id)
+                    || item.get("name")?.as_str()? != name
+                    || call.name != name
+                    || call.arguments != json!({"input": input}).as_object()?.clone()
+                {
+                    return None;
+                }
+                json!({"type":"custom_tool_call", "call_id":id, "name":name, "input":input})
+            }
             _ => return None,
         };
-        sanitized.push(Some(wire));
+        sanitized.push(IncrementalNativeItem { content_index: Some(content_index), wire: Some(wire) });
+    }
+    while native_items
+        .peek()
+        .is_some_and(|(_, item)| item.get("type").and_then(Value::as_str) == Some("web_search_call"))
+    {
+        let (_, item) = native_items.next()?;
+        sanitized.push(IncrementalNativeItem { content_index: None, wire: Some(hosted_search_replay(item)?) });
     }
     if native_items.next().is_some()
         || model.api != super::openai_codex_responses::API
-            && !sanitized.iter().zip(&message.content).any(|(item, block)| {
-                item.is_some()
-                    && (matches!(block, AssistantBlock::Text(text) if !text.text.trim().is_empty())
-                        || matches!(block, AssistantBlock::ToolCall(_)))
+            && !sanitized.iter().any(|item| {
+                item.wire.is_some()
+                    && item.content_index.is_none_or(|index| {
+                        matches!(&message.content[index], AssistantBlock::Text(text) if !text.text.trim().is_empty())
+                            || matches!(&message.content[index], AssistantBlock::ToolCall(_))
+                    })
             })
     {
         return None;
@@ -439,22 +663,22 @@ fn native_history(message: &AssistantMessage, model: &Model) -> Option<Vec<Optio
     Some(sanitized)
 }
 
-struct FullNativeHistory {
-    items: Vec<Value>,
-    pending_calls: Vec<(String, String)>,
+pub(crate) struct FullNativeHistory {
+    pub(crate) items: Vec<Value>,
+    pub(crate) pending_calls: Vec<(String, String)>,
 }
 
 fn repair_full_snapshot_orphan_calls(input: Vec<Value>) -> Vec<Value> {
     let mut later_outputs = HashSet::new();
     let mut orphans = HashSet::new();
     for (index, item) in input.iter().enumerate().rev() {
-        if item["type"] == "function_call_output" {
+        if let Some(family) = responses_output_family(item["type"].as_str()) {
             if let Some(id) = item["call_id"].as_str() {
-                later_outputs.insert(id.to_owned());
+                later_outputs.insert((family, id.to_owned()));
             }
-        } else if item["type"] == "function_call"
+        } else if let Some(family) = responses_call_family(item["type"].as_str())
             && let Some(id) = item["call_id"].as_str()
-            && !later_outputs.contains(id)
+            && !later_outputs.contains(&(family, id.to_owned()))
         {
             orphans.insert(index);
         }
@@ -465,9 +689,18 @@ fn repair_full_snapshot_orphan_calls(input: Vec<Value>) -> Vec<Value> {
     let mut repaired = Vec::with_capacity(input.len() + orphans.len());
     for (index, item) in input.into_iter().enumerate() {
         let id = if orphans.contains(&index) { item["call_id"].as_str().map(str::to_owned) } else { None };
+        if item["type"] == "computer_call"
+            && let Some(id) = &id
+        {
+            repaired.push(json!({"type":"message","role":"assistant",
+                "content":format!("[Computer call interrupted before a screenshot was recorded; call_id={id}]")}));
+            continue;
+        }
+        let output_kind =
+            if item["type"] == "custom_tool_call" { "custom_tool_call_output" } else { "function_call_output" };
         repaired.push(item);
         if let Some(id) = id {
-            repaired.push(json!({"type":"function_call_output","call_id":id,"output":INTERRUPTED_TOOL_OUTPUT}));
+            repaired.push(json!({"type":output_kind,"call_id":id,"output":INTERRUPTED_TOOL_OUTPUT}));
         }
     }
     repaired
@@ -487,6 +720,14 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
     {
         return None;
     }
+    validate_full_native_items(payload, supports_images, false)
+}
+
+fn validate_full_native_items(
+    payload: &Value,
+    supports_images: bool,
+    preserve_output_ids: bool,
+) -> Option<FullNativeHistory> {
     let source = payload.get("items")?.as_array()?;
     if source.is_empty()
         || source.len() > MAX_NATIVE_SNAPSHOT_ITEMS
@@ -495,9 +736,10 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
         return None;
     }
     let mut items = Vec::with_capacity(source.len());
-    let mut call_ids = HashMap::<String, String>::new();
+    let mut call_ids = HashMap::<String, (String, &'static str)>::new();
     let mut pending = HashSet::new();
-    for item in source {
+    let computer_reasoning = computer_linked_reasoning_indices(source, false);
+    for (source_index, item) in source.iter().enumerate() {
         let wire = match item.get("type")?.as_str()? {
             "message" => {
                 let role = item.get("role")?.as_str()?;
@@ -538,6 +780,9 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
             }
             "reasoning" => {
                 let mut wire = json!({"type":"reasoning"});
+                if computer_reasoning.contains(&source_index) && item.get("id").is_some_and(Value::is_string) {
+                    wire["id"] = item["id"].clone();
+                }
                 for field in ["summary", "content", "encrypted_content"] {
                     if let Some(value) = item.get(field) {
                         if !(if field == "encrypted_content" {
@@ -552,25 +797,31 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
                 }
                 wire
             }
-            "function_call" => {
+            "function_call" | "custom_tool_call" => {
+                let custom = item["type"] == "custom_tool_call";
                 let raw_id = item.get("call_id")?.as_str()?.to_owned();
                 let name = item.get("name")?.as_str()?;
-                let arguments = item.get("arguments")?.as_str()?;
-                if raw_id.is_empty() || name.is_empty() || serde_json::from_str::<Value>(arguments).is_err() {
+                let arguments = item.get(if custom { "input" } else { "arguments" })?.as_str()?;
+                if raw_id.is_empty() || name.is_empty() || !custom && serde_json::from_str::<Value>(arguments).is_err()
+                {
                     return None;
                 }
                 let wire_id = call_id(&raw_id, API);
-                if wire_id.is_empty() || call_ids.values().any(|existing| existing == &wire_id) {
+                if wire_id.is_empty() || call_ids.values().any(|(existing, _)| existing == &wire_id) {
                     return None;
                 }
-                call_ids.insert(raw_id, wire_id.clone());
+                call_ids.insert(raw_id, (wire_id.clone(), if custom { "custom" } else { "function" }));
                 pending.insert(wire_id.clone());
-                json!({"type":"function_call","call_id":wire_id,"name":name,"arguments":arguments})
+                if custom {
+                    json!({"type":"custom_tool_call","call_id":wire_id,"name":name,"input":arguments})
+                } else {
+                    json!({"type":"function_call","call_id":wire_id,"name":name,"arguments":arguments})
+                }
             }
-            "function_call_output" => {
+            "function_call_output" | "custom_tool_call_output" => {
                 let raw_id = item.get("call_id")?.as_str()?;
-                let wire_id = call_ids.get(raw_id)?;
-                if !pending.remove(wire_id) {
+                let (wire_id, family) = call_ids.get(raw_id)?;
+                if responses_output_family(item["type"].as_str()) != Some(*family) || !pending.remove(wire_id) {
                     return None;
                 }
                 let output = item.get("output")?;
@@ -586,7 +837,32 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
                         }
                     }
                 }
-                json!({"type":"function_call_output","call_id":wire_id,"output":output})
+                json!({"type":if *family == "custom" { "custom_tool_call_output" } else { "function_call_output" },"call_id":wire_id,"output":output})
+            }
+            "computer_call" => {
+                let raw_id = item.get("call_id")?.as_str()?.to_owned();
+                crate::responses_stream::computer_metadata(item).ok()?;
+                let wire_id = call_id(&raw_id, API);
+                if wire_id.is_empty() || call_ids.values().any(|(existing, _)| existing == &wire_id) {
+                    return None;
+                }
+                call_ids.insert(raw_id, (wire_id.clone(), "computer"));
+                pending.insert(wire_id.clone());
+                raw_computer_call_item(&wire_id, item)?
+            }
+            "computer_call_output" => {
+                let raw_id = item.get("call_id")?.as_str()?;
+                let (wire_id, family) = call_ids.get(raw_id)?;
+                if *family != "computer" || !pending.remove(wire_id) {
+                    return None;
+                }
+                let metadata: crate::ToolResultProviderMetadata = serde_json::from_value(json!({
+                    "type":"computer","screenshot":item.get("output"),
+                    "acknowledgedSafetyChecks":item.get("acknowledged_safety_checks")
+                        .filter(|checks| !checks.is_null()).cloned().unwrap_or_else(|| json!([]))
+                }))
+                .ok()?;
+                computer_output_item(wire_id, &metadata)
             }
             "compaction" if item.get("encrypted_content")?.is_string() => {
                 let mut wire = item.clone();
@@ -599,16 +875,115 @@ fn full_native_history(message: &AssistantMessage, model: &Model, supports_image
                 wire.as_object_mut()?.remove("status");
                 wire
             }
+            "web_search_call" => hosted_search_replay(item)?,
             "item_reference" => continue,
             _ => return None,
         };
+        let mut wire = wire;
+        // Native Codex client payload is already a compacted native input, unlike
+        // assistant-history sanitization. Conversion retains its output IDs; the
+        // final Codex request transformer subsequently strips non-computer IDs.
+        if preserve_output_ids && let Some(id) = item.get("id") {
+            if !id.is_string() {
+                return None;
+            }
+            wire["id"] = id.clone();
+        }
         items.push(wire);
     }
     if !items.iter().any(|item| item["type"] != "reasoning") {
         return None;
     }
-    let pending_calls = call_ids.into_iter().filter(|(_, wire_id)| pending.contains(wire_id)).collect();
+    let pending_calls = call_ids
+        .into_iter()
+        .filter_map(|(raw_id, (wire_id, _))| pending.contains(&wire_id).then_some((raw_id, wire_id)))
+        .collect();
     Some(FullNativeHistory { items, pending_calls })
+}
+
+fn client_payload(message: &Message) -> Option<(&'static str, &Value, Option<&crate::ResponsesClientHistoryOrigin>)> {
+    match message {
+        Message::User(user) => Some(("user", user.provider_payload.as_ref()?, user.provider_payload_origin.as_ref())),
+        Message::Developer(developer) => {
+            Some(("developer", developer.provider_payload.as_ref()?, developer.provider_payload_origin.as_ref()))
+        }
+        _ => None,
+    }
+}
+
+fn payload_fingerprint(payload: &Value) -> Option<String> {
+    let bytes = serde_json::to_vec(payload).ok()?;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    Some(digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn validate_client_payload(payload: &Value, model: &Model, supports_images: bool) -> Option<FullNativeHistory> {
+    if !matches!(model.api.as_str(), API | super::openai_codex_responses::API)
+        || payload.get("type")?.as_str()? != "openaiResponsesHistory"
+        || payload
+            .get("provider")
+            .is_some_and(|value| !value.is_null() && value.as_str() != Some(model.provider.as_str()))
+        || payload
+            .get("endpointSha256")
+            .is_some_and(|value| value.as_str() != Some(responses_endpoint_fingerprint(&model.base_url).as_str()))
+        || !matches!(payload.get("dt"), None | Some(Value::Bool(_)))
+    {
+        return None;
+    }
+    validate_full_native_items(payload, supports_images, model.api == super::openai_codex_responses::API)
+}
+
+/// Adopt CURRENT User/Developer native history after the Host has independently
+/// checked its source and producing route. Only the existing checked Session
+/// remote projection may grant this in the production Host. Ordinary caller JSON
+/// and the selected current Model are not evidence of the producing route.
+///
+/// Serialization deliberately drops this temporary proof. Reopen must derive it
+/// again from checked Session preserve/source receipts. Neither this proof nor a
+/// tool allowlist is a cryptographic trust primitive or an operating-system sandbox.
+pub fn adopt_client_history_for_checked_route(
+    model: &Model,
+    message: &mut Message,
+    supports_images: bool,
+) -> Result<(), ProviderError> {
+    let (role, payload, _) = client_payload(message)
+        .ok_or_else(|| ProviderError::Config("checked client history requires a User/Developer payload".into()))?;
+    validate_client_payload(payload, model, supports_images).ok_or_else(|| {
+        ProviderError::Config("client history cannot be adopted by the checked producing route".into())
+    })?;
+    let proof = crate::ResponsesClientHistoryOrigin {
+        role: role.into(),
+        api: model.api.clone(),
+        provider: model.provider.clone(),
+        model: model.id.clone(),
+        endpoint_sha256: responses_endpoint_fingerprint(&model.base_url),
+        payload_sha256: payload_fingerprint(payload).expect("validated bounded native payload"),
+    };
+    match message {
+        Message::User(user) => user.provider_payload_origin = Some(proof),
+        Message::Developer(developer) => developer.provider_payload_origin = Some(proof),
+        _ => unreachable!("checked client role"),
+    }
+    Ok(())
+}
+
+pub(crate) fn checked_client_history(
+    message: &Message,
+    model: &Model,
+    supports_images: bool,
+) -> Option<FullNativeHistory> {
+    let (role, payload, origin) = client_payload(message)?;
+    let origin = origin?;
+    if origin.role != role
+        || origin.api != model.api
+        || origin.provider != model.provider
+        || origin.model != model.id
+        || origin.endpoint_sha256 != responses_endpoint_fingerprint(&model.base_url)
+        || origin.payload_sha256 != payload_fingerprint(payload)?
+    {
+        return None;
+    }
+    validate_client_payload(payload, model, supports_images)
 }
 
 pub(crate) fn checked_remote_replacement(model: &Model, items: &[Value], supports_images: bool) -> Option<Value> {
@@ -646,7 +1021,198 @@ pub(crate) fn remote_compaction_carrier(message: &AssistantMessage, model: &Mode
 
 enum ReplayedCall {
     Function(String),
+    Custom(String),
+    Computer(String),
     Filtered(String),
+}
+
+fn responses_call_family(kind: Option<&str>) -> Option<&'static str> {
+    match kind {
+        Some("function_call") => Some("function"),
+        Some("custom_tool_call") => Some("custom"),
+        Some("computer_call") => Some("computer"),
+        _ => None,
+    }
+}
+fn responses_output_family(kind: Option<&str>) -> Option<&'static str> {
+    match kind {
+        Some("function_call_output") => Some("function"),
+        Some("custom_tool_call_output") => Some("custom"),
+        Some("computer_call_output") => Some("computer"),
+        _ => None,
+    }
+}
+pub(crate) fn computer_call_item(id: &str, metadata: &crate::ToolCallProviderMetadata) -> Value {
+    let crate::ToolCallProviderMetadata::Computer(metadata) = metadata;
+    json!({"type":"computer_call","id":metadata.provider_item_id,
+        "call_id":responses_call_component(id),"actions":metadata.actions,
+        "pending_safety_checks":metadata.pending_safety_checks,"status":"completed"})
+}
+fn raw_computer_call_item(id: &str, item: &Value) -> Option<Value> {
+    let provider_id = item.get("id")?.as_str()?.to_owned();
+    if provider_id.is_empty() {
+        return None;
+    }
+    let mut wire = item.clone();
+    wire["call_id"] = json!(responses_call_component(id));
+    Some(wire)
+}
+pub(crate) fn computer_output_item(id: &str, metadata: &crate::ToolResultProviderMetadata) -> Value {
+    let crate::ToolResultProviderMetadata::Computer(metadata) = metadata;
+    json!({"type":"computer_call_output","call_id":id,"output":metadata.screenshot,
+        "acknowledged_safety_checks":metadata.acknowledged_safety_checks})
+}
+
+fn client_input_boundary(item: &Value) -> bool {
+    match item["type"].as_str() {
+        Some("message") | None if item["role"].is_string() => item["role"] != "assistant",
+        Some(
+            "input_text"
+            | "input_image"
+            | "input_file"
+            | "input_audio"
+            | "function_call_output"
+            | "custom_tool_call_output"
+            | "computer_call_output"
+            | "local_shell_call_output"
+            | "shell_call_output"
+            | "apply_patch_call_output"
+            | "mcp_approval_response"
+            | "compaction"
+            | "compaction_summary"
+            | "compaction_trigger"
+            | "item_reference",
+        ) => true,
+        Some("additional_tools") => item["role"] != "assistant",
+        Some("tool_search_output") => item["execution"] != "server",
+        _ => false,
+    }
+}
+
+fn computer_linked_reasoning_indices(items: &[Value], require_output: bool) -> HashSet<usize> {
+    let mut calls_with_output = HashSet::new();
+    if require_output {
+        let mut later_outputs = HashSet::new();
+        for (index, item) in items.iter().enumerate().rev() {
+            if item["type"] == "computer_call_output"
+                && let Some(id) = item["call_id"].as_str()
+            {
+                later_outputs.insert(id);
+            } else if item["type"] == "computer_call"
+                && item["id"].is_string()
+                && item["call_id"].as_str().is_some_and(|id| later_outputs.contains(id))
+            {
+                calls_with_output.insert(index);
+            }
+        }
+    }
+    let mut reasoning = Vec::new();
+    let mut linked = HashSet::new();
+    for (index, item) in items.iter().enumerate() {
+        if client_input_boundary(item) {
+            reasoning.clear();
+        } else if item["type"] == "reasoning" {
+            reasoning.push(index);
+        } else if item["type"] == "computer_call"
+            && item["id"].is_string()
+            && (!require_output || calls_with_output.contains(&index))
+        {
+            linked.extend(reasoning.iter().copied());
+        }
+    }
+    linked
+}
+
+fn reasoning_with_other_output_ids(items: &[Value]) -> HashSet<usize> {
+    let mut retained = HashSet::new();
+    let mut reasoning = Vec::new();
+    let mut has_output_id = false;
+    for (index, item) in items.iter().enumerate() {
+        if client_input_boundary(item) {
+            if has_output_id {
+                retained.extend(reasoning.iter().copied());
+            }
+            reasoning.clear();
+            has_output_id = false;
+        } else if item["type"] == "reasoning" {
+            reasoning.push(index);
+        } else if item["type"] != "computer_call" && item["id"].is_string() {
+            has_output_id = true;
+        }
+    }
+    if has_output_id {
+        retained.extend(reasoning);
+    }
+    retained
+}
+
+pub(crate) fn adapt_computer_history(
+    mut input: Vec<Value>,
+    supported: bool,
+    codex: bool,
+    supports_image_detail_original: bool,
+) -> Vec<Value> {
+    let linked = computer_linked_reasoning_indices(&input, false);
+    let paired = computer_linked_reasoning_indices(&input, true);
+    let retained = reasoning_with_other_output_ids(&input);
+    for (index, item) in input.iter_mut().enumerate() {
+        if linked.contains(&index)
+            && (supported && !paired.contains(&index) || !supported && (!codex || !retained.contains(&index)))
+            && let Some(object) = item.as_object_mut()
+        {
+            object.remove("id");
+        }
+    }
+    if supported {
+        return input;
+    }
+    let mut adapted = Vec::with_capacity(input.len());
+    for item in input {
+        let kind = item["type"].as_str();
+        let id = item["call_id"].as_str().unwrap_or("");
+        if kind == Some("computer_call") && codex {
+            let actions = item
+                .get("actions")
+                .filter(|actions| actions.is_array())
+                .cloned()
+                .unwrap_or_else(|| json!(item.get("action").cloned().into_iter().collect::<Vec<_>>()));
+            adapted.push(json!({"type":"function_call","call_id":id,"name":"computer",
+                "arguments":json!({"actions":actions}).to_string()}));
+        } else if kind == Some("computer_call_output") && codex {
+            let screenshot = &item["output"];
+            let detail = if supports_image_detail_original { "original" } else { "auto" };
+            let image = if let Some(url) = screenshot["image_url"].as_str().filter(|url| !url.is_empty()) {
+                Some(json!({"type":"input_image","detail":detail,"image_url":url}))
+            } else {
+                screenshot["file_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(|id| json!({"type":"input_image","detail":detail,"file_id":id}))
+            };
+            adapted.push(json!({"type":"function_call_output","call_id":id,
+                "output":if image.is_some() { "(see attached image)" } else { "" }}));
+            if let Some(image) = image {
+                adapted.push(json!({"role":"user","content":[
+                {"type":"input_text","text":"Attached image from computer tool result:"},image]}));
+            }
+        } else if matches!(kind, Some("computer_call" | "computer_call_output")) {
+            adapted.push(json!({"type":"message","role":"assistant","content":format!(
+                "[Previous computer {}; call_id={id}]: {item}",
+                if kind == Some("computer_call") { "call" } else { "result" })}));
+        } else {
+            adapted.push(item);
+        }
+    }
+    adapted
+}
+
+impl ReplayedCall {
+    fn wire_id(&self) -> Option<&str> {
+        match self {
+            Self::Function(id) | Self::Custom(id) | Self::Computer(id) => Some(id),
+            Self::Filtered(_) => None,
+        }
+    }
 }
 
 fn orphan_tool_result(call_id: &str, output: Value) -> Value {
@@ -703,7 +1269,9 @@ fn sanitize_responses_schema(value: &Value, depth: usize) -> Result<Value, ()> {
     if depth > 128 {
         return Err(());
     }
-    let Some(object) = value.as_object() else { return Ok(value.clone()) };
+    let Some(object) = value.as_object() else {
+        return Ok(value.clone());
+    };
     if object.is_empty() {
         return Ok(Value::Bool(true));
     }
@@ -874,6 +1442,36 @@ pub(crate) fn build_request_for_api(
     let mut remapped: HashMap<String, VecDeque<ReplayedCall>> = HashMap::new();
     let mut used_call_ids = HashSet::new();
     for message in &transformed {
+        if let Some(history) = checked_client_history(message, model, options.supports_images)
+            && (api == super::openai_codex_responses::API
+                || options.native_history_replay.unwrap_or(true)
+                || history.items.iter().any(crate::remote_compaction::valid_compaction_item))
+        {
+            // A checked client carrier appends its native compacted view. Session
+            // owns the already-replaced raw prefix; it is not an assistant dt=false.
+            for item in &history.items {
+                if let Some(id) = item["call_id"].as_str()
+                    && responses_call_family(item["type"].as_str()).is_some()
+                {
+                    used_call_ids.insert(id.to_owned());
+                }
+            }
+            for (raw_id, wire_id) in history.pending_calls {
+                let family = history
+                    .items
+                    .iter()
+                    .find(|item| item["call_id"] == wire_id && responses_call_family(item["type"].as_str()).is_some())
+                    .and_then(|item| responses_call_family(item["type"].as_str()));
+                remapped.entry(scope.pairing_key(&raw_id).to_owned()).or_default().push_back(match family {
+                    Some("computer") => ReplayedCall::Computer(wire_id),
+                    Some("custom") => ReplayedCall::Custom(wire_id),
+                    _ => ReplayedCall::Function(wire_id),
+                });
+            }
+            input.extend(history.items);
+            saw_full_snapshot = true;
+            continue;
+        }
         match message {
             Message::User(user) => {
                 let content = content_parts(&user.content, options.supports_images);
@@ -898,14 +1496,24 @@ pub(crate) fn build_request_for_api(
                     remapped.clear();
                     used_call_ids = input
                         .iter()
-                        .filter(|item| item["type"] == "function_call")
+                        .filter(|item| responses_call_family(item["type"].as_str()).is_some())
                         .filter_map(|item| item["call_id"].as_str().map(str::to_owned))
                         .collect();
                     let mut pending_keys = HashSet::new();
                     for (raw_id, wire_id) in snapshot.pending_calls {
                         let key = scope.pairing_key(&raw_id).to_owned();
                         pending_keys.insert(key.clone());
-                        remapped.entry(key).or_default().push_back(ReplayedCall::Function(wire_id));
+                        let custom =
+                            input.iter().any(|item| item["type"] == "custom_tool_call" && item["call_id"] == wire_id);
+                        let computer =
+                            input.iter().any(|item| item["type"] == "computer_call" && item["call_id"] == wire_id);
+                        remapped.entry(key).or_default().push_back(if computer {
+                            ReplayedCall::Computer(wire_id)
+                        } else if custom {
+                            ReplayedCall::Custom(wire_id)
+                        } else {
+                            ReplayedCall::Function(wire_id)
+                        });
                     }
                     for call in assistant.tool_calls() {
                         let key = scope.pairing_key(&call.id).to_owned();
@@ -919,13 +1527,28 @@ pub(crate) fn build_request_for_api(
                     continue;
                 }
                 if options.native_history_replay.unwrap_or(true)
-                    && let Some(items) = native_history(assistant, model)
+                    && let Some(items) = incremental_native_history(assistant, model)
                 {
-                    for (item, block) in items.into_iter().zip(&assistant.content) {
+                    for slot in items {
+                        let Some(content_index) = slot.content_index else {
+                            if let Some(item) = slot.wire {
+                                input.push(item);
+                            }
+                            continue;
+                        };
+                        let block = &assistant.content[content_index];
+                        let item = slot.wire;
                         if let AssistantBlock::ToolCall(call) = block {
                             let base = call_id(&call.id, &assistant.api);
                             let replayed = if item.is_some() {
-                                ReplayedCall::Function(unique_call_id(base, &mut used_call_ids))
+                                let wire_id = unique_call_id(base, &mut used_call_ids);
+                                if item.as_ref().is_some_and(|item| item["type"] == "computer_call") {
+                                    ReplayedCall::Computer(wire_id)
+                                } else if item.as_ref().is_some_and(|item| item["type"] == "custom_tool_call") {
+                                    ReplayedCall::Custom(wire_id)
+                                } else {
+                                    ReplayedCall::Function(wire_id)
+                                }
                             } else {
                                 ReplayedCall::Filtered(base)
                             };
@@ -933,8 +1556,10 @@ pub(crate) fn build_request_for_api(
                         }
                         if let Some(mut item) = item {
                             if let AssistantBlock::ToolCall(call) = block
-                                && let Some(ReplayedCall::Function(wire_id)) =
-                                    remapped.get(scope.pairing_key(&call.id)).and_then(VecDeque::back)
+                                && let Some(wire_id) = remapped
+                                    .get(scope.pairing_key(&call.id))
+                                    .and_then(VecDeque::back)
+                                    .and_then(ReplayedCall::wire_id)
                             {
                                 item["call_id"] = json!(wire_id);
                             }
@@ -955,45 +1580,114 @@ pub(crate) fn build_request_for_api(
                                 return Err(ProviderError::Config("tool call has no usable Responses call ID".into()));
                             }
                             let wire_id = unique_call_id(base, &mut used_call_ids);
-                            remapped
-                                .entry(scope.pairing_key(&call.id).to_owned())
-                                .or_default()
-                                .push_back(ReplayedCall::Function(wire_id.clone()));
-                            input.push(json!({
-                                "type": "function_call", "call_id": wire_id,
-                                "name": call.name,
-                                "arguments": serde_json::to_string(&call.arguments).map_err(|e| ProviderError::Config(e.to_string()))?,
-                            }));
+                            if let Some(metadata) = &call.provider_metadata {
+                                remapped
+                                    .entry(scope.pairing_key(&call.id).to_owned())
+                                    .or_default()
+                                    .push_back(ReplayedCall::Computer(wire_id.clone()));
+                                if !options.supports_computer_use && api != super::openai_codex_responses::API {
+                                    let crate::ToolCallProviderMetadata::Computer(metadata) = metadata;
+                                    input.push(json!({"type":"message","role":"assistant","content":format!(
+                                        "[Previous computer call; call_id={wire_id}]: {}",
+                                        serde_json::to_string(&metadata.actions).map_err(|error| ProviderError::Config(error.to_string()))?)}));
+                                    continue;
+                                }
+                                input.push(computer_call_item(&wire_id, metadata));
+                                continue;
+                            }
+                            let custom = call.custom_wire_name.as_deref().filter(|name| !name.is_empty());
+                            remapped.entry(scope.pairing_key(&call.id).to_owned()).or_default().push_back(
+                                if custom.is_some() {
+                                    ReplayedCall::Custom(wire_id.clone())
+                                } else {
+                                    ReplayedCall::Function(wire_id.clone())
+                                },
+                            );
+                            input.push(if let Some(name) = custom {
+                                json!({"type":"custom_tool_call", "call_id":wire_id, "name":name,
+                                    "input":call.arguments.get("input").and_then(Value::as_str).unwrap_or("")})
+                            } else {
+                                json!({"type": "function_call", "call_id": wire_id,
+                                    "name": call.name,
+                                    "arguments": serde_json::to_string(&call.arguments).map_err(|e| ProviderError::Config(e.to_string()))?})
+                            });
                         }
                         _ => {}
                     }
                 }
             }
             Message::ToolResult(result) => {
-                let replayed = remapped
-                    .get_mut(scope.pairing_key(&result.tool_call_id))
-                    .and_then(VecDeque::pop_front)
-                    .ok_or_else(|| {
-                        ProviderError::Config("tool result has no matching Responses function call".into())
-                    })?;
+                let replayed = remapped.get_mut(scope.pairing_key(&result.tool_call_id)).and_then(VecDeque::pop_front);
+                if !options.supports_computer_use
+                    && api != super::openai_codex_responses::API
+                    && let Some(crate::ToolResultProviderMetadata::Computer(metadata)) = &result.provider_metadata
+                {
+                    let wire_id = replayed
+                        .as_ref()
+                        .and_then(ReplayedCall::wire_id)
+                        .unwrap_or_else(|| responses_call_component(&result.tool_call_id));
+                    input.push(json!({"type":"message","role":"assistant","content":format!(
+                        "[Previous computer result; call_id={wire_id}]: {}",
+                        serde_json::to_string(&metadata.screenshot).map_err(|error| ProviderError::Config(error.to_string()))?)}));
+                    continue;
+                }
+                let Some(replayed) = replayed else {
+                    if result.provider_metadata.is_some() {
+                        input.push(json!({"type":"message","role":"assistant","content":format!(
+                            "[Orphan computer result; call_id={}]", responses_call_component(&result.tool_call_id))}));
+                        continue;
+                    }
+                    return Err(ProviderError::Config("tool result has no matching Responses function call".into()));
+                };
                 let output = tool_output(&result.content, options.supports_images);
                 input.push(match replayed {
                     ReplayedCall::Function(wire_id) => json!({
                         "type": "function_call_output", "call_id": wire_id, "output": output,
                     }),
+                    ReplayedCall::Custom(wire_id) => json!({
+                        "type": "custom_tool_call_output", "call_id": wire_id, "output": output,
+                    }),
+                    ReplayedCall::Computer(wire_id) => {
+                        if let Some(metadata) = &result.provider_metadata {
+                            computer_output_item(&wire_id, metadata)
+                        } else if !options.supports_computer_use && api == super::openai_codex_responses::API {
+                            json!({"type":"function_call_output","call_id":wire_id,"output":output})
+                        } else {
+                            let text = match &output { Value::String(text) => text.clone(), other => other.to_string() };
+                            let mut chars = text.chars();
+                            let note = chars.by_ref().take(16_000).collect::<String>();
+                            let suffix = if chars.next().is_some() { "\n...[truncated]" } else { "" };
+                            json!({"type":"message","role":"assistant","content":format!(
+                                "[Computer tool failed before a screenshot was produced; call_id={wire_id}]: {note}{suffix}")})
+                        }
+                    },
                     ReplayedCall::Filtered(wire_id) => orphan_tool_result(&wire_id, output),
                 });
             }
         }
     }
 
-    if saw_full_snapshot {
+    let has_computer = input.iter().any(|item| responses_call_family(item["type"].as_str()) == Some("computer"));
+    input = adapt_computer_history(
+        input,
+        options.supports_computer_use,
+        api == super::openai_codex_responses::API,
+        options.reasoning_policy.as_ref().is_some_and(|policy| policy.supports_original_image_detail()),
+    );
+    if saw_full_snapshot || has_computer {
         input = repair_full_snapshot_orphan_calls(input);
+    }
+    for item in &mut input {
+        adapt_custom_replay_item(item, options, context.tools.as_deref());
     }
 
     let mut body = json!({"model": model.id, "input": input, "stream": true, "store": false});
     if model.reasoning {
         body["include"] = json!(["reasoning.encrypted_content"]);
+    }
+    if !options.include.is_empty() {
+        let mut seen = HashSet::new();
+        body["include"] = json!(options.include.iter().filter(|item| seen.insert(item.as_str())).collect::<Vec<_>>());
     }
     let instructions =
         context.system_prompt.iter().filter(|prompt| !prompt.trim().is_empty()).cloned().collect::<Vec<_>>();
@@ -1011,6 +1705,14 @@ pub(crate) fn build_request_for_api(
         tools
             .iter()
             .filter_map(|tool| {
+                if options.supports_computer_use && tool.native == Some(crate::NativeToolMarker::Computer) {
+                    return Some(json!({"type":"computer"}));
+                }
+                if supports_custom_tools(options) && let Some(format) = &tool.custom_format {
+                    return Some(json!({"type":"custom", "name":tool.custom_wire_name.as_deref().unwrap_or(&tool.name),
+                        "description":tool.description,
+                        "format":{"type":"grammar", "syntax":format.syntax, "definition":compact_grammar_definition(format)}}));
+                }
                 let upgraded = match crate::schema_draft::upgrade_json_schema(&tool.parameters, 0) {
                     Ok(schema) => schema,
                     Err(()) => {
@@ -1052,16 +1754,95 @@ pub(crate) fn build_request_for_api(
     if let Some(choice) = &options.tool_choice
         && tools.as_ref().is_some_and(|tools| !tools.is_empty())
     {
+        let definitions = context.tools.as_deref().unwrap_or_default();
+        // Generic Native Responses maps against the definitions that survived
+        // quarantine, using emitted wire names and the native Computer marker.
+        let surviving_tools: Vec<_> = if api != super::openai_codex_responses::API
+            && tools.as_ref().is_some_and(|emitted| emitted.len() != definitions.len())
+        {
+            let emitted = tools.as_ref().expect("emitted tools checked above");
+            let emitted_names: HashSet<_> = emitted.iter().filter_map(|tool| tool["name"].as_str()).collect();
+            let emitted_computer = emitted.iter().any(|tool| tool["type"] == "computer");
+            definitions
+                .iter()
+                .filter(|tool| {
+                    emitted_names.contains(tool.custom_wire_name.as_deref().unwrap_or(&tool.name))
+                        || tool.native == Some(crate::NativeToolMarker::Computer) && emitted_computer
+                })
+                .collect()
+        } else {
+            definitions.iter().collect()
+        };
         let wire = match choice {
             ToolChoice::Auto => Some(json!("auto")),
             ToolChoice::None => Some(json!("none")),
-            ToolChoice::Required => Some(json!("required")),
-            ToolChoice::Tool(name)
-                if tools.as_ref().is_some_and(|tools| tools.iter().any(|tool| tool["name"] == *name)) =>
-            {
-                Some(json!({"type": "function", "name": name}))
+            ToolChoice::Any if api == super::openai_codex_responses::API => Some(json!("any")),
+            ToolChoice::Any | ToolChoice::Required => Some(json!("required")),
+            ToolChoice::Computer => {
+                surviving_tools.iter().find(|tool| tool.native == Some(crate::NativeToolMarker::Computer)).and_then(
+                    |tool| {
+                        if options.supports_computer_use {
+                            tools
+                                .as_ref()?
+                                .iter()
+                                .any(|offered| offered["type"] == "computer")
+                                .then(|| json!({"type":"computer"}))
+                        } else {
+                            // Native Computer choice precedes custom-format mapping,
+                            // even if this marker's emitted definition is custom.
+                            Some(json!({"type":"function","name":tool.name}))
+                        }
+                    },
+                )
             }
-            ToolChoice::Tool(_) => None,
+            ToolChoice::Function(name) | ToolChoice::FunctionNested(name) | ToolChoice::Tool(name) => {
+                let definitions = &surviving_tools;
+                let custom = supports_custom_tools(options)
+                    .then(|| {
+                        definitions.iter().find(|tool| {
+                            tool.custom_format.is_some()
+                                && (tool.name == *name || tool.custom_wire_name.as_deref() == Some(name.as_str()))
+                        })
+                    })
+                    .flatten();
+                let selected = custom.or_else(|| definitions.iter().find(|tool| tool.name == *name));
+                selected.and_then(|tool| {
+                    if options.supports_computer_use && tool.native == Some(crate::NativeToolMarker::Computer) {
+                        return tools
+                            .as_ref()?
+                            .iter()
+                            .any(|offered| offered["type"] == "computer")
+                            .then(|| json!({"type":"computer"}));
+                    }
+                    if api != super::openai_codex_responses::API
+                        && tool.native == Some(crate::NativeToolMarker::Computer)
+                    {
+                        // Generic Responses gives the marker precedence; Codex
+                        // named choices retain their custom-format mapping.
+                        return Some(json!({"type":"function","name":tool.name}));
+                    }
+                    let wire_name = if custom.is_some() {
+                        tool.custom_wire_name.as_deref().unwrap_or(&tool.name)
+                    } else {
+                        &tool.name
+                    };
+                    tools
+                        .as_ref()?
+                        .iter()
+                        .find(|offered| offered["name"] == wire_name)
+                        .map(|offered| json!({"type":offered["type"],"name":wire_name}))
+                })
+            }
+        };
+        // Native forced compatibility precedes marker/name availability lookup.
+        let forced = !matches!(choice, ToolChoice::Auto | ToolChoice::None);
+        let wire = if api != super::openai_codex_responses::API
+            && forced
+            && options.reasoning_policy.as_ref().is_some_and(|policy| !policy.supports_forced_tool_choice())
+        {
+            Some(json!("auto"))
+        } else {
+            wire
         };
         if let Some(wire) = wire {
             body["tool_choice"] = wire;
@@ -1069,6 +1850,14 @@ pub(crate) fn build_request_for_api(
     }
     if let Some(key) = options.prompt_cache_key.as_deref().filter(|key| !key.is_empty()) {
         body["prompt_cache_key"] = json!(key);
+    }
+    if api != super::openai_codex_responses::API {
+        crate::reasoning::apply_responses(
+            &mut body,
+            model,
+            options.reasoning.as_ref(),
+            options.reasoning_policy.as_ref(),
+        )?;
     }
     Ok(body)
 }
@@ -1146,6 +1935,7 @@ fn stream_once(
     tokio::spawn(async move {
         let start = Instant::now();
         let mut state = ResponsesStreamState::new(&model);
+        state.tool_starts_block_replay = matches!(&protocol, ResponsesProtocol::Codex { .. });
         let mut retry_blocked = false;
         let result = run(&client, &model, &context, (&options, &protocol), &mut state, &sink, &mut retry_blocked).await;
         let mut output = state.output.clone();
@@ -1268,7 +2058,7 @@ async fn run(
     if let Some(lease) = &chain {
         body["store"] = json!(true);
         complete_body = Some(body.clone());
-        if let Some(baseline) = &lease.baseline
+        if let Some(ChainSnapshot::Typed(baseline)) = &lease.baseline
             && let Some(delta) = chain_delta(baseline, &body)
         {
             body["input"] = json!(delta);
@@ -1350,7 +2140,9 @@ async fn run(
         let ended = next.is_none();
         let frames = match next {
             Some(Ok(bytes)) => decoder.feed(&bytes)?,
-            Some(Err(error)) => return Err(ProviderError::Transport(format!("Responses stream read failed: {error}"))),
+            Some(Err(error)) => {
+                return Err(ProviderError::Transport(format!("Responses stream read failed: {error}")));
+            }
             None => decoder.finish()?.into_iter().collect(),
         };
         for frame in frames {
@@ -1457,6 +2249,7 @@ mod tests {
             name: "read".into(),
             arguments: serde_json::from_value(json!({"path": "a.txt"})).unwrap(),
             thought_signature: None,
+            ..Default::default()
         })
     }
 
@@ -1468,6 +2261,8 @@ mod tests {
             details: None,
             is_error: false,
             timestamp: now_ms(),
+            provider_metadata: None,
+            useless: false,
         })
     }
 
@@ -1480,6 +2275,7 @@ mod tests {
                 name: "read".into(),
                 description: "Read a file".into(),
                 parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+                ..Default::default()
             }]),
         };
         let body = build_request(
@@ -1492,6 +2288,10 @@ mod tests {
                 supports_images: false,
                 native_history_replay: None,
                 prompt_cache_key: None,
+                reasoning: None,
+                reasoning_policy: None,
+                apply_patch_tool_type: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1621,6 +2421,7 @@ mod tests {
             parameters: json!({"type":"object","properties":{
                 "choice":{"type":"integer","enum":["not an integer"]}
             }}),
+            ..Default::default()
         };
         let good = Tool {
             name: "good".into(),
@@ -1629,6 +2430,7 @@ mod tests {
                 "choice":{"type":["string","null"],"enum":["yes",null]},
                 "open":{"enum":["anything"]}
             }}),
+            ..Default::default()
         };
         let context = Context { tools: Some(vec![bad.clone(), good]), ..Context::default() };
         let forced_bad = build_request(
@@ -2100,6 +2902,8 @@ mod tests {
         let context = Context {
             messages: vec![Message::Developer(crate::types::DeveloperMessage {
                 content: UserContent::Text("developer note".into()),
+                provider_payload: None,
+                provider_payload_origin: None,
                 timestamp: now_ms(),
             })],
             ..Context::default()
@@ -2123,6 +2927,8 @@ mod tests {
             messages: vec![Message::User(UserMessage {
                 content: UserContent::Blocks(vec![UserBlock::text("look"), image.clone()]),
                 synthetic: None,
+                provider_payload: None,
+                provider_payload_origin: None,
                 timestamp: now_ms(),
             })],
             ..Context::default()
@@ -2174,6 +2980,8 @@ mod tests {
                 messages: vec![Message::User(UserMessage {
                     content: UserContent::Blocks(vec![frame]),
                     synthetic: None,
+                    provider_payload: None,
+                    provider_payload_origin: None,
                     timestamp: 0,
                 })],
                 ..Context::default()
@@ -2195,5 +3003,99 @@ mod tests {
             assert_eq!(encoded["content"][0]["detail"], detail);
             assert!(encoded["content"][0].get("compactionFrame").is_none(), "archive marker is derived at projection");
         }
+    }
+
+    #[test]
+    fn checked_client_history_conversion_ids_and_proof_boundaries() {
+        // Fixed computer-contract.test.ts:728-781 is a USER raw payload.
+        // Preserve IDs in conversion first; actual HTTP tests separately observe
+        // the final Codex regular/Lite transformer stripping output-only IDs.
+        let mut route = model();
+        route.api = super::super::openai_codex_responses::API.into();
+        route.provider = "openai-codex".into();
+        let payload = json!({"type":"openaiResponsesHistory","provider":route.provider,"items":[
+            {"type":"reasoning","id":"rs_codex_mixed","summary":[],"encrypted_content":"mixed"},
+            {"type":"message","id":"msg_codex_mixed","role":"assistant","status":"completed",
+                "content":[{"type":"output_text","text":"Inspecting the screen."}]},
+            {"type":"function_call","id":"fc_codex_mixed","call_id":"call_codex_mixed_tool","name":"read","arguments":"{}"},
+            {"type":"computer_call","id":"cu_codex_mixed","call_id":"call_codex_mixed_computer",
+                "actions":[{"type":"screenshot"}],"pending_safety_checks":[],"status":"completed"},
+            {"type":"computer_call_output","call_id":"call_codex_mixed_computer",
+                "output":{"type":"computer_screenshot","file_id":"file_codex_mixed"},"acknowledged_safety_checks":[]}
+        ]});
+        for role in ["user", "developer"] {
+            let raw = json!({"role":role,"content":"compacted history","providerPayload":payload,"timestamp":0});
+            let mut message: Message = serde_json::from_value(raw.clone()).unwrap();
+            assert!(checked_client_history(&message, &route, true).is_none());
+            adopt_client_history_for_checked_route(&route, &mut message, true).unwrap();
+            assert_eq!(serde_json::to_value(&message).unwrap(), raw);
+            let history = checked_client_history(&message, &route, true).unwrap();
+            let unrolled = adapt_computer_history(history.items, false, true, false);
+            for id in ["rs_codex_mixed", "msg_codex_mixed", "fc_codex_mixed"] {
+                assert!(unrolled.iter().any(|item| item["id"] == id));
+            }
+            let mut foreign = route.clone();
+            foreign.id = "foreign".into();
+            assert!(checked_client_history(&message, &foreign, true).is_none());
+            foreign = route.clone();
+            foreign.base_url = "https://foreign.example/v1".into();
+            assert!(checked_client_history(&message, &foreign, true).is_none());
+            let restored: Message = serde_json::from_value(serde_json::to_value(&message).unwrap()).unwrap();
+            assert!(checked_client_history(&restored, &route, true).is_none());
+            let mut moved: Message = serde_json::from_value(json!({"role":if role=="user" {"developer"} else {"user"},
+                "content":"same","providerPayload":payload,"timestamp":0}))
+            .unwrap();
+            match (&message, &mut moved) {
+                (Message::User(from), Message::Developer(to)) => {
+                    to.provider_payload_origin = from.provider_payload_origin.clone()
+                }
+                (Message::Developer(from), Message::User(to)) => {
+                    to.provider_payload_origin = from.provider_payload_origin.clone()
+                }
+                _ => unreachable!(),
+            }
+            assert!(checked_client_history(&moved, &route, true).is_none());
+        }
+        // Every fixed client continuation boundary ends the previous response's
+        // candidate reasoning group; server tool-search remains in that group.
+        let boundaries = vec![
+            json!({"type":"message","role":"user"}),
+            json!({"role":"developer"}),
+            json!({"type":"input_text"}),
+            json!({"type":"input_image"}),
+            json!({"type":"input_file"}),
+            json!({"type":"input_audio"}),
+            json!({"type":"function_call_output"}),
+            json!({"type":"custom_tool_call_output"}),
+            json!({"type":"computer_call_output"}),
+            json!({"type":"local_shell_call_output"}),
+            json!({"type":"shell_call_output"}),
+            json!({"type":"apply_patch_call_output"}),
+            json!({"type":"mcp_approval_response"}),
+            json!({"type":"compaction"}),
+            json!({"type":"compaction_summary"}),
+            json!({"type":"compaction_trigger"}),
+            json!({"type":"item_reference"}),
+            json!({"type":"additional_tools","role":"developer"}),
+            json!({"type":"tool_search_output","execution":"client"}),
+        ];
+        for boundary in boundaries {
+            let items = vec![
+                json!({"type":"reasoning","id":"rs_previous"}),
+                boundary,
+                json!({"type":"reasoning","id":"rs_current"}),
+                json!({"type":"computer_call","id":"cu","call_id":"call"}),
+                json!({"type":"computer_call_output","call_id":"call"}),
+            ];
+            assert_eq!(computer_linked_reasoning_indices(&items, true), HashSet::from([2]));
+        }
+        let server = vec![
+            json!({"type":"reasoning"}),
+            json!({"type":"tool_search_output","execution":"server"}),
+            json!({"type":"reasoning"}),
+            json!({"type":"computer_call","id":"cu","call_id":"call"}),
+            json!({"type":"computer_call_output","call_id":"call"}),
+        ];
+        assert_eq!(computer_linked_reasoning_indices(&server, true), HashSet::from([0, 2]));
     }
 }

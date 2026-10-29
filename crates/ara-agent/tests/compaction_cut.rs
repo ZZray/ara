@@ -16,7 +16,12 @@ fn user(text: &str) -> Message {
 }
 
 fn developer(text: &str) -> Message {
-    Message::Developer(DeveloperMessage { content: UserContent::Text(text.into()), timestamp: 0 })
+    Message::Developer(DeveloperMessage {
+        content: UserContent::Text(text.into()),
+        timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
+    })
 }
 
 fn assistant(reason: StopReason, call: Option<&str>) -> Message {
@@ -28,6 +33,7 @@ fn assistant(reason: StopReason, call: Option<&str>) -> Message {
             name: "write".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         }));
     } else {
         message.content.push(AssistantBlock::text("done"));
@@ -44,6 +50,8 @@ fn synthetic_result(id: &str, source: &str) -> Message {
         details: Some(json!({"__synthetic": true, "source": source, "executed": false})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -57,6 +65,7 @@ fn aborted(call: Option<&str>) -> Message {
             name: "write".into(),
             arguments: JsonObject::new(),
             thought_signature: None,
+            ..Default::default()
         }));
     }
     Message::Assistant(message)
@@ -74,6 +83,8 @@ fn tool_result(id: &str, unknown_effect: bool) -> Message {
         details: unknown_effect.then(|| json!({"panicked":true})),
         is_error: unknown_effect,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     })
 }
 
@@ -252,6 +263,8 @@ fn a_cancelled_call_is_summarized_with_its_own_abort_result() {
         details: Some(json!({})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let messages =
         [user("run slow.py"), assistant(StopReason::ToolUse, Some("c1")), cancelled, aborted(None), user("next")];
@@ -278,6 +291,8 @@ fn a_timed_out_call_does_not_block_later_cuts() {
         details: Some(json!({"timedOut":true,"timeoutSeconds":300})),
         is_error: true,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     let messages = [
         user("build"),
@@ -347,6 +362,8 @@ fn structural_boundary_does_not_claim_prompt_payload_support() {
         })]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let messages = [image, assistant(StopReason::Stop, None), user("next")];
     let ids = ["e1", "e2", "e3"];
@@ -441,6 +458,8 @@ fn refuses_a_cut_whose_summary_prompt_cannot_preserve_its_source() {
         })]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let messages = [image, assistant(StopReason::Stop, None), user("next")];
     assert_eq!(selected(&["e1", "e2", "e3"], &messages, 0), Err(SummaryInputError::UnsupportedImage));
@@ -460,6 +479,8 @@ fn falls_back_to_an_earlier_boundary_to_keep_unsupported_content_raw() {
         })]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let ids = ["e1", "e2", "e3", "e4", "e5"];
     let messages =
@@ -572,6 +593,8 @@ fn native_cut_preserves_summary_safety_and_exact_snapshot_ids() {
                 })]),
                 synthetic: None,
                 timestamp: 0,
+                provider_payload: None,
+                provider_payload_origin: None,
             });
         }
         let mut ids = (0..messages.len()).map(|index| format!("e-{index}")).collect::<Vec<_>>();
@@ -773,6 +796,8 @@ fn native_raw_entry_summary_preserves_group_identity_and_safety_module() {
                 })]),
                 synthetic: None,
                 timestamp: 0,
+                provider_payload: None,
+                provider_payload_origin: None,
             })),
             "unknown-tool" => {
                 groups[1] = vec![assistant(StopReason::ToolUse, Some("uncertain"))];

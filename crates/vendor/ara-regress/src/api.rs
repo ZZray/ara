@@ -533,6 +533,33 @@ impl Regex {
         )
     }
 
+    /// Matches only at UCS2 index `start` in the complete original input.
+    /// Unlike find_from_ucs2, a miss does not try any later starting position.
+    /// Absolute anchors, lookbehind and capture ranges retain full-input context.
+    /// An out-of-range start returns None without attempting a match.
+    #[cfg(feature = "utf16")]
+    pub fn match_at_ucs2(&self, text: &[u16], start: usize) -> Option<Match> {
+        let input = Ucs2Input::new(text, self.cr.flags.unicode);
+        let mut executor = super::classicalbacktrack::BacktrackExecutor::new(
+            input,
+            MatchAttempter::new(&self.cr, input.left_end()),
+        );
+        executor.match_at_offset(start)
+    }
+
+    /// Matches only at UTF16 code-unit index `start` in the complete input.
+    /// Unicode-mode pairs consume one code point while ranges remain UTF16.
+    /// Uses the existing single-attempt executor, without a suffix search.
+    #[cfg(feature = "utf16")]
+    pub fn match_at_utf16(&self, text: &[u16], start: usize) -> Option<Match> {
+        let input = Utf16Input::new(text, self.cr.flags.unicode);
+        let mut executor = super::classicalbacktrack::BacktrackExecutor::new(
+            input,
+            MatchAttempter::new(&self.cr, input.left_end()),
+        );
+        executor.match_at_offset(start)
+    }
+
     /// Replaces the first match of the regex in `text` with the replacement string.
     ///
     /// The replacement string may contain capture group references in the form `$1`, `$2`, etc.,

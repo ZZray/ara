@@ -41,6 +41,7 @@ fn pending_tool_call() -> Message {
         name: "bash".into(),
         arguments: JsonObject::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     message.stop_reason = StopReason::ToolUse;
     message.timestamp = 41;
@@ -137,12 +138,12 @@ fn receipts_materialize_reopen_and_fork_without_replacing_raw_role_or_excluded_i
     let path = journal.path().to_path_buf();
     let bytes = fs::read(&path).unwrap();
     let reopened = SessionJournal::open(&path).unwrap();
-    assert_eq!(reopened.entries()[0].bash_execution(), Some(visible.clone()));
-    assert_eq!(reopened.entries()[1].bash_execution(), Some(excluded.clone()));
+    assert_eq!(reopened.entries()[0].bash_execution().unwrap(), Some(visible.clone()));
+    assert_eq!(reopened.entries()[1].bash_execution().unwrap(), Some(excluded.clone()));
     assert_eq!(reopened.entries()[0].raw["message"]["role"], "bashExecution");
     assert_eq!(reopened.undecodable_messages(), 0);
-    assert_eq!(reopened.build_context(), vec![visible.model_message().unwrap()]);
-    assert_eq!(reopened.model_context(), reopened.build_context());
+    assert_eq!(reopened.build_context().unwrap(), vec![visible.model_message().unwrap()]);
+    assert_eq!(reopened.model_context().unwrap(), reopened.build_context().unwrap());
     assert_eq!(
         reopened
             .compaction_source_snapshot()
@@ -156,8 +157,8 @@ fn receipts_materialize_reopen_and_fork_without_replacing_raw_role_or_excluded_i
     let fork = reopened.fork_at(Some(&excluded_id), Some(&directory.path().join("fork"))).unwrap();
     assert_eq!(fork.entries()[0].id, visible_id);
     assert_eq!(fork.entries()[1].id, excluded_id);
-    assert_eq!(fork.entries()[1].bash_execution(), Some(excluded));
-    assert_eq!(fork.model_context(), reopened.model_context());
+    assert_eq!(fork.entries()[1].bash_execution().unwrap(), Some(excluded));
+    assert_eq!(fork.model_context().unwrap(), reopened.model_context().unwrap());
     assert_eq!(fs::read(&path).unwrap(), bytes);
     assert_eq!(SessionJournal::open(fork.path()).unwrap().entries(), fork.entries());
 }
@@ -171,7 +172,7 @@ fn append_to_owner_branch_keeps_active_leaf_and_missing_parent_never_changes_byt
     let recorded = journal.append_bash_execution_to_branch(&bash(), Some(&owner)).unwrap();
     assert_eq!(journal.leaf_id(), Some(active.as_str()));
     assert_eq!(journal.entries().last().unwrap().parent_id.as_deref(), Some(owner.as_str()));
-    assert_eq!(journal.build_context().len(), 2, "non-active receipt never enters active context");
+    assert_eq!(journal.build_context().unwrap().len(), 2, "non-active receipt never enters active context");
     let before = fs::read(journal.path()).unwrap();
     let entries = journal.entries().to_vec();
     assert!(
@@ -186,9 +187,9 @@ fn append_to_owner_branch_keeps_active_leaf_and_missing_parent_never_changes_byt
     assert_eq!(fs::read(journal.path()).unwrap(), before);
     let reopened = SessionJournal::open(journal.path()).unwrap();
     assert_eq!(reopened.entries().last().unwrap().id, recorded);
-    assert!(reopened.entries().last().unwrap().bash_execution().is_some());
+    assert!(reopened.entries().last().unwrap().bash_execution().unwrap().is_some());
     let fork = journal.fork_at(Some(&recorded), None).unwrap();
-    assert_eq!(fork.build_context().len(), 2, "owner prompt then owner Bash receipt");
+    assert_eq!(fork.build_context().unwrap().len(), 2, "owner prompt then owner Bash receipt");
     assert_eq!(fork.entries()[1].id, recorded);
     let root = journal.append_bash_execution_to_branch(&bash(), None).unwrap();
     assert_eq!(journal.entries().last().unwrap().id, root);
@@ -244,10 +245,10 @@ fn compaction_projects_visible_bash_sources_skips_excluded_and_retains_all_nativ
     assert_eq!(projection.items.len(), 4);
     assert!(matches!(&projection.items[0], CompactedContextItem::Summary(_)));
     assert!(matches!(&projection.items[3], CompactedContextItem::Message(source) if source.entry_id == later));
-    assert_eq!(reopened.model_context().len(), 4);
+    assert_eq!(reopened.model_context().unwrap().len(), 4);
     assert_eq!(reopened.undecodable_messages(), 0);
     assert_eq!(reopened.entries().len(), 9);
-    assert!(reopened.entries().iter().any(|entry| entry.id == hidden1 && entry.bash_execution().is_some()));
+    assert!(reopened.entries().iter().any(|entry| entry.id == hidden1 && entry.bash_execution().unwrap().is_some()));
     let fork = reopened.fork_at(Some(&compaction), None).unwrap();
     assert_eq!(fork.entries(), reopened.entries());
     assert_eq!(fork.compacted_context_projection().unwrap().items, projection.items);
@@ -264,7 +265,7 @@ fn malformed_excluded_native_bash_is_counted_and_compaction_refuses_it() {
     fs::write(&path, format!("{header}\n{malformed}\n")).unwrap();
     let journal = SessionJournal::open(&path).unwrap();
     assert_eq!(journal.undecodable_messages(), 1);
-    assert!(journal.build_context().is_empty());
+    assert!(journal.build_context().unwrap().is_empty());
     assert_eq!(
         journal.compaction_source_snapshot(),
         Err(CompactionSourceError::UndecodableMessage { id: "bad-bash".into() })
@@ -281,16 +282,16 @@ fn excluded_bash_is_transparent_to_interrupted_recovery_after_create_import_and_
         let mut journal = SessionJournal::open(&path).unwrap();
         let native = journal.entries()[1].clone();
         assert_eq!(journal.undecodable_messages(), 0);
-        assert_eq!(journal.model_context(), vec![pending_tool_call()]);
+        assert_eq!(journal.model_context().unwrap(), vec![pending_tool_call()]);
         assert_eq!(
             journal.recover_interrupted_tool_calls().unwrap(),
             Recovery { paired: vec!["pending-bash".into()], unpaired_earlier: vec![] }
         );
         assert_eq!(journal.entries().len(), 3);
         assert_eq!(journal.entries()[1], native, "native receipt and identity remain unchanged");
-        assert_eq!(journal.entries()[1].bash_execution(), Some(excluded.clone()));
+        assert_eq!(journal.entries()[1].bash_execution().unwrap(), Some(excluded.clone()));
         assert_eq!(journal.undecodable_messages(), 0);
-        let context = journal.model_context();
+        let context = journal.model_context().unwrap();
         assert_eq!(context.len(), 2, "excluded Bash does not split the assistant/result pair");
         assert_eq!(context[0], pending_tool_call());
         let Message::ToolResult(result) = &context[1] else { panic!("unknown effect result") };
@@ -305,7 +306,7 @@ fn excluded_bash_is_transparent_to_interrupted_recovery_after_create_import_and_
         let recovered_bytes = fs::read(&path).unwrap();
         let mut reopened = SessionJournal::open(&path).unwrap();
         assert_eq!(reopened.entries(), entries);
-        assert_eq!(reopened.model_context(), context);
+        assert_eq!(reopened.model_context().unwrap(), context);
         assert_eq!(reopened.undecodable_messages(), 0);
         assert_eq!(reopened.recover_interrupted_tool_calls().unwrap(), Recovery::default(), "idempotent");
         assert_eq!(fs::read(&path).unwrap(), recovered_bytes);
@@ -323,14 +324,14 @@ fn included_bash_remains_a_user_barrier_to_interrupted_recovery_after_import_and
             let entries = journal.entries().to_vec();
             let bytes = fs::read(&path).unwrap();
             assert_eq!(journal.undecodable_messages(), 0);
-            assert_eq!(journal.model_context(), vec![pending_tool_call(), included.model_message().unwrap()]);
+            assert_eq!(journal.model_context().unwrap(), vec![pending_tool_call(), included.model_message().unwrap()]);
             assert_eq!(
                 journal.recover_interrupted_tool_calls().unwrap(),
                 Recovery { paired: vec![], unpaired_earlier: vec!["pending-bash".into()] }
             );
             assert_eq!(journal.entries(), entries);
             assert_eq!(fs::read(&path).unwrap(), bytes, "no result appended across a User barrier");
-            assert_eq!(SessionJournal::open(&path).unwrap().model_context(), journal.model_context());
+            assert_eq!(SessionJournal::open(&path).unwrap().model_context().unwrap(), journal.model_context().unwrap());
         }
     }
 }

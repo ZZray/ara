@@ -66,8 +66,8 @@ id = "AGT-APPEND-CTX"
 title = "Append-only context mode"
 scope = "core"
 gate = "P1"
-owner = "ara-agent::context"
-status = "open"
+owner = "ara-agent::append_only_context"
+status = "accepted"
 match = ['^packages/agent/src/append-only-context\.ts$', '^packages/agent/test/append-only-context\.test\.ts$']
 behavior = "Prefix-stable append-only context for provider cache reuse."
 
@@ -306,8 +306,8 @@ id = "AI-MOCK"
 title = "Mock provider"
 scope = "core"
 gate = "P1"
-owner = "ara-testkit"
-status = "implementing"
+owner = "ara-ai::providers::mock / ara-cli::mock_provider_host"
+status = "accepted"
 match = ['^packages/ai/src/providers/mock\.ts$', '^packages/ai/test/mock-provider\.test\.ts$']
 behavior = "Deterministic scripted provider for tests."
 
@@ -404,8 +404,8 @@ id = "AI-RETRY"
 title = "Retry, timeouts, empty completion recovery"
 scope = "core"
 gate = "P1"
-owner = "tbd"
-status = "implementing"
+owner = "ara-ai::retry / ara-cli::retry_host"
+status = "accepted"
 match = [
   '^packages/ai/test/issue-(4593)-[^/]*\.test\.ts$',
   '^packages/ai/test/pre-response-timeout',
@@ -637,11 +637,11 @@ title = "write tool"
 scope = "core"
 gate = "P1"
 owner = "ara-tools::write"
-status = "implementing"
+status = "accepted"
 match = [
   '^packages/coding-agent/test/tools/(file-write-fallback|conflict-|auto-generated)',
   '^packages/coding-agent/src/tools/(write|file-write-fallback|file-recorder|auto-generated-guard|conflict-detect|fs-cache-invalidation)\.ts$',
-  '^packages/coding-agent/test/(write-|cache-invalidation)[^/]*\.test\.ts$',
+  '^packages/coding-agent/test/write-[^/]*\.test\.ts$',
 ]
 behavior = "Create/overwrite files, parent dirs, guards, conflict detection, streaming preview."
 
@@ -666,8 +666,8 @@ id = "CA-TOOL-EDIT"
 title = "edit/patch tools"
 scope = "core"
 gate = "P1"
-owner = "tbd (pi-edit vendoring candidate)"
-status = "implementing"
+owner = "ara-tools::edit/ast_edit; ara-cli::actual_tools/terminal"
+status = "accepted"
 match = [
   '^packages/coding-agent/test/tools/(apply-patch|ast-edit|edit-)',
   '^packages/coding-agent/test/fixtures/chunk-edit',
@@ -959,6 +959,7 @@ gate = "P3"
 owner = "host"
 status = "open"
 match = [
+  '^packages/coding-agent/test/cache-invalidation-marker\.test\.ts$',
   '^packages/coding-agent/test/modes/',
   '^packages/coding-agent/test/live/',
   '^packages/coding-agent/test/fixtures/(xterm|fatal-tui|assistant-message)',
@@ -1302,7 +1303,7 @@ title = "Snapcompact bitmap context compression"
 scope = "service"
 gate = "P3"
 owner = "ara-snapcompact"
-status = "implementing"
+status = "accepted"
 match = ['^packages/snapcompact/']
 behavior = "Vision-frame compression of context."
 
@@ -1373,7 +1374,7 @@ title = "pi-edit"
 scope = "native"
 gate = "P1"
 owner = "vendoring candidate for CA-TOOL-EDIT"
-status = "tested"
+status = "accepted"
 match = ['^crates/pi-edit/', '^crates/pi-diff/']
 behavior = "Edit application and diffing."
 

@@ -94,7 +94,21 @@ impl VariantSpec {
         Self { value, undefined_paths: Vec::new() }
     }
     pub fn from_json(value: &serde_json::Value) -> Self {
-        Self::from_wire(WireValue::parse(&value.to_string()).expect("serde JSON is wire JSON"))
+        // This is a serde tree import, not parsing new JSON text or adopting a
+        // runtime graph. Preserve Map iteration order and the parser's f64 domain.
+        fn import(value: &serde_json::Value) -> WireValue {
+            match value {
+                serde_json::Value::Null => WireValue::Null,
+                serde_json::Value::Bool(value) => WireValue::Bool(*value),
+                serde_json::Value::Number(value) => WireValue::Number(value.as_f64().expect("serde number fits f64")),
+                serde_json::Value::String(value) => WireValue::String(value.as_str().into()),
+                serde_json::Value::Array(values) => WireValue::Array(values.iter().map(import).collect()),
+                serde_json::Value::Object(values) => {
+                    WireValue::Object(values.iter().map(|(key, value)| (key.as_str().into(), import(value))).collect())
+                }
+            }
+        }
+        Self::from_wire(import(value))
     }
     pub fn get(&self, key: &str) -> Option<&WireValue> {
         self.get_path(&[WireString::from(key)])
@@ -1873,7 +1887,49 @@ fn project_model_spec(model: &VariantSpec) -> VariantSpec {
 mod tests {
     use super::*;
     use serde_json::json;
-
+    #[test]
+    fn direct_serde_tree_import_retains_original_text_parser_values() {
+        fn compare(value: &serde_json::Value) {
+            let direct = VariantSpec::from_json(value).value;
+            let original = WireValue::parse(&value.to_string()).unwrap();
+            // stringify observes raw object order and the same ECMAScript
+            // number representation; signed zero needs a separate bit check.
+            assert_eq!(direct.stringify(), original.stringify());
+            fn compare_bits(left: &WireValue, right: &WireValue) {
+                match (left, right) {
+                    (WireValue::Number(left), WireValue::Number(right)) => assert_eq!(left.to_bits(), right.to_bits()),
+                    (WireValue::Array(left), WireValue::Array(right)) => {
+                        assert_eq!(left.len(), right.len());
+                        for (left, right) in left.iter().zip(right) {
+                            compare_bits(left, right);
+                        }
+                    }
+                    (WireValue::Object(left), WireValue::Object(right)) => {
+                        assert_eq!(left.len(), right.len());
+                        for ((lk, lv), (rk, rv)) in left.iter().zip(right) {
+                            assert_eq!(lk, rk);
+                            compare_bits(lv, rv);
+                        }
+                    }
+                    _ => assert_eq!(left, right),
+                }
+            }
+            compare_bits(&direct, &original);
+        }
+        compare(catalog_rules::compiled_rules());
+        compare(
+            &serde_json::json!({"z":[null,true,false,"\u{0000}😀\u{2028}"],"10":10,"2":2,"__proto__":{"constructor":1}}),
+        );
+        for number in [i64::MIN, -9_007_199_254_740_993, -1, 0, 9_007_199_254_740_993, i64::MAX] {
+            compare(&serde_json::Value::from(number));
+        }
+        for number in [0, 9_007_199_254_740_993, u64::MAX] {
+            compare(&serde_json::Value::from(number));
+        }
+        for number in [-0.0, f64::MIN, f64::MAX, f64::MIN_POSITIVE, f64::from_bits(1), 0.1, 1e-100, 1e100] {
+            compare(&serde_json::Value::from(number));
+        }
+    }
     fn model(provider: &str, id: &str) -> SpecRef {
         fresh_ref(VariantSpec::from_json(&json!({
             "provider":provider,"id":id,"name":id,"api":"openai-completions","baseUrl":"https://example.test/v1",

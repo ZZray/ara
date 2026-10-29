@@ -6,6 +6,8 @@
 //! Copyright (c) 2025-2026 Can Bölük
 //! Copyright (c) 2026 Stencil Labs, Inc.
 
+use ara_agent::{ActualProviderError, AgentMessage, SessionValues};
+use ara_ai::graph_values::GraphValueFactory;
 use ara_ai::{AssistantMessage, Model};
 use ara_cli::{
     auth_storage::{AuthRequestContext, AuthStorage, RecordedUsageLimit},
@@ -15,6 +17,7 @@ use ara_cli::{
         RequestAuthResolver, RequestIdentity, RequestReceiptObserver,
     },
 };
+use ara_rpc::value_heap::{ValueError, ValueHandle};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     sync::{Arc, LazyLock, Mutex},
@@ -33,6 +36,9 @@ pub(crate) struct SessionQuotaOutcome {
     pub recorded: bool,
     pub switched: bool,
     pub wait_ms: Option<f64>,
+    /// Only the observed account owner's sibling availability supplies this
+    /// fact. A generic provider retry-after is not evidence of a sibling.
+    pub sibling_retry_at_ms: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -55,11 +61,16 @@ enum FeedbackState {
 }
 
 struct PendingQuota {
-    terminal: AssistantMessage,
+    terminal: PendingTerminal,
     binding: Arc<QuotaBinding>,
     lease: RequestAuthLease,
     unblock_at_ms: f64,
     feedback: watch::Receiver<FeedbackState>,
+}
+
+enum PendingTerminal {
+    Typed(AssistantMessage),
+    Actual { source: ValueHandle, factory: GraphValueFactory },
 }
 
 #[derive(Default)]
@@ -116,7 +127,7 @@ impl SessionQuotaRecovery {
             .iter()
             .filter_map(|(id, pending)| {
                 (pending.binding.host.owns_context(&pending.binding.reset_context)
-                    && matches_retained(&pending.terminal, message))
+                    && matches!(&pending.terminal, PendingTerminal::Typed(raw) if matches_retained(raw, message)))
                 .then_some(*id)
             })
             .collect();
@@ -126,13 +137,46 @@ impl SessionQuotaRecovery {
         state.records.remove(&matches[0]).map(|pending| ObservedQuota { pending })
     }
 
+    /// Match the exact terminal carried by Core's same finalized record, even
+    /// when Core created a shallow root to discard unfinished tool calls.
+    /// Public/journal constructors have no such ephemeral provenance.
+    pub fn recorded_actual(
+        &self,
+        message: &AgentMessage,
+        values: &SessionValues,
+    ) -> Result<Option<ObservedQuota>, ActualProviderError> {
+        let Some(source) = message.stream_terminal_origin(values)? else { return Ok(None) };
+        // The Core method above performs callback-free ownership validation
+        // before the private owner lock. No Native callback executes under it.
+        let runtime = values.factory().runtime_handle();
+        let mut state = self.state.lock().unwrap();
+        let matches: Vec<uuid::Uuid> = state
+            .records
+            .iter()
+            .filter_map(|(id, pending)| {
+                let PendingTerminal::Actual { source: actual, factory } = &pending.terminal else { return None };
+                (actual.same_identity(&source)
+                    && factory.heap().heap_token() == values.heap().heap_token()
+                    && Arc::ptr_eq(&factory.runtime_handle(), &runtime)
+                    && pending.binding.host.owns_context(&pending.binding.reset_context))
+                .then_some(*id)
+            })
+            .collect();
+        if matches.len() != 1 {
+            return Ok(None);
+        }
+        Ok(state.records.remove(&matches[0]).map(|pending| ObservedQuota { pending }))
+    }
+
     pub async fn settle(&self) {
-        let jobs = {
+        let (records, jobs) = {
             let mut state = self.state.lock().unwrap();
             state.closing = true;
-            state.records.clear();
-            std::mem::take(&mut state.jobs)
+            (std::mem::take(&mut state.records), std::mem::take(&mut state.jobs))
         };
+        // Actual records hold the original runtime owner. Its final Drop is
+        // outside the quota lock, just like awaiting the owned feedback jobs.
+        drop(records);
         for job in jobs {
             let _ = job.await;
         }
@@ -143,6 +187,50 @@ struct QuotaObserver {
     owner: Arc<SessionQuotaRecovery>,
     binding: Arc<QuotaBinding>,
     requests: Mutex<BTreeMap<uuid::Uuid, Arc<QuotaBinding>>>,
+}
+
+impl QuotaObserver {
+    fn publish_pending(
+        &self,
+        request: &RequestIdentity,
+        binding: Arc<QuotaBinding>,
+        lease: &RequestAuthLease,
+        terminal: PendingTerminal,
+        wait: impl FnOnce() -> f64,
+    ) -> Result<bool, ReceiptError> {
+        let mut state = self.owner.state.lock().unwrap();
+        if state.closing {
+            return Err(ReceiptError);
+        }
+        if !state.seen.insert(request.call_id) {
+            return Ok(true);
+        }
+        let unblock_at_ms = now_ms() + wait();
+        let (done, feedback) = watch::channel(FeedbackState::Pending);
+        let pending = Arc::new(PendingQuota { terminal, binding, lease: lease.clone(), unblock_at_ms, feedback });
+        state.records.insert(request.call_id, pending.clone());
+        state.jobs.push(tokio::spawn(async move {
+            // Rejection feedback settles under its independent owner even if
+            // the Run is canceled; it grants no reset or model replay.
+            let owned = CancellationToken::new();
+            let result = pending
+                .binding
+                .account
+                .mark_usage_limit_reached_observed(
+                    &pending.binding.model.provider,
+                    &pending.binding.context,
+                    &pending.lease,
+                    pending.unblock_at_ms,
+                    &owned,
+                )
+                .await;
+            done.send_replace(match result {
+                Ok(recorded) => FeedbackState::Settled(recorded),
+                Err(_) => FeedbackState::Failed,
+            });
+        }));
+        Ok(true)
+    }
 }
 
 impl RequestReceiptObserver for QuotaObserver {
@@ -185,6 +273,25 @@ impl RequestReceiptObserver for QuotaObserver {
     fn settled(&self, _: &RequestIdentity, _: &AssistantMessage) -> Result<(), ReceiptError> {
         Ok(())
     }
+    fn settled_actual(
+        &self,
+        request: &RequestIdentity,
+        message: &ValueHandle,
+        factory: &GraphValueFactory,
+    ) -> Result<(), ValueError> {
+        factory.heap().adopt(message)?;
+        let requests = self.requests.lock().unwrap();
+        let binding = requests
+            .get(&request.call_id)
+            .ok_or(ValueError::UnsupportedOperation("Actual quota settlement has no private request owner"))?;
+        if request.provider != binding.model.provider
+            || request.model_id != binding.model.id
+            || request.route_generation != binding.generation
+        {
+            return Err(ValueError::UnsupportedOperation("Actual quota settlement request identity changed"));
+        }
+        Ok(())
+    }
     fn interrupted(&self, request: &RequestIdentity) {
         self.finished(request.call_id);
     }
@@ -210,51 +317,58 @@ impl RequestReceiptObserver for QuotaObserver {
         if !matches!(lease.identity(), CredentialIdentity::Stored { .. }) {
             return Ok(false);
         }
-        let mut state = self.owner.state.lock().unwrap();
-        if state.closing {
-            return Err(ReceiptError);
+        let model = binding.model.clone();
+        self.publish_pending(request, binding, lease, PendingTerminal::Typed(message.clone()), || {
+            ara_ai::retry_classification::classify_retry(message, &model.api)
+                .wait_ms
+                .filter(|ms| ms.is_finite() && *ms > 0.0)
+                .unwrap_or_else(|| native_backoff_ms(message.error_message.as_deref().unwrap_or("")))
+        })
+    }
+
+    fn quota_rejected_actual(
+        &self,
+        request: &RequestIdentity,
+        lease: &RequestAuthLease,
+        message: &ValueHandle,
+        factory: &GraphValueFactory,
+    ) -> Result<bool, ValueError> {
+        factory.heap().adopt(message)?;
+        let binding = self
+            .requests
+            .lock()
+            .unwrap()
+            .remove(&request.call_id)
+            .ok_or(ValueError::UnsupportedOperation("Actual quota rejection has no private request owner"))?;
+        if request.provider != binding.model.provider
+            || request.model_id != binding.model.id
+            || request.route_generation != binding.generation
+            || request.credential != *lease.identity()
+        {
+            return Err(ValueError::UnsupportedOperation("Actual quota rejection request or lease changed"));
         }
-        if !state.seen.insert(request.call_id) {
-            return Ok(true);
+        if !matches!(lease.identity(), CredentialIdentity::Stored { .. }) {
+            return Ok(false);
         }
-        let now = now_ms();
-        let classified = ara_ai::retry_classification::classify_retry(message, &binding.model.api);
-        let wait = classified
+        // Original Native Gets and exceptions stay outside the owner lock.
+        let Some(metadata) = ara_cli::model_route::actual_failure_metadata(&binding.model, message, factory)?
+            .filter(|metadata| metadata.class.usage_limit)
+        else {
+            return Ok(false);
+        };
+        let wait = metadata
+            .class
             .wait_ms
             .filter(|ms| ms.is_finite() && *ms > 0.0)
-            .unwrap_or_else(|| native_backoff_ms(message.error_message.as_deref().unwrap_or("")));
-        let unblock_at_ms = now + wait;
-        let (done, feedback) = watch::channel(FeedbackState::Pending);
-        let pending = Arc::new(PendingQuota {
-            terminal: message.clone(),
+            .unwrap_or_else(|| native_backoff_ms(metadata.error_message.as_deref().unwrap_or("")));
+        self.publish_pending(
+            request,
             binding,
-            lease: lease.clone(),
-            unblock_at_ms,
-            feedback,
-        });
-        state.records.insert(request.call_id, pending.clone());
-        state.jobs.push(tokio::spawn(async move {
-            // A confirmed terminal's feedback survives the Run cancellation.
-            // This token never permits reset spending or another model call.
-            let owned = CancellationToken::new();
-            let result = pending
-                .binding
-                .account
-                .mark_usage_limit_reached_observed(
-                    &pending.binding.model.provider,
-                    &pending.binding.context,
-                    &pending.lease,
-                    pending.unblock_at_ms,
-                    &owned,
-                )
-                .await;
-            let state = match result {
-                Ok(recorded) => FeedbackState::Settled(recorded),
-                Err(_) => FeedbackState::Failed,
-            };
-            done.send_replace(state);
-        }));
-        Ok(true)
+            lease,
+            PendingTerminal::Actual { source: message.clone(), factory: factory.clone() },
+            || wait,
+        )
+        .map_err(|_| ValueError::UnsupportedOperation("Actual quota feedback owner is closing"))
     }
 }
 
@@ -295,7 +409,16 @@ pub(crate) async fn recover(
     if !current() {
         return Ok(SessionQuotaOutcome::default());
     }
-    let mut outcome = SessionQuotaOutcome { recorded: true, ..Default::default() };
+    let now = now_ms();
+    let window = (pending.unblock_at_ms - now).max(0.0);
+    let sibling_retry_at_ms = recorded.availability.retry_at_ms.filter(|at| at.is_finite());
+    let effective_wait = sibling_retry_at_ms.map(|at| ((at - now).max(0.0) + 1_000.0).min(window)).unwrap_or(window);
+    let mut outcome = SessionQuotaOutcome {
+        recorded: true,
+        wait_ms: Some(effective_wait),
+        sibling_retry_at_ms,
+        ..Default::default()
+    };
     if !allow_recovery {
         return Ok(outcome);
     }
@@ -354,7 +477,7 @@ pub(crate) async fn recover(
             .availability
             .retry_at_ms
             .filter(|at| at.is_finite())
-            .map(|at| (at + 1_000.0 - now).max(0.0).min(window))
+            .map(|at| ((at - now).max(0.0) + 1_000.0).min(window))
             .unwrap_or(window),
     );
     Ok(outcome)
@@ -504,6 +627,10 @@ fn native_backoff_ms(message: &str) -> f64 {
 }
 
 #[cfg(test)]
+#[path = "session_quota_actual_observations.rs"]
+pub(crate) mod actual_observations;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use ara_ai::{AssistantBlock, StopReason, ToolCall};
@@ -565,6 +692,7 @@ mod tests {
             name: "write_fixture".into(),
             arguments: json!({"incomplete":true}).as_object().unwrap().clone(),
             thought_signature: None,
+            ..Default::default()
         })];
         let retained = ara_agent::agent_loop::retain_completed_tool_calls(raw.clone(), &HashSet::new());
         assert!(matches_retained(&raw, &retained), "reproduce the Agent's unfinished tool normalization");
@@ -581,6 +709,7 @@ mod tests {
             name: "write_fixture".into(),
             arguments: json!({"incomplete":false}).as_object().unwrap().clone(),
             thought_signature: None,
+            ..Default::default()
         });
         assert!(!matches_retained(&raw, &changed), "retained call arguments cannot be rewritten into ownership proof");
     }

@@ -75,6 +75,35 @@ impl AuthCredential {
     }
 }
 
+/// Persistence is selected by the first owner of a coalesced refresh. Request
+/// force (including a 401 retry) remains a merge; only an explicit Broker owner
+/// applies the fixed Native standard projection to its own usable grant.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum OAuthRefreshPublication {
+    #[default]
+    Merge,
+    BrokerExplicit,
+}
+
+/// Fixed auth-storage.ts:6970-6988. Call only at the owner publication CAS, never
+/// on an adopted/persisted peer row returned by a resolver.
+pub fn standard_oauth_projection(refreshed: &AuthCredential, attempted: &AuthCredential) -> Option<AuthCredential> {
+    let AuthCredential::OAuth { fields: refreshed } = refreshed else { return None };
+    let AuthCredential::OAuth { fields: attempted } = attempted else { return None };
+    let mut fields = Map::new();
+    for key in ["access", "refresh", "expires"] {
+        if let Some(value) = refreshed.get(key) {
+            fields.insert(key.into(), value.clone());
+        }
+    }
+    for key in ["accountId", "email", "projectId", "enterpriseUrl", "apiEndpoint", "orgId", "orgName", "authorizedAt"] {
+        if let Some(value) = refreshed.get(key).filter(|value| !value.is_null()).or_else(|| attempted.get(key)) {
+            fields.insert(key.into(), value.clone());
+        }
+    }
+    Some(AuthCredential::OAuth { fields })
+}
+
 /// `serialized_data` is the exact stored value for refresh CAS fencing. It
 /// must not be reconstructed from an OAuth map, whose key order can differ.
 #[derive(Clone)]
@@ -790,6 +819,34 @@ impl SqliteCredentialStore {
              ON CONFLICT(key) DO NOTHING",
             params![key, lease.owner, i64::MAX, id, expected_data, lease.now_ms],
         )? == 1)
+    }
+
+    /// The Broker's bounded managed-MCP layer uses the original durable cache/lease
+    /// fence, with an exact provider instead of broadening the Codex-only entry.
+    pub(crate) fn try_begin_managed_mcp_refresh(
+        &self,
+        id: i64,
+        provider: &str,
+        expected_data: &str,
+        key: &str,
+        lease: &CredentialRefreshLeaseFence,
+    ) -> Result<bool> {
+        anyhow::ensure!(
+            provider.starts_with("mcp_oauth:") || provider.starts_with("mcp_oauth_"),
+            "not a managed MCP credential"
+        );
+        self.transaction(TransactionBehavior::Immediate, |_| {
+            Ok(self.db()?.execute(
+                "INSERT INTO cache(key,value,expires_at)
+                 SELECT ?1,?2,?3 FROM auth_credentials c
+                 WHERE c.id=?4 AND c.data=?5 AND c.provider=?7
+                   AND c.credential_type='oauth' AND c.disabled_cause IS NULL
+                   AND EXISTS(SELECT 1 FROM auth_credential_refresh_leases l
+                     WHERE l.credential_id=c.id AND l.owner=?2 AND l.expires_at_ms>?6)
+                 ON CONFLICT(key) DO NOTHING",
+                params![key, lease.owner, i64::MAX, id, expected_data, lease.now_ms, provider],
+            )? == 1)
+        })
     }
 
     /// The submitted grant is settled only when its durable token replacement

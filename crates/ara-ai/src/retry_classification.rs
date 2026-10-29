@@ -64,6 +64,10 @@ pub struct ProviderFailureEvidence {
     pub context_recovery: Option<ContextRecoveryEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<f64>,
+    /// Maximum finite, positive wait from actual response headers only.
+    /// Keep its provenance separate from body hints for the Session formatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_wait_ms: Option<f64>,
     pub error_id: u32,
 }
 
@@ -86,6 +90,7 @@ impl ProviderFailureEvidence {
             same_route_blocked: replay_blocked,
             context_recovery: None,
             wait_ms: None,
+            header_wait_ms: None,
             error_id: 0,
         }
     }
@@ -237,15 +242,34 @@ fn text_wait_ms(text: &str) -> Option<f64> {
 /// Classify using the actual requested API, never an upstream's echoed API.
 /// This is eligibility evidence, not authority to replay a tool or rotate an
 /// account. The Host still checks receipts, cancellation and policy.
+pub struct RetryFacts<'a> {
+    pub stop_reason: StopReason,
+    pub error_message: Option<&'a str>,
+    pub error_status: Option<u16>,
+    pub failure_evidence: Option<&'a ProviderFailureEvidence>,
+}
+
 pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClass {
+    classify_retry_facts(
+        RetryFacts {
+            stop_reason: message.stop_reason,
+            error_message: message.error_message.as_deref(),
+            error_status: message.error_status,
+            failure_evidence: message.failure_evidence.as_ref(),
+        },
+        actual_api,
+    )
+}
+
+pub fn classify_retry_facts(facts: RetryFacts<'_>, actual_api: &str) -> RetryClass {
     use flag::*;
     let supported = matches!(
         actual_api,
         "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages"
     );
-    let evidence = message.failure_evidence.as_ref();
-    let text = message.error_message.as_deref().unwrap_or("");
-    let status = evidence.and_then(|e| e.status).or(message.error_status);
+    let evidence = facts.failure_evidence;
+    let text = facts.error_message.unwrap_or("");
+    let status = evidence.and_then(|e| e.status).or(facts.error_status);
     let mut flags =
         evidence.filter(|e| e.error_id & CLASS != 0).map_or(0, |e| e.error_id & !STALE_RESPONSES_ITEM & !CLASS);
     let kind = evidence.map(|e| e.kind);
@@ -306,7 +330,7 @@ pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClas
     if kind == Some(ProviderErrorKind::Aborted) {
         flags |= ABORT;
     }
-    if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted)
+    if matches!(facts.stop_reason, StopReason::Error | StopReason::Aborted)
         && matches!(text, "Request was aborted" | "Request was aborted.")
     {
         flags |= ABORT;
@@ -329,7 +353,7 @@ pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClas
         && IMMUTABLE_THINKING.is_match(text);
     let preflight_blocked = text.starts_with("Usage preflight blocked:");
     let retriable = supported
-        && message.stop_reason == StopReason::Error
+        && facts.stop_reason == StopReason::Error
         && !preflight_blocked
         && !immutable_thinking
         && kind != Some(ProviderErrorKind::Config)
@@ -340,9 +364,7 @@ pub fn classify_retry(message: &AssistantMessage, actual_api: &str) -> RetryClas
         overflow: flags & CONTEXT_OVERFLOW != 0,
         stale_responses: flags & STALE_RESPONSES_ITEM != 0,
         usage_limit: flags & USAGE_LIMIT != 0,
-        abort: supported
-            && matches!(message.stop_reason, StopReason::Error | StopReason::Aborted)
-            && flags & ABORT != 0,
+        abort: supported && matches!(facts.stop_reason, StopReason::Error | StopReason::Aborted) && flags & ABORT != 0,
         malformed: flags & MALFORMED_FUNCTION_CALL != 0,
         wait_ms: evidence
             .and_then(|e| e.wait_ms)
@@ -379,30 +401,55 @@ pub(crate) fn finalize_failure(
     same_route_blocked: bool,
     actual_api: &str,
 ) {
-    let previous = message.failure_evidence.take();
+    message.failure_evidence = Some(finalize_failure_facts(
+        message.stop_reason,
+        message.error_message.as_deref(),
+        message.error_status,
+        message.failure_evidence.take(),
+        error,
+        replay_blocked,
+        same_route_blocked,
+        actual_api,
+    ));
+}
+
+/// Metadata-only entry for actual producers. Graph consumers read these
+/// controls with their current resolver at the source position; no canonical
+/// AssistantMessage, Context, ToolCall or arguments is reconstructed.
+pub fn finalize_failure_facts(
+    stop_reason: StopReason,
+    error_message: Option<&str>,
+    error_status: Option<u16>,
+    previous: Option<ProviderFailureEvidence>,
+    error: &ProviderError,
+    replay_blocked: bool,
+    same_route_blocked: bool,
+    actual_api: &str,
+) -> ProviderFailureEvidence {
     let mut evidence = ProviderFailureEvidence::from_error(error, replay_blocked);
     evidence.same_route_blocked = same_route_blocked;
     if let Some(previous) = previous {
         evidence.status = evidence.status.or(previous.status);
         evidence.code = previous.code;
         evidence.wait_ms = previous.wait_ms;
+        evidence.header_wait_ms = previous.header_wait_ms;
         evidence.error_id = previous.error_id;
         evidence.replay_blocked |= previous.replay_blocked;
         evidence.same_route_blocked |= previous.same_route_blocked;
         evidence.context_recovery = previous.context_recovery;
     }
-    message.failure_evidence = Some(evidence);
-    let classified = classify_retry(message, actual_api);
-    let evidence = message.failure_evidence.as_mut().expect("installed evidence");
+    let classified = classify_retry_facts(
+        RetryFacts { stop_reason, error_message, error_status, failure_evidence: Some(&evidence) },
+        actual_api,
+    );
     evidence.error_id = classified.error_id;
-    if classified.usage_limit
-        || message.error_message.as_deref().is_some_and(|text| text.starts_with("Usage preflight blocked:"))
-    {
+    if classified.usage_limit || error_message.is_some_and(|text| text.starts_with("Usage preflight blocked:")) {
         evidence.context_recovery =
             Some(evidence.context_recovery.map_or(ContextRecoveryEvidence::UsageAdmission, |previous| {
                 previous.merge(ContextRecoveryEvidence::UsageAdmission)
             }));
     }
+    evidence
 }
 
 #[cfg(test)]
@@ -617,6 +664,7 @@ mod tests {
                 assert_eq!(evidence.kind, ProviderErrorKind::Timeout, "{api}");
                 assert_eq!(evidence.status, Some(429), "{api}");
                 assert_eq!(evidence.wait_ms, wait_ms, "{api}");
+                assert_eq!(evidence.header_wait_ms, wait_ms, "{api}: only actual header facts keep this provenance");
                 assert!(evidence.replay_blocked, "{api}: both header cases stop provider replay");
                 assert_eq!(evidence.same_route_blocked, same_route_blocked, "{api}");
                 let class = classify_retry(message, api);

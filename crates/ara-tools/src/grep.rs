@@ -176,6 +176,16 @@ fn match_abs(match_path: &str, search_path: &Path) -> PathBuf {
     if match_path.is_empty() { search_path.to_path_buf() } else { crate::normalize(&search_path.join(match_path)) }
 }
 
+/// Selected values at the native action boundary. This is not an argument DTO:
+/// the Host has already observed the original graph fields and methods.
+pub struct GrepOsValues {
+    pub pattern: String,
+    pub path: Option<String>,
+    pub case_sensitive: bool,
+    pub use_gitignore: bool,
+    pub skip: f64,
+}
+
 pub struct GrepTool {
     pub ctx: ToolContext,
     /// Wall-clock budget per call; upstream `SEARCH_GREP_TIMEOUT_MS`.
@@ -188,19 +198,56 @@ impl GrepTool {
     }
 
     fn execute_blocking(&self, args: &JsonObject, cancel: &CancellationToken) -> Result<ToolOutput, ToolError> {
-        let ctx = &self.ctx;
-        let pattern = args.get("pattern").and_then(Value::as_str).unwrap_or_default().to_string();
-        if pattern.trim().is_empty() {
-            return Err(ToolError("Pattern must not be empty".into()));
-        }
-        let skip = match args.get("skip") {
-            None | Some(Value::Null) => 0usize,
-            Some(v) => match v.as_f64() {
-                Some(f) if f.is_finite() && f >= 0.0 => f.floor() as usize,
-                _ => return Err(ToolError("Skip must be a non-negative number".into())),
+        let input = GrepOsValues {
+            pattern: args.get("pattern").and_then(Value::as_str).unwrap_or_default().to_string(),
+            path: args.get("path").and_then(Value::as_str).map(str::to_owned),
+            case_sensitive: args.get("case").and_then(Value::as_bool).unwrap_or(true),
+            use_gitignore: args.get("gitignore").and_then(Value::as_bool).unwrap_or(true),
+            skip: match args.get("skip") {
+                None | Some(Value::Null) => 0.0,
+                Some(value) => value.as_f64().unwrap_or(f64::NAN),
             },
         };
-        let raw_path = args.get("path").and_then(Value::as_str);
+        if input.pattern.trim().is_empty() {
+            return Err(ToolError("Pattern must not be empty".into()));
+        }
+        self.execute_blocking_os_values(&input, cancel)
+    }
+
+    /// Reuse the existing search/action owner without serializing original args.
+    pub async fn execute_os_values(
+        &self,
+        input: GrepOsValues,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let tool = Self { ctx: self.ctx.clone(), timeout: self.timeout };
+        let work = cancel.child_token();
+        let _stop_on_drop = work.clone().drop_guard();
+        // Native owns this entered worker through settlement. Cancellation
+        // requests a stop; it cannot release the invocation's grant owner while
+        // the original search may still update its shared EditStore.
+        let settled = tokio::task::spawn_blocking(move || tool.execute_blocking_os_values(&input, &work)).await;
+        if cancel.is_cancelled() {
+            return Err(ToolError("Grep was aborted".into()));
+        }
+        settled.map_err(|error| ToolError(format!("Grep failed: {error}")))?
+    }
+
+    fn execute_blocking_os_values(
+        &self,
+        input: &GrepOsValues,
+        cancel: &CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let ctx = &self.ctx;
+        // Native Host has already called the ORIGINAL pattern.trim method.
+        // The typed wrapper above retains its own established validation.
+        let pattern = input.pattern.clone();
+        let skip = if input.skip.is_finite() && input.skip >= 0.0 {
+            input.skip.floor() as usize
+        } else {
+            return Err(ToolError("Skip must be a non-negative number".into()));
+        };
+        let raw_path = input.path.as_deref();
         let mut entries = paths::to_path_list(raw_path);
         if entries.is_empty() {
             entries.push(".".into());
@@ -243,8 +290,8 @@ impl GrepTool {
             }
         }
 
-        let case_sensitive = args.get("case").and_then(Value::as_bool).unwrap_or(true);
-        let use_gitignore = args.get("gitignore").and_then(Value::as_bool).unwrap_or(true);
+        let case_sensitive = input.case_sensitive;
+        let use_gitignore = input.use_gitignore;
         let multiline = pattern.contains('\n') || pattern.contains("\\n");
         let is_multi_scope = scope.is_directory || scope.exact_file_paths.is_some() || scope.multi_targets.is_some();
         let per_file_cap = if is_multi_scope { MULTI_FILE_PER_FILE_MATCHES } else { SINGLE_FILE_MATCHES };
@@ -529,6 +576,7 @@ impl AgentTool for GrepTool {
                 "required": ["pattern"],
                 "additionalProperties": false
             }),
+            ..Default::default()
         }
     }
 

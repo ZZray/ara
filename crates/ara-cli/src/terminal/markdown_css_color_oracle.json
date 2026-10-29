@@ -1,0 +1,110 @@
+[
+  {
+    "input": "lab(50% 40 30)",
+    "true_color": "\u001b[38;2;187;88;70m",
+    "ansi256": "\u001b[38;5;131m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lab(75% -40 -30 / 0.5)",
+    "true_color": "\u001b[38;2;0;206;239m",
+    "ansi256": "\u001b[38;5;45m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lch(50% 50 60)",
+    "true_color": "\u001b[38;2;170;101;44m",
+    "ansi256": "\u001b[38;5;130m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lch(75% 40 240 / 50%)",
+    "true_color": "\u001b[38;2;93;197;248m",
+    "ansi256": "\u001b[38;5;81m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklab(60% 0.1 0.1)",
+    "true_color": "\u001b[38;2;195;96;46m",
+    "ansi256": "\u001b[38;5;166m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklab(75% -0.1 -0.05 / 0.5)",
+    "true_color": "\u001b[38;2;64;194;209m",
+    "ansi256": "\u001b[38;5;74m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklch(60% 0.15 60)",
+    "true_color": "\u001b[38;2;191;102;0m",
+    "ansi256": "\u001b[38;5;130m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklch(75% 0.12 240 / 50%)",
+    "true_color": "\u001b[38;2;95;184;242m",
+    "ansi256": "\u001b[38;5;75m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lab(50% 100 100)",
+    "true_color": "\u001b[38;2;242;0;22m",
+    "ansi256": "\u001b[38;5;196m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklab(50% 0.4 -0.4)",
+    "true_color": "\u001b[38;2;149;0;192m",
+    "ansi256": "\u001b[38;5;91m",
+    "oracle_receipt": "TUI-BUN-CSS-NONNEUTRAL-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lab(60% 40 -30)",
+    "true_color": "\u001b[38;2;193;117;199m",
+    "ansi256": "\u001b[38;5;140m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lch(60% 50 315)",
+    "true_color": "\u001b[38;2;182;122;208m",
+    "ansi256": "\u001b[38;5;140m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklab(60% 0.15 -0.1)",
+    "true_color": "\u001b[38;2;181;81;184m",
+    "ansi256": "\u001b[38;5;133m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "oklch(60% 0.18 315)",
+    "true_color": "\u001b[38;2;167;88;200m",
+    "ansi256": "\u001b[38;5;134m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "color(srgb 1 0 0)",
+    "true_color": null,
+    "ansi256": null,
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "color(srgb-linear 1 0 0)",
+    "true_color": null,
+    "ansi256": null,
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "lab(120% 300 -300)",
+    "true_color": "\u001b[38;2;255;255;255m",
+    "ansi256": "\u001b[38;5;231m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  },
+  {
+    "input": "hsl(none 100% 50%)",
+    "true_color": "\u001b[38;2;255;0;0m",
+    "ansi256": "\u001b[38;5;196m",
+    "oracle_receipt": "TUI-BUN-CSS-CONVERSION-ORACLE-ROOT-v1.js.stdout.json"
+  }
+]

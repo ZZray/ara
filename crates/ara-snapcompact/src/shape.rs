@@ -1,5 +1,7 @@
 //! Fixed OMP shape tables, model identity and provider billing/budgets.
-use crate::{Error, IdealShape, NormalizeOptions, Result, Shape, ShapeTarget};
+use crate::{
+    DeploymentTarget, Error, FrameBilling, IdealShape, ImageSize, NormalizeOptions, Result, Shape, ShapeTarget,
+};
 use regex::Regex;
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -27,7 +29,7 @@ pub fn is_shape_variant_name(value: &str) -> bool {
     SHAPE_VARIANT_NAMES.contains(&value)
 }
 pub fn is_shape(value: &Value) -> bool {
-    for key in ["stretch", "stopwordDim"] {
+    for key in ["stretch", "stopwordDim", "frameTokensVerified"] {
         if value.get(key).is_some_and(|v| !v.is_boolean()) {
             return false;
         }
@@ -63,17 +65,42 @@ pub(crate) fn billing_family(api: Option<&str>) -> &'static str {
         _ => "unknown",
     }
 }
-pub(crate) fn price(mut shape: Shape, api: Option<&str>) -> Shape {
-    shape.image_detail = None;
-    shape.frame_token_estimate = match billing_family(api) {
-        "google" => 1120.0,
-        "openai" => {
-            shape.image_detail = Some("original".into());
-            ((shape.frame_size / 32.0).ceil().powi(2).min(10000.0) * 1.2).ceil()
-        }
-        _ => ((shape.frame_size / 28.0).ceil().powi(2).min(4784.0) * 1.05).ceil(),
-    };
-    shape
+pub fn frame_billing(target: Option<&ShapeTarget>) -> Result<FrameBilling> {
+    let rule = target.map(crate::catalog::image_axes).transpose()?.and_then(|axes| {
+        axes.get("imageTokenization")
+            .filter(|rule| matches!(rule["regime"].as_str(), Some("openai-patch" | "anthropic-patch" | "fixed")))
+            .cloned()
+    });
+    let image_detail =
+        (billing_family(target.and_then(|t| t.api.as_deref())) == "openai").then(|| "original".to_owned());
+    Ok(FrameBilling { rule, image_detail })
+}
+pub fn frame_billing_key(billing: &FrameBilling) -> String {
+    format!(
+        "{}:{}",
+        billing.image_detail.as_deref().unwrap_or("auto"),
+        billing.rule.as_ref().map(Value::to_string).unwrap_or_else(|| "ceiling".into())
+    )
+}
+pub fn frame_tokens(billing: &FrameBilling, size: ImageSize) -> f64 {
+    billing.rule.as_ref().map_or(crate::FRAME_TOKEN_ESTIMATE as f64, |rule| {
+        crate::catalog::image_tokens(rule, size, billing.image_detail.as_deref())
+    })
+}
+pub fn planned_frame_tokens(shape: &Shape) -> f64 {
+    if shape.frame_tokens_verified == Some(true) {
+        shape.frame_token_estimate
+    } else {
+        shape.frame_token_estimate.max(crate::FRAME_TOKEN_ESTIMATE as f64)
+    }
+}
+pub(crate) fn price(mut shape: Shape, target: Option<&ShapeTarget>) -> Result<Shape> {
+    let billing = frame_billing(target)?;
+    shape.frame_token_estimate =
+        frame_tokens(&billing, ImageSize { width: shape.frame_size, height: shape.frame_size });
+    shape.frame_tokens_verified = billing.rule.as_ref().is_some_and(|rule| rule["verified"] == true).then_some(true);
+    shape.image_detail = billing.image_detail;
+    Ok(shape)
 }
 pub fn shape_variant(name: &str) -> Result<Shape> {
     let (font, cw, ch, repeat, size) = match name {
@@ -87,7 +114,9 @@ pub fn shape_variant(name: &str) -> Result<Shape> {
         "8on22-bw" => ("8x13", 8, 22, 1, 1568),
         "11on16-bw" => ("8x13", 11, 16, 1, 1568),
         "silver16-bw" => ("silver", 16, 16, 1, 1568),
-        _ => return Err(Error::from_reason(format!("Unknown snapcompact shape variant {name:?}"))),
+        _ => {
+            return Err(Error::from_reason(format!("Unknown snapcompact shape variant {name:?}")));
+        }
     };
     Ok(Shape {
         font: font.into(),
@@ -100,6 +129,7 @@ pub fn shape_variant(name: &str) -> Result<Shape> {
         line_repeat: f64::from(repeat),
         frame_size: f64::from(size),
         frame_token_estimate: 1.0,
+        frame_tokens_verified: None,
         image_detail: None,
     })
 }
@@ -135,7 +165,7 @@ pub fn ideal_shape_variant(id: &str) -> Option<IdealShape> {
 pub fn resolve_shape(model: Option<&ShapeTarget>, variant: Option<&str>) -> Result<Shape> {
     let api = model.and_then(|m| m.api.as_deref());
     if let Some(variant) = variant.filter(|&v| v != "auto" && !v.is_empty()) {
-        return Ok(price(shape_variant(variant)?, api));
+        return price(fit_host_image_edge(shape_variant(variant)?, model)?, model);
     }
     let ideal = model.and_then(|m| m.id.as_deref()).filter(|s| !s.is_empty()).and_then(ideal_shape_variant);
     let name = ideal.as_ref().map(|i| i.variant).unwrap_or(if billing_family(api) == "anthropic" {
@@ -147,17 +177,42 @@ pub fn resolve_shape(model: Option<&ShapeTarget>, variant: Option<&str>) -> Resu
     if let Some(size) = ideal.and_then(|i| i.frame_size) {
         shape.frame_size = f64::from(size);
     }
-    Ok(price(shape, api))
+    price(fit_host_image_edge(shape, model)?, model)
+}
+fn fit_host_image_edge(mut shape: Shape, target: Option<&ShapeTarget>) -> Result<Shape> {
+    if let Some(edge) = target
+        .map(crate::catalog::image_axes)
+        .transpose()?
+        .and_then(|axes| axes.get("imageMaxEdge").and_then(Value::as_f64).filter(|edge| *edge > 0.0))
+        && shape.frame_size > edge
+    {
+        shape.frame_size = edge;
+    }
+    Ok(shape)
 }
 pub fn resolve_shape_for_text(text: &str, model: Option<&ShapeTarget>, variant: Option<&str>) -> Result<Shape> {
+    resolve_shape_for_text_utf16(&crate::Utf16Text::from(text), model, variant)
+}
+pub fn resolve_shape_for_text_utf16(
+    text: &crate::Utf16Text,
+    model: Option<&ShapeTarget>,
+    variant: Option<&str>,
+) -> Result<Shape> {
     let shape = resolve_shape(model, variant)?;
     if variant.is_some_and(|v| !v.is_empty() && v != "auto") {
         return Ok(shape);
     }
     let silver = resolve_shape(model, Some("silver16-bw"))?;
     let current_safe =
-        crate::scan_renderability(text, NormalizeOptions { shape: Some(shape.clone()), ..Default::default() }).is_safe;
-    let chars = crate::text::normalized_input_chars(text);
+        crate::scan_renderability_utf16(text, NormalizeOptions { shape: Some(shape.clone()), ..Default::default() })
+            .is_safe;
+    let chars: Vec<_> = crate::text::normalized_input_utf16(text)
+        .into_iter()
+        .filter_map(|p| match p {
+            crate::Utf16CodePoint::Scalar(c) => Some(c),
+            crate::Utf16CodePoint::Lone(_) => None,
+        })
+        .collect();
     let graphics: Vec<_> = chars
         .into_iter()
         .filter(|&c| {
@@ -167,7 +222,7 @@ pub fn resolve_shape_for_text(text: &str, model: Option<&ShapeTarget>, variant: 
     let wide = graphics.iter().filter(|&&c| crate::layout::is_wide(c)).count();
     let cjk = wide >= 8 && wide as f64 / graphics.len() as f64 >= 0.25;
     if (!current_safe || shape.font != "silver" && cjk)
-        && crate::scan_renderability(text, NormalizeOptions { shape: Some(silver.clone()), ..Default::default() })
+        && crate::scan_renderability_utf16(text, NormalizeOptions { shape: Some(silver.clone()), ..Default::default() })
             .is_safe
     {
         Ok(silver)
@@ -175,26 +230,75 @@ pub fn resolve_shape_for_text(text: &str, model: Option<&ShapeTarget>, variant: 
         Ok(shape)
     }
 }
-pub(crate) fn dense_companion(high: &Shape, api: Option<&str>) -> Shape {
+pub(crate) fn dense_companion(high: &Shape, _api: Option<&str>) -> Shape {
     if high.columns == Some(2) || high.font == "silver" {
         return high.clone();
     }
     let mut low = shape_variant("8on16-bw").expect("fixed variant");
     low.frame_size = high.frame_size;
-    let low = price(low, api);
+    low.frame_token_estimate = high.frame_token_estimate;
+    low.image_detail = high.image_detail.clone();
+    // Upstream constructs a new geometry and copies only estimate/detail here.
+    // It intentionally does not copy frameTokensVerified to the dense tier.
     if crate::geometry(&low, None).capacity > crate::geometry(high, None).capacity { low } else { high.clone() }
 }
-pub fn provider_image_budget(provider: Option<&str>) -> usize {
-    match provider {
-        Some("anthropic" | "amazon-bedrock" | "openrouter") => 90,
-        Some("openai" | "openai-codex" | "google" | "google-vertex" | "google-gemini-cli") => 200,
-        Some("umans") => 10,
-        _ => crate::DEFAULT_PROVIDER_IMAGE_BUDGET,
-    }
+pub fn provider_image_budget(deployment: Option<&DeploymentTarget>) -> Result<usize> {
+    let Some(deployment) = deployment else {
+        return Ok(crate::DEFAULT_PROVIDER_IMAGE_BUDGET);
+    };
+    let axes = crate::catalog::deployment_axes(deployment)?;
+    // Source `official && policy.officialImageCountBudget || policy.imageCountBudget`.
+    let official = deployment.official_endpoint.then(|| axes.get("officialImageCountBudget")).flatten().filter(
+        |value| match value {
+            Value::Null => false,
+            Value::Bool(v) => *v,
+            Value::Number(v) => v.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
+            Value::String(v) => !v.is_empty(),
+            _ => true,
+        },
+    );
+    let value = official.or_else(|| axes.get("imageCountBudget"));
+    Ok(value
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0 && v.fract() == 0.0)
+        .map(|v| v as usize)
+        .unwrap_or(crate::DEFAULT_PROVIDER_IMAGE_BUDGET))
 }
-pub fn provider_frame_budget(provider: Option<&str>) -> usize {
-    provider_image_budget(provider).min(crate::MAX_FRAMES_DEFAULT)
+pub fn provider_frame_budget(deployment: Option<&DeploymentTarget>) -> Result<usize> {
+    Ok(provider_image_budget(deployment)?.min(crate::MAX_FRAMES_DEFAULT))
 }
-pub fn max_frames_for_data_budget(bytes: Option<usize>) -> usize {
-    (bytes.unwrap_or(crate::FRAME_DATA_BYTES_BUDGET) / crate::FRAME_DATA_BYTES_ESTIMATE).max(1)
+pub fn frame_data_bytes_budget(deployment: Option<&DeploymentTarget>) -> Result<usize> {
+    let Some(deployment) = deployment.filter(|d| d.official_endpoint) else {
+        return Ok(crate::FRAME_DATA_BYTES_BUDGET);
+    };
+    let axes = crate::catalog::deployment_axes(deployment)?;
+    Ok(axes
+        .get("inlineImageByteBudget")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| (value / 2.0).floor() as usize)
+        .unwrap_or(crate::FRAME_DATA_BYTES_BUDGET))
+}
+pub fn reader_images_read_results(deployment: &DeploymentTarget) -> Result<bool> {
+    Ok(crate::catalog::deployment_axes(deployment)?.get("snapcompactImageReads") == Some(&Value::Bool(true)))
+}
+pub fn reader_includes_thinking(deployment: &DeploymentTarget) -> Result<bool> {
+    Ok(crate::catalog::deployment_axes(deployment)?.get("classifierCotExtraction") != Some(&Value::Bool(true)))
+}
+pub fn max_frames_for_data_budget(shape: &Shape, budget: usize) -> usize {
+    let area_priced = ["8on22-bw", "11on16-bw"].iter().any(|name| {
+        let variant = shape_variant(name).expect("fixed variant");
+        variant.font == shape.font
+            && variant.cell_width == shape.cell_width
+            && variant.cell_height == shape.cell_height
+            && variant.stretch == shape.stretch
+            && variant.variant == shape.variant
+            && variant.stopword_dim == shape.stopword_dim
+            && variant.columns == shape.columns
+            && variant.line_repeat == shape.line_repeat
+    });
+    let area_ratio = if area_priced { (shape.frame_size / 1932.0).powi(2) } else { 1.0 };
+    let frame_bytes =
+        (crate::FRAME_DATA_BYTES_ESTIMATE as f64).min((crate::FRAME_DATA_BYTES_ESTIMATE as f64 * area_ratio).ceil());
+    ((budget as f64 / frame_bytes).floor() as usize).max(1)
 }

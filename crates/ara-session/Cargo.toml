@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 ara-ai.workspace = true
 ara-prompt.workspace = true
+ara-rpc.workspace = true
 ara-snapcompact.workspace = true
 base64.workspace = true
 chrono.workspace = true

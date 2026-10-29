@@ -15,6 +15,91 @@ use std::time::{Duration, Instant};
 const BIN: &str = env!("CARGO_BIN_EXE_ara");
 const WAIT: Duration = Duration::from_secs(15);
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_core_hooks_interrupt_setting_raw_result_and_journal_restart_group() {
+    let env = Env::new();
+    let directory = env.home.path().join("agent");
+    std::fs::create_dir_all(&directory).unwrap();
+    let settings = directory.join("config.yml");
+    std::fs::write(&settings, "unrelated: retained\nfeatures:\n  unexpectedStopDetection: none\n").unwrap();
+    let up = upstream(json!({"responses":[
+        {"events":[tool_call(0,"valid-metadata","held","{}"),
+            tool_call(1,"invalid-metadata","held","{}"),tool_call(2,"self-error","held","{}"),finish("tool_calls"),done()]},
+        {"events":[text("All actual tool outcomes retained."),finish("stop"),done()]}
+    ]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready();
+    assert_eq!(child.state("default-mode")["interruptMode"], "immediate");
+    child.send(json!({"id":"wait-mode","type":"set_interrupt_mode","mode":"wait"}));
+    child.success("wait-mode");
+    assert_eq!(child.state("wait-state")["interruptMode"], "wait");
+    let before = std::fs::read(&settings).unwrap();
+    child.send(json!({"id":"bad-mode","type":"set_interrupt_mode","mode":"invalid"}));
+    assert_eq!(child.response("bad-mode")["success"], false);
+    assert_eq!(std::fs::read(&settings).unwrap(), before);
+    child.send(json!({"id":"tools","type":"set_host_tools","tools":[{
+        "name":"held","description":"controlled foreground tool","parameters":{"type":"object","properties":{}}
+    }]}));
+    child.success("tools");
+    child.send(json!({"id":"run","type":"prompt","message":"preserve all actual settled results"}));
+    child.success("run");
+    let calls: Vec<_> = (0..3).map(|_| child.until(|frame| frame["type"] == "host_tool_call", WAIT)).collect();
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end"));
+    child.send(json!({"id":"next-mode","type":"set_interrupt_mode","mode":"immediate"}));
+    child.success("next-mode");
+    child.send(json!({"id":"queued-user","type":"steer","message":"queued user source must survive"}));
+    child.success("queued-user");
+    let metadata = json!({"type":"computer", "screenshot":{"type":"computer_screenshot","file_id":"retained-file"},
+        "acknowledgedSafetyChecks":[{"id":"safety","message":null}]});
+    for call in calls {
+        let result = match call["toolCallId"].as_str().unwrap() {
+            "valid-metadata" => json!({"content":[{"type":"text","text":"real output"}],
+                "details":{"providerMetadata":"ordinary detail"},"providerMetadata":metadata,"useless":true}),
+            "invalid-metadata" => json!({"content":[{"type":"text","text":"malformed metadata output"}],
+                "providerMetadata":{"type":"computer","screenshot":{"type":"computer_screenshot", "image_url":"image","file_id":null},
+                    "acknowledgedSafetyChecks":[]}, "useless":true}),
+            "self-error" => json!({"content":[],"isError":true,"useless":true}),
+            other => panic!("unexpected tool {other}"),
+        };
+        child.send(json!({"type":"host_tool_result","id":call["id"],"result":result}));
+    }
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let messages = child.messages("actual-results");
+    let valid = messages.iter().find(|message| message["toolCallId"] == "valid-metadata").unwrap();
+    assert_eq!(valid["providerMetadata"], metadata);
+    assert_eq!(valid["useless"], true);
+    assert_eq!(valid["isError"], false);
+    assert_eq!(valid["details"], json!({"providerMetadata":"ordinary detail"}));
+    let invalid = messages.iter().find(|message| message["toolCallId"] == "invalid-metadata").unwrap();
+    assert_eq!(invalid["isError"], true);
+    assert!(invalid.get("providerMetadata").is_none() && invalid.get("useless").is_none());
+    assert!(contains_text(invalid, "computer providerMetadata had an unsupported shape"));
+    let error = messages.iter().find(|message| message["toolCallId"] == "self-error").unwrap();
+    assert_eq!(error["isError"], true);
+    assert!(error.get("useless").is_none());
+    assert!(contains_text(error, "Tool failed with no output."));
+    assert_eq!(
+        user_texts(&messages).iter().filter(|text| text.as_str() == "queued user source must survive").count(),
+        1
+    );
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "host_tool_cancel"));
+    let state = child.state("settled-mode");
+    assert_eq!(state["interruptMode"], "immediate");
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    child.finish(0);
+    let entries = journal(&file);
+    let persisted = entries.iter().find(|entry| entry["message"]["toolCallId"] == "valid-metadata").unwrap();
+    assert_eq!(persisted["message"]["providerMetadata"], metadata);
+    assert_eq!(persisted["message"]["useless"], true);
+    assert!(std::fs::read_to_string(&settings).unwrap().contains("unrelated: retained"));
+    let mut reopened = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    reopened.ready();
+    assert_eq!(reopened.state("restored-mode")["interruptMode"], "immediate");
+    assert_eq!(reopened.messages("restored-results"), messages);
+    reopened.finish(0);
+    assert_eq!(up.served(), 2);
+}
+
 struct Env {
     home: tempfile::TempDir,
     work: tempfile::TempDir,
@@ -61,9 +146,84 @@ impl Env {
             .args(["--mode", "rpc", "--model", "fake-model", "--base-url", base_url, "--cwd"])
             .arg(cwd)
             .arg("--session-dir")
-            .arg(&self.sessions)
-            .args(["--compact-threshold", "0"])
-            .args(args);
+            .arg(&self.sessions);
+        if !args.contains(&"--compact-threshold") {
+            command.args(["--compact-threshold", "0"]);
+        }
+        command.args(args);
+        command
+    }
+
+    // Reuse the real fresh-cache path for unrelated catalogue producers.
+    // Configured auto/switch endpoints stay cold and fully observed by this group.
+    fn selection_command(&self, base_url: &str, args: &[&str]) -> Command {
+        use ara_cli::provider_models::{
+            catalog_providers, models_dev_catalog_provider_ids, provider_descriptors, resolve_model_cache_provider_id,
+        };
+        let cache = ara_cli::model_cache::SqliteModelCache::for_path(self.home.path().join("agent/model-cache.db"));
+        let mut providers = models_dev_catalog_provider_ids();
+        providers.extend(provider_descriptors().into_iter().map(|provider| provider.provider_id));
+        providers.push("openai-codex".into());
+        providers.sort_by(|a, b| a.units().cmp(b.units()));
+        providers.dedup();
+        let no_environment = |_: &str| -> Option<ara_rpc::WireString> { None };
+        let now = chrono::Utc::now().timestamp_millis() as f64;
+        for provider in providers {
+            let codex = provider.equals_ascii("openai-codex");
+            let bundled =
+                if codex { ara_cli::model_identity_wire::bundled_provider_models(&provider) } else { Vec::new() };
+            let fingerprint = if codex {
+                ara_cli::model_manager::fingerprint_static_models(
+                    &ara_cli::model_manager::ModelArray::new(bundled.clone()),
+                    true,
+                )
+            } else {
+                "".into()
+            };
+            let cache_base = provider.equals_ascii("ollama").then(|| ara_rpc::WireString::from("http://127.0.0.1:1"));
+            let key = resolve_model_cache_provider_id(&provider, None, cache_base.as_ref(), &no_environment);
+            cache
+                .write_model_cache_wire(
+                    &key,
+                    now,
+                    &[],
+                    ara_cli::model_cache::WireModelCacheWriteOptions {
+                        authoritative: codex,
+                        static_fingerprint: &fingerprint,
+                        static_header_sources: &bundled,
+                        restorable_header_fallback: None,
+                    },
+                )
+                .unwrap();
+        }
+        let mut command = self.command(base_url, args);
+        for provider in catalog_providers() {
+            for key in provider
+                .env_vars
+                .iter()
+                .flatten()
+                .chain(provider.catalog_discovery.iter().flat_map(|discovery| discovery.env_vars.iter().flatten()))
+            {
+                let key = key.to_utf8().unwrap();
+                if key != "ARA_API_KEY" {
+                    command.env_remove(key);
+                }
+            }
+        }
+        for key in [
+            "LITELLM_BASE_URL",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "GOOGLE_CLOUD_QUOTA_PROJECT",
+        ] {
+            command.env_remove(key);
+        }
+        // Native startup and later catalog queries also discover local models.
+        // Keep those reads away from unrelated services on the test machine.
+        for key in ["OLLAMA_BASE_URL", "OLLAMA_HOST", "LLAMA_CPP_BASE_URL", "LM_STUDIO_BASE_URL"] {
+            command.env(key, "http://127.0.0.1:1");
+        }
         command
     }
 
@@ -79,6 +239,33 @@ impl Env {
             .unwrap_or_default();
         paths.sort();
         paths
+    }
+
+    /// Actual startup selection: retain fixture isolation/cache seeding while
+    /// omitting command()'s explicit model and endpoint override.
+    fn startup_command(&self, args: &[&str]) -> Command {
+        let seeded = self.selection_command("http://127.0.0.1:1", &[]);
+        let mut command = Command::new(BIN);
+        for (key, value) in seeded.get_envs() {
+            match value {
+                Some(value) => {
+                    command.env(key, value);
+                }
+                None => {
+                    command.env_remove(key);
+                }
+            }
+        }
+        let mut source = seeded.get_args();
+        while let Some(arg) = source.next() {
+            if arg == "--model" || arg == "--base-url" {
+                source.next();
+            } else {
+                command.arg(arg);
+            }
+        }
+        command.args(args);
+        command
     }
 }
 
@@ -1797,6 +1984,8 @@ async fn rpc_responses_tool_journal_and_restart_use_native_history_without_repla
     assert!(full.iter().any(|item| {
         item["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["text"] == "Native write settled."))
     }));
+    drop(requests);
+    rpc_native_edit_preview_guard_and_disabled_settings_group().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2008,6 +2197,9 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     command.env("PATH", format!("C:\\Program Files\\Git\\usr\\bin;{}", std::env::var("PATH").unwrap_or_default()));
     let mut child = RpcChild::spawn(command);
     child.ready_commands(proof_commands());
+    // Keep the tool active while messages queue so new_session owns its abort.
+    child.send(json!({"id":"wait-interrupt","type":"set_interrupt_mode","mode":"wait"}));
+    child.success("wait-interrupt");
     let old = child.state("old-state");
     let old_file = PathBuf::from(old["sessionFile"].as_str().unwrap());
     child.send(json!({"id":"steering-mode","type":"set_steering_mode","mode":"all"}));
@@ -2033,6 +2225,7 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     assert_eq!(adopted["queuedMessageCount"], 0);
     assert_eq!(adopted["steeringMode"], "all");
     assert_eq!(adopted["followUpMode"], "all");
+    assert_eq!(adopted["interruptMode"], "wait");
     let new_file = PathBuf::from(adopted["sessionFile"].as_str().unwrap());
     assert!(new_file.is_file(), "new_session is durable before its successful response");
     let initial_new = journal(&new_file);
@@ -2051,7 +2244,7 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     assert_eq!(child.seen[end]["messages"], json!(completed_events(&child.seen[..=end])));
     let receipt = old_entries.iter().find(|entry| entry["message"]["toolCallId"] == "old-active").unwrap();
     assert_eq!(receipt["message"]["isError"], true);
-    assert!(contains_text(&receipt["message"], "aborted"));
+    assert!(contains_text(&receipt["message"], "aborted"), "settled old-active receipt: {receipt}");
     child.send(json!({"id":"fresh","type":"prompt","message":"new task after adoption"}));
     child.success("fresh");
     child.until(|frame| frame["type"] == "agent_end", WAIT);
@@ -2176,7 +2369,7 @@ async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_t
 
 fn responses_answer(id: &str, answer: &str) -> Value {
     json!({"events":[
-        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":format!("msg-{id}"),"content":[{"type":"output_text","text":answer,"annotations":[]}]}}},
+        {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":format!("msg-{id}"),"role":"assistant","status":"completed","content":[{"type":"output_text","text":answer,"annotations":[]}]}}},
         {"data":{"type":"response.completed","response":{"id":id,"status":"completed"}}}
     ]})
 }
@@ -2638,3 +2831,1857 @@ async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_con
     assert!(requests[2]["body"]["messages"].to_string().contains("original before MCP setup failure"));
     assert!(!requests[2]["body"]["messages"].to_string().contains("target for candidate setup failure"));
 }
+
+// Fixed ModelControls Auto input families on the real JSON-lines Host. This
+// covers the online consumer only; Local runtime/full model controls stay WIP.
+impl Env {
+    fn auto_models(&self, base_url: &str, default_auto: bool) {
+        let agent = self.home.path().join("agent");
+        std::fs::create_dir_all(&agent).unwrap();
+        std::fs::write(
+            agent.join("config.yml"),
+            serde_json::to_vec_pretty(&json!({
+                "retry":{"enabled":false,"modelFallback":false,"usageAwareFallback":false},
+                "features":{"unexpectedStopDetection":"none"},
+                "defaultThinkingLevel":if default_auto { "auto" } else { "high" },
+                "modelRoles":{"tiny":["auto-fixture/classifier-fixture"]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            agent.join("models.yml"),
+            serde_json::to_vec_pretty(&json!({
+                "providers":{"auto-fixture":{"api":"openai-completions","auth":"apiKey","apiKey":"ARA_API_KEY","baseUrl":base_url,
+                    "compat":{"maxTokensField":"max_tokens"},
+                    "models":[
+                        {"id":"fake-model","contextWindow":131072,"maxTokens":8192,"reasoning":true,
+                            "thinking":{"mode":"effort","efforts":["low","high"]}},
+                        {"id":"classifier-fixture","contextWindow":131072,"maxTokens":2048,"reasoning":false}
+                    ]}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn auto_reply(value: &str) -> Value {
+    json!({"events":[text(value),finish("stop"),
+        {"data":{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}},
+        done()]})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_startup_scope_cli_precedence_snapshot_and_thinking_sources() {
+    let cases: &[(&[&str], &str, &str)] = &[
+        (
+            &["--models", "auto-fixture/fake-model:high", "--models=switch-fixture/target-model:low"],
+            "target-model",
+            "low",
+        ),
+        (
+            &["--model", "auto-fixture/fake-model:high", "--models", "switch-fixture/target-model:low"],
+            "fake-model",
+            "low",
+        ),
+        (&["--models", "switch-fixture/target-model:low,auto-fixture/fake-model:high"], "fake-model", "low"),
+    ];
+    for (index, (args, expected_model, expected_thinking)) in cases.iter().enumerate() {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[auto_reply("startup primary")]})).await;
+        let target = SwitchWire::new(json!({"responses":[auto_reply("startup target")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let path = env.home.path().join("agent/config.yml");
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        settings["enabledModels"] = json!(["switch-fixture/target-model:low", "auto-fixture/fake-model:high"]);
+        settings["modelRoles"]["default"] = json!("auto-fixture/fake-model:high");
+        std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        let settings_before = std::fs::read(&path).unwrap();
+        let mut child = RpcChild::spawn(env.startup_command(args));
+        child.ready();
+        let state = child.state("startup-selected");
+        assert_eq!(state["model"]["id"], *expected_model, "case {index}");
+        assert_eq!(state["configuredThinkingLevel"], *expected_thinking, "case {index}");
+        child.send(json!({"id":"startup-run","type":"prompt","message":"exercise the selected startup route once"}));
+        child.success("startup-run");
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        if index == 0 {
+            child.send(json!({"id":"single-scope","type":"cycle_model"}));
+            assert_eq!(
+                child.success("single-scope")["data"],
+                Value::Null,
+                "CLI one-entry snapshot must survive background catalog publication"
+            );
+        }
+        child.finish(0);
+        let (selected, unselected) = if *expected_model == "target-model" {
+            (target.requests.lock().await, first.requests.lock().await)
+        } else {
+            (first.requests.lock().await, target.requests.lock().await)
+        };
+        let calls: Vec<_> = selected.iter().filter(|request| request["body"].is_object()).collect();
+        assert_eq!(calls.len(), 1, "case {index}: {selected:?}");
+        assert_eq!(calls[0]["body"]["model"], *expected_model);
+        assert_eq!(calls[0]["body"]["reasoning_effort"], *expected_thinking);
+        assert!(!unselected.iter().any(|request| request["body"].is_object()));
+        assert_eq!(std::fs::read(&path).unwrap(), settings_before, "startup role selection must not persist settings");
+        let entries = journal(Path::new(state["sessionFile"].as_str().unwrap()));
+        assert_eq!(entries.iter().filter(|entry| entry["type"] == "model_change").count(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_startup_resume_candidates_and_cli_scope_preserve_saved_receipts() {
+    for (role, expected_model) in [("smol", "target-model"), (ara_session::EPHEMERAL_MODEL_CHANGE_ROLE, "fake-model")] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        let target = SwitchWire::new(json!({"responses":[]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let mut saved = ara_session::SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+        saved.append_model_change("auto-fixture/fake-model").unwrap();
+        saved.append_model_change_with_role("switch-fixture/target-model:high", Some(role), false).unwrap();
+        saved.append_thinking_level_change(Some("low"), None).unwrap();
+        saved.materialize().unwrap();
+        let file = saved.path().to_path_buf();
+        let before = std::fs::read(&file).unwrap();
+        drop(saved);
+        let mut child = RpcChild::spawn(env.startup_command(&[
+            "--resume",
+            file.to_str().unwrap(),
+            "--models",
+            "auto-fixture/fake-model:high",
+        ]));
+        child.ready();
+        let state = child.state("restored-startup");
+        assert_eq!(state["model"]["id"], expected_model);
+        assert_eq!(state["configuredThinkingLevel"], "low", "saved receipt outranks scope/default/saved-model suffix");
+        child.finish(0);
+        assert_eq!(std::fs::read(&file).unwrap(), before, "resume must not append model/thinking startup receipts");
+        assert!(!first.requests.lock().await.iter().any(|request| request["body"].is_object()));
+        assert!(!target.requests.lock().await.iter().any(|request| request["body"].is_object()));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_startup_unmatched_scope_and_invalid_explicit_selector_never_run_fallback() {
+    for args in
+        [vec!["--models", "missing-provider/nonexistent-model"], vec!["--model", "auto-fixture/fake-model:invalid"]]
+    {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        env.auto_models(&first.base_url(), false);
+        let mut child = RpcChild::spawn(env.startup_command(&args));
+        child.finish_inner(1, false, false);
+        assert!(child.errors().contains("not found"), "{}", child.errors());
+        assert!(env.sessions().is_empty());
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "ready"));
+        assert!(!first.requests.lock().await.iter().any(|request| request["body"].is_object()));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_cycle_scoped_author_order_thinking_and_same_session_receipts() {
+    for explicit in [true, false] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[auto_reply("cycled back to the original model")]})).await;
+        let target = SwitchWire::new(json!({"responses":[auto_reply("scoped target call")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let path = env.home.path().join("agent/config.yml");
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        settings["enabledModels"] = if explicit {
+            json!([
+                "switch-fixture/target-model:low",
+                "auto-fixture/fake-model:high",
+                "switch-fixture/target-model:high"
+            ])
+        } else {
+            // A missing scope level clears the current effort. The target's
+            // model default must not become a Session selector through cycle.
+            settings.as_object_mut().unwrap().remove("defaultThinkingLevel");
+            json!(["switch-fixture/target-model", "auto-fixture/fake-model"])
+        };
+        std::fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        let settings_before = std::fs::read(&path).unwrap();
+        let mut child = RpcChild::spawn(
+            env.selection_command(&first.base_url(), &["--provider", "auto-fixture", "--thinking", "high"]),
+        );
+        child.ready();
+        let before = child.state("cycle-before");
+        child.send(json!({"id":"cycle-target","type":"cycle_model"}));
+        let selected = child.success("cycle-target");
+        assert_eq!(selected["data"]["isScoped"], true);
+        assert_eq!(selected["data"]["model"]["id"], "target-model");
+        if explicit {
+            assert_eq!(selected["data"]["thinkingLevel"], "low", "first duplicate owns the level");
+        } else {
+            assert!(selected["data"].get("thinkingLevel").is_none(), "Native undefined is omitted on RPC");
+        }
+        let after = child.state("cycle-after");
+        assert_eq!(after["sessionId"], before["sessionId"]);
+        assert_eq!(after["sessionFile"], before["sessionFile"]);
+        assert_eq!(after["model"]["id"], "target-model");
+        child.send(json!({"id":"target-run","type":"prompt","message":"call the scoped target once"}));
+        child.success("target-run");
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        // Native MRU uses whole seconds without a tie-break. Age the actual
+        // first adoption's row in this fixture before the next real adoption.
+        // This proves both records without waiting for a clock boundary.
+        let usage_db = rusqlite::Connection::open(env.home.path().join("agent/agent.db")).unwrap();
+        assert_eq!(
+            usage_db
+                .execute(
+                    "UPDATE model_usage SET last_used_at=1 WHERE model_key='switch-fixture/target-model' AND last_used_at>1",
+                    [],
+                )
+                .unwrap(),
+            1,
+            "the first cycle must have recorded its actual target usage"
+        );
+        drop(usage_db);
+        child.send(json!({"id":"cycle-original","type":"cycle_model"}));
+        let original = child.success("cycle-original");
+        assert_eq!(original["data"]["model"]["id"], "fake-model");
+        assert_eq!(original["data"]["isScoped"], true);
+        if explicit {
+            assert_eq!(original["data"]["thinkingLevel"], "high");
+        } else {
+            assert!(original["data"].get("thinkingLevel").is_none());
+        }
+        child.send(json!({"id":"original-run","type":"prompt","message":"call the original once"}));
+        child.success("original-run");
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        child.finish(0);
+        let requests = target.requests.lock().await;
+        assert_eq!(requests.len(), 1, "cycling has no selected metadata GET");
+        assert_eq!(requests[0]["body"]["model"], "target-model");
+        if explicit {
+            assert_eq!(requests[0]["body"]["reasoning_effort"], "low");
+            assert_eq!(first.requests.lock().await[0]["body"]["reasoning_effort"], "high");
+        }
+        assert_eq!(*target.auth.lock().await, ["Bearer sk-target-fixture-only"]);
+        assert_eq!(std::fs::read(&path).unwrap(), settings_before, "cycle does not update global roles/settings");
+        let entries = journal(&env.sessions()[0]);
+        let models: Vec<_> = entries.iter().filter(|entry| entry["type"] == "model_change").collect();
+        assert_eq!(models.len(), 3, "startup records the initial model before the two cycle changes");
+        assert_eq!(models[0]["model"], "auto-fixture/fake-model");
+        let cycles = &models[1..];
+        assert!(cycles.iter().all(|entry| entry.get("role").is_none() && entry["resolvedModelIsFallback"] == false));
+        assert_eq!(cycles[0]["model"], "switch-fixture/target-model");
+        assert_eq!(cycles[1]["model"], "auto-fixture/fake-model");
+        let mru = ara_cli::model_usage_order::SqliteModelUsageOrder::for_agent_dir(env.home.path().join("agent"));
+        assert_eq!(mru.get_model_usage_order().unwrap(), ["auto-fixture/fake-model", "switch-fixture/target-model"]);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_cycle_available_retains_effort_and_single_model_is_null() {
+    for single in [false, true] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        let target = upstream(json!({"responses":[auto_reply("available target call")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let path = env.home.path().join("agent/models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        models["providers"]["auto-fixture"]["models"].as_array_mut().unwrap().pop();
+        if single {
+            models["providers"].as_object_mut().unwrap().remove("switch-fixture");
+        }
+        std::fs::write(path, serde_json::to_vec(&models).unwrap()).unwrap();
+        let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        child.send(json!({"id":"available","type":"get_available_models"}));
+        assert_eq!(child.success("available")["data"]["models"].as_array().unwrap().len(), if single { 1 } else { 2 });
+        child.send(json!({"id":"cycle","type":"cycle_model"}));
+        let selected = child.success("cycle");
+        if single {
+            assert!(selected["data"].is_null());
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "model_changed"));
+        } else {
+            assert_eq!(selected["data"]["isScoped"], false);
+            assert_eq!(selected["data"]["model"]["id"], "target-model");
+            assert_eq!(selected["data"]["thinkingLevel"], "high", "current high wins over the target default low");
+            child.send(json!({"id":"run","type":"prompt","message":"call the available target"}));
+            child.success("run");
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+        }
+        child.finish(0);
+        assert!(first.requests.lock().await.is_empty());
+        let requests = target.requests.lock().await;
+        assert_eq!(requests.len(), usize::from(!single));
+        if !single {
+            assert_eq!(requests[0]["body"]["reasoning_effort"], "high");
+        }
+    }
+}
+
+impl Env {
+    fn switch_models(&self, primary: &str, target: &str, auto: bool) {
+        self.auto_models(primary, auto);
+        let agent = self.home.path().join("agent");
+        let path = agent.join("models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        models["providers"]["switch-fixture"] = json!({
+            "api":"openai-completions","apiKey":"sk-target-fixture-only","auth":"apiKey","baseUrl":target,
+            "compat":{"maxTokensField":"max_tokens"},
+            "models":[{"id":"target-model","contextWindow":131072,"maxTokens":256,"reasoning":true,
+                "thinking":{"mode":"effort","efforts":["low","high"],"defaultLevel":"low"}}]
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&models).unwrap()).unwrap();
+    }
+}
+
+// Reuse the controlled FakeUpstream, capturing only synthetic fixture auth
+// before its ordinary recorder redacts header values.
+struct SwitchWire {
+    up: FakeUpstream,
+    addr: std::net::SocketAddr,
+    auth: Arc<tokio::sync::Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl std::ops::Deref for SwitchWire {
+    type Target = FakeUpstream;
+    fn deref(&self) -> &Self::Target {
+        &self.up
+    }
+}
+impl SwitchWire {
+    async fn new(script: Value) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let up = upstream(script).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let target = up.addr;
+        let auth = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let records = auth.clone();
+        let task = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let records = records.clone();
+                tokio::spawn(async move {
+                    let mut bytes = Vec::new();
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if socket.read_exact(&mut byte).await.is_err() {
+                            return;
+                        }
+                        bytes.push(byte[0]);
+                        assert!(bytes.len() <= 64 * 1024);
+                    }
+                    let head = String::from_utf8(bytes.clone()).unwrap();
+                    let bearer = head
+                        .lines()
+                        .filter_map(|line| line.split_once(':'))
+                        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                        .map(|(_, value)| value.trim().to_owned())
+                        .unwrap_or_default();
+                    records.lock().await.push(bearer);
+                    let mut forward = tokio::net::TcpStream::connect(target).await.unwrap();
+                    forward.write_all(&bytes).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut socket, &mut forward).await;
+                });
+            }
+        });
+        Self { up, addr, auth, task }
+    }
+    fn base_url(&self) -> String {
+        format!("http://{}/v1", self.addr)
+    }
+}
+impl Drop for SwitchWire {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_scope_same_identity_mru_and_target_generation() {
+    for explicit_cap in [None, Some("512")] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        let target = SwitchWire::new(json!({"responses":[auto_reply("selected target")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let config = env.home.path().join("agent/config.yml");
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        settings["enabledModels"] = json!(["auto-fixture/fake-model", "@task"]);
+        settings["modelRoles"]["task"] = json!("switch-fixture/target-model");
+        let settings_before = serde_json::to_vec_pretty(&settings).unwrap();
+        std::fs::write(&config, &settings_before).unwrap();
+        let mut args = vec!["--provider", "auto-fixture"];
+        if let Some(cap) = explicit_cap {
+            args.extend(["--max-tokens", cap]);
+        }
+        let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &args));
+        child.ready();
+        let initial = child.state("initial");
+        child.send(json!({"id":"models","type":"get_available_models"}));
+        let models = child.success("models")["data"]["models"].as_array().unwrap().clone();
+        assert_eq!(models.len(), 2, "{models:?}");
+        assert_eq!(models[0]["id"], "fake-model");
+        assert_eq!(models[1]["id"], "target-model");
+        assert!(models.iter().all(|model| model.get("headers").is_none() && model.get("apiKey").is_none()));
+        for (provider, id) in [("Auto-fixture", "fake-model"), ("auto-fixture", "classifier-fixture")] {
+            child.send(json!({"id":"missing","type":"set_model","provider":provider,"modelId":id}));
+            let denied = child.response("missing");
+            assert_eq!(denied["success"], false);
+            assert_eq!(denied["error"], format!("Model not found: {provider}/{id}"));
+            assert_eq!(child.state("unchanged")["model"], initial["model"]);
+        }
+        for id in ["target", "same"] {
+            child.send(json!({"id":id,"type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+            let response = child.success(id);
+            assert_eq!(response["data"]["id"], "target-model");
+            assert_eq!(response["data"]["maxTokens"], 256);
+        }
+        let selected = child.state("selected");
+        assert_eq!(selected["sessionId"], initial["sessionId"]);
+        assert_eq!(selected["model"]["provider"], "switch-fixture");
+        assert_eq!(selected["thinkingLevel"], "low");
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "model_changed").count(), 1);
+        let changed = child.seen.iter().position(|frame| frame["type"] == "model_changed").unwrap();
+        let thinking = child
+            .seen
+            .iter()
+            .enumerate()
+            .skip(changed)
+            .find(|(_, frame)| frame["type"] == "thinking_level_changed")
+            .unwrap()
+            .0;
+        assert!(changed < thinking, "Native model event precedes reapplied thinking");
+        assert_eq!(std::fs::read(&config).unwrap(), settings_before, "RPC does not persist modelRoles");
+        child.send(json!({"id":"run","type":"prompt","message":"use selected target"}));
+        child.success("run");
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        child.finish(0);
+        let entries = journal(&env.sessions()[0]);
+        let changes: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry["type"] == "model_change" && entry["model"] == "switch-fixture/target-model")
+            .collect();
+        assert_eq!(changes.len(), 2, "same identity still records selection");
+        assert!(changes.iter().all(|entry| entry["role"] == "default"));
+        let db = rusqlite::Connection::open(env.home.path().join("agent/agent.db")).unwrap();
+        let usage: Vec<String> = db
+            .prepare("SELECT model_key FROM model_usage")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(usage, ["switch-fixture/target-model"]);
+        assert!(first.requests.lock().await.is_empty());
+        let requests = target.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["body"]["model"], "target-model");
+        assert_eq!(requests[0]["body"]["reasoning_effort"], "low");
+        assert_eq!(
+            requests[0]["body"]["max_tokens"],
+            explicit_cap.map(|cap| cap.parse::<u64>().unwrap()).unwrap_or(256)
+        );
+        assert_eq!(*target.auth.lock().await, ["Bearer sk-target-fixture-only"]);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_during_active_call_and_host_tool_keeps_original_receipts() {
+    for aborted in [false, true] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[{"events":[text("A visible"),{"sleep_ms":500},
+            tool_call(0,"old-call","held_tool","{}"),finish("tool_calls"),done()]}]}))
+        .await;
+        let target = SwitchWire::new(json!({"responses":[auto_reply("B continuation")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        child.send(json!({"id":"tools","type":"set_host_tools","tools":[{
+            "name":"held_tool","label":"Held tool","description":"controlled original adapter",
+            "parameters":{"type":"object","properties":{}}
+        }]}));
+        child.success("tools");
+        let initial = child.state("initial");
+        child.send(json!({"id":"run","type":"prompt","message":"make one held tool call then continue"}));
+        child.success("run");
+        child.until(|frame| frame["type"] == "message_update" && frame.to_string().contains("A visible"), WAIT);
+        child.send(json!({"id":"switch","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+        child.success("switch");
+        let selected = child.state("selected-live");
+        assert_eq!(selected["isStreaming"], true);
+        assert_eq!(selected["sessionId"], initial["sessionId"]);
+        assert_eq!(selected["model"]["id"], "target-model");
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end"));
+        let call = child.until(|frame| frame["type"] == "host_tool_call", WAIT);
+        assert_eq!(call["toolCallId"], "old-call", "{call}");
+        child.send(json!({"id":"same-held","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+        child.success("same-held");
+        if aborted {
+            child.send(json!({"id":"abort-switched-tool","type":"abort"}));
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+            child.success("abort-switched-tool");
+        } else {
+            child.send(json!({"type":"host_tool_result","id":call["id"],
+                "result":{"content":[{"type":"text","text":"one original receipt"}],"isError":false}}));
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+        }
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
+        assert_eq!(first.requests.lock().await.len(), 1);
+        let requests = target.requests.lock().await;
+        assert_eq!(requests.len(), usize::from(!aborted), "abort must not request the switched provider");
+        if !aborted {
+            assert_eq!(requests[0]["body"]["model"], "target-model");
+            assert_eq!(requests[0]["body"]["reasoning_effort"], "low");
+            assert!(
+                requests[0]["body"]["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|message| message["role"] == "tool" && message["content"] == "one original receipt")
+            );
+            assert_eq!(*target.auth.lock().await, ["Bearer sk-target-fixture-only"]);
+        } else {
+            assert!(target.auth.lock().await.is_empty());
+        }
+        drop(requests);
+        assert_eq!(env.sessions().len(), 1);
+        let entries = journal(&env.sessions()[0]);
+        let assistants: Vec<_> = entries.iter().filter(|entry| entry["message"]["role"] == "assistant").collect();
+        assert_eq!(assistants.len(), 2);
+        assert_eq!(assistants[0]["message"]["provider"], "auto-fixture");
+        assert_eq!(assistants[0]["message"]["model"], "fake-model");
+        assert_eq!(assistants[1]["message"]["provider"], "switch-fixture");
+        assert_eq!(assistants[1]["message"]["model"], "target-model");
+        assert_eq!(assistants[1]["message"]["stopReason"], if aborted { "aborted" } else { "stop" });
+        assert_eq!(entries.iter().filter(|entry| entry["message"]["toolCallId"] == "old-call").count(), 1);
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_start").count(), 1);
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "model_changed").count(), 1);
+        if aborted {
+            // Keep every original zero-dispatch/aborted receipt observation
+            // above, then continue this same Session through its actual Graph
+            // history. A typed synthetic metadata record rejects this request
+            // at Host conversion before any target HTTP call can be emitted.
+            let after_abort = child.state("settled-abort");
+            assert_eq!(after_abort["sessionId"], initial["sessionId"]);
+            assert_eq!(after_abort["isStreaming"], false);
+            let original_host_calls = child.seen.iter().filter(|frame| frame["type"] == "host_tool_call").count();
+            child.send(json!({"id":"after-abort","type":"prompt","message":"continue the same Session after abort"}));
+            child.success("after-abort");
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+            let after = child.state("same-session-successor");
+            assert_eq!(after["sessionId"], initial["sessionId"]);
+            assert_eq!(after["model"]["id"], "target-model");
+            assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_start").count(), 2);
+            assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_end").count(), 2);
+            assert_eq!(
+                child.seen.iter().filter(|frame| frame["type"] == "host_tool_call").count(),
+                original_host_calls,
+                "successor must not replay the original held tool"
+            );
+            assert_eq!(first.requests.lock().await.len(), 1);
+            let successor_requests = target.requests.lock().await;
+            assert_eq!(successor_requests.len(), 1, "one normal target request after the prior zero-dispatch abort");
+            assert_eq!(successor_requests[0]["body"]["model"], "target-model");
+            assert_eq!(successor_requests[0]["body"]["reasoning_effort"], "low");
+            assert!(
+                successor_requests[0]["body"]["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|message| message["role"] == "user"
+                        && message["content"] == "continue the same Session after abort")
+            );
+            assert_eq!(*target.auth.lock().await, ["Bearer sk-target-fixture-only"]);
+            let after_entries = journal(&env.sessions()[0]);
+            let after_assistants: Vec<_> =
+                after_entries.iter().filter(|entry| entry["message"]["role"] == "assistant").collect();
+            assert_eq!(after_assistants.len(), 3);
+            assert_eq!(after_assistants[0]["message"], assistants[0]["message"]);
+            assert_eq!(
+                after_assistants[1]["message"], assistants[1]["message"],
+                "retain the original live-model aborted metadata"
+            );
+            assert_eq!(after_assistants[2]["message"]["provider"], "switch-fixture");
+            assert_eq!(after_assistants[2]["message"]["model"], "target-model");
+            assert_eq!(after_assistants[2]["message"]["stopReason"], "stop");
+            assert!(contains_text(&after_assistants[2]["message"], "B continuation"));
+            assert_eq!(after_entries.iter().filter(|entry| entry["message"]["toolCallId"] == "old-call").count(), 1);
+            assert_eq!(env.sessions().len(), 1);
+        }
+        child.finish(0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_and_cycle_rebind_accepted_auto_input_and_preserve_nonmutating_input() {
+    for (cycle, valid) in [(false, false), (false, true), (true, false), (true, true)] {
+        let env = Env::new();
+        let classifier = if valid {
+            json!({"events":[text("high")], "end":"hang"})
+        } else {
+            json!({"events":[{"sleep_ms":500},text("high"),finish("stop"),done()]})
+        };
+        let first = upstream(json!({"responses":[classifier, auto_reply("original primary")]})).await;
+        let target = upstream(json!({"responses":[auto_reply("new provisional primary")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), true);
+        if cycle {
+            let path = env.home.path().join("agent/config.yml");
+            let mut settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            settings["enabledModels"] = if valid {
+                json!(["auto-fixture/fake-model:low", "switch-fixture/target-model:high"])
+            } else {
+                json!(["auto-fixture/fake-model"])
+            };
+            std::fs::write(path, serde_json::to_vec(&settings).unwrap()).unwrap();
+        }
+        let mut child = RpcChild::spawn(
+            env.selection_command(&first.base_url(), &["--provider", "auto-fixture", "--thinking", "auto"]),
+        );
+        child.ready();
+        child.send(json!({"id":"accepted","type":"prompt","message":"retain this accepted user"}));
+        child.success("accepted");
+        wait_auto_requests(&first, 1).await;
+        let model = if valid { "target-model" } else { "missing-model" };
+        child.send(if cycle {
+            json!({"id":"switch","type":"cycle_model"})
+        } else {
+            json!({"id":"switch","type":"set_model","provider":"switch-fixture","modelId":model})
+        });
+        let response = child.response("switch");
+        assert_eq!(response["success"], cycle || valid);
+        if cycle && !valid {
+            assert!(response["data"].is_null(), "a one-entry cycle preserves pending accepted input");
+        }
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        let state = child.state("after");
+        assert_eq!(state["configuredThinkingLevel"], "auto");
+        assert_eq!(state["model"]["id"], if valid { "target-model" } else { "fake-model" });
+        assert_eq!(state["thinkingLevel"], if valid { "low" } else { "high" });
+        child.finish(0);
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "prompt_result" && frame["agentInvoked"] == false));
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_start").count(), 1);
+        let first_requests = first.requests.lock().await;
+        let target_requests = target.requests.lock().await;
+        assert_eq!(first_requests.len(), if valid { 1 } else { 2 });
+        assert_eq!(target_requests.len(), usize::from(valid));
+        if valid {
+            assert_eq!(target_requests[0]["body"]["reasoning_effort"], "low");
+        }
+        let entries = journal(&env.sessions()[0]);
+        assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 1);
+        assert!(entries.iter().any(|entry| entry["message"].to_string().contains("retain this accepted user")));
+        let usage: Vec<_> = entries.iter().filter(|entry| entry["type"] == "model_usage").collect();
+        assert_eq!(usage.len(), 1, "the initiating classifier retains its actual terminal receipt");
+        if valid {
+            assert_eq!(usage[0]["stopReason"], "aborted");
+            assert!(
+                usage[0]["usage"]["input"].is_null() && usage[0]["usage"]["output"].is_null(),
+                "cancelled before reported usage is unknown, not zero"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_revalidates_old_admission_after_selected_metadata_await() {
+    let env = Env::new();
+    let first = upstream(json!({"responses":[{"events":[
+        tool_call(0,"before-selection","held_tool","{}"),finish("tool_calls"),done()]}]}))
+    .await;
+    let metadata = json!({"data":[{"id":"target-model","state":"loaded",
+        "loaded_context_length":4096,"max_context_length":131072,"type":"llm"}]})
+    .to_string();
+    let initial_metadata = json!({"data":[{"id":"target-model","state":"loaded",
+        "loaded_context_length":131072,"max_context_length":131072,"type":"llm"}]})
+    .to_string();
+    let target = SwitchWire::new(json!({"responses":[
+        {"body":initial_metadata},{"body":initial_metadata},{"body":metadata,"delay_ms":500},auto_reply("new admission continuation")
+    ]})).await;
+    env.switch_models(&first.base_url(), &target.base_url(), false);
+    let agent = env.home.path().join("agent");
+    let path = agent.join("models.yml");
+    let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    models["providers"]["switch-fixture"]["discovery"] = json!({"type":"lm-studio","timeoutMs":2000});
+    models["providers"]["switch-fixture"]["models"][0].as_object_mut().unwrap().remove("contextWindow");
+    std::fs::write(&path, serde_json::to_vec(&models).unwrap()).unwrap();
+    let settings_path = agent.join("config.yml");
+    let mut settings: Value = serde_json::from_slice(&std::fs::read(&settings_path).unwrap()).unwrap();
+    settings["retry"]["usageAwareFallback"] = json!(true);
+    std::fs::write(settings_path, serde_json::to_vec(&settings).unwrap()).unwrap();
+    let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &["--provider", "auto-fixture"]));
+    child.ready();
+    child.send(json!({"id":"catalog","type":"get_available_models"}));
+    child.success("catalog");
+    let baseline = target.requests.lock().await.len();
+    assert_eq!(baseline, 2, "one configured discovery catalog/native pair");
+    child.send(json!({"id":"tools","type":"set_host_tools","tools":[{
+        "name":"held_tool","description":"controlled old admission",
+        "parameters":{"type":"object","properties":{}}
+    }]}));
+    child.success("tools");
+    child.send(json!({"id":"run","type":"prompt","message":"hold one tool then continue the same Run"}));
+    child.success("run");
+    let held = child.until(|frame| frame["type"] == "host_tool_call", WAIT);
+    child.send(json!({"id":"switch","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+    wait_model_selection_probe(&target, baseline + 1).await;
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "response" && frame["id"] == "switch"));
+    child.send(json!({"type":"host_tool_result","id":held["id"],
+        "result":{"content":[{"type":"text","text":"old adapter settled once"}]}}));
+    // The actual tool settles while the serial model-selection handler is
+    // still awaiting native metadata, so its continuation queues old admission.
+    std::thread::sleep(Duration::from_millis(80));
+    let selected = child.success("switch");
+    assert_eq!(selected["data"]["contextWindow"], 131072, "RPC returns the original found model");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let state = child.state("after");
+    assert_eq!(state["model"]["id"], "target-model");
+    child.send(json!({"id":"refreshed","type":"get_available_models"}));
+    let refreshed = child.success("refreshed");
+    assert_eq!(
+        refreshed["data"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["provider"] == "switch-fixture" && model["id"] == "target-model")
+            .unwrap()["contextWindow"],
+        4096
+    );
+    child.finish(0);
+    let requests = target.requests.lock().await;
+    assert_eq!(requests.len(), baseline + 2);
+    assert_eq!(requests[baseline]["request"], "GET /api/v0/models HTTP/1.1");
+    assert_eq!(requests.last().unwrap()["body"]["model"], "target-model");
+    assert!(
+        requests.last().unwrap()["body"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["role"] == "tool" && message["content"] == "old adapter settled once")
+    );
+    assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_start").count(), 1);
+    let entries = journal(&env.sessions()[0]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["toolCallId"] == "before-selection").count(), 1);
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["message"]["role"] == "assistant" && entry["message"]["model"] == "target-model")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_reader_controls_revoke_replacement_and_preserve_serial_input() {
+    for stop in ["abort", "new_session", "eof", "prompt", "set_auto_retry"] {
+        let revokes = matches!(stop, "abort" | "new_session" | "eof");
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        let metadata = json!({"data":[{"id":"target-model","state":"loaded",
+            "loaded_context_length":131072,"max_context_length":131072,"type":"llm"}]})
+        .to_string();
+        let target = upstream(json!({"responses":[{"body":metadata},{"body":metadata},
+            {"body":metadata,"delay_ms":500},auto_reply("queued input uses B")]}))
+        .await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let path = env.home.path().join("agent/models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        models["providers"]["switch-fixture"]["discovery"] = json!({"type":"lm-studio","timeoutMs":2000});
+        std::fs::write(path, serde_json::to_vec(&models).unwrap()).unwrap();
+        let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        child.send(json!({"id":"catalog","type":"get_available_models"}));
+        child.success("catalog");
+        let baseline = target.requests.lock().await.len();
+        child.send(json!({"id":"switch","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+        wait_model_selection_probe(&target, baseline + 1).await;
+        if stop == "eof" {
+            child.stdin.take();
+        } else {
+            let mut command = json!({"id":"stop","type":stop});
+            if stop == "prompt" {
+                command["message"] = json!("use the model selected by the preceding command");
+            }
+            if stop == "set_auto_retry" {
+                command["enabled"] = json!(false);
+            }
+            child.send(command);
+        }
+        let rejected = child.response("switch");
+        assert_eq!(rejected["success"], !revokes, "Reader {stop} selection admission: {rejected}");
+        if stop != "eof" {
+            child.success("stop");
+            if stop == "prompt" {
+                child.until(|frame| frame["type"] == "agent_end", WAIT);
+            }
+            assert_eq!(
+                child.state("after")["model"]["provider"],
+                if revokes { "auto-fixture" } else { "switch-fixture" }
+            );
+        }
+        child.finish(0);
+        assert_eq!(child.seen.iter().any(|frame| frame["type"] == "model_changed"), !revokes);
+        assert!(first.requests.lock().await.is_empty());
+        if stop == "prompt" {
+            let requests = target.requests.lock().await;
+            assert_eq!(requests.len(), baseline + 2);
+            assert_eq!(requests.last().unwrap()["body"]["model"], "target-model");
+        }
+        for path in env.sessions() {
+            assert_eq!(
+                journal(&path)
+                    .iter()
+                    .any(|entry| entry["type"] == "model_change" && entry["model"] == "switch-fixture/target-model"),
+                !revokes,
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_selection_defers_command_auth_and_rejects_failed_journal_publication() {
+    for fail_journal in [false, true] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[auto_reply("materialized original Session")]})).await;
+        let target = SwitchWire::new(json!({"responses":[auto_reply("command account selected")]})).await;
+        env.switch_models(&first.base_url(), &target.base_url(), false);
+        let marker = env.home.path().join("selected-key.count");
+        #[cfg(windows)]
+        let helper = {
+            let path = env.home.path().join("selected-key.cmd");
+            std::fs::write(
+                &path,
+                format!("@echo off\r\n>>\"{}\" echo run\r\necho sk-target-fixture-only\r\n", marker.display()),
+            )
+            .unwrap();
+            format!("!call \"{}\"", path.display())
+        };
+        #[cfg(not(windows))]
+        let helper = format!("!printf 'run\\n' >> '{}'; printf %s sk-target-fixture-only", marker.display());
+        let path = env.home.path().join("agent/models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        models["providers"]["switch-fixture"]["apiKey"] = json!(helper);
+        std::fs::write(path, serde_json::to_vec(&models).unwrap()).unwrap();
+        let mut child = RpcChild::spawn(env.selection_command(&first.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        let startup_calls = std::fs::read_to_string(&marker).unwrap().lines().count();
+        assert_eq!(startup_calls, 1, "Native startup eagerly installs configured provider keys");
+        if fail_journal {
+            child.send(json!({"id":"materialize","type":"prompt","message":"materialize the original Session"}));
+            child.success("materialize");
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+            assert_eq!(first.requests.lock().await.len(), 1);
+            let state = child.state("journal-path");
+            let path = PathBuf::from(state["sessionFile"].as_str().unwrap());
+            assert!(journal(&path).iter().any(|entry| entry["message"]["role"] == "assistant"));
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(path).unwrap();
+        }
+        child.send(json!({"id":"switch","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+        let selected = child.response("switch");
+        assert_eq!(selected["success"], !fail_journal, "{selected}");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap().lines().count(),
+            startup_calls,
+            "explicit selection must only check configured auth presence"
+        );
+        assert!(target.requests.lock().await.is_empty());
+        if fail_journal {
+            child.finish(1);
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "model_changed"));
+        } else {
+            child.send(json!({"id":"run","type":"prompt","message":"resolve key only for this selected call"}));
+            child.success("run");
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+            child.finish(0);
+            assert_eq!(
+                std::fs::read_to_string(&marker).unwrap().lines().count(),
+                startup_calls,
+                "the actual selected request shares Native command-value cache"
+            );
+            assert_eq!(*target.auth.lock().await, ["Bearer sk-target-fixture-only"]);
+            assert_eq!(target.requests.lock().await.len(), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "test-fixture")]
+async fn rpc_model_selection_rejects_explicit_codex_caps_before_adopting_configured_account() {
+    use ara_cli::credential_store::{AuthCredential, SqliteCredentialStore};
+    for extra in [["--max-tokens", "512"], ["--temperature", "0.5"]] {
+        let env = Env::new();
+        let first = upstream(json!({"responses":[]})).await;
+        env.auto_models(&first.base_url(), false);
+        let path = env.home.path().join("agent/models.yml");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        models["providers"]["openai-codex"] = json!({"api":"openai-codex-responses","auth":"oauth",
+            "baseUrl":first.base_url(),"models":[{"id":"codex-target","input":["text"]}]});
+        std::fs::write(path, serde_json::to_vec(&models).unwrap()).unwrap();
+        let store = SqliteCredentialStore::open(env.home.path().join("agent/auth.db")).unwrap();
+        let fields = json!({"access":"synthetic-account-access","refresh":"synthetic-account-refresh",
+            "expires":chrono::Utc::now().timestamp_millis()+3_600_000,
+            "authorizedAt":chrono::Utc::now().timestamp_millis(),"accountId":"synthetic-account"});
+        store
+            .upsert_auth_credential_for_provider(
+                "openai-codex",
+                &AuthCredential::oauth(fields.as_object().unwrap().clone()),
+            )
+            .unwrap();
+        let mut child = RpcChild::spawn(
+            env.selection_command(&first.base_url(), &["--provider", "auto-fixture", extra[0], extra[1]]),
+        );
+        child.ready();
+        let initial = child.state("before");
+        child.send(json!({"id":"switch","type":"set_model","provider":"openai-codex","modelId":"codex-target"}));
+        let rejected = child.response("switch");
+        assert_eq!(rejected["success"], false);
+        assert!(rejected["error"].as_str().unwrap().contains("output caps and sampling"), "{rejected}");
+        assert_eq!(child.state("after")["model"], initial["model"]);
+        child.finish(0);
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "model_changed"));
+        assert!(first.requests.lock().await.is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_native_thinking_cli_initial_and_resume_keep_saved_receipts() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[auto_reply("fixed low"),auto_reply("override high"),auto_reply("low"),auto_reply("auto low")]})).await;
+    env.auto_models(&up.base_url(), false);
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture", "--thinking", "lo"]));
+    child.until(|frame| frame["type"] == "ready", WAIT);
+    assert_eq!(child.state("initial")["thinkingLevel"], "low");
+    child.send(json!({"id":"one","type":"prompt","message":"first fixed User"}));
+    child.success("one");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    let file = env.sessions().pop().unwrap();
+    let before =
+        journal(&file).into_iter().filter(|entry| entry["type"] == "thinking_level_change").collect::<Vec<_>>();
+    assert_eq!(before.len(), 1);
+    let path = file.to_str().unwrap();
+    let mut child = RpcChild::spawn(
+        env.command(&up.base_url(), &["--provider", "auto-fixture", "--resume", path, "--thinking", "hi"]),
+    );
+    child.until(|frame| frame["type"] == "ready", WAIT);
+    let state = child.state("resumed");
+    assert_eq!(state["thinkingLevel"], "high");
+    assert_eq!(state["configuredThinkingLevel"], "high");
+    child.send(json!({"id":"two","type":"prompt","message":"runtime override User"}));
+    child.success("two");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    assert_eq!(
+        journal(&file).into_iter().filter(|entry| entry["type"] == "thinking_level_change").collect::<Vec<_>>(),
+        before
+    );
+    let mut child = RpcChild::spawn(
+        env.command(&up.base_url(), &["--provider", "auto-fixture", "--resume", path, "--thinking", "auto"]),
+    );
+    child.until(|frame| frame["type"] == "ready", WAIT);
+    assert_eq!(child.state("auto-initial")["configuredThinkingLevel"], "auto");
+    child.send(json!({"id":"three","type":"prompt","message":"classified User"}));
+    child.success("three");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0]["body"]["reasoning_effort"], "low");
+    assert_eq!(requests[1]["body"]["reasoning_effort"], "high");
+    assert_eq!(requests[2]["body"]["model"], "classifier-fixture");
+    assert_eq!(requests[3]["body"]["reasoning_effort"], "low");
+}
+
+async fn wait_model_selection_probe(up: &FakeUpstream, count: usize) {
+    let started = Instant::now();
+    tokio::time::timeout(WAIT, async {
+        while up.requests.lock().await.len() < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("selected native metadata probe reached the controlled HTTP route");
+    eprintln!("selected metadata probe observed after {:?}", started.elapsed());
+}
+
+async fn wait_auto_requests(up: &FakeUpstream, count: usize) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while up.requests.lock().await.len() < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("classifier reached the actual controlled HTTP route");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_users_tool_continuation_usage_pin_and_same_file_reload() {
+    let up = upstream(json!({"responses":[
+        auto_reply("low"),
+        {"events":[tool_call(0,"auto-write","write",r#"{"path":"auto.txt","content":"one"}"#),finish("tool_calls"),
+            {"data":{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}},done()]},
+        auto_reply("wrote one"), auto_reply("high"), auto_reply("second complete"),
+        auto_reply("pinned high"), auto_reply("reloaded low"), auto_reply("reloaded high")
+    ]}))
+    .await;
+    let env = Env::new();
+    env.auto_models(&up.base_url(), false);
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+    child.ready();
+    let session = child.state("initial")["sessionId"].clone();
+    child.send(json!({"id":"auto","type":"set_thinking_level","level":"auto"}));
+    child.success("auto");
+    for (id, message, effort) in
+        [("first", "write auto.txt with one", "low"), ("second", "solve a harder problem", "high")]
+    {
+        child.send(json!({"id":id,"type":"prompt","message":message}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        let state = child.state(&format!("{id}-state"));
+        assert_eq!(state["sessionId"], session);
+        assert_eq!(state["thinkingLevel"], effort, "host stderr: {}", child.errors());
+        assert_eq!(state["configuredThinkingLevel"], "auto");
+    }
+    assert_eq!(std::fs::read_to_string(env.work.path().join("auto.txt")).unwrap(), "one");
+    // Even a pin to the currently resolved effort exits Auto.
+    child.send(json!({"id":"pin","type":"set_thinking_level","level":"high"}));
+    child.success("pin");
+    child.send(json!({"id":"third","type":"prompt","message":"keep the explicit high pin"}));
+    child.success("third");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let path = env.sessions().pop().unwrap();
+    child.adopt("same-file", json!({"id":"same-file","type":"switch_session","sessionPath":path}));
+    for effort in ["low", "high"] {
+        let id = format!("reload-{effort}");
+        child.send(json!({"id":format!("{id}-pin"),"type":"set_thinking_level","level":effort}));
+        child.success(&format!("{id}-pin"));
+        child.send(json!({"id":id,"type":"prompt","message":format!("use explicit {effort} after reload")}));
+        child.success(&id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        assert_eq!(child.state(&format!("{id}-state"))["thinkingLevel"], effort);
+    }
+    let messages = child.messages("public-messages");
+    assert_eq!(user_texts(&messages).len(), 5);
+    assert!(!messages.iter().any(|message| message["model"] == "classifier-fixture"));
+    child.send(json!({"id":"stats","type":"get_session_stats"}));
+    let stats = child.success("stats")["data"].clone();
+    assert_eq!(stats["totalMessages"], messages.len());
+    assert_eq!(stats["toolCalls"], 1);
+    assert_eq!(stats["tokens"]["total"], 32, "includes private classifier terminals");
+    child.finish(0);
+    let entries = journal(&path);
+    let usage: Vec<_> = entries.iter().filter(|entry| entry["type"] == "model_usage").collect();
+    assert_eq!(usage.len(), 2);
+    assert!(usage.iter().all(|entry| entry["purpose"] == "auto-thinking" && entry["model"] == "classifier-fixture"));
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 8);
+    for index in [0, 3] {
+        assert_eq!(requests[index]["body"]["model"], "classifier-fixture");
+        assert_eq!(requests[index]["body"]["max_tokens"], 4096);
+        assert!(requests[index]["body"].get("tools").is_none());
+    }
+    for (index, effort) in [(1, "low"), (2, "low"), (4, "high"), (5, "high"), (6, "low"), (7, "high")] {
+        assert_eq!(requests[index]["body"]["model"], "fake-model");
+        assert_eq!(requests[index]["body"]["reasoning_effort"], effort, "actual wire request {index}");
+        assert!(!requests[index]["body"]["messages"].to_string().contains("Classify"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_accepted_prompt_finishes_after_input_eof() {
+    let up = upstream(json!({"responses":[auto_reply("low"),auto_reply("completed after EOF")]})).await;
+    let env = Env::new();
+    env.auto_models(&up.base_url(), true);
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+    child.ready();
+    child.send(json!({"id":"eof-prompt","type":"prompt","message":"finish this already accepted turn"}));
+    child.stdin.take();
+    child.finish(0);
+    assert!(child.seen.iter().any(|frame| frame["type"] == "agent_end"));
+    assert!(
+        child
+            .seen
+            .iter()
+            .any(|frame| frame["type"] == "message_end" && contains_text(&frame["message"], "completed after EOF"))
+    );
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "response" && frame["success"] == false));
+    let entries = journal(&env.sessions().pop().unwrap());
+    assert_eq!(entries.iter().filter(|entry| entry["type"] == "model_usage").count(), 1);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["body"]["reasoning_effort"], "low");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_deadline_falls_back_and_host_remains_responsive() {
+    let mut delayed = auto_reply("low");
+    delayed["delay_ms"] = json!(4500);
+    let up = upstream(json!({"responses":[delayed,auto_reply("fallback high")]})).await;
+    let env = Env::new();
+    env.auto_models(&up.base_url(), true);
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+    child.ready();
+    child.send(json!({"id":"timeout","type":"prompt","message":"classify with a bounded deadline"}));
+    child.success("timeout");
+    wait_auto_requests(&up, 1).await;
+    let start = Instant::now();
+    let state = child.state("during-classification");
+    assert!(start.elapsed() < Duration::from_secs(2), "serial Host stays responsive");
+    assert_eq!(state["isStreaming"], true);
+    assert!(child.messages("pending-history").is_empty(), "initial User waits outside Agent/journal");
+    child.send(json!({"id":"pending-page","type":"get_messages_page","limit":2}));
+    assert_eq!(child.response("pending-page")["code"], "session_busy");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let state = child.state("after-timeout");
+    assert_eq!(state["thinkingLevel"], "high", "Native provisional/default fallback");
+    assert_eq!(state["configuredThinkingLevel"], "auto");
+    child.finish(0);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["body"]["reasoning_effort"], "high");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_explicit_pin_abort_and_session_replacement_supersede_pending_classification() {
+    for action in ["pin", "abort", "new_session"] {
+        let mut delayed = auto_reply("low");
+        delayed["delay_ms"] = json!(5000);
+        let up = upstream(json!({"responses":[delayed,auto_reply("current main only")]})).await;
+        let env = Env::new();
+        env.auto_models(&up.base_url(), false);
+        let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        child.send(json!({"id":"auto","type":"set_thinking_level","level":"auto"}));
+        child.success("auto");
+        let original = child.state("original");
+        child.send(json!({"id":"pending","type":"prompt","message":"pending classification"}));
+        child.success("pending");
+        wait_auto_requests(&up, 1).await;
+        let changed = if action == "pin" {
+            json!({"id":"change","type":"set_thinking_level","level":"low"})
+        } else {
+            json!({"id":"change","type":action})
+        };
+        child.send(changed);
+        child.success("change");
+        if action == "pin" {
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+        } else {
+            assert_eq!(up.requests.lock().await.len(), 1, "abort/replacement vetoes the previous main POST");
+            assert!(child.messages("revoked-history").is_empty(), "revoked input was never journaled");
+            assert_eq!(
+                child
+                    .seen
+                    .iter()
+                    .filter(|frame| frame["type"] == "prompt_result"
+                        && frame["id"] == "pending"
+                        && frame["agentInvoked"] == false)
+                    .count(),
+                1
+            );
+            if action == "new_session" {
+                assert_ne!(child.state("new-owner")["sessionId"], original["sessionId"]);
+            }
+            child.send(json!({"id":"explicit","type":"set_thinking_level","level":"high"}));
+            child.success("explicit");
+            child.send(json!({"id":"fresh","type":"prompt","message":"use the current owner and explicit pin"}));
+            child.success("fresh");
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+        }
+        child.finish(0);
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 2, "{action} launches only the current main call");
+        assert_eq!(requests[1]["body"]["model"], "fake-model");
+        assert_eq!(requests[1]["body"]["reasoning_effort"], if action == "pin" { "low" } else { "high" });
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_native_steering_and_followup_queue_do_not_add_classifiers() {
+    for during_pending in [true, false] {
+        let mut classification = auto_reply("low");
+        if during_pending {
+            classification["delay_ms"] = json!(2500);
+        }
+        let up = upstream(json!({"responses":[
+            classification,
+            {"events":[text("Before Auto queues."),{"sleep_ms":700},finish("stop"),done()]},
+            auto_reply("steered"), auto_reply("followed up")
+        ]}))
+        .await;
+        let env = Env::new();
+        env.auto_models(&up.base_url(), true);
+        let seeded = if during_pending {
+            let mut journal = ara_session::SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+            // Match launch identity so startup does not append a newer model
+            // selection after the expected initiating leaf was captured.
+            journal.append_model_change("auto-fixture/fake-model").unwrap();
+            let owner = journal.append_thinking_level_change(Some("high"), Some("auto")).unwrap();
+            journal.materialize().unwrap();
+            Some((journal.path().to_owned(), owner))
+        } else {
+            None
+        };
+        let mut command = env.command(&up.base_url(), &["--provider", "auto-fixture"]);
+        if let Some((path, _)) = &seeded {
+            command.arg("--resume").arg(path);
+        }
+        let mut child = RpcChild::spawn(command);
+        child.ready();
+        child.send(json!({"id":"initial","type":"prompt","message":"initial real user"}));
+        child.success("initial");
+        let owner = if during_pending {
+            wait_auto_requests(&up, 1).await;
+            assert!(child.messages("held-history").is_empty());
+            let owner = json!(seeded.as_ref().unwrap().1);
+            // The actual rejected commands must leave the accepted initial turn
+            // alive. A metadata append independently advances the current leaf.
+            child.send(json!({"id":"busy","type":"prompt","message":"must be rejected"}));
+            let refusal = child
+                .until(|frame| frame["type"] == "response" && frame["id"] == "busy" && frame["success"] == false, WAIT);
+            assert!(refusal["error"].as_str().unwrap().contains("already running"));
+            child.send(json!({"id":"invalid-branch","type":"branch","entryId":"absent"}));
+            assert_eq!(child.response("invalid-branch")["success"], false);
+            child.send(json!({"id":"policy","type":"set_auto_retry","enabled":false}));
+            child.success("policy");
+            child.send(json!({"id":"name","type":"set_session_name","name":"independent successor"}));
+            child.success("name");
+            Some(owner)
+        } else {
+            child.until(
+                |frame| frame["type"] == "message_update" && contains_text(&frame["message"], "Before Auto queues."),
+                WAIT,
+            );
+            None
+        };
+        for (id, kind, message) in [("steer", "steer", "queued steering"), ("follow", "follow_up", "queued followup")] {
+            if during_pending {
+                child.send(json!({"id":id,"type":"prompt","streamingBehavior":if kind=="steer" {"steer"} else {"followUp"},"message":message}));
+            } else {
+                child.send(json!({"id":id,"type":kind,"message":message}));
+            }
+            child.success(id);
+        }
+        assert_eq!(child.state("queued")["queuedMessageCount"], 2);
+        if during_pending {
+            assert_eq!(up.requests.lock().await.len(), 1, "queues do not overtake the held classifier");
+            assert!(child.messages("queued-history").is_empty());
+        }
+        child.finish(0);
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), if during_pending { 3 } else { 4 });
+        assert_eq!(requests.iter().filter(|request| request["body"]["model"] == "classifier-fixture").count(), 1);
+        // Fixed agent-loop.ts:1071 dequeues initial steering before its first
+        // model call. A steer queued while classification waits joins that
+        // first main request; a steer arriving during main needs another call.
+        let steered = if during_pending { 1 } else { 2 };
+        assert!(requests[steered]["body"]["messages"].to_string().contains("queued steering"));
+        assert!(requests[steered + 1]["body"]["messages"].to_string().contains("queued followup"));
+        let entries = journal(&env.sessions().pop().unwrap());
+        let usage: Vec<_> = entries.iter().filter(|entry| entry["type"] == "model_usage").collect();
+        assert_eq!(usage.len(), 1);
+        if let Some(owner) = owner {
+            assert_eq!(usage[0]["parentId"], owner, "usage retains its original leaf after metadata advances it");
+        }
+        let users: Vec<_> =
+            entries.iter().filter(|entry| entry["type"] == "message" && entry["message"]["role"] == "user").collect();
+        assert_eq!(users.len(), 3, "accepted initial and two queued inputs only");
+        assert!(!users.iter().any(|entry| entry["message"].to_string().contains("must be rejected")));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_classification_precedes_preprompt_compaction_and_user_skill_journal() {
+    use ara_ai::{AssistantBlock, AssistantMessage, Message, UserMessage};
+    use ara_session::SessionJournal;
+    for case in ["user", "skill", "eof-before-handoff", "eof-during-handoff", "abort-during-handoff"] {
+        let skill = case == "skill";
+        let handoff = case.ends_with("handoff");
+        let mut classification = auto_reply("low");
+        classification["delay_ms"] = json!(1500);
+        let mut summary_reply = auto_reply("preserved source summary");
+        if handoff {
+            summary_reply["delay_ms"] = json!(1500);
+        }
+        let up = upstream(json!({"responses":[classification,summary_reply,auto_reply("main complete")]})).await;
+        let env = Env::new();
+        env.auto_models(&up.base_url(), true);
+        let config = env.home.path().join("agent/config.yml");
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        settings["compaction"] = json!({"enabled":true,"methodOrder":[if handoff {"handoff"} else {"soft"}]});
+        std::fs::write(config, serde_json::to_vec(&settings).unwrap()).unwrap();
+        if skill {
+            invocation_skill(&env, ".ara/skills", "proof", "Expanded classifier task marker.");
+        }
+        let mut seed = SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+        for (input, answer, tokens) in
+            [("old user source", "old answer source", 1), ("kept user source", "kept billed source", 100_000)]
+        {
+            seed.append_message(&Message::User(UserMessage::text(input))).unwrap();
+            let mut message = AssistantMessage::empty("openai-completions", "auto-fixture", "fake-model");
+            message.content.push(AssistantBlock::text(answer));
+            message.usage.input = Some(tokens);
+            message.usage.total_tokens = Some(tokens);
+            seed.append_message(&Message::Assistant(message)).unwrap();
+        }
+        let owner = seed.append_thinking_level_change(Some("high"), Some("auto")).unwrap();
+        let path = seed.path().to_owned();
+        drop(seed);
+        let mut child = RpcChild::spawn(env.command(
+            &up.base_url(),
+            &[
+                "--provider",
+                "auto-fixture",
+                "--resume",
+                path.to_str().unwrap(),
+                "--compact-threshold",
+                "50000",
+                "--compact-keep-tokens",
+                "6",
+            ],
+        ));
+        if skill {
+            child.ready_commands(proof_commands());
+        } else {
+            child.ready();
+        }
+        let message = if skill { "/skill:proof pending new input" } else { "pending new input" };
+        child.send(json!({"id":"ordered","type":"prompt","message":message}));
+        child.success("ordered");
+        wait_auto_requests(&up, 1).await;
+        assert_eq!(child.state("held")["isStreaming"], true);
+        assert_eq!(child.messages("before-invocation").len(), 4);
+        assert!(!child.seen.iter().any(|frame| frame["type"] == "auto_compaction_start"));
+        assert_eq!(journal(&path).last().unwrap()["id"], owner, "classification captures the preprompt leaf");
+        if case == "abort-during-handoff" {
+            wait_auto_requests(&up, 2).await;
+            child.send(json!({"id":"stop-maintenance","type":"abort"}));
+            child.success("stop-maintenance");
+            assert_eq!(child.messages("aborted-maintenance").len(), 4);
+            child.finish(0);
+            assert_eq!(up.requests.lock().await.len(), 2, "abort still cancels the accepted maintenance");
+            assert_eq!(
+                child
+                    .seen
+                    .iter()
+                    .filter(|frame| frame["type"] == "prompt_result"
+                        && frame["id"] == "ordered"
+                        && frame["agentInvoked"] == false)
+                    .count(),
+                1
+            );
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end"));
+            assert!(!journal(&path).iter().any(|entry| entry["message"].to_string().contains("pending new input")));
+            continue;
+        } else if case.starts_with("eof") {
+            if case == "eof-during-handoff" {
+                wait_auto_requests(&up, 2).await;
+            }
+            child.stdin.take();
+            child.finish(0);
+            assert!(!child.seen.iter().any(|frame| frame["type"] == "prompt_result" || frame["success"] == false));
+        } else {
+            child.until(|frame| frame["type"] == "agent_end", WAIT);
+            child.state("settled");
+            child.finish(0);
+        }
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 3, "classifier then summary then main: {}", child.errors());
+        assert_eq!(requests[0]["body"]["model"], "classifier-fixture");
+        if skill {
+            assert!(requests[0]["body"]["messages"].to_string().contains("Expanded classifier task marker."));
+        }
+        assert_eq!(requests[1]["body"]["model"], "fake-model");
+        // Fixed custom Chat compatibility may omit an empty tools array.
+        // The summary has no tools; the main request carries the Host tools.
+        if handoff {
+            assert!(
+                !requests[1]["body"]["tools"].as_array().unwrap().is_empty(),
+                "native handoff keeps live context/tools"
+            );
+        } else {
+            assert!(requests[1]["body"].get("tools").is_none_or(|tools| tools == &json!([])));
+        }
+        assert!(!requests[2]["body"]["tools"].as_array().unwrap().is_empty());
+        assert!(!requests[1]["body"]["messages"].to_string().contains("pending new input"));
+        assert!(requests[2]["body"]["messages"].to_string().contains("pending new input"));
+        assert_eq!(requests[2]["body"]["reasoning_effort"], "low");
+        let entries = journal(&path);
+        let usage = entries.iter().position(|entry| entry["type"] == "model_usage").unwrap();
+        assert_eq!(entries[usage]["parentId"], owner);
+        let summary = entries.iter().position(|entry| entry["type"] == "compaction").unwrap();
+        let input = entries
+            .iter()
+            .position(|entry| {
+                (entry["type"] == "message" || entry["type"] == "custom_message")
+                    && entry["message"].to_string().contains("pending new input")
+                    || entry["customType"] == "skill-prompt"
+                        && entry["content"].to_string().contains("pending new input")
+            })
+            .unwrap();
+        assert!(usage < summary && summary < input, "native usage/maintenance/input publication order");
+        assert_eq!(entries.iter().filter(|entry| entry["type"] == "compaction").count(), 1);
+        assert_eq!(child.seen.iter().filter(|frame| frame["type"] == "agent_end").count(), 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_role_selection_reads_native_mru_without_recording_ordinary_calls() {
+    let up = upstream(json!({"responses":[auto_reply("low"),auto_reply("selected MRU classifier")]})).await;
+    let env = Env::new();
+    env.auto_models(&up.base_url(), true);
+    let agent = env.home.path().join("agent");
+    let mut settings: Value = serde_json::from_slice(&std::fs::read(agent.join("config.yml")).unwrap()).unwrap();
+    settings["modelRoles"]["tiny"] = json!(["auto-fixture/classifier-*"]);
+    std::fs::write(agent.join("config.yml"), serde_json::to_vec(&settings).unwrap()).unwrap();
+    let mut models: Value = serde_json::from_slice(&std::fs::read(agent.join("models.yml")).unwrap()).unwrap();
+    let mut alternate = models["providers"]["auto-fixture"]["models"][1].clone();
+    alternate["id"] = json!("classifier-alternate");
+    models["providers"]["auto-fixture"]["models"].as_array_mut().unwrap().push(alternate);
+    std::fs::write(agent.join("models.yml"), serde_json::to_vec(&models).unwrap()).unwrap();
+    let db_path = agent.join("agent.db");
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute_batch(
+        "CREATE TABLE model_usage(model_key TEXT PRIMARY KEY,last_used_at INTEGER NOT NULL);
+        INSERT INTO model_usage VALUES('auto-fixture/classifier-fixture',1),('auto-fixture/classifier-alternate',2);",
+    )
+    .unwrap();
+    drop(db);
+    let before = std::fs::read(&db_path).unwrap();
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+    child.ready();
+    child.send(json!({"id":"mru","type":"prompt","message":"choose the last explicitly selected classifier"}));
+    child.success("mru");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.finish(0);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["body"]["model"], "classifier-alternate");
+    assert_eq!(requests[1]["body"]["model"], "fake-model");
+    assert_eq!(std::fs::read(db_path).unwrap(), before, "startup and ordinary calls do not write MRU");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_auto_keyless_classifier_and_missing_nonkeyless_credentials() {
+    for keyless in [true, false] {
+        let responses = if keyless {
+            vec![auto_reply("low"), auto_reply("keyless main complete")]
+        } else {
+            vec![auto_reply("missing classifier uses provisional high")]
+        };
+        let up = upstream(json!({"responses":responses})).await;
+        let env = Env::new();
+        env.auto_models(&up.base_url(), true);
+        let agent = env.home.path().join("agent");
+        let mut models: Value = serde_json::from_slice(&std::fs::read(agent.join("models.yml")).unwrap()).unwrap();
+        let classifier = models["providers"]["auto-fixture"]["models"].as_array_mut().unwrap().pop().unwrap();
+        models["providers"]["classifier-owner"] = json!({"api":"openai-completions","baseUrl":up.base_url(),
+            "auth":if keyless {"none"} else {"oauth"},"models":[classifier]});
+        std::fs::write(agent.join("models.yml"), serde_json::to_vec(&models).unwrap()).unwrap();
+        let mut settings: Value = serde_json::from_slice(&std::fs::read(agent.join("config.yml")).unwrap()).unwrap();
+        settings["modelRoles"]["tiny"] = json!(["classifier-owner/classifier-fixture"]);
+        std::fs::write(agent.join("config.yml"), serde_json::to_vec(&settings).unwrap()).unwrap();
+        let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--provider", "auto-fixture"]));
+        child.ready();
+        child.send(json!({"id":"keyless","type":"prompt","message":"use only the classifier's authored auth"}));
+        child.success("keyless");
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        assert_eq!(child.state("result")["thinkingLevel"], if keyless { "low" } else { "high" }, "{}", child.errors());
+        child.finish(0);
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), if keyless { 2 } else { 1 });
+        if keyless {
+            assert_eq!(requests[0]["body"]["model"], "classifier-fixture");
+            assert!(requests[0]["headers"].get("authorization").is_none());
+        }
+        assert_eq!(requests.last().unwrap()["body"]["model"], "fake-model");
+        assert!(requests.last().unwrap()["headers"].get("authorization").is_some());
+    }
+}
+
+// Append to crates/ara-cli/tests/rpc_host.rs; uses its existing process fixtures.
+// One child covers repeated model changes, retained snapshots, MCP/Host adapters,
+// disabled/order preservation, and the existing RPC fresh-Session store boundary.
+
+fn model_tools_definition<'a>(state: &'a Value, name: &str) -> &'a Value {
+    state["dumpTools"].as_array().unwrap().iter().find(|tool| tool["name"] == name).unwrap()
+}
+
+fn assert_model_tools_snapshot(state: &Value, replace: bool) {
+    let edit = model_tools_definition(state, "edit");
+    let properties = edit["parameters"]["properties"].as_object().unwrap();
+    assert_eq!(properties.contains_key("old_string"), replace, "{edit}");
+    assert_eq!(properties.contains_key("input"), !replace, "{edit}");
+    assert_eq!(
+        model_tools_definition(state, "read")["description"].as_str().unwrap().contains("snapshot header"),
+        !replace
+    );
+    let names: Vec<_> =
+        state["dumpTools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["read", "write", "edit", "grep", "mcp__fixture__echo", "held_tool"]);
+}
+
+fn model_tools_prompt(child: &mut RpcChild, id: &str, held_id: Option<&str>) {
+    child.send(json!({"id":id,"type":"prompt","message":id}));
+    child.success(id);
+    let mut held = 0;
+    loop {
+        let frame = child.until(|frame| frame["type"] == "host_tool_call" || frame["type"] == "agent_end", WAIT);
+        if frame["type"] == "agent_end" {
+            break;
+        }
+        assert_eq!(frame["toolCallId"].as_str(), held_id, "{frame}");
+        held += 1;
+        child.send(json!({"type":"host_tool_result","id":frame["id"],
+            "result":{"content":[{"type":"text","text":"retained Host adapter"}],"isError":false}}));
+    }
+    assert_eq!(held, usize::from(held_id.is_some()));
+}
+
+fn model_tools_receipt<'a>(messages: &'a [Value], id: &str) -> &'a Value {
+    messages.iter().find(|message| message["toolCallId"] == id).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_model_tools_repeat_switch_retains_store_and_external_adapters_then_fresh_rpc_store() {
+    let env = Env::new();
+    let work = env.work.path();
+    std::fs::create_dir_all(work.join("src")).unwrap();
+    let source = "def add(a, b):\n    return a - b  # BUG\n";
+    std::fs::write(work.join("src/math.py"), source).unwrap();
+    std::fs::write(work.join("format.txt"), "plain marker\n").unwrap();
+    let anchored = json!({"input":"[math.py#450E]\nPUT 2.=2:\n+    return a + b\n"}).to_string();
+    let first = upstream(json!({"responses":[
+        {"events":[tool_call(0,"before-switch-read","read","{\"path\":\"src/math.py\"}"),finish("tool_calls"),done()]},
+        auto_reply("snapshot recorded"),
+        {"events":[tool_call(0,"retained-snapshot-edit","edit",&anchored),finish("tool_calls"),done()]},
+        auto_reply("old snapshot reused"),
+        {"events":[tool_call(0,"fresh-snapshot-edit","edit",&anchored),finish("tool_calls"),done()]},
+        auto_reply("fresh Session failure inspected")
+    ]}))
+    .await;
+    let marker = env.home.path().join("retained-mcp-marker.txt");
+    let target = upstream(json!({"responses":[
+        {"events":[tool_call(0,"target-read-one","read","{\"path\":\"format.txt\"}"),finish("tool_calls"),done()]},
+        auto_reply("plain read one"),
+        {"events":[tool_call(0,"target-read-two","read","{\"path\":\"format.txt\"}"),finish("tool_calls"),done()]},
+        {"events":[tool_call(0,"retained-mcp-call","mcp__fixture__echo",&json!({"text":"after repeated switch","marker":marker}).to_string()),finish("tool_calls"),done()]},
+        {"events":[tool_call(0,"retained-host-call","held_tool","{}"),finish("tool_calls"),done()]},
+        auto_reply("both external adapters retained")
+    ]})).await;
+    env.switch_models(&first.base_url(), &target.base_url(), false);
+    let settings_path = env.home.path().join("agent/config.yml");
+    let mut settings: Value = serde_json::from_slice(&std::fs::read(&settings_path).unwrap()).unwrap();
+    settings["edit"] = json!({"mode":"hashline","modelVariants":{"switch-fixture/target-model":"replace"}});
+    settings["enabledModels"] = json!(["auto-fixture/fake-model", "switch-fixture/target-model"]);
+    std::fs::write(&settings_path, serde_json::to_vec(&settings).unwrap()).unwrap();
+    let mcp_record = env.home.path().join("mcp-model-tools-record.json");
+    let mcp_config = env.home.path().join("mcp-model-tools.json");
+    std::fs::write(
+        &mcp_config,
+        json!({"name":"fixture","command":env!("CARGO_BIN_EXE_ara-mcp-fixture"),
+        "args":["--record",mcp_record]})
+        .to_string(),
+    )
+    .unwrap();
+    let mut command = env.selection_command(
+        &first.base_url(),
+        &[
+            "--provider",
+            "auto-fixture",
+            "--tools",
+            "read,write,edit,grep",
+            "--mcp-config",
+            mcp_config.to_str().unwrap(),
+            "--mcp-allow",
+            "fixture:echo",
+        ],
+    );
+    command.env_remove("ARA_EDIT_VARIANT").env_remove("ARA_STRICT_EDIT_MODE");
+    let mut child = RpcChild::spawn(command);
+    child.ready();
+    child.send(json!({"id":"held-definition","type":"set_host_tools","tools":[{
+        "name":"held_tool","label":"Held tool","description":"retained Host adapter",
+        "parameters":{"type":"object","properties":{}}
+    }]}));
+    child.success("held-definition");
+    let original = child.state("original-tools");
+    assert_model_tools_snapshot(&original, false);
+    let initial_mcp: Value = serde_json::from_slice(&std::fs::read(&mcp_record).unwrap()).unwrap();
+    model_tools_prompt(&mut child, "record-snapshot", None);
+    child.send(json!({"id":"explicit-target","type":"set_model","provider":"switch-fixture","modelId":"target-model"}));
+    child.success("explicit-target");
+    assert_model_tools_snapshot(&child.state("replace-one-tools"), true);
+    model_tools_prompt(&mut child, "plain-read-one", None);
+    // Observe the first read before Native supersede pruning replaces it after
+    // a later read of the same path. Keep the actual display/content gate.
+    let first_plain_messages = child.messages("first-plain-read-messages");
+    let first_plain = model_tools_receipt(&first_plain_messages, "target-read-one");
+    assert_eq!(first_plain["isError"], false);
+    assert!(contains_text(first_plain, "plain marker"), "{first_plain}");
+    assert!(!first_plain["content"].to_string().contains("[format.txt#"), "{first_plain}");
+    child.send(json!({"id":"cycle-original","type":"cycle_model"}));
+    assert_eq!(child.success("cycle-original")["data"]["model"]["id"], "fake-model");
+    assert_model_tools_snapshot(&child.state("hashline-two-tools"), false);
+    model_tools_prompt(&mut child, "reuse-old-snapshot", None);
+    let messages = child.messages("retained-snapshot-messages");
+    assert_eq!(model_tools_receipt(&messages, "retained-snapshot-edit")["isError"], false);
+    assert_eq!(std::fs::read_to_string(work.join("src/math.py")).unwrap(), "def add(a, b):\n    return a + b\n");
+    child.send(json!({"id":"cycle-target-again","type":"cycle_model"}));
+    assert_eq!(child.success("cycle-target-again")["data"]["model"]["id"], "target-model");
+    let repeated = child.state("replace-two-tools");
+    assert_eq!(repeated["sessionId"], original["sessionId"]);
+    assert_eq!(repeated["sessionFile"], original["sessionFile"]);
+    assert_model_tools_snapshot(&repeated, true);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(&mcp_record).unwrap()).unwrap()["pid"],
+        initial_mcp["pid"],
+        "model changes keep the same MCP child"
+    );
+    model_tools_prompt(&mut child, "plain-read-and-adapters", Some("retained-host-call"));
+    let messages = child.messages("plain-read-messages");
+    {
+        let id = "target-read-two";
+        let receipt = model_tools_receipt(&messages, id);
+        assert_eq!(receipt["isError"], false);
+        assert!(contains_text(receipt, "plain marker"), "{receipt}");
+        assert!(!receipt["content"].to_string().contains("[format.txt#"), "{receipt}");
+    }
+    let superseded = model_tools_receipt(&messages, "target-read-one");
+    assert_eq!(superseded["isError"], false);
+    assert!(contains_text(superseded, "[Superseded by a newer read of this file]"), "{superseded}");
+    assert_eq!(model_tools_receipt(&messages, "retained-mcp-call")["isError"], false);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "dispatched");
+    child.send(json!({"id":"hashline-before-new","type":"set_model","provider":"auto-fixture","modelId":"fake-model"}));
+    child.success("hashline-before-new");
+    std::fs::write(work.join("src/math.py"), source).unwrap();
+    // Existing ARA RPC reset creates a new store. The bare nested-file recovery
+    // cannot succeed from a previous Session's snapshot after this boundary.
+    child.adopt("fresh-store", json!({"id":"fresh-store","type":"new_session"}));
+    let fresh = child.state("fresh-store-tools");
+    assert_ne!(fresh["sessionId"], original["sessionId"]);
+    assert_model_tools_snapshot(&fresh, false);
+    model_tools_prompt(&mut child, "reject-old-snapshot", None);
+    let messages = child.messages("fresh-snapshot-messages");
+    assert_eq!(model_tools_receipt(&messages, "fresh-snapshot-edit")["isError"], true);
+    assert_eq!(std::fs::read_to_string(work.join("src/math.py")).unwrap(), source);
+    child.finish(0);
+    let first_requests = first.requests.lock().await;
+    let target_requests = target.requests.lock().await;
+    assert_eq!(first_requests.len(), 6);
+    assert_eq!(target_requests.len(), 6);
+    for (request, replace) in [
+        (&first_requests[0], false),
+        (&target_requests[0], true),
+        (&first_requests[2], false),
+        (&target_requests[2], true),
+    ] {
+        let edit = request["body"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "edit")
+            .unwrap();
+        assert_eq!(edit["function"]["parameters"]["properties"].get("old_string").is_some(), replace, "{edit}");
+    }
+}
+
+/// Extend the original production Responses/Native journal gate with real
+/// streamed Edit effects. The original reader deadlines and assertions remain.
+async fn rpc_native_edit_preview_guard_and_disabled_settings_group() {
+    let env = Env::new();
+    let agent_dir = env.home.path().join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(agent_dir.join("config.yml"), "edit:\n  streamingAbort: true\n  fuzzyMatch: false\n").unwrap();
+    let artifact = env.work.path().join("stream.txt");
+    let generated_path = env.work.path().join("generated.ts");
+    let generated = "// Code generated by sqlc. DO NOT EDIT.\nexport const value = 1;\n";
+    std::fs::write(&artifact, "before\n").unwrap();
+    std::fs::write(&generated_path, generated).unwrap();
+    let streamed = json!({"path":"stream.txt","old_string":"before","new_string":"after"}).to_string();
+    let provider_final =
+        json!({"path":"stream.txt","old_string":"before","new_string":"provider-final-must-not-replace-stream"})
+            .to_string();
+    let invalid =
+        json!({"path":"stream.txt","old_string":"completely absent target","new_string":"must not write"}).to_string();
+    let edit_response = |call_id: &str, delta: &str, final_args: &str| {
+        json!({"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":format!("fc_{call_id}"),"call_id":call_id,"name":"edit"}}},
+            {"data":{"type":"response.function_call_arguments.delta","output_index":0,"delta":delta}},
+            {"sleep_ms":1000},
+            {"data":{"type":"response.function_call_arguments.done","output_index":0,"arguments":final_args}},
+            {"sleep_ms":1000},
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":format!("fc_{call_id}"),"call_id":call_id,"name":"edit","arguments":final_args}}},
+            {"sleep_ms":1000},
+            {"data":{"type":"response.completed","response":{"id":format!("resp_{call_id}"),"status":"completed"}}}
+        ]})
+    };
+    let answer = |id: &str, text: &str| {
+        json!({"events":[
+            {"data":{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":id,"content":[{"type":"output_text","text":text}]}}},
+            {"data":{"type":"response.completed","response":{"id":format!("resp_{id}"),"status":"completed"}}}
+        ]})
+    };
+    let up = upstream(json!({"responses":[
+        edit_response("native-preview", &streamed, &provider_final),
+        answer("edited", "Streamed session applied."),
+        edit_response("generated-preview", "{\"path\":\"generated.ts\",", "{}"),
+        answer("after-generated", "Original Session continues after generated guard."),
+        edit_response("invalid-final-preview", &invalid, &invalid),
+        answer("after-invalid", "Original Session continues after final preview guard.")
+    ]}))
+    .await;
+    let mut command =
+        env.command(&up.base_url(), &["--api", "openai-responses", "--tools", "edit", "--edit-mode", "replace"]);
+    command.env("ARA_EDIT_FUZZY", "false").env_remove("ARA_EDIT_FUZZY_THRESHOLD");
+    let mut child = RpcChild::spawn(command);
+    child.ready();
+    let initial = child.state("preview-session");
+    child.send(
+        json!({"id":"streamed-edit","type":"prompt","message":"edit through the original Native argument stream"}),
+    );
+    child.success("streamed-edit");
+    let preview = child.until(
+        |frame| {
+            frame["type"] == "tool_stream_update"
+                && frame["toolCallId"] == "native-preview|fc_native-preview"
+                && frame["update"]["streaming"] == true
+        },
+        WAIT,
+    );
+    assert!(
+        preview["update"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["diff"].as_str().is_some_and(|diff| diff.contains("after"))),
+        "{preview}"
+    );
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end" || frame["type"] == "tool_execution_start"));
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "before\n", "preview must not write");
+    let active = child.state("preview-still-active");
+    assert_eq!(active["isStreaming"], true);
+    assert_eq!(active["sessionId"], initial["sessionId"]);
+    let active_messages = child.messages("preview-no-receipt");
+    assert!(!active_messages.iter().any(|message| message["role"] == "toolResult"));
+    let final_preview = child.until(
+        |frame| {
+            frame["type"] == "tool_stream_update"
+                && frame["toolCallId"] == "native-preview|fc_native-preview"
+                && frame["update"]["streaming"] == false
+        },
+        WAIT,
+    );
+    assert!(
+        final_preview["update"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["diff"].as_str().is_some_and(|diff| diff.contains("after")))
+    );
+    assert!(
+        !final_preview["update"]["files"].as_array().unwrap().iter().any(|file| file["diff"]
+            .as_str()
+            .is_some_and(|diff| diff.contains("provider-final-must-not-replace-stream")))
+    );
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "before\n");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "after\n", "execute must reuse the preview Session buffer");
+    let messages = child.messages("preview-one-receipt");
+    assert_eq!(messages.iter().filter(|message| message["role"] == "toolResult").count(), 1);
+    assert_eq!(
+        messages
+            .iter()
+            .find(|message| message["toolCallId"] == "native-preview|fc_native-preview"
+                && message["role"] == "toolResult")
+            .unwrap()["isError"],
+        false
+    );
+
+    for (id, followup, expected_abort) in [
+        ("generated-preview", "after-generated", "auto-generated file"),
+        ("invalid-final-preview", "after-invalid", "stream.txt"),
+    ] {
+        let start = child.seen.len();
+        child.send(json!({"id":id,"type":"prompt","message":"controlled rejected streamed edit"}));
+        child.success(id);
+        let ending = child.until(|frame| frame["type"] == "agent_end", WAIT);
+        // Fixed OMP emits start/end for a synthetic aborted result even
+        // though the real tool was never entered. Keep its pairing in history.
+        let rejected: Vec<_> =
+            child.seen[start..].iter().filter(|frame| frame["type"] == "tool_execution_end").collect();
+        if id == "generated-preview" {
+            // Fixed retainCompletedToolCalls removes the delta-only call.
+            assert!(rejected.is_empty(), "{:?}", &child.seen[start..]);
+            assert!(!child.seen[start..].iter().any(|frame| frame["assistantMessageEvent"]["type"] == "toolcall_end"));
+            let assistant = ending["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "assistant")
+                .unwrap();
+            assert_eq!(assistant["stopReason"], "aborted");
+            assert!(!assistant["content"].as_array().unwrap().iter().any(|block| block["type"] == "toolCall"));
+        } else {
+            assert_eq!(rejected.len(), 1, "{id}: {:?}", &child.seen[start..]);
+            assert_eq!(rejected[0]["toolCallId"], format!("{id}|fc_{id}"));
+            assert_eq!(rejected[0]["isError"], true);
+            assert_eq!(rejected[0]["result"]["details"]["__synthetic"], true);
+            assert_eq!(rejected[0]["result"]["details"]["executed"], false);
+        }
+        assert_eq!(std::fs::read_to_string(&artifact).unwrap(), "after\n");
+        assert_eq!(std::fs::read_to_string(&generated_path).unwrap(), generated);
+        assert!(child.errors().contains(expected_abort), "{}", child.errors());
+        if id == "invalid-final-preview" {
+            assert!(child.seen[start..].iter().any(|frame| frame["type"] == "tool_stream_update"
+                && frame["toolCallId"] == format!("{id}|fc_{id}")
+                && frame["update"]["streaming"] == false
+                && frame["update"]["files"].as_array().is_some_and(|files| {
+                    files.iter().any(|file| file["error"].as_str().is_some_and(|error| !error.is_empty()))
+                })));
+        }
+        let stopped = child.state(&format!("{id}-state"));
+        assert_eq!(stopped["isStreaming"], false);
+        assert_eq!(stopped["sessionId"], initial["sessionId"]);
+        child
+            .send(json!({"id":followup,"type":"prompt","message":"continue the original Session after cancelled Run"}));
+        child.success(followup);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+        assert_eq!(child.state(&format!("{followup}-state"))["sessionId"], initial["sessionId"]);
+    }
+    child.finish(0);
+    let entries = journal(&env.sessions()[0]);
+    let tool_results: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry["message"]["role"] == "toolResult")
+        .map(|entry| &entry["message"])
+        .collect();
+    assert_eq!(tool_results.len(), 2, "one real result plus one completed-call aborted placeholder");
+    assert_eq!(tool_results.iter().filter(|result| result["isError"] == false).count(), 1);
+    assert!(!tool_results.iter().any(|result| result["toolCallId"] == "generated-preview|fc_generated-preview"));
+    for id in ["invalid-final-preview"] {
+        let result = tool_results.iter().find(|result| result["toolCallId"] == format!("{id}|fc_{id}")).unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["details"]["__synthetic"], true);
+        assert_eq!(result["details"]["executed"], false);
+    }
+    assert!(!entries.iter().any(|entry| entry.to_string().contains("tool_stream_update")));
+    assert_eq!(up.served(), 6);
+
+    // A disabled Edit constructor must not consume its malformed settings or
+    // fuzzy environment. This exercises the real startup branch from PRE v2.
+    let disabled = Env::new();
+    let dir = disabled.home.path().join("agent");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.yml"), "edit:\n  fuzzyMatch: null\n  fuzzyThreshold: invalid\n  enforceSeenLines: invalid\n  blockAutoGenerated: invalid\n").unwrap();
+    let unused = upstream(json!({"responses":[]})).await;
+    let mut command = disabled.command(&unused.base_url(), &["--tools", "read"]);
+    command.env("ARA_EDIT_FUZZY", "invalid").env("ARA_EDIT_FUZZY_THRESHOLD", "invalid");
+    let mut child = RpcChild::spawn(command);
+    child.ready();
+    child.state("edit-disabled");
+    child.finish(0);
+    assert_eq!(unused.served(), 0);
+}
+
+#[path = "support/ast_edit_rpc.rs"]
+mod ast_edit_rpc;
+
+#[path = "support/edit_session_upgrade.rs"]
+mod edit_session_upgrade;

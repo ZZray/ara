@@ -34,6 +34,7 @@ struct Pending {
 
 #[derive(Default)]
 struct State {
+    epoch:u64,
     // Vec preserves the insertion position of a normalized duplicate, as Map
     // does in fixed OMP. Replacing its value does not move the scheme.
     definitions: Vec<SchemeDefinition>,
@@ -97,6 +98,7 @@ impl UriBridge {
         for name in &names {
             state.removed.remove(name);
         }
+        state.epoch=state.epoch.checked_add(1).expect("URI registration epoch exhausted");
         state.definitions = definitions;
         // Pending requests retain their original operation/URL. Replacing a
         // scheme does not cancel them; read defaults use the current definition.
@@ -123,6 +125,7 @@ impl UriBridge {
     fn clear(&self, message: &str) {
         let pending = {
             let mut state = self.state.lock().unwrap();
+            state.epoch=state.epoch.checked_add(1).expect("URI registration epoch exhausted");
             let definitions = std::mem::take(&mut state.definitions);
             state.removed.extend(definitions.into_iter().map(|definition| definition.scheme));
             std::mem::take(&mut state.pending)
@@ -137,6 +140,7 @@ impl UriBridge {
         let (pending, message) = {
             let mut state = self.state.lock().unwrap();
             let message = state.connection_closed.get_or_insert_with(|| message.into()).clone();
+            state.epoch=state.epoch.checked_add(1).expect("URI registration epoch exhausted");
             let definitions = std::mem::take(&mut state.definitions);
             state.removed.extend(definitions.into_iter().map(|definition| definition.scheme));
             (std::mem::take(&mut state.pending), message)
@@ -154,7 +158,7 @@ impl UriBridge {
     /// Ordinary read/write tools check the route before entering these methods.
     pub async fn request_read(&self, url: &str, cancel: CancellationToken) -> Result<UriResource, ToolError> {
         let (scheme, href) = canonical_internal_url(url)?;
-        let result = self.dispatch("read", &href, None, cancel).await?;
+        let result = self.dispatch("read", &href, None, cancel,None,None).await?;
         if result.get("isError").is_some_and(wire_truthy) {
             return Err(ToolError(result_error(&result, "read", &href)));
         }
@@ -191,7 +195,7 @@ impl UriBridge {
 
     pub async fn request_write(&self, url: &str, content: &str, cancel: CancellationToken) -> Result<(), ToolError> {
         let (_, href) = canonical_internal_url(url)?;
-        let result = self.dispatch("write", &href, Some(content), cancel).await?;
+        let result = self.dispatch("write", &href, Some(content), cancel,None,None).await?;
         if result.get("isError").is_some_and(wire_truthy) {
             Err(ToolError(result_error(&result, "write", &href)))
         } else {
@@ -206,6 +210,8 @@ impl UriBridge {
         url: &str,
         content: Option<&str>,
         cancel: CancellationToken,
+        selection:Option<&ara_tools::ContentUriWriteSelection>,
+        dispatched_receipt:Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<WireValue, ToolError> {
         let aborted = format!("Host URI {operation} for {url} was aborted");
         if cancel.is_cancelled() {
@@ -221,18 +227,22 @@ impl UriBridge {
             if cancel.is_cancelled() {
                 return Err(ToolError(format!("{aborted} before dispatch; not executed")));
             }
+            if let Some(selection)=selection {
+                if self.selection_locked(&state,url)!=*selection{return Err(ToolError("URI registration changed before request admission; not dispatched".into()));}
+            }
             state.pending.insert(id.clone(), Pending { reply, dispatched: false });
         }
         let _guard = RequestGuard { bridge: self, id: id.clone() };
         let dispatch = {
             let mut state = self.state.lock().unwrap();
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || selection.is_some_and(|selection|self.selection_locked(&state,url)!=*selection) {
                 if let Some(pending) = state.pending.remove(&id) {
                     let _ = pending.reply.send(Err(Failure { message: aborted.clone(), dispatched: false }));
                 }
                 false
             } else if let Some(pending) = state.pending.get_mut(&id) {
                 pending.dispatched = true;
+                if let Some(receipt)=dispatched_receipt{receipt.store(true,std::sync::atomic::Ordering::Release);}
                 true
             } else {
                 false
@@ -275,6 +285,13 @@ impl UriBridge {
         }
     }
 
+    fn selection_locked(&self,state:&State,url:&str)->ara_tools::ContentUriWriteSelection {
+        let scheme=extract_scheme(url);
+        let route=if let Some(definition)=state.definitions.iter().find(|definition|Some(definition.scheme.as_str())==scheme.as_deref()) {
+            ContentUriRoute::Registered{writable:definition.writable}
+        }else if scheme.as_ref().is_some_and(|scheme|state.removed.contains(scheme)){ContentUriRoute::Removed}else{ContentUriRoute::Unregistered};
+        ara_tools::ContentUriWriteSelection{owner:self as *const Self as usize,epoch:state.epoch,route,policy:ara_tools::ContentUriWritePolicy::default()}
+    }
     fn emit_cancel(&self, id: &WireString) {
         (self.output)(WireValue::object(vec![
             ("type", WireValue::String("host_uri_cancel".into())),
@@ -300,6 +317,20 @@ impl Drop for RequestGuard<'_> {
 
 #[async_trait]
 impl ContentUriPort for UriBridge {
+    fn write_selection(&self,url:&str)->ara_tools::ContentUriWriteSelection {self.selection_locked(&self.state.lock().unwrap(),url)}
+    async fn write_result_selected(&self,url:&str,content:&str,selection:&ara_tools::ContentUriWriteSelection,cancel:CancellationToken)->Result<Option<ara_agent::ToolOutput>,ara_tools::ContentUriWriteDispatchError> {
+        let(_,href)=canonical_internal_url(url)?;
+        let dispatched=std::sync::atomic::AtomicBool::new(false);
+        let result=self.dispatch("write",&href,Some(content),cancel,Some(selection),Some(&dispatched)).await.map_err(|error|if dispatched.load(std::sync::atomic::Ordering::Acquire){ara_tools::ContentUriWriteDispatchError::Effect(error)}else{ara_tools::ContentUriWriteDispatchError::NotDispatched(error)})?;
+        if result.get("isError").is_some_and(wire_truthy){Err(ara_tools::ContentUriWriteDispatchError::Effect(ToolError(result_error(&result,"write",&href))))}else{Ok(None)}
+    }
+    fn edit_specs(&self)->Vec<ara_tools::ContentUriEditSpec> {
+        let state=self.state.lock().unwrap();
+        state.definitions.iter().map(|definition|ara_tools::ContentUriEditSpec {
+            scheme:definition.scheme.clone(),single_slash_alias:false,line_selectors:false,port_authority:false,immutable:definition.immutable,
+            policy:if definition.writable {ara_tools::ContentUriEditPolicy::Handler}else{ara_tools::ContentUriEditPolicy::ReadOnly},
+        }).chain(state.removed.iter().map(|scheme|ara_tools::ContentUriEditSpec {scheme:scheme.clone(),single_slash_alias:false,line_selectors:false,port_authority:false,immutable:true,policy:ara_tools::ContentUriEditPolicy::ReadOnly})).collect()
+    }
     fn route(&self, url: &str) -> ContentUriRoute {
         let Some(scheme) = extract_scheme(url) else { return ContentUriRoute::Unregistered };
         let state = self.state.lock().unwrap();

@@ -10381,14 +10381,14 @@ B-ba59a1c381	CA-DISCOVERY	packages/coding-agent/test/bundled-agent-parsing.test.
 B-be3ffc951f	CA-DISCOVERY	packages/coding-agent/test/bundled-agent-parsing.test.ts	23	ts-test	bundled agent parsing > defaults the task agent to the auto thinking selector
 B-6c40ebe1e8	CA-DISCOVERY	packages/coding-agent/test/bundled-agent-parsing.test.ts	36	ts-test	bundled agent parsing > resolves the configured slow-role effort suffix for reviewer
 B-3ee5819c74	CA-DISCOVERY	packages/coding-agent/test/bundled-agent-parsing.test.ts	69	ts-test	bundled agent parsing > keeps the role identity of every alias-routed bundled agent through expansion
-B-84937214a5	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	25	ts-test	detectCacheInvalidation > does not flag the first turn (no prior cache footprint)
-B-4c4143489a	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	29	ts-test	detectCacheInvalidation > flags a cacheRead collapse after a warm turn and reports reprocessed tokens
-B-5540336608	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	37	ts-test	detectCacheInvalidation > does not flag a cold turn whose predecessor only wrote the cache (never read it)
-B-1e0386d7a2	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	48	ts-test	detectCacheInvalidation > does not flag a turn that reused any cache
-B-7cb05840e2	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	54	ts-test	detectCacheInvalidation > does not flag implicit best-effort caches that report no cacheWrite
-B-4140a563a0	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	65	ts-test	detectCacheInvalidation > ignores collapses when the prior footprint was below the cacheable floor
-B-626e4bde24	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	72	ts-test	detectCacheInvalidation > ignores a cold turn that reprocessed only a trivial prompt
-B-2217bbb7b4	CA-TOOL-WRITE	packages/coding-agent/test/cache-invalidation-marker.test.ts	84	ts-test	CacheInvalidationMarkerComponent > renders a slim, left-aligned, partial-width divider padded by blank lines
+B-84937214a5	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	25	ts-test	detectCacheInvalidation > does not flag the first turn (no prior cache footprint)
+B-4c4143489a	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	29	ts-test	detectCacheInvalidation > flags a cacheRead collapse after a warm turn and reports reprocessed tokens
+B-5540336608	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	37	ts-test	detectCacheInvalidation > does not flag a cold turn whose predecessor only wrote the cache (never read it)
+B-1e0386d7a2	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	48	ts-test	detectCacheInvalidation > does not flag a turn that reused any cache
+B-7cb05840e2	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	54	ts-test	detectCacheInvalidation > does not flag implicit best-effort caches that report no cacheWrite
+B-4140a563a0	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	65	ts-test	detectCacheInvalidation > ignores collapses when the prior footprint was below the cacheable floor
+B-626e4bde24	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	72	ts-test	detectCacheInvalidation > ignores a cold turn that reprocessed only a trivial prompt
+B-2217bbb7b4	CA-TUI-MODE	packages/coding-agent/test/cache-invalidation-marker.test.ts	84	ts-test	CacheInvalidationMarkerComponent > renders a slim, left-aligned, partial-width divider padded by blank lines
 B-16043be376	CA-CAPABILITY	packages/coding-agent/test/capability/fs-special-files.test.ts	24	ts-test	capability/fs readFile on special files > returns null for a FIFO instead of blocking
 B-a1688c97d4	CA-CAPABILITY	packages/coding-agent/test/capability/fs-special-files.test.ts	44	ts-test	capability/fs readFile on special files > still reads regular files through symlinks
 B-bd3871a49e	CA-CAPABILITY	packages/coding-agent/test/capability/rule-agents.test.ts	5	ts-test	agents frontmatter normalization > lowercases a YAML sequence

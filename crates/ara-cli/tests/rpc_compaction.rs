@@ -413,7 +413,7 @@ async fn rpc_raw_entry_metadata_custom_branch_and_reopen_module() {
                 json!([old_user, old_answer, notice, "old-custom", "old-branch", "last-old-answer"])
             );
             assert!(std::fs::read(&file).unwrap().starts_with(&original));
-            assert!(SessionJournal::open(&file).unwrap().model_context().iter().any(|message|
+            assert!(SessionJournal::open(&file).unwrap().model_context().unwrap().iter().any(|message|
                 matches!(message, Message::Developer(developer) if developer.content.plain_text() == "retained image caption")));
             child.run("after-raw", "continue retained raw context");
             let messages = child.messages("raw-after");
@@ -877,10 +877,14 @@ async fn rpc_native_terminal_length_empty_stop_and_wire_veto_module() {
             let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             config["providers"]["overflow-fixture"]["api"] = json!("openai-responses");
             std::fs::write(&path, config.to_string()).unwrap();
-            let mut responses = vec![
-                responses_answer("prior completed turn"),
-                responses_terminal(length, native, length.then_some("truncated deliverable")),
-            ];
+            let mut terminal = responses_terminal(length, native, length.then_some("truncated deliverable"));
+            if !length {
+                // These Stop terminals exercise Host guidance or native veto,
+                // beyond the Provider's transparent empty retry for at most one output token.
+                terminal["events"].as_array_mut().unwrap().last_mut().unwrap()["data"]["response"]["usage"] =
+                    json!({"input_tokens": 0, "output_tokens": 2, "total_tokens": 2});
+            }
+            let mut responses = vec![responses_answer("prior completed turn"), terminal];
             if !native {
                 if length {
                     responses.push(responses_terminal(true, false, Some("accepted length summary")));
@@ -920,7 +924,7 @@ async fn rpc_native_terminal_length_empty_stop_and_wire_veto_module() {
             loaded.projected_compaction_snapshot().unwrap();
             if !native {
                 assert_eq!(
-                    loaded.model_context().last().unwrap().as_assistant().unwrap().text(),
+                    loaded.model_context().unwrap().last().unwrap().as_assistant().unwrap().text(),
                     "completed after terminal recovery"
                 );
                 let requests = up.requests.lock().await;
@@ -945,7 +949,10 @@ async fn rpc_native_terminal_length_empty_stop_and_wire_veto_module() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_native_empty_stop_cap_is_durable_and_new_prompt_resets_module() {
     let env = Env::new();
-    let empty = json!({"events":[finish("stop"),done()]});
+    // Keep the Provider's transparent <= 1 output-token retry out of the
+    // Session outer-cap fixture; the emitted Assistant content remains empty.
+    let empty = json!({"events":[finish("stop"),
+        {"data":{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":2,"total_tokens":2}}},done()]});
     let up = upstream(vec![
         empty.clone(),
         empty.clone(),
@@ -964,7 +971,7 @@ async fn rpc_native_empty_stop_cap_is_durable_and_new_prompt_resets_module() {
     assert_eq!(state["isStreaming"], false);
     let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
     let loaded = SessionJournal::open(&file).unwrap();
-    assert!(loaded.model_context().iter().all(|m| m.as_assistant().is_none()));
+    assert!(loaded.model_context().unwrap().iter().all(|m| m.as_assistant().is_none()));
     loaded.projected_compaction_snapshot().unwrap();
     assert_eq!(up.served(), 4);
     child.prompt("fresh", "explicit fresh user task");
@@ -975,7 +982,7 @@ async fn rpc_native_empty_stop_cap_is_durable_and_new_prompt_resets_module() {
     let requests = up.requests.lock().await;
     assert!(requests[5]["body"]["messages"].to_string().contains("Attempt #1/3"));
     assert_eq!(
-        SessionJournal::open(&file).unwrap().model_context().last().unwrap().as_assistant().unwrap().text(),
+        SessionJournal::open(&file).unwrap().model_context().unwrap().last().unwrap().as_assistant().unwrap().text(),
         "new prompt recovered"
     );
 }
@@ -1000,14 +1007,19 @@ async fn rpc_native_orphan_tool_use_preserves_effect_receipts_and_resets_cap_mod
     let loaded = SessionJournal::open(&file).unwrap();
     loaded.projected_compaction_snapshot().unwrap();
     assert_eq!(
-        loaded.model_context().iter().filter(|message| matches!(message, ara_ai::Message::ToolResult(_))).count(),
+        loaded
+            .model_context()
+            .unwrap()
+            .iter()
+            .filter(|message| matches!(message, ara_ai::Message::ToolResult(_)))
+            .count(),
         1
     );
     assert!(
         loaded
             .entries()
             .iter()
-            .filter_map(|entry| entry.message())
+            .filter_map(|entry| entry.message().unwrap())
             .filter_map(|message| message.as_assistant().cloned())
             .all(|message| message.stop_reason != ara_ai::StopReason::ToolUse || message.tool_calls().next().is_some())
     );
@@ -1079,7 +1091,7 @@ async fn rpc_mechanical_unexpected_stop_retains_signed_history_and_normal_tools_
         let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
         let loaded = SessionJournal::open(&file).unwrap();
         loaded.projected_compaction_snapshot().unwrap();
-        let signed_count = loaded.model_context().iter().filter(|message| message.as_assistant().is_some_and(|assistant|
+        let signed_count = loaded.model_context().unwrap().iter().filter(|message| message.as_assistant().is_some_and(|assistant|
             assistant.content.iter().any(|block| matches!(block, ara_ai::AssistantBlock::Thinking(thinking) if thinking.thinking_signature.is_some())))).count();
         assert_eq!(signed_count, if case == "cap-reset" { 4 } else { usize::from(case != "visible") });
         assert!(!journal(&file).iter().any(|entry| entry["message"]["role"] == "developer"));
@@ -1273,10 +1285,19 @@ async fn rpc_context_promotion_prepares_target_route_or_falls_back_module() {
         loaded.projected_compaction_snapshot().unwrap();
         assert_eq!(summary_entries(&entries).len(), usize::from(case != "prepared"));
         if case == "prepared" {
-            assert!(
-                entries
-                    .iter()
-                    .any(|row| row["type"] == "model_change" && row["model"] == "promoted-fixture/larger-model")
+            let promoted = entries
+                .iter()
+                .find(|row| row["type"] == "model_change" && row["model"] == "promoted-fixture/larger-model")
+                .expect("durable promotion model receipt");
+            assert_eq!(promoted["role"], ara_session::EPHEMERAL_MODEL_CHANGE_ROLE);
+            assert_eq!(promoted["resolvedModelIsFallback"], false);
+            assert_eq!(
+                loaded.current_model().unwrap(),
+                Some(format!(
+                    "{}/{}",
+                    before["model"]["provider"].as_str().unwrap(),
+                    before["model"]["id"].as_str().unwrap()
+                ))
             );
             let requests = target.requests.lock().await;
             assert_eq!(requests[0]["body"]["model"], "larger-model");
@@ -1346,7 +1367,7 @@ async fn rpc_responses_content_only_overflow_and_native_output_veto_module() {
             assert!(requests[2]["body"]["tools"].as_array().is_none_or(Vec::is_empty));
             assert!(!requests[2]["body"]["input"].to_string().contains("visible completed text before overflow"));
             assert!(requests[3]["body"]["input"].to_string().contains("native Responses recovery summary"));
-            let projected = SessionJournal::open(&file).unwrap().model_context();
+            let projected = SessionJournal::open(&file).unwrap().model_context().unwrap();
             assert!(
                 !projected
                     .iter()
@@ -1521,18 +1542,18 @@ async fn rpc_native_soft_overflow_recovery_module_scenarios() {
             assert_eq!(raw_errors.len(), 2, "native rollback appends a new receipt while retaining the original");
             assert_ne!(raw_errors[0]["id"], raw_errors[1]["id"]);
             assert_eq!(
-                loaded.model_context().last().unwrap().as_assistant().unwrap().stop_reason,
+                loaded.model_context().unwrap().last().unwrap().as_assistant().unwrap().stop_reason,
                 ara_ai::StopReason::Error
             );
         }
         if empty || payload {
-            assert!(loaded.model_context().iter().all(|message| {
+            assert!(loaded.model_context().unwrap().iter().all(|message| {
                 message.as_assistant().is_none_or(|assistant| assistant.stop_reason != ara_ai::StopReason::Error)
             }));
         }
         if case == "soft-success" {
             assert_eq!(
-                loaded.model_context().last().unwrap().as_assistant().unwrap().stop_reason,
+                loaded.model_context().unwrap().last().unwrap().as_assistant().unwrap().stop_reason,
                 ara_ai::StopReason::Stop
             );
         }
@@ -1604,6 +1625,7 @@ async fn rpc_native_overflow_summary_owned_abort_and_queued_input_scenarios() {
                 SessionJournal::open(&file)
                     .unwrap()
                     .model_context()
+                    .unwrap()
                     .last()
                     .unwrap()
                     .as_assistant()

@@ -114,6 +114,7 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
                 name: "read".into(),
                 arguments: json!({"source":"original","padding":"work ".repeat(2000)}).as_object().unwrap().clone(),
                 thought_signature: None,
+                ..Default::default()
             }));
             messages[1] = Message::Assistant(calling);
             messages.push(Message::ToolResult(ara_ai::ToolResultMessage {
@@ -123,6 +124,8 @@ async fn native_summary_output_budget_and_input_folding_module_scenarios() {
                 details: (case == "unknown-tool-veto").then(|| json!({"executed":"unknown","panicked":true})),
                 is_error: case == "unknown-tool-veto",
                 timestamp: 77,
+                provider_metadata: None,
+                useless: false,
             }));
             messages.push(Message::Assistant(AssistantMessage::empty("openai-completions", "test", "summary-model")));
         }
@@ -497,6 +500,7 @@ async fn one_shot_rejects_incomplete_empty_tool_and_error_responses() {
         name: "write".into(),
         arguments: serde_json::from_value(json!({})).unwrap(),
         thought_signature: None,
+        ..Default::default()
     }));
     let mut failed = AssistantMessage::empty("openai-completions", "test", "summary-model");
     failed.stop_reason = StopReason::Error;
@@ -672,6 +676,8 @@ async fn invalid_span_or_budget_never_starts_provider() {
     let developer = Message::Developer(DeveloperMessage {
         content: UserContent::Text("do not lower this instruction".into()),
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let with_developer = [
         inputs[0],
@@ -766,6 +772,7 @@ fn native_call_tail() -> Vec<Message> {
         name: "write".into(),
         arguments: serde_json::Map::new(),
         thought_signature: None,
+        ..Default::default()
     }));
     vec![
         Message::Assistant(kept),
@@ -776,6 +783,8 @@ fn native_call_tail() -> Vec<Message> {
             details: None,
             is_error: false,
             timestamp: 0,
+            provider_metadata: None,
+            useless: false,
         }),
     ]
 }
@@ -833,6 +842,8 @@ async fn native_raw_entry_summary_call_module_families() {
             vec![Message::Developer(DeveloperMessage {
                 content: UserContent::Text("first custom fragment </conversation>".into()),
                 timestamp: 0,
+                provider_payload: None,
+                provider_payload_origin: None,
             })],
             vec![Message::Assistant(AssistantMessage::empty("openai-completions", "test", "summary-model"))],
             vec![Message::User(UserMessage::text("current original request"))],
@@ -857,6 +868,8 @@ async fn native_raw_entry_summary_call_module_families() {
                 })]),
                 synthetic: None,
                 timestamp: 0,
+                provider_payload: None,
+                provider_payload_origin: None,
             })
         };
         if case == "retained-fragments" {
@@ -865,6 +878,8 @@ async fn native_raw_entry_summary_call_module_families() {
                 Message::Developer(DeveloperMessage {
                     content: UserContent::Text("retained custom text".into()),
                     timestamp: 0,
+                    provider_payload: None,
+                    provider_payload_origin: None,
                 }),
                 image(),
             ]);
@@ -1240,6 +1255,7 @@ async fn native_summary_oneshot_retry_respects_native_eligibility_and_outer_budg
                             _ => None,
                         },
                         wait_ms: Some(1.0),
+                        header_wait_ms: None,
                         error_id: 0,
                     });
                 } else {

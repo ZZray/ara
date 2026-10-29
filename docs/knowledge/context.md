@@ -1,5 +1,13 @@
 # References, memory, and context
 
+## Deferred optimization options
+
+[OpenCode background summary precomputation](context-optimization-options.md),
+recorded 2026-10-27 as CTX-OPT-BG-01, is a future performance research option.
+Its prepare/validate/publish split may reduce foreground compaction waits;
+it neither guarantees fidelity nor replaces current source, budget or stale-
+snapshot guards. No implementation or current delivery scope is added.
+
 ## Native archive source and image ownership
 
 **Source-backed implemented boundary, 2026-10-02, fixed OMP `596f2da`:**

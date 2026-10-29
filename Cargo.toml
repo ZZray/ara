@@ -2,6 +2,7 @@
 members = [
   "crates/ara-ai",
   "crates/ara-agent",
+  "crates/ara-workflow",
   "crates/ara-cli",
   "crates/ara-mcp",
   "crates/ara-context",
@@ -17,12 +18,19 @@ members = [
   "crates/vendor/ara-ast",
   "crates/vendor/ara-diff",
   "crates/vendor/ara-edit",
+  "crates/vendor/ara-iso",
+  "crates/vendor/ara-task-vcs",
+  "crates/vendor/tree-sitter-go",
 ]
 resolver = "3"
-exclude = ["crates/vendor/ara-regress"]
+exclude = ["crates/vendor/ara-regress", "crates/vendor/portable-pty"]
 
 [patch.crates-io]
+# Exact portable-pty 0.9.0 with one Windows system-ConPTY loader fix.
+portable-pty = { path = "crates/vendor/portable-pty" }
 regress = { path = "crates/vendor/ara-regress" }
+# Fixed OMP b91db66e Go1.26 new(expr) production parser patch.
+tree-sitter-go = { path = "crates/vendor/tree-sitter-go" }
 
 [workspace.package]
 version = "0.1.0"
@@ -32,8 +40,11 @@ rust-version = "1.88"
 publish = false
 
 [workspace.dependencies]
+# Exact direct PTY dependency reviewed for HOST-SERVICE-CONTROL; graph/lock gate remains Root-owned.
+portable-pty = "=0.9.0"
 ara-ai = { path = "crates/ara-ai" }
 ara-agent = { path = "crates/ara-agent" }
+ara-workflow = { path = "crates/ara-workflow" }
 ara-mcp = { path = "crates/ara-mcp" }
 ara-session = { path = "crates/ara-session" }
 ara-snapcompact = { path = "crates/ara-snapcompact" }
@@ -62,7 +73,7 @@ regress = { version = "=0.12.0", features = ["utf16"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream", "json"] }
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 tempfile = "3"
 thiserror = "2"
@@ -140,3 +151,23 @@ tree-sitter-vue = { version = "0.1.0", package = "tree-sitter-vue-next" }
 tree-sitter-xml = "0.7"
 tree-sitter-yaml = "0.7"
 tree-sitter-zig = "1.1"
+
+# Fixed b91 Task isolation/Git dependency proposal; Root resolves Cargo.lock once.
+ara-iso = { path = "crates/vendor/ara-iso" }
+ara-task-vcs = { path = "crates/vendor/ara-task-vcs" }
+gix = { version = "0.85", default-features = false, features = ["attributes","blob-diff","dirwalk","excludes","index","max-performance-safe","merge","revision","sha1","sha256","status","tree-editor","worktree-mutation","zlib-rs"] }
+similar = "3.2.0"
+libc = "0.2"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_Security", "Win32_Storage_FileSystem", "Win32_Storage_ProjectedFileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
+
+# Keep repeated candidate builds from retaining full debug and incremental caches.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = 1
+incremental = false

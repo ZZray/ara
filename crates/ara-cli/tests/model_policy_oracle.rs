@@ -59,6 +59,67 @@ fn lossless_policy_adapter_replays_all_original_policy_and_build_cases() {
     );
 }
 
+#[test]
+#[ignore = "requires retained fixed OMP artifact in ARA_MODEL_POLICY_ORACLE"]
+fn lossless_identity_metrics_replays_original_cold_and_warm_cases() {
+    use ara_cli::{model_collapse::VariantSpec, model_identity_wire as wire};
+    let path = std::env::var_os("ARA_MODEL_POLICY_ORACLE").expect("execute scripts/model_policy_oracle.py first");
+    let bytes = std::fs::read(path).unwrap();
+    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    let actual = digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    assert_eq!(actual, "53c29b84b31edde4be7dda3e22ddcb2aa2121e43f66dcc6b2c8e3136cb9b1cad");
+    let oracle: Value = serde_json::from_slice(&bytes).unwrap();
+    inventory(&oracle).expect("original full source inventory");
+    let index = wire::CatalogMetricsIndex::new(wire::bundled_models());
+    let cases: Vec<_> = oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            matches!(
+                string(case, "kind"),
+                "catalog-identity" | "fixture-identity" | "catalog-metrics" | "fixture-metrics"
+            )
+        })
+        .collect();
+    assert_eq!(cases.len(), 2 * (4776 + 215));
+    let as_json = |spec: VariantSpec| serde_json::from_str::<Value>(&spec.to_wire_json().stringify()).unwrap();
+    // Different input order reuses both retained regex state and the candidate
+    // cache, against independent fixed-source results rather than Rust outputs.
+    for reverse in [false, true] {
+        for position in 0..cases.len() {
+            let case = cases[if reverse { cases.len() - 1 - position } else { position }];
+            if std::env::var_os("ARA_IDENTITY_METRICS_PROGRESS").is_some() && position % 500 == 0 {
+                eprintln!("identity/metrics replay reverse={reverse} position={position} label={}", case["label"]);
+            }
+            let input = &case["input"];
+            let expected = &case["expected"]["value"];
+            match string(case, "kind") {
+                "catalog-identity" | "fixture-identity" => {
+                    let id: ara_rpc::WireString = string(input, "id").into();
+                    assert_eq!(
+                        wire::bare_model_id(&id).to_utf8().unwrap(),
+                        expected["bare"].as_str().unwrap(),
+                        "{}",
+                        case["label"]
+                    );
+                    let candidates: Vec<_> =
+                        wire::reference_candidate_ids(&id).into_iter().map(|id| id.to_utf8().unwrap()).collect();
+                    assert_eq!(json!(candidates), expected["candidates"], "{}", case["label"]);
+                }
+                _ => {
+                    let spec = VariantSpec::from_json(input);
+                    let mut actual = Map::new();
+                    field(&mut actual, "own", wire::catalog_metrics_of(&spec).map(&as_json));
+                    field(&mut actual, "resolved", index.resolve(&spec).map(&as_json));
+                    assert!(same(&Value::Object(actual), expected), "{}", case["label"]);
+                }
+            }
+        }
+    }
+    eprintln!("{} fixed-source identity/metrics cases replayed cold and warm", cases.len());
+}
+
 const EXPECTED_COUNTS: &[(&str, usize)] = &[
     ("catalog-taxonomy", 4776),
     ("catalog-cascade", 4776),

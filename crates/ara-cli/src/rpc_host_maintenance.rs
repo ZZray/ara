@@ -1,5 +1,7 @@
 //! Fixed OMP 596f2da same-route overflow and incomplete-output recovery.
 //! Snapcompact and other unported method surfaces retain separate gates.
+use super::super::rpc_host_retry::NativeRetryContextReceipt;
+use super::terminal::{ContinuationKind, FactsPurpose, NativeContinuationGuard, RecoveryToken};
 use super::*;
 use ara_agent::compaction::{
     AcceptedSummary, SummaryOptions, select_native_entry_compaction_cut, summarize_native_entry_compaction_cut,
@@ -26,8 +28,10 @@ pub(super) struct ActiveMaintenance {
     snapshot: NativeProjectedCompactionSnapshot,
     first_kept: String,
     tokens_before: u64,
-    expected_messages: Vec<Message>,
-    recovery: FailedAssistantRecovery,
+    expected_messages: Vec<Value>,
+    recovery: RecoveryToken,
+    native_context: Option<NativeRetryContextReceipt>,
+    native_guard: Option<NativeContinuationGuard>,
     reserve_tokens: Option<f64>,
 }
 
@@ -35,9 +39,11 @@ pub(super) struct PendingMaintenanceContinue {
     session: Arc<Session>,
     generation: u64,
     command: Command,
-    expected_messages: Vec<Message>,
+    expected_messages: Vec<Value>,
     reserve_tokens: Option<f64>,
     check_fit: bool,
+    native_context: Option<NativeRetryContextReceipt>,
+    native_guard: Option<NativeContinuationGuard>,
     pub deadline: Instant,
 }
 
@@ -81,8 +87,8 @@ fn persisted_assistant_id(active: &ActiveRun, message: &AssistantMessage) -> Res
         .context("recovery assistant has no persisted native entry ID")
 }
 
-pub(super) fn retry_tokens_fit(window: Option<f64>, reserve: Option<f64>, tokens: usize) -> bool {
-    let Some(window) = window.filter(|window| window.is_finite() && *window > 0.0) else { return true };
+pub(super) fn retry_context_capacity(window: Option<f64>, reserve: Option<f64>) -> Option<f64> {
+    let window = window.filter(|window| window.is_finite() && *window > 0.0)?;
     // Fixed agent compaction.ts:303-333. Preserve explicit/default provenance.
     let proportional = (window * 0.15).floor().max(1.0);
     let effective = (window * 0.15).floor().max(reserve.unwrap_or(16_384.0));
@@ -91,11 +97,22 @@ pub(super) fn retry_tokens_fit(window: Option<f64>, reserve: Option<f64>, tokens
     } else {
         effective
     };
-    tokens as f64 <= (window - resolved).max(0.0)
+    Some((window - resolved).max(0.0))
+}
+
+pub(super) fn retry_tokens_fit(window: Option<f64>, reserve: Option<f64>, tokens: usize) -> bool {
+    retry_context_capacity(window, reserve).is_none_or(|capacity| tokens as f64 <= capacity)
 }
 
 impl Host {
-    fn queue_terminal_continue(&mut self, active: &ActiveRun, messages: Vec<Message>) {
+    fn queue_terminal_continue(
+        &mut self,
+        active: &ActiveRun,
+        messages: Vec<AgentMessage>,
+        terminal: &RecoveryTerminal,
+        kind: ContinuationKind,
+    ) -> Result<()> {
+        terminal.check_host(self)?;
         self.maintenance_continue = Some(PendingMaintenanceContinue {
             session: self.session.clone(),
             generation: self.prompt_generation,
@@ -104,28 +121,39 @@ impl Host {
                 kind: active.command.kind.clone(),
                 frame: active.command.frame.clone(),
             },
-            expected_messages: messages,
+            expected_messages: if terminal.actual().is_some() {
+                Vec::new()
+            } else {
+                self.session.projector.current_body_receipts(&messages)?
+            },
             reserve_tokens: None,
             check_fit: false,
+            native_context: terminal.context_receipt(&messages)?,
+            native_guard: NativeContinuationGuard::for_terminal(terminal, kind),
             deadline: Instant::now() + Duration::from_millis(100),
         });
         self.auto_compaction_pending = false;
+        Ok(())
     }
 
-    async fn try_context_promotion(&mut self, active: &ActiveRun, message: &AssistantMessage) -> Result<bool> {
+    async fn try_context_promotion(&mut self, active: &ActiveRun, message: &RecoveryTerminal) -> Result<bool> {
         use ara_cli::daily_model_config::{load_daily_config, resolve_daily_promotion_selection};
-        use ara_cli::model_config_values::{ConfigValueEnvironment, ProcessConfigEnvironment};
         let agent_dir = super::super::ara_home().join("agent");
-        let Some(metadata) = self.sessions.provider.metadata.as_ref() else { return Ok(false) };
+        let Some(metadata) = self.sessions.provider.metadata.as_ref() else {
+            return Ok(false);
+        };
+        let admission = quota::QuotaControl::begin(&self.quota_control, &self.connection);
         let prepared = async {
             if !super::super::rpc_host_settings::context_promotion_enabled(&agent_dir)? {
                 return Ok(None);
             }
             let path = self.sessions.args.models_config.clone().unwrap_or_else(|| agent_dir.join("models.yml"));
             let models = load_daily_config(&path, self.sessions.args.models_config.is_some())?;
-            let Some(selection) = resolve_daily_promotion_selection(models.as_ref(), metadata, &|name: &str| {
-                ProcessConfigEnvironment.get(name)
-            })?
+            let Some(selection) = resolve_daily_promotion_selection(
+                models.as_ref(),
+                metadata,
+                &ara_cli::schema_policy::process_daily_environment,
+            )?
             else {
                 return Ok(None);
             };
@@ -134,19 +162,20 @@ impl Host {
                 bail!("account promotion in RPC is not yet available");
             }
             let generation = selection.generation;
-            let provider = super::super::ProviderFactory::daily(
-                self.sessions.provider.client.clone(),
-                selection,
-                self.session.header["id"].as_str().map(str::to_owned),
-                &self.sessions.cwd,
-                &active.cancel,
-                self.sessions.provider.shared_account.clone(),
-                self.sessions.provider.registry.clone(),
-            )
-            .await?;
+            let provider = self
+                .sessions
+                .provider
+                .prepare_daily_replacement(
+                    selection,
+                    self.session.header["id"].as_str().map(str::to_owned),
+                    self.session.header["id"].as_str().map(str::to_owned),
+                    &self.sessions.cwd,
+                    &admission.cancel,
+                )
+                .await?;
             provider
                 .route
-                .check_auth(&active.cancel)
+                .check_auth(&admission.cancel)
                 .await
                 .map_err(|error| anyhow::anyhow!("promotion authentication unavailable: {error:?}"))?;
             let mut config = self.base_config();
@@ -154,25 +183,44 @@ impl Host {
             config.provider = provider.build();
             config.max_tokens = self.sessions.args.max_tokens.or(generation.max_tokens);
             config.temperature = self.sessions.args.temperature.or(generation.temperature);
-            let overlay = self.overlay(&self.host_tools, &self.active_host_names());
-            let (config, skills) = self.sessions.config(&config, false, overlay).await?;
-            Ok::<_, anyhow::Error>(Some((provider, config, skills)))
+            let overlay = self.overlay(&self.host_tools, &self.active_host_names()).await?;
+            let retained_owner = active.sink.session.tool_owner.lock().unwrap().clone();
+            let candidate = self
+                .sessions
+                .config(
+                    &config,
+                    provider.metadata.as_ref(),
+                    Some(&self.skills),
+                    false,
+                    active.sink.session.values.clone(),
+                    active.sink.session.native_session.clone(),
+                    overlay,
+                    Some(retained_owner),
+                )
+                .await?;
+            Ok::<_, anyhow::Error>(Some((provider, candidate)))
         }
         .await;
-        let (provider, config, skills) = match prepared {
+        let (provider, candidate) = match prepared {
             Ok(Some(prepared)) => prepared,
             Ok(None) => return Ok(false),
             Err(_) => {
+                if admission.cancel.is_cancelled() || active.cancel.is_cancelled() {
+                    return Ok(false);
+                }
                 self.output.frame(json!({"type":"notice","level":"warning","source":"context-promotion", "message":"Context promotion target could not be prepared; trying configured compaction."}));
                 return Ok(false);
             }
         };
-        if active.cancel.is_cancelled() || self.connection.is_cancelled() {
+        let super::PreparedSessionConfig { config, skills, tool_owner, context_controller, native_publication, .. } =
+            candidate;
+        if active.cancel.is_cancelled() || admission.cancel.is_cancelled() || self.connection.is_cancelled() {
             return Ok(false);
         }
-        let entry_id = persisted_assistant_id(active, message)?;
-        let mut messages = self.agent.messages().await;
-        if messages.last().and_then(Message::as_assistant) != Some(message) {
+        let entry_id = message.persisted_id(active)?;
+        let mut messages = self.agent.raw_messages().await;
+        let original_messages = messages.clone();
+        if !message.exact_tail(&messages)? {
             return Ok(false);
         }
         messages.pop();
@@ -180,28 +228,51 @@ impl Host {
         // The prepared snapshot is then published on the same Agent/Session.
         let session = self.session.clone();
         let mut journal = session.journal.lock().await;
+        if active.cancel.is_cancelled()
+            || admission.cancel.is_cancelled()
+            || self.connection.is_cancelled()
+            || !Arc::ptr_eq(&session, &self.session)
+        {
+            return Ok(false);
+        }
         let leaf = journal.leaf_id().map(str::to_owned);
         let parent =
             journal.entries().iter().find(|entry| entry.id == entry_id).and_then(|entry| entry.parent_id.clone());
-        journal.discard_failed_assistant_for_promotion(
+        message.require_current(self, ContinuationKind::Overflow)?;
+        message.discard_promotion(
+            &mut journal,
             leaf.as_deref(),
             &entry_id,
-            message,
             &format!("{}/{}", config.model.provider, config.model.id),
         )?;
-        self.maintenance_bash_transition(parent);
-        self.agent.replace_idle_messages(messages.clone())?;
-        *session.messages.lock().unwrap() = Session::public_messages(&journal);
+        let public = public_messages_after_publication(&journal, &session, &self.connection, &mut self.drain_queues)?;
         drop(journal);
+        self.agent.replace_idle_raw_messages(messages.clone())?;
+        if let Err(primary) = self.publish_native_after_journal(native_publication.as_ref(), &session) {
+            if let Err(secondary) = self.agent.replace_idle_raw_messages(original_messages) {
+                if let Some(receipt) = session.persistence_error.lock().unwrap().as_mut() {
+                    receipt.push_str(&format!("; Agent rollback failed: {secondary}"));
+                }
+            }
+            return Err(primary);
+        }
+        self.maintenance_bash_transition(parent);
+        *session.messages.lock().unwrap() = public;
+        *session.tool_owner.lock().unwrap() = tool_owner.clone();
+        let session_id = self.session.header["id"].as_str().map(str::to_owned);
+        self.sessions.provider.adopt_daily_replacement(provider, session_id.clone(), session_id);
+        let mut config = config;
+        config.provider = self.sessions.provider.build();
+        self.sessions.tool_owner = tool_owner;
+        self.sessions.context_controller = context_controller;
         self.publish_snapshot(&config);
         let from = format!("{}/{}", self.config.model.provider, self.config.model.id);
         let to = format!("{}/{}", config.model.provider, config.model.id);
         self.config = config;
         self.skills = skills;
-        self.sessions.provider = provider;
         self.terminal_recovery.incomplete_attempts = 0;
         self.finish_retry(None, Some("Retry transferred to context promotion".into()), false).await;
-        self.queue_terminal_continue(active, messages);
+        self.queue_terminal_continue(active, messages, message, ContinuationKind::Overflow)?;
         self.output.frame(json!({"type":"notice","level":"info","source":"context-promotion", "message":format!("Context model promoted from {from} to {to}")}));
         Ok(true)
     }
@@ -211,19 +282,24 @@ impl Host {
         active: &ActiveRun,
         message: &AssistantMessage,
     ) -> Result<MaintenanceOutcome> {
+        self.begin_empty_stop_recovery_terminal(active, &RecoveryTerminal::Legacy(message.clone())).await
+    }
+
+    pub(super) async fn begin_empty_stop_recovery_terminal(
+        &mut self,
+        active: &ActiveRun,
+        message: &RecoveryTerminal,
+    ) -> Result<MaintenanceOutcome> {
         let none = MaintenanceOutcome::default();
-        let api = &self.config.model.api;
-        if produced_output(message) {
+        let facts = message.facts_for(&self.config.model, FactsPurpose::Empty)?;
+        if facts.produced_output {
             self.terminal_recovery.incomplete_attempts = 0;
         }
-        let class = ara_ai::retry_classification::classify_retry(message, api);
-        let provider_empty = message.stop_reason == ara_ai::StopReason::Error
+        let class = message.class(&self.config.model)?;
+        let provider_empty = facts.stop_reason == ara_ai::StopReason::Error
             && class.error_id & ara_ai::retry_classification::flag::EMPTY_RESPONSE != 0
-            && message.content.iter().all(|block| {
-                matches!(block, ara_ai::AssistantBlock::Thinking(_))
-                    || matches!(block, ara_ai::AssistantBlock::Text(text) if text.text.trim().is_empty())
-            });
-        if !ara_session::is_empty_assistant_terminal(message) && !provider_empty {
+            && facts.provider_empty_content;
+        if !facts.empty_terminal && !provider_empty {
             self.terminal_recovery.empty_attempts = 0;
             return Ok(none);
         }
@@ -231,36 +307,38 @@ impl Host {
             || active.cancel.is_cancelled()
             || self.connection.is_cancelled()
             || !Arc::ptr_eq(&active.sink.session, &self.session)
-            || message.provider != self.config.model.provider
-            || message.model != self.config.model.id
+            || !facts.current_route
             || class.context_recovery_blocked
-            || (!provider_empty && !safe_success_terminal(message, api))
+            || (!provider_empty && !facts.safe_success)
         {
             return Ok(none);
         }
-        let mut messages = self.agent.messages().await;
-        if messages.last().and_then(Message::as_assistant) != Some(message) {
+        let mut messages = self.agent.raw_messages().await;
+        if !message.exact_tail(&messages)? {
             return Ok(none);
         }
-        let entry_id = persisted_assistant_id(active, message)?;
+        let entry_id = message.persisted_id(active)?;
         let session = self.session.clone();
         let mut journal = session.journal.lock().await;
+        message.check_host(self)?;
+        message.require_current(self, ContinuationKind::Empty)?;
         let leaf = journal.leaf_id().map(str::to_owned);
         let parent =
             journal.entries().iter().find(|entry| entry.id == entry_id).and_then(|entry| entry.parent_id.clone());
         if provider_empty {
-            journal.discard_entry_durably(leaf.as_deref(), &entry_id, message)?;
+            message.discard(&mut journal, leaf.as_deref(), &entry_id, false)?;
         } else {
-            journal.discard_empty_assistant_terminal_durably(leaf.as_deref(), &entry_id, message)?;
+            message.discard(&mut journal, leaf.as_deref(), &entry_id, true)?;
         }
         self.maintenance_bash_transition(parent);
         messages.pop();
-        *session.messages.lock().unwrap() = Session::public_messages(&journal);
+        *session.messages.lock().unwrap() =
+            public_messages_after_publication(&journal, &session, &self.connection, &mut self.drain_queues)?;
         drop(journal);
         self.terminal_recovery.empty_attempts += 1;
         if self.terminal_recovery.empty_attempts > 3 {
             self.terminal_recovery.empty_attempts = 0;
-            self.agent.replace_idle_messages(messages)?;
+            self.agent.replace_idle_raw_messages(messages)?;
             let error = "Assistant returned no final output after three recovery attempts; try switching models or raising output limits.";
             self.finish_retry(None, Some(error.into()), false).await;
             self.output.frame(json!({"type":"notice","level":"error","source":"empty-stop", "message":error}));
@@ -268,12 +346,9 @@ impl Host {
         }
         // Fixed empty-stop-retry.md. Runtime-only developer guidance, not a new
         // user source or permission restriction on the continuing Agent.
-        messages.push(Message::Developer(ara_ai::DeveloperMessage {
-            content: UserContent::Text(format!("<system-injection>\nStopped without actionable output; task incomplete. Continue with a user-visible final answer or the next required tool call.\nAttempt #{}/3\n</system-injection>", self.terminal_recovery.empty_attempts)),
-            timestamp: ara_ai::now_ms(),
-        }));
-        self.agent.replace_idle_messages(messages.clone())?;
-        self.queue_terminal_continue(active, messages);
+        messages.push(self.session.projector.new_legacy_message(json!({"role":"developer", "content":format!("<system-injection>\nStopped without actionable output; task incomplete. Continue with a user-visible final answer or the next required tool call.\nAttempt #{}/3\n</system-injection>", self.terminal_recovery.empty_attempts), "timestamp":ara_ai::now_ms()}), None)?);
+        self.agent.replace_idle_raw_messages(messages.clone())?;
+        self.queue_terminal_continue(active, messages, message, ContinuationKind::Empty)?;
         Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none })
     }
 
@@ -282,22 +357,22 @@ impl Host {
         active: &ActiveRun,
         message: &AssistantMessage,
     ) -> Result<MaintenanceOutcome> {
+        self.begin_unexpected_stop_recovery_terminal(active, &RecoveryTerminal::Legacy(message.clone())).await
+    }
+
+    pub(super) async fn begin_unexpected_stop_recovery_terminal(
+        &mut self,
+        active: &ActiveRun,
+        message: &RecoveryTerminal,
+    ) -> Result<MaintenanceOutcome> {
         let none = MaintenanceOutcome::default();
         if self.unexpected_stop_mode == UnexpectedStopMode::None {
             return Ok(none);
         }
-        let has_text = message.content.iter().any(
-            |block| matches!(block, ara_ai::AssistantBlock::Text(text) if !ara_prompt::js::trim(&text.text).is_empty()),
-        );
-        let has_signed_thinking = message.content.iter().any(|block| {
-            matches!(block, ara_ai::AssistantBlock::Thinking(thinking)
-                if !ara_prompt::js::trim(&thinking.thinking).is_empty()
-                    && thinking.thinking_signature.as_deref().is_some_and(|signature| !ara_prompt::js::trim(signature).is_empty()))
-        });
-        if message.stop_reason != ara_ai::StopReason::Stop
-            || message.tool_calls().next().is_some()
-            || !has_text && !has_signed_thinking
-        {
+        let facts = message.facts_for(&self.config.model, FactsPurpose::Unexpected)?;
+        let has_text = facts.has_text;
+        let has_signed_thinking = facts.signed_thinking;
+        if facts.stop_reason != ara_ai::StopReason::Stop || facts.has_tools || !has_text && !has_signed_thinking {
             self.terminal_recovery.unexpected_attempts = 0;
             return Ok(none);
         }
@@ -312,17 +387,18 @@ impl Host {
             || active.cancel.is_cancelled()
             || self.connection.is_cancelled()
             || !Arc::ptr_eq(&active.sink.session, &self.session)
-            || message.provider != self.config.model.provider
-            || message.model != self.config.model.id
-            || !safe_success_terminal(message, &self.config.model.api)
-            || ara_ai::retry_classification::classify_retry(message, &self.config.model.api).context_recovery_blocked
+            || !facts.current_route
+            || !facts.safe_success
+            || message.class(&self.config.model)?.context_recovery_blocked
         {
             return Ok(none);
         }
-        let mut messages = self.agent.messages().await;
-        if messages.last().and_then(Message::as_assistant) != Some(message) {
+        let mut messages = self.agent.raw_messages().await;
+        if !message.exact_tail(&messages)? {
             return Ok(none);
         }
+        message.check_host(self)?;
+        message.require_current(self, ContinuationKind::Unexpected)?;
         self.terminal_recovery.unexpected_attempts += 1;
         if self.terminal_recovery.unexpected_attempts > 3 {
             self.terminal_recovery.unexpected_attempts = 0;
@@ -330,12 +406,9 @@ impl Host {
         }
         // Keep the exact signed assistant in native and model history. Only
         // the recovery guidance is runtime-only, matching unexpected-stop-retry.md.
-        messages.push(Message::Developer(ara_ai::DeveloperMessage {
-            content: UserContent::Text(format!("<system-injection>\nYou said you would continue with a tool call or action but stopped. Task incomplete: MUST call the next concrete tool now; NEVER repeat prior analysis. No tool needed? Give the final answer now.\nAttempt #{}/3\n</system-injection>\n", self.terminal_recovery.unexpected_attempts)),
-            timestamp: ara_ai::now_ms(),
-        }));
-        self.agent.replace_idle_messages(messages.clone())?;
-        self.queue_terminal_continue(active, messages);
+        messages.push(self.session.projector.new_legacy_message(json!({"role":"developer", "content":format!("<system-injection>\nYou said you would continue with a tool call or action but stopped. Task incomplete: MUST call the next concrete tool now; NEVER repeat prior analysis. No tool needed? Give the final answer now.\nAttempt #{}/3\n</system-injection>\n", self.terminal_recovery.unexpected_attempts), "timestamp":ara_ai::now_ms()}), None)?);
+        self.agent.replace_idle_raw_messages(messages.clone())?;
+        self.queue_terminal_continue(active, messages, message, ContinuationKind::Unexpected)?;
         Ok(MaintenanceOutcome { continuation_scheduled: true, ..none })
     }
     // Caller holds the journal across the synchronous branch transition.
@@ -361,32 +434,52 @@ impl Host {
         active: &ActiveRun,
         message: &AssistantMessage,
     ) -> Result<MaintenanceOutcome> {
+        self.begin_overflow_recovery_terminal(active, &RecoveryTerminal::Legacy(message.clone())).await
+    }
+
+    pub(super) async fn begin_overflow_recovery_terminal(
+        &mut self,
+        active: &ActiveRun,
+        message: &RecoveryTerminal,
+    ) -> Result<MaintenanceOutcome> {
+        let result = self.begin_overflow_recovery_owned(active, message).await;
+        if self.maintenance.is_none() {
+            self.session.failed_recovery_message.lock().unwrap().take();
+        }
+        result
+    }
+
+    async fn begin_overflow_recovery_owned(
+        &mut self,
+        active: &ActiveRun,
+        message: &RecoveryTerminal,
+    ) -> Result<MaintenanceOutcome> {
         let none = MaintenanceOutcome::default();
+        let facts = message.facts_for(&self.config.model, FactsPurpose::Overflow)?;
         if self.maintenance.is_some()
             || self.input_closed
             || active.cancel.is_cancelled()
             || self.connection.is_cancelled()
             || !Arc::ptr_eq(&active.sink.session, &self.session)
-            || !matches!(message.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Length)
-            || message.provider != self.config.model.provider
-            || message.model != self.config.model.id
+            || !matches!(facts.stop_reason, ara_ai::StopReason::Error | ara_ai::StopReason::Length)
+            || !facts.current_route
         {
             return Ok(none);
         }
-        let messages = self.agent.messages().await;
-        if messages.last().and_then(Message::as_assistant) != Some(message) || message.tool_calls().next().is_some() {
+        let messages = self.agent.raw_messages().await;
+        if !message.exact_tail(&messages)? || facts.has_tools {
             return Ok(none);
         }
-        let class = ara_ai::retry_classification::classify_retry(message, &self.config.model.api);
-        let incomplete = message.stop_reason == ara_ai::StopReason::Length;
-        if produced_output(message) {
+        let class = message.class(&self.config.model)?;
+        let incomplete = facts.stop_reason == ara_ai::StopReason::Length;
+        if facts.produced_output {
             self.terminal_recovery.incomplete_attempts = 0;
         }
-        if class.context_recovery_blocked || incomplete && !safe_success_terminal(message, &self.config.model.api) {
+        if class.context_recovery_blocked || incomplete && !facts.safe_success {
             return Ok(none);
         }
         let window = self.config.model.context_window.filter(|window| window.is_finite() && *window > 0.0);
-        let (lower, reported) = reported_input(message);
+        let (lower, reported) = message.input_usage()?;
         let usage_overflow = window.is_some_and(|window| lower as f64 > window);
         let payload = class.error_id & ara_ai::retry_classification::flag::PAYLOAD_REJECTED != 0;
         if !incomplete && !class.overflow && !usage_overflow && !payload {
@@ -405,18 +498,20 @@ impl Host {
             .and_then(Value::as_str)
             .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
             .map(|timestamp| timestamp.timestamp_millis());
-        if latest.is_some_and(|timestamp| message.timestamp < timestamp) {
+        if latest.is_some_and(|timestamp| facts.timestamp < timestamp as f64) {
             return Ok(none);
         }
+        let stored_context_tokens =
+            self.budget_message_tokens(&messages, MessageCountOptions { exclude_encrypted_reasoning: true })?;
         let trusted_payload = payload
             && window.is_some_and(|window| {
                 reported.map_or(!class.overflow && !usage_overflow, |reported| reported as f64 <= window)
-                    && (stored_tokens(&self.config.model, &messages) as f64) < window * 0.9
+                    && (stored_context_tokens as f64) < window * 0.9
             });
         if payload && (trusted_payload || !class.overflow && window.is_none()) {
             let mut clean = messages;
             clean.pop();
-            self.agent.replace_idle_messages(clean)?;
+            self.agent.replace_idle_raw_messages(clean)?;
             self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                 "message":"Provider rejected request payload size; token compaction cannot establish a recovery. Reduce the payload or select another route."}));
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, ..none });
@@ -431,7 +526,7 @@ impl Host {
         if incomplete {
             if self.terminal_recovery.incomplete_attempts >= 3 {
                 self.terminal_recovery.incomplete_attempts = 0;
-                let entry_id = persisted_assistant_id(active, message)?;
+                let entry_id = message.persisted_id(active)?;
                 let session = self.session.clone();
                 let mut journal = session.journal.lock().await;
                 let leaf = journal.leaf_id().map(str::to_owned);
@@ -440,12 +535,14 @@ impl Host {
                     .iter()
                     .find(|entry| entry.id == entry_id)
                     .and_then(|entry| entry.parent_id.clone());
-                journal.discard_entry_durably(leaf.as_deref(), &entry_id, message)?;
+                message.require_current(self, ContinuationKind::Overflow)?;
+                message.discard(&mut journal, leaf.as_deref(), &entry_id, false)?;
                 self.maintenance_bash_transition(parent);
                 let mut clean = messages;
                 clean.pop();
-                self.agent.replace_idle_messages(clean)?;
-                *session.messages.lock().unwrap() = Session::public_messages(&journal);
+                self.agent.replace_idle_raw_messages(clean)?;
+                *session.messages.lock().unwrap() =
+                    public_messages_after_publication(&journal, &session, &self.connection, &mut self.drain_queues)?;
                 self.output.frame(json!({"type":"notice","level":"error","source":"compaction", "message":"Compaction recovery gave up after three consecutive empty length responses; try switching models or raising max output tokens."}));
                 return Ok(MaintenanceOutcome {
                     automatic_continuation_blocked: true,
@@ -465,26 +562,19 @@ impl Host {
         }
         self.header_continue = None;
         self.maintenance_continue = None;
-        let entry_id = active
-            .sink
-            .entries
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find_map(|(id, candidate)| (candidate.as_assistant() == Some(message)).then(|| id.clone()))
-            .context("overflow assistant has no persisted native entry ID")?;
+        let entry_id = message.persisted_id(active)?;
         let session = self.session.clone();
         let mut recovery = {
             let mut journal = session.journal.lock().await;
             let leaf = journal.leaf_id().context("overflow recovery has no active branch")?.to_owned();
-            let recovery = journal.begin_failed_assistant_recovery(&leaf, &entry_id, message)?;
+            message.require_current(self, ContinuationKind::Overflow)?;
+            let recovery = message.begin_recovery(&mut journal, &leaf, &entry_id)?;
             self.maintenance_bash_transition(Some(leaf));
             recovery
         };
         let mut clean = messages;
-        clean.pop();
-        if let Err(error) = self.agent.replace_idle_messages(clean.clone()) {
+        *session.failed_recovery_message.lock().unwrap() = clean.pop();
+        if let Err(error) = self.agent.replace_idle_raw_messages(clean.clone()) {
             self.restore_maintenance(recovery, &session).await?;
             return Err(error.into());
         }
@@ -503,14 +593,20 @@ impl Host {
                     .await;
                 match remote {
                     Ok(Some(_)) => {
-                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                        recovery.finish(&mut *session.journal.lock().await, true)?;
+                        session.failed_recovery_message.lock().unwrap().take();
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await? {
                             true
                         } else {
                             self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
                         };
                         if fits && !self.maintenance_stop_requested() {
-                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            self.queue_terminal_continue(
+                                active,
+                                self.agent.raw_messages().await,
+                                message,
+                                ContinuationKind::Overflow,
+                            )?;
                             return Ok(MaintenanceOutcome {
                                 continuation_scheduled: true,
                                 history_rewritten: true,
@@ -543,14 +639,20 @@ impl Host {
                 let compacted = Box::pin(self.snapcompact_history(&[])).await;
                 match compacted {
                     Ok(Some(_)) => {
-                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                        recovery.finish(&mut *session.journal.lock().await, true)?;
+                        session.failed_recovery_message.lock().unwrap().take();
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await? {
                             true
                         } else {
                             self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
                         };
                         if fits && !self.maintenance_stop_requested() {
-                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            self.queue_terminal_continue(
+                                active,
+                                self.agent.raw_messages().await,
+                                message,
+                                ContinuationKind::Overflow,
+                            )?;
                             return Ok(MaintenanceOutcome {
                                 continuation_scheduled: true,
                                 history_rewritten: true,
@@ -579,14 +681,20 @@ impl Host {
                 let handoff = Box::pin(self.handoff_local_history(Some(ara_cli::handoff::AUTO_FOCUS), true)).await;
                 match handoff {
                     Ok(Some(_)) => {
-                        session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+                        recovery.finish(&mut *session.journal.lock().await, true)?;
+                        session.failed_recovery_message.lock().unwrap().take();
+                        let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await? {
                             true
                         } else {
                             self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
                         };
                         if fits {
-                            self.queue_terminal_continue(active, self.agent.messages().await);
+                            self.queue_terminal_continue(
+                                active,
+                                self.agent.raw_messages().await,
+                                message,
+                                ContinuationKind::Overflow,
+                            )?;
                             return Ok(MaintenanceOutcome {
                                 continuation_scheduled: true,
                                 history_rewritten: true,
@@ -616,12 +724,13 @@ impl Host {
             if method != "shake" {
                 continue;
             }
-            let reduced = self.shake_local_history(false, Some(&mut recovery)).await;
+            let reduced = self.shake_local_history(false, Some(recovery.transaction_mut())).await;
             match reduced {
-                Ok(true) if self.recovery_fits(settings.reserve_tokens, None, &[]).await => {
-                    session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-                    let messages = self.agent.messages().await;
-                    self.queue_terminal_continue(active, messages);
+                Ok(true) if self.recovery_fits(settings.reserve_tokens, None, &[]).await? => {
+                    recovery.finish(&mut *session.journal.lock().await, true)?;
+                    session.failed_recovery_message.lock().unwrap().take();
+                    let messages = self.agent.raw_messages().await;
+                    self.queue_terminal_continue(active, messages, message, ContinuationKind::Overflow)?;
                     self.output.frame(json!({"type":"notice","level":"info","source":"compaction", "message":"Local shake restored the retry context; original output is available through artifact recovery."}));
                     return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
                 }
@@ -648,14 +757,20 @@ impl Host {
             }
         };
         if let Some(entry_id) = frame_rescue {
-            session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-            let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await {
+            recovery.finish(&mut *session.journal.lock().await, true)?;
+            session.failed_recovery_message.lock().unwrap().take();
+            let fits = if self.recovery_fits(settings.reserve_tokens, None, &[]).await? {
                 true
             } else {
                 self.rescue_local_history(settings.reserve_tokens, None, false, &[], None).await?
             };
             if fits && !self.maintenance_stop_requested() {
-                self.queue_terminal_continue(active, self.agent.messages().await);
+                self.queue_terminal_continue(
+                    active,
+                    self.agent.raw_messages().await,
+                    message,
+                    ContinuationKind::Overflow,
+                )?;
                 return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
             }
             self.stamp_frame_dead_end(&entry_id, true).await?;
@@ -668,7 +783,7 @@ impl Host {
                     None,
                     settings.method_order.iter().any(|method| method == "shake"),
                     &[],
-                    Some(&mut recovery),
+                    Some(recovery.transaction_mut()),
                 )
                 .await;
             let rescued = match rescued {
@@ -681,14 +796,20 @@ impl Host {
                 }
             };
             if rescued {
-                session.journal.lock().await.finish_failed_assistant_recovery(recovery, true)?;
-                self.queue_terminal_continue(active, self.agent.messages().await);
+                recovery.finish(&mut *session.journal.lock().await, true)?;
+                session.failed_recovery_message.lock().unwrap().take();
+                self.queue_terminal_continue(
+                    active,
+                    self.agent.raw_messages().await,
+                    message,
+                    ContinuationKind::Overflow,
+                )?;
                 return Ok(MaintenanceOutcome { continuation_scheduled: true, history_rewritten: true, ..none });
             }
             self.restore_maintenance(recovery, &session).await?;
             return Ok(MaintenanceOutcome { automatic_continuation_blocked: true, history_rewritten: true, ..none });
         }
-        clean = self.agent.messages().await;
+        clean = self.agent.raw_messages().await;
         let preparation = session.journal.lock().await.native_projected_compaction_snapshot();
         let prepared = (|| -> Result<_> {
             let snapshot = preparation?;
@@ -747,9 +868,17 @@ impl Host {
             },
             snapshot,
             first_kept,
-            tokens_before: stored_tokens(&self.config.model, &clean) as u64,
-            expected_messages: clean,
+            tokens_before: self
+                .budget_message_tokens(&clean, MessageCountOptions { exclude_encrypted_reasoning: true })?
+                as u64,
+            expected_messages: if message.actual().is_some() {
+                Vec::new()
+            } else {
+                self.session.projector.current_body_receipts(&clean)?
+            },
             recovery,
+            native_context: message.context_receipt(&clean)?,
+            native_guard: NativeContinuationGuard::for_terminal(message, ContinuationKind::Overflow),
             reserve_tokens: settings.reserve_tokens,
         });
         self.is_compacting = true;
@@ -758,25 +887,42 @@ impl Host {
         Ok(MaintenanceOutcome { continuation_scheduled: true, ..none })
     }
 
-    async fn restore_maintenance(&mut self, recovery: FailedAssistantRecovery, session: &Arc<Session>) -> Result<()> {
+    async fn restore_maintenance(&mut self, recovery: impl Into<RecoveryToken>, session: &Arc<Session>) -> Result<()> {
         let mut journal = session.journal.lock().await;
-        let rewritten = recovery.local_history_rewritten();
-        let outcome = journal.finish_failed_assistant_recovery(recovery, rewritten)?;
-        let mut public = Session::public_messages(&journal);
-        if let FailedAssistantRecoveryOutcome::Restored { message, appended_entry_id } = outcome {
-            let message = *message;
-            if appended_entry_id.is_none() {
-                // Native empty errors live in the active transcript/public view,
-                // while the raw receipt stays on its original branch.
+        let recovery = recovery.into();
+        let rewritten = recovery.rewritten();
+        let outcome = recovery.finish(&mut journal, rewritten)?;
+        let mut public =
+            public_messages_after_publication(&journal, session, &self.connection, &mut self.drain_queues)?;
+        let retained = session.failed_recovery_message.lock().unwrap().take();
+        if let Some((recovery_body, recovery_source, appended_entry_id, legacy_message)) = outcome {
+            let raw = match retained {
+                Some(raw) => raw,
+                None => session.projector.message_from_body(recovery_body, recovery_source)?,
+            };
+            if let Some(id) = appended_entry_id {
+                session.projector.record_entry_id(&raw, id);
+            } else {
                 public.push(
-                    AgentEvent::MessageEnd { message: Message::Assistant(message.clone()) }.full()["message"].clone(),
+                    session.projector.public_event_wire(&AgentEvent::MessageEnd { message: raw.clone() }, true)?.get("message")
+                        .cloned().unwrap_or(WireValue::Null),
                 );
             }
-            let mut messages = self.route_model_context(&journal)?;
-            if messages.last().and_then(Message::as_assistant) != Some(&message) {
-                messages.push(Message::Assistant(message));
+            let selected = self.route_raw_context(&journal)?;
+            let current = self.agent.raw_messages().await;
+            let mut messages = session.projector.reconcile_owned_context(&current, selected)?;
+            let duplicate = if let Some(message) = legacy_message.as_ref() {
+                raw_last_assistant(&messages)?.as_ref() == Some(message.as_ref())
+            } else {
+                messages.last().is_some_and(|tail| tail.same_record(&raw)
+                    || matches!((tail.body_snapshot(), raw.body_snapshot()),
+                        (ara_agent::AgentMessageBody::Graph(current), ara_agent::AgentMessageBody::Graph(restored)) if current.same_identity(&restored)))
+            };
+            if duplicate {
+                messages.pop();
             }
-            self.agent.replace_idle_messages(messages)?;
+            messages.push(raw);
+            self.agent.replace_idle_raw_messages(messages)?;
         }
         // Empty errors remain visible even when excluded from model replay.
         *session.messages.lock().unwrap() = public;
@@ -798,8 +944,19 @@ impl Host {
         let mut committed = false;
         let result = async {
             let accepted = result?;
-            if self.agent.messages().await != active.expected_messages {
+            if active.native_context.is_none()
+                && self.session.projector.current_body_receipts(&self.agent.raw_messages().await)?
+                    != active.expected_messages
+            {
                 bail!("Context changed during overflow recovery");
+            }
+            if let Some(receipt) = &active.native_context {
+                let messages = self.agent.raw_messages().await;
+                receipt
+                    .recheck(&messages, active.session.values.as_ref().context("Native maintenance values missing")?)?;
+            }
+            if let Some(guard) = &active.native_guard {
+                guard.recheck(self)?;
             }
             let mut journal = active.session.journal.lock().await;
             if let Err(error) = journal.commit_native_entry_compaction(
@@ -816,33 +973,38 @@ impl Host {
                 return Err(error.into());
             }
             committed = true;
-            if let Err(error) = self.adopt_route_context(&journal) {
+            if let Err(error) = self.adopt_route_context(&journal).await {
                 *active.session.persistence_error.lock().unwrap() = Some(error.to_string());
                 self.connection.cancel();
                 return Err(error);
             }
-            *active.session.messages.lock().unwrap() = Session::public_messages(&journal);
+            *active.session.messages.lock().unwrap() =
+                public_messages_after_publication(&journal, &active.session, &self.connection, &mut self.drain_queues)?;
             self.config.provider = self.sessions.provider.build();
+            if let Some(controller) = &self.sessions.context_controller {
+                controller.fresh_provider_session();
+            }
             self.publish_snapshot(&self.config);
             Ok::<_, anyhow::Error>(accepted)
         }
         .await;
         let finalized = if committed {
-            active
-                .session
-                .journal
-                .lock()
-                .await
-                .finish_failed_assistant_recovery(active.recovery, false)
-                .map(|_| ())
-                .map_err(anyhow::Error::from)
+            active.session.failed_recovery_message.lock().unwrap().take();
+            active.recovery.finish(&mut *active.session.journal.lock().await, false).map(|_| ())
         } else {
             self.restore_maintenance(active.recovery, &active.session).await
         };
         if let Err(error) = finalized {
-            *active.session.persistence_error.lock().unwrap() = Some(error.to_string());
+            active.session.persistence_error.lock().unwrap().get_or_insert_with(|| error.to_string());
             self.connection.cancel();
+            self.drain_queues = false;
         }
+        active.session.failed_recovery_message.lock().unwrap().take();
+        let publication_error = active.session.persistence_error.lock().unwrap().clone();
+        let result = match (result, publication_error) {
+            (Ok(_), Some(error)) => Err(anyhow::anyhow!(error)),
+            (result, _) => result,
+        };
         self.is_compacting = false;
         self.auto_compaction_pending = false;
         let mut event =
@@ -850,38 +1012,64 @@ impl Host {
         match result {
             Ok(accepted) => {
                 event["result"] = json!({"summary":accepted.text,"firstKeptEntryId":active.first_kept,"tokensBefore":active.tokens_before});
-                let fits = if self.recovery_fits(active.reserve_tokens, None, &[]).await {
-                    true
-                } else {
-                    match self.rescue_local_history(active.reserve_tokens, None, false, &[], None).await {
-                        Ok(fits) => fits,
-                        Err(error) => {
-                            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction","message":error.to_string()}));
-                            false
-                        }
+                let continuation: Result<(bool, Vec<Value>, Option<NativeRetryContextReceipt>)> = async {
+                    let fits = if self.recovery_fits(active.reserve_tokens, None, &[]).await? {
+                        true
+                    } else {
+                        self.rescue_local_history(active.reserve_tokens, None, false, &[], None).await?
+                    };
+                    let messages = self.agent.raw_messages().await;
+                    Ok((
+                        fits,
+                        if active.native_context.is_some() {
+                            Vec::new()
+                        } else {
+                            self.session.projector.current_body_receipts(&messages)?
+                        },
+                        if active.native_guard.is_some() {
+                            Some(NativeRetryContextReceipt::capture(
+                                &messages,
+                                self.session.values.clone().context("Native maintenance values missing")?,
+                            )?)
+                        } else {
+                            None
+                        },
+                    ))
+                }
+                .await;
+                let (fits, expected_messages, continuation_native_context) = match continuation {
+                    Ok(continuation) => continuation,
+                    Err(error) => {
+                        event["errorMessage"] = json!(super::super::sanitize_text(&error.to_string()));
+                        self.drain_queues = false;
+                        self.output.response(&active.command, None, Some(error.to_string()));
+                        self.output.frame(event);
+                        return;
                     }
                 };
-                let messages = self.agent.messages().await;
                 if !cancelled && !self.connection.is_cancelled() && fits {
                     self.maintenance_continue = Some(PendingMaintenanceContinue {
                         session: active.session,
                         generation: active.generation,
                         command: active.command,
-                        expected_messages: messages,
+                        expected_messages,
                         reserve_tokens: active.reserve_tokens,
                         check_fit: true,
+                        native_context: continuation_native_context,
+                        native_guard: active.native_guard,
                         deadline: Instant::now() + Duration::from_millis(100),
                     });
                     event["willRetry"] = json!(true);
                 } else {
                     self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
                         "message":"Compaction could not free enough context. Clear large tool output or switch to a larger-context model."}));
-                    self.drain_queues = !cancelled && self.agent.has_queued_messages();
+                    self.drain_queues =
+                        !cancelled && !self.connection.is_cancelled() && self.agent.has_queued_messages();
                 }
             }
             Err(error) => {
                 event["errorMessage"] = json!(super::super::sanitize_text(&error.to_string()));
-                self.drain_queues = !cancelled && self.agent.has_queued_messages();
+                self.drain_queues = !cancelled && !self.connection.is_cancelled() && self.agent.has_queued_messages();
                 self.output.response(&active.command, None, Some(error.to_string()));
             }
         }
@@ -900,13 +1088,49 @@ impl Host {
     }
 
     pub(super) async fn resume_maintenance_continue(&mut self) {
-        let Some(pending) = self.maintenance_continue.take() else { return };
+        let Some(pending) = self.maintenance_continue.take() else {
+            return;
+        };
         if self.input_closed
             || self.maintenance_stop_requested()
             || pending.generation != self.prompt_generation
             || !Arc::ptr_eq(&pending.session, &self.session)
-            || self.agent.messages().await != pending.expected_messages
         {
+            self.drain_queues = false;
+            return;
+        }
+        let current_messages = self.agent.raw_messages().await;
+        let receipts = if pending.native_context.is_some() {
+            Vec::new()
+        } else {
+            let receipts = match self.session.projector.current_body_receipts(&current_messages) {
+                Ok(receipts) => receipts,
+                Err(error) => {
+                    self.drain_queues = false;
+                    self.output.response(&pending.command, None, Some(error.to_string()));
+                    return;
+                }
+            };
+            receipts
+        };
+        let native_check = (|| -> Result<()> {
+            if let Some(receipt) = &pending.native_context {
+                receipt.recheck(
+                    &current_messages,
+                    pending.session.values.as_ref().context("Native maintenance values missing")?,
+                )?;
+            }
+            if let Some(guard) = &pending.native_guard {
+                guard.recheck(self)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = native_check {
+            self.drain_queues = false;
+            self.output.response(&pending.command, None, Some(error.to_string()));
+            return;
+        }
+        if receipts != pending.expected_messages {
             self.drain_queues = false;
             return;
         }
@@ -914,23 +1138,63 @@ impl Host {
         if self.agent.has_queued_messages() {
             self.drain_queues = true;
             self.reconcile_queues().await;
-        } else if pending.check_fit && !self.recovery_fits(pending.reserve_tokens, None, &[]).await {
-            self.drain_queues = false;
-            self.output.frame(json!({"type":"notice","level":"warning","source":"compaction",
-                "message":"Context changed after compaction and no longer fits the model."}));
-        } else if let Err(error) = self.start(None, pending.command) {
+        } else if let Err(error) =
+            self.start_after_maintenance(pending.command, pending.check_fit, pending.reserve_tokens).await
+        {
             self.drain_queues = false;
             self.output
                 .frame(json!({"type":"notice","level":"warning","source":"compaction","message":error.to_string()}));
         }
     }
 
-    pub(super) fn extend_maintenance_context(&mut self, session: &Arc<Session>, message: &Message) {
+    pub(super) fn extend_maintenance_context(&mut self, session: &Arc<Session>, message: &AgentMessage) -> Result<()> {
         if let Some(pending) = &mut self.maintenance_continue
             && pending.generation == self.prompt_generation
             && Arc::ptr_eq(&pending.session, session)
         {
-            pending.expected_messages.push(message.clone());
+            if let Some(receipt) = &mut pending.native_context {
+                receipt.append(message)?;
+            } else {
+                pending
+                    .expected_messages
+                    .extend(session.projector.current_body_receipts(std::slice::from_ref(message))?);
+            }
         }
+        Ok(())
+    }
+}
+
+// Append inside rpc_host_maintenance.rs's existing @bin:ara module. The
+// descendant can call the private method without widening production access.
+#[cfg(test)]
+mod raw_messages_r_rollback_group {
+    use super::*;
+    use ara_ai::AssistantBlock;
+
+    #[tokio::test]
+    async fn actual_raw_native_rollback_restores_same_record_and_extensions_group() {
+        let (mut host, _) = super::super::tests::fixture();
+        let mut failed =
+            AssistantMessage::empty(&host.config.model.api, &host.config.model.provider, &host.config.model.id);
+        failed.stop_reason = ara_ai::StopReason::Error;
+        failed.error_message = Some("source fixture failure".into());
+        failed.content.push(AssistantBlock::text("retained failed output"));
+        let mut body = serde_json::to_value(Message::Assistant(failed.clone())).unwrap();
+        body["application"] = json!({"rollback":"preserve"});
+        body["errorId"] = json!(0x0002_1000_u32);
+        let raw_failed = AgentMessage::from_raw(body.clone(), None).unwrap();
+        host.agent.replace_idle_raw_messages(vec![raw_failed.clone()]).unwrap();
+        let recovery = {
+            let mut journal = host.session.journal.lock().await;
+            let id = host.session.projector.append_current_body(&mut journal, &raw_failed).unwrap();
+            let leaf = journal.leaf_id().unwrap().to_owned();
+            journal.begin_failed_assistant_recovery(&leaf, &id, &failed).unwrap()
+        };
+        *host.session.failed_recovery_message.lock().unwrap() = Some(raw_failed.clone());
+        let retained_session = host.session.clone();
+        host.restore_maintenance(recovery, &retained_session).await.unwrap();
+        assert!(host.agent.raw_messages().await.last().unwrap().same_record(&raw_failed));
+        assert!(host.session.failed_recovery_message.lock().unwrap().is_none());
+        assert_eq!(host.session.journal.lock().await.branch().last().unwrap().raw["message"], body);
     }
 }

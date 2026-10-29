@@ -1,0 +1,4144 @@
+{
+  "fixed_omp": "596f2da7101178214aa27a753529d15e6b7ad91d",
+  "bun_version": "1.4.0",
+  "bun_revision": "34cbb9a40b4bd1bd767d134a7065e66c2432a676",
+  "oracle_sha256": "e2f86eb16f5a5a026fe12be1e7e989ae0e149b41da2f4c22cbdcce9688ebfef7",
+  "rows": [
+    {
+      "label": "empty",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [],
+      "same_input": true,
+      "effects": [],
+      "input_units": []
+    },
+    {
+      "label": "plain",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        116,
+        101,
+        120,
+        116
+      ],
+      "same_input": true,
+      "effects": [],
+      "input_units": [
+        116,
+        101,
+        120,
+        116
+      ]
+    },
+    {
+      "label": "unicode",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        20013,
+        25991,
+        55357,
+        56832,
+        101,
+        769
+      ],
+      "same_input": true,
+      "effects": [],
+      "input_units": [
+        20013,
+        25991,
+        55357,
+        56832,
+        101,
+        769
+      ]
+    },
+    {
+      "label": "unpaired",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        120,
+        55296,
+        121,
+        57343,
+        122
+      ],
+      "same_input": true,
+      "effects": [],
+      "input_units": [
+        120,
+        55296,
+        121,
+        57343,
+        122
+      ]
+    },
+    {
+      "label": "c0-c1",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        28,
+        29,
+        30,
+        31,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159
+      ]
+    },
+    {
+      "label": "nul-tab-cr-lf",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        97,
+        0,
+        98,
+        9,
+        99,
+        13,
+        100,
+        10,
+        101
+      ],
+      "same_input": true,
+      "effects": [],
+      "input_units": [
+        97,
+        0,
+        98,
+        9,
+        99,
+        13,
+        100,
+        10,
+        101
+      ]
+    },
+    {
+      "label": "bom",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65279,
+        32,
+        120
+      ],
+      "same_input": true,
+      "effects": [],
+      "input_units": [
+        65279,
+        32,
+        120
+      ]
+    },
+    {
+      "label": "sgr",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "sgr-reset",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "sgr-rgb",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        56,
+        59,
+        50,
+        59,
+        50,
+        53,
+        53,
+        59,
+        48,
+        59,
+        57,
+        57,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "sgr-colon",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        56,
+        58,
+        50,
+        58,
+        58,
+        49,
+        58,
+        50,
+        58,
+        51,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "private-csi",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        63,
+        50,
+        53,
+        108,
+        66
+      ]
+    },
+    {
+      "label": "csi-intermediate",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        48,
+        32,
+        113,
+        66
+      ]
+    },
+    {
+      "label": "csi-bang",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        33,
+        112,
+        66
+      ]
+    },
+    {
+      "label": "osc-bel",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        7,
+        66
+      ]
+    },
+    {
+      "label": "osc-st",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "osc-hyperlink",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        108,
+        105,
+        110,
+        107,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        56,
+        59,
+        59,
+        104,
+        116,
+        116,
+        112,
+        115,
+        58,
+        47,
+        47,
+        101,
+        120,
+        97,
+        109,
+        112,
+        108,
+        101,
+        46,
+        105,
+        110,
+        118,
+        97,
+        108,
+        105,
+        100,
+        27,
+        92,
+        108,
+        105,
+        110,
+        107,
+        27,
+        93,
+        56,
+        59,
+        59,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "dcs",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        80,
+        49,
+        59,
+        50,
+        124,
+        112,
+        97,
+        121,
+        108,
+        111,
+        97,
+        100,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "apc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        95,
+        112,
+        97,
+        121,
+        108,
+        111,
+        97,
+        100,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "pm",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        94,
+        112,
+        97,
+        121,
+        108,
+        111,
+        97,
+        100,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "sos",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        88,
+        112,
+        97,
+        121,
+        108,
+        111,
+        97,
+        100,
+        27,
+        92,
+        66
+      ]
+    },
+    {
+      "label": "esc-char",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        55,
+        66
+      ]
+    },
+    {
+      "label": "esc-charset",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        40,
+        66,
+        66
+      ]
+    },
+    {
+      "label": "esc-reset",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        99,
+        66
+      ]
+    },
+    {
+      "label": "esc-unknown",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        90,
+        66
+      ]
+    },
+    {
+      "label": "c1-csi",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        155,
+        51,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "c1-osc-bel",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        157,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        7,
+        66
+      ]
+    },
+    {
+      "label": "c1-osc-st",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        157,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        156,
+        66
+      ]
+    },
+    {
+      "label": "c1-dcs",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        144,
+        49,
+        59,
+        50,
+        124,
+        112,
+        97,
+        121,
+        108,
+        111,
+        97,
+        100,
+        156,
+        66
+      ]
+    },
+    {
+      "label": "bare-esc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27
+      ]
+    },
+    {
+      "label": "bare-csi",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91
+      ]
+    },
+    {
+      "label": "partial-csi",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        49
+      ]
+    },
+    {
+      "label": "invalid-csi",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        49,
+        10,
+        33
+      ]
+    },
+    {
+      "label": "invalid-csi-unicode",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        51,
+        49,
+        20013
+      ]
+    },
+    {
+      "label": "partial-osc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101
+      ]
+    },
+    {
+      "label": "partial-osc-esc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        27
+      ]
+    },
+    {
+      "label": "osc-newline",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        116,
+        105,
+        116,
+        108,
+        101,
+        10,
+        110,
+        101,
+        120,
+        116,
+        7
+      ]
+    },
+    {
+      "label": "esc-emoji",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        55357,
+        56832
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        55357,
+        56832
+      ]
+    },
+    {
+      "label": "esc-surrogate",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        55296
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        55296
+      ]
+    },
+    {
+      "label": "repeated-esc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        27,
+        91,
+        51,
+        49,
+        109
+      ]
+    },
+    {
+      "label": "nested-osc",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        48,
+        59,
+        97,
+        27,
+        93,
+        48,
+        59,
+        98,
+        7
+      ]
+    },
+    {
+      "label": "esc-second-20",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        32,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-21",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        33,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-22",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        34,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-23",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        35,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-24",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        36,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-25",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        37,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-26",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        38,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-27",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        39,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-28",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        40,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-29",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        41,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        42,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        43,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        44,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        45,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        46,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-2f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        47,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-30",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        48,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-31",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        49,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-32",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        50,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-33",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        51,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-34",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        52,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-35",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        53,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-36",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        54,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-37",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        55,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-38",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        56,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-39",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        57,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        58,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        59,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        60,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        61,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        62,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-3f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        63,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-40",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        64,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-41",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        65,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-42",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        66,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-43",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        67,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-44",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        68,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-45",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        69,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-46",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        70,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-47",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        71,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-48",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        72,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-49",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        73,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        74,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        75,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        76,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        77,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        78,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-4f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        79,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-50",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        80,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-51",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        81,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-52",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        82,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-53",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        83,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-54",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        84,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-55",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        85,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-56",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        86,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-57",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        87,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-58",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        88,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-59",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        89,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        90,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        92,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        93,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        94,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-5f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        95,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-60",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        96,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-61",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        97,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-62",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        98,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-63",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        99,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-64",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        100,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-65",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        101,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-66",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        102,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-67",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        103,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-68",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        104,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-69",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        105,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        106,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        107,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        108,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        109,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        110,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-6f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        111,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-70",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        112,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-71",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        113,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-72",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        114,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-73",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        115,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-74",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        116,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-75",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        117,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-76",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        118,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-77",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        119,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-78",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        120,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-79",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        121,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-7a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        122,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-7b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        123,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-7c",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        124,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-7d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        125,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "esc-second-7e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        59,
+        49,
+        109,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        126,
+        59,
+        49,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0000",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        0,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0007",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        7,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0009",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        9,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-000a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        10,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-000d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        13,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0020",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        32,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0030",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        48,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-003a",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        58,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-003b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        59,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-003f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        63,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0040",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        64,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0041",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        65,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-004b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        75,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0050",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        80,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0058",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        88,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-005d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        93,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-005e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        94,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-005f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        95,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0060",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        96,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-006d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        109,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-007e",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        126,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-007f",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        127,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0080",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        128,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-0090",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        144,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-009b",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        155,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-009d",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        157,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-00a0",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        160,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-d800",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        55296,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-dc00",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        56320,
+        66
+      ]
+    },
+    {
+      "label": "csi-body-ffff",
+      "kind": "string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": [
+        65,
+        27,
+        91,
+        65535,
+        66
+      ]
+    },
+    {
+      "label": "type-missing",
+      "kind": "missing",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        117,
+        110,
+        100,
+        101,
+        102,
+        105,
+        110,
+        101,
+        100
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-undefined",
+      "kind": "undefined",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        117,
+        110,
+        100,
+        101,
+        102,
+        105,
+        110,
+        101,
+        100
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-null",
+      "kind": "null",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        110,
+        117,
+        108,
+        108
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-false",
+      "kind": "false",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        102,
+        97,
+        108,
+        115,
+        101
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-true",
+      "kind": "true",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        116,
+        114,
+        117,
+        101
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-zero",
+      "kind": "zero",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        48
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-negative_zero",
+      "kind": "negative_zero",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        48
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-number",
+      "kind": "number",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        49,
+        50,
+        46,
+        53
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-nan",
+      "kind": "nan",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        78,
+        97,
+        78
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-infinity",
+      "kind": "infinity",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        73,
+        110,
+        102,
+        105,
+        110,
+        105,
+        116,
+        121
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-bigint",
+      "kind": "bigint",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        49,
+        50,
+        51
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-symbol",
+      "kind": "symbol",
+      "ok": false,
+      "original_marker": false,
+      "error_name": "TypeError",
+      "error_message": "Cannot convert a symbol to a string",
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-empty_object",
+      "kind": "empty_object",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        91,
+        111,
+        98,
+        106,
+        101,
+        99,
+        116,
+        32,
+        79,
+        98,
+        106,
+        101,
+        99,
+        116,
+        93
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-array",
+      "kind": "array",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65,
+        44,
+        66
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-boxed_string",
+      "kind": "boxed_string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [],
+      "input_units": null
+    },
+    {
+      "label": "type-coerce_string",
+      "kind": "coerce_string",
+      "ok": true,
+      "output_type": "string",
+      "output_units": [
+        65
+      ],
+      "same_input": false,
+      "effects": [
+        "Get:Symbol.toPrimitive",
+        "Call:Symbol.toPrimitive:string"
+      ],
+      "input_units": null
+    },
+    {
+      "label": "type-coerce_symbol",
+      "kind": "coerce_symbol",
+      "ok": false,
+      "original_marker": false,
+      "error_name": "TypeError",
+      "error_message": "Cannot convert a symbol to a string",
+      "effects": [
+        "Get:Symbol.toPrimitive",
+        "Call:Symbol.toPrimitive:string"
+      ],
+      "input_units": null
+    },
+    {
+      "label": "type-coerce_throw",
+      "kind": "coerce_throw",
+      "ok": false,
+      "original_marker": true,
+      "error_name": null,
+      "error_message": null,
+      "effects": [
+        "Get:Symbol.toPrimitive",
+        "Call:Symbol.toPrimitive:string"
+      ],
+      "input_units": null
+    },
+    {
+      "label": "type-coerce_get_throw",
+      "kind": "coerce_get_throw",
+      "ok": false,
+      "original_marker": true,
+      "error_name": null,
+      "error_message": null,
+      "effects": [
+        "Get:Symbol.toPrimitive"
+      ],
+      "input_units": null
+    }
+  ]
+}

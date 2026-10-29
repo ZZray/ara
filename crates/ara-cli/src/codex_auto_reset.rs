@@ -287,6 +287,15 @@ fn numeric_order(a: f64, b: f64) -> Ordering {
 /// coordinator mutation occurs here. Live credit availability is checked again
 /// by the executor, and unknown consume outcomes require a durable receipt fence.
 pub fn plan_codex_resets(input: &CodexResetPlanInput<'_>) -> CodexResetPlan {
+    plan_codex_resets_with_permits(input, None)
+}
+
+/// Session eligibility applies only to blocked restoration, before best selection.
+/// Shared inventory and expiring-credit salvage retain the unrestricted snapshots.
+pub fn plan_codex_resets_with_permits(
+    input: &CodexResetPlanInput<'_>,
+    permits: Option<&dyn Fn(&ResetCreditTarget) -> bool>,
+) -> CodexResetPlan {
     let now_ms = input.now_ms;
     let settings = input.settings;
     let mut plan = CodexResetPlan::default();
@@ -370,6 +379,10 @@ pub fn plan_codex_resets(input: &CodexResetPlanInput<'_>) -> CodexResetPlan {
         for snapshot in &snapshots {
             let rule = "blocked-account";
             let account = &snapshot.account_key;
+            if permits.is_some_and(|permits| !permits(&snapshot.target)) {
+                skip(&mut plan.skipped, account, rule, "outside-account-pool");
+                continue;
+            }
             let live_unblock = if snapshot.active { input.active_block_unblock_at_ms } else { None };
             if !snapshot.limit_reached && live_unblock.is_none() {
                 skip(&mut plan.skipped, account, rule, "not-limit-reached");
@@ -482,7 +495,11 @@ pub fn plan_codex_resets(input: &CodexResetPlanInput<'_>) -> CodexResetPlan {
             let remaining_ms = unblock - now_ms;
             let account = account_key.as_deref().unwrap_or("*");
             let attempt_key = blocked_attempt_key(account, unblock);
-            let reason = if account_key.is_none() {
+            let target = ResetCreditTarget { account_id: account_id.map(str::to_owned),
+                email: email.map(str::to_owned), ..Default::default() };
+            let reason = if permits.is_some_and(|permits| !permits(&target)) {
+                Some("outside-account-pool")
+            } else if account_key.is_none() {
                 Some("no-identity")
             } else if keep_credits > 0.0 {
                 Some("credits-unknown")
@@ -657,4 +674,47 @@ pub fn overlay_live_reset_credits(
 /// nonterminal here, but the Host receipt layer must forbid an unsafe replay.
 pub fn is_terminal_redeem_outcome(code: &str) -> bool {
     matches!(code, "reset" | "already_redeemed" | "no_credit")
+}
+
+
+#[cfg(test)]
+mod cold_pool_tests {
+    use super::*;
+    use crate::auth_storage_policy::{UsageAmount, UsageLimit, UsageWindow, UsageResetCredits, UsageResetCreditDetail};
+
+    #[test]
+    fn permits_filter_before_best_and_active_fallback_without_filtering_salvage() {
+        let now = 1_700_000_000_000.0;
+        let report = |email: &str, expires: f64| UsageReport {
+            provider: "openai-codex".into(), fetched_at: now,
+            metadata: Some(serde_json::json!({"email":email,"accountId":email,"limitReached":true}).as_object().unwrap().clone()),
+            limits: vec![UsageLimit { id: "openai-codex:primary".into(),
+                amount: UsageAmount { used_fraction: Some(1.0), ..Default::default() },
+                window: Some(UsageWindow { resets_at: Some(now + 7_200_000.0), ..Default::default() }), ..Default::default() }],
+            reset_credits: Some(UsageResetCredits { available_count: 1.0,
+                credits: Some(vec![UsageResetCreditDetail { status: Some("available".into()),
+                    expires_at: Some(chrono::DateTime::from_timestamp_millis((now + expires) as i64).unwrap().to_rfc3339()),
+                    ..Default::default() }]), ..Default::default() }), ..Default::default()
+        };
+        let reports = [report("b@fixture", 3_600_000.0), report("a@fixture", 7_200_000.0)];
+        let attempted = HashSet::new(); let deferred = HashMap::new(); let last = HashMap::new();
+        let mut input = CodexResetPlanInput { now_ms: now, trigger: CodexResetTrigger::Blocked,
+            provider: "openai-codex", model_id: "gpt-5.6-sol", settings: CodexResetSettings {
+                auto_redeem: CodexAutoRedeemMode::Yes, ..Default::default() }, identity: None,
+            reports: Some(&reports), attempted_keys: &attempted, deferred_until_by_key: &deferred,
+            last_attempt_at_by_account: &last, active_block_unblock_at_ms: None };
+        assert_eq!(plan_codex_resets(&input).actions[0].target.email.as_deref(), Some("b@fixture"));
+        let permits = |target: &ResetCreditTarget| target.email.as_deref() == Some("a@fixture");
+        let scoped = plan_codex_resets_with_permits(&input, Some(&permits));
+        assert_eq!(scoped.actions.iter().find(|action| action.reason == "blocked-account").unwrap().target.email.as_deref(), Some("a@fixture"));
+        assert!(scoped.skipped.iter().any(|skip| skip.reason == "outside-account-pool"));
+        assert!(scoped.actions.iter().any(|action| action.reason != "blocked-account" && action.target.email.as_deref() == Some("b@fixture")));
+        let deny = |_: &ResetCreditTarget| false;
+        assert!(!plan_codex_resets_with_permits(&input, Some(&deny)).actions.iter().any(|action| action.reason == "blocked-account"));
+        let identity = OAuthAccountSummary { position: 0, credential_id: 7, account_id: Some("a@fixture".into()),
+            email: Some("a@fixture".into()), project_id: None, enterprise_url: None, org_id: None, org_name: None, active: true };
+        input.identity = Some(&identity); input.reports = None; input.active_block_unblock_at_ms = Some(now + 7_200_000.0);
+        assert!(plan_codex_resets(&input).actions.iter().any(|action| action.reason == "blocked-account"));
+        assert!(plan_codex_resets_with_permits(&input, Some(&deny)).actions.is_empty());
+    }
 }

@@ -89,7 +89,12 @@ fn estimates_supported_message_blocks_without_stale_cache() {
         "derived archive frames count 5024 each; original user pictures remain zero"
     );
 
-    let developer = Message::Developer(DeveloperMessage { content: UserContent::Text("测试".into()), timestamp: 0 });
+    let developer = Message::Developer(DeveloperMessage {
+        content: UserContent::Text("测试".into()),
+        timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
+    });
     assert_eq!(count_message(&developer, MessageCountOptions::default()), 2);
 
     let mut arguments = Map::new();
@@ -109,6 +114,7 @@ fn estimates_supported_message_blocks_without_stale_cache() {
             name: "read".into(),
             arguments,
             thought_signature: None,
+            ..Default::default()
         }),
         AssistantBlock::Image(image()),
     ];
@@ -126,6 +132,8 @@ fn estimates_supported_message_blocks_without_stale_cache() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     assert_eq!(count_message(&tool_result, MessageCountOptions::default()), 2 + IMAGE_TOKEN_ESTIMATE);
 
@@ -145,6 +153,7 @@ fn exact(family: ModelTokenizer, fragments: &[&str]) -> usize {
 
 #[test]
 fn every_family_and_mode_use_the_captured_catalog_choice() {
+    observe_original_utf16_fragment_counts();
     let fragments = ["hello, world", "ξ", "你好", ""];
     for family in [
         ModelTokenizer::ClaudeV3,
@@ -170,6 +179,60 @@ fn every_family_and_mode_use_the_captured_catalog_choice() {
     assert_eq!(captured.count_text("hello, world", TokenCountMode::Strict), 3);
     assert_eq!(changed.count_text("hello, world", TokenCountMode::Strict), 4);
     assert_eq!(captured.encoding(), Some(ModelTokenizer::ClaudeV3));
+}
+
+fn observe_original_utf16_fragment_counts() {
+    // Fixed tokens.rs accepts JsString -> raw UTF16 -> the existing utok core.
+    // Numeric observations below were also read from the installed original
+    // 18.1.8 addon with Bun 1.4.0; that binary is not a pinned-source build.
+    let cases: [&[u16]; 6] =
+        [&[0xd800], &[0xdc00], &[0xd800, 0xd800], &[0xdc00, 0xd800], &[0xd800, 0xdc00], &[0xd800, 65, 0xdc00]];
+    for (family, expected, separate) in [
+        (ModelTokenizer::ClaudeV3, [2, 2, 3, 3, 5, 4], 4),
+        (ModelTokenizer::ClaudeV47, [2, 2, 3, 3, 5, 4], 4),
+        (ModelTokenizer::ClaudeV5, [1, 1, 2, 2, 4, 3], 2),
+        (ModelTokenizer::ClaudeV5Sonnet, [1, 1, 2, 2, 4, 3], 2),
+        (ModelTokenizer::Qwen3, [1, 1, 1, 1, 4, 3], 2),
+        (ModelTokenizer::DeepSeekV3, [1, 1, 1, 1, 3, 3], 2),
+        (ModelTokenizer::KimiK2, [1, 1, 1, 1, 4, 3], 2),
+        (ModelTokenizer::Glm5, [1, 1, 1, 1, 4, 3], 2),
+    ] {
+        let tokenizer = Tokenizer::for_model(&model(Some(family)));
+        for mode in [TokenCountMode::Strict, TokenCountMode::Approximate, TokenCountMode::UpperBound] {
+            for (units, expected) in cases.iter().zip(expected) {
+                assert_eq!(
+                    tokenizer.count_utf16_fragments_checked([*units], mode),
+                    Ok(expected),
+                    "{family:?} {mode:?} {units:x?}"
+                );
+            }
+            assert_eq!(tokenizer.count_utf16_fragments([cases[0], cases[1]], mode), separate);
+            let valid = "hello, world ξ 你好";
+            let valid_units: Vec<_> = valid.encode_utf16().collect();
+            assert_eq!(
+                tokenizer.count_utf16_fragments([valid_units.as_slice()], mode),
+                tokenizer.count_fragments([valid], mode)
+            );
+        }
+    }
+    let fallback = Tokenizer::with_policy(None, TokenizerPolicy::default());
+    for (units, bytes) in cases.iter().zip([3usize, 3, 6, 6, 4, 7]) {
+        assert_eq!(fallback.count_utf16_fragments([*units], TokenCountMode::UpperBound), bytes);
+        assert_eq!(fallback.count_utf16_fragments([*units], TokenCountMode::Approximate), bytes.div_ceil(4));
+    }
+    assert_eq!(fallback.count_utf16_fragments([cases[0], cases[1]], TokenCountMode::Approximate), 2);
+    assert_eq!(fallback.count_utf16_fragments([cases[4]], TokenCountMode::Approximate), 1);
+    for (units, expected) in cases.iter().zip([1, 1, 1, 1, 4, 3]) {
+        assert_eq!(fallback.count_utf16_fragments([*units], TokenCountMode::Strict), expected);
+    }
+    let test_policy = Tokenizer::with_policy(
+        Some(&model(Some(ModelTokenizer::ClaudeV3))),
+        TokenizerPolicy { test_environment: true, accurate_unknown: true },
+    );
+    assert_eq!(test_policy.count_utf16_fragments([cases[0]], TokenCountMode::Approximate), 1);
+    assert_eq!(test_policy.count_utf16_fragments([cases[0]], TokenCountMode::Strict), 2);
+    let accurate = Tokenizer::with_policy(None, TokenizerPolicy { test_environment: false, accurate_unknown: true });
+    assert_eq!(accurate.count_utf16_fragments([cases[4]], TokenCountMode::Approximate), 4);
 }
 
 #[test]
@@ -223,12 +286,19 @@ fn typed_empty_fragments_reasoning_tools_and_images_follow_fixed_rules() {
         content: UserContent::Blocks(vec![UserBlock::text(""), UserBlock::Image(image())]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     assert_eq!(tokenizer.count_message(&empty_string, options), 1);
     assert_eq!(tokenizer.count_message(&empty_block, options), 0);
     assert_eq!(
         tokenizer.count_message(
-            &Message::Developer(DeveloperMessage { content: UserContent::Text("".into()), timestamp: 0 }),
+            &Message::Developer(DeveloperMessage {
+                content: UserContent::Text("".into()),
+                timestamp: 0,
+                provider_payload: None,
+                provider_payload_origin: None,
+            }),
             options
         ),
         1
@@ -245,6 +315,7 @@ fn typed_empty_fragments_reasoning_tools_and_images_follow_fixed_rules() {
             name: "ξ".into(),
             arguments: Map::new(),
             thought_signature: None,
+            ..Default::default()
         }),
         AssistantBlock::Image(image()),
     ];
@@ -263,6 +334,8 @@ fn typed_empty_fragments_reasoning_tools_and_images_follow_fixed_rules() {
         details: None,
         is_error: false,
         timestamp: 0,
+        provider_metadata: None,
+        useless: false,
     });
     assert_eq!(tokenizer.count_message(&tool, options), 3 + IMAGE_TOKEN_ESTIMATE);
     let mut frame = image();
@@ -271,6 +344,8 @@ fn typed_empty_fragments_reasoning_tools_and_images_follow_fixed_rules() {
         content: UserContent::Blocks(vec![UserBlock::text("ξ"), UserBlock::Image(frame)]),
         synthetic: None,
         timestamp: 0,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     assert_eq!(tokenizer.count_message(&archived, options), 3 + SNAPCOMPACT_FRAME_TOKEN_ESTIMATE);
     let messages = [empty_string, assistant, tool, archived];

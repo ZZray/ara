@@ -51,6 +51,8 @@ fn in_memory_keeps_host_identity_native_ids_empty_users_images_and_skills_withou
         })]),
         synthetic: None,
         timestamp: 1,
+        provider_payload: None,
+        provider_payload_origin: None,
     });
     let image_id = journal.append_message(&image).unwrap();
     let skill = UserSkillPrompt::new(UserContent::Text("Owned Skill body".into()), Some(json!({"name":"fixture"})));
@@ -66,9 +68,9 @@ fn in_memory_keeps_host_identity_native_ids_empty_users_images_and_skills_withou
     assert_eq!(journal.entries()[1].parent_id.as_deref(), Some(empty.as_str()));
     assert_eq!(journal.entries()[2].parent_id.as_deref(), Some(image_id.as_str()));
     assert!(journal.entries().iter().all(|entry| entry.id.len() == 8));
-    assert_eq!(journal.entries()[1].message(), Some(image));
+    assert_eq!(journal.entries()[1].message().unwrap(), Some(image));
     assert_eq!(journal.entries()[2].skill_prompt(), Some(skill));
-    assert_eq!(journal.build_context().len(), 4);
+    assert_eq!(journal.build_context().unwrap().len(), 4);
     assert_eq!(journal.compaction_source_snapshot(), Err(CompactionSourceError::NotDurable));
 }
 
@@ -168,7 +170,7 @@ fn fork_resolves_off_path_labels_removals_and_map_insertion_order() {
     assert_eq!(labels[0].parent_id.as_deref(), Some("u3"));
     assert_eq!(labels[1].parent_id.as_deref(), Some(labels[0].id.as_str()));
     assert!(labels.iter().all(|entry| !source.entries().iter().any(|old| old.id == entry.id)));
-    assert_eq!(fork.build_context().len(), 3);
+    assert_eq!(fork.build_context().unwrap().len(), 3);
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
@@ -183,7 +185,7 @@ fn root_fork_is_empty_except_inherited_name_action_and_has_no_previous_title() {
     let before = raw_entries(&source);
     let fork = source.fork_at(None, None).unwrap();
     assert_ne!(fork.session_id(), source.session_id());
-    assert!(fork.build_context().is_empty());
+    assert!(fork.build_context().unwrap().is_empty());
     assert_eq!(fork.entries().len(), 1);
     let title = &fork.entries()[0];
     assert_eq!(title.kind, "title_change");
@@ -270,7 +272,7 @@ fn memory_fork_projects_compaction_without_claiming_a_durable_source_snapshot() 
     let projection = fork.compacted_context_projection().unwrap();
     assert_eq!(projection.items.len(), 3);
     assert!(matches!(&projection.items[0], CompactedContextItem::Summary(view) if view.entry_id == summary));
-    assert_eq!(fork.model_context().len(), 3);
+    assert_eq!(fork.model_context().unwrap().len(), 3);
     assert_eq!(fork.compaction_source_snapshot(), Err(CompactionSourceError::NotDurable));
     assert!(!fork.is_on_disk());
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);

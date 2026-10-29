@@ -536,18 +536,11 @@ mod tests {
         origin: String,
         client: reqwest::Client,
     }
-    #[async_trait]
-    impl OAuthProvider for HttpOAuth {
-        fn lease(&self, row: &StoredAuthCredential) -> Result<RequestAuthLease, AuthStorageError> {
-            Ok(RequestAuthLease::new(
-                CredentialIdentity::Stored { id: row.id, revision: row.revision },
-                text_field(row, "access"),
-            ))
-        }
-        async fn resolve(
+    impl HttpOAuth {
+        async fn resolve_owned(
             &self,
             row: StoredAuthCredential,
-            _: bool,
+            publication: OAuthRefreshPublication,
             cancel: &CancellationToken,
         ) -> Result<ResolvedOAuth, AuthStorageError> {
             let response = tokio::select! {
@@ -564,17 +557,54 @@ mod tests {
             if let AuthCredential::OAuth { fields } = &mut credential {
                 fields.extend(fresh);
             }
-            let store = self.store.lock().unwrap();
-            if !store.try_update_auth_credential_if_matches(row.id, &row.serialized_data, &credential, None).unwrap() {
-                return Err(AuthStorageError::Unavailable);
+            let usable = match &credential {
+                AuthCredential::OAuth { fields } => {
+                    fields.get("expires").and_then(Value::as_f64).is_some_and(|at| at > FIXTURE_NOW)
+                }
+                _ => false,
+            };
+            if publication == OAuthRefreshPublication::BrokerExplicit && usable {
+                credential =
+                    standard_oauth_projection(&credential, &row.credential).ok_or(AuthStorageError::Configuration)?;
             }
+            let store = self.store.lock().unwrap();
+            let won =
+                store.try_update_auth_credential_if_matches(row.id, &row.serialized_data, &credential, None).unwrap();
             let row = store
                 .list_auth_credentials(Some(&row.provider))
                 .unwrap()
                 .into_iter()
                 .find(|candidate| candidate.id == row.id)
                 .ok_or(AuthStorageError::Unavailable)?;
+            let own = won && row.credential == credential;
+            if !access_fresh(&row, FIXTURE_NOW, if own { 0.0 } else { REFRESH_SKEW_MS }) {
+                return Err(AuthStorageError::Unavailable);
+            }
             Ok(ResolvedOAuth { lease: self.lease(&row)?, row })
+        }
+    }
+    #[async_trait]
+    impl OAuthProvider for HttpOAuth {
+        fn lease(&self, row: &StoredAuthCredential) -> Result<RequestAuthLease, AuthStorageError> {
+            Ok(RequestAuthLease::new(
+                CredentialIdentity::Stored { id: row.id, revision: row.revision },
+                text_field(row, "access"),
+            ))
+        }
+        async fn resolve(
+            &self,
+            row: StoredAuthCredential,
+            _: bool,
+            cancel: &CancellationToken,
+        ) -> Result<ResolvedOAuth, AuthStorageError> {
+            self.resolve_owned(row, OAuthRefreshPublication::Merge, cancel).await
+        }
+        async fn resolve_broker_explicit(
+            &self,
+            row: StoredAuthCredential,
+            cancel: &CancellationToken,
+        ) -> Result<ResolvedOAuth, AuthStorageError> {
+            self.resolve_owned(row, OAuthRefreshPublication::BrokerExplicit, cancel).await
         }
     }
 

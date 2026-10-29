@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "reviewer": "independent Codex /root/task_owner_complete_review",
+  "created_utc": "2026-10-29T15:50:24.198Z",
+  "verdict": "APPROVE_THREE_FROZEN_HELPER_SOURCES_ONLY_PENDING_COMPOSED_WIRING_AND_RUNTIME",
+  "findings": [],
+  "findings_count": 0,
+  "review_scope": "Only exact新增cfg blocks in main.rs/worktree.rs/capture.rs from the frozen helper manifest; no claim about unfinished test/Peer/grant candidate or runtime.",
+  "manifest": {
+    "path": "D:/workspace/env/cache/ara-port-candidates/omp-upgrade-host-service-control-v1/task-m1m9-resume-20261029/gap-bank-v1/candidate/HELPER-MANIFEST.json",
+    "sha256": "eb9cfbbd326915a8c4d1194a520527f4341bc72b0fceaab39057b7802e51c10a"
+  },
+  "reviewed_files": [
+    {
+      "path": "crates/ara-cli/src/main.rs",
+      "before_sha256": "a25acf6943a1224ad4668f34c39ad40b66af5bc5b1a4901a4d9fedead28f61ab",
+      "after_sha256": "42a1dd2ad7be0dfe33ba07a8dfbd268340b536b5289ae8049e1e017ab832c2e2",
+      "opcodes": [
+        [
+          "replace",
+          459,
+          460,
+          459,
+          542
+        ]
+      ],
+      "inverse_bytes_equal": true,
+      "changed_old_lines": [
+        "        // This concrete CLI type has no after-tool extension callback.\n"
+      ],
+      "added_cfg_markers": 1
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+      "before_sha256": "2a5d0788caf1a3a127c64287406cb97b22bb740d49f0abbf70c85772322112bc",
+      "after_sha256": "08cc4d5ba5e66b8716389e9ae060fdb83eec0ca74f47a9e3468dc541997c107d",
+      "opcodes": [
+        [
+          "insert",
+          13,
+          13,
+          13,
+          71
+        ],
+        [
+          "insert",
+          563,
+          563,
+          621,
+          623
+        ],
+        [
+          "insert",
+          584,
+          584,
+          644,
+          657
+        ]
+      ],
+      "inverse_bytes_equal": true,
+      "changed_old_lines": [],
+      "added_cfg_markers": 3
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/capture.rs",
+      "before_sha256": "7e01d42b860b6f9b1e4b2198d8725ce141ede58fa39176027c5ad79bb3a8a527",
+      "after_sha256": "66c29a90487f882b4111358febcb1a59b029cf7312e6a6885e584d901db7259b",
+      "opcodes": [
+        [
+          "insert",
+          122,
+          122,
+          122,
+          134
+        ]
+      ],
+      "inverse_bytes_equal": true,
+      "changed_old_lines": [],
+      "added_cfg_markers": 1
+    }
+  ],
+  "source_observations": [
+    {
+      "path": "crates/ara-cli/src/main.rs",
+      "lines": "460-542",
+      "decision": "APPROVE_SOURCE_ONLY",
+      "proof": [
+        "The original native hook/value checks, tool_call/args/result owner validation and child_yield.after_tool_call remain in the same order before the added block.",
+        "Core agent_loop/actual_execute.rs1404 awaits this exact after_tool_call_actual future before readmit/result publication. The code writes actual isolated cwd/after-hook-<key>.json with held phase, then awaits a bounded file release, then writes released before returning the original None.",
+        "Tool id/name come from the actual Graph tool call, self.cwd is the existing Host cwd, and ResourceId is read from that cwd parent's physical owner marker. This is a real callback side effect under the original Task/turn path, not a counter-generated tool result.",
+        "The config must contain a task-after-tool-hook gate before extra Graph field reads occur; keys exclude path separators and dot traversal. Missing config/gate leaves existing behavior unchanged.",
+        "Read/parse/Graph/proof/gate/timeout errors propagate through ActualProviderError::Callback with the original context; there is no swallowed success or fabricated release."
+      ],
+      "boundaries": [
+        "The marker read supplies evidence, not new ownership authority. The unfinished bank must prove current cwd/resource/Peer/run identity agrees with the actual retained lease and journal.",
+        "Production has no extension callback. This cfg-only fixture binding verifies the real Core async-hook/Task settlement contract and must not be presented as an implemented extension product.",
+        "Proof bytes are expected test side effects in the isolated copy and later baseline-relative capture; original parent WIP assertions must account for apply policy rather than silently accept hook writes to parent."
+      ]
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/worktree.rs",
+      "lines": "16-71,622-623,645-657",
+      "decision": "APPROVE_SOURCE_ONLY",
+      "proof": [
+        "The shared helper is cfg(test-fixture), pub(crate), synchronous and local to the existing library worktree module; capture can reuse it without importing binary peer_host.",
+        "Only matching configured gates write the reached receipt and wait. The helper does not manufacture a Git/FS failure or implement failAfterRelease; error paths from read/parse/write/timeout return Result Err.",
+        "The branch call occurs inside the existing dirty-history path only after a real non-base rewritten tip and successful rescue compare_and_swap_ref. The receipt contains original copy/resource/parent/scratch/ref/tip/source commit.",
+        "The original following synthetic_tree/Git operations are unchanged. Test obstruction must make one of those actual operations fail, preserving the completed prefix through the existing owner effect path.",
+        "The helper's std::thread::sleep is inside the existing spawn_blocking capture worker, under original admission/parent mutation ownership; no new async owner or effect thread is introduced."
+      ],
+      "boundaries": [
+        "The literal completed_prefix=1 means first observed non-base rewritten prefix, not necessarily first source-history ordinal. The bank must check source_commit and remaining work rather than infer two valid commits from this number.",
+        "Gate must select the exact original resource and scratch path in a fresh private scenario. No cleanup/repair of a failed resource is authorized by this helper."
+      ]
+    },
+    {
+      "path": "crates/ara-cli/src/task_isolation/capture.rs",
+      "lines": "123-134",
+      "decision": "APPROVE_SOURCE_ONLY",
+      "proof": [
+        "The gate is reached only for the first actual nested patch after write_new(root.patch) returns successfully and before unchanged write_new(nested-0.patch).",
+        "Receipt exposes the real current capture directory, root/nested paths, ResourceId and nested relative path; the bank can create an exact private filesystem obstruction without guessing a UUID.",
+        "No production persistence order, fingerprint, branch publication or capture.json path is changed. A helper error propagates through the existing capture worker/effect failure mechanism."
+      ],
+      "boundaries": [
+        "root.patch may be an empty but durably written root delta when the scenario has only nested edits; existence/durable write must not be misrepresented as a nonempty root change.",
+        "The future bank must verify actual nested bytes and the original nested write OS error, absent successful capture.json and retained original resource. A reached receipt by itself is not evidence of that failure."
+      ]
+    }
+  ],
+  "nonfixture_review": {
+    "all_added_executable_code_and_state_cfg_test_fixture": true,
+    "original_executable_lines_removed_or_reordered": 0,
+    "only_nonfixture_change": "One explanatory comment in main.rs.",
+    "inverse_original_bytes_verified": true,
+    "details": "Each candidate hash matches manifest, each original hash matches frozen source, and inverse hunk reconstruction yields exact original bytes. worktree/capture change only insertions; main replacement contains the old comment plus cfg block, with no original executable statement changed.",
+    "original_test_assertion_body_changes": 0
+  },
+  "timeout_review": {
+    "seconds": 25,
+    "error_propagation": "Main gate maps failure to Core callback error; synchronous library helper returns Err so existing capture effect records failed/unknown and retains according to existing owner policy.",
+    "outer_operation_boundary": "Existing Peer fixture operations also have a25-second bound. A deliberately held gate may lose the race to that outer bound; do not use full-timeout text as success evidence or extend original test timeouts to make the bank green.",
+    "required_wiring": "Normal scenario controller must wait for exact reached evidence, inspect actual held-state effects, perform the intended private action, then release promptly inside existing operation bounds. Timeout retains failure/Unknown evidence and is never a passing result."
+  },
+  "interface_contract_for_remaining_composition": {
+    "config": "Existing ARA_TEST_PEER_FRONTIERS JSON file",
+    "gate_names": [
+      "task-after-tool-hook",
+      "task-branch-prefix-persisted",
+      "task-root-patch-before-nested"
+    ],
+    "selectors": "unique nonempty ASCII alphanumeric/hyphen/underscore key, actual identityContains, finite occurrence",
+    "reached_path": "config.parent/frontiers/<key>.reached.json",
+    "release_path": "config.parent/frontiers/<key>.release",
+    "requirements": [
+      "Bind gate config and proof roots to fresh disposable scenario directories; stale release files or a broad root callback match must not bypass the observation.",
+      "F3 must independently hold actual Bash effect and hook: settle one while the other is held, inspect same actual resource has no capture/remove progression, then release and inspect native journal+physical proof/capture.",
+      "F4 must use actual dirty parent baseline and at least two meaningful child commits, inspect real first rescue ref/tip, then induce a real scratch filesystem error.",
+      "F5 must use a genuine nested repo/edit and exact actual nested path directory obstruction after persisted root patch.",
+      "Current original89 identities/19 criteria/assertions/timeouts remain preserved; source syntax receipts are not typecheck/runtime acceptance."
+    ]
+  },
+  "checks_actually_performed": [
+    "Read exact candidate files/diffs and original Core await/Host/capture worker callers",
+    "Verify six original/candidate file hashes against frozen manifest",
+    "Inspect changed-old-line set and inverse exact byte reconstruction",
+    "Review error/timeout/ownership/persistence placement and nonfixture cfg boundaries"
+  ],
+  "not_performed": [
+    "Cargo",
+    "Rust execution",
+    "Unit/integration tests",
+    "Model calls",
+    "Process/backend effects",
+    "Source/candidate edits"
+  ],
+  "remaining_gates": [
+    "Exact Peer/test/grant candidate and interface composition review before adoption.",
+    "Final source manifest1551/normal image/affected harness plan binding; reuse unchanged approved driver/launcher.",
+    "One bounded affected build/runtime batch with actual outputs and independent effect audit.",
+    "Existing EXEC/POINT and M5/M8/O1/O8 partial outcomes remain unchanged until new executed evidence."
+  ],
+  "reuse_rule": "Final complete candidate review may reuse this coverage only while the three after hashes exactly match reviewed_files. Review new callers/schema/interfaces and any changed helper delta separately.",
+  "activity": {
+    "only_report": "gap-bank-v1/HELPER-POST.json",
+    "source_or_candidate_writes": 0,
+    "builds": 0,
+    "tests": 0,
+    "models": 0,
+    "replays": 0
+  }
+}
+

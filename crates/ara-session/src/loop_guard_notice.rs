@@ -4,6 +4,8 @@
 //! MIT license and permission notice: repository THIRD_PARTY_NOTICES.md.
 
 use ara_ai::{DeveloperMessage, Message, UserContent, now_ms};
+#[path = "loop_guard_notice_actual.rs"]
+pub mod actual;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -153,7 +155,12 @@ impl LoopGuardNotice {
     }
 
     pub fn model_message(&self) -> Message {
-        Message::Developer(DeveloperMessage { content: UserContent::Text(self.content()), timestamp: self.timestamp })
+        Message::Developer(DeveloperMessage {
+            content: UserContent::Text(self.content()),
+            timestamp: self.timestamp,
+            provider_payload: None,
+            provider_payload_origin: None,
+        })
     }
 
     pub fn try_model_message(&self) -> Result<Message, std::io::Error> {

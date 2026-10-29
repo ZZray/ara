@@ -66,7 +66,7 @@ fn native_summary(journal: &SessionJournal, active: &Model) -> ara_session::Comp
 
 fn comparable_context(journal: &SessionJournal, active: &Model, available: bool) -> Vec<Message> {
     let projection = journal.compacted_context_projection_for_route(active, available).unwrap();
-    let mut context = journal.model_context_for_route(active, available);
+    let mut context = journal.model_context_for_route(active, available).unwrap();
     if matches!(projection.items.first(), Some(CompactedContextItem::Summary(summary)) if summary.remote.is_none()) {
         // A text summary is a freshly derived lower-trust User projection.
         // Only its synthetic timestamp varies between calls; retain every
@@ -99,7 +99,7 @@ fn native_v1_v2_replay_same_provider_different_model_reopen_and_recent_tail_are_
     assert_eq!(summary.source_entry_ids.as_ref().unwrap(), &first);
     assert_eq!(summary.remote.as_ref().unwrap().replay_through_entry_id, second[1]);
     assert_eq!(summary.file_details.unwrap().modified_files, result.modified_files);
-    let context = journal.model_context_for_route(&active, true);
+    let context = journal.model_context_for_route(&active, true).unwrap();
     assert_eq!(context.len(), 1, "recent history is already covered by the replay carrier");
     let carrier = context[0].as_assistant().unwrap();
     assert!(carrier.content.is_empty() && carrier.usage.is_unknown() && carrier.response_id.is_none());
@@ -110,14 +110,14 @@ fn native_v1_v2_replay_same_provider_different_model_reopen_and_recent_tail_are_
     );
     let mut reopened = SessionJournal::open(&path).unwrap();
     assert_eq!(reopened.entries(), journal.entries());
-    assert_eq!(reopened.model_context_for_route(&active, true), context);
+    assert_eq!(reopened.model_context_for_route(&active, true).unwrap(), context);
     let changed_model = model("openai", "model-b");
-    let changed = reopened.model_context_for_route(&changed_model, true);
+    let changed = reopened.model_context_for_route(&changed_model, true).unwrap();
     assert_eq!(changed[0].as_assistant().unwrap().model, "model-b");
     assert_eq!(changed[0].as_assistant().unwrap().provider_payload, carrier.provider_payload);
     let third = turn(&mut reopened, "THIRD NEW TURN");
     let fourth = turn(&mut reopened, "FOURTH NEW TURN");
-    let context = reopened.model_context_for_route(&changed_model, true);
+    let context = reopened.model_context_for_route(&changed_model, true).unwrap();
     assert_eq!(context.len(), 5);
     let snapshot = reopened.native_remote_snapshot(&changed_model, true).unwrap();
     assert_eq!(
@@ -136,11 +136,11 @@ fn native_v1_v2_replay_same_provider_different_model_reopen_and_recent_tail_are_
         .unwrap();
     let summary = native_summary(&reopened, &changed_model);
     assert_eq!(summary.source_entry_ids.unwrap(), first.into_iter().chain(second).chain(third).collect::<Vec<_>>());
-    assert_eq!(reopened.model_context_for_route(&changed_model, true).len(), 1);
+    assert_eq!(reopened.model_context_for_route(&changed_model, true).unwrap().len(), 1);
     assert!(reopened.native_remote_snapshot(&changed_model, true).unwrap().projection.entries.is_empty());
     assert_eq!(
-        SessionJournal::open(&path).unwrap().model_context_for_route(&changed_model, true),
-        reopened.model_context_for_route(&changed_model, true)
+        SessionJournal::open(&path).unwrap().model_context_for_route(&changed_model, true).unwrap(),
+        reopened.model_context_for_route(&changed_model, true).unwrap()
     );
 }
 
@@ -181,7 +181,7 @@ fn foreign_disabled_and_unsupported_routes_expand_sources_and_keep_earlier_reada
             assert!(!snapshot.previous_summary.as_ref().is_some_and(|summary| summary.remote.is_some()));
             assert_eq!(expanded.contains("ORIGINAL FIRST"), !previous_text);
             assert!(
-                !serde_json::to_string(&journal.model_context_for_route(&route, available))
+                !serde_json::to_string(&journal.model_context_for_route(&route, available).unwrap())
                     .unwrap()
                     .contains("Remote compaction preserved provider-native history")
             );
@@ -299,9 +299,9 @@ fn native_remote_branch_and_reset_do_not_resurrect_or_cover_other_raw_windows() 
         .unwrap();
     let fork = journal.fork_at(Some(&first[1]), None).unwrap();
     assert!(fork.native_projected_compaction_snapshot_for_route(&active, true).unwrap().previous_summary.is_none());
-    assert_eq!(fork.model_context_for_route(&active, true).len(), 2);
+    assert_eq!(fork.model_context_for_route(&active, true).unwrap().len(), 2);
     journal.append_reset_boundary().unwrap();
-    assert!(journal.model_context_for_route(&active, true).is_empty());
+    assert!(journal.model_context_for_route(&active, true).unwrap().is_empty());
     let fresh = turn(&mut journal, "fresh complete");
     let next = turn(&mut journal, "fresh retained");
     let snapshot = journal.native_remote_snapshot(&active, true).unwrap();
@@ -321,6 +321,6 @@ fn native_remote_branch_and_reset_do_not_resurrect_or_cover_other_raw_windows() 
         .commit_native_entry_remote(&snapshot, &prepared("v1", "fresh retained"), &next[0], &fresh, &next[1], 90)
         .unwrap();
     assert_eq!(native_summary(&journal, &active).source_entry_ids.unwrap(), fresh);
-    assert_eq!(journal.model_context_for_route(&active, true).len(), 1);
-    assert!(!serde_json::to_string(&journal.model_context()).unwrap().contains("old recent"));
+    assert_eq!(journal.model_context_for_route(&active, true).unwrap().len(), 1);
+    assert!(!serde_json::to_string(&journal.model_context().unwrap()).unwrap().contains("old recent"));
 }

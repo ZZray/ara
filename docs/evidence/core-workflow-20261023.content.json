@@ -1,0 +1,481 @@
+{
+  "title": "Full Core 公共工作流：实现与验收记录",
+  "subtitle": "原多文件C++已正常提交并通过原58项与独立重编；通用能力、逆向与依赖审计仍开放。",
+  "brand": "ARA · Agent Core",
+  "date": "2026-10-23",
+  "sections": [
+    {
+      "id": "conclusion",
+      "title": "当前结果",
+      "blocks": [
+        {
+          "type": "callout",
+          "title": "Length 机制与文本连续性试验已限定验收",
+          "tone": "warning",
+          "text": "当前包52项测试通过，其中连续性新增13项。真实模型在两个独立进程间恢复同一Session，实际读取知识正文并生成符合用户修正的文件：累计8次逻辑调用、18.56秒。原S3多文件C++与Length模块的限定证据保留；七项目标均未整体验收。"
+        },
+        {
+          "type": "paragraph",
+          "text": "本次接受原S3产物和公共API集成的限定证据。原Lite两组失败、Full首轮Length失败、第二轮off预算耗尽均保留。相同48项复用和独立重编不构成新holdout；通用编码稳定收益、逆向能力、产品接线及发布仍未验收。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "机器可读结果、源码与证据哈希",
+              "href": "core-workflow-20261023.result.json"
+            },
+            {
+              "label": "完整调研与原失败记录",
+              "href": "../../crates/ara-agent-lite-core/docs/evidence/coding-reverse-enhancement-20261022.html"
+            },
+            {
+              "label": "公共库及外部调用说明",
+              "href": "../../crates/ara-workflow/README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "length-continuation",
+      "title": "公共层的有界长度续作",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "新增显式开启的公共入口：最终响应因输出上限停止、且没有工具调用时，Host 可先核对实际效果与持久化，再提交独立结算回执。库只在同一 Agent 和 Session 的原请求、attempt、绝对时间预算内加入有来源的续作输入。Length 不能直接进入普通产物审核或成为成功。默认入口仍停机。"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "该阶段结果",
+            "覆盖边界"
+          ],
+          "rows": [
+            [
+              "长度模块阶段回归",
+              "39 项通过，0 失败、0 忽略",
+              "27 项既有检查本轮重跑，另 11 项长度对抗检查与 1 项新原生示例；不重复累加历史计数"
+            ],
+            [
+              "独立对抗检查",
+              "默认停机、双向共享消息篡改、坏回执、取消等待、三重预算、截断调用不执行及绝对 deadline 均通过",
+              "受控 HTTP 和受控 Host 回执，实际运行 Full Core"
+            ],
+            [
+              "普通程序运行",
+              "4 请求、2 attempts；真实文件 partial→correct，2 次写入结果完整配对",
+              "原子进程分别正常退出；Journal 原文、append ID 和来源 sidecar 已核，非任意后代隔离证明"
+            ],
+            [
+              "外部消费者",
+              "独立 workspace 实际运行通过，2 请求、2 attempts",
+              "公共 API 联接与控制合同；该消费者的结算回执受控，不是独立真实产物验收"
+            ],
+            [
+              "检查与旧失败",
+              "scoped Clippy 和 fmt 通过；旧编译、原生示例与 Clippy 失败保留",
+              "既有依赖审计仍未通过；未运行整仓检查"
+            ],
+            [
+              "真实模型恢复",
+              "本模块尚未执行",
+              "旧 C++ S3 成功不算本功能的真实恢复证据；未证明通用成功率或逆向能力提升"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "Core 已处理部分带工具调用的 Length，CLI 也有自己的恢复策略。本次补的是公共 typed Workflow 的 Host 结算入口，不复制 CLI 压缩逻辑，不改写原终态，不重放截断工具调用。独立源码和执行复审已限定接受此机制；真实模型恢复收益和整体目标仍未验收。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "调用说明",
+              "href": "../../crates/ara-workflow/README.md"
+            },
+            {
+              "label": "原生运行示例",
+              "href": "../../crates/ara-workflow/examples/length_recovery.rs"
+            },
+            {
+              "label": "机器可读验证记录",
+              "href": "core-workflow-20261023.result.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "continuity",
+      "title": "压缩、重开与知识正文检索",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "continuity 示例复用现有 Agent、Session 与 Workflow 接口。准备进程先完成两轮无工具对话，由真实模型压缩实际四条来源消息；恢复进程创建新 Agent，恢复同一持久化 Session 的受检文本视图，再读取项目索引、原用户纠正和知识正文。原用户记录与派生摘要分别保留。"
+        },
+        {
+          "type": "table",
+          "caption": "秒数为两个普通进程耗时之和；不含父进程启动间隙。",
+          "columns": [
+            "检查",
+            "结果",
+            "覆盖范围"
+          ],
+          "rows": [
+            [
+              "当前包回归",
+              "52 PASS / 0 FAIL / 0 ignored",
+              "其中13项为本轮连续性测试；独立源码审核、限定Clippy和格式检查通过"
+            ],
+            [
+              "受控双进程",
+              "PID 20384 → 4884；7次调用；2.49秒",
+              "真实本机文件工具与Session持久化；受控HTTP上游"
+            ],
+            [
+              "真实模型双进程",
+              "PID 69324 → 32716；8次调用；18.56秒",
+              "请求deepseek-v4.1-flash / openai-completions；1次摘要调用"
+            ],
+            [
+              "来源与纠正",
+              "原四条消息、revision 1/2侧车与摘要来源保留",
+              "真实模型另用read_source_entry回读了原始纠正；不能只归功于摘要"
+            ],
+            [
+              "正文与产物",
+              "实际工具结果含索引链接与本轮随机事实，且先于写入",
+              "原始字节、独立oracle、审核封存产物与保护文件核对一致"
+            ],
+            [
+              "跨进程预算",
+              "原16次调用与600秒绝对截止时间不重置",
+              "摘要也先预留；逻辑调用不等于HTTP重试或计费token"
+            ],
+            [
+              "准入反例",
+              "篡改、重复恢复、账本缺口、预算/期限与异常摘要拒绝",
+              "只返回标题即使产物正确也NeedsChanges；随后读正文并重写才Verified"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "1172项执行输入和普通程序映像已冻结，独立Codex复核实际PID、Journal原件、来源、工具正文、产物与预算。源码审查曾发现目录别名可能绕过恢复标记、正文读取判据过宽、来源回读字段不匹配和最终旧侧车未复核，均已修正。早期编译、恢复桥接和反例夹具失败全部保留。"
+        },
+        {
+          "type": "callout",
+          "tone": "warning",
+          "title": "本轮接受范围",
+          "text": "接受新进程、新Agent恢复同一Session的指定文本场景及两份已授予知识文件。未完成通用知识检索、长历史策略、公共通用恢复入口、原Agent原生恢复、Live Graph或Full/Lite统一；本次也未验证真实Length恢复、编码或逆向收益。模型目录reasoning=false不代表关闭思考；实际摘要报告317 reasoningTokens。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "连续性结果、版本与审核哈希",
+              "href": "core-continuity-20261023.result.json"
+            },
+            {
+              "label": "示例与适用边界",
+              "href": "../../crates/ara-workflow/README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "boundary",
+      "title": "Core 与上层的职责",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "层次",
+            "本次归属"
+          ],
+          "rows": [
+            [
+              "Full Core",
+              "现有 Agent loop、模型与工具调用、消息身份和 Host hooks；本次没有复制执行引擎"
+            ],
+            [
+              "ara-workflow 公共库",
+              "同 Agent 的有界 Run 序列、Host 回执准入、反馈来源、累计请求额度和恢复栅栏"
+            ],
+            [
+              "Host",
+              "Session 独占、身份、权限、存储、工具副作用结算、产物检查与最终 Task 审核"
+            ],
+            [
+              "harness / tests",
+              "产生受控故障与执行证据，不承担生产编排能力"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "外部 Rust 程序可通过 path 依赖使用公共库。本次未提交、推送、发布或修改产品安装；CLI Native Graph 接线、Full/Lite 统一和跨进程恢复仍开放。"
+        }
+      ]
+    },
+    {
+      "id": "original-s3",
+      "title": "原多文件C++：正常提交与独立验收通过",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "试验或检查",
+            "结果",
+            "边界"
+          ],
+          "rows": [
+            [
+              "原任务",
+              "18原文件、14可写cpp/hpp、4保护文件、公10/私48",
+              "保持原接口、保护文件和原失败，未用小题代替"
+            ],
+            [
+              "Full第一轮：旧提交策略",
+              "默认思考，7请求/176.52秒，Length；保存产物单独公10/私48全过",
+              "算法产物正确，但原Run没有候选提交，仍失败；未释放旧fence"
+            ],
+            [
+              "Full第二轮：显式off",
+              "32请求/116.70秒，先正常提交、公10/私37；收到真实反馈后同Session继续，最终预算停止",
+              "无Length；首轮候选质量不足，二次未完成Host审核的产物不能沿用37分"
+            ],
+            [
+              "Full第三轮：保留思考与及时提交",
+              "18请求/141.21秒/1candidate，VerifiedArtifact；公10/私48全过、无fence",
+              "采用恢复读取窗口和公测PASS后提交指令，Core Stop门禁未变"
+            ],
+            [
+              "独立最终重编",
+              "同18源码封存、全新binary，公10/私48再次通过",
+              "同一原48，非新holdout；远端模型别名和weights仍UNKNOWN"
+            ],
+            [
+              "读取修复",
+              "复用既有split_selector，有限窗口补读省略内容；严格base白名单、write精确裸路径",
+              "属于Host示例修复，不是ReadTool或Core推理能力的新实现"
+            ],
+            [
+              "当前自动回归",
+              "12项当前Rust功能检查PASS；含真实文件工具/故障/默认与off实际HTTP body",
+              "与原15项不变测试组成27distinct，只有12fresh；不加早先6/10重复计数"
+            ],
+            [
+              "真实反馈链",
+              "第二轮committed NeedsChanges、原append ID/sidecar来源与同Session后续响应已核",
+              "最终成功轮只有1candidate，不伪称成功轮也执行了反馈修复"
+            ],
+            [
+              "依赖及文档",
+              "新包Clippy通过；既有安全/许可审计仍未通过；HTML静态检查通过",
+              "视觉因先前浏览器拒绝仍未验收；不发布"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "这道题的长度卡住已在当前提交策略下解决，并保留了编码阶段的思考。第一轮最后一个响应把16384个输出token全部用于思考，已经正确的代码没有交给Host验收。整轮关闭思考虽然产生正常提交，但该轮候选只过37/48。最终保持默认思考，在公测通过后先提交产物，交由Host验证，获得正常Stop与完整通过。"
+        },
+        {
+          "type": "paragraph",
+          "text": "这些是三次有界集成运行的观察。读取、指令、生成策略和随机采样有变化，不能据此给出单变量或总体能力提升比例。最终usage有6条缺reasoningTokens；只报告已有字段小计14870，完整思考token总量与费用UNKNOWN。"
+        },
+        {
+          "type": "links",
+          "items": [
+            {
+              "label": "三轮原始计数与最终复核哈希",
+              "href": "core-workflow-20261023.result.json"
+            },
+            {
+              "label": "外部项目消费者源码",
+              "href": "../../crates/ara-workflow/examples/project.rs"
+            },
+            {
+              "label": "公共调用说明",
+              "href": "../../crates/ara-workflow/README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "title": "外部调用与续作条件",
+      "blocks": [
+        {
+          "type": "code",
+          "language": "rust",
+          "text": "let handle = Workflow::start(agent, host, request, config, sink, policy, cancel)?;\nlet outcome = handle.wait().await?;"
+        },
+        {
+          "type": "paragraph",
+          "text": "控制句柄可克隆，重复 wait 返回同一结果。取消等待不会取消工作；显式 cancel 停止后续准入，并等待原 Run 和 Host 回调结算。Host 必须保留至少一个控制句柄至结算或 reconcile，全部丢弃后不提供自动找回。"
+        },
+        {
+          "type": "paragraph",
+          "text": "只有真实 Completed 和 Stop 终态，且 Host 回执同工作流、Session 代次、attempt、验收条件和产物 basis，已提交并结算，才允许 NeedsChanges 反馈进入原 Agent。VerifiedArtifact 仍等待 Host 审核 Task。未知结果保持关门的栅栏，Host 提交当前权威结算回执后才能释放。"
+        },
+        {
+          "type": "paragraph",
+          "text": "根额度累计逻辑 prepared-request reservations，绝对 deadline 跨 Run 保留。HTTP 重试、token 与费用另由 Host 计量。直接 compaction/handoff provider 调用不在本门禁覆盖内；本库不会自动发起这些旁路工作。"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "title": "机制检查与红绿证据",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "检查",
+            "实际结果",
+            "覆盖边界"
+          ],
+          "rows": [
+            [
+              "最终集成和示例测试",
+              "15 PASS / 0 failed / 0 ignored",
+              "含真实 HTTP、WriteTool、SessionJournal、文件和原生进程；provider 为受控响应"
+            ],
+            [
+              "共享消息终态攻击",
+              "原版错误 VerifiedArtifact；修复后 NonStopAssistant",
+              "owner 在发布共享消息前封存终态准入事实"
+            ],
+            [
+              "预算、取消与恢复",
+              "跨轮次额度、driver 早返 / panic / late poll、未知 fence 恢复通过",
+              "不证明 OS 沙箱或任意后代进程结算"
+            ],
+            [
+              "严格 Clippy",
+              "新包 --no-deps 通过；带依赖检查失败",
+              "既有 ara-rpc 7 项诊断保留"
+            ],
+            [
+              "格式和文档测试",
+              "fmt 通过；doc test 入口 exit 0",
+              "0 个 doctest，不增加测试通过数"
+            ],
+            [
+              "普通受控示例",
+              "2 attempts / 4 requests / VerifiedArtifact",
+              "模型未实连；证明失败反馈后的同 Agent 修复机制"
+            ],
+            [
+              "库外消费者",
+              "独立 workspace/path 依赖编译通过",
+              "证明公共 API 接线，不证明模型效果"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "当前 15 项覆盖由 14 项源码未变的最终批次运行证据，加上 1 项来源落盘补强后的新运行组成。补强示例另有普通进程执行，不能把这些重跑相加成更多独立能力或任务。"
+        }
+      ]
+    },
+    {
+      "id": "cpp",
+      "title": "真实模型 C++ 接入试验",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "项目",
+            "结果"
+          ],
+          "rows": [
+            [
+              "范围",
+              "单一十进制定点解析函数；5 个公开例子和 24 个首次额外 Host 检查"
+            ],
+            [
+              "模型与协议",
+              "deepseek-v4.1-flash / openai-completions；未记录 wire echo，远端权重 UNKNOWN"
+            ],
+            [
+              "调用限制与实际",
+              "上限 16 逻辑请求、3 轮、300 秒；实际 4 请求、1 轮"
+            ],
+            [
+              "工具动作",
+              "read_source → replace_source → check_cpp → Stop"
+            ],
+            [
+              "种子与产物",
+              "14/29 → 29/29；封存源码独立重编译后同组 29/29"
+            ],
+            [
+              "验证状态",
+              "产物 Verified；只覆盖本任务，不接受整体编码与逆向能力"
+            ],
+            [
+              "usage 边界",
+              "Session 中 3 轮有 reasoningTokens，已报小计 2,588；另 1 轮缺失，完整总量 UNKNOWN，费用 UNKNOWN"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "本次真实模型一次提交就通过，未触发真实模型的 NeedsChanges 续作。受控两轮示例与真实单轮任务分别提供机制和接入证据。独立重编译复用相同 oracle，不能计作新留出题。"
+        },
+        {
+          "type": "code",
+          "language": "text",
+          "text": "source SHA-256\n1464cda2fb9646fc2b006902ab564719a06ae6c834e2e7a388661d68d757d317\nindependent binary SHA-256\ndf2d812cbafe367d8394aa6713979eb4904334145b3412e902119b61b2a72975"
+        }
+      ]
+    },
+    {
+      "id": "audit",
+      "title": "审计缺口与后续工作",
+      "blocks": [
+        {
+          "type": "table",
+          "columns": [
+            "项目",
+            "状态"
+          ],
+          "rows": [
+            [
+              "运行依赖审计",
+              "5 项既有 rustls 安全公告；licenses / bans / sources 通过，advisories 未通过"
+            ],
+            [
+              "含开发依赖审计",
+              "advisories 与 licenses 未通过；包含既有 Wasmtime 等依赖诊断"
+            ],
+            [
+              "依赖改动",
+              "Cargo.lock 只新增 ara-workflow 工作区记录，没有升级第三方版本"
+            ],
+            [
+              "文档验证",
+              "静态结构与链接单独检查；浏览器此前拒绝观察，视觉未验收；全仓 bootstrap 仍未完成"
+            ],
+            [
+              "下一步能力验收",
+              "通过公共库入口继续多文件 C++ 与逆向任务，验证真实模型收到失败反馈后能否改善产物"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "本次保留现有 WIP、OMP marker 和旧失败记录。依赖问题需在明确范围内另行修复与验证；当前不声明可发布，也不把小任务通过换算成总目标完成比例。"
+        }
+      ]
+    }
+  ]
+}

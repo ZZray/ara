@@ -19,7 +19,11 @@ pub fn has_glob_path_chars(s: &str) -> bool {
 
 /// Trim and strip one pair of surrounding double quotes (`normalizePathLikeInput`).
 pub fn normalize_path_like_input(input: &str) -> String {
-    let t = input.trim();
+    normalize_delimited_input(input, false)
+}
+
+fn normalize_delimited_input(input: &str, read: bool) -> String {
+    let t = if read { ara_prompt::js::trim(input) } else { input.trim() };
     if t.len() > 1 && t.starts_with('"') && t.ends_with('"') { t[1..t.len() - 1].to_string() } else { t.to_string() }
 }
 
@@ -276,7 +280,27 @@ fn stat_exists(ctx: &ToolContext, base: &str) -> Result<bool, String> {
     }
 }
 
-fn delimited_part_resolves(ctx: &ToolContext, entry: &str, splitter: Splitter) -> Result<bool, String> {
+// Fixed path-utils.ts74-84,120-146,537-546. Internal prefix checks
+// are case-sensitive. @ shorthand excludes ssh/vault; one local slash is
+// normalized before/after expansion. An absolute home/file URL expansion
+// cannot begin with an internal prefix under the Host's filesystem contract.
+fn read_delimited_internal_path(entry: &str) -> bool {
+    let at = entry.strip_prefix('@').filter(|without| {
+        ["agent://", "artifact://", "skill://", "rule://", "security://", "local:", "mcp://"]
+            .iter().any(|prefix| without.starts_with(prefix))
+    });
+    let entry = at.unwrap_or(entry).strip_prefix(r"\\?\").unwrap_or(at.unwrap_or(entry));
+    ["agent://", "artifact://", "skill://", "rule://", "security://", "local:/", "mcp://", "ssh://", "vault://"]
+        .iter().any(|prefix| entry.starts_with(prefix))
+}
+
+fn delimited_part_resolves(
+    ctx: &ToolContext, entry: &str, splitter: Splitter, routed: Option<&dyn Fn(&str) -> bool>,
+) -> Result<bool, String> {
+    // Fixed path-utils.ts930 uses lexical isInternalUrlPath, independently
+    // of the optional router predicate. Search/Find's existing policy stays
+    // unchanged; registration must not make a custom comma part resolve.
+    if routed.is_some() && read_delimited_internal_path(entry) { return Ok(true); }
     let peeled = split_path_and_sel(entry).0;
     stat_exists(ctx, &splitter.base(&peeled))
 }
@@ -289,12 +313,13 @@ enum SplitMode {
     Mixed,
 }
 
-fn is_separator(ch: char, mode: SplitMode) -> bool {
+fn is_separator(ch: char, mode: SplitMode, read: bool) -> bool {
+    let whitespace = if read { ara_prompt::js::is_space(ch) } else { ch.is_whitespace() };
     match mode {
         SplitMode::Comma => ch == ',',
         SplitMode::Semicolon => ch == ';',
-        SplitMode::Whitespace => ch.is_whitespace(),
-        SplitMode::Mixed => ch == ',' || ch == ';' || ch.is_whitespace(),
+        SplitMode::Whitespace => whitespace,
+        SplitMode::Mixed => ch == ',' || ch == ';' || whitespace,
     }
 }
 
@@ -335,19 +360,20 @@ fn try_split(
     splitter: Splitter,
     mode: SplitMode,
     req: Requirement,
+    routed: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<Option<Vec<String>>, String> {
-    let raw_parts = split_top_level(entry, |c| is_separator(c, mode));
+    let raw_parts = split_top_level(entry, |c| is_separator(c, mode, routed.is_some()));
     if raw_parts.len() < 2 {
         return Ok(None);
     }
-    let parts: Vec<String> = raw_parts.iter().map(|p| normalize_path_like_input(p)).filter(|p| !p.is_empty()).collect();
+    let parts: Vec<String> = raw_parts.iter().map(|p| normalize_delimited_input(p, routed.is_some())).filter(|p| !p.is_empty()).collect();
     if parts.is_empty() {
         return Ok(None);
     }
     if req != Requirement::None {
         let mut resolved = Vec::with_capacity(parts.len());
         for part in &parts {
-            resolved.push(delimited_part_resolves(ctx, part, splitter)?);
+            resolved.push(delimited_part_resolves(ctx, part, splitter, routed)?);
         }
         let ok = if req == Requirement::All { resolved.iter().all(|b| *b) } else { resolved.iter().any(|b| *b) };
         if !ok {
@@ -365,15 +391,47 @@ pub fn split_delimited_entry(
     entry: &str,
     splitter: Splitter,
 ) -> Result<Option<Vec<String>>, String> {
-    let entry = normalize_path_like_input(entry);
-    if split_top_level(&entry, |c| is_separator(c, SplitMode::Mixed)).len() < 2 {
+    split_delimited_entry_with_routed(ctx, entry, splitter, None)
+}
+
+/// READ-only opt-in to the fixed routedUrlPredicate behavior. Other callers
+/// keep the existing Search/Find contract through split_delimited_entry.
+pub fn split_delimited_entry_with_routed(
+    ctx: &ToolContext, entry: &str, splitter: Splitter, routed: Option<&dyn Fn(&str) -> bool>,
+) -> Result<Option<Vec<String>>, String> {
+    let entry = normalize_delimited_input(entry, routed.is_some());
+    split_prepared_delimited_entry_with_routed(ctx, &entry, splitter, routed)
+}
+
+/// An original-realm caller already completed normalizePathLikeInput. Keep
+/// this native filesystem helper from silently normalizing that result again.
+pub fn split_prepared_delimited_entry(
+    ctx: &ToolContext,
+    entry: &str,
+    splitter: Splitter,
+) -> Result<Option<Vec<String>>, String> {
+    split_prepared_delimited_entry_with_routed(ctx, entry, splitter, None)
+}
+
+pub fn split_prepared_delimited_entry_with_routed(
+    ctx: &ToolContext, entry: &str, splitter: Splitter, routed: Option<&dyn Fn(&str) -> bool>,
+) -> Result<Option<Vec<String>>, String> {
+    if split_top_level(&entry, |c| is_separator(c, SplitMode::Mixed, routed.is_some())).len() < 2 {
+        return Ok(None);
+    }
+    if let Some(predicate) = routed.filter(|predicate| predicate(entry)) {
+        let parts = try_split(ctx, entry, splitter, SplitMode::Semicolon, Requirement::None, routed)?;
+        return Ok(parts.filter(|parts| parts.iter().all(|part| predicate(part))));
+    }
+    if if routed.is_some() { read_delimited_internal_path(entry) }
+        else { crate::ast_edit::is_internal_scope_path(entry) } {
         return Ok(None);
     }
     if probe_literal(ctx, &entry) != Probe::Missing {
         return Ok(None);
     }
     let peeled = split_path_and_sel(&entry).0;
-    if !has_glob_path_chars(&peeled) && delimited_part_resolves(ctx, &entry, splitter)? {
+    if !has_glob_path_chars(&peeled) && delimited_part_resolves(ctx, &entry, splitter, routed)? {
         return Ok(None);
     }
     for (mode, req) in [
@@ -382,7 +440,7 @@ pub fn split_delimited_entry(
         (SplitMode::Whitespace, Requirement::All),
         (SplitMode::Mixed, Requirement::All),
     ] {
-        if let Some(parts) = try_split(ctx, &entry, splitter, mode, req)? {
+        if let Some(parts) = try_split(ctx, &entry, splitter, mode, req, routed)? {
             return Ok(Some(parts));
         }
     }
@@ -498,6 +556,19 @@ static EXTERNAL_URL_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?i)^(?:https?|ftp|ws|wss)://").unwrap());
 
 pub fn resolve_search_scope(ctx: &ToolContext, inputs: &[String]) -> Result<SearchScope, String> {
+    resolve_search_scope_with_options(ctx, inputs, true, true, " (`path` list entries must each exist relative to cwd)")
+}
+
+/// Fixed common scope options: grep enables exact-file/fan-out; AST Edit uses
+/// the original combined glob behavior instead. Existing grep callers retain
+/// their defaults and errors.
+pub fn resolve_search_scope_with_options(
+    ctx: &ToolContext,
+    inputs: &[String],
+    surface_exact: bool,
+    fan_out: bool,
+    stat_hint: &str,
+) -> Result<SearchScope, String> {
     const EMPTY: &str = "Search scope entries must be non-empty paths or globs";
     let normalized: Vec<String> = inputs.iter().map(|p| normalize_path_like_input(p)).collect();
     if normalized.iter().any(String::is_empty) {
@@ -512,6 +583,21 @@ pub fn resolve_search_scope(ctx: &ToolContext, inputs: &[String]) -> Result<Sear
             "Cannot search external URL: {url}. Use `read` to fetch web content, then search the returned text."
         ));
     }
+    resolve_prepared_search_scope(ctx, &raw_paths, surface_exact, fan_out, stat_hint)
+}
+
+/// Scope derivation after the original asynchronous expansion/URI pipeline.
+/// No repeated delimiter expansion, normalization or backing-path resolution.
+pub fn resolve_prepared_search_scope(
+    ctx: &ToolContext,
+    raw_paths: &[String],
+    surface_exact: bool,
+    fan_out: bool,
+    stat_hint: &str,
+) -> Result<SearchScope, String> {
+    if raw_paths.is_empty() {
+        return Err("`paths` must contain at least one path or glob".into());
+    }
     let (effective, missing_paths) = if raw_paths.len() > 1 {
         let (valid, missing) = partition_existing(ctx, &raw_paths, Splitter::Search)?;
         if valid.is_empty() {
@@ -519,7 +605,7 @@ pub fn resolve_search_scope(ctx: &ToolContext, inputs: &[String]) -> Result<Sear
         }
         (valid, missing)
     } else {
-        (raw_paths.clone(), Vec::new())
+        (raw_paths.to_vec(), Vec::new())
     };
 
     let (search_path, scope_path, glob, multi_targets, exact_file_paths);
@@ -569,9 +655,10 @@ pub fn resolve_search_scope(ctx: &ToolContext, inputs: &[String]) -> Result<Sear
             .collect();
         let common_is_requested = items.iter().any(|i| i.abs == base);
         let demotes_file = !all_exact_files && items.iter().any(|i| i.glob.is_none() && i.is_file);
-        let targets = (items.len() > 1 && (!common_is_requested || demotes_file))
+        let targets = (items.len() > 1 && (!common_is_requested || (fan_out && demotes_file)))
             .then(|| items.iter().map(|i| SearchTarget { base: i.abs.clone(), glob: i.glob.clone() }).collect());
-        exact_file_paths = all_exact_files.then(|| items.iter().map(|i| i.abs.clone()).collect::<Vec<_>>());
+        exact_file_paths =
+            (surface_exact && all_exact_files).then(|| items.iter().map(|i| i.abs.clone()).collect::<Vec<_>>());
         glob = if exact_file_paths.is_some() || targets.is_some() { None } else { brace_union(&combined) };
         multi_targets = targets;
         search_path = base;
@@ -580,7 +667,7 @@ pub fn resolve_search_scope(ctx: &ToolContext, inputs: &[String]) -> Result<Sear
     let is_directory = match std::fs::metadata(&search_path) {
         Ok(m) => m.is_dir(),
         Err(_) => {
-            let hint = if raw_paths.len() > 1 { " (`path` list entries must each exist relative to cwd)" } else { "" };
+            let hint = if raw_paths.len() > 1 { stat_hint } else { "" };
             return Err(format!("Path not found: {scope_path}{hint}"));
         }
     };
@@ -679,7 +766,17 @@ pub fn format_grouped_paths(paths: &[String]) -> String {
 /// `body` returns the file's lines and a header suffix (a hashline `#TAG`).
 /// Files whose body is empty are omitted.
 pub fn format_grouped_files(files: &[String], mut body: impl FnMut(&str) -> (Vec<String>, String)) -> Vec<String> {
-    let mut sections: Vec<(String, Vec<String>, String)> = Vec::new();
+    format_grouped_file_values(files, |path| body(path), str::to_owned)
+}
+
+/// Same existing tree/group owner, with a native output-leaf encoder. AST's
+/// 120-code-unit slice can retain a lone surrogate for the original realm.
+pub fn format_grouped_file_values<T: Clone>(
+    files: &[String],
+    mut body: impl FnMut(&str) -> (Vec<T>, String),
+    encode: impl Fn(&str) -> T,
+) -> Vec<T> {
+    let mut sections: Vec<(String, Vec<T>, String)> = Vec::new();
     for f in files {
         if sections.iter().any(|(k, _, _)| k == f) {
             continue;
@@ -697,15 +794,15 @@ pub fn format_grouped_files(files: &[String], mut body: impl FnMut(&str) -> (Vec
     for (is_dir, depth, name, key) in events {
         let hashes = "#".repeat(depth + 1);
         if emitted && (depth == 0 || is_dir) {
-            out.push(String::new());
+            out.push(encode(""));
         }
         emitted = true;
         if is_dir {
-            out.push(format!("{hashes} {name}/"));
+            out.push(encode(&format!("{hashes} {name}/")));
             continue;
         }
         let section = sections.iter().find(|(k, _, _)| *k == key);
-        out.push(format!("{hashes} {name}{}", section.map_or("", |(_, _, suffix)| suffix.as_str())));
+        out.push(encode(&format!("{hashes} {name}{}", section.map_or("", |(_, _, suffix)| suffix.as_str()))));
         if let Some((_, lines, _)) = section {
             out.extend(lines.iter().cloned());
         }

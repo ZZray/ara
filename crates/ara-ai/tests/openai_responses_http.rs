@@ -11,6 +11,40 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "support/freeform_protocol.rs"]
+mod freeform_protocol;
+
+#[path = "support/computer_protocol.rs"]
+mod computer_protocol;
+
+#[tokio::test]
+async fn computer_responses_wire_contract_group() {
+    computer_protocol::verify(
+        &|base, context, request, cancel| {
+            let mut opts = options();
+            opts.request = request;
+            opts.cancel = cancel;
+            opts.retry.max_attempts = 2;
+            openai_responses::stream(reqwest::Client::new(), model(&base), context, opts)
+        },
+        &model,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn conditional_freeform_responses_protocol_group() {
+    freeform_protocol::verify(&|base, context, request, cancel| {
+        let mut opts = options();
+        opts.request = request;
+        opts.cancel = cancel;
+        opts.retry.max_attempts = 2;
+        openai_responses::stream(reqwest::Client::new(), model(&base), context, opts)
+    })
+    .await;
+}
+
 fn script(value: Value) -> Script {
     serde_json::from_value(value).unwrap()
 }
@@ -69,6 +103,213 @@ async fn collect(stream: ara_ai::AssistantStream) -> (Vec<AssistantMessageEvent>
         _ => panic!("missing terminal event"),
     };
     (events, final_message)
+}
+
+#[tokio::test]
+async fn reasoning_responses_requests_preserve_native_summary_off_mapping_and_mandatory_routes() {
+    use ara_ai::{
+        CallOptions, ModelProvider, OpenAIReasoningPolicy, OpenAIResponsesProvider, ReasoningEffort as Effort,
+        ReasoningRequest, ReasoningSummary as Summary,
+    };
+    let effort = ReasoningRequest { effort: Some(Effort::High), ..Default::default() };
+    let off = ReasoningRequest { disable_reasoning: true, ..Default::default() };
+    let force_off = ReasoningRequest { force_reasoning_off: true, ..Default::default() };
+    let cases = [
+        (json!({}), effort.clone(), json!({"effort":"baked-high","summary":"auto"})),
+        (
+            json!({"reasoningEffortMap":{"high":"wire-high"}}),
+            ReasoningRequest { summary: Summary::Hidden, ..effort.clone() },
+            json!({"effort":"wire-high"}),
+        ),
+        (
+            json!({}),
+            ReasoningRequest { summary: Summary::Concise, ..effort.clone() },
+            json!({"effort":"baked-high","summary":"concise"}),
+        ),
+        (
+            json!({}),
+            ReasoningRequest { summary: Summary::Detailed, ..effort.clone() },
+            json!({"effort":"baked-high","summary":"detailed"}),
+        ),
+        (json!({"supportsReasoningSummary":false}), effort.clone(), json!({"effort":"baked-high"})),
+        (
+            json!({"omitReasoningEffort":true}),
+            ReasoningRequest { summary: Summary::Auto, ..effort.clone() },
+            json!({"summary":"auto"}),
+        ),
+        (
+            json!({"omitReasoningEffort":true}),
+            ReasoningRequest { summary: Summary::Hidden, ..effort.clone() },
+            Value::Null,
+        ),
+        (json!({"reasoningDisableMode":"none-effort"}), off.clone(), json!({"effort":"none"})),
+        (json!({"reasoningDisableMode":"lowest-effort"}), off.clone(), json!({"effort":"low"})),
+        (json!({"reasoningDisableMode":"openrouter-enabled-false"}), off.clone(), json!({"enabled":false})),
+        (json!({"reasoningDisableMode":"omit"}), off.clone(), Value::Null),
+        (json!({"reasoningDisableMode":"omit"}), force_off.clone(), json!({"effort":"none"})),
+    ];
+    for (compat, request, expected) in cases {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[completed_text("reasoning","ok")]})), None).await.unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let original = endpoint.clone();
+        let mut base = options();
+        base.request.reasoning_policy = Some(
+            OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,
+                "thinking":{"mode":"effort","efforts":["low","high"],"effortMap":{"high":"baked-high"}},"compat":compat
+            }))
+            .unwrap(),
+        );
+        base.request.reasoning =
+            Some(ReasoningRequest { effort: Some(Effort::Low), summary: Summary::Detailed, ..Default::default() });
+        let provider = OpenAIResponsesProvider { client: reqwest::Client::new(), base };
+        let (_, output) = collect(provider.stream(
+            &endpoint,
+            &Context::default(),
+            CallOptions { reasoning: Some(request), ..Default::default() },
+        ))
+        .await;
+        assert_eq!(output.text(), "ok");
+        assert_eq!(endpoint, original);
+        let recorded = server.requests.lock().await;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0]["body"]["reasoning"], expected, "compat={compat}");
+    }
+    for (mandatory, suppress_off) in [(false, false), (true, false), (true, true)] {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[completed_text("mandatory","ok")]})), None).await.unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let mut base = options();
+        base.request.reasoning = Some(off.clone());
+        base.request.reasoning_policy = Some(OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,"requestModelId":"high-default",
+            "thinking":{"mode":"effort","efforts":["low","high"],"requiresEffort":mandatory,"suppressWhenOff":suppress_off,"effortRouting":{"low":"low-route","high":"high-default","off":"off-route"}},
+            "compat":{"reasoningDisableMode":"none-effort"}
+        })).unwrap());
+        assert_eq!(
+            collect(openai_responses::stream(reqwest::Client::new(), endpoint, Context::default(), base))
+                .await
+                .1
+                .text(),
+            "ok"
+        );
+        let recorded = server.requests.lock().await;
+        let body = &recorded[0]["body"];
+        assert_eq!(body["model"], if mandatory && !suppress_off { "high-default" } else { "off-route" });
+        assert_eq!(
+            body["reasoning"],
+            if mandatory && !suppress_off {
+                json!({"effort":"high","summary":"auto"})
+            } else {
+                json!({"effort":"none"})
+            }
+        );
+    }
+    let server = FakeUpstream::start(script(json!({"responses":[completed_text("juice","ok")]})), None).await.unwrap();
+    let mut endpoint = model(&server.base_url());
+    endpoint.reasoning = true;
+    let mut base = options();
+    base.request.reasoning =
+        Some(ReasoningRequest { force_reasoning_off: true, effort: Some(Effort::High), ..Default::default() });
+    base.request.reasoning_policy = Some(
+        OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,"reasoningMode":"pro",
+            "thinking":{"mode":"effort","efforts":["high"]},"compat":{"requiresReasoningOffJuiceInstruction":true}
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        collect(openai_responses::stream(reqwest::Client::new(), endpoint, Context::default(), base)).await.1.text(),
+        "ok"
+    );
+    let recorded = server.requests.lock().await;
+    assert_eq!(recorded[0]["body"]["reasoning"], json!({"effort":"none"}));
+    assert_eq!(
+        recorded[0]["body"]["input"].as_array().unwrap().last().unwrap()["content"][0]["text"],
+        "# Juice: 48 !important"
+    );
+    drop(recorded);
+    for request in [effort.clone(), off.clone()] {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[completed_text("pro","ok")]})), None).await.unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let mut base = options();
+        base.request.reasoning = Some(request.clone());
+        base.request.reasoning_policy = Some(
+            OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,"reasoningMode":"pro",
+                "thinking":{"mode":"effort","efforts":["high"]},"compat":{"reasoningDisableMode":"none-effort"}
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            collect(openai_responses::stream(reqwest::Client::new(), endpoint, Context::default(), base))
+                .await
+                .1
+                .text(),
+            "ok"
+        );
+        let recorded = server.requests.lock().await;
+        assert_eq!(
+            recorded[0]["body"]["reasoning"],
+            if request.disable_reasoning {
+                json!({"effort":"none","mode":"pro"})
+            } else {
+                json!({"effort":"high","summary":"auto","mode":"pro"})
+            }
+        );
+    }
+    for summary in [Summary::ProviderDefault, Summary::Detailed] {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[completed_text("no-dial","ok")]})), None).await.unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let mut base = options();
+        base.request.reasoning = Some(ReasoningRequest { effort: Some(Effort::High), summary, ..Default::default() });
+        base.request.reasoning_policy = Some(
+            OpenAIReasoningPolicy::from_model_spec(
+                &json!({"reasoning":true,"compat":{"supportsReasoningEffort":false}}),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            collect(openai_responses::stream(reqwest::Client::new(), endpoint, Context::default(), base))
+                .await
+                .1
+                .text(),
+            "ok"
+        );
+        let recorded = server.requests.lock().await;
+        assert_eq!(
+            recorded[0]["body"]["reasoning"],
+            if summary == Summary::Detailed { json!({"summary":"detailed"}) } else { Value::Null }
+        );
+    }
+    let policy = OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,"requestModelId":"default-high",
+        "thinking":{"mode":"effort","efforts":["low","high","max"],"defaultLevel":"high","requiresEffort":true,"prefixBinding":true,"supportsDisplay":false,"effortRouting":{"high":"default-high"}},"compat":{}
+    })).unwrap();
+    assert_eq!(policy.supported_efforts(), &[Effort::Low, Effort::High, Effort::Max]);
+    assert_eq!(policy.clamp_effort(Effort::Medium), Some(Effort::Low));
+    assert_eq!(policy.clamp_effort(Effort::Minimal), Some(Effort::Low));
+    assert_eq!(policy.default_effort(), Some(Effort::High));
+    assert_eq!(policy.default_supported_effort(), Some(Effort::High));
+    assert!(!policy.model_supports_effort_ceiling(Effort::Minimal));
+    assert!(policy.model_supports_effort_ceiling(Effort::Low));
+    // Native ladder eligibility is distinct from the effective mandatory
+    // default route, which the Host must check for this particular request.
+    let normalized = policy.normalize_request(Some(&off)).unwrap();
+    assert_eq!(normalized.effort, Some(Effort::High));
+    assert!(!normalized.disable_reasoning && !normalized.force_reasoning_off);
+    assert!(normalized.effort.unwrap() > Effort::Low);
+    let no_dial = OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true})).unwrap();
+    assert!(no_dial.model_supports_effort_ceiling(Effort::Minimal));
+    assert_eq!(no_dial.normalize_request(Some(&effort)).unwrap().effort, None);
+    let sparse = OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,
+        "thinking":{"mode":"effort","efforts":["max"]}
+    }))
+    .unwrap();
+    assert!(!sparse.model_supports_effort_ceiling(Effort::XHigh));
+    assert!(sparse.model_supports_effort_ceiling(Effort::Max));
 }
 
 #[tokio::test]
@@ -579,6 +820,8 @@ async fn chained_tool_result_is_the_only_delta_and_changed_history_breaks_the_ch
         details: None,
         is_error: false,
         timestamp: 1,
+        provider_metadata: None,
+        useless: false,
     });
     let (_, second) = collect(openai_responses::stream(
         reqwest::Client::new(),
@@ -1193,6 +1436,7 @@ async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request
                 name: "broken".into(),
                 description: "bad schema".into(),
                 parameters: json!({"type":"object","properties":{"value":{"type":"null","const":"not null"}}}),
+                ..Default::default()
             },
             Tool {
                 name: "safe".into(),
@@ -1201,6 +1445,7 @@ async fn incompatible_tool_schema_is_quarantined_on_the_actual_responses_request
                     "value":{"oneOf":[{"type":"string"},{"type":"null"}]},
                     "patternOnly":{"pattern":"^(?!bad$)"}
                 }}),
+                ..Default::default()
             },
         ]),
         ..Context::default()
@@ -1245,8 +1490,14 @@ async fn wire_postprocess_is_visible_on_responses_http_without_mutating_tool_sch
                 name: "broken".into(),
                 description: "incompatible enum".into(),
                 parameters: json!({"type":"object","properties":{"x":{"type":"integer","enum":["bad"]}}}),
+                ..Default::default()
             },
-            Tool { name: "safe".into(), description: "safe wire".into(), parameters: parameters.clone() },
+            Tool {
+                name: "safe".into(),
+                description: "safe wire".into(),
+                parameters: parameters.clone(),
+                ..Default::default()
+            },
         ]),
         ..Context::default()
     };
@@ -1305,6 +1556,7 @@ async fn draft_07_tool_schema_is_upgraded_on_the_actual_responses_request() {
                 },
                 "definitions":{"Item":{"type":"string"}}
             }),
+            ..Default::default()
         }]),
         ..Context::default()
     };
@@ -1365,6 +1617,8 @@ async fn tool_result_is_replayed_on_the_next_real_http_request() {
                 details: None,
                 is_error: false,
                 timestamp: 1,
+                provider_metadata: None,
+                useless: false,
             }),
         ],
         ..Context::default()
@@ -1523,19 +1777,38 @@ async fn hidden_only_incomplete_response_is_saved_without_warming_the_session() 
 }
 
 #[tokio::test]
-async fn eof_after_tool_start_never_reissues_the_request_or_succeeds() {
-    let server = FakeUpstream::start(script(json!({"responses":[{"events":[
-        {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read"}}}
-    ]}]})), None).await.unwrap();
-    let (_, output) = collect(openai_responses::stream(
+async fn eof_after_unfilled_tool_start_retries_without_exposing_the_failed_call() {
+    // OMP b91db66e: the unfilled start is still buffered; argument content,
+    // including the literal "{}", is what makes the attempt irrevocable.
+    let server = FakeUpstream::start(script(json!({"responses":[
+        {"events":[
+            {"data":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read"}}}
+        ]},
+        completed_text("recovered", "recovered answer")
+    ]})), None).await.unwrap();
+    let (events, output) = collect(openai_responses::stream(
         reqwest::Client::new(),
         model(&server.base_url()),
         Context::default(),
         options(),
     ))
     .await;
-    assert_eq!(output.stop_reason, StopReason::Error);
-    assert_eq!(server.served(), 1);
+    assert_eq!(output.stop_reason, StopReason::Stop);
+    assert_eq!(output.text(), "recovered answer");
+    assert_eq!(output.tool_calls().count(), 0);
+    assert_eq!(server.served(), 2);
+    assert_eq!(events.iter().filter(|event| matches!(event, AssistantMessageEvent::Start { .. })).count(), 1);
+    assert!(!events.iter().any(|event| matches!(event,
+        AssistantMessageEvent::ToolcallStart { .. }
+        | AssistantMessageEvent::ToolcallDelta { .. }
+        | AssistantMessageEvent::ToolcallEnd { .. }
+    )));
+    assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { reason: StopReason::Stop, .. })));
+    let attempts = &output.retry_accounting.as_ref().expect("both native attempts are recorded").attempts;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].usage.input, None);
+    assert_eq!(attempts[0].stop_reason, StopReason::Error);
+    assert_eq!(attempts[1].stop_reason, StopReason::Stop);
 }
 
 #[tokio::test]
@@ -1654,4 +1927,408 @@ async fn cancelling_after_a_partial_tool_start_remains_aborted() {
     .expect("cancellation should end the stream");
     assert!(saw_partial_tool);
     assert_eq!(server.served(), 1);
+}
+
+#[tokio::test]
+async fn computer_include_and_lite_per_call_override_family() {
+    use ara_ai::{CallOptions, ModelProvider};
+    for (include, lite) in [
+        (None, None),
+        (Some(Vec::new()), Some(false)),
+        (Some(vec!["computer_call_output.output.image_url".into()]), Some(true)),
+    ] {
+        let endpoint=FakeUpstream::start(script(json!({"responses":[
+            {"events":[{"data":{"type":"response.output_item.done","output_index":0,"item":{
+                "type":"message","id":"msg_override","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}},
+                {"data":{"type":"response.completed","response":{"status":"completed"}}}]}
+        ]})),None).await.unwrap();
+        let mut base = options();
+        base.request.include = vec!["inherited-only".into()];
+        base.request.responses_lite = true;
+        let provider = ara_ai::OpenAIResponsesProvider { client: reqwest::Client::new(), base };
+        let (_, out) = collect(provider.stream(
+            &model(&endpoint.base_url()),
+            &Context { messages: vec![Message::User(UserMessage::text("call override"))], ..Default::default() },
+            CallOptions { include: include.clone(), responses_lite: lite, ..Default::default() },
+        ))
+        .await;
+        assert_eq!(out.text(), "ok");
+        let recorded = endpoint.requests.lock().await;
+        let body = &recorded[0]["body"];
+        let includes = body.get("include").and_then(Value::as_array).cloned().unwrap_or_default();
+        assert_eq!(includes.contains(&json!("inherited-only")), include.is_none());
+        assert_eq!(
+            includes.contains(&json!("computer_call_output.output.image_url")),
+            include.as_ref().is_some_and(|items| !items.is_empty())
+        );
+        assert!(body.get("tools").is_none());
+        assert!(recorded[0]["headers"].get("x-openai-internal-codex-responses-lite").is_none());
+        assert_ne!(body["input"][0]["type"], "additional_tools");
+    }
+}
+
+
+#[tokio::test]
+async fn responses_retry_unfilled_tool_wire_boundary_group() {
+    use ara_ai::ActualAssistantEvent;
+    use ara_ai::graph_values::GraphValueFactory;
+    use ara_ai::providers::openai_responses::actual::{GraphResponsesOptions, stream_prepared};
+    use ara_rpc::value_heap::{
+        CompiledFunctionForm, CompiledFunctionSpec, NoRuntime, PropertyDescriptor, PropertyKey, ValueHeap, ValueSnapshot,
+    };
+
+    // The reference NativeRealm installs this Host primitive on Array.prototype.
+    // A bare ValueHeap includes push/iteration but intentionally omits indexOf.
+    // Reuse its public operation owner, preserving the provider's original Get,
+    // receiver and argument identities; no Provider-local index approximation.
+    static ARRAY_INDEX_OF: CompiledFunctionSpec = CompiledFunctionSpec {
+        source: "Responses fixture binding to existing Native Array.prototype.indexOf owner",
+        name: "indexOf",
+        length: 1,
+        form: CompiledFunctionForm::Builtin,
+        capture_count: 0,
+        body: |heap, _, receiver, arguments, runtime| heap.array_index_of_native(receiver, arguments, runtime),
+    };
+
+    // Keep the migrated EOF fixture and all original response banks unchanged.
+    // This one coarse wire group exercises the changed typed parser plus the
+    // existing public actual transport binding of the same native retry owner.
+    // It does not stand for full native request preparation/Provider parity.
+    for actual in [false, true] {
+        for (label, item_kind, delta, should_retry) in [
+            ("function-start", "function_call", None, true),
+            ("custom-start", "custom_tool_call", None, true),
+            ("computer-start", "computer_call", None, true),
+            ("function-empty-delta", "function_call", Some(""), true),
+            ("custom-empty-delta", "custom_tool_call", Some(""), true),
+            (
+                "function-nonempty-delta",
+                "function_call",
+                Some("{}"),
+                false,
+            ),
+            (
+                "custom-nonempty-delta",
+                "custom_tool_call",
+                Some("echo accepted"),
+                false,
+            ),
+        ] {
+            let mut item =
+                json!({"type":item_kind,"id":"item_failed","call_id":"call_failed","name":"read"});
+            if item_kind == "computer_call" {
+                item = json!({"type":"computer_call","id":"item_failed","call_id":"call_failed",
+                    "actions":[{"type":"screenshot"}],"pending_safety_checks":[],"status":"in_progress"});
+            }
+            let mut failed = vec![json!({"data":{
+                "type":"response.output_item.added","output_index":0,"item":item
+            }})];
+            if let Some(delta) = delta {
+                failed.push(json!({"data":{
+                    "type":if item_kind == "custom_tool_call" {
+                        "response.custom_tool_call_input.delta"
+                    } else {
+                        "response.function_call_arguments.delta"
+                    },"output_index":0,"item_id":"item_failed","delta":delta
+                }}));
+            }
+            let server = FakeUpstream::start(
+                script(json!({"responses":[
+                    {"events":failed}, completed_text("recovered_boundary", "recovered boundary")
+                ]})),
+                None,
+            )
+            .await
+            .unwrap();
+            let mut opts = options();
+            opts.retry.max_attempts = 1;
+            if !actual {
+                let (events, output) = collect(openai_responses::stream(
+                    reqwest::Client::new(),
+                    model(&server.base_url()),
+                    Context::default(),
+                    opts,
+                ))
+                .await;
+                assert_eq!(
+                    output.stop_reason,
+                    if should_retry {
+                        StopReason::Stop
+                    } else {
+                        StopReason::Error
+                    },
+                    "{label}"
+                );
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, AssistantMessageEvent::Start { .. }))
+                        .count(),
+                    1
+                );
+                if should_retry {
+                    assert_eq!(output.text(), "recovered boundary", "{label}");
+                    assert_eq!(output.tool_calls().count(), 0);
+                    assert!(
+                        !events.iter().any(|event| matches!(
+                            event,
+                            AssistantMessageEvent::ToolcallStart { .. }
+                                | AssistantMessageEvent::ToolcallDelta { .. }
+                                | AssistantMessageEvent::ToolcallEnd { .. }
+                        )),
+                        "discard failed lifecycle: {label}"
+                    );
+                    let attempts = &output
+                        .retry_accounting
+                        .as_ref()
+                        .expect("both attempts are recorded")
+                        .attempts;
+                    assert_eq!(attempts.len(), 2);
+                    assert_eq!(attempts[0].usage.input, None);
+                    assert_eq!(attempts[0].stop_reason, StopReason::Error);
+                    assert_eq!(attempts[1].stop_reason, StopReason::Stop);
+                } else {
+                    assert_eq!(output.tool_calls().count(), 1);
+                    assert_eq!(
+                        events
+                            .iter()
+                            .filter(|event| matches!(
+                                event,
+                                AssistantMessageEvent::ToolcallStart { .. }
+                            ))
+                            .count(),
+                        1
+                    );
+                    assert!(events.iter().any(|event| matches!(event,
+                        AssistantMessageEvent::ToolcallDelta { delta: observed, .. } if Some(observed.as_str()) == delta
+                    )));
+                    assert!(matches!(
+                        events.last(),
+                        Some(AssistantMessageEvent::Error {
+                            reason: StopReason::Error,
+                            ..
+                        })
+                    ));
+                }
+            } else {
+                let heap = ValueHeap::new().unwrap();
+                let factory =
+                    Arc::new(GraphValueFactory::new(heap.clone(), Arc::new(NoRuntime)).unwrap());
+                let index_of = heap.fresh_compiled_function(&ARRAY_INDEX_OF, &[]).unwrap();
+                heap.define_own(
+                    &heap.array_prototype(),
+                    "indexOf".into(),
+                    PropertyDescriptor::Data {
+                        value: index_of,
+                        writable: true,
+                        enumerable: false,
+                        configurable: true,
+                    },
+                    factory.runtime(),
+                )
+                .unwrap();
+                let request_body = heap
+                    .import_strict(
+                        ara_rpc::WireValue::parse(
+                            r#"{"model":"fake-responses-model","input":[],"stream":true}"#,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                let mut stream = stream_prepared(
+                    reqwest::Client::new(),
+                    model(&server.base_url()),
+                    request_body,
+                    factory.clone(),
+                    opts,
+                    GraphResponsesOptions::default(),
+                )
+                .unwrap();
+                let receipt = stream.failure_receipt();
+                let events = tokio::time::timeout(Duration::from_secs(5), async {
+                    let mut events = Vec::new();
+                    while let Some(event) = stream.recv().await {
+                        events.push(event);
+                    }
+                    events
+                })
+                .await
+                .expect("actual Responses boundary drain");
+                drop(stream);
+                let failures = tokio::time::timeout(Duration::from_secs(2), receipt.wait_settled())
+                    .await
+                    .expect("actual Responses boundary settlement");
+                assert!(failures.is_empty(), "{label}: {failures:?}");
+                assert_eq!(events.iter().filter(|event| event.is_terminal()).count(), 1);
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, ActualAssistantEvent::Start { .. }))
+                        .count(),
+                    1
+                );
+                let terminal = events.last().expect("actual terminal");
+                assert!(
+                    if should_retry {
+                        matches!(
+                            terminal,
+                            ActualAssistantEvent::Done {
+                                reason: StopReason::Stop,
+                                ..
+                            }
+                        )
+                    } else {
+                        matches!(
+                            terminal,
+                            ActualAssistantEvent::Error {
+                                reason: StopReason::Error,
+                                ..
+                            }
+                        )
+                    },
+                    "{label}"
+                );
+                let root = terminal.partial();
+                let get = |root: &ara_rpc::value_heap::ValueHandle, name: &str| {
+                    heap.get(root, &PropertyKey::from(name), factory.runtime())
+                        .unwrap()
+                };
+                let content = get(root, "content");
+                assert!(matches!(
+                    heap.snapshot(&get(&content, "length")).unwrap(),
+                    ValueSnapshot::Number(1.0)
+                ));
+                let block = get(&content, "0");
+                assert!(
+                    matches!(heap.snapshot(&get(&block, "type")).unwrap(), ValueSnapshot::String(kind)
+                    if kind.equals_ascii(if should_retry { "text" } else { "toolCall" })),
+                    "{label}"
+                );
+                if should_retry {
+                    assert!(
+                        matches!(heap.snapshot(&get(&block, "text")).unwrap(), ValueSnapshot::String(text)
+                        if text.equals_ascii("recovered boundary"))
+                    );
+                    assert!(!events.iter().any(|event| matches!(
+                        event,
+                        ActualAssistantEvent::ToolcallStart { .. }
+                            | ActualAssistantEvent::ToolcallDelta { .. }
+                            | ActualAssistantEvent::ToolcallEnd { .. }
+                    )));
+                    let attempts = get(&get(root, "retryAccounting"), "attempts");
+                    assert!(matches!(
+                        heap.snapshot(&get(&attempts, "length")).unwrap(),
+                        ValueSnapshot::Number(2.0)
+                    ));
+                } else {
+                    assert_eq!(
+                        events
+                            .iter()
+                            .filter(|event| matches!(
+                                event,
+                                ActualAssistantEvent::ToolcallStart { .. }
+                            ))
+                            .count(),
+                        1
+                    );
+                    assert!(events.iter().any(|event| match event {
+                        ActualAssistantEvent::ToolcallDelta { delta: observed, .. } => {
+                            matches!(heap.snapshot(&observed).unwrap(), ValueSnapshot::String(observed)
+                                if delta.is_some_and(|expected| observed.equals_ascii(expected)))
+                        }
+                        _ => false,
+                    }));
+                }
+            }
+            assert_eq!(
+                server.served(),
+                if should_retry { 2 } else { 1 },
+                "actual={actual}: {label}"
+            );
+            let requests = server.requests.lock().await;
+            assert_eq!(requests.len(), if should_retry { 2 } else { 1 });
+            if should_retry {
+                assert_eq!(
+                    requests[0]["body"], requests[1]["body"],
+                    "same complete body: {label}"
+                );
+                assert_eq!(
+                    requests[0]["headers"], requests[1]["headers"],
+                    "same complete headers: {label}"
+                );
+            }
+            eprintln!("ARA-RETRY RESPONSES CLOSURE PASS actual={actual} {label}");
+        }
+    }
+
+    // Codex is a distinct caller of the shared typed parser. Its fixed retry
+    // owner vetoes any visible tool block, including an unfilled start.
+    // Exercise that ResponsesProtocol policy with a valid Codex model fixture.
+    for item_kind in ["function_call", "custom_tool_call", "computer_call"] {
+        let item = if item_kind == "computer_call" {
+            json!({"type":"computer_call","id":"codex_item","call_id":"codex_call",
+                "actions":[{"type":"screenshot"}],"pending_safety_checks":[],"status":"in_progress"})
+        } else {
+            json!({"type":item_kind,"id":"codex_item","call_id":"codex_call","name":"read"})
+        };
+        let server = FakeUpstream::start(script(json!({"responses":[
+            {"events":[{"data":{"type":"response.output_item.added","output_index":0,"item":item}}]},
+            completed_text("must_not_retry_codex", "wrong Codex replay")
+        ]})), None).await.unwrap();
+        let mut control_model = model(&server.base_url());
+        control_model.api = ara_ai::providers::openai_codex_responses::API.into();
+        let opts = ara_ai::providers::openai_codex_responses::StreamOptions {
+            api_key: Some("fixture-codex-token".into()),
+            extra_headers: vec![(
+                ara_ai::providers::openai_codex_responses::ACCOUNT_HEADER.into(),
+                "fixture-account".into(),
+            )],
+            retry: options().retry,
+            first_event_timeout: Some(Duration::from_secs(2)),
+            idle_timeout: Some(Duration::from_secs(2)),
+            ..Default::default()
+        };
+        ara_ai::providers::openai_codex_responses::build_request(
+            &control_model,
+            &Context::default(),
+            &opts.request,
+        )
+        .expect("valid Codex fixture request");
+        let (events, output) = collect(ara_ai::providers::openai_codex_responses::stream(
+            reqwest::Client::new(),
+            control_model,
+            Context::default(),
+            opts,
+        ))
+        .await;
+        assert_eq!(output.stop_reason, StopReason::Error, "Codex {item_kind}");
+        assert_eq!(
+            server.served(),
+            1,
+            "Codex must preserve its tool-block veto: {item_kind}"
+        );
+        assert_eq!(output.tool_calls().count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, AssistantMessageEvent::ToolcallStart { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                reason: StopReason::Error,
+                ..
+            })
+        ));
+        assert!(
+            output
+                .failure_evidence
+                .as_ref()
+                .expect("failure facts")
+                .replay_blocked
+        );
+        eprintln!("ARA-RETRY RESPONSES CLOSURE PASS codex-protocol {item_kind}");
+    }
 }

@@ -7,6 +7,7 @@ pub mod frame;
 pub mod input;
 pub mod json;
 pub mod messages;
+pub mod value_heap;
 pub mod writer;
 pub use frame::{EncodedFrames, RpcError, RpcFrameDecoder, RpcFrameEncoder, encode_rpc_frame};
 pub use json::{WireString, WireValue};

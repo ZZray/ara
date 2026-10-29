@@ -14,6 +14,13 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+#[path = "support/actual_completions_history.rs"]
+mod actual_completions_history;
+#[path = "support/actual_completions_schema.rs"]
+mod actual_completions_schema;
+#[path = "support/actual_markup_observations.rs"]
+mod actual_markup_observations;
+
 fn script(v: Value) -> Script {
     serde_json::from_value(v).unwrap()
 }
@@ -39,6 +46,7 @@ fn ctx() -> Context {
             name: "read".into(),
             description: "Read a file".into(),
             parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+            ..Default::default()
         }]),
     }
 }
@@ -52,6 +60,41 @@ fn opts() -> StreamOptions {
             max_delay: Duration::from_secs(1),
         },
         ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn all_eight_native_choices_chat_wire_family() {
+    use ara_ai::ToolChoice;
+    actual_completions_history::observe_all_native_choices();
+    for (choice, expected) in [
+        (ToolChoice::Auto, Some(json!("auto"))),
+        (ToolChoice::None, Some(json!("none"))),
+        (ToolChoice::Any, Some(json!("required"))),
+        (ToolChoice::Required, Some(json!("required"))),
+        (ToolChoice::Function("read".into()), Some(json!({"type":"function","function":{"name":"read"}}))),
+        (ToolChoice::FunctionNested("read".into()), Some(json!({"type":"function","function":{"name":"read"}}))),
+        (ToolChoice::Tool("read".into()), Some(json!({"type":"function","function":{"name":"read"}}))),
+        (ToolChoice::Computer, None),
+    ] {
+        let endpoint = FakeUpstream::start(
+            script(json!({"responses":[
+                {"events":[text("ok"),finish("stop"),done()]}
+            ]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut options = opts();
+        options.tool_choice = Some(choice);
+        let (_, out) =
+            collect(openai_completions::stream(reqwest::Client::new(), model(&endpoint.base_url()), ctx(), options))
+                .await;
+        assert_eq!(out.text(), "ok");
+        let recorded = endpoint.requests.lock().await;
+        assert_eq!(recorded[0]["body"].get("tool_choice"), expected.as_ref());
+        assert_eq!(recorded[0]["body"]["tools"][0]["function"]["name"], "read");
+        assert_eq!(endpoint.served(), 1);
     }
 }
 
@@ -101,6 +144,327 @@ async fn streams_text_usage_and_records_request() {
 }
 
 #[tokio::test]
+async fn reasoning_native_chat_dialects_execute_whole_per_call_replacements() {
+    use ara_ai::{
+        CallOptions, ModelProvider, OpenAICompletionsProvider, OpenAIReasoningPolicy, ReasoningEffort as Effort,
+        ReasoningRequest,
+    };
+    let on = ReasoningRequest { effort: Some(Effort::High), ..Default::default() };
+    let off = ReasoningRequest { disable_reasoning: true, ..Default::default() };
+    let cases = [
+        (json!({"reasoningEffortMap":{"high":"wire-high"}}), on.clone(), json!({"reasoning_effort":"wire-high"})),
+        (
+            json!({"thinkingFormat":"openrouter","reasoningDisableMode":"openrouter-enabled-false"}),
+            on.clone(),
+            json!({"reasoning":{"effort":"baked-high"}}),
+        ),
+        (
+            json!({"thinkingFormat":"zai","reasoningDisableMode":"zai-thinking-disabled"}),
+            on.clone(),
+            json!({"thinking":{"type":"enabled"},"reasoning_effort":"baked-high"}),
+        ),
+        (
+            json!({"thinkingFormat":"kimi","reasoningDisableMode":"zai-thinking-disabled","thinkingKeep":"all"}),
+            on.clone(),
+            json!({"thinking":{"type":"enabled","effort":"baked-high","keep":"all"}}),
+        ),
+        (
+            json!({"thinkingFormat":"qwen","reasoningDisableMode":"qwen-enable-thinking-false","qwenTemplateReasoningEffort":true,"qwenPreserveThinking":true}),
+            on.clone(),
+            json!({"enable_thinking":true,"preserve_thinking":true,"reasoning_effort":"baked-high","chat_template_kwargs":{"preserve_thinking":true,"reasoning_effort":"baked-high"}}),
+        ),
+        (
+            json!({"thinkingFormat":"qwen-chat-template","reasoningDisableMode":"qwen-template-false","qwenTemplateReasoningEffort":true,"qwenPreserveThinking":true}),
+            on.clone(),
+            json!({"chat_template_kwargs":{"enable_thinking":true,"preserve_thinking":true,"reasoning_effort":"baked-high"}}),
+        ),
+        (
+            json!({"thinkingFormat":"chat-template","reasoningDisableMode":"chat-template-thinking-false"}),
+            on.clone(),
+            json!({"chat_template_kwargs":{"thinking":true,"reasoning_effort":"baked-high"}}),
+        ),
+        (json!({"reasoningDisableMode":"none-effort"}), off.clone(), json!({"reasoning_effort":"none"})),
+        (json!({"reasoningDisableMode":"lowest-effort"}), off.clone(), json!({"reasoning_effort":"low"})),
+        (json!({"reasoningDisableMode":"omit"}), off.clone(), json!({})),
+        (
+            json!({"reasoningDisableMode":"openrouter-enabled-false"}),
+            off.clone(),
+            json!({"reasoning":{"enabled":false}}),
+        ),
+        (json!({"reasoningDisableMode":"cline-enabled-false"}), off.clone(), json!({"reasoning":{"enabled":false}})),
+        (
+            json!({"reasoningDisableMode":"venice-disable-thinking"}),
+            off.clone(),
+            json!({"venice_parameters":{"disable_thinking":true}}),
+        ),
+        (json!({"reasoningDisableMode":"zai-thinking-disabled"}), off.clone(), json!({"thinking":{"type":"disabled"}})),
+        (json!({"reasoningDisableMode":"qwen-enable-thinking-false"}), off.clone(), json!({"enable_thinking":false})),
+        (
+            json!({"reasoningDisableMode":"qwen-template-false"}),
+            off.clone(),
+            json!({"chat_template_kwargs":{"enable_thinking":false}}),
+        ),
+        (
+            json!({"reasoningDisableMode":"chat-template-thinking-false"}),
+            off.clone(),
+            json!({"chat_template_kwargs":{"thinking":false}}),
+        ),
+        (
+            json!({"thinkingFormat":"zai","reasoningDisableMode":"zai-thinking-disabled","reasoningEffortMap":{"high":"none"}}),
+            on.clone(),
+            json!({"thinking":{"type":"disabled"}}),
+        ),
+        (json!({"omitReasoningEffort":true}), on.clone(), json!({})),
+    ];
+    for (compat, request, expected) in cases {
+        let server = FakeUpstream::start(
+            script(json!({"responses":[{"events":[text("ok"),finish("stop"),usage(3,1),done()]}]})),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let original = endpoint.clone();
+        let policy = OpenAIReasoningPolicy::from_model_spec(&json!({
+            "reasoning":true,"requestModelId":"wire-default",
+            "thinking":{"mode":"effort","efforts":["low","high"],"effortMap":{"high":"baked-high"},"effortRouting":{"high":"wire-high-model","off":"wire-off-model"}},
+            "compat":compat,
+        })).unwrap();
+        let mut base = opts();
+        base.reasoning_policy = Some(policy);
+        base.reasoning = Some(on.clone());
+        let provider = OpenAICompletionsProvider { client: reqwest::Client::new(), base };
+        let (_, output) = collect(provider.stream(
+            &endpoint,
+            &ctx(),
+            CallOptions { reasoning: Some(request.clone()), ..Default::default() },
+        ))
+        .await;
+        assert_eq!(output.text(), "ok");
+        assert_eq!(endpoint, original, "wire routing must not rewrite Host model identity");
+        assert_eq!(output.model, endpoint.id);
+        let recorded = server.requests.lock().await;
+        assert_eq!(recorded.len(), 1);
+        let body = &recorded[0]["body"];
+        assert_eq!(body["model"], if request.effort.is_some() { "wire-high-model" } else { "wire-off-model" });
+        let controls = [
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            "enable_thinking",
+            "preserve_thinking",
+            "chat_template_kwargs",
+            "venice_parameters",
+        ]
+        .into_iter()
+        .filter_map(|key| body.get(key).map(|value| (key.to_owned(), value.clone())))
+        .collect::<serde_json::Map<_, _>>();
+        assert_eq!(Value::Object(controls), expected, "compat={compat}");
+    }
+    let server =
+        FakeUpstream::start(script(json!({"responses":[{"events":[text("budget"),finish("stop"),done()]}]})), None)
+            .await
+            .unwrap();
+    let mut endpoint = model(&server.base_url());
+    endpoint.provider = "cline-pass".into();
+    endpoint.reasoning = true;
+    let mut options = opts();
+    options.reasoning_policy = Some(
+        OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,
+            "thinking":{"mode":"budget","efforts":["high"],"effortBudgets":{"high":100}},"compat":{}
+        }))
+        .unwrap(),
+    );
+    options.reasoning = Some(ReasoningRequest {
+        effort: Some(Effort::High),
+        thinking_budgets: [(Effort::High, 200)].into(),
+        ..Default::default()
+    });
+    assert_eq!(
+        collect(openai_completions::stream(reqwest::Client::new(), endpoint, ctx(), options)).await.1.text(),
+        "budget"
+    );
+    let recorded = server.requests.lock().await;
+    assert_eq!(recorded[0]["body"]["reasoning"], json!({"max_tokens":200}));
+    assert!(recorded[0]["body"].get("reasoning_effort").is_none());
+    drop(recorded);
+    let server = FakeUpstream::start(
+        script(json!({"responses":[
+            {"events":[text("inherit"),finish("stop"),done()]}, {"events":[text("clear"),finish("stop"),done()]}
+        ]})),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut endpoint = model(&server.base_url());
+    endpoint.reasoning = true;
+    let mut base = opts();
+    base.reasoning = Some(on);
+    base.reasoning_policy = Some(
+        OpenAIReasoningPolicy::from_model_spec(
+            &json!({"reasoning":true,"thinking":{"mode":"effort","efforts":["high"]},"compat":{}}),
+        )
+        .unwrap(),
+    );
+    let provider = OpenAICompletionsProvider { client: reqwest::Client::new(), base };
+    assert_eq!(collect(provider.stream(&endpoint, &ctx(), CallOptions::default())).await.1.text(), "inherit");
+    assert_eq!(
+        collect(provider.stream(
+            &endpoint,
+            &ctx(),
+            CallOptions { reasoning: Some(ReasoningRequest::default()), ..Default::default() }
+        ))
+        .await
+        .1
+        .text(),
+        "clear"
+    );
+    let recorded = server.requests.lock().await;
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0]["body"]["reasoning_effort"], "high");
+    assert!(recorded[1]["body"].get("reasoning_effort").is_none());
+}
+
+#[tokio::test]
+async fn reasoning_when_thinking_changes_actual_converter_and_respects_surviving_tool_choice() {
+    use ara_ai::{OpenAIReasoningPolicy, ReasoningEffort, ReasoningRequest, ToolChoice};
+    for choice in [ToolChoice::Auto, ToolChoice::Required, ToolChoice::None] {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[{"events":[text("ok"),finish("stop"),done()]}]})), None)
+                .await
+                .unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let mut options = opts();
+        options.tool_choice = Some(choice.clone());
+        options.max_tokens = Some(64);
+        options.reasoning = Some(ReasoningRequest { effort: Some(ReasoningEffort::High), ..Default::default() });
+        options.reasoning_policy = Some(OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,
+            "thinking":{"mode":"effort","efforts":["low","high"]},
+            "compat":{"disableReasoningOnToolChoice":true,"reasoningDisableMode":"none-effort",
+                "whenThinking":{"supportsDeveloperRole":true,"requiresThinkingAsText":true,"maxTokensField":"max_completion_tokens","reasoningEffortMap":{"high":"enabled-high"}}}
+        })).unwrap());
+        let mut context = ctx();
+        let mut previous = AssistantMessage::empty(&endpoint.api, &endpoint.provider, &endpoint.id);
+        previous.content = vec![
+            AssistantBlock::Thinking(ThinkingContent { thinking: "earlier".into(), thinking_signature: None }),
+            AssistantBlock::text("answer"),
+        ];
+        previous.stop_reason = StopReason::Stop;
+        context.messages.insert(0, Message::Assistant(previous));
+        assert_eq!(
+            collect(openai_completions::stream(reqwest::Client::new(), endpoint, context, options)).await.1.text(),
+            "ok"
+        );
+        let requests = server.requests.lock().await;
+        let body = &requests[0]["body"];
+        if choice == ToolChoice::Auto {
+            assert!(body.get("tool_choice").is_none());
+            assert_eq!(body["reasoning_effort"], "enabled-high");
+            assert_eq!(body["messages"][0]["role"], "developer");
+            assert_eq!(body["messages"][1]["content"], "<thinking>\nearlier\n</thinking> answer");
+            assert_eq!(body["max_completion_tokens"], 64);
+            assert!(body.get("max_tokens").is_none());
+        } else {
+            assert_eq!(body["tool_choice"], if choice == ToolChoice::Required { "required" } else { "none" });
+            assert_eq!(body["reasoning_effort"], "none");
+            assert_eq!(body["messages"][0]["role"], "system");
+            assert_eq!(body["messages"][1]["content"], "answer");
+            assert_eq!(body["max_tokens"], 64);
+        }
+    }
+    for (compat, expected_choice, expected_reasoning, narrow) in [
+        (json!({"supportsNamedToolChoice":false}), Some("required"), json!({"effort":"high"}), true),
+        (json!({"supportsForcedToolChoice":false}), Some("auto"), json!({"effort":"high"}), false),
+        (json!({"supportsToolChoice":false}), None, json!({"effort":"high"}), false),
+        (json!({"disableReasoningOnForcedToolChoice":true,"isOpenRouterHost":true}), None, Value::Null, false),
+    ] {
+        let server =
+            FakeUpstream::start(script(json!({"responses":[{"events":[text("ok"),finish("stop"),done()]}]})), None)
+                .await
+                .unwrap();
+        let mut endpoint = model(&server.base_url());
+        endpoint.reasoning = true;
+        let mut options = opts();
+        options.tool_choice = Some(ToolChoice::Tool("read".into()));
+        options.reasoning = Some(ReasoningRequest { effort: Some(ReasoningEffort::High), ..Default::default() });
+        let mut merged = json!({"thinkingFormat":"openrouter","reasoningDisableMode":"openrouter-enabled-false"});
+        merged.as_object_mut().unwrap().extend(compat.as_object().unwrap().clone());
+        options.reasoning_policy = Some(
+            OpenAIReasoningPolicy::from_model_spec(
+                &json!({"reasoning":true,"thinking":{"mode":"effort","efforts":["high"]},"compat":merged}),
+            )
+            .unwrap(),
+        );
+        let mut context = ctx();
+        context.tools.as_mut().unwrap().push(Tool {
+            name: "write".into(),
+            description: "write".into(),
+            parameters: json!({"type":"object"}),
+            ..Default::default()
+        });
+        assert_eq!(
+            collect(openai_completions::stream(reqwest::Client::new(), endpoint, context, options)).await.1.text(),
+            "ok"
+        );
+        let recorded = server.requests.lock().await;
+        let body = &recorded[0]["body"];
+        if let Some(choice) = expected_choice {
+            assert_eq!(body["tool_choice"], choice);
+        } else if expected_reasoning.is_null() {
+            assert!(body["tool_choice"].is_object());
+        } else {
+            assert!(body.get("tool_choice").is_none());
+        }
+        assert_eq!(body["reasoning"], expected_reasoning);
+        assert_eq!(body["tools"].as_array().unwrap().len(), if narrow { 1 } else { 2 });
+    }
+    actual_completions_history::observe_request_policy_http().await;
+}
+
+#[tokio::test]
+async fn reasoning_policy_rejections_do_not_post_or_hide_materialized_errors() {
+    use ara_ai::{OpenAIReasoningPolicy, ReasoningEffort, ReasoningRequest};
+    let server = FakeUpstream::start(script(json!({"responses":[]})), None).await.unwrap();
+    let mut endpoint = model(&server.base_url());
+    endpoint.reasoning = true;
+    for with_policy in [false, true] {
+        let mut options = opts();
+        options.reasoning = Some(ReasoningRequest { effort: Some(ReasoningEffort::Max), ..Default::default() });
+        if with_policy {
+            options.reasoning_policy = Some(
+                OpenAIReasoningPolicy::from_model_spec(
+                    &json!({"reasoning":true,"thinking":{"mode":"effort","efforts":["low","high"]},"compat":{}}),
+                )
+                .unwrap(),
+            );
+        }
+        let (_, output) =
+            collect(openai_completions::stream(reqwest::Client::new(), endpoint.clone(), ctx(), options)).await;
+        assert_eq!(output.stop_reason, StopReason::Error);
+        assert!(output.error_message.as_ref().unwrap().contains(if with_policy {
+            "not supported"
+        } else {
+            "materialized model policy"
+        }));
+    }
+    assert!(server.requests.lock().await.is_empty());
+    actual_completions_history::observe_request_policy_rejection_http().await;
+    for (compat, path) in [
+        (json!({"thinkingFormat":"unrepresented"}), "thinkingFormat"),
+        (json!({"whenThinking":{"unrepresentedFlag":"original-value"}}), "whenThinking.unrepresentedFlag"),
+    ] {
+        let error =
+            OpenAIReasoningPolicy::from_model_spec(&json!({"reasoning":true,"compat":compat})).unwrap_err().to_string();
+        assert!(
+            error.contains(path) && (error.contains("unrepresented") || error.contains("original-value")),
+            "{error}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn delayed_real_tool_result_reaches_the_wire_before_guidance() {
     let server =
         FakeUpstream::start(script(json!({"responses": [{"events": [text("ack"), finish("stop"), done()]}]})), None)
@@ -113,6 +477,7 @@ async fn delayed_real_tool_result_reaches_the_wire_before_guidance() {
         name: "read".into(),
         arguments: serde_json::from_value(json!({"path": "a.txt"})).unwrap(),
         thought_signature: None,
+        ..Default::default()
     }));
     let mut context = ctx();
     context.messages = vec![
@@ -125,6 +490,8 @@ async fn delayed_real_tool_result_reaches_the_wire_before_guidance() {
             details: None,
             is_error: false,
             timestamp: 3,
+            provider_metadata: None,
+            useless: false,
         }),
     ];
     let (_, answer) =
@@ -156,12 +523,14 @@ async fn malformed_tool_call_and_result_do_not_reach_openai_wire() {
             name: "".into(),
             arguments: Default::default(),
             thought_signature: None,
+            ..Default::default()
         }),
         AssistantBlock::ToolCall(ToolCall {
             id: "good".into(),
             name: "read".into(),
             arguments: serde_json::from_value(json!({"path": "good.txt"})).unwrap(),
             thought_signature: None,
+            ..Default::default()
         }),
     ];
     let mut context = ctx();
@@ -175,6 +544,8 @@ async fn malformed_tool_call_and_result_do_not_reach_openai_wire() {
             details: None,
             is_error: true,
             timestamp: 2,
+            provider_metadata: None,
+            useless: false,
         }),
         Message::ToolResult(ToolResultMessage {
             tool_call_id: "good".into(),
@@ -183,6 +554,8 @@ async fn malformed_tool_call_and_result_do_not_reach_openai_wire() {
             details: None,
             is_error: false,
             timestamp: 3,
+            provider_metadata: None,
+            useless: false,
         }),
         Message::User(UserMessage::text("continue")),
     ];
@@ -214,6 +587,7 @@ async fn responses_composite_results_and_opaque_chat_ids_match_calls_on_the_wire
         name: "read".into(),
         arguments: Default::default(),
         thought_signature: None,
+        ..Default::default()
     }));
     let mut chat = AssistantMessage::empty("openai-completions", "fake", "fake-model");
     chat.stop_reason = StopReason::ToolUse;
@@ -223,6 +597,7 @@ async fn responses_composite_results_and_opaque_chat_ids_match_calls_on_the_wire
             name: "read".into(),
             arguments: Default::default(),
             thought_signature: None,
+            ..Default::default()
         }));
     }
     let result = |id: &str, body: &str| {
@@ -233,6 +608,8 @@ async fn responses_composite_results_and_opaque_chat_ids_match_calls_on_the_wire
             details: None,
             is_error: false,
             timestamp: 3,
+            provider_metadata: None,
+            useless: false,
         })
     };
     let mut context = ctx();
@@ -970,6 +1347,10 @@ async fn replay_safe_retry_accept_empty_response_disables_reissue() {
 
 #[tokio::test]
 async fn prepared_text_observation_matches_retried_wire_body() {
+    actual_completions_schema::observe_schema_requests();
+    actual_completions_schema::observe_strict_http().await;
+    actual_completions_history::observe_request_history();
+    actual_markup_observations::observe_actual_markup().await;
     let server = FakeUpstream::start(
         script(json!({"responses": [
             {"status": 429, "headers": {"retry-after": "0"}, "body": "retry"},
@@ -991,6 +1372,7 @@ async fn prepared_text_observation_matches_retried_wire_body() {
             name: "read".into(),
             arguments: json!({"path":"secret"}).as_object().unwrap().clone(),
             thought_signature: None,
+            ..Default::default()
         }),
     ];
     let context = Context {
@@ -1007,6 +1389,8 @@ async fn prepared_text_observation_matches_retried_wire_body() {
                     }),
                 ]),
                 synthetic: None,
+                provider_payload: None,
+                provider_payload_origin: None,
                 timestamp: 0,
             }),
             Message::Assistant(assistant),
@@ -1026,6 +1410,8 @@ async fn prepared_text_observation_matches_retried_wire_body() {
                 details: None,
                 is_error: false,
                 timestamp: 0,
+                provider_metadata: None,
+                useless: false,
             }),
         ],
         tools: ctx().tools,
@@ -1321,6 +1707,91 @@ async fn finish_without_usage_ends_after_grace() {
     assert!(elapsed >= Duration::from_millis(2400) && elapsed < Duration::from_secs(6), "{elapsed:?}");
     assert_eq!(msg.stop_reason, StopReason::Stop);
     assert_eq!(msg.text(), "done");
+    accepted_tail_transport_contract(false, false).await;
+    accepted_tail_transport_contract(true, false).await;
+    accepted_tail_transport_contract(true, true).await;
+    let server = FakeUpstream::start(script(json!({"responses": [{
+        "events": [text("bounded"), finish("stop"), usage(2, 1)], "end": "hang"
+    }]})), None).await.unwrap();
+    let mut capped = opts();
+    capped.wait_for_terminal_drain = true;
+    let started = Instant::now();
+    let (_, accepted) = collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()), ctx(), capped)).await;
+    assert!(started.elapsed() >= Duration::from_millis(2400) && started.elapsed() < Duration::from_secs(6));
+    assert_eq!(accepted.text(), "bounded");
+    assert_eq!(accepted.stop_reason, StopReason::Stop);
+}
+
+/// Real TCP tail ownership, in the existing coarse transport bank. Default
+/// completion leaves the same connection alive; capped completion awaits it.
+async fn accepted_tail_transport_contract(await_drain: bool, malformed_split: bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let (started, response_started) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut buffer).await.unwrap();
+            assert!(n > 0, "client closed before request body");
+            request.extend_from_slice(&buffer[..n]);
+            let Some(end) = request.windows(4).position(|b| b == b"\r\n\r\n") else { continue };
+            let headers = String::from_utf8_lossy(&request[..end]);
+            let length = headers.lines().find_map(|line| {
+                line.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())
+            }).unwrap_or(0);
+            if request.len() >= end + 4 + length { break; }
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").await.unwrap();
+        let frames = [
+            json!({"choices":[{"index":0,"delta":{"content":"accepted"}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}),
+        ].iter().map(|v| format!("data: {v}\n\n")).collect::<String>();
+        socket.write_all(format!("{:x}\r\n{frames}\r\n", frames.len()).as_bytes()).await.unwrap();
+        socket.flush().await.unwrap();
+        let _ = started.send(());
+        tokio::select! {
+            _ = released => {},
+            result = socket.read(&mut buffer) => panic!("accepted body closed before original drain: {result:?}"),
+        }
+        if malformed_split {
+            let invalid = "data: malformed accepted tail\n\n";
+            socket.write_all(format!("{:x}\r\n{invalid}\r\n", invalid.len()).as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            // No DONE/EOF is supplied. Original next() parse failure must
+            // terminate drain promptly, instead of retaining it until grace.
+            let n = tokio::time::timeout(Duration::from_secs(1), socket.read(&mut buffer)).await.unwrap().unwrap();
+            assert_eq!(n, 0, "Malformed tail was ignored instead of closing original body");
+        } else {
+            let tail = "event: error\ndata: {\"error\":{\"message\":\"rate limit\",\"code\":\"429\"}}\n\ndata: \"{}\"\n\ndata: [DONE]\n\n";
+            socket.write_all(format!("{:x}\r\n{tail}\r\n0\r\n\r\n", tail.len()).as_bytes()).await.unwrap();
+        }
+    });
+    let mut options = opts();
+    options.wait_for_terminal_drain = await_drain;
+    let request_model = model(&format!("http://{address}/v1"));
+    let mut completion = tokio::spawn(async move {
+        collect(openai_completions::stream(reqwest::Client::new(), request_model, ctx(), options)).await
+    });
+    response_started.await.unwrap();
+    let accepted = if await_drain {
+        assert!(tokio::time::timeout(Duration::from_millis(120), &mut completion).await.is_err(),
+            "capped terminal preceded same-body drain");
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), completion).await.unwrap().unwrap().1
+    } else {
+        let (_, message) = tokio::time::timeout(Duration::from_secs(1), &mut completion).await.unwrap().unwrap();
+        release.send(()).unwrap();
+        message
+    };
+    server.await.unwrap();
+    assert_eq!(accepted.stop_reason, StopReason::Stop);
+    assert_eq!(accepted.text(), "accepted");
+    assert_eq!(accepted.usage.total_tokens, Some(3));
 }
 
 #[tokio::test]
@@ -1511,4 +1982,154 @@ async fn cancel_while_terminal_waits_for_full_channel_keeps_one_terminal() {
     let (events, msg) = collect(rx).await;
     assert_eq!(msg.stop_reason, StopReason::Aborted);
     assert_eq!(events.iter().filter(|e| e.is_terminal()).count(), 1);
+}
+
+
+// Fixed b91db66e error-body-rate-limit.test.ts JSON matrix plus the
+// bounded double-wrap, precedence, opaque and account-cap boundaries.
+fn chat_inband_cases() -> Vec<(&'static str, Value, Option<u16>, bool)> {
+    vec![
+        ("type", json!({"error":{"type":"rate_limit_error"}}), Some(429), false),
+        ("code", json!({"error":{"code":"rate_limit_exceeded"}}), Some(429), false),
+        ("too_many", json!({"error":{"type":"too_many_requests"}}), Some(429), false),
+        ("flat_code", json!({"code":429}), Some(429), false),
+        ("float_integer", json!({"status":429.0}), Some(429), false),
+        ("float_code", json!({"code":429.0}), Some(429), false),
+        ("mixed_separator", json!({"error":{"code":" rate_.limit -_error "}}), Some(429), false),
+        ("flat_status", json!({"status":429,"message":"slow down"}), Some(429), false),
+        ("string_status", json!({"error":{"status":"429","message":"compat status"}}), Some(429), false),
+        ("typed_error", json!({"type":"error","error":{"type":"rate_limit_error"}}), Some(429), false),
+        ("overloaded", json!({"error":{"type":"overloaded_error"}}), Some(503), false),
+        ("flat_type", json!({"type":"rate_limit_error"}), Some(429), false),
+        ("camel_dot", json!({"error":{"code":"Throttling.AllocationQuota"}}), Some(429), true),
+        ("camel", json!({"error":{"code":"ThrottlingAllocationQuota"}}), Some(429), true),
+        ("double_wrap", json!({"error":{"error":{"status":503,"message":"busy"}}}), Some(503), false),
+        ("two_unwraps", json!({"error":{"error":{"error":{"code":429}}}}), Some(429), false),
+        ("nested_then_root", json!({"status":502,"error":{"status":401,"message":"back off"}}), Some(502), false),
+        ("opaque", json!({"status":429,"message":"{}"}), Some(429), false),
+        ("framing", json!({"status":429,"message":"HTTP 429 (no body)"}), Some(429), false),
+        ("markup", json!({"status":503,"message":"<b>busy</b>\n\u{0007} now"}), Some(503), false),
+        ("statusless", json!({"error":{"message":"Throttled. Please retry"}}), None, false),
+        ("auth_prose", json!({"error":{"message":"Too many requests (401 from billing shim)"}}), None, false),
+        ("account", json!({"error":{"code":429,"message":"Account monthly quota reached"}}), Some(429), true),
+    ]
+}
+fn chat_inband_legacy_cases() -> Vec<(Value,Option<u16>,&'static str)> {
+    vec![
+        (json!({"error":{"code":"invalid_request_error","status":503,"message":"bad"}}),None,"bad"),
+        (json!({"error":{"code":"insufficient_quota","status":429,"message":"pay up"}}),None,"pay up"),
+        (json!({"status":401,"message":"auth problem"}),None,"auth problem"),
+        (json!({"error":{"code":401,"message":"auth problem"}}),Some(401),"auth problem"),
+        (json!({"error":{"message":"HTTP 401 Service unavailable"}}),None,"HTTP 401 Service unavailable"),
+        (json!({"error":{"error":{"error":{"error":{"code":429}}}}}),None,"error"),
+    ]
+}
+fn chat_callback_options(mode: &'static str) -> StreamOptions {
+    let mut options = opts();
+    options.first_event_timeout = Some(Duration::from_millis(150));
+    if mode == "body_timeout" { options.retry.max_attempts = 1; }
+    let cancel = options.cancel.clone();
+    options.on_response = Some(ara_ai::ProviderResponseCallback::new(move |metadata, _| {
+        assert_eq!(metadata.status, 200);
+        let cancel = cancel.clone();
+        Box::pin(async move {
+            // Headers have already connected. Outlive their watchdog budget.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            if mode == "reject" { return Err(ara_ai::ProviderError::Stream("Service unavailable callback".into())); }
+            if mode == "cancel" { cancel.cancel(); }
+            Ok(())
+        })
+    }));
+    options
+}
+#[tokio::test]
+async fn upgraded_chat_connected_callback_boundary() {
+    for mode in ["ok", "reject", "cancel", "body_timeout"] {
+        let body = if mode == "body_timeout" {
+            vec![json!({"sleep_ms":1000}), text("late"), finish("stop"), done()]
+        } else { vec![text("Hello delayed"), finish("stop"), done()] };
+        let server = FakeUpstream::start(script(json!({"responses":[
+            {"events":body.clone()}, {"events":body}
+        ]})), None).await.unwrap();
+        let (_, message) = collect(openai_completions::stream(reqwest::Client::new(), model(&server.base_url()),
+            ctx(), chat_callback_options(mode))).await;
+        match mode {
+            "ok" => { assert_eq!(message.stop_reason, StopReason::Stop); assert_eq!(message.text(), "Hello delayed"); },
+            "reject" => {
+                assert_eq!(message.stop_reason, StopReason::Error);
+                assert!(message.error_message.as_deref().unwrap().contains("provider response callback failed"));
+                assert!(message.failure_evidence.as_ref().unwrap().same_route_blocked);
+            },
+            "cancel" => assert_eq!(message.stop_reason, StopReason::Aborted),
+            _ => assert_eq!(message.error_message.as_deref(), Some(openai_completions::FIRST_EVENT_TIMEOUT_MESSAGE)),
+        }
+        // The outer replay owner allows one pre-output timeout retry,
+        // independently of the inner HTTP max_attempts setting.
+        assert_eq!(server.served(), if mode == "body_timeout" { 2 } else { 1 }, "{mode}");
+    }
+    actual_completions_schema::observe_upgraded_chat_callback().await;
+}
+#[tokio::test]
+async fn upgraded_chat_structured_inband_matrix() {
+    for (label, frame, status, account) in chat_inband_cases() {
+        let server = FakeUpstream::start(script(json!({"responses":[{"events":[text("committed"),{"data":frame},done()]}]})),None).await.unwrap();
+        let mut options = opts(); options.retry.max_attempts = 1;
+        let (_, message) = collect(openai_completions::stream(reqwest::Client::new(),model(&server.base_url()),ctx(),options)).await;
+        assert_eq!(message.stop_reason,StopReason::Error,"{label}: {message:?}");
+        assert_eq!(message.error_status,status,"{label}: {message:?}");
+        let evidence = message.failure_evidence.as_ref().unwrap();
+        assert_eq!(evidence.replay_blocked,account,"{label}: {message:?}");
+        if label == "opaque" || label == "framing" {
+            assert_eq!(message.error_message.as_deref(),Some("429 Provider returned an in-band provider error"));
+        }
+        if label == "auth_prose" {
+            assert_eq!(message.error_message.as_deref(),Some("Too many requests (401 from billing shim)"));
+        }
+        if label == "float_code" {
+            assert_eq!(message.error_message.as_deref(),Some("429 Provider returned an in-band provider error"));
+            assert_eq!(evidence.code.as_deref(),Some("429"));
+        }
+        if label == "markup" {assert_eq!(message.error_message.as_deref(),Some("503 busy now"));}
+        assert_eq!(server.served(),1);
+    }
+    // Unknown/nonretryable frames retain legacy handling and never synthesize
+    // status. Ordinary chunks and bare nonerror types keep the normal body.
+    for frame in [json!({"code":429.5}),json!({"status":65536503u64}),json!({"type":"response.output_text.delta"})] {
+        let server = FakeUpstream::start(script(json!({"responses":[{"events":[{"data":frame},text("ok"),finish("stop"),done()]}]})),None).await.unwrap();
+        let (_,message)=collect(openai_completions::stream(reqwest::Client::new(),model(&server.base_url()),ctx(),opts())).await;
+        assert_eq!(message.stop_reason,StopReason::Stop); assert_eq!(message.text(),"ok"); assert_eq!(message.error_status,None);
+    }
+    for (frame,status,detail) in chat_inband_legacy_cases() {
+        let server=FakeUpstream::start(script(json!({"responses":[{"events":[text("committed"),{"data":frame},done()]}]})),None).await.unwrap();
+        let mut options=opts();options.retry.max_attempts=1;
+        let (_,message)=collect(openai_completions::stream(reqwest::Client::new(),model(&server.base_url()),ctx(),options)).await;
+        assert_eq!(message.stop_reason,StopReason::Error);assert_eq!(message.error_status,status);
+        assert!(message.error_message.as_deref().unwrap().contains(detail));assert_eq!(server.served(),1);
+    }
+    actual_completions_schema::observe_upgraded_chat_inband().await;
+}
+#[tokio::test]
+async fn upgraded_chat_structured_throttle_replay_boundary() {
+    for frame in [json!({"status":429}),json!({"error":{"message":"Throttled. Please retry"}})] {
+    for committed in ["none","text","tool"] {
+        let mut events=vec![];
+        match committed {
+            "text" => events.push(text("partial")),
+            "tool" => events.push(tool_call(0,"call1","read","{\"path\":\"a\"}")),
+            _ => {},
+        }
+        events.push(json!({"data":frame}));
+        let server=FakeUpstream::start(script(json!({"responses":[{"events":events},{"events":[text("recovered"),finish("stop"),done()]}]})),None).await.unwrap();
+        let (_,message)=collect(openai_completions::stream(reqwest::Client::new(),model(&server.base_url()),ctx(),opts())).await;
+        if committed == "none" && frame.get("status").is_some() {assert_eq!(server.served(),2);assert_eq!(message.text(),"recovered");}
+        else if committed == "none" {
+            assert_eq!(server.served(),1);assert_eq!(message.stop_reason,StopReason::Error);
+            let class=ara_ai::retry_classification::classify_retry(&message,"openai-completions");
+            assert!(class.retriable,"explicit transient reaches Session fallback, not local text retry");
+            assert_eq!(message.error_status,None);
+        }
+        else {assert_eq!(server.served(),1);assert_eq!(message.stop_reason,StopReason::Error);}
+    }
+    }
+    actual_completions_schema::observe_upgraded_chat_replay().await;
 }

@@ -8,7 +8,9 @@
 //! fixtures contain content counts larger than their UTF-8 byte lengths.
 
 pub use ara_ai::model_tokenizer::{ModelContentCount, count_model_fragments};
-use ara_ai::model_tokenizer::{count_default_fragments, count_family_fragments};
+use ara_ai::model_tokenizer::{
+    count_default_fragments, count_default_utf16_fragments, count_family_fragments, count_family_utf16_fragments,
+};
 use ara_ai::{AssistantBlock, Message, Model, ModelTokenizer, UserBlock, UserContent};
 use std::borrow::Cow;
 
@@ -124,6 +126,48 @@ impl Tokenizer {
     /// never silently switch to an approximate count.
     pub fn count_fragments<'a>(&self, fragments: impl IntoIterator<Item = &'a str>, mode: TokenCountMode) -> usize {
         self.count_fragments_checked(fragments, mode).unwrap_or(usize::MAX)
+    }
+
+    /// Derived budget observation in the original string domain. The selected
+    /// native encoding already accepts UTF16 units; fallback bytes follow
+    /// Buffer.byteLength's replacement of each unpaired unit by three bytes.
+    pub fn count_utf16_fragments_checked<'a>(
+        &self,
+        fragments: impl IntoIterator<Item = &'a [u16]>,
+        mode: TokenCountMode,
+    ) -> Result<usize, TokenCountError> {
+        if self.uses_native(mode) {
+            let count = match self.encoding {
+                Some(family) => count_family_utf16_fragments(family, fragments),
+                None => count_default_utf16_fragments(fragments),
+            };
+            return match count {
+                ModelContentCount::Exact(tokens) => usize::try_from(tokens).map_err(|_| TokenCountError::CountOverflow),
+                ModelContentCount::CountOverflow => Err(TokenCountError::CountOverflow),
+                ModelContentCount::UnknownTokenizer => Err(TokenCountError::NativeEncodingUnavailable),
+            };
+        }
+        let mut counts = fragments.into_iter().map(|units| {
+            let bytes = char::decode_utf16(units.iter().copied()).try_fold(0usize, |sum, point| {
+                sum.checked_add(point.map_or(3, char::len_utf8)).ok_or(TokenCountError::CountOverflow)
+            })?;
+            Ok(match mode {
+                TokenCountMode::Approximate => bytes.div_ceil(4),
+                TokenCountMode::UpperBound => bytes,
+                TokenCountMode::Strict => unreachable!("strict uses a native encoding"),
+            })
+        });
+        counts.try_fold(0usize, |sum, count: Result<usize, TokenCountError>| {
+            sum.checked_add(count?).ok_or(TokenCountError::CountOverflow)
+        })
+    }
+
+    pub fn count_utf16_fragments<'a>(
+        &self,
+        fragments: impl IntoIterator<Item = &'a [u16]>,
+        mode: TokenCountMode,
+    ) -> usize {
+        self.count_utf16_fragments_checked(fragments, mode).unwrap_or(usize::MAX)
     }
 
     pub fn count_text(&self, text: &str, mode: TokenCountMode) -> usize {
