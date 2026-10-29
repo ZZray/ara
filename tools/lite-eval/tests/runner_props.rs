@@ -113,6 +113,7 @@ fn tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass() {
                 executor: &executor,
                 env: &env,
                 probe_only: false,
+                baseline: false,
             }))
             .unwrap();
 

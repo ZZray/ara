@@ -3,8 +3,8 @@
   "document": "crates/ara-agent-lite-core/docs/support-matrix.md",
   "basis": {
     "branch": "dev",
-    "commit": "c061062",
-    "worktree": "includes uncommitted changes",
+    "commit": "8e9b123",
+    "worktree": "Lite crate src/ identical to the commit; uncommitted test and document changes from task 57",
     "date": "2026-10-29"
   },
   "merge": "not merged in this phase; one side's evidence never supports the other side",
@@ -400,6 +400,37 @@
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "unknown_effect_list", "name": "records_are_unique_ordered_and_locatable"},
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "unknown_effects_examples", "name": "builtin_exec_timeout_is_unknown_through_structured_status_only"}
+            ]
+          }
+        },
+        {
+          "id": "harness.output-limit",
+          "capability": "Per-call output limit from the request, the Host ceiling and the model's declared max tokens, recorded with its sources (Host ceiling opt-in)",
+          "full": {
+            "status": "partial",
+            "gap": "a Host-set max_tokens travels with the execution snapshot to the provider; searching max_tokens with min( only hits the summary budget in compaction.rs, so taking the minimum with the model declaration for agent calls and recording the limit sources was not found",
+            "evidence": [
+              {"kind": "source", "path": "crates/ara-agent/src/agent_loop.rs", "symbol": "ModelExecutionSnapshot::max_tokens"}
+            ]
+          },
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "output_limit_wire", "name": "provider_receives_the_recorded_effective_limit"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "output_limit_zero", "name": "zero_host_ceiling_is_refused_before_any_http_request"}
+            ]
+          }
+        },
+        {
+          "id": "harness.stable-api",
+          "capability": "Documented public API stability levels checked by compile-time stability tests",
+          "full": {"status": "unsupported", "note": "no stability classification found: searching *.md in ara-agent and ara-workflow for experimental, stability and semver gives 0 hits"},
+          "lite": {
+            "status": "partial",
+            "gap": "the stable set covers the minimal Host integration and the Run_Policy generation settings only; policies, events, resume, stop review, unknown-effect records and the MCP crate are experimental; the compile-failure demonstration after deleting a stable item (task 35.3) is not wired into the gate",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "stability_surface", "name": "stable_items_are_usable_through_public_paths"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stability_surface", "name": "stable_harness_items_are_usable_through_public_paths"}
             ]
           }
         }

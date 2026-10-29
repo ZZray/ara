@@ -7,6 +7,7 @@
 - [宿主接入](#宿主接入)：`McpSession` 的用法。
 - [行为](#行为)：命名、握手、结果转换、超时与未知副作用。
 - [范围外](#范围外)：不支持的能力及其报错方式。
+- [支持状态与已知限制](#支持状态与已知限制)：稳定级别、支持矩阵中的状态，以及与 Claude Code 行为的差异。
 - [测试](#测试)：测试文件和运行方式。
 
 ## 用途
@@ -90,6 +91,18 @@ session.shutdown().await;
 | `listChanged` 动态刷新、HTTP GET 推送流、SSE 断点续传 | 不实现；工具列表在连接时读取一次 |
 | 多来源配置合并、企业策略、权限审批 | 由宿主决定传入哪份配置 |
 | Computer use | 不在需求 42 内 |
+
+## 支持状态与已知限制
+
+- 稳定级别：[稳定性规则](../ara-agent-lite-core/docs/stability.md) 把 `ara_agent_lite_mcp::*` 整体列为 experimental（版本 0.1.0），任何版本都可能变更，树外消费者引用会被门禁报告。宿主拿到的工具是普通 `AgentTool`，经 `RunRequest.extra_tools`（stable）注册。
+- 支持矩阵：[支持矩阵](../ara-agent-lite-core/docs/support-matrix.md) 中 `tools.mcp` 为“部分支持”，缺口即上面的范围外各项，另有 Unix 进程路径只编译未运行；`jsonl.mcp`（start 帧 `mcp_servers` 与 `mcp_status` 事件）为“已支持”。
+- 实现时记录的偏差（与 Claude Code 或设计稿不同，阶段 3 记录，本次按代码核对）：
+  - 顶层和 server 条目中的未知字段直接报错（`invalid_config`、`unsupported_field`），不忽略。
+  - `isError: true` 且带 `structuredContent` 时，`structuredContent` 以 `structuredContent: <JSON>` 附在错误文本后。
+  - 合法的 `image` 内容转为 Core 图片块，不转成文本说明；base64 无效时才写 `[image: <MIME>, invalid base64 data omitted]`。
+- 其他限制：
+  - Windows 上子进程在 spawn 之后才加入 Job 对象，中间有极短的窗口；子进程若在这段时间里再派生进程，孙进程不受 Job 约束。
+  - 发给模型的工具结果不做脱敏，server 返回的内容原样进入对话。
 
 ## 测试
 

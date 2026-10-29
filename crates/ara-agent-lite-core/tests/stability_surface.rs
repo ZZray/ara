@@ -1,4 +1,4 @@
-//! Stability_Test_Crate for requirement 29 (tasks 35.2): every Core item that
+//! Stability_Test_Crate for requirement 29 (tasks 35.2, 57.1): every Core item that
 //! `docs/stability.md` marks stable is used once through its public path, so
 //! deleting, renaming or retyping one of them fails to compile (29.5). The
 //! test also parses the document and checks that its stable set is exactly
@@ -11,7 +11,7 @@ use std::{
 };
 
 use ara_agent_lite_core::{
-    model::{ModelHost, Route},
+    model::{CatalogModelHost, GenerationPolicy, LengthRecoveryPolicy, ModelHost, ModelSelection, Route},
     steering::SteeringBuffer,
     RunMode, RunRequest, RunResult, RuntimePaths, ToolRegistration,
 };
@@ -56,6 +56,12 @@ const USED_STABLE: &[&str] = &[
     "execute",
     "model::Route",
     "model::ModelHost",
+    "model::ModelHost::generation_policy",
+    "model::ModelHost::length_recovery_policy",
+    "model::GenerationPolicy",
+    "model::LengthRecoveryPolicy",
+    "model::CatalogModelHost",
+    "model::ModelSelection",
     "steering::SteeringBuffer",
 ];
 
@@ -240,6 +246,46 @@ fn stable_items_are_usable_through_public_paths() {
     request.steering = Arc::new(Mutex::new(SteeringBuffer::default()));
     let _: &Arc<Mutex<SteeringBuffer>> = &request.steering;
 
+    // Model policy items: the default Host, both stable default methods with
+    // their documented defaults, every variant, and the serde names a Host
+    // reads from its own configuration (DR-P4-3).
+    // `Default` is part of the documented contract; the fn pointer keeps it checked.
+    let default_host: fn() -> CatalogModelHost = CatalogModelHost::default;
+    let catalog = default_host();
+    let route = request.route.clone();
+    let generation: GenerationPolicy = catalog.generation_policy(&route).unwrap();
+    assert_eq!(generation, GenerationPolicy::default());
+    let length: LengthRecoveryPolicy = catalog.length_recovery_policy(&route).unwrap();
+    assert_eq!(length, LengthRecoveryPolicy::default());
+    for (policy, name) in [
+        (GenerationPolicy::ProviderDefault, "provider_default"),
+        (GenerationPolicy::ThinkingTypeDisabled, "thinking_type_disabled"),
+    ] {
+        match policy {
+            GenerationPolicy::ProviderDefault | GenerationPolicy::ThinkingTypeDisabled => {}
+        }
+        assert_eq!(serde_json::to_value(policy).unwrap(), serde_json::json!(name));
+        assert_eq!(serde_json::from_value::<GenerationPolicy>(serde_json::json!(name)).unwrap(), policy);
+    }
+    assert_eq!(generation, GenerationPolicy::ProviderDefault);
+    for (policy, name) in [(LengthRecoveryPolicy::Stop, "stop"), (LengthRecoveryPolicy::ReplanOnce, "replan_once")] {
+        match policy {
+            LengthRecoveryPolicy::Stop | LengthRecoveryPolicy::ReplanOnce => {}
+        }
+        assert_eq!(serde_json::to_value(policy).unwrap(), serde_json::json!(name));
+        assert_eq!(serde_json::from_value::<LengthRecoveryPolicy>(serde_json::json!(name)).unwrap(), policy);
+    }
+    assert_eq!(length, LengthRecoveryPolicy::Stop);
+    let policy_host = PolicyHost {
+        catalog: CatalogModelHost,
+        generation: GenerationPolicy::ThinkingTypeDisabled,
+        length: LengthRecoveryPolicy::ReplanOnce,
+    };
+    assert_eq!(policy_host.generation_policy(&route).unwrap(), GenerationPolicy::ThinkingTypeDisabled);
+    assert_eq!(policy_host.length_recovery_policy(&route).unwrap(), LengthRecoveryPolicy::ReplanOnce);
+    let policy_host: Arc<dyn ModelHost> = Arc::new(policy_host);
+    request.model_host = policy_host;
+
     // The entry point with its full signature; the future is dropped unpolled,
     // so nothing runs and no request is sent.
     let (events, _receiver) = tokio::sync::mpsc::channel(1);
@@ -255,6 +301,27 @@ async fn call_execute(
     events: tokio::sync::mpsc::Sender<serde_json::Value>,
 ) -> anyhow::Result<RunResult> {
     ara_agent_lite_core::execute(request, cancellation, events).await
+}
+
+/// A Host ModelHost written only against stable items: `resolve` passes the
+/// default Host's `ModelSelection` through unchanged, and both stable default
+/// methods are overridden with their exact signatures.
+struct PolicyHost {
+    catalog: CatalogModelHost,
+    generation: GenerationPolicy,
+    length: LengthRecoveryPolicy,
+}
+#[async_trait::async_trait]
+impl ModelHost for PolicyHost {
+    async fn resolve(&self, route: Route, endpoint: &str, token: &str, run: &str) -> anyhow::Result<ModelSelection> {
+        self.catalog.resolve(route, endpoint, token, run).await
+    }
+    fn generation_policy(&self, _: &Route) -> anyhow::Result<GenerationPolicy> {
+        Ok(self.generation)
+    }
+    fn length_recovery_policy(&self, _: &Route) -> anyhow::Result<LengthRecoveryPolicy> {
+        Ok(self.length)
+    }
 }
 
 /// A Host tool written only against the stable `rpi_agent`/`rpi_ai` re-exports.

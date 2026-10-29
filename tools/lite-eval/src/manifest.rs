@@ -6,7 +6,14 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{digest::DiffRule, policy::PolicyIdentity, probe::ProbeReceipt, registry::Violation};
+use crate::{
+    baseline::{BaselineCheck, BaselineMark},
+    digest::DiffRule,
+    metrics::{MetricsSummary, TaskMetrics, Total},
+    policy::{PolicyIdentity, RunPolicy},
+    probe::ProbeReceipt,
+    registry::Violation,
+};
 
 pub const MANIFEST_VERSION: u32 = 1;
 
@@ -22,6 +29,9 @@ pub enum ManifestStatus {
     /// `--probe-only`: every pre-task check and the probe passed; no task
     /// was started (route re-check before real-model trials, DR-P0-3).
     ProbeOnly,
+    /// `--baseline` run that finished, but some task of the Task_Set has no
+    /// Oracle judgement (7.6); it is not a Baseline_Record.
+    IncompleteBaseline,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -79,6 +89,9 @@ pub enum TaskState {
     /// Not run: the fixture SHA-256 differed or was unreadable before the
     /// first upstream request (1.4); neither passed nor failed.
     Refused,
+    /// Did not pass and its Failure_Record could not be written (5.7);
+    /// counted among the failed tasks.
+    FailureRecordMissing,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,17 +109,42 @@ pub struct SelectedRecord {
     pub refusal: Option<Refusal>,
     /// `tasks/<id>/result.json`, when written.
     pub result: Option<PathBuf>,
+    /// `tasks/<id>/failure.json` of a task that did not pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_record: Option<PathBuf>,
+    /// Why the Failure_Record is missing (state `failure_record_missing`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_record_error: Option<String>,
+    /// Metrics of a task that ran; `None` for a refused task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<TaskMetrics>,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Summary {
     pub passed: usize,
+    /// Includes `failure_record_missing` tasks.
     pub failed: usize,
     pub refused: usize,
-    /// Usage, cost and correctness aggregation belong to M-P0-METRICS
-    /// (task 14); until it lands they are recorded as not computed, never 0.
-    pub usage: Value,
-    pub cost: Value,
+    pub failure_record_missing: usize,
+    /// Over the tasks that ran (refused tasks have no metrics).
+    pub usage: Total,
+    pub cost: Total,
+    pub correctness: Total,
+}
+
+impl Summary {
+    pub fn new(metrics: MetricsSummary) -> Self {
+        Self {
+            passed: 0,
+            failed: 0,
+            refused: 0,
+            failure_record_missing: 0,
+            usage: metrics.usage,
+            cost: metrics.cost,
+            correctness: metrics.correctness,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,6 +155,9 @@ pub struct RunManifest {
     pub started_at: String,
     pub finished_at: String,
     pub run_policy: PolicyIdentity,
+    /// The policy content as read (only the credential variable's name),
+    /// so a comparison can list differing items (21.3).
+    pub policy: RunPolicy,
     pub code_version: CodeVersionRecord,
     pub probe: ProbeRecord,
     pub task_set: TaskSetRecord,
@@ -128,6 +169,12 @@ pub struct RunManifest {
     pub selected: Vec<SelectedRecord>,
     pub sealed_holdout: Value,
     pub summary: Summary,
+    /// `--baseline` runs: the in-repo index and why the run is (not) a
+    /// Baseline_Record (7.2–7.6).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BaselineMark>,
+    /// Re-verification of every registered baseline at the end of this run (7.4).
+    pub baseline_checks: Vec<BaselineCheck>,
     /// Known limits of this run's evidence.
     pub limits: Vec<String>,
 }

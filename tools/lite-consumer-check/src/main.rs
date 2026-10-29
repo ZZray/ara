@@ -11,7 +11,9 @@ use ara_agent_lite_harness::{start, TaskKind, TaskSpec, TaskStop};
 use lite_consumer_check::{Config, ConsumerHost};
 
 const USAGE: &str = "usage: lite-consumer-check --task-id ID --workspace DIR --state-dir DIR --evidence-dir NEW_DIR \
---endpoint URL --model ID --protocol NAME --credential-env VAR --objective TEXT \
+--endpoint URL --model ID --protocol NAME [--route-binding KEY] [--route-decision TEXT] \
+--generation-policy provider_default|thinking_type_disabled --length-recovery stop|replan_once \
+--credential-env VAR --objective TEXT \
 --max-runs N --max-calls N --deadline-seconds N --run-max-calls N --run-max-seconds N --max-output N \
 --check-timeout-seconds N -- CHECK_PROGRAM [CHECK_ARGS...]";
 
@@ -41,6 +43,11 @@ async fn main() -> Result<()> {
     let endpoint = take("endpoint")?;
     let model = take("model")?;
     let protocol = take("protocol")?;
+    // Run_Policy spellings are the stable serde names of the two policy enums.
+    let generation_policy = serde_json::from_value(serde_json::Value::String(take("generation-policy")?))
+        .context("--generation-policy must be provider_default or thinking_type_disabled")?;
+    let length_recovery = serde_json::from_value(serde_json::Value::String(take("length-recovery")?))
+        .context("--length-recovery must be stop or replan_once")?;
     let credential_env = take("credential-env")?;
     let objective = take("objective")?;
     let max_runs = number(take("max-runs")?, "max-runs")? as usize;
@@ -50,6 +57,8 @@ async fn main() -> Result<()> {
     let run_max_seconds = number(take("run-max-seconds")?, "run-max-seconds")?;
     let max_output = u32::try_from(number(take("max-output")?, "max-output")?).context("--max-output too large")?;
     let check_timeout = Duration::from_secs(number(take("check-timeout-seconds")?, "check-timeout-seconds")?);
+    let route_binding = options.remove("route-binding").unwrap_or_default();
+    let route_decision = options.remove("route-decision").unwrap_or_default();
     if let Some(key) = options.keys().next() {
         bail!("unknown option --{key}\n{USAGE}");
     }
@@ -62,6 +71,10 @@ async fn main() -> Result<()> {
         endpoint,
         model,
         protocol,
+        route_binding,
+        route_decision,
+        generation_policy,
+        length_recovery,
         token,
         run_max_calls,
         run_max_seconds,

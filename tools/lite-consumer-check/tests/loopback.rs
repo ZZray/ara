@@ -14,7 +14,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ara_agent_lite_core::rpi_agent::AgentTool;
+use ara_agent_lite_core::{
+    model::{GenerationPolicy, LengthRecoveryPolicy},
+    rpi_agent::AgentTool,
+};
 use ara_agent_lite_harness::{start, TaskKind, TaskSpec, TaskStop};
 use lite_consumer_check::{Config, ConsumerHost, WorkspaceTool};
 use serde_json::{json, Value};
@@ -41,7 +44,8 @@ fn text(value: &str) -> Value {
 /// OpenAI-compatible loopback upstream: a model catalog plus scripted SSE replies.
 struct Provider {
     endpoint: String,
-    requests: Arc<Mutex<usize>>,
+    /// JSON body of every model request, in arrival order.
+    requests: Arc<Mutex<Vec<Value>>>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
 }
@@ -51,7 +55,7 @@ impl Provider {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        let requests = Arc::new(Mutex::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let (done, count) = (stop.clone(), requests.clone());
         let worker = thread::spawn(move || {
             let mut replies = VecDeque::from(replies);
@@ -92,7 +96,8 @@ impl Provider {
                         Ok(n) => bytes.extend_from_slice(&chunk[..n]),
                     }
                 }
-                *count.lock().unwrap() += 1;
+                let body = serde_json::from_slice(&bytes[header_end..]).unwrap_or(Value::Null);
+                count.lock().unwrap().push(body);
                 let reply = replies.pop_front().unwrap_or_else(|| text("No further controlled reply."));
                 let _ =
                     write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n");
@@ -146,6 +151,10 @@ fn config(root: &Path, provider: &Provider) -> Config {
         endpoint: provider.endpoint.clone(),
         model: String::from("consumer-fixture"),
         protocol: String::from("openai-completions"),
+        route_binding: String::from("loopback-binding"),
+        route_decision: String::from("loopback fixture route"),
+        generation_policy: GenerationPolicy::ProviderDefault,
+        length_recovery: LengthRecoveryPolicy::Stop,
         token: String::from("loopback-fixture-key"),
         run_max_calls: 4,
         run_max_seconds: 60,
@@ -182,12 +191,43 @@ async fn failed_public_check_continues_in_the_same_session_until_the_check_passe
     assert_eq!(outcome.runs, 2);
     assert!(!outcome.task_accepted);
     assert_eq!(std::fs::read_to_string(workspace.join("answer.txt")).unwrap(), "ok");
-    assert_eq!(*provider.requests.lock().unwrap(), 4);
+    let bodies = provider.requests.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 4);
+    assert!(
+        bodies.iter().all(|body| body.is_object() && body.get("thinking").is_none()),
+        "provider_default sends no thinking field"
+    );
     let first: Value =
         serde_json::from_slice(&std::fs::read(root.join("state/host/check-run-1.json")).unwrap()).unwrap();
     let second: Value =
         serde_json::from_slice(&std::fs::read(root.join("state/host/check-run-2.json")).unwrap()).unwrap();
     assert_eq!((first["passed"].as_bool(), second["passed"].as_bool()), (Some(false), Some(true)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Run_Policy `generation_policy: thinking_type_disabled` reaches every model
+/// request through the consumer's ModelHost, built only from stable items.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_policy_thinking_type_disabled_is_sent_on_every_model_request() {
+    let root = fresh_dir("policy");
+    let provider = Provider::new(vec![write_call("w1", "ok"), text("done")]);
+    let mut config = config(&root, &provider);
+    config.generation_policy = serde_json::from_value(json!("thinking_type_disabled")).unwrap();
+    config.length_recovery = serde_json::from_value(json!("stop")).unwrap();
+    let workspace = config.workspace.clone();
+    let host = Arc::new(ConsumerHost::new(config).unwrap());
+    let request = host.request("policy-run-1", "Write ok into answer.txt with ws_write_file, then stop.");
+    let handle = start(spec(&root, "policy"), request, host).unwrap();
+    let outcome = handle.wait().await;
+    assert_eq!(outcome.stop, TaskStop::AwaitingHostAcceptance, "{}", outcome.detail);
+    assert_eq!(outcome.runs, 1);
+    assert_eq!(std::fs::read_to_string(workspace.join("answer.txt")).unwrap(), "ok");
+    let bodies = provider.requests.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 2);
+    for body in &bodies {
+        assert_eq!(body["thinking"], json!({"type": "disabled"}), "{body}");
+        assert_eq!(body["model"], json!("consumer-fixture"));
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -1,14 +1,14 @@
-# Full/Lite 支持矩阵（初稿）
+# Full/Lite 支持矩阵
 
 本文是需求 30 的 Support_Matrix，机器可读副本为同目录的 [support-matrix.json](support-matrix.json)，两份内容一致，`lite-eval gate` 读取 JSON。
 
 - 本阶段不合并 Full 与 Lite。两边的支持状态分开列出，一方的源码位置或测试不作为另一方已支持的依据。
 - Full 指同仓库的 `crates/ara-agent` 与 `crates/ara-workflow`；`ara-tools`、`ara-session`、`ara-mcp` 等其他完整版 crate 不在本矩阵的 Full 范围内，因此相关能力在 Full 一列记为“不支持”，并在说明中注明。
 - Lite 指 `crates/ara-agent-lite-core`、`crates/ara-agent-lite-harness`、`crates/ara-agent-lite-jsonl`、`crates/ara-agent-lite-mcp`。
-- 依据版本：分支 `dev` @ `c061062`，工作区含未提交改动，2026-10-29 核对。
+- 依据版本：分支 `dev` @ `8e9b123`，四个 Lite crate 的 `src/` 与该提交相同，工作区另有任务 57 的测试与文档改动；2026-10-29 任务 57.2 定稿。
 - 状态只取“已支持”“部分支持”“不支持”。Lite 的已支持与部分支持项都附测试名；部分支持项写明缺口。Full 的“不支持”是在上述两个 crate 中检索后的结论，检索词写在说明里，没有做穷尽审计。
 - 测试名写法：Rust 单元测试为 `crate:模块路径::测试名`（`cargo test --manifest-path <crate>/Cargo.toml --lib <名称> -- --exact`），集成测试为 `crate:tests/文件.rs::测试名`；Python 为 `文件::类.方法`，这些 Python 测试需要设置 `ARA_JSONL_TEST_BINARY` 等环境变量。
-- 引用的测试在本文编写时只核对了存在性，没有在本次运行；交付门禁按需求 30.4、30.5 在同一提交上运行它们（任务 36.2）。
+- 任务 57.2 用脚本逐条核对了 JSON 中全部引用测试（Full 证据测试与 Lite 测试）在所写文件里都有同名函数，缺失 0 条，Markdown 与 JSON 的能力 ID 列表一致。核对的只是存在性；除两个 `stability_surface` 测试外，引用的测试没有在这次运行。交付门禁按需求 30.4、30.5 在同一提交上运行它们（任务 36.2）。
 
 ## 工具
 
@@ -60,6 +60,8 @@
 | `harness.budget-snapshot` | 闭合预算停止的快照复核（需显式开启） | 不支持 | `ara-workflow` 只有 `workflow prepared-request budget exhausted` 一种预算停止（`driver.rs`），没有快照复核 | 已支持 | `harness:tests/budget_snapshots.rs::actual_file_can_be_verified_without_synthesizing_a_model_stop`；`harness:tests/budget_snapshots.rs::default_start_keeps_closed_budget_stop_out_of_ordinary_review` | 无 |
 | `harness.resume` | 恢复被 fence 的 Task，拒绝原因类型化 | 不支持 | `ara-workflow` 在进程内从 clone 恢复 fence；在新进程恢复被 fence 的 Task 本次未确认 | 已支持 | `harness:tests/resume.rs::resume_checked_refuses_with_typed_reasons_before_any_callback`；`harness:tests/resume.rs::out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing` | 无 |
 | `harness.unknown-effect-records` | `TaskOutcome` 列出未知副作用调用及回执引用 | 不支持 | 无 | 已支持 | `harness:tests/unknown_effect_list.rs::records_are_unique_ordered_and_locatable`；`harness:tests/unknown_effects_examples.rs::builtin_exec_timeout_is_unknown_through_structured_status_only` | 无 |
+| `harness.output-limit` | 单次输出上限取请求值、Host 上限与模型声明的最小值，并记录来源（Host 上限需显式设置） | 部分支持 | `crates/ara-agent/src/agent_loop.rs` `ModelExecutionSnapshot::max_tokens`。缺口：Host 设定的 `max_tokens` 随执行快照传给 provider；检索 `max_tokens` 与 `min(` 只在 `compaction.rs` 的摘要预算中命中，agent 调用与模型声明取最小值并记录来源的逻辑未找到 | 已支持 | `core:tests/output_limit_wire.rs::provider_receives_the_recorded_effective_limit`；`core:tests/output_limit_zero.rs::zero_host_ceiling_is_refused_before_any_http_request` | 无 |
+| `harness.stable-api` | 公共接口稳定级别文档，并由编译期测试核对 | 不支持 | 在两个 crate 的 `*.md` 中检索 `experimental`、`stability`、`semver`：0 处 | 部分支持 | `core:tests/stability_surface.rs::stable_items_are_usable_through_public_paths`；`harness:tests/stability_surface.rs::stable_harness_items_are_usable_through_public_paths` | stable 集合只覆盖最小 Host 集成与 Run_Policy 的生成策略；`policies`、事件枚举、resume、停止复核、未知副作用记录与 MCP crate 为 experimental；删除 stable 项后编译失败的演示（任务 35.3）未接入门禁 |
 
 ## JSONL
 
@@ -82,5 +84,6 @@
 
 ## 未覆盖
 
-- 本稿已列入截至 `c061062` 的 P1–P4 新增能力（resume、停止复核、未知副作用、Session 分叉、Completion_Gate、Stuck_Detector、Compaction_Refresh、输出上限、事件枚举、MCP）。任务 57.2 定稿时复核并补入之后新增的能力，同步 JSON。
+- 本文列入 P1–P4 新增能力：resume、停止复核、未知副作用、重放来源、摘要预算、Session 分叉、Completion_Gate、Stuck_Detector、Compaction_Refresh、输出上限、事件枚举、稳定级别与 MCP。`c061062` 之后四个 Lite crate 的 `src/` 没有变化，57.2 补入的是初稿漏列的 `harness.output-limit` 与 `harness.stable-api` 两项。
+- 树外消费者 crate（`tools/lite-consumer-check`，需求 31）不在 Lite 范围内，没有列为能力项；它的检查由 `lite-eval gate --consumer`（任务 58.2）执行。
 - 门禁按矩阵运行引用测试（任务 36.2）与门禁结论属性测试（任务 36.3）在 `tools/lite-eval` 中实现，尚未接入。

@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{bail, ensure, Context, Result};
 use ara_agent_lite_core::{
-    model::ModelHost,
+    model::{CatalogModelHost, GenerationPolicy, LengthRecoveryPolicy, ModelHost, ModelSelection, Route},
     rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial},
     rpi_ai::{Schema, Tool},
     steering::SteeringBuffer,
@@ -38,6 +38,13 @@ pub struct Config {
     pub endpoint: String,
     pub model: String,
     pub protocol: String,
+    /// Opaque route continuity keys (`Route.binding`, `Route.decision`).
+    pub route_binding: String,
+    pub route_decision: String,
+    /// Run_Policy `generation.generation_policy`.
+    pub generation_policy: GenerationPolicy,
+    /// Run_Policy `generation.length_recovery`.
+    pub length_recovery: LengthRecoveryPolicy,
     /// In-memory credential; never written to records or output.
     pub token: String,
     pub run_max_calls: usize,
@@ -46,6 +53,28 @@ pub struct Config {
     /// Public check: program and arguments, run in `workspace`.
     pub check: Vec<String>,
     pub check_timeout: Duration,
+}
+
+/// Catalog resolution plus the operator's generation and length-recovery
+/// policy. No output ceiling: Core keeps its builtin rule, as the B0 Host does.
+struct PolicyModelHost {
+    generation: GenerationPolicy,
+    length_recovery: LengthRecoveryPolicy,
+}
+
+#[async_trait::async_trait]
+impl ModelHost for PolicyModelHost {
+    async fn resolve(&self, route: Route, endpoint: &str, token: &str, run: &str) -> Result<ModelSelection> {
+        CatalogModelHost.resolve(route, endpoint, token, run).await
+    }
+
+    fn generation_policy(&self, _: &Route) -> Result<GenerationPolicy> {
+        Ok(self.generation)
+    }
+
+    fn length_recovery_policy(&self, _: &Route) -> Result<LengthRecoveryPolicy> {
+        Ok(self.length_recovery)
+    }
 }
 
 pub struct ConsumerHost {
@@ -68,7 +97,9 @@ impl ConsumerHost {
             (Arc::new(WorkspaceTool::list(workspace.clone())), true),
             (Arc::new(WorkspaceTool::write(workspace)), false),
         ];
-        Ok(Self { model_host: defaults.model_host, steering: defaults.steering, tools, config })
+        let model_host: Arc<dyn ModelHost> =
+            Arc::new(PolicyModelHost { generation: config.generation_policy, length_recovery: config.length_recovery });
+        Ok(Self { model_host, steering: defaults.steering, tools, config })
     }
 
     /// A Run request built only with `RunRequest::new` and stable fields.
@@ -83,6 +114,8 @@ impl ConsumerHost {
         request.model = config.model.clone();
         request.route.model = config.model.clone();
         request.route.protocol = config.protocol.clone();
+        request.route.binding = config.route_binding.clone();
+        request.route.decision = config.route_decision.clone();
         request.device_fp = String::from("lite-consumer-check");
         request.session_key = String::from("lite-consumer-check/session");
         request.max_calls = config.run_max_calls;

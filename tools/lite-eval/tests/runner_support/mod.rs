@@ -168,17 +168,31 @@ impl Provider {
                     }
                     models.fetch_add(1, Ordering::SeqCst);
                     let response = script(&request);
+                    // Optional controls: `delay_ms` before answering, an
+                    // `http_status` error reply, and `usage` on the last chunk.
+                    if let Some(delay) = response["delay_ms"].as_u64() {
+                        thread::sleep(Duration::from_millis(delay));
+                    }
+                    if let Some(status) = response["http_status"].as_u64() {
+                        let body = json!({"error": {"message": "controlled provider error", "type": "server_error"}})
+                            .to_string();
+                        let _ = write!(stream, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        return;
+                    }
                     let _ = write!(
                         stream,
                         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
                     );
-                    for (delta, finish) in [
-                        (json!({"role": "assistant"}), Value::Null),
-                        (response["delta"].clone(), Value::Null),
-                        (json!({}), response["finish"].clone()),
+                    for (delta, finish, usage) in [
+                        (json!({"role": "assistant"}), Value::Null, Value::Null),
+                        (response["delta"].clone(), Value::Null, Value::Null),
+                        (json!({}), response["finish"].clone(), response["usage"].clone()),
                     ] {
-                        let packet = json!({"id": "controlled", "object": "chat.completion.chunk", "model": MODEL,
+                        let mut packet = json!({"id": "controlled", "object": "chat.completion.chunk", "model": MODEL,
                             "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]});
+                        if !usage.is_null() {
+                            packet["usage"] = usage;
+                        }
                         let _ = write!(stream, "data: {packet}\n\n");
                     }
                     let _ = stream.write_all(b"data: [DONE]\n\n");

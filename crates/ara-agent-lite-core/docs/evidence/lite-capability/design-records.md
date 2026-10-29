@@ -197,3 +197,29 @@
 - 证据等级：分级为审查决定；项数与可用性为运行确认：`crates/ara-agent-lite-core/tests/stability_surface.rs` 3 项、`crates/ara-agent-lite-harness/tests/stability_surface.rs` 2 项通过（2026-10-29），`tools/lite-consumer-check` 只引用 stable 项，`cargo build`、`cargo clippy -- -D warnings` 退出码 0 且无诊断，受控 loopback 测试 2 项通过。
 - 日期：2026-10-29
 - 后续动作：任务 57.1 复核 experimental 项，并由用户决定是否把生成策略相关的 `model` 项提升为 stable（58.1 阻断）。任务 35.3 在 `lite-eval gate` 中加入“删除一个 stable 项后 `cargo check` 失败”的演示。任务 58.2 的引用扫描以 `stability.md` 表格第一列的完整路径为准。
+
+## DR-P4-3 稳定级别定稿（任务 57.1）
+
+- 约束：任务 57.1 要求把 `RunRequest.policies` 与 P2、P3、P4 新增的公开类型加入 `docs/stability.md` 并审查分级，标注项数等于字段数与重导出数之和，`stability_surface` 测试覆盖新增的 stable 项（需求 29.1、29.3）。同时解决 DR-P4-2 记下的 58.1 阻断：只用 stable 项的消费者无法按 Run_Policy 的 `thinking_type_disabled` 运行。
+- 核实结论：
+  - 提升为 stable 的 6 项（主代理决定，用于解除 58.1 阻断）：
+    - `model::GenerationPolicy`、`model::LengthRecoveryPolicy`：Run_Policy 的 `generation.generation_policy` 与 `generation.length_recovery` 直接取这两个枚举的 serde 名，消费者必须能按名称构造它们。变体、默认值与 serde 名一并受保护；方法 `validate_route`、`apply` 仍为 experimental。代价：两者都按补充规则 6 处理，新增变体需要升级主版本。
+    - `ModelHost::generation_policy`、`ModelHost::length_recovery_policy`：Host 只能经这两个默认方法把策略交给 Core（`agent.rs` 在 `resolve` 之后调用，`ReplanOnce` 只允许 Execute 模式）。签名、默认值、调用时机与“纯函数”要求属于契约。
+    - `model::CatalogModelHost`：自定义 ModelHost 要保留目录解析，只能把 `resolve` 委托给它，否则消费者就得自己实现 `/models` 读取与协议核对。它对 `capabilities_source` 的覆盖值不提升。
+    - `model::ModelSelection`：`resolve` 的返回类型，写 `impl ModelHost` 必须点名。只承诺类型名；字段 `capabilities` 的类型 `model_caps::ModelCaps` 和 `client` 都不宜冻结，所以四个字段保持 experimental，受保护的用法是把 `CatalogModelHost` 的结果原样返回。
+  - 保持 experimental：
+    - `ModelHost::capabilities_source`：只影响 `model_capabilities` 事件的 `source` 标签，不改变请求。消费者不覆盖它，事件里写 `host_model_configuration`；`lite-eval` 的 `PolicyModelHost` 转发 `CatalogModelHost` 的值，写 `hub_model_directory`。
+    - `ModelHost::output_ceiling`：属于 P2-a，B0 与 `lite-eval` 的 `Features::V1` 都不设 Host 上限，Core 用内置规则（`output_limit::effective`，无 Host 上限时取 8192）。消费者同样不设，与 B0 配置一致，所以按 Run_Policy 运行不需要这一项。
+    - `RunRequest.policies` 及 `run_policies`、`completion_gate`、`stuck_detector`、`compaction_refresh`、`output_limit` 模块：P2 能力默认关闭，B0 基线与 P2-a～P2-e 对比（任务 38、42–54）尚未运行，类型可能随对比结论调整；`RunPolicies.length_stop_evidence` 由 Harness 持有，外部 Host 不应自行设置。
+    - `LiteEvent`、`EVENT_SCHEMA_VERSION`、`events::*`：`model_result` 与同轮 `text_delta` 的相对顺序不确定（DR-P4-1），schema v1 只有 13 个受控场景的样本；需求 28 不要求事件枚举为 stable。
+    - `session_fork`、`effect_status`、`termination`（含 `StopEvidence`）：分别只服务评估工具、内部判定与停止证据，外部最小集成用不到。
+    - Harness 的 `resume`、`resume_checked` 及其类型：任务 25.2 未完成，需求 14.5 在“授权变化”“预算或单 Run 上限变大”两种拒绝下未满足。
+    - 停止复核类型（`TaskOptions`、`LengthStopReviewPolicy`、`StopSnapshot` 等）：属于 P2-a，待对比。
+    - `TaskOutcome.unknown_effects`、`TaskOutcome.budget_stop` 与未知副作用记录类型：JSONL 的 `receipt_ref` 字段刚在阶段 4 加入，形状仍可能随任务 61 审查调整。
+    - `ara-agent-lite-mcp`：Unix 进程路径只编译未运行，模块收尾（67.7 的台账与 56–62 接入）未完成。
+  - 项数：`RunRequest` 字段 31 个（`policies` 已在其中），加 `rpi_agent`、`rpi_ai` 共 33 项，与代码一致，未变。Core stable 由 37 项增至 43 项，Harness stable 仍为 15 项。
+  - 文档另改两处：补充规则 5 去掉“57.1 定稿前”的限定，并写明 stable 类型的字段未单列时为 experimental；`model::*` 行改为列出其余公共函数。
+- 来源位置：`crates/ara-agent-lite-core/src/model.rs:16-108`（两个策略枚举、`ModelSelection`、`ModelHost` 默认方法、`CatalogModelHost`）、`src/agent.rs:1270-1287`（`resolve` 后调用两个策略方法与 Execute 检查）、`src/output_limit.rs:43-55`、`tools/lite-eval/src/host/mod.rs:58-89`（`PolicyModelHost`）、`tools/lite-eval/src/host/features.rs:27-35`（`Features::V1`）、`tools/lite-eval/run-policy.json` 的 `generation` @ `8e9b123`（四个 Lite crate 的 `src/` 与 `c061062` 相同）。
+- 证据等级：分级为审查决定；可用性为运行确认（2026-10-29）：Core `tests/stability_surface.rs` 3 项通过，测试经公共路径使用新增 6 项，包括覆盖两个默认方法的 `PolicyHost`、全部变体与 serde 名；Harness `tests/stability_surface.rs` 2 项通过；`tools/lite-consumer-check` 改为自带 `ModelHost`，`cargo build`、`cargo clippy -- -D warnings` 退出码 0，loopback 测试 3 项通过，其中新增的一项断言 `thinking_type_disabled` 时每个模型请求都带 `thinking: {"type": "disabled"}`。
+- 日期：2026-10-29
+- 后续动作：任务 58.2 的引用扫描以本文表格第一列为准，`ModelHost::generation_policy` 这类 trait 方法行需要扫描器把 `impl ModelHost` 中的同名方法对应到该行。任务 58.4 运行时给消费者传 Run_Policy 的 `generation_policy`、`length_recovery`、`route.binding` 与 `route.decision`。P2 对比完成后复核 `policies` 与停止复核类型能否提升；任务 25.2 完成后复核 resume 系列。

@@ -35,16 +35,20 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+pub use crate::metrics::{Counts, PathRecord};
 use crate::{
+    baseline,
     common::{
         new_run_dir, run_bounded, timestamp_now, write_json_new, write_new, write_output_new, Bounded, Credentials,
     },
     digest::{tree_digest, worktree_diff},
+    failure::{self, FailureContext, OracleRecord},
     host::{run_id, session_paths, CapabilityHost, Features, HostConfig, PolicyModelHost, RunTemplate, WriteCounts},
     manifest::{
         CodeVersionRecord, FixtureRecord, ManifestStatus, ProbeRecord, Refusal, RunManifest, SelectedRecord, Summary,
         TaskSetRecord, TaskState, MANIFEST_VERSION,
     },
+    metrics::{self, load_events, CorrectnessMetrics, TaskMetrics},
     policy::{load_fixed, PolicyIdentity, RunPolicy, TaskBudget},
     probe::probe,
     registry::{
@@ -76,13 +80,6 @@ impl Selection {
     }
 }
 
-/// Oracle judgement of one task.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Counts {
-    pub passed: u64,
-    pub total: u64,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Correctness {
@@ -108,22 +105,62 @@ impl Correctness {
     pub fn passed(&self) -> bool {
         matches!(self, Correctness::Judged { passed: true, .. })
     }
-}
 
-/// An evidence path, checked for existence when the result is written (4.5).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum PathRecord {
-    Present { path: PathBuf },
-    Missing { reason: String },
-}
+    /// Requirement 4.7: without a judgement no count is written, not even 0.
+    pub fn metrics(&self) -> CorrectnessMetrics {
+        match self {
+            Correctness::Judged { passed, public, hidden, holdout, .. } => CorrectnessMetrics {
+                known: true,
+                passed: Some(*passed),
+                public: *public,
+                hidden: *hidden,
+                holdout: *holdout,
+                reason: None,
+            },
+            Correctness::Unknown { reason } | Correctness::OracleError { reason } => CorrectnessMetrics {
+                known: false,
+                passed: None,
+                public: None,
+                hidden: None,
+                holdout: None,
+                reason: Some(reason.clone()),
+            },
+        }
+    }
 
-impl PathRecord {
-    pub fn of(path: &Path, missing: &str) -> Self {
-        if path.exists() {
-            Self::Present { path: path.to_owned() }
-        } else {
-            Self::Missing { reason: missing.to_owned() }
+    /// Oracle output of a Failure_Record (5.5, 5.6).
+    pub fn oracle_record(&self, stop: Option<TaskStop>) -> OracleRecord {
+        match self {
+            Correctness::Judged { passed, public, hidden, holdout, raw_output } => OracleRecord {
+                executed: true,
+                passed: Some(*passed),
+                public: *public,
+                hidden: *hidden,
+                holdout: *holdout,
+                raw_output: raw_output.clone(),
+                reason: None,
+            },
+            Correctness::OracleError { reason } => OracleRecord {
+                executed: true,
+                passed: None,
+                public: None,
+                hidden: None,
+                holdout: None,
+                raw_output: None,
+                reason: Some(format!("the Oracle gave no judgement: {reason}")),
+            },
+            Correctness::Unknown { reason } => OracleRecord {
+                executed: false,
+                passed: None,
+                public: None,
+                hidden: None,
+                holdout: None,
+                raw_output: None,
+                reason: Some(match stop {
+                    Some(stop) => format!("{reason}; Harness stop {stop:?}"),
+                    None => format!("{reason}; the Harness reported no stop"),
+                }),
+            },
         }
     }
 }
@@ -157,6 +194,13 @@ pub struct TaskRecord {
     /// Sealed_Holdout processing, when this task is the Sealed_Holdout.
     #[serde(skip)]
     pub sealed: Option<SealedOutcome>,
+    /// The Harness `run-N-events.jsonl` files in Run order (usage and
+    /// Failure_Record evidence).
+    #[serde(skip)]
+    pub events: Vec<PathBuf>,
+    /// The Harness evidence directory, when it exists.
+    #[serde(skip)]
+    pub harness_evidence: Option<PathBuf>,
 }
 
 impl TaskRecord {
@@ -175,6 +219,8 @@ impl TaskRecord {
             tools: ToolRecord::default(),
             error: Some(reason),
             sealed: None,
+            events: Vec::new(),
+            harness_evidence: None,
         }
     }
 }
@@ -215,6 +261,9 @@ pub struct RunInputs<'a> {
     pub env: &'a (dyn Fn(&str) -> Option<String> + Sync),
     /// Stop after a successful probe without starting any task.
     pub probe_only: bool,
+    /// Baseline mode (7.2): the run goes to `<evidence_root>/baseline/` and
+    /// an in-repo index with every file's SHA-256 is written after the manifest.
+    pub baseline: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -310,7 +359,7 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
     let violations: Vec<_> = validate(&set).into_iter().chain(check_holdout_log(&set, log.events())).collect();
     let token = (inputs.env)(&policy.model.credential_env).unwrap_or_default();
     let credentials = Credentials::new([token.clone()]);
-    let run_dir = new_run_dir(&inputs.evidence_root.join("runs"))?;
+    let run_dir = new_run_dir(&inputs.evidence_root.join(if inputs.baseline { "baseline" } else { "runs" }))?;
     let manifest_id = run_dir.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_owned();
     let diff_path = if diff.dirty {
         let path = run_dir.join("code-version").join("worktree.diff");
@@ -328,6 +377,7 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
         started_at,
         finished_at: String::new(),
         run_policy: policy_identity.clone(),
+        policy: policy.clone(),
         code_version: CodeVersionRecord {
             head: diff.head.clone(),
             dirty: diff.dirty,
@@ -346,13 +396,13 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
         requested: selected.clone(),
         selected: Vec::new(),
         sealed_holdout: json!({"isolation": ISOLATION, "selected": false}),
-        summary: Summary {
-            usage: json!({"status": "not_computed", "reason": "M-P0-METRICS (task 14) is not implemented"}),
-            cost: json!({"status": "not_computed", "reason": "M-P0-METRICS (task 14) is not implemented"}),
-            ..Summary::default()
-        },
+        summary: Summary::new(metrics::summarize(&[])),
+        baseline: None,
+        baseline_checks: Vec::new(),
         limits: vec![
-            "usage, cost and Failure_Record are not produced until M-P0-METRICS and M-P0-FAILURE land".into(),
+            "usage is what the provider adapter reported in model_result.usage_metrics; a call without \
+             positive counts is unknown, never 0"
+                .into(),
             "S1, S2, S3, R1 and H2 are not new holdouts; their Oracle files are readable by absolute path \
              through process tools outside the Host path checks (DR-P0-1)"
                 .into(),
@@ -360,9 +410,25 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
     };
     let finish = |manifest: &mut RunManifest, status, exit: u8| -> Result<RunReport> {
         manifest.status = status;
+        // 7.4: every registered baseline is re-verified at the end of every run.
+        manifest.baseline_checks = baseline::verify_all(root);
+        if inputs.baseline {
+            let missing = baseline::missing_judgement(manifest);
+            if status == ManifestStatus::Completed && !missing.is_empty() {
+                manifest.status = ManifestStatus::IncompleteBaseline;
+            }
+            manifest.baseline = Some(baseline::BaselineMark {
+                index: baseline::index_path(&manifest.manifest_id),
+                usable: manifest.status == ManifestStatus::Completed,
+                missing_judgement: missing,
+            });
+        }
         manifest.finished_at = timestamp_now();
         let path = run_dir.join("manifest.json");
         write_json_new(&path, &manifest, &credentials)?;
+        if inputs.baseline {
+            baseline::write_index(root, &run_dir, manifest, &path, &credentials)?;
+        }
         Ok(RunReport { exit, manifest_path: path, manifest: manifest.clone() })
     };
     if !violations.is_empty() {
@@ -413,6 +479,9 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
                 state: TaskState::Refused,
                 refusal: Some(refusal),
                 result: None,
+                failure_record: None,
+                failure_record_error: None,
+                metrics: None,
             });
             continue;
         }
@@ -460,30 +529,91 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
             manifest.sealed_holdout["holdout_status_changed"] = json!(changed);
         }
         let passed = record.correctness.passed();
-        let state = if passed { TaskState::Passed } else { TaskState::Failed };
+        let events: Vec<_> = record.events.iter().map(|path| load_events(path)).collect();
+        let usage = metrics::task_usage(&events, record.logical_calls);
+        let cost = metrics::cost(&usage, Some(&policy.price));
+        let not_produced = record.error.clone().unwrap_or_else(|| "not produced by the Harness".into());
+        let paths = metrics::checked_paths(record.paths.clone(), &not_produced);
+        // Requirement 5.1: every task that did not pass gets a Failure_Record.
+        let failure_path = task_dir.join("failure.json");
+        let failure = (!passed).then(|| {
+            let artifacts = serde_json::from_value::<PathRecord>(paths["artifacts"].clone())
+                .unwrap_or(PathRecord::Missing { reason: not_produced.clone() });
+            let context = FailureContext {
+                task_id: task_id.clone(),
+                run_ids: record.run_ids.clone(),
+                stop: record.stop,
+                detail: record.detail.clone(),
+                error: record.error.clone(),
+                events: events.clone(),
+                harness_evidence: record.harness_evidence.clone(),
+                artifacts,
+                oracle: record.correctness.oracle_record(record.stop),
+                registered_tools: record.tools.registered.clone(),
+            };
+            failure::write(&context, &failure_path, &credentials)
+                .map_err(|error| credentials.redact(&format!("cannot write the Failure_Record: {error:#}")))
+        });
+        let (failure_class, failure_error) = match &failure {
+            None => (None, None),
+            Some(Ok(written)) => (Some(written.classification.label().to_owned()), None),
+            Some(Err(error)) => (None, Some(error.clone())),
+        };
+        let state = match (passed, &failure_error) {
+            (true, _) => TaskState::Passed,
+            (false, None) => TaskState::Failed,
+            (false, Some(_)) => TaskState::FailureRecordMissing,
+        };
+        let task_metrics = TaskMetrics {
+            success: passed,
+            stop: record.stop.map(|stop| format!("{stop:?}")),
+            correctness: record.correctness.metrics(),
+            logical_calls: record.logical_calls,
+            wall_ms: record.wall_ms,
+            usage: metrics::UsageTotals { calls: Vec::new(), ..usage.clone() },
+            cost: cost.clone(),
+            write_counts: record.write_counts,
+            failure_class,
+        };
         let result_path = task_dir.join("result.json");
         let mut result = serde_json::to_value(&record)?;
         result["task_id"] = json!(task_id);
         result["success"] = json!(passed);
-        result["usage"] = manifest.summary.usage.clone();
-        result["cost"] = manifest.summary.cost.clone();
+        result["usage"] = serde_json::to_value(&usage)?;
+        result["cost"] = serde_json::to_value(&cost)?;
+        result["paths"] = paths;
+        result["failure_record"] = match &failure {
+            None => Value::Null,
+            Some(Ok(_)) => json!(failure_path),
+            Some(Err(error)) => json!({"status": "missing", "reason": error}),
+        };
         if let Some(outcome) = &record.sealed {
             result["holdout"] = json!({"compromised": outcome.compromised, "hits": outcome.leaks});
         }
         let result = serde_json::from_str::<Value>(&credentials.redact(&result.to_string()))?;
         let written = write_json_new(&result_path, &result, &credentials);
-        if passed {
-            manifest.summary.passed += 1;
-        } else {
-            manifest.summary.failed += 1;
+        match state {
+            TaskState::Passed => manifest.summary.passed += 1,
+            TaskState::FailureRecordMissing => {
+                manifest.summary.failed += 1;
+                manifest.summary.failure_record_missing += 1;
+            }
+            _ => manifest.summary.failed += 1,
         }
         manifest.selected.push(SelectedRecord {
             task_id: task_id.clone(),
             state,
             refusal: None,
             result: written.is_ok().then_some(result_path),
+            failure_record: matches!(failure, Some(Ok(_))).then_some(failure_path),
+            failure_record_error: failure_error,
+            metrics: Some(task_metrics),
         });
     }
+    let task_metrics: Vec<TaskMetrics> = manifest.selected.iter().filter_map(|record| record.metrics.clone()).collect();
+    let summary = metrics::summarize(&task_metrics);
+    (manifest.summary.usage, manifest.summary.cost, manifest.summary.correctness) =
+        (summary.usage, summary.cost, summary.correctness);
     let all_passed = manifest.selected.iter().all(|record| record.state == TaskState::Passed);
     finish(&mut manifest, ManifestStatus::Completed, if all_passed { 0 } else { 1 })
 }
@@ -541,7 +671,8 @@ fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &s
         Ok(copied) => copied,
         Err(error) => {
             let reason = format!("copy failed: {error:#}");
-            return Ok((Correctness::OracleError { reason }, json!({"oracle_dir": oracle_dir})));
+            let dir = PathRecord::of(&oracle_dir, "the Oracle directory was not created");
+            return Ok((Correctness::OracleError { reason }, json!({"oracle_dir": dir})));
         }
     };
     let text_path = context.task_dir.join("final-text.txt");
@@ -591,7 +722,15 @@ fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &s
         }
     };
     let unchanged = snapshot(workspace)? == before;
-    Ok((correctness, json!({"oracle_dir": oracle_dir, "copied": copied, "workspace_unchanged": unchanged})))
+    Ok((
+        correctness,
+        json!({
+            "oracle_dir": PathRecord::of(&oracle_dir, "the Oracle directory was not created"),
+            "output": PathRecord::of(&out, "the Oracle wrote no result file"),
+            "copied": copied,
+            "workspace_unchanged": unchanged,
+        }),
+    ))
 }
 
 impl HarnessExecutor {
@@ -717,7 +856,8 @@ impl HarnessExecutor {
                     sealed::Correctness::Unknown { reason } => Correctness::Unknown { reason: reason.clone() },
                     sealed::Correctness::OracleError { reason } => Correctness::OracleError { reason: reason.clone() },
                 };
-                (correctness, json!({"oracle_dir": outcome.oracle_dir}), Some(outcome))
+                let dir = PathRecord::of(&outcome.oracle_dir, "the Oracle directory was not created");
+                (correctness, json!({"oracle_dir": dir}), Some(outcome))
             }
             None => {
                 let (correctness, oracle) = judge_registered(context, &workspace, &final_text)?;
@@ -744,6 +884,8 @@ impl HarnessExecutor {
             tools,
             error: None,
             sealed: sealed_outcome,
+            events,
+            harness_evidence: evidence.exists().then_some(evidence),
         })
     }
 }
@@ -753,7 +895,14 @@ impl TaskExecutor for HarnessExecutor {
     async fn execute(&self, context: &TaskContext) -> TaskRecord {
         match self.execute_inner(context).await {
             Ok(record) => record,
-            Err(error) => TaskRecord::not_run(context.credentials.redact(&format!("{error:#}"))),
+            Err(error) => {
+                // Whatever the Harness already wrote stays referenced (5.1).
+                let mut record = TaskRecord::not_run(context.credentials.redact(&format!("{error:#}")));
+                let evidence = context.task_dir.join("harness");
+                record.events = events_files(&evidence);
+                record.harness_evidence = evidence.exists().then_some(evidence);
+                record
+            }
         }
     }
 }

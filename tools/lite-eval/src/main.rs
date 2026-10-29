@@ -34,9 +34,9 @@ enum Command {
     /// Fork a Session at a journal prefix into two new Sessions.
     Fork(ForkArgs),
     /// Compare a run against the baseline Run_Manifest.
-    Compare(Pending),
+    Compare(CompareArgs),
     /// Append a manual Failure_Class to a Failure_Record.
-    Classify(Pending),
+    Classify(ClassifyArgs),
     /// Judge a task's artifacts with its Oracle outside the workspace.
     Oracle(Pending),
     /// Run the delivery quality gate for a module.
@@ -70,6 +70,70 @@ struct RunArgs {
     /// task (manifest status `probe_only`; re-check before real trials).
     #[arg(long)]
     probe_only: bool,
+    /// Baseline mode: write to `<dir>/baseline/<manifest_id>/` and register
+    /// the run's file SHA-256 list in the repository (requirement 7).
+    #[arg(long, conflicts_with = "probe_only")]
+    baseline: bool,
+}
+
+#[derive(Args)]
+struct CompareArgs {
+    /// Baseline Run_Manifest; repeat for more samples.
+    #[arg(long, required = true)]
+    baseline: Vec<PathBuf>,
+    /// Current Run_Manifest; repeat for more samples.
+    #[arg(long, required = true)]
+    current: Vec<PathBuf>,
+    /// P2 sub-item this comparison is for (P2-a … P2-e).
+    #[arg(long)]
+    item: String,
+    /// Output file; defaults to the in-repo comparisons directory.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ClassifyArgs {
+    /// Failure_Record (`tasks/<id>/failure.json`); it is never modified.
+    record: PathBuf,
+    /// model_gap, core_defect, wiring_gap or tool_gap.
+    #[arg(long)]
+    class: String,
+    /// `event:<events-file>#<seq>`, `file:<path>` or `log:<path>#<line>`; repeatable.
+    #[arg(long = "evidence", required = true)]
+    evidence: Vec<String>,
+}
+
+/// Exit 0 comparable with a valid baseline, 1 the record has no valid
+/// conclusions (not comparable, environment unavailable, invalid baseline).
+fn compare(args: CompareArgs) -> Result<ExitCode> {
+    use lite_eval::compare::{check_item, compare, load, Conclusions, COMPARISONS_DIR};
+    check_item(&args.item)?;
+    let bases = args.baseline.iter().map(|path| load(path)).collect::<Result<Vec<_>>>()?;
+    let currents = args.current.iter().map(|path| load(path)).collect::<Result<Vec<_>>>()?;
+    let record = compare(&bases, &currents, &args.item);
+    let out = match args.out {
+        Some(out) => out,
+        None => {
+            let current = &currents.last().expect("required").reference.manifest_id;
+            let dir = repo_root()?.join(COMPARISONS_DIR);
+            std::fs::create_dir_all(&dir)?;
+            dir.join(format!("{}-{current}.json", args.item))
+        }
+    };
+    lite_eval::common::write_json_new(&out, &record, &credentials())?;
+    println!("{}", out.display());
+    println!("comparability {:?}, conclusions {:?}", record.comparability, record.conclusions);
+    Ok(if record.conclusions == Conclusions::Valid { ExitCode::SUCCESS } else { ExitCode::from(1) })
+}
+
+fn classify(args: ClassifyArgs) -> Result<ExitCode> {
+    use lite_eval::failure::{classify, EvidenceRef, FailureClass};
+    let class = FailureClass::parse(&args.class)?;
+    let evidence = args.evidence.iter().map(|text| EvidenceRef::parse(text)).collect::<Result<Vec<_>>>()?;
+    let path = classify(&args.record, class, evidence, &credentials())?;
+    println!("{}", path.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Exit 0 all passed, 1 a task failed or was refused, 2 start failure (no
@@ -87,6 +151,7 @@ fn run(args: RunArgs) -> Result<ExitCode> {
         executor: &HarnessExecutor,
         env: &env,
         probe_only: args.probe_only,
+        baseline: args.baseline,
     }))?;
     let summary = &report.manifest.summary;
     println!("{}", report.manifest_path.display());
@@ -638,8 +703,8 @@ fn main() -> ExitCode {
         Command::Validate => validate_task_set(),
         Command::Holdout(command) => holdout(command),
         Command::Fork(args) => fork(args),
-        Command::Compare(_) => not_implemented("compare"),
-        Command::Classify(_) => not_implemented("classify"),
+        Command::Compare(args) => compare(args),
+        Command::Classify(args) => classify(args),
         Command::Oracle(_) => not_implemented("oracle"),
         Command::Gate(args) => gate(args),
         Command::Deny => deny(),

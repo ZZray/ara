@@ -327,6 +327,7 @@ fn a_controlled_sealed_run_records_isolation_and_keeps_the_holdout_status() {
                 executor: &HarnessExecutor,
                 env: &env,
                 probe_only: false,
+                baseline: false,
             }))
             .unwrap()
     };

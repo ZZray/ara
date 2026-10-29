@@ -38,6 +38,7 @@ fn execute_with(
         executor: &HarnessExecutor,
         env: &env,
         probe_only,
+        baseline: false,
     }))
 }
 
