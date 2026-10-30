@@ -1,0 +1,29 @@
+{
+    "schema":  "lite-closeout-trial-v1",
+    "created_at":  "2026-10-30T16:33:15.9121122+08:00",
+    "module":  "M-P3-SUMMARY",
+    "real_model_trial":  {
+                             "command":  "lite-eval long-compact --task S3",
+                             "record":  "D:/WorkSpace/tmp/ara-lite-capability/long-compact/20261030T083019Z-0001/long-compact.json",
+                             "binary":  "D:/WorkSpace/tmp/ara-lite-capability/bin/lite-eval-trials.exe (sha256 435e58c82c14f62b25d81a82698fd81b5539a0913e191ad21118b451e8b5ad81, built from HEAD f43064b)",
+                             "budget":  "budgets.LONG-COMPACT",
+                             "summary_reservations":  0,
+                             "agent_reservations":  20,
+                             "task_logical_calls":  20,
+                             "max_calls":  80,
+                             "compactions":  0,
+                             "verdict":  "uncovered: no compaction completed within the LONG-COMPACT budget"
+                         },
+    "capped_attempts":  [
+                            "long-trial attempt 1, window 98304: Run 1 context reached 42062 of 46080 bytes after 7 calls, then exceeded the budget; Task ended ReconciliationRequired (current run exceeds context byte budget). Record: long-trial/20261030T082505Z-0001",
+                            "long-trial attempt 2, window 163840: public check passed after 12 calls but the Run context reached 91565 of 92160 bytes and the Run then ended with the same error. Record: long-trial/20261030T082742Z-0001"
+                        ],
+    "finding":  "Compaction only moves complete turns of EARLIER Runs into the summary (context_memory::summary_input_with_limit: messages[old_count..] stay exact). A Task that finishes in one Run can never compact, and a single Run whose own messages exceed the projection budget ends with ReconciliationRequired. With S3 and the real model every attempt was a single Run.",
+    "criteria":  {
+                     "25.1-25.4":  "Property 34 and summary_budget tests (31.3, 31.4), see closeouts and run-summary-20261030.json",
+                     "25.6":  "no compaction happened, so the trial is recorded as uncovered with the reason, not as passed"
+                 },
+    "uncovered":  {
+                      "25.5":  "The bounded real-model trial never triggered a compaction, so the summary-plus-agent reservation sum was checked (0 + 20 = 20 \u003c= 80) but no Session references before and after a compaction exist."
+                  }
+}

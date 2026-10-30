@@ -1,9 +1,9 @@
 # 进度台账摘要
 
-由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 45 条记录。
+由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 47 条记录。
 
 - 总进度：verified 检查点 0/36
-- 模块状态：verified 0，done 36，open 1，未开始 6
+- 模块状态：verified 0，done 37，open 2，未开始 4
 
 | 模块 | 阶段 | 需求 | 状态 | 完成标准 | 更新时间 | 证据 | 未覆盖 |
 |---|---|---|---|---|---|---|---|
@@ -31,7 +31,7 @@
 | M-P3-UNKNOWN | P3 | 22 类型化未知副作用记录 | done | 8/8 | 2026-10-30T16:03:29+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-UNKNOWN.json | 偏差：已知行为（tasks.md 阶段 4）：sidecar 回调失败时 bridge.fail() 取消 Task，多个 Unknown 调用的…；详见 closeouts/M-P3-UNKNOWN.json |
 | M-P3-JSONL-UNKNOWN | P3 | 23 JSONL Unknown 结算类型化 | done | 7/7 | 2026-10-30T16:11:48+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-JSONL-UNKNOWN-fix.json | Deviation: the old-client comparison now pins revision d42ecc3 (parent of f0a7570), not HEAD |
 | M-P3-REPLAY | P3 | 24 重放前置条件 | done | 7/7 | 2026-10-30T16:03:31+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-REPLAY.json | 偏差：replay_provenance 的属性测试发现并修复了 arguments_sha256 随键顺序变化的缺陷；修复前写入的未排序键 No…；详见 closeouts/M-P3-REPLAY.json |
-| M-P3-SUMMARY | P3 | 25 Harness 内压缩共享 Task 预算 | 未开始 | 0/6 | — | — | — |
+| M-P3-SUMMARY | P3 | 25 Harness 内压缩共享 Task 预算 | done | 5/6 | 2026-10-30T16:33:18+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-SUMMARY.json | 25.5: the bounded real-model trial (long-compact S3: 0 summary + 20 agent = 20 of 80 calls) triggered no compaction, so there are no Session references before and after compaction; recorded uncovered as 25.6 requires. Compaction only covers earlier Runs, and every real attempt was a single Run |
 | M-P3-BYTES | P3 | 26 NUL 与 Unicode 字节保留 | done | 4/6 | 2026-10-30T16:03:31+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-BYTES.json | 26.5 条件不适用：DR-P3-1 结论为“模型补丁”，不是工具 I/O 或 JSONL 传输；“修复前失败、修复后通过”无法演示（dr_p3_1_tool_io_leg_preserves_sample 仅证明出口为 17 字节）；26.6 条件不适用：DR-P3-1 结论不是“未复现”；偏差：准则 26.5、26.6 为条件分支，结论为模型补丁，故按未覆盖计、不按“空真”计入。；详见 closeouts/M-P3-BYTES.json |
 | M-P4-DEPS | P4 | 27 职责边界与依赖方向 | done | 6/6 | 2026-10-30T16:03:32+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-DEPS.json | 偏差：host-contracts.md 第 21–78 行仍写“任务 34.2 的 Dependency_Check_Test 尚未实现”，该测…；详见 closeouts/M-P4-DEPS.json |
 | M-P4-EVENTS | P4 | 28 版本化类型事件枚举 | done | 6/7 | 2026-10-30T16:03:40+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-EVENTS.json | 28.7 DR-P4-1 偏差待用户确认：现有 execute 的 model_result 与同一轮 text_delta 由两个任务发出，相对顺序每次运行可能不同；event_compat 把 model_result 移到相邻 text_delta 段之前再比对，其余顺序严格比对。若要求严格顺序，需改 Core 事件发送。“顺序一致”仅在此放宽下成立，故不计入；偏差：DR-P4-1 事件顺序放宽（model_result 与 text_delta）尚待用户接受。 / event_samples::capture_events_v1 为 #[ignore]（样本采集入口，故意不在常规测试中重采）。；详见 closeouts/M-P4-EVENTS.json |
@@ -41,7 +41,7 @@
 | M-P5-REVIEW | P5 | 32 模块独立审查 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-P5-QUALITY | P5 | 33 交付代码质量门 | done | 4/4 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-P5-DENY | P5 | 34 依赖审计现状记录 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
-| M-P5-LONG | P5 | 35 长任务综合可靠性验收 | 未开始 | 0/6 | — | — | — |
+| M-P5-LONG | P5 | 35 长任务综合可靠性验收 | open | 4/6 | 2026-10-30T16:33:19+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P5-LONG.json | 35.1, 35.2: compaction, 2 Host review continuations, 1 length continuation and a resume did not occur in two real trials |
 | M-P5-STAGE | P5 | 36 证据保留与阶段验收记录 | done | 7/7 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-X-LEDGER | 横向 | 37 进度台账 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-X-NOTIFY | 横向 | 38 钉钉进度通知 | done | 9/9 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
@@ -55,3 +55,6 @@
 
 - **M-P0-HOLDOUT**（seq 16）：file symlink privilege unavailable on this machine；需要的决定：run as administrator or enable Developer Mode, then rerun isolation_props
   - 已尝试：std::os::windows::fs::symlink_file → os error 1314
+- **M-P5-LONG**（seq 47）：Two real long-trial runs on S3 ended coverage-insufficient: the model solves the task inside one Run, so no Host review continuation, no compaction, no length stop and no kill/resume happens；需要的决定：Choose how to get the events: (a) a Host review policy in the driver that demands extra repair rounds, (b) a harder or longer task with a public check, or (c) accept the coverage-insufficient result
+  - 已尝试：long-trial S3 window 98304 → Run 1 exceeded the 45 KiB projection after 7 calls, ReconciliationRequired
+  - 已尝试：long-trial S3 window 163840 → public check passed after 12 calls, then the Run exceeded 92 KiB, ReconciliationRequired

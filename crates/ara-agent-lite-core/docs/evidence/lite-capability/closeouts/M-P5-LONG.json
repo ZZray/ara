@@ -1,0 +1,36 @@
+{
+    "schema":  "lite-closeout-trial-v1",
+    "created_at":  "2026-10-30T16:33:16.4631301+08:00",
+    "module":  "M-P5-LONG",
+    "implementation":  "tools/lite-eval/long_trial/long_trial.py and src/long_trial.rs; checks tested by long_trial_checks (16 cases)",
+    "trials":  [
+                   {
+                       "attempt":  1,
+                       "record":  "D:/WorkSpace/tmp/ara-lite-capability/long-trial/20261030T082505Z-0001/long-trial.json",
+                       "context_window":  98304,
+                       "result":  "coverage_insufficient; Task ended ReconciliationRequired after 7 calls: current run exceeds context byte budget"
+                   },
+                   {
+                       "attempt":  2,
+                       "record":  "D:/WorkSpace/tmp/ara-lite-capability/long-trial/20261030T082742Z-0001/long-trial.json",
+                       "context_window":  163840,
+                       "result":  "coverage_insufficient; public check passed after 12 calls, then the same Run exceeded the budget (91565/92160 bytes)"
+                   }
+               ],
+    "counts":  {
+                   "compaction":  0,
+                   "host_review_continuation":  0,
+                   "length_continuation":  0,
+                   "resume":  0
+               },
+    "checks_in_both_trials":  "evidence_readable, session_path, journal_unchanged, logical_calls, authority_hash passed; effects_unknown_receipts and resume_accepted not applicable (no kill, no resume)",
+    "public_check":  "tools via s3-public-check.cmd (cmake + ctest on a copy; pristine fixture fails 3 of 10 cases)",
+    "why":  "Every Host review continuation needs the public check to fail after a Run, and compaction needs a prior Run. S3 solved by the real model passes its public check inside one Run, or overflows the small window first. The required events do not occur on their own.",
+    "criteria":  {
+                     "35.3-35.6":  "checks, receipts order, Failure_Record and the coverage-insufficient label are implemented and tested; both real trials produced the label with the missing event types"
+                 },
+    "uncovered":  {
+                      "35.1":  "compaction, two Host review continuations, one length continuation and one resume did not occur",
+                      "35.2":  "no kill and resume happened"
+                  }
+}
