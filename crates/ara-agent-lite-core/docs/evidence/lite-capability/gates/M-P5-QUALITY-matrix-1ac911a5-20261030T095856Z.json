@@ -1,0 +1,1523 @@
+{
+  "module": "M-P5-QUALITY",
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "1ac911a55c10251957a1067b13ad39efbdb7c94e321c4098dcd5ad2036b6fd48",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "matrix_sha256": "01900d7a928bbe8e18f3a150f08ad510d1cde5f445e4eda734b5d7774e7215dd",
+  "tests": [
+    {
+      "capability": "tools.host-registered",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [host_boundary] invalid_custom_names_are_rejected_before_model_state_or_tool_effects",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test host_boundary invalid_custom_names_are_rejected_before_model_state_or_tool_effects -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:26:06+08:00",
+      "finished_at": "2026-10-30T18:26:38+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-001-tools.host-registered.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-001-tools.host-registered.stderr.txt"
+    },
+    {
+      "capability": "tools.host-registered",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [tasks] actual_file_feedback_repair_reuses_session_and_original_call_budget",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test tasks actual_file_feedback_repair_reuses_session_and_original_call_budget -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:26:39+08:00",
+      "finished_at": "2026-10-30T18:27:23+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-002-tools.host-registered.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-002-tools.host-registered.stderr.txt"
+    },
+    {
+      "capability": "tools.builtin-files",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:27:23+08:00",
+      "finished_at": "2026-10-30T18:27:44+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-003-tools.builtin-files.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-003-tools.builtin-files.stderr.txt"
+    },
+    {
+      "capability": "tools.builtin-files",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] file_edits::tests::rejections_name_the_current_hash_and_the_failing_block",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib file_edits::tests::rejections_name_the_current_hash_and_the_failing_block -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:27:44+08:00",
+      "finished_at": "2026-10-30T18:27:57+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-004-tools.builtin-files.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-004-tools.builtin-files.stderr.txt"
+    },
+    {
+      "capability": "tools.builtin-files",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] file_edits::tests::property_26::edit_applies_every_block_or_none",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib file_edits::tests::property_26::edit_applies_every_block_or_none -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:27:57+08:00",
+      "finished_at": "2026-10-30T18:28:15+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-005-tools.builtin-files.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-005-tools.builtin-files.stderr.txt"
+    },
+    {
+      "capability": "tools.builtin-files",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [host_tool_schema] every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test host_tool_schema every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:28:15+08:00",
+      "finished_at": "2026-10-30T18:29:51+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-006-tools.builtin-files.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-006-tools.builtin-files.stderr.txt"
+    },
+    {
+      "capability": "tools.shell-script",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] local_tools::tests::real_shell_captures_output_and_exit",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib local_tools::tests::real_shell_captures_output_and_exit -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:29:52+08:00",
+      "finished_at": "2026-10-30T18:30:09+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-007-tools.shell-script.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-007-tools.shell-script.stderr.txt"
+    },
+    {
+      "capability": "tools.shell-script",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] script_tools::tests::real_python_utf8_quoting_exit_cancel_timeout_cleanup",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib script_tools::tests::real_python_utf8_quoting_exit_cancel_timeout_cleanup -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:30:09+08:00",
+      "finished_at": "2026-10-30T18:30:25+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-008-tools.shell-script.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-008-tools.shell-script.stderr.txt"
+    },
+    {
+      "capability": "tools.web",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] web_tools::tests::tool_contract_has_only_two_read_only_tools",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib web_tools::tests::tool_contract_has_only_two_read_only_tools -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:30:25+08:00",
+      "finished_at": "2026-10-30T18:30:42+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-009-tools.web.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-009-tools.web.stderr.txt"
+    },
+    {
+      "capability": "tools.jobs-terminal",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] managed_jobs::tests::repeated_intent_never_replays_and_input_conflict_is_rejected",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib managed_jobs::tests::repeated_intent_never_replays_and_input_conflict_is_rejected -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:30:42+08:00",
+      "finished_at": "2026-10-30T18:30:56+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-010-tools.jobs-terminal.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-010-tools.jobs-terminal.stderr.txt"
+    },
+    {
+      "capability": "tools.jobs-terminal",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] terminal_process::tests::terminal_is_tty_input_environment_and_resize",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib terminal_process::tests::terminal_is_tty_input_environment_and_resize -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:30:56+08:00",
+      "finished_at": "2026-10-30T18:31:09+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-011-tools.jobs-terminal.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-011-tools.jobs-terminal.stderr.txt"
+    },
+    {
+      "capability": "tools.analysis",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] analysis_tools::tests::parses_definitions_and_rejects_malformed_records",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib analysis_tools::tests::parses_definitions_and_rejects_malformed_records -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:31:09+08:00",
+      "finished_at": "2026-10-30T18:31:22+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-012-tools.analysis.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-012-tools.analysis.stderr.txt"
+    },
+    {
+      "capability": "tools.mcp",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-mcp/Cargo.toml [stdio] handshake_paginates_and_names_tools",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-mcp/Cargo.toml --test stdio handshake_paginates_and_names_tools -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:31:22+08:00",
+      "finished_at": "2026-10-30T18:31:33+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-013-tools.mcp.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-013-tools.mcp.stderr.txt"
+    },
+    {
+      "capability": "tools.mcp",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-mcp/Cargo.toml [http] session_headers_json_and_sse_replies",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-mcp/Cargo.toml --test http session_headers_json_and_sse_replies -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:31:33+08:00",
+      "finished_at": "2026-10-30T18:31:51+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-014-tools.mcp.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-014-tools.mcp.stderr.txt"
+    },
+    {
+      "capability": "tools.mcp",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-mcp/Cargo.toml [harness_mcp] mcp_tool_succeeds_inside_a_task",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-mcp/Cargo.toml --test harness_mcp mcp_tool_succeeds_inside_a_task -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:31:51+08:00",
+      "finished_at": "2026-10-30T18:32:03+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-015-tools.mcp.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-015-tools.mcp.stderr.txt"
+    },
+    {
+      "capability": "tools.unknown-effects",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [run_policies] structured_unknown_details_mark_tool_end",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test run_policies structured_unknown_details_mark_tool_end -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:32:03+08:00",
+      "finished_at": "2026-10-30T18:32:05+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-016-tools.unknown-effects.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-016-tools.unknown-effects.stderr.txt"
+    },
+    {
+      "capability": "tools.unknown-effects",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] effect_status::tests::builtin_phrases_on_the_first_line_of_effect_tool_errors_are_typed",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib effect_status::tests::builtin_phrases_on_the_first_line_of_effect_tool_errors_are_typed -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:32:05+08:00",
+      "finished_at": "2026-10-30T18:32:07+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-017-tools.unknown-effects.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-017-tools.unknown-effects.stderr.txt"
+    },
+    {
+      "capability": "tools.unknown-effects",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [unknown_effects] unknown_iff_structured_details",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test unknown_effects unknown_iff_structured_details -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:32:08+08:00",
+      "finished_at": "2026-10-30T18:33:31+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-018-tools.unknown-effects.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-018-tools.unknown-effects.stderr.txt"
+    },
+    {
+      "capability": "session.persist-reopen",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] agent::tests::actual_tool_and_text_history_survives_checkpoint_and_restart",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib agent::tests::actual_tool_and_text_history_survives_checkpoint_and_restart -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:33:32+08:00",
+      "finished_at": "2026-10-30T18:33:50+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-019-session.persist-reopen.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-019-session.persist-reopen.stderr.txt"
+    },
+    {
+      "capability": "session.persist-reopen",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] session_journal::tests::torn_or_unconfirmed_tail_is_preserved_and_fenced",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib session_journal::tests::torn_or_unconfirmed_tail_is_preserved_and_fenced -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:33:51+08:00",
+      "finished_at": "2026-10-30T18:34:05+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-020-session.persist-reopen.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-020-session.persist-reopen.stderr.txt"
+    },
+    {
+      "capability": "session.fence-settlement",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] agent::interrupted_run_property_tests::reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib agent::interrupted_run_property_tests::reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:05+08:00",
+      "finished_at": "2026-10-30T18:34:20+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-021-session.fence-settlement.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-021-session.fence-settlement.stderr.txt"
+    },
+    {
+      "capability": "session.fence-settlement",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [resume] crashed_owner_resumes_only_after_host_settlement_without_replay_or_budget_refund",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test resume crashed_owner_resumes_only_after_host_settlement_without_replay_or_budget_refund -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:20+08:00",
+      "finished_at": "2026-10-30T18:34:21+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-022-session.fence-settlement.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-022-session.fence-settlement.stderr.txt"
+    },
+    {
+      "capability": "session.fence-settlement",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_resume_process.py ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+      "command": "python -m unittest -v test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:21+08:00",
+      "finished_at": "2026-10-30T18:34:25+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-023-session.fence-settlement.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-023-session.fence-settlement.stderr.txt"
+    },
+    {
+      "capability": "session.fork",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [session_fork] property_14_fork_keeps_prefix_and_source",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test session_fork property_14_fork_keeps_prefix_and_source -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:25+08:00",
+      "finished_at": "2026-10-30T18:34:29+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-024-session.fork.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-024-session.fork.stderr.txt"
+    },
+    {
+      "capability": "session.fork",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [session_fork] run_on_one_fork_isolates_other_fork_and_source",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test session_fork run_on_one_fork_isolates_other_fork_and_source -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:29+08:00",
+      "finished_at": "2026-10-30T18:34:30+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-025-session.fork.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-025-session.fork.stderr.txt"
+    },
+    {
+      "capability": "session.replay-provenance",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [replay_preconditions] same_call_after_not_executed_runs_once_under_the_new_native_id",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test replay_preconditions same_call_after_not_executed_runs_once_under_the_new_native_id -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:30+08:00",
+      "finished_at": "2026-10-30T18:34:31+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-026-session.replay-provenance.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-026-session.replay-provenance.stderr.txt"
+    },
+    {
+      "capability": "session.replay-provenance",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [replay_provenance] replay_of_names_the_latest_matching_not_executed_call",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test replay_provenance replay_of_names_the_latest_matching_not_executed_call -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:34:31+08:00",
+      "finished_at": "2026-10-30T18:35:38+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-027-session.replay-provenance.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-027-session.replay-provenance.stderr.txt"
+    },
+    {
+      "capability": "session.steering",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] steering::tests::object_receipts_preserve_metadata_for_complete_and_finish",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib steering::tests::object_receipts_preserve_metadata_for_complete_and_finish -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:38+08:00",
+      "finished_at": "2026-10-30T18:35:39+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-028-session.steering.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-028-session.steering.stderr.txt"
+    },
+    {
+      "capability": "compaction.summary",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:39+08:00",
+      "finished_at": "2026-10-30T18:35:39+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-029-compaction.summary.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-029-compaction.summary.stderr.txt"
+    },
+    {
+      "capability": "compaction.summary",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_compaction_process.py CompactionProcessTest.test_two_summaries_three_runs_and_new_process_reopens_released_session",
+      "command": "python -m unittest -v test_compaction_process.CompactionProcessTest.test_two_summaries_three_runs_and_new_process_reopens_released_session",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:39+08:00",
+      "finished_at": "2026-10-30T18:35:56+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-030-compaction.summary.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-030-compaction.summary.stderr.txt"
+    },
+    {
+      "capability": "compaction.budget",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [summary_reservation] summary_needed_with_no_call_left_is_a_summary_budget_stop",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test summary_reservation summary_needed_with_no_call_left_is_a_summary_budget_stop -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:56+08:00",
+      "finished_at": "2026-10-30T18:35:57+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-031-compaction.budget.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-031-compaction.budget.stderr.txt"
+    },
+    {
+      "capability": "compaction.budget",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [summary_budget] task_budget_exhausted_before_summary_is_a_typed_budget_stop",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test summary_budget task_budget_exhausted_before_summary_is_a_typed_budget_stop -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:58+08:00",
+      "finished_at": "2026-10-30T18:35:59+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-032-compaction.budget.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-032-compaction.budget.stderr.txt"
+    },
+    {
+      "capability": "compaction.budget",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [long_compact_examples] summary_and_agent_reservations_sum_to_the_task_total",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test long_compact_examples summary_and_agent_reservations_sum_to_the_task_total -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:35:59+08:00",
+      "finished_at": "2026-10-30T18:36:39+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-033-compaction.budget.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-033-compaction.budget.stderr.txt"
+    },
+    {
+      "capability": "compaction.budget",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [long_compact_examples] a_context_window_cap_reaches_the_model_host_and_the_record",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test long_compact_examples a_context_window_cap_reaches_the_model_host_and_the_record -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:39+08:00",
+      "finished_at": "2026-10-30T18:36:42+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-034-compaction.budget.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-034-compaction.budget.stderr.txt"
+    },
+    {
+      "capability": "compaction.budget",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [long_compact_examples] a_zero_context_window_cap_starts_nothing",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test long_compact_examples a_zero_context_window_cap_starts_nothing -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:42+08:00",
+      "finished_at": "2026-10-30T18:36:42+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-035-compaction.budget.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-035-compaction.budget.stderr.txt"
+    },
+    {
+      "capability": "compaction.refresh",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [compaction_refresh] refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test compaction_refresh refresh_follows_the_summary_with_current_disk_and_session_plan_state -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:42+08:00",
+      "finished_at": "2026-10-30T18:36:43+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-036-compaction.refresh.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-036-compaction.refresh.stderr.txt"
+    },
+    {
+      "capability": "compaction.refresh",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [compaction_refresh] without_the_policy_no_refresh_message_or_event_appears",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test compaction_refresh without_the_policy_no_refresh_message_or_event_appears -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:43+08:00",
+      "finished_at": "2026-10-30T18:36:44+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-037-compaction.refresh.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-037-compaction.refresh.stderr.txt"
+    },
+    {
+      "capability": "goal.mode",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] execution::tests::goal_review_is_explicit_and_bounded",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib execution::tests::goal_review_is_explicit_and_bounded -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:44+08:00",
+      "finished_at": "2026-10-30T18:36:45+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-038-goal.mode.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-038-goal.mode.stderr.txt"
+    },
+    {
+      "capability": "goal.completion-gate",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [run_policies] failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test run_policies failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:45+08:00",
+      "finished_at": "2026-10-30T18:36:46+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-039-goal.completion-gate.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-039-goal.completion-gate.stderr.txt"
+    },
+    {
+      "capability": "goal.completion-gate",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [completion_gate] gate_runs_once_per_ordinary_stop_and_continues_only_within_budget",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test completion_gate gate_runs_once_per_ordinary_stop_and_continues_only_within_budget -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:36:46+08:00",
+      "finished_at": "2026-10-30T18:37:28+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-040-goal.completion-gate.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-040-goal.completion-gate.stderr.txt"
+    },
+    {
+      "capability": "goal.completion-gate",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [completion_gate_golden] without_a_gate_the_run_matches_the_golden",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test completion_gate_golden without_a_gate_the_run_matches_the_golden -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:28+08:00",
+      "finished_at": "2026-10-30T18:37:29+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-041-goal.completion-gate.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-041-goal.completion-gate.stderr.txt"
+    },
+    {
+      "capability": "goal.completion-gate",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [completion_gate_accept] a_passed_gate_never_accepts_the_task",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test completion_gate_accept a_passed_gate_never_accepts_the_task -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:29+08:00",
+      "finished_at": "2026-10-30T18:37:30+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-042-goal.completion-gate.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-042-goal.completion-gate.stderr.txt"
+    },
+    {
+      "capability": "goal.stuck",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [stuck] repeated_errors_hit_correct_then_stop_with_no_progress",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test stuck repeated_errors_hit_correct_then_stop_with_no_progress -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:30+08:00",
+      "finished_at": "2026-10-30T18:37:31+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-043-goal.stuck.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-043-goal.stuck.stderr.txt"
+    },
+    {
+      "capability": "goal.stuck",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [stuck] unconfigured_detector_emits_nothing_and_injects_nothing",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test stuck unconfigured_detector_emits_nothing_and_injects_nothing -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:31+08:00",
+      "finished_at": "2026-10-30T18:37:32+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-044-goal.stuck.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-044-goal.stuck.stderr.txt"
+    },
+    {
+      "capability": "harness.bounded-review",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [tasks] cumulative_budget_is_not_refilled_after_needs_changes",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test tasks cumulative_budget_is_not_refilled_after_needs_changes -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:32+08:00",
+      "finished_at": "2026-10-30T18:37:33+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-045-harness.bounded-review.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-045-harness.bounded-review.stderr.txt"
+    },
+    {
+      "capability": "harness.bounded-review",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [tasks] wrong_uncommitted_and_unknown_receipts_stop_without_second_run",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test tasks wrong_uncommitted_and_unknown_receipts_stop_without_second_run -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:33+08:00",
+      "finished_at": "2026-10-30T18:37:33+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-046-harness.bounded-review.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-046-harness.bounded-review.stderr.txt"
+    },
+    {
+      "capability": "harness.length",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [lib] agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --lib agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:33+08:00",
+      "finished_at": "2026-10-30T18:37:34+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-047-harness.length.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-047-harness.length.stderr.txt"
+    },
+    {
+      "capability": "harness.length",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [stop_review] closed_length_stop_is_reviewed_and_verified_without_a_new_run",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test stop_review closed_length_stop_is_reviewed_and_verified_without_a_new_run -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:34+08:00",
+      "finished_at": "2026-10-30T18:37:35+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-048-harness.length.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-048-harness.length.stderr.txt"
+    },
+    {
+      "capability": "harness.length",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [stop_review_flow] length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test stop_review_flow length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:35+08:00",
+      "finished_at": "2026-10-30T18:37:36+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-049-harness.length.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-049-harness.length.stderr.txt"
+    },
+    {
+      "capability": "harness.length",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [stop_review_flow] policy_off_keeps_pre_feature_stops_and_length_recovery_is_unchanged",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test stop_review_flow policy_off_keeps_pre_feature_stops_and_length_recovery_is_unchanged -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:36+08:00",
+      "finished_at": "2026-10-30T18:37:37+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-050-harness.length.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-050-harness.length.stderr.txt"
+    },
+    {
+      "capability": "harness.budget-snapshot",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [budget_snapshots] actual_file_can_be_verified_without_synthesizing_a_model_stop",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test budget_snapshots actual_file_can_be_verified_without_synthesizing_a_model_stop -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:37+08:00",
+      "finished_at": "2026-10-30T18:37:38+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-051-harness.budget-snapshot.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-051-harness.budget-snapshot.stderr.txt"
+    },
+    {
+      "capability": "harness.budget-snapshot",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [budget_snapshots] default_start_keeps_closed_budget_stop_out_of_ordinary_review",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test budget_snapshots default_start_keeps_closed_budget_stop_out_of_ordinary_review -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:38+08:00",
+      "finished_at": "2026-10-30T18:37:38+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-052-harness.budget-snapshot.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-052-harness.budget-snapshot.stderr.txt"
+    },
+    {
+      "capability": "harness.resume",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [resume] resume_checked_refuses_with_typed_reasons_before_any_callback",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test resume resume_checked_refuses_with_typed_reasons_before_any_callback -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:39+08:00",
+      "finished_at": "2026-10-30T18:37:39+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-053-harness.resume.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-053-harness.resume.stderr.txt"
+    },
+    {
+      "capability": "harness.resume",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [resume] out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test resume out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:39+08:00",
+      "finished_at": "2026-10-30T18:37:40+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-054-harness.resume.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-054-harness.resume.stderr.txt"
+    },
+    {
+      "capability": "harness.resume",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [long_trial_checks] a_complete_trial_passes_with_every_event_counted",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test long_trial_checks a_complete_trial_passes_with_every_event_counted -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:40+08:00",
+      "finished_at": "2026-10-30T18:37:47+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-055-harness.resume.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-055-harness.resume.stderr.txt"
+    },
+    {
+      "capability": "harness.unknown-effect-records",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [unknown_effect_list] records_are_unique_ordered_and_locatable",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test unknown_effect_list records_are_unique_ordered_and_locatable -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:37:47+08:00",
+      "finished_at": "2026-10-30T18:38:52+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-056-harness.unknown-effect-records.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-056-harness.unknown-effect-records.stderr.txt"
+    },
+    {
+      "capability": "harness.unknown-effect-records",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [unknown_effects_examples] builtin_exec_timeout_is_unknown_through_structured_status_only",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test unknown_effects_examples builtin_exec_timeout_is_unknown_through_structured_status_only -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:38:52+08:00",
+      "finished_at": "2026-10-30T18:38:55+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-057-harness.unknown-effect-records.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-057-harness.unknown-effect-records.stderr.txt"
+    },
+    {
+      "capability": "harness.output-limit",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [output_limit_wire] provider_receives_the_recorded_effective_limit",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test output_limit_wire provider_receives_the_recorded_effective_limit -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:38:55+08:00",
+      "finished_at": "2026-10-30T18:39:16+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-058-harness.output-limit.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-058-harness.output-limit.stderr.txt"
+    },
+    {
+      "capability": "harness.output-limit",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [output_limit_zero] zero_host_ceiling_is_refused_before_any_http_request",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test output_limit_zero zero_host_ceiling_is_refused_before_any_http_request -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:16+08:00",
+      "finished_at": "2026-10-30T18:39:17+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-059-harness.output-limit.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-059-harness.output-limit.stderr.txt"
+    },
+    {
+      "capability": "harness.stable-api",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [stability_surface] stable_items_are_usable_through_public_paths",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test stability_surface stable_items_are_usable_through_public_paths -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:17+08:00",
+      "finished_at": "2026-10-30T18:39:18+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-060-harness.stable-api.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-060-harness.stable-api.stderr.txt"
+    },
+    {
+      "capability": "harness.stable-api",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-harness/Cargo.toml [stability_surface] stable_harness_items_are_usable_through_public_paths",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-harness/Cargo.toml --test stability_surface stable_harness_items_are_usable_through_public_paths -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:18+08:00",
+      "finished_at": "2026-10-30T18:39:18+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-061-harness.stable-api.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-061-harness.stable-api.stderr.txt"
+    },
+    {
+      "capability": "harness.stable-api",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [consumer_scan_props] scan_reports_exactly_the_non_stable_references",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test consumer_scan_props scan_reports_exactly_the_non_stable_references -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:19+08:00",
+      "finished_at": "2026-10-30T18:39:24+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-062-harness.stable-api.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-062-harness.stable-api.stderr.txt"
+    },
+    {
+      "capability": "harness.dependency-direction",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [dependency_direction] real_lite_workspaces_follow_the_dependency_direction",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test dependency_direction real_lite_workspaces_follow_the_dependency_direction -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:24+08:00",
+      "finished_at": "2026-10-30T18:39:31+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-063-harness.dependency-direction.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-063-harness.dependency-direction.stderr.txt"
+    },
+    {
+      "capability": "harness.dependency-direction",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [dependency_direction] checks_report_exactly_reachable_violations_with_real_chains",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test dependency_direction checks_report_exactly_reachable_violations_with_real_chains -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:31+08:00",
+      "finished_at": "2026-10-30T18:39:31+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-064-harness.dependency-direction.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-064-harness.dependency-direction.stderr.txt"
+    },
+    {
+      "capability": "harness.delivery-gate",
+      "runner": "cargo",
+      "test": "tools/lite-eval/Cargo.toml [gate_props] gate_passes_iff_every_command_and_every_matrix_test_passes",
+      "command": "cargo test --manifest-path tools/lite-eval/Cargo.toml --test gate_props gate_passes_iff_every_command_and_every_matrix_test_passes -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:31+08:00",
+      "finished_at": "2026-10-30T18:39:47+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-065-harness.delivery-gate.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-065-harness.delivery-gate.stderr.txt"
+    },
+    {
+      "capability": "jsonl.sidecar",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_process.py NativeProcessTest.test_python_real_file_feedback_and_same_task_budget",
+      "command": "python -m unittest -v test_process.NativeProcessTest.test_python_real_file_feedback_and_same_task_budget",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:47+08:00",
+      "finished_at": "2026-10-30T18:39:53+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-066-jsonl.sidecar.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-066-jsonl.sidecar.stderr.txt"
+    },
+    {
+      "capability": "jsonl.sidecar",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_process.py NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget",
+      "command": "python -m unittest -v test_process.NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:39:54+08:00",
+      "finished_at": "2026-10-30T18:40:00+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-067-jsonl.sidecar.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-067-jsonl.sidecar.stderr.txt"
+    },
+    {
+      "capability": "jsonl.sidecar",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_process.py NativeProcessTest.test_catalog_capped_lowers_the_declared_window_below_the_catalog_value",
+      "command": "python -m unittest -v test_process.NativeProcessTest.test_catalog_capped_lowers_the_declared_window_below_the_catalog_value",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:00+08:00",
+      "finished_at": "2026-10-30T18:40:04+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-068-jsonl.sidecar.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-068-jsonl.sidecar.stderr.txt"
+    },
+    {
+      "capability": "jsonl.sidecar",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_process.py NativeProcessTest.test_catalog_capped_out_of_range_is_refused_before_any_request",
+      "command": "python -m unittest -v test_process.NativeProcessTest.test_catalog_capped_out_of_range_is_refused_before_any_request",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:04+08:00",
+      "finished_at": "2026-10-30T18:40:06+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-069-jsonl.sidecar.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-069-jsonl.sidecar.stderr.txt"
+    },
+    {
+      "capability": "jsonl.resume",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_jsonl_resume.py JsonlResumeTest.test_valid_resume_settles_once_and_continues_in_the_original_task",
+      "command": "python -m unittest -v test_jsonl_resume.JsonlResumeTest.test_valid_resume_settles_once_and_continues_in_the_original_task",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:06+08:00",
+      "finished_at": "2026-10-30T18:40:08+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-070-jsonl.resume.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-070-jsonl.resume.stderr.txt"
+    },
+    {
+      "capability": "jsonl.resume",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_protocol_doc_examples.py ProtocolDocExamplesTest.test_successful_resume_sequence",
+      "command": "python -m unittest -v test_protocol_doc_examples.ProtocolDocExamplesTest.test_successful_resume_sequence",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:08+08:00",
+      "finished_at": "2026-10-30T18:40:10+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-071-jsonl.resume.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-071-jsonl.resume.stderr.txt"
+    },
+    {
+      "capability": "jsonl.stop-review",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_length_stop_review.py LengthStopReviewTest.test_needs_changes_continues_in_the_same_session_then_verifies",
+      "command": "python -m unittest -v test_length_stop_review.LengthStopReviewTest.test_needs_changes_continues_in_the_same_session_then_verifies",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:10+08:00",
+      "finished_at": "2026-10-30T18:40:12+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-072-jsonl.stop-review.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-072-jsonl.stop-review.stderr.txt"
+    },
+    {
+      "capability": "jsonl.stop-review",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_length_stop_review.py LengthStopReviewTest.test_default_policy_sends_no_stop_frames",
+      "command": "python -m unittest -v test_length_stop_review.LengthStopReviewTest.test_default_policy_sends_no_stop_frames",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:12+08:00",
+      "finished_at": "2026-10-30T18:40:14+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-073-jsonl.stop-review.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-073-jsonl.stop-review.stderr.txt"
+    },
+    {
+      "capability": "jsonl.unknown-effects",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_jsonl_unknown.py JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence",
+      "command": "python -m unittest -v test_jsonl_unknown.JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:14+08:00",
+      "finished_at": "2026-10-30T18:40:17+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-074-jsonl.unknown-effects.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-074-jsonl.unknown-effects.stderr.txt"
+    },
+    {
+      "capability": "jsonl.mcp",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_mcp_servers.py McpServersTest.test_connected_tools_join_the_task_and_status_is_reported",
+      "command": "python -m unittest -v test_mcp_servers.McpServersTest.test_connected_tools_join_the_task_and_status_is_reported",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:17+08:00",
+      "finished_at": "2026-10-30T18:40:20+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-075-jsonl.mcp.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-075-jsonl.mcp.stderr.txt"
+    },
+    {
+      "capability": "jsonl.mcp",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_mcp_servers.py McpServersTest.test_without_the_field_frames_and_tools_are_unchanged",
+      "command": "python -m unittest -v test_mcp_servers.McpServersTest.test_without_the_field_frames_and_tools_are_unchanged",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:20+08:00",
+      "finished_at": "2026-10-30T18:40:22+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-076-jsonl.mcp.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-076-jsonl.mcp.stderr.txt"
+    },
+    {
+      "capability": "jsonl.bytes",
+      "runner": "python",
+      "test": "crates/ara-agent-lite-jsonl/tests/test_byte_roundtrip.py ByteRoundTripTest.test_sample_round_trips_through_real_python_and_node_client_processes",
+      "command": "python -m unittest -v test_byte_roundtrip.ByteRoundTripTest.test_sample_round_trips_through_real_python_and_node_client_processes",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:22+08:00",
+      "finished_at": "2026-10-30T18:40:27+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-077-jsonl.bytes.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-077-jsonl.bytes.stderr.txt"
+    },
+    {
+      "capability": "jsonl.bytes",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [byte_roundtrip] dr_p3_1_tool_io_leg_preserves_sample",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test byte_roundtrip dr_p3_1_tool_io_leg_preserves_sample -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:27+08:00",
+      "finished_at": "2026-10-30T18:40:29+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-078-jsonl.bytes.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-078-jsonl.bytes.stderr.txt"
+    },
+    {
+      "capability": "events.typed",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [event_enum] every_sample_line_round_trips_through_its_named_variant",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test event_enum every_sample_line_round_trips_through_its_named_variant -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:29+08:00",
+      "finished_at": "2026-10-30T18:40:30+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-079-events.typed.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-079-events.typed.stderr.txt"
+    },
+    {
+      "capability": "events.typed",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [event_enum_errors] missing_required_field_is_rejected",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test event_enum_errors missing_required_field_is_rejected -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:30+08:00",
+      "finished_at": "2026-10-30T18:40:32+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-080-events.typed.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-080-events.typed.stderr.txt"
+    },
+    {
+      "capability": "events.versioned-json",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [event_enum] an_unknown_type_keeps_the_complete_original_json",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test event_enum an_unknown_type_keeps_the_complete_original_json -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:32+08:00",
+      "finished_at": "2026-10-30T18:40:33+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-081-events.versioned-json.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-081-events.versioned-json.stderr.txt"
+    },
+    {
+      "capability": "events.versioned-json",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [event_compat] value_execute_matches_the_golden_event_shapes",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test event_compat value_execute_matches_the_golden_event_shapes -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:33+08:00",
+      "finished_at": "2026-10-30T18:40:44+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-082-events.versioned-json.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-082-events.versioned-json.stderr.txt"
+    },
+    {
+      "capability": "events.policy-events",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [event_compat] every_event_type_has_samples_and_a_named_variant",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test event_compat every_event_type_has_samples_and_a_named_variant -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:44+08:00",
+      "finished_at": "2026-10-30T18:40:45+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-083-events.policy-events.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-083-events.policy-events.stderr.txt"
+    },
+    {
+      "capability": "events.policy-events",
+      "runner": "cargo",
+      "test": "crates/ara-agent-lite-core/Cargo.toml [output_limit_wire] provider_receives_the_recorded_effective_limit",
+      "command": "cargo test --manifest-path crates/ara-agent-lite-core/Cargo.toml --test output_limit_wire provider_receives_the_recorded_effective_limit -- --exact",
+      "exit_code": 0,
+      "counts": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "outcome": "passed",
+      "started_at": "2026-10-30T18:40:45+08:00",
+      "finished_at": "2026-10-30T18:41:14+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-084-events.policy-events.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\matrix\\matrix-084-events.policy-events.stderr.txt"
+    }
+  ]
+}

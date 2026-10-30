@@ -1,0 +1,237 @@
+{
+  "schema": "headroom-approved-policy-independent-review-v1",
+  "reviewer": {
+    "canonical_task_id": "/root/lite_oracle_review",
+    "tool": "Codex collaboration agent",
+    "skills": [
+      ".ara/skills/ara-git-review/SKILL.md"
+    ],
+    "rust_review": "not applicable: policy and decision documentation only"
+  },
+  "created_at": "2026-10-30T20:24:44+08:00",
+  "base_head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+  "authorization": "Parent supplied the current explicit user approval for all three items, including advisory-ID scope across all matching paste versions and the existing Full graph. This supersedes the earlier pending-candidate state; it does not grant approval for any other exception.",
+  "scope": "Exactly root deny.toml additions and complete dependency-policy-20261030.md. Existing historical review gaps are unchanged.",
+  "reviewed_files": [
+    {
+      "path": "deny.toml",
+      "sha256": "b14368d2baec9d53ea187cea02f0c501943f8956fd345ff22da5a10337efd9f5",
+      "scope": "all changed root-policy hunks"
+    },
+    {
+      "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/headroom/dependency-policy-20261030.md",
+      "sha256": "04bee6a6eaedbbd9f6055c788f432cddd07ac8f42511e3264ae9785b4b837afe",
+      "scope": "complete decision document"
+    }
+  ],
+  "scoped_diff_sha256": "3a98793c02e0e96654aa8bf66f086092bb8208440d0aee0cfa897bf44dc62808",
+  "diff_rule": "Raw tracked Git diff with binary/no-textconv/no-ext-diff flags, followed by sorted /dev/null diffs for new scope files.",
+  "checks_executed": [
+    "Compared TOML semantics with HEAD: after removing exactly the approved advisory ignore and two leading exact license exceptions, every other value is identical.",
+    "Confirmed reason says user-approved and acknowledges shared root/Full/all-matching-version scope; no version-scoped advisory exception is claimed.",
+    "Read complete decision document: MPL source-access/notice duties, CDLA agreement-text duties, fixed upstream, no other advisory waiver, and H0-only audit scope are stated.",
+    "Read the actual approved-policy audit and raw JSONL summaries; policy hash matches reviewed policy, exit0 and four categories have zero errors.",
+    "Rehashed all six audit-protected inputs. Of twelve selected historical evidence inputs, eleven match and the original cached executable is missing; no current executable hash match is claimed."
+  ],
+  "policy_semantics": {
+    "only_authorized_changes": true,
+    "license_grants": [
+      {
+        "name": "option-ext",
+        "version": "=0.2.0",
+        "allow": [
+          "MPL-2.0"
+        ]
+      },
+      {
+        "name": "webpki-roots",
+        "version": "=1.0.11",
+        "allow": [
+          "CDLA-Permissive-2.0"
+        ]
+      }
+    ],
+    "advisory_ignore": [
+      {
+        "id": "RUSTSEC-2024-0436",
+        "reason": "User approved the root advisory-ID exception on 2026-10-30 after evaluating fixed Headroom 17d38e5 and paste 1.0.15. This advisory reports unmaintained status, with no patched version. cargo-deny cannot version-scope this ignore; the approved scope includes other matching versions and the existing Full graph. Re-review when the dependency lock or integration route changes."
+      }
+    ],
+    "global_license_allowlist_changed": false,
+    "graph_bans_sources_or_existing_exceptions_changed": false
+  },
+  "actual_audit": {
+    "record": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\headroom\\approved-policy-audit-20261030.json",
+    "record_sha256": "dea4c8b09a7ad690d404ef136ad699936f53c2a2cbb93e04df48a248bb6b1b1a",
+    "policy_sha256": "b14368d2baec9d53ea187cea02f0c501943f8956fd345ff22da5a10337efd9f5",
+    "exit": 0,
+    "wall_seconds": 25.099076200000127,
+    "summaries": [
+      {
+        "advisories": {
+          "errors": 0,
+          "helps": 0,
+          "notes": 2,
+          "warnings": 0
+        },
+        "bans": {
+          "errors": 0,
+          "helps": 0,
+          "notes": 0,
+          "warnings": 5
+        },
+        "licenses": {
+          "errors": 0,
+          "helps": 229,
+          "notes": 0,
+          "warnings": 4
+        },
+        "sources": {
+          "errors": 0,
+          "helps": 0,
+          "notes": 0,
+          "warnings": 0
+        }
+      }
+    ],
+    "raw_error_diagnostics": [],
+    "stdout": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\headroom-approved-policy.stdout.jsonl",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\headroom-approved-policy.stderr.jsonl",
+    "stderr_sha256": "b7cc104824a21736b651c3e8370b3da0708aff5bb0053bf5685ab11e58ecf59f",
+    "protected_input_hash_checks": [
+      {
+        "path": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\deny.toml",
+        "recorded_sha256": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+        "current_sha256": "a2c289313753bfdc8b6a6ce194ceb14ab73ba644a4252d991ba1d07e39baf033",
+        "matches": true
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.toml",
+        "recorded_sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+        "current_sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+        "matches": true
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.lock",
+        "recorded_sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+        "current_sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+        "matches": true
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\metadata.json",
+        "recorded_sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+        "current_sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+        "matches": true
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\Cargo.toml",
+        "recorded_sha256": "e0153dfb59347cb2ade36fe8ec2cafa6bf1672270f8864032a201a5b680b553c",
+        "current_sha256": "e0153dfb59347cb2ade36fe8ec2cafa6bf1672270f8864032a201a5b680b553c",
+        "matches": true
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\crates\\headroom-core\\Cargo.toml",
+        "recorded_sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+        "current_sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+        "matches": true
+      }
+    ],
+    "scope_limit": "Fixed Headroom H0 dependency graph only; no Full full-graph audit or formal Lite adapter acceptance."
+  },
+  "h0_historical_evidence_reuse": {
+    "original_record": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\headroom\\record.json",
+    "original_record_sha256": "fd60ce64824ae74421b676da557d0d53bc327ca7c8042b2adf01ded17a2c30a5",
+    "original_review": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\headroom\\review.json",
+    "original_review_sha256": "ffd5006b15a0f61d96073c27ff6323c405bd27a17438fb595471bbf940d87e34",
+    "original_source_verdict": "no remaining actionable H0 source finding",
+    "original_acceptance_verdict": "OPEN: dependency gate fails; LNK4098 warning retained; no Lite or real-model acceptance",
+    "inspected_inputs": [
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.toml",
+        "recorded_sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+        "current_sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.lock",
+        "recorded_sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+        "current_sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\src\\main.rs",
+        "recorded_sha256": "1ffed257650b0ca599098fd8780af695353be9677b870ffdab2baf15a0a2554d",
+        "current_sha256": "1ffed257650b0ca599098fd8780af695353be9677b870ffdab2baf15a0a2554d",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\tests\\process.rs",
+        "recorded_sha256": "5e32ab1af9b5fe41e403c5a955119047ae73ec499134ea4c70e82e2a50b7fcd1",
+        "current_sha256": "5e32ab1af9b5fe41e403c5a955119047ae73ec499134ea4c70e82e2a50b7fcd1",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\LICENSE",
+        "recorded_sha256": "50b9e890f4afb0a500696cdb6cde3dae08468225a1699317d23e81a1e2703a46",
+        "current_sha256": "50b9e890f4afb0a500696cdb6cde3dae08468225a1699317d23e81a1e2703a46",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\upstream\\crates\\headroom-core\\Cargo.toml",
+        "recorded_sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+        "current_sha256": "0c73043a99322c39b1f6c8ce5d2f192594af6c1994450d624b5532a56254cc51",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\metadata.json",
+        "recorded_sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+        "current_sha256": "26ea312f77e786a43a23440a3e3581e0563a9d9623b0e9b49968bfe2b704fc7f",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\run-v2\\results.json",
+        "recorded_sha256": "fe99d8dc4db0ae9581c51c7233dfe1301c0577e22e29996e3e7940582d06bc81",
+        "current_sha256": "fe99d8dc4db0ae9581c51c7233dfe1301c0577e22e29996e3e7940582d06bc81",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stdout.log",
+        "recorded_sha256": "d8ac812a715f3e84cf55447e72314f1df575fade45ab4d3360d74e05c2d88a73",
+        "current_sha256": "d8ac812a715f3e84cf55447e72314f1df575fade45ab4d3360d74e05c2d88a73",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stderr.log",
+        "recorded_sha256": "79ef73cb24e86a50b360675f8a4508457841a5c7e3e160c5724965131212e10b",
+        "current_sha256": "79ef73cb24e86a50b360675f8a4508457841a5c7e3e160c5724965131212e10b",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\clippy-final.stderr.log",
+        "recorded_sha256": "b602b08d43578fb2ca68ed799a57aefdf88e13e899c58a5ca280eaa9dcd2acfe",
+        "current_sha256": "b602b08d43578fb2ca68ed799a57aefdf88e13e899c58a5ca280eaa9dcd2acfe",
+        "state": "matched"
+      },
+      {
+        "path": "D:\\workspace\\env\\cache\\rust-target-headroom-h0\\debug\\ara-headroom-h0.exe",
+        "recorded_sha256": "e9b23863c6c03d37faedef85554871f38583db4744decaa4cfbf973035a00d5d",
+        "current_sha256": null,
+        "state": "missing"
+      }
+    ],
+    "matched_count": 11,
+    "missing_count": 1,
+    "assessment": "The recorded original source, manifest, lock, metadata and passing behavior/test/clippy evidence hashes match. Original cached executable ara-headroom-h0.exe is absent, so only its historical recorded hash exists; no rebuilt or currently available binary is accepted by this review. Historical execution receipts are retained as evidence, not relabelled as a new run.",
+    "closeout_recommendation": "M-H0-HEADROOM done6/6, not verified, is appropriate only as closure of the bounded feasibility record using explicitly historical execution evidence plus the new actual policy audit. Keep the missing cached executable, unresolved LNK4098 cause and other non-H0 acceptance gaps visible. Requirement39.2 originally limited repository changes to evidence indexing; record that explicit user approval extended scope to root policy. Do not state literal zero deviation or current-binary hash equality. Formal task64 remains blocked on the original task55 prerequisite.",
+    "parent_acknowledgement": "Parent explicitly agreed to remove current-binary hash equality, retain the cache-missing limitation, and reuse historical execution receipts without rebuilding or claiming a newly delivered binary."
+  },
+  "findings": [],
+  "conclusion": "No actionable defect in the approved two-file policy change. It implements exactly the authorized three exceptions and documents different license obligations and the wider advisory-ID scope. The actual root-policy audit passes only the fixed H0 graph, with nine retained warnings. The missing historical executable is an explicit evidence limit, not concealed as a passing current-binary check.",
+  "not_covered": [
+    "Reviewer did not run Cargo, rerun audit or modify project files.",
+    "No full Full dependency-graph audit, production/release distribution-compliance inspection, or P2-f implementation acceptance.",
+    "No renewed Rust-source review beyond hash-bound reuse of earlier H0 source review; the original cache executable is unavailable.",
+    "Historical independent-review gaps and other task61 failures remain unresolved by this review."
+  ]
+}

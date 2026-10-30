@@ -165,7 +165,7 @@ fn step() -> impl Strategy<Value = Step> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn gate_runs_once_per_ordinary_stop_and_continues_only_within_budget(

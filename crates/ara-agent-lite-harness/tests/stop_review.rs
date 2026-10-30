@@ -345,7 +345,7 @@ mod property_22 {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(32))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn stop_review_follows_the_decision_table(case in case()) {

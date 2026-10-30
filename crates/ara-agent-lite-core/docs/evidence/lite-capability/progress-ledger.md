@@ -1,14 +1,14 @@
 # 进度台账摘要
 
-由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 47 条记录。
+由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 62 条记录。
 
 - 总进度：verified 检查点 0/36
-- 模块状态：verified 0，done 37，open 2，未开始 4
+- 模块状态：verified 0，done 39，open 3，未开始 1
 
 | 模块 | 阶段 | 需求 | 状态 | 完成标准 | 更新时间 | 证据 | 未覆盖 |
 |---|---|---|---|---|---|---|---|
 | M-P0-TASKSET | P0 | 1 固定评估任务集 | done | 4/7 | 2026-10-29T15:11:56+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/M-P0-TASKSET-local-20261029T150951.json | SH1 登记见任务 10；6 项完整校验见任务 11.4；1.4 逐任务 fixture SHA 复核与 1.5 Manifest 逐项记录见任务 13；完整 11 命令门禁见任务 61 |
-| M-P0-HOLDOUT | P0 | 2 新增密封 C++ holdout 任务 | open | 7/8 | 2026-10-29T21:47:11+08:00 | tools/lite-eval/tests/isolation_props.rs | 10.6 file symlink case fails: no SeCreateSymbolicLinkPrivilege, Developer Mode off (os error 1314) |
+| M-P0-HOLDOUT | P0 | 2 新增密封 C++ holdout 任务 | open | 7/8 | 2026-10-30T19:30:14+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/final-round-20261030-codex.json | 2项文件symlink测试实际WinError1314；用户明确保留权限阻断，本轮不更改系统设置、不跳过测试或修改断言。 |
 | M-P0-RUNNER | P0 | 3 一键评估运行器与固定运行策略 | done | 8/8 | 2026-10-30T16:03:22+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-RUNNER.json | 偏差：DR-P0-3 已解除阻断（CAS 直连，tasks.md 阶段 7：真实探测 1 次，HTTP 200，761 ms，回显 deepsee… / Run_Policy 增加 model.accepted_echo 字段，DR-P0-3 尚未补记；Task_Set 无 objective… / S1/S2/S3/R1/H2 没有登记 public 检查，verify 返回 Verified 并记 none_registered，只由…；详见 closeouts/M-P0-RUNNER.json |
 | M-P0-METRICS | P0 | 4 结果度量与未知值记录 | done | 8/8 | 2026-10-30T16:03:23+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-METRICS.json | 偏差：需求 4 的验证方式含“有界真实模型试验”，指标在真实 provider 上的表现由 B0 基线运行（M-P0-BASELINE）验证，本次…；详见 closeouts/M-P0-METRICS.json |
 | M-P0-FAILURE | P0 | 5 失败记录与分类 | done | 7/7 | 2026-10-30T16:03:23+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-FAILURE.json | 详见 closeouts/M-P0-FAILURE.json |
@@ -35,26 +35,25 @@
 | M-P3-BYTES | P3 | 26 NUL 与 Unicode 字节保留 | done | 4/6 | 2026-10-30T16:03:31+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-BYTES.json | 26.5 条件不适用：DR-P3-1 结论为“模型补丁”，不是工具 I/O 或 JSONL 传输；“修复前失败、修复后通过”无法演示（dr_p3_1_tool_io_leg_preserves_sample 仅证明出口为 17 字节）；26.6 条件不适用：DR-P3-1 结论不是“未复现”；偏差：准则 26.5、26.6 为条件分支，结论为模型补丁，故按未覆盖计、不按“空真”计入。；详见 closeouts/M-P3-BYTES.json |
 | M-P4-DEPS | P4 | 27 职责边界与依赖方向 | done | 6/6 | 2026-10-30T16:03:32+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-DEPS.json | 偏差：host-contracts.md 第 21–78 行仍写“任务 34.2 的 Dependency_Check_Test 尚未实现”，该测…；详见 closeouts/M-P4-DEPS.json |
 | M-P4-EVENTS | P4 | 28 版本化类型事件枚举 | done | 6/7 | 2026-10-30T16:03:40+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-EVENTS.json | 28.7 DR-P4-1 偏差待用户确认：现有 execute 的 model_result 与同一轮 text_delta 由两个任务发出，相对顺序每次运行可能不同；event_compat 把 model_result 移到相邻 text_delta 段之前再比对，其余顺序严格比对。若要求严格顺序，需改 Core 事件发送。“顺序一致”仅在此放宽下成立，故不计入；偏差：DR-P4-1 事件顺序放宽（model_result 与 text_delta）尚待用户接受。 / event_samples::capture_events_v1 为 #[ignore]（样本采集入口，故意不在常规测试中重采）。；详见 closeouts/M-P4-EVENTS.json |
-| M-P4-STABILITY | P4 | 29 公共接口稳定性规则 | done | 5/5 | 2026-10-30T16:03:33+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-STABILITY.json | 偏差：29.5 的证据是历史运行记录，不是本次运行；稳定项集合在 57.1 之后扩大，演示未在新集合上重跑。；详见 closeouts/M-P4-STABILITY.json |
-| M-P4-MATRIX | P4 | 30 Full/Lite 支持矩阵 | done | 4/5 | 2026-10-30T16:03:34+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-MATRIX.json | 30.4 `lite-eval gate --matrix`（按提交标识逐项执行并记录执行数量）未运行，留到任务 61；本次仅用日志做了交叉核对；偏差：新增测试文件尚未登记进 support-matrix.json（tasks.md 阶段 10：任务 61 前补）；支持矩阵 JSON 当前引…；详见 closeouts/M-P4-MATRIX.json |
-| M-P4-CONSUMER | P4 | 31 树外消费者 crate | 未开始 | 0/7 | — | — | — |
-| M-P5-REVIEW | P5 | 32 模块独立审查 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
-| M-P5-QUALITY | P5 | 33 交付代码质量门 | done | 4/4 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
-| M-P5-DENY | P5 | 34 依赖审计现状记录 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
-| M-P5-LONG | P5 | 35 长任务综合可靠性验收 | open | 4/6 | 2026-10-30T16:33:19+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P5-LONG.json | 35.1, 35.2: compaction, 2 Host review continuations, 1 length continuation and a resume did not occur in two real trials |
-| M-P5-STAGE | P5 | 36 证据保留与阶段验收记录 | done | 7/7 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
+| M-P4-STABILITY | P4 | 29 公共接口稳定性规则 | done | 5/5 | 2026-10-30T19:30:12+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/M-P5-QUALITY-stability-demo-1ac911a5-20261030T095856Z.json | 当前稳定接口集合已演示：原样编译通过；移除model_host公开字段后编译失败且命名匹配。后续仅runner测试计数联动修改；完整门禁未通过。 |
+| M-P4-MATRIX | P4 | 30 Full/Lite 支持矩阵 | done | 5/5 | 2026-10-30T19:30:11+08:00 | E:\repos\ara-github\crates\ara-agent-lite-core\docs\evidence\lite-capability\gates\M-P5-QUALITY-matrix-1ac911a5-20261030T095856Z.json | 支持矩阵84/84引用已逐项执行通过，四条上下文窗口引用已登记。完整质量门仍失败；不标verified。 |
+| M-P4-CONSUMER | P4 | 31 树外消费者 crate | done | 7/7 | 2026-10-30T17:09:59+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-CONSUMER-codex-20261030.json | S1一次真实模型试验：Host公开示例通过，Oracle hidden13/13；CAS别名身份未验证；全量门禁单独记录。 |
+| M-P5-REVIEW | P5 | 32 模块独立审查 | done | 5/5 | 2026-10-30T21:53:16+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/task61-repair-independent-20261030.json | 本次唯一新增代码为test_compaction_process.py；独立Codex及两项技能复审0剩余发现，两个中间计时方案已撤除。先前34文件与根策略审查记录保留，历史提交范围gap不抹去。 |
+| M-P5-QUALITY | P5 | 33 交付代码质量门 | done | 4/4 | 2026-10-30T21:53:16+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/task61-repair-20261030-codex.json | deadline夹具按实际契约修正，最终compaction6/6真实子进程通过；公网原用例1/1通过，未改搜索实现。原2项symlink1314按用户保留；最新差异未重跑整套门禁，任务61仍未通过、不标verified。原失败和两个撤回的计时方案均保留。 |
+| M-P5-DENY | P5 | 34 依赖审计现状记录 | done | 5/5 | 2026-10-30T19:30:13+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/deny/0a08ac7e-20261030T111246Z.json | 最终0a08ac7e审计known7/new0/not-executed0，新增依赖8项。无新增失败，不表示既有依赖问题清零；deny策略及Lite锁文件未改。 |
+| M-P5-LONG | P5 | 35 长任务综合可靠性验收 | open | 4/6 | 2026-10-30T17:10:01+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P5-LONG-mechanisms-codex-20261030.json | 用户方案A的受控实际进程机制全部通过：compact1、Host续写2、Length续写1、kill/resume1；当前driver/script/sidecar哈希一致。原两次真实长任务覆盖不足保留，未接受真实整体验收。 |
+| M-P5-STAGE | P5 | 36 证据保留与阶段验收记录 | done | 7/7 | 2026-10-30T21:53:18+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/stage-acceptance-P5.json | P4/P5四目标仍未整体验收；deadline与公网检查已补最新通过证据，原权限阻断与最新差异无完整门禁明确保留。台账revalidate执行，verified0。 |
 | M-X-LEDGER | 横向 | 37 进度台账 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-X-NOTIFY | 横向 | 38 钉钉进度通知 | done | 9/9 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
-| M-H0-HEADROOM | 横向 | 39 固定版本 Headroom Rust 可行性 | 未开始 | 0/6 | — | — | — |
-| M-P2F-COMPRESS | 横向 | 40 Lite 模型投影压缩与原文回读 | 未开始 | 0/10 | — | — | — |
+| M-H0-HEADROOM | 横向 | 39 固定版本 Headroom Rust 可行性 | done | 6/6 | 2026-10-30T20:25:18+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/headroom/closeout-20261030.json | 用户已批准并应用三项根策略例外；固定H0实际审计exit0/0errors/9warnings、25.099秒。复用原构建/6组行为/2进程收据，源码/锁/日志哈希匹配；当前缓存exe缺失，未重建复验。独立复审无策略发现。保留LNK4098原因未查，不代表Lite/P2-f/Full验收。 |
+| M-P2F-COMPRESS | 横向 | 40 Lite 模型投影压缩与原文回读 | open | 0/10 | 2026-10-30T20:25:19+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/headroom/closeout-20261030.json | 三项依赖例外已批准应用，H0收尾完成；正式适配未开始，规格64.1仍要求原55检查点完成。原55与61质量门未通过，现存失败保留，不绕过前置。 |
 | M-P2F-COMPARE | 横向 | 41 独立 A/B 与交付 | 未开始 | 0/6 | — | — | — |
-| M-MCP-CORE | 横向 | 42 Lite 的 MCP 工具来源 | done | 8/9 | 2026-10-30T16:03:41+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-MCP-CORE.json | 42.1 crate 隔离与 harness_mcp 证明了普通 AgentTool 接入，但“新增第三方依赖按需求 33 登记许可证并说明原因”需 61.1 的 lite-eval deny 才能核对，本次未运行；偏差：README 记录的设计偏差：未知字段严格报错（Claude Code 忽略）、Windows 子进程 spawn 后才加入 Job（极短逃…；详见 closeouts/M-MCP-CORE.json |
+| M-MCP-CORE | 横向 | 42 Lite 的 MCP 工具来源 | done | 8/9 | 2026-10-30T19:30:15+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/final-round-20261030-codex.json | 最终依赖审计new0，MCP fmt/clippy/test24项通过。42.1新增依赖逐项许可证与引入原因尚无完整归属记录，保守保留8/9；原README设计偏差和Node文档缺口保留。 |
 | M-MCP-JSONL | 横向 | 42 JSONL 暴露 MCP（42.9） | done | 1/1 | 2026-10-30T16:03:41+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-MCP-JSONL.json | 42.9 文档部分的缺口：clients/node/README.md 没有 MCP 说明（protocol-v1.md 第 171–184 行与 crate README.md 第 101、104 行有）；详见 closeouts/M-MCP-JSONL.json |
 
 ## 未解除的阻断
 
-- **M-P0-HOLDOUT**（seq 16）：file symlink privilege unavailable on this machine；需要的决定：run as administrator or enable Developer Mode, then rerun isolation_props
-  - 已尝试：std::os::windows::fs::symlink_file → os error 1314
-- **M-P5-LONG**（seq 47）：Two real long-trial runs on S3 ended coverage-insufficient: the model solves the task inside one Run, so no Host review continuation, no compaction, no length stop and no kill/resume happens；需要的决定：Choose how to get the events: (a) a Host review policy in the driver that demands extra repair rounds, (b) a harder or longer task with a public check, or (c) accept the coverage-insufficient result
-  - 已尝试：long-trial S3 window 98304 → Run 1 exceeded the 45 KiB projection after 7 calls, ReconciliationRequired
-  - 已尝试：long-trial S3 window 163840 → public check passed after 12 calls, then the Run exceeded 92 KiB, ReconciliationRequired
+- **M-P0-HOLDOUT**（seq 54）：Windows文件symlink权限仍不可用；用户已选择本轮保留阻断；需要的决定：用户已决定保留权限阻断，本轮收尾；后续具备权限时再执行，当前无需再次询问
+  - 已尝试：实际执行两项symlink测试 → WinError1314
+- **M-P2F-COMPRESS**（seq 59）：原55 P2-e阶段检查点未完成；需要的决定：无需再次批准依赖例外；先处理原检查点未通过项，再进入正式适配
+  - 已尝试：核对tasks.md的task_prerequisites与55状态 → 64.1前置55、63.5；55仍未勾，63.5本次完成

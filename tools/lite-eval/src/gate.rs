@@ -14,7 +14,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    common::{timestamp_now, write_json_new, write_output_new, Credentials},
+    common::{sha256_file, timestamp_now, write_json_new, write_output_new, Credentials},
     ledger::CodeVersion,
     records::{
         Count, CountLabel, GateCommand, GateCommandId, GateRecord, CARGO_TEST, CLIPPY, FMT, GATE_COMMANDS, NODE_TESTS,
@@ -41,6 +41,44 @@ pub trait CommandRunner {
 
 /// Real processes, waiting without a time limit (test suites can be long).
 pub struct SystemRunner;
+
+/// Bind every native Python suite to this build and fresh family-specific evidence.
+fn run_python(
+    runner: &dyn CommandRunner,
+    cwd: &Path,
+    args: &[String],
+    binary: &Path,
+    evidence: &Path,
+) -> CommandOutput {
+    let environment = (|| -> Result<Vec<(String, OsString)>> {
+        let binary = crate::workspace::canonical(binary)?;
+        let sha = sha256_file(&binary)?;
+        // Length tests create method directories; protocol tests create their own root.
+        fs::create_dir_all(evidence.join("length"))?;
+        let mut env = vec![("ARA_JSONL_TEST_BINARY".into(), binary.into_os_string())];
+        for key in
+            ["ARA_JSONL_BUDGET_BINARY_SHA256", "ARA_JSONL_GENERATION_BINARY_SHA256", "ARA_JSONL_EXPECTED_BINARY_SHA256"]
+        {
+            env.push((key.into(), OsString::from(&sha)));
+        }
+        env.push(("ARA_JSONL_TEST_EVIDENCE".into(), evidence.as_os_str().to_owned()));
+        for family in ["BUDGET", "GENERATION", "COMPACTION", "LENGTH", "PROTOCOL", "RELAY"] {
+            env.push((
+                format!("ARA_JSONL_{family}_EVIDENCE"),
+                evidence.join(family.to_ascii_lowercase()).into_os_string(),
+            ));
+        }
+        Ok(env)
+    })();
+    match environment {
+        Ok(env) => runner.run(cwd, "python", args, &env),
+        Err(error) => CommandOutput {
+            exit_code: None,
+            stdout: Vec::new(),
+            stderr: format!("cannot prepare Python test binding: {error:#}").into_bytes(),
+        },
+    }
+}
 
 impl CommandRunner for SystemRunner {
     fn run(&self, cwd: &Path, program: &str, args: &[String], env: &[(String, OsString)]) -> CommandOutput {
@@ -170,13 +208,7 @@ pub fn run_gate(plan: &GatePlan<'_>, runner: &dyn CommandRunner, credentials: &C
                 stdout: Vec::new(),
                 stderr: format!("not run: JSONL binary build failed: {build}").into_bytes(),
             },
-            (Ok(binary), true) => {
-                let env = vec![
-                    ("ARA_JSONL_TEST_BINARY".to_owned(), binary.clone().into_os_string()),
-                    ("ARA_JSONL_TEST_EVIDENCE".to_owned(), plan.python_evidence.clone().into_os_string()),
-                ];
-                runner.run(&plan.repo_root.join(&cwd), program, &args, &env)
-            }
+            (Ok(binary), true) => run_python(runner, &plan.repo_root.join(&cwd), &args, binary, &plan.python_evidence),
             (_, false) => runner.run(&plan.repo_root.join(&cwd), program, &args, &[]),
         };
         let finished_at = timestamp_now();
@@ -588,12 +620,7 @@ pub mod matrix {
                 },
                 (TestRef::Python { .. }, Ok(binary)) => {
                     let evidence = plan.python_evidence.join(format!("{:03}", index + 1));
-                    fs::create_dir_all(&evidence)?;
-                    let env = vec![
-                        ("ARA_JSONL_TEST_BINARY".to_owned(), binary.clone().into_os_string()),
-                        ("ARA_JSONL_TEST_EVIDENCE".to_owned(), evidence.into_os_string()),
-                    ];
-                    runner.run(&plan.repo_root.join(&cwd), program, &args, &env)
+                    super::run_python(runner, &plan.repo_root.join(&cwd), &args, binary, &evidence)
                 }
                 _ => runner.run(&plan.repo_root.join(&cwd), program, &args, &[]),
             };

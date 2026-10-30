@@ -7,6 +7,11 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# User-approved 2026-10-30; see the Headroom policy decision in
+# crates/ara-agent-lite-core/docs/evidence/lite-capability/headroom/dependency-policy-20261030.md.
+# cargo-deny scopes this ignore by advisory ID, including all matching versions
+# in the shared Full graph. This does not waive any other advisory.
+ignore = [{ id = "RUSTSEC-2024-0436", reason = "User approved the root advisory-ID exception on 2026-10-30 after evaluating fixed Headroom 17d38e5 and paste 1.0.15. This advisory reports unmaintained status, with no patched version. cargo-deny cannot version-scope this ignore; the approved scope includes other matching versions and the existing Full graph. Re-review when the dependency lock or integration route changes." }]
 
 [licenses]
 version = 2
@@ -30,6 +35,10 @@ allow = [
 
 # Fixed TUI static color parser dependencies; package/version-scoped MPL grants.
 exceptions = [
+  # Fixed Headroom H0 packages, user-approved 2026-10-30. Retain the MPL
+  # notices and covered-source access; include the CDLA text with shared data.
+  { name = "option-ext", version = "=0.2.0", allow = ["MPL-2.0"] },
+  { name = "webpki-roots", version = "=1.0.11", allow = ["CDLA-Permissive-2.0"] },
   { name = "cssparser", version = "=0.37.0", allow = ["MPL-2.0"] },
   { name = "cssparser-color", version = "=0.5.0", allow = ["MPL-2.0"] },
   # PDF/SVG resvg dependency; retain the complete notice in distributions.

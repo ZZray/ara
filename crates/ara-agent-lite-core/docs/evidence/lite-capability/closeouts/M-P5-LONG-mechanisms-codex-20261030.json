@@ -1,0 +1,60 @@
+{
+  "module": "M-P5-LONG",
+  "status": "open",
+  "criteria_done": 4,
+  "criteria_total": 6,
+  "user_decision": "A: add explicit Host review rounds and verify mechanisms using controlled upstream",
+  "verification": "controlled_process_mechanisms_only",
+  "mechanism_status": "passed",
+  "evidence": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+  "checker": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\trial\\long-trial.json",
+  "coverage": {
+    "compaction": 1,
+    "host_review_continuation": 2,
+    "length_continuation": 1,
+    "resume": 1
+  },
+  "checks": [
+    {
+      "name": "evidence_readable",
+      "status": "passed"
+    },
+    {
+      "name": "session_path",
+      "status": "passed"
+    },
+    {
+      "name": "journal_unchanged",
+      "status": "passed"
+    },
+    {
+      "name": "logical_calls",
+      "status": "passed"
+    },
+    {
+      "name": "authority_hash",
+      "status": "passed"
+    },
+    {
+      "name": "effects_unknown_receipts",
+      "status": "passed"
+    },
+    {
+      "name": "resume_accepted",
+      "status": "passed"
+    }
+  ],
+  "binary_matches": true,
+  "driver_matches": true,
+  "script_matches": true,
+  "host_review_policy": {
+    "extra_rounds": 2,
+    "deferred_reviews": 2,
+    "scope": "mechanism_trial"
+  },
+  "uncovered": [
+    "The two original real-model long-trial results remain coverage-insufficient.",
+    "Controlled mechanism results do not establish combined real-model long-task acceptance.",
+    "Default Host behavior is unchanged when host_review_rounds is zero."
+  ]
+}

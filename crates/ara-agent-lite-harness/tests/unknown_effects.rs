@@ -141,7 +141,7 @@ fn run_case(failed: bool, result_text: &str, details: Value) -> (Arc<TaskOutcome
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn unknown_iff_structured_details(failed in any::<bool>(), text in 0..TEXTS.len(), detail in 0..11usize) {

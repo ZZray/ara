@@ -1,0 +1,353 @@
+{
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "0a08ac7ebecfb987f7b03da1e720d0f5e791bfc5bb428cb4692c3adcd0ad29e0",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "checks": [
+    {
+      "manifest": "ara-agent-lite-core",
+      "check": "bans",
+      "status": "failed",
+      "exit_code": 2,
+      "failures": [
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-core",
+          "version": "0.1.1",
+          "rule_or_advisory_id": "wildcard"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:12:46+08:00",
+      "finished_at": "2026-10-30T19:12:48+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.bans.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.bans.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-core",
+      "check": "licenses",
+      "status": "failed",
+      "exit_code": 4,
+      "failures": [
+        {
+          "check": "licenses",
+          "crate": "webpki-roots",
+          "version": "1.0.10",
+          "rule_or_advisory_id": "rejected"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:12:48+08:00",
+      "finished_at": "2026-10-30T19:12:49+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.licenses.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.licenses.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-core",
+      "check": "sources",
+      "status": "failed",
+      "exit_code": 8,
+      "failures": [
+        {
+          "check": "sources",
+          "crate": "rpi-agent",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-ai",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-telemetry",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:12:49+08:00",
+      "finished_at": "2026-10-30T19:12:50+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.sources.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.sources.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-core",
+      "check": "advisories",
+      "status": "passed",
+      "exit_code": 0,
+      "failures": [],
+      "reason": null,
+      "started_at": "2026-10-30T19:12:50+08:00",
+      "finished_at": "2026-10-30T19:13:04+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.advisories.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-core.advisories.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-harness",
+      "check": "bans",
+      "status": "failed",
+      "exit_code": 2,
+      "failures": [
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-core",
+          "version": "0.1.1",
+          "rule_or_advisory_id": "wildcard"
+        },
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-harness",
+          "version": "0.1.0",
+          "rule_or_advisory_id": "wildcard"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:04+08:00",
+      "finished_at": "2026-10-30T19:13:05+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.bans.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.bans.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-harness",
+      "check": "licenses",
+      "status": "failed",
+      "exit_code": 4,
+      "failures": [
+        {
+          "check": "licenses",
+          "crate": "webpki-roots",
+          "version": "1.0.10",
+          "rule_or_advisory_id": "rejected"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:05+08:00",
+      "finished_at": "2026-10-30T19:13:06+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.licenses.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.licenses.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-harness",
+      "check": "sources",
+      "status": "failed",
+      "exit_code": 8,
+      "failures": [
+        {
+          "check": "sources",
+          "crate": "rpi-agent",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-ai",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-telemetry",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:06+08:00",
+      "finished_at": "2026-10-30T19:13:07+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.sources.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.sources.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-harness",
+      "check": "advisories",
+      "status": "passed",
+      "exit_code": 0,
+      "failures": [],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:07+08:00",
+      "finished_at": "2026-10-30T19:13:09+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.advisories.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-harness.advisories.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-jsonl",
+      "check": "bans",
+      "status": "failed",
+      "exit_code": 2,
+      "failures": [
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-core",
+          "version": "0.1.1",
+          "rule_or_advisory_id": "wildcard"
+        },
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-harness",
+          "version": "0.1.0",
+          "rule_or_advisory_id": "wildcard"
+        },
+        {
+          "check": "bans",
+          "crate": "ara-agent-lite-jsonl",
+          "version": "0.1.0",
+          "rule_or_advisory_id": "wildcard"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:09+08:00",
+      "finished_at": "2026-10-30T19:13:10+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.bans.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.bans.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-jsonl",
+      "check": "licenses",
+      "status": "failed",
+      "exit_code": 4,
+      "failures": [
+        {
+          "check": "licenses",
+          "crate": "webpki-roots",
+          "version": "1.0.10",
+          "rule_or_advisory_id": "rejected"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:10+08:00",
+      "finished_at": "2026-10-30T19:13:12+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.licenses.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.licenses.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-jsonl",
+      "check": "sources",
+      "status": "failed",
+      "exit_code": 8,
+      "failures": [
+        {
+          "check": "sources",
+          "crate": "rpi-agent",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-ai",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        },
+        {
+          "check": "sources",
+          "crate": "rpi-telemetry",
+          "version": "0.3.23",
+          "rule_or_advisory_id": "source-not-allowed"
+        }
+      ],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:12+08:00",
+      "finished_at": "2026-10-30T19:13:13+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.sources.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.sources.stderr.txt"
+    },
+    {
+      "manifest": "ara-agent-lite-jsonl",
+      "check": "advisories",
+      "status": "passed",
+      "exit_code": 0,
+      "failures": [],
+      "reason": null,
+      "started_at": "2026-10-30T19:13:13+08:00",
+      "finished_at": "2026-10-30T19:13:15+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.advisories.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\deny\\20261030T111246Z\\ara-agent-lite-jsonl.advisories.stderr.txt"
+    }
+  ],
+  "comparison": {
+    "new_dependencies": [
+      [
+        "ara-agent-lite-mcp",
+        "0.1.0"
+      ],
+      [
+        "ppv-lite86",
+        "0.2.21"
+      ],
+      [
+        "proptest",
+        "1.11.0"
+      ],
+      [
+        "rand",
+        "0.9.5"
+      ],
+      [
+        "rand_chacha",
+        "0.9.0"
+      ],
+      [
+        "rand_core",
+        "0.9.5"
+      ],
+      [
+        "rand_xorshift",
+        "0.4.0"
+      ],
+      [
+        "unarray",
+        "0.1.4"
+      ]
+    ],
+    "new_failures": [],
+    "new_failures_from_new_dependencies": [],
+    "known_failures": [
+      {
+        "check": "bans",
+        "crate": "ara-agent-lite-core",
+        "version": "0.1.1",
+        "rule_or_advisory_id": "wildcard"
+      },
+      {
+        "check": "bans",
+        "crate": "ara-agent-lite-harness",
+        "version": "0.1.0",
+        "rule_or_advisory_id": "wildcard"
+      },
+      {
+        "check": "bans",
+        "crate": "ara-agent-lite-jsonl",
+        "version": "0.1.0",
+        "rule_or_advisory_id": "wildcard"
+      },
+      {
+        "check": "licenses",
+        "crate": "webpki-roots",
+        "version": "1.0.10",
+        "rule_or_advisory_id": "rejected"
+      },
+      {
+        "check": "sources",
+        "crate": "rpi-agent",
+        "version": "0.3.23",
+        "rule_or_advisory_id": "source-not-allowed"
+      },
+      {
+        "check": "sources",
+        "crate": "rpi-ai",
+        "version": "0.3.23",
+        "rule_or_advisory_id": "source-not-allowed"
+      },
+      {
+        "check": "sources",
+        "crate": "rpi-telemetry",
+        "version": "0.3.23",
+        "rule_or_advisory_id": "source-not-allowed"
+      }
+    ]
+  },
+  "package_baseline_missing": []
+}

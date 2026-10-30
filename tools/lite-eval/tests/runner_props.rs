@@ -95,7 +95,8 @@ fn tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass() {
     // its own evidence root.
     let provider = Provider::standard();
     let repo = TestRepo::new(&provider.endpoint, "LITE_EVAL_PROPS_KEY", &|_| "correct".into());
-    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(32));
+    let cases = 256;
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(cases));
     let strategy = (selection(), proptest::collection::vec(ending(), 6));
     let result = runner.run(&strategy, |(selection, endings)| {
         let endings: BTreeMap<String, Ending> =
@@ -160,6 +161,10 @@ fn tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass() {
     if let Err(error) = result {
         panic!("{error}");
     }
-    assert_eq!(provider.probe_requests.load(std::sync::atomic::Ordering::SeqCst), 32, "one probe per run");
+    assert_eq!(
+        provider.probe_requests.load(std::sync::atomic::Ordering::SeqCst),
+        usize::try_from(cases).unwrap(),
+        "one probe per run"
+    );
     assert_eq!(provider.model_requests.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

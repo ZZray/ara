@@ -338,7 +338,7 @@ fn valid_chain(graph: &Graph, chain: &[String]) -> bool {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(64) })]
+    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(256) })]
 
     #[test]
     fn checks_report_exactly_reachable_violations_with_real_chains(graph in graph()) {

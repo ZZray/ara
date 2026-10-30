@@ -76,7 +76,7 @@ fn probe_classifies_every_injected_fault_with_exactly_one_request() {
     value["generation"]["generation_policy"] = json!("thinking_type_disabled");
     let policy: RunPolicy = serde_json::from_value(value).unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(32));
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(256));
     let result = runner.run(&fault(), |fault| {
         *provider.probe_mode.lock().unwrap() = mode(&fault);
         let before = provider.probe_requests.load(Ordering::SeqCst);

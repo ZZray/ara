@@ -674,7 +674,19 @@ impl From<CountsInput> for Counts {
 /// Judge a registered (non-sealed) task: copy the workspace into a new
 /// Oracle directory and run `<command> --artifacts <dir> --final-text <file>
 /// --out <json>` from the repository root (`tools/lite-eval/oracles`).
-fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &str) -> Result<(Correctness, Value)> {
+pub struct RegisteredOracle<'a> {
+    pub entry: &'a TaskEntry,
+    pub task_dir: &'a Path,
+    pub repo_root: &'a Path,
+    pub policy: &'a RunPolicy,
+    pub credentials: &'a Credentials,
+}
+
+pub fn judge_registered(
+    context: &RegisteredOracle<'_>,
+    workspace: &Workspace,
+    final_text: &str,
+) -> Result<(Correctness, Value)> {
     let command = &context.entry.oracle.command;
     if command.is_empty() {
         return Ok((Correctness::Unknown { reason: "no Oracle command registered".into() }, Value::Null));
@@ -690,7 +702,7 @@ fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &s
         }
     };
     let text_path = context.task_dir.join("final-text.txt");
-    write_new(&text_path, context.credentials.redact(final_text).as_bytes(), &context.credentials)?;
+    write_new(&text_path, context.credentials.redact(final_text).as_bytes(), context.credentials)?;
     let out = context.task_dir.join("oracle-result.json");
     let mut process = Command::new(&command[0]);
     process
@@ -701,7 +713,7 @@ fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &s
         .arg(&text_path)
         .arg("--out")
         .arg(&out)
-        .current_dir(&context.repo_root)
+        .current_dir(context.repo_root)
         .env_remove(&context.policy.model.credential_env);
     let timeout = std::time::Duration::from_secs(context.policy.oracle_timeout_seconds);
     let correctness = match run_bounded(process, timeout)? {
@@ -709,8 +721,8 @@ fn judge_registered(context: &TaskContext, workspace: &Workspace, final_text: &s
             Correctness::OracleError { reason: format!("Oracle exceeded {} seconds", timeout.as_secs()) }
         }
         Bounded::Exited { code, stdout, stderr } => {
-            write_output_new(&context.task_dir.join("oracle.stdout.bin"), &stdout, &context.credentials)?;
-            write_output_new(&context.task_dir.join("oracle.stderr.bin"), &stderr, &context.credentials)?;
+            write_output_new(&context.task_dir.join("oracle.stdout.bin"), &stdout, context.credentials)?;
+            write_output_new(&context.task_dir.join("oracle.stderr.bin"), &stderr, context.credentials)?;
             let parsed = fs::read(&out).ok().and_then(|bytes| serde_json::from_slice::<OracleOutput>(&bytes).ok());
             match parsed {
                 Some(output) if code == Some(0) && matches!(output.status.as_str(), "PASS" | "FAIL") => {
@@ -875,7 +887,17 @@ impl HarnessExecutor {
                 (correctness, json!({"oracle_dir": dir}), Some(outcome))
             }
             None => {
-                let (correctness, oracle) = judge_registered(context, &workspace, &final_text)?;
+                let (correctness, oracle) = judge_registered(
+                    &RegisteredOracle {
+                        entry: &context.entry,
+                        task_dir: &context.task_dir,
+                        repo_root: &context.repo_root,
+                        policy: &context.policy,
+                        credentials: &context.credentials,
+                    },
+                    &workspace,
+                    &final_text,
+                )?;
                 (correctness, oracle, None)
             }
         };

@@ -70,7 +70,7 @@ fn run_case(kind: Interrupt, read_only: bool, at_ms: u64) -> Result<(), TestCase
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn interrupted_calls_mark_unknown_effects(

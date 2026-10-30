@@ -84,7 +84,7 @@ fn sources_json(limit: &EffectiveOutputLimit) -> Value {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn provider_receives_the_recorded_effective_limit(

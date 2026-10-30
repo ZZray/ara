@@ -38,7 +38,7 @@ with open(args.out, 'w', encoding='utf-8') as out:
 "#;
 
 fn config() -> ProptestConfig {
-    ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(32) }
+    ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(256) }
 }
 
 fn files() -> impl Strategy<Value = BTreeMap<String, Vec<u8>>> {

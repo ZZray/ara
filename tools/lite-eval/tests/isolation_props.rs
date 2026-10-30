@@ -22,7 +22,7 @@ const DIRS: [&str; 4] = ["", "src/", "src/deep/", "include/"];
 const CHANNELS: [&str; 4] = ["text:task", "text:system", "text:tool:ws_read_file", "env:TOOL_ENV"];
 
 fn config() -> ProptestConfig {
-    ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(32) }
+    ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(256) }
 }
 
 /// Oracle file and sealed registration outside the workspace, plus an

@@ -3078,7 +3078,7 @@ mod interrupted_run_property_tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(64))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence(

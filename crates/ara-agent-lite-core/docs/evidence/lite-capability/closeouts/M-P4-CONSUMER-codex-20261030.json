@@ -1,0 +1,58 @@
+{
+  "module": "M-P4-CONSUMER",
+  "status": "done",
+  "criteria_done": 7,
+  "criteria_total": 7,
+  "verification": "bounded_real_model",
+  "task_id": "S1",
+  "run_policy_id": "lite-eval-policy-v1",
+  "run_policy_sha256": "2db286b40a1e46dc6542a13dffc6a9e54f5d475a2d0f5422cb1d31c428e36ea9",
+  "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+  "source_receipt": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\source-before.json",
+  "evidence": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+  "consumer_gate": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\consumer-gate.stdout",
+  "stop": "AwaitingHostAcceptance",
+  "logical_calls": 11,
+  "runs": 1,
+  "wall_ms": 33546,
+  "public": {
+    "kind": "README example compiled and executed by Host",
+    "passed": true,
+    "registered_counts": null
+  },
+  "oracle": {
+    "status": "judged",
+    "passed": true,
+    "hidden": {
+      "passed": 13,
+      "total": 13
+    },
+    "raw_output": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\oracle.json-evidence\\oracle-result.json"
+  },
+  "artifact_sha256": {
+    "README.md": "7e79db45e8b033b0f491d8da5d2c00173cab2be0721d02a55cafca41bd281180",
+    "include/display.hpp": "3a4cb88291ff9e825424435225fcee099ad969dbd02733257cd4acbd8dd0366f",
+    "include/model.hpp": "394b4c60eb0f6c09b375f5b011cdb10a5600186024bbf5318552d43796c2a9d6",
+    "include/options.hpp": "15a7c4b1b8fb18cbea76a9b37a5a77e3d2075435785c4e90837057e832889882",
+    "include/reader.hpp": "e175fb37bd71a052680bff4830d468109cc72cbf39ed9f6e2f99aefe2be8d93a",
+    "include/report.hpp": "847ee4ac978588138f7d0d3ff02ef7196ea59927b8b23998921a99a7e4250e7a",
+    "include/wire.hpp": "60ce0ab00db43c49a19673257b453befd3c7f7bedeacd117f4e900e55ebd0d52",
+    "src/display.cpp": "627ab857c8f11dfd6df9d4a6cad96518c7751f320a00f747e8ab630db45e05fb",
+    "src/main.cpp": "23bb01ac83d595ca78c8e863b9309e1b148434bb6a0c9770cf88bc9bebff3a76",
+    "src/options.cpp": "3a124b8af562334c695539fa85ad21423c97a0047ffdb26bfb0823f5b1225a17",
+    "src/reader.cpp": "f16e46bb6d46b8816e77189a191ef22943f36ee8ac1f4e4cf635ba83f9346993",
+    "src/report.cpp": "523974fc25c1de652337c806da07e30f608c68e3b33d9eb1f208a90befd4535a",
+    "src/wire.cpp": "a3818a086591e3c73a6c76a60f99b57cc5b94293f1b1edff64202205a388fa0d"
+  },
+  "sources_unchanged_during_trial": true,
+  "uncovered": [
+    "One real-model sample; broad coding capability is not established.",
+    "No registered public case count exists for S1; Oracle public remains absent.",
+    "CAS accepted response alias is unverified model identity.",
+    "Final gate is recorded separately. The later MCP manifest-only version constraint leaves resolution unchanged."
+  ],
+  "review_evidence": [
+    "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\review-final-source-01a18bf7.json",
+    "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\review-mcp-version-appendix.json"
+  ]
+}

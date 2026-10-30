@@ -131,7 +131,7 @@ fn test_output(python: bool, case: Case) -> CommandOutput {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(32) })]
+    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(256) })]
 
     #[test]
     fn gate_passes_iff_every_command_and_every_matrix_test_passes(
@@ -148,6 +148,7 @@ proptest! {
             .map(|(id, (exit, body))| quality_output(id.command, *exit, body))
             .collect();
         let runner = Scripted { outputs: RefCell::new(outputs.clone()) };
+        std::fs::write(dir.path().join("ara-agent-lite-jsonl.exe"), b"controlled binary bytes").unwrap();
         let plan = GatePlan {
             repo_root: dir.path(),
             module: "M-P4-MATRIX",

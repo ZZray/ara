@@ -8,7 +8,7 @@
 
 ## 当前结论
 
-H0 的 Windows Rust 构建、6 组离线输入和 2 项真实子进程测试通过，固定上游可以通过公共 API 调用。依赖门禁未通过，H0 保持 open，未标 verified。Lite 代码、workspace 和锁文件未因本次原型修改；正式 P2-f、持久原文存储、Session 权限、跨进程取回和真实模型任务尚未实施。
+H0 的 Windows Rust 构建、6 组离线输入和 2 项真实子进程测试通过，固定上游可以通过公共 API 调用。2026-10-30 用户批准三项依赖例外后，实际根策略审计退出0，0 errors、9 warnings，耗时25.099秒。H0记done 6/6，未标verified；原LNK4098链接警告与失败历史保留。Lite 代码、workspace 和锁文件未因本次原型修改；正式 P2-f、持久原文存储、Session 权限、跨进程取回和真实模型任务尚未实施。
 
 正式执行顺序为原任务 1–55 → 新任务 64–66 → 原任务 56–62；任务 63 必须先完成。P2-f 会使用同二进制、同工具及预算的压缩关闭/开启对照，不能把原 B0 到 P2-e 的累计变化归因于 Headroom。
 
@@ -23,7 +23,7 @@ H0 的 Windows Rust 构建、6 组离线输入和 2 项真实子进程测试通�
 | 原始证据 | `D:/WorkSpace/tmp/ara-headroom-20261027/evidence/` |
 | 特性 | `headroom-core`, `default-features = false`；解析节点特性为空，图中没有 ort/fastembed/magika |
 | 工具链 | rustc 1.97.1、cargo 1.97.1，Windows x86_64 MSVC |
-| 原型 debug exe | `D:/workspace/env/cache/rust-target-headroom-h0/debug/ara-headroom-h0.exe`，18,207,744 字节；不是发布包大小 |
+| 原执行的 debug exe | `D:/workspace/env/cache/rust-target-headroom-h0/debug/ara-headroom-h0.exe`，原记录18,207,744字节；当前缓存文件缺失，未重建；不是发布包大小 |
 | 模型调用 | 0；无真实模型或产品效果验收 |
 
 原型 Cargo 使用相对 path 依赖该固定 checkout，manifest、lock 和 SHA 均收录于 [机器可读记录](record.json)。原型不调用 Lite，不实现或复制 Agent 循环。未下载或启用 ML 权重；本次案例没有配置模型服务。
@@ -71,10 +71,10 @@ Host 完整输入另用内容键保存并检查字节取回。它与上游 JSON 
 | `webpki-roots 1.0.11` / CDLA-Permissive-2.0 被拒绝 | Lite 已有 1.0.10 的同类问题；新版本不能据此豁免 |
 | `paste 1.0.15` / RUSTSEC-2024-0436 未维护 | 根 workspace 已存在，三个 Lite 锁文件没有，是 Lite 新增项 |
 
-当前不修改项目 `deny.toml`、不改上游 SHA，不将失败记录为通过。正式接入前需审查依赖裁剪或逐包合规处理方案，并在实际交付锁文件上重跑。上游 `CcrStore::put` 返回 `()`，不能证明持久化成功；“先存成功、再发布 marker”须由 Host 的可失败写入契约负责。上游 memory cache 不代替 Session 原文存储。
+原审计退出5的失败记录保留。2026-10-30按用户明确批准更新根`deny.toml`：两个许可证采用包名与精确版本例外，paste采用根策略公告ID例外，影响所有匹配版本及已有Full图。详见[批准与义务](dependency-policy-20261030.md)、[实际策略审计](approved-policy-audit-20261030.json)和[独立复审](approved-policy-review-20261030.json)。上游SHA与锁文件未改；正式适配须在实际交付锁文件上重跑，并准备分发所需材料。上游 `CcrStore::put` 返回 `()`，不能证明持久化成功；“先存成功、再发布 marker”须由 Host 的可失败写入契约负责。上游 memory cache 不代替 Session 原文存储。
 
 ## 独立审查与未完成项
 
 独立 Codex `/root/estimate_review` 读取具名规格/原型文件、此前快照及实际运行日志，按 `ara-git-review` 与 `ara-rust-core-review` 复审。首次发现 JSON marker 检查缺失、默认关闭与 A/B 关闭混淆、证据索引路径不一致，均已修复并复审；无剩余源码发现。详见 [审查记录](review.json)。审查者没有重跑测试；实际执行由本线程完成。
 
-H0 不证明 Lite 投影、持久存储、恢复、权限、provider 协议、真实任务正确性或产品收益。任务 63.5 的门禁收尾仍 open；任务 64–66 尚未开始，且依赖原 54/55。原项目 P0 评估运行器和基线尚待完成，本次不重写其状态。
+H0 不证明 Lite 投影、持久存储、恢复、权限、provider 协议、真实任务正确性或产品收益。任务63.5已完成，逐项需求39映射见[本次收尾记录](closeout-20261030.json)。原型源码、锁文件与运行证据哈希仍匹配；当前缓存exe已不存在，无法复核其当前哈希。本次只改策略，复用原构建/行为收据，未重建或重新执行行为，不宣称新二进制验收。任务64–66尚未开始，原55检查点仍未通过，不能仅凭依赖批准进入正式适配。

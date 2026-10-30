@@ -27,7 +27,7 @@ fn the_credential_occurs_nowhere_in_the_run_outputs() {
     // S1 expects the scripted answer (pass); S2 expects another (fail).
     let repo =
         TestRepo::new(&provider.endpoint, VARIABLE, &|id| if id == "S2" { "other".into() } else { "correct".into() });
-    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(32));
+    let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig::with_cases(256));
     let result = runner.run(&"[A-Za-z0-9_-]{24,48}", |token| {
         let evidence = tempfile::tempdir().unwrap();
         let before = provider.authorizations.lock().unwrap().len();

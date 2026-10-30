@@ -1,0 +1,34 @@
+{
+  "module": "M-P5-QUALITY",
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "1ac911a55c10251957a1067b13ad39efbdb7c94e321c4098dcd5ad2036b6fd48",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "commands": [
+    {
+      "command": "cargo build",
+      "exit_code": 0,
+      "diagnostics": [],
+      "started_at": "2026-10-30T18:42:11+08:00",
+      "finished_at": "2026-10-30T18:42:12+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\consumer\\consumer-1-build.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\consumer\\consumer-1-build.stderr.txt"
+    },
+    {
+      "command": "cargo clippy -- -D warnings",
+      "exit_code": 0,
+      "diagnostics": [],
+      "started_at": "2026-10-30T18:42:12+08:00",
+      "finished_at": "2026-10-30T18:42:13+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\consumer\\consumer-2-clippy.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\consumer\\consumer-2-clippy.stderr.txt"
+    }
+  ],
+  "scanned_files": [
+    "src/lib.rs",
+    "src/main.rs",
+    "tests/loopback.rs"
+  ],
+  "findings": []
+}

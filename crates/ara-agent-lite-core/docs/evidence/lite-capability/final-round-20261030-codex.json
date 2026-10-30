@@ -1,0 +1,234 @@
+{
+  "schema": "lite-final-round-evidence-v1",
+  "implementation_chat": "01a18bf7-058a-7893-98c2-623998f3ed3e",
+  "base": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+  "final_code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "0a08ac7ebecfb987f7b03da1e720d0f5e791bfc5bb428cb4692c3adcd0ad29e0",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "quality_snapshot": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "1ac911a55c10251957a1067b13ad39efbdb7c94e321c4098dcd5ad2036b6fd48",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "quality_record": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\gates\\M-P5-QUALITY-1ac911a5-20261030T095856Z.json",
+  "quality_commands": [
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:59:10+08:00",
+      "finished_at": "2026-10-30T17:59:15+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\01-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\01-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:59:16+08:00",
+      "finished_at": "2026-10-30T17:59:26+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\02-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\02-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo test",
+      "exit_code": 0,
+      "passed": 294,
+      "failed": 0,
+      "started_at": "2026-10-30T17:59:26+08:00",
+      "finished_at": "2026-10-30T18:09:16+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\03-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\03-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T18:09:17+08:00",
+      "finished_at": "2026-10-30T18:09:20+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\04-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\04-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T18:09:20+08:00",
+      "finished_at": "2026-10-30T18:09:43+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\05-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\05-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo test",
+      "exit_code": 0,
+      "passed": 61,
+      "failed": 0,
+      "started_at": "2026-10-30T18:09:43+08:00",
+      "finished_at": "2026-10-30T18:15:55+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\06-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\06-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T18:15:55+08:00",
+      "finished_at": "2026-10-30T18:15:58+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\07-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\07-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T18:15:58+08:00",
+      "finished_at": "2026-10-30T18:16:16+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\08-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\08-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo test",
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0,
+      "started_at": "2026-10-30T18:16:16+08:00",
+      "finished_at": "2026-10-30T18:16:46+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\09-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\09-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "python -m unittest discover -s tests -p \"test_*.py\"",
+      "exit_code": 1,
+      "passed": 114,
+      "failed": 1,
+      "started_at": "2026-10-30T18:16:46+08:00",
+      "finished_at": "2026-10-30T18:26:00+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\10-ara-agent-lite-jsonl-python.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\10-ara-agent-lite-jsonl-python.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl/clients/node",
+      "command": "node --test",
+      "exit_code": 0,
+      "passed": 30,
+      "failed": 0,
+      "started_at": "2026-10-30T18:26:01+08:00",
+      "finished_at": "2026-10-30T18:26:06+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\11-ara-agent-lite-jsonl_clients_node-node.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T095856Z\\11-ara-agent-lite-jsonl_clients_node-node.stderr.txt"
+    }
+  ],
+  "quality_passed": false,
+  "matrix": {
+    "record": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\gates\\M-P5-QUALITY-matrix-1ac911a5-20261030T095856Z.json",
+    "references": 84,
+    "passed": 84
+  },
+  "core_default": {
+    "passed": 294,
+    "failed": 0,
+    "ignored": 2
+  },
+  "harness": {
+    "passed": 61,
+    "failed": 0,
+    "ignored": 0
+  },
+  "jsonl_rust": {
+    "passed": 12,
+    "failed": 0,
+    "ignored": 0
+  },
+  "python": {
+    "passed": 114,
+    "failed": 1,
+    "tests": 115,
+    "failure": "test_original_deadline_bounds_inflight_summary_across_runs"
+  },
+  "node": {
+    "passed": 30,
+    "failed": 0
+  },
+  "mcp": {
+    "passed": 24,
+    "failed": 0,
+    "ignored": 0
+  },
+  "consumer_unit": {
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0
+  },
+  "lite_eval": {
+    "integration_targets": 34,
+    "counts_after_targeted_count_fix": {
+      "passed": 155,
+      "failed": 2,
+      "ignored": 0
+    },
+    "coverage": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\eval-remaining-20261030T110040Z\\coverage.json",
+    "supplement_results": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\eval-remaining-20261030T110040Z\\results.json",
+    "count_fix": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\runner-probe-fix-test.log",
+    "remaining_failures": [
+      "isolation_props::file_symlink_is_detected",
+      "sealed_isolation::a_file_symlink_to_the_oracle_is_rejected"
+    ]
+  },
+  "ignored_explicit": {
+    "capture_events_v1": "passed",
+    "live_public_web_tools_execute_receipt": "failed: DDG challenge; fetch Python docs passed"
+  },
+  "host_policy_unit": {
+    "passed": 4,
+    "failed": 0
+  },
+  "real_consumer": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+  "controlled_long_mechanisms": "D:/WorkSpace/tmp/ara-lite-capability/long-mechanism-codex-20261030-final/final-verification.json",
+  "dependency_audit": {
+    "record": "crates/ara-agent-lite-core/docs/evidence/lite-capability/deny/0a08ac7e-20261030T111246Z.json",
+    "known": 7,
+    "new": 0,
+    "not_executed": 0
+  },
+  "headroom_candidates": [
+    {
+      "variant": "all-three",
+      "exit": 0,
+      "warnings": 9
+    },
+    {
+      "variant": "licenses-only",
+      "exit": 1,
+      "warnings": 9
+    }
+  ],
+  "decisions": {
+    "long_trial": "A: controlled Host multi-Run mechanism coverage",
+    "symlink": "user requested retaining blocker this round",
+    "headroom": "assessment completed; concrete exception approval still pending; actual policy unchanged"
+  },
+  "limits": [
+    "Full quality gate failed; no verified delivery claimed.",
+    "Quality snapshot precedes the final test-only runner probe-count linkage correction; only that affected target was rechecked afterward.",
+    "The two prior real-model long-task trials remain coverage-insufficient; controlled mechanisms do not replace them.",
+    "Existing baseline dependency findings and historical review gaps remain recorded."
+  ]
+}

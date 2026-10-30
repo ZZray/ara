@@ -1387,7 +1387,7 @@ mod consumed_tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(32))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn consumption_counts_every_admitted_run_without_refund(
@@ -1512,7 +1512,7 @@ mod summary_reservation_tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(32))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn task_total_counts_every_agent_and_summary_reservation_without_refund(

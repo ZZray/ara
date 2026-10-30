@@ -1,0 +1,131 @@
+{
+  "module": "M-P5-QUALITY",
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "004e3f97da9a1136e12a0686f76697b40251dad1af445b0c0e2de623d559df21",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "commands": [
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:05:05+08:00",
+      "finished_at": "2026-10-30T17:05:07+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\01-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\01-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:05:08+08:00",
+      "finished_at": "2026-10-30T17:05:15+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\02-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\02-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-core",
+      "command": "cargo test",
+      "exit_code": 0,
+      "passed": 294,
+      "failed": 0,
+      "started_at": "2026-10-30T17:05:15+08:00",
+      "finished_at": "2026-10-30T17:15:41+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\03-ara-agent-lite-core-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\03-ara-agent-lite-core-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:15:41+08:00",
+      "finished_at": "2026-10-30T17:15:44+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\04-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\04-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:15:44+08:00",
+      "finished_at": "2026-10-30T17:16:51+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\05-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\05-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-harness",
+      "command": "cargo test",
+      "exit_code": 101,
+      "passed": 60,
+      "failed": 1,
+      "started_at": "2026-10-30T17:16:51+08:00",
+      "finished_at": "2026-10-30T17:30:35+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\06-ara-agent-lite-harness-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\06-ara-agent-lite-harness-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:30:36+08:00",
+      "finished_at": "2026-10-30T17:30:39+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\07-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\07-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "exit_code": 0,
+      "passed": "不适用",
+      "failed": "不适用",
+      "started_at": "2026-10-30T17:30:39+08:00",
+      "finished_at": "2026-10-30T17:31:48+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\08-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\08-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "cargo test",
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0,
+      "started_at": "2026-10-30T17:31:48+08:00",
+      "finished_at": "2026-10-30T17:33:06+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\09-ara-agent-lite-jsonl-cargo.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\09-ara-agent-lite-jsonl-cargo.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl",
+      "command": "python -m unittest discover -s tests -p \"test_*.py\"",
+      "exit_code": 1,
+      "passed": 63,
+      "failed": 35,
+      "started_at": "2026-10-30T17:33:06+08:00",
+      "finished_at": "2026-10-30T17:35:44+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\10-ara-agent-lite-jsonl-python.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\10-ara-agent-lite-jsonl-python.stderr.txt"
+    },
+    {
+      "crate": "ara-agent-lite-jsonl/clients/node",
+      "command": "node --test",
+      "exit_code": 0,
+      "passed": 30,
+      "failed": 0,
+      "started_at": "2026-10-30T17:35:44+08:00",
+      "finished_at": "2026-10-30T17:35:51+08:00",
+      "stdout_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\11-ara-agent-lite-jsonl_clients_node-node.stdout.txt",
+      "stderr_path": "D:/WorkSpace/tmp/ara-lite-capability\\gates\\M-P5-QUALITY-20261030T090457Z\\11-ara-agent-lite-jsonl_clients_node-node.stderr.txt"
+    }
+  ]
+}

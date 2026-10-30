@@ -80,7 +80,7 @@ fn outcome() -> impl Strategy<Value = TaskOutcome> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn outcome_round_trips_and_old_json_parses_with_defaults(outcome in outcome()) {

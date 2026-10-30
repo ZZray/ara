@@ -217,6 +217,10 @@ class Trial:
         self.receipt_index: dict[str, list[tuple[Path, dict]]] = {}
         self.seen_calls: dict[str, str] = {}
         self.processes: list[dict] = []
+        # An explicit trial-only review policy. It never changes the public
+        # check result or fabricates a Core length/compaction event.
+        self.host_review_rounds = spec.get('host_review_rounds', 0)
+        self.deferred_reviews = 0
 
     # ----- evidence files -------------------------------------------------
 
@@ -538,7 +542,8 @@ class TrialHost:
         trigger = None
         if trial.process == 1 and not trial.kill_requested:
             counts = trial.counts()
-            if all(value >= 1 for value in counts.values()):
+            if all(value >= 1 for value in counts.values()) \
+                    and counts['host_review_continuation'] >= max(1, trial.host_review_rounds):
                 trigger = counts
         target = self.relative(path)
         trial.receipt(request, 'started', False, target=target, intended_sha256=sha256_bytes(data),
@@ -566,34 +571,51 @@ class TrialHost:
         return {'value': {'written': target, 'bytes': len(data), 'sha256': sha256_bytes(data)}, 'is_error': False,
                 'settlement': 'Settled', 'operation_receipt': str(applied)}
 
-    def review_receipt(self, kind: str, basis: dict, passed: bool, feedback: str, check: Path) -> dict:
+    def review_receipt(self, kind: str, basis: dict, passed: bool, feedback: str, check: Path,
+                       public_passed: bool, trial_reason: str | None) -> dict:
         verdict = 'Verified' if passed else {'NeedsChanges': {'feedback': feedback}}
         number = self.t.next_number()
         path = self.t.write_new(self.t.receipts / f'{number:04d}-{kind}.json',
                                 {'version': 1, 'kind': kind, 'committed': True, 'run_id': basis.get('run_id'),
                                  'run_number': basis.get('run_number'), 'verdict': verdict,
                                  'public_check_receipt': str(check), 'process': self.t.process,
+                                 'public_check_passed': public_passed, 'trial_review_reason': trial_reason,
                                  'at_unix_ms': now_ms()})
         self.t.log.write('host_receipt', process=self.t.process, path=str(path), stage=kind, committed=True,
                          native_call_id=None, run_id=basis.get('run_id'))
         return {'basis': basis, 'committed': True, 'settlement': 'Settled', 'verdict': verdict, 'evidence': [str(path)]}
 
-    async def review(self, kind: str, basis: dict) -> dict:
+    async def review(self, kind: str, basis: dict, cause: str | None = None) -> dict:
         self.log_callback(kind, run_id=basis.get('run_id'), run_number=basis.get('run_number'))
         await asyncio.to_thread(self.t.snapshot_journal, f'{kind}-run-{basis.get("run_number")}')
         passed, feedback, check = await asyncio.to_thread(self.t.public_check, kind)
-        return self.review_receipt(kind, basis, passed, feedback, check)
+        public_passed, trial_reason = passed, None
+        if self.t.host_review_rounds and kind == 'verify' and passed \
+                and self.t.deferred_reviews < self.t.host_review_rounds:
+            self.t.deferred_reviews += 1
+            trial_reason = (f'Explicit Host mechanism trial: additional review '
+                            f'{self.t.deferred_reviews}/{self.t.host_review_rounds}. '
+                            'Public checks passed; review is deliberately not final. '
+                            f'Write a short review checkpoint to trial-review-{self.t.deferred_reviews}.md '
+                            'in the workspace, rerun public checks and submit again.')
+            passed = False
+        elif self.t.host_review_rounds and kind == 'verify_stop' and cause == 'length':
+            trial_reason = ('Explicit Host mechanism trial: the actual provider response ended at the output limit. '
+                            'Continue that truncated reply in the same Session, even if public checks passed.')
+            passed = False
+        if trial_reason:
+            feedback = trial_reason + '\n\n' + feedback
+            self.t.log.write('trial_review_policy', process=self.t.process, run_id=basis.get('run_id'),
+                             public_check_passed=public_passed, reason=trial_reason)
+        if kind == 'verify_stop' and not passed:
+            feedback = f'The previous Run stopped ({cause}). ' + feedback
+        return self.review_receipt(kind, basis, passed, feedback, check, public_passed, trial_reason)
 
     async def verify(self, candidate: dict, cancelled: asyncio.Event) -> dict:
         return await self.review('verify', candidate['basis'])
 
     async def verify_stop_snapshot(self, snapshot: dict, cancelled: asyncio.Event) -> dict:
-        receipt = await self.review('verify_stop', snapshot['basis'])
-        if receipt['verdict'] != 'Verified':
-            cause = snapshot.get('evidence', {}).get('cause')
-            feedback = receipt['verdict']['NeedsChanges']['feedback']
-            receipt['verdict'] = {'NeedsChanges': {'feedback': f'The previous Run stopped ({cause}). ' + feedback}}
-        return receipt
+        return await self.review('verify_stop', snapshot['basis'], snapshot.get('evidence', {}).get('cause'))
 
     def next_run(self, kind: str, continuation: dict, prefix: str) -> dict:
         number = continuation['next_run_number']
@@ -606,6 +628,9 @@ class TrialHost:
 
     async def prepare(self, continuation: dict, cancelled: asyncio.Event) -> dict:
         return self.next_run('prepare', continuation,
+                             ('Continue from the committed Host review below. Its public check result and any '
+                              'explicit mechanism-trial review requirement are recorded separately.')
+                             if self.t.host_review_rounds else
                              "The Host ran this task's public checks on your workspace and they did not pass.")
 
     async def prepare_stop_continuation(self, continuation: dict, cancelled: asyncio.Event) -> dict:
@@ -713,6 +738,9 @@ async def run_trial(spec: dict, trial_dir: Path, token: str) -> dict:
         'sidecar_logs': [process['log'] for process in trial.processes],
         'fences': trial.fences, 'journal_snapshots': trial.journal_snapshots,
         'model_resolution': trial.model_resolution(),
+        'host_review_policy': {'extra_rounds': trial.host_review_rounds,
+                               'deferred_reviews': trial.deferred_reviews,
+                               'scope': 'mechanism_trial' if trial.host_review_rounds else 'public_check_only'},
         'tools': [tool['name'] for tool in TOOLS], 'kill': trial.kill, 'resume': resume,
         'processes': trial.processes, 'ended_by': ended_by, 'stop': final['stop'], 'error': error,
     }
@@ -732,6 +760,9 @@ def main(argv=None) -> int:
                              'recommended value; default: the catalog value')
     args = parser.parse_args(argv)
     spec = json.loads(args.input.read_text(encoding='utf-8'))
+    rounds = spec.get('host_review_rounds', 0)
+    if type(rounds) is not int or rounds < 0 or (rounds and rounds + 3 > spec['budget']['max_runs']):
+        parser.error('host_review_rounds must be nonnegative and leave three Runs for length, interruption and resume')
     if args.context_window is not None:
         if spec.get('context_window_cap') not in (None, args.context_window):
             print(f"--context-window {args.context_window} differs from context_window_cap "

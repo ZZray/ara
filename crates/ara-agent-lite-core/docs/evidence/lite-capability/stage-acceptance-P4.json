@@ -1,0 +1,161 @@
+{
+  "phase": "P4",
+  "covered": [
+    {
+      "goal": 1,
+      "name": "多文件 C++ 编码真实产物与独立检查",
+      "evidence": [
+        {
+          "requirement": 31,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+          "verification": "real_model_trial"
+        }
+      ]
+    },
+    {
+      "goal": 2,
+      "name": "压缩",
+      "evidence": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 2,
+      "name": "多次续写",
+      "evidence": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 2,
+      "name": "长度截断",
+      "evidence": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 2,
+      "name": "进程中断",
+      "evidence": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 2,
+      "name": "回执核对",
+      "evidence": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 3,
+      "name": "稳定接口与树外消费者",
+      "evidence": [
+        {
+          "requirement": 31,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+          "verification": "real_model_trial"
+        }
+      ]
+    },
+    {
+      "goal": 4,
+      "name": "独立审查",
+      "evidence": [
+        {
+          "requirement": 32,
+          "path": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\reviews\\final-count-linked-01a18bf7-0a08ac7e-ara-git-review-20261030T112535Z.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "goal": 4,
+      "name": "失败记录与未覆盖项保留",
+      "evidence": [
+        {
+          "requirement": 36,
+          "path": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\final-round-20261030-codex.json",
+          "verification": "controlled_test"
+        }
+      ]
+    }
+  ],
+  "uncovered": [
+    {
+      "goal": 1,
+      "name": "逻辑推理真实产物与独立检查",
+      "reason": "已有P2样本保留；R1即使hidden28/28仍有3项预测错误，Oracle未通过，本轮无新的通过验收。"
+    },
+    {
+      "goal": 1,
+      "name": "逆向分析真实产物与独立检查",
+      "reason": "H2各配置均未通过，部分答案格式不符而无计数；本轮未重跑。"
+    },
+    {
+      "goal": 1,
+      "name": "同模型同任务同预算前后对比",
+      "reason": "已有5份Comparable记录，每配置仅1次；结果翻转，不能归因单项P2；B0包含关闭开关的P2代码，不满足纯改动前基线。"
+    },
+    {
+      "goal": 3,
+      "name": "职责边界与依赖方向",
+      "reason": "已有边界测试及矩阵通过，但本轮未重新接受完整Full/Lite边界目标；保留原模块偏差，不以单个消费者验收整个目标。"
+    },
+    {
+      "goal": 4,
+      "name": "回归测试",
+      "reason": "最新针对性验证：compaction6/6、公网原用例1/1通过；原全量中的2项symlink权限失败按用户决定保留，最新差异未重跑完整门禁，不标verified。"
+    },
+    {
+      "goal": 4,
+      "name": "依赖门禁",
+      "reason": "Lite相对基线审计新增失败0，既有7项未清零；Headroom三项已批准应用且实际根策略固定H0审计通过，尚未验证正式适配锁文件或Full全图。"
+    }
+  ],
+  "goals": [
+    {
+      "goal": 1,
+      "overall_accepted": false
+    },
+    {
+      "goal": 2,
+      "overall_accepted": false
+    },
+    {
+      "goal": 3,
+      "overall_accepted": false
+    },
+    {
+      "goal": 4,
+      "overall_accepted": false
+    }
+  ],
+  "pending_review_runs": [],
+  "tasks": [
+    {
+      "task_id": "S1",
+      "host_accepted": false
+    }
+  ]
+}

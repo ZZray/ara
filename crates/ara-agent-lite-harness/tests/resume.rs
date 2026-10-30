@@ -446,7 +446,7 @@ fn resume_refusal_leaves_no_side_effects() {
         ReceiptFault::ExtraCall,
         ReceiptFault::MissingCall,
     ];
-    let mut runner = TestRunner::new(Config { cases: 32, ..Config::default() });
+    let mut runner = TestRunner::new(Config { cases: 256, ..Config::default() });
     runner
         .run(&(0..TERMS + faults.len()), |variant| {
             let attempt = attempts.fetch_add(1, Ordering::SeqCst);

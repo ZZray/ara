@@ -317,7 +317,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(32))]
+            #![proptest_config(ProptestConfig::with_cases(256))]
 
             #[test]
             fn edit_applies_every_block_or_none(case in case()) {

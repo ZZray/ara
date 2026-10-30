@@ -121,7 +121,7 @@ fn check(observed: &Observed, max_calls: usize) -> Result<(), TestCaseError> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn reservations_count_agent_and_summary_calls_regardless_of_results(

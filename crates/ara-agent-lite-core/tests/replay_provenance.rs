@@ -43,7 +43,7 @@ fn new_call() -> impl Strategy<Value = NewCall> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn replay_of_names_the_latest_matching_not_executed_call(

@@ -26,6 +26,23 @@ struct Stub {
 
 impl CommandRunner for Stub {
     fn run(&self, cwd: &Path, program: &str, args: &[String], env: &[(String, OsString)]) -> CommandOutput {
+        if program == "python" {
+            let bindings: std::collections::BTreeMap<_, _> =
+                env.iter().map(|(key, value)| (key.as_str(), value)).collect();
+            let expected = OsString::from(sha256_hex(b"controlled binary bytes"));
+            for key in [
+                "ARA_JSONL_BUDGET_BINARY_SHA256",
+                "ARA_JSONL_GENERATION_BINARY_SHA256",
+                "ARA_JSONL_EXPECTED_BINARY_SHA256",
+            ] {
+                assert_eq!(bindings[key], &expected, "{key} must bind this image");
+            }
+            assert!(Path::new(bindings["ARA_JSONL_TEST_BINARY"]).is_absolute());
+            assert!(Path::new(bindings["ARA_JSONL_LENGTH_EVIDENCE"]).is_dir());
+            let protocol = Path::new(bindings["ARA_JSONL_PROTOCOL_EVIDENCE"]);
+            assert!(!protocol.exists(), "the protocol suite owns its root creation");
+            assert!(protocol.parent().unwrap().is_dir());
+        }
         self.calls.borrow_mut().push((
             cwd.to_path_buf(),
             program.to_owned(),
@@ -59,6 +76,7 @@ fn version() -> CodeVersion {
 #[test]
 fn failures_do_not_stop_the_gate_and_every_command_is_recorded() {
     let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("ara-agent-lite-jsonl.exe"), b"controlled binary bytes").unwrap();
     let stub = Stub { calls: RefCell::default() };
     let plan = GatePlan {
         repo_root: dir.path(),

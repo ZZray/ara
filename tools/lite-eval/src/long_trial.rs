@@ -142,6 +142,9 @@ pub struct TrialRecord {
     pub stop: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Explicit trial-only Host reviews; absent in older natural trials.
+    #[serde(default)]
+    pub host_review_policy: Option<Value>,
 }
 
 /// One admitted Run of a sidecar evidence directory.
@@ -1061,6 +1064,9 @@ pub struct LongTrialRecord {
     /// Sidecars the driver left running when it timed out or failed, and the
     /// kill that ended each one (empty when there were none).
     pub orphan_sidecars: Vec<OrphanKill>,
+    /// Preserve the trial policy so mechanism coverage cannot be mistaken
+    /// for naturally occurring real-task events.
+    pub host_review_policy: Option<Value>,
 }
 
 /// One sidecar left running by a failed driver, and its kill.
@@ -1219,6 +1225,7 @@ pub fn check_trial(
         failure_record_error,
         driver_error,
         orphan_sidecars,
+        host_review_policy: trial.record.host_review_policy.clone(),
     };
     let path = first_unused(trial_dir, "long-trial");
     let value: Value = serde_json::from_str(&credentials.redact(&serde_json::to_string(&record)?))?;
@@ -1244,6 +1251,9 @@ pub struct LongTrialInputs<'a> {
     /// Context window ceiling in tokens the sidecar declares
     /// (`model_resolution` `catalog_capped`); `None` keeps the catalog value.
     pub context_window_cap: Option<u64>,
+    /// Deliberate extra Host reviews for mechanism coverage; zero preserves
+    /// the ordinary public-check-only trial.
+    pub host_review_rounds: usize,
 }
 
 /// Range the sidecar accepts for `context_window_cap`.
@@ -1293,6 +1303,10 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
     }
     let (policy, identity) = load_fixed(root)?;
     let budget = *policy.budget(LONG_TRIAL_BUDGET)?;
+    ensure!(
+        inputs.host_review_rounds == 0 || inputs.host_review_rounds.saturating_add(3) <= budget.max_runs,
+        "--host-review-rounds must leave three Runs for length, interruption and resume"
+    );
     let token = (inputs.env)(&policy.model.credential_env).unwrap_or_default();
     let credentials = Credentials::new([token.clone()]);
     let finish = |(record, record_path): (LongTrialRecord, PathBuf)| {
@@ -1342,6 +1356,7 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
         "task_id": entry.task_id, "fixture_path": entry.fixture_path, "fixture_sha256": digest.sha256,
         "public_check": public_check, "max_output": max_output,
         "context_window_cap": inputs.context_window_cap,
+        "host_review_rounds": inputs.host_review_rounds,
         "sidecar": {"path": sidecar, "sha256": sha256_file(sidecar)?},
         "driver": {"path": DRIVER_PATH, "sha256": sha256_file(&driver)?},
         "probe": receipt,
@@ -1357,6 +1372,7 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
                   "generation_policy": policy.generation.generation_policy,
                   "length_recovery": policy.generation.length_recovery},
         "budget": budget, "max_output": max_output, "context_window_cap": inputs.context_window_cap,
+        "host_review_rounds": inputs.host_review_rounds,
     });
     write_json_new(&input, &spec, &credentials)?;
     let mut command = Command::new(inputs.python);

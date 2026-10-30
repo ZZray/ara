@@ -114,7 +114,7 @@ fn kinds() -> impl Strategy<Value = Vec<Kind>> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(32))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn records_are_unique_ordered_and_locatable(earlier_run in any::<bool>(), kinds in kinds()) {

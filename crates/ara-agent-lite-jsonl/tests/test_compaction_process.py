@@ -112,8 +112,9 @@ def call(name, arguments, ordinal):
 
 class CompactionProvider(AbstractContextManager):
     """Scripts tool choices, but learns source IDs/correction/history from actual HTTP bodies."""
-    def __init__(self, root, fault=None, recall=False):
+    def __init__(self, root, fault=None, recall=False, summary_hold_seconds=10):
         self.root, self.fault, self.recall = root, fault, recall
+        self.summary_hold_seconds = summary_hold_seconds
         self.requests, self.errors, self.summaries = [], [], []
         self.agent_calls = 0
         self.reference = None
@@ -148,7 +149,8 @@ class CompactionProvider(AbstractContextManager):
                     self.wfile.flush()
                     if summary and outer.fault in ('cancel', 'deadline'):
                         outer.summary_inflight.set()
-                        outer.release_summary.wait(10)
+                        if not outer.release_summary.wait(outer.summary_hold_seconds):
+                            raise AssertionError('summary fault hold expired before explicit test release')
                     self.packet(response['delta'], None)
                     self.packet({}, response['finish'])
                     self.wfile.write(b'data: [DONE]\n\n')
@@ -496,21 +498,33 @@ class CompactionProcessTest(unittest.IsolatedAsyncioTestCase):
             self.original_sources(True)
 
     async def bad_summary(self, fault):
-        with CompactionProvider(self.root, fault=fault) as provider:
-            config = self.config(provider.endpoint, deadline_ms=5000 if fault == 'deadline' else 40000)
+        deadline_ms = 15000 if fault == 'deadline' else 40000
+        with CompactionProvider(self.root, fault=fault,
+                                summary_hold_seconds=deadline_ms / 1000 + 5) as provider:
+            config = self.config(provider.endpoint, deadline_ms=deadline_ms)
             host = FileHost(self.root, config)
             cancellation = asyncio.Event()
+            summary_started_unix_ms = None
 
-            async def cancel_inflight():
-                present = await asyncio.to_thread(provider.summary_inflight.wait, 8)
+            async def observe_inflight():
+                nonlocal summary_started_unix_ms
+                present = await asyncio.to_thread(provider.summary_inflight.wait, 10)
                 self.assertTrue(present, 'actual SSE summary must be in flight before cancellation')
-                cancellation.set()
-                save(self.root / 'cancel-during-summary.json', {'http_calls': len(provider.requests),
+                summary_started_unix_ms = int(time.time() * 1000)
+                if fault == 'cancel':
+                    cancellation.set()
+                else:
+                    self.assertLess(summary_started_unix_ms, config['task']['deadline_unix_ms'] - 1000,
+                                    'summary must start with time left to exercise the deadline')
+                save(self.root / 'inflight-summary.json', {'http_calls': len(provider.requests),
                      'summary_inflight': present, 'unix_ms': int(time.time() * 1000)})
 
-            watcher = asyncio.create_task(cancel_inflight()) if fault == 'cancel' else None
+            watcher = asyncio.create_task(observe_inflight()) if fault in ('cancel', 'deadline') else None
             try:
-                outcome = await self.invoke(config, host, cancellation=cancellation)
+                # This watchdog bounds fixture cleanup, not the Task's work budget.
+                # The actual original Task deadline remains in the start frame.
+                outcome = await asyncio.wait_for(self.invoke(config, host, cancellation=cancellation),
+                                                 timeout=deadline_ms / 1000 + 10)
                 completed_unix_ms = int(time.time() * 1000)
                 if watcher:
                     await watcher
@@ -533,26 +547,44 @@ class CompactionProcessTest(unittest.IsolatedAsyncioTestCase):
                 if fault == 'cancel':
                     self.assertEqual(outcome['stop'], 'Cancelled')
                 else:
-                    # The Host floors remaining seconds for each Run, so Core's
-                    # inherited deadline may stop conservatively before Task's.
-                    self.assertEqual(outcome['stop'], 'ReconciliationRequired')
                     first = json.loads((self.root / 'harness/run-1-admission.json').read_bytes())
                     second = json.loads((self.root / 'harness/run-2-admission.json').read_bytes())
+                    self.assertEqual(first['deadline_unix_ms'], config['task']['deadline_unix_ms'])
                     self.assertEqual(second['deadline_unix_ms'], config['task']['deadline_unix_ms'])
                     # Floored seconds only drop when Run 1 takes at least the
                     # sub-second remainder; a fast sidecar can finish it sooner.
                     self.assertLessEqual(second['max_seconds'], first['max_seconds'])
-                    self.assertLessEqual(completed_unix_ms, config['task']['deadline_unix_ms'] + 1000)
                     self.assertFalse(cancellation.is_set(), 'deadline case sends no external cancel')
-                    # Core's outer deadline also cancels the same signal. Its
-                    # timer and the summary timer can settle in either order.
+                    observation = json.loads((self.root / 'harness/run-2-observation.json').read_bytes())
+                    self.assertTrue(observation['core_joined'], 'the same Core future must settle')
+                    # Core starts its floored relative timer after admission I/O.
+                    # Either it or the original absolute Task deadline may win.
+                    if outcome['stop'] == 'Cancelled':
+                        self.assertTrue(observation['stopped'])
+                        self.assertEqual(outcome['detail'],
+                            'canceled/deadline; original Core future joined; reconcile effects')
+                    else:
+                        self.assertEqual(outcome['stop'], 'ReconciliationRequired')
+                        self.assertFalse(observation['stopped'])
+                        self.assertEqual(outcome['detail'],
+                            'Core/event completion cannot establish a settled ordinary candidate')
                     deadline_details = {'context maintenance failed: context maintenance deadline exceeded',
                                         'context maintenance failed: context maintenance canceled'}
-                    self.assertTrue(any(r['event'].get('detail') in deadline_details for r in self.events()))
+                    terminals = [r for r in self.events() if r['run_id'] == 'run-2'
+                                 and r['event']['type'] == 'agent_end']
+                    self.assertEqual(len(terminals), 1)
+                    terminal = terminals[0]
+                    self.assertIn(terminal['event']['detail'], deadline_details)
+                    # The floored Core deadline can be less than one second
+                    # early. Join/checkpoint/fence I/O has no one-second SLA;
+                    # the watchdog bounds the fixture instead of renewing work.
+                    self.assertGreaterEqual(completed_unix_ms, config['task']['deadline_unix_ms'] - 1000)
                     save(self.root / 'inherited-deadline.json', {'original_task_deadline_unix_ms':
                          config['task']['deadline_unix_ms'], 'completed_unix_ms': completed_unix_ms,
+                         'summary_started_unix_ms': summary_started_unix_ms,
+                         'terminal_event': terminal, 'core_observation': observation,
                          'run1_max_seconds': first['max_seconds'], 'run2_max_seconds': second['max_seconds'],
-                         'reason': 'Core inherited floored remaining time; original Task deadline never renewed'})
+                         'reason': 'Original Task deadline never renewed; terminal boundary and joined settlement recorded separately'})
             else:
                 results = [r['event'] for r in self.events()
                            if r['event']['type'] == 'model_result' and r['event']['phase'] == 'summary']

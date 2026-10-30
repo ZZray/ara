@@ -1,0 +1,185 @@
+{
+  "schema": "lite-independent-deadline-fixture-review-v1",
+  "reviewer": {
+    "canonical_task_id": "/root/lite_oracle_review",
+    "tool": "Codex collaboration agent",
+    "skills": [
+      ".ara/skills/ara-git-review/SKILL.md",
+      ".ara/skills/ara-rust-core-review/SKILL.md"
+    ]
+  },
+  "created_at": "2026-10-30T21:49:38+08:00",
+  "base_head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+  "scope": "Only test_compaction_process.py relative to HEAD; production timer/transport/client/Harness sources were read to verify contracts but not changed or broadly re-reviewed.",
+  "reviewed_files": [
+    {
+      "path": "crates/ara-agent-lite-jsonl/tests/test_compaction_process.py",
+      "sha256": "377ee03b07d0b410ab8d99638aaad049872da7d8a410bd96640e72da5fa57dcf",
+      "scope": "all changed hunks; current final candidate with both UI and durable timing watchers removed"
+    }
+  ],
+  "scoped_git_diff_sha256": "d7407f326b14f4ceef0c065273ecbf0cfa6d7443a7e8773fc0b5eb63e3e8553e",
+  "findings": [],
+  "resolved_during_review": [
+    {
+      "id": "D1",
+      "priority": "P2",
+      "problem": "The first candidate required exactly one best-effort UI agent_end callback and used its arrival as a deadline clock; the actual focused run observed zero UI events.",
+      "sources": [
+        "crates/ara-agent-lite-jsonl/src/lib.rs:305-323",
+        "crates/ara-agent-lite-jsonl/src/transport.rs:120-123",
+        "crates/ara-agent-lite-jsonl/clients/python/ara_agent_lite.py:510-546"
+      ],
+      "resolution": "Removed emit_events/on_event/terminal_events dependency entirely; final acceptance reads the complete durable event file after Core has joined."
+    },
+    {
+      "id": "D2",
+      "priority": "P2",
+      "problem": "The intermediate replacement polled durable terminal-file arrival against deadline+1s, but Core emits agent_end after durable checkpoint and Harness synchronizes event writes. There is no one-second persistence/settlement contract.",
+      "sources": [
+        "crates/ara-agent-lite-core/src/agent.rs:2488-2497",
+        "crates/ara-agent-lite-harness/src/runner.rs:464-476",
+        "crates/ara-agent-lite-harness/src/runner.rs:1166-1210"
+      ],
+      "resolution": "Removed the durable timing watcher and deadline+1s upper bound. The final fixture retains the near-deadline lower bound, exact preserved deadline/stop/detail/observation assertions and an outer cancellation watchdog."
+    }
+  ],
+  "reviewed_hunks": [
+    "CompactionProvider now holds an in-flight cancellation/deadline summary until explicit fixture release, with a finite failure bound; expiration records an error instead of sending an unsolicited successful summary.",
+    "Deadline test window becomes 15s solely as fixture startup allowance; no Task deadline is reset during continuation.",
+    "One observer confirms actual SSE summary inflight before deadline with at least 1s left; only the explicit cancel case sets the external cancellation token.",
+    "invoke is guarded by asyncio.wait_for(deadline window+10s); finally explicitly releases the provider and cancels/awaits the observer.",
+    "Deadline acceptance admits only the two source-backed outcome branches, binding each exact detail to core_joined/stopped observation.",
+    "Both Run admission records retain the original absolute Task deadline and the second Run relative cap cannot increase.",
+    "Final Run2 contains exactly one durable agent_end with the expected deadline/cancel detail; completed time cannot precede original deadline by 1s or more.",
+    "Original no-later-work checks remain: 3 HTTP requests, 1 summary, 1 Host operation, 1 Host review, no answer artifact, no compact install, retained originals and held fence."
+  ],
+  "source_contract_checks": [
+    {
+      "path": "crates/ara-agent-lite-harness/src/runner.rs",
+      "lines": "548-554, 591-637, 704-708",
+      "result": "The Task passes floored remaining seconds to Core; original absolute Task deadline is retained. Harness cancellation/join can produce Cancelled with stopped=true; a Core failure before Harness stop flag yields the exact ReconciliationRequired branch."
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/runner.rs",
+      "lines": "464-476",
+      "result": "Cancellation/deadline signals and then joins the same future; cooperative settlement is intentional and has no one-second completion SLA."
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/runner.rs",
+      "lines": "1166-1210",
+      "result": "Events are written and synchronized before optional UI broadcast, so final complete-file evidence is appropriate and UI arrival is not authority."
+    },
+    {
+      "path": "crates/ara-agent-lite-jsonl/clients/python/ara_agent_lite.py",
+      "lines": "641-660",
+      "result": "Client cleanup closes stdin and waits a bounded grace+5s before killing/reaping the owned sidecar. asyncio.wait_for starts cancellation at the fixture timeout; total wall time can include this existing cleanup, so 25s is not asserted as an exact completion SLA."
+    }
+  ],
+  "non_weakening_assessment": "The removed deadline+1s settlement assertions imposed a contract not present in the implementation. The final change keeps the actual original-deadline, in-flight-summary, exact stop-branch, joined-Core and no-later-effect contracts. Increasing the fixture input deadline supplies startup time without changing or renewing production timer semantics.",
+  "cleanup_assessment": "Within this controlled fixture, the server hold is finite and explicitly released in finally; the observer is canceled and awaited; existing run_task cleanup closes/reaps the sidecar. No new unbounded polling loop or best-effort evidence dependency remains. The watchdog triggers cancellation rather than promising total wall time exactly <=25s.",
+  "audit_correction": "The summary model_result assertion at the final else branch applies only to length/fake_source faults, not the deadline/cancel branch. It must not be attributed to this deadline test failure.",
+  "static_verification": [
+    {
+      "check": "ast.parse of exact current Python file",
+      "result": "passed"
+    },
+    {
+      "check": "UI observer and durable timing polling removed; final durable unique-terminal assertions present",
+      "result": "passed"
+    }
+  ],
+  "intermediate_execution_records": [
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\focused-process.json",
+      "sha256": "13a9b95b8c558a7fc0b8124a53ace049ebda1b4e523d3f3d2131947dab0ab0b6",
+      "exit": 1,
+      "test_sha256": "cc936281ff6df7447042623abe834468773e5feed23ae1fad20c23bd10c83dd3",
+      "disposition": "Intermediate UI-observer candidate; failed and withdrawn",
+      "counts_as_final_verification": false
+    },
+    {
+      "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\durable-focused-process.json",
+      "sha256": "76c3c838fc8579b0479547c2395799f3316efc4181cdf623c91925c2bb1b2314",
+      "exit": 0,
+      "test_sha256": "fb1c1ba9a66cfbe58c10ca20485fa94c8ff3ffc3b196dcf7337b4e9f4a934c3c",
+      "disposition": "Intermediate durable-polling candidate; one pass, then timing design withdrawn",
+      "counts_as_final_verification": false
+    }
+  ],
+  "not_run": [
+    "Reviewer ran no Cargo command, Python unittest or native process test.",
+    "The parent executed the final six-case suite on the reviewed exact hash; reviewer read and checked its receipts only.",
+    "No Rust rebuild or production timer change was requested or performed by this review."
+  ],
+  "scope_excluded": [
+    "Live DDG rerun and its reported pass, which had no source change",
+    "Other task61 failures and preserved symlink privilege blocker",
+    "Full product/hardware/release acceptance",
+    "Unrelated source and existing WIP"
+  ],
+  "conclusion": "No remaining actionable finding in the final one-file fixture diff. Both intermediate design problems were withdrawn. Source review is clean; the parent-executed final six-case suite passes on the same Python and sidecar hashes and its deadline artifacts preserve the declared boundary. Reviewer inspected receipts without claiming to have executed the suite.",
+  "final_execution_receipts_read_only": {
+    "executor": "Parent agent; reviewer did not execute this suite",
+    "process_record": {
+      "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\final-suite-process.json",
+      "sha256": "957befed1a2f506da15b92edf5b4a7625bb45d72e1d0500442d484b2b69c1815"
+    },
+    "log": {
+      "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\final-suite.log",
+      "sha256": "1f6a4b07cdfbb8e704bcc9ad7a2cc25dfa7341d3a65cfc8b2ab9b3d45d24b52e"
+    },
+    "test_sha256": "377ee03b07d0b410ab8d99638aaad049872da7d8a410bd96640e72da5fa57dcf",
+    "sidecar_sha256": "2103dbf693b6ab4a71835526351e04c7fe2e1cfc32f50b0b5ea78fa745dbf3b9",
+    "test_hash_matches_reviewed_file": true,
+    "current_sidecar_hash_matches_receipt": true,
+    "exit": 0,
+    "tests": {
+      "passed": 6,
+      "failed": 0,
+      "test_wall_seconds": 56.614
+    },
+    "process_wall_seconds": 57.28697619999002,
+    "deadline_evidence": {
+      "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\final-suite\\test_original_deadline_bounds_inflight_summary_across_runs-1793368040269449000\\inherited-deadline.json",
+      "sha256": "bba9698b248118a43db7b94c9d2d208349f1019c81d3c3201042e4a4129871a6",
+      "original_deadline_unix_ms": 1793368055390,
+      "summary_observed_before_deadline_ms": 10806,
+      "actual_completion_offset_ms": 83,
+      "run_max_seconds": [
+        14,
+        11
+      ],
+      "outcome_stop": "ReconciliationRequired",
+      "outcome_detail": "Core/event completion cannot establish a settled ordinary candidate",
+      "core_joined": true,
+      "stopped": false,
+      "native_terminal": {
+        "task_id": "three-feedback-runs",
+        "run_id": "run-2",
+        "seq": 5,
+        "event": {
+          "type": "agent_end",
+          "status": "failed",
+          "output": "",
+          "detail": "context maintenance failed: context maintenance deadline exceeded",
+          "code": -1
+        }
+      },
+      "http_requests": 3,
+      "summary_requests": 1,
+      "provider_errors": [],
+      "host_operation_records": 1,
+      "host_review_records": 1,
+      "answer_artifact_exists": false,
+      "compact_event_count": 0,
+      "fence_retained": true
+    },
+    "limits": [
+      "Read-only inspection of a parent-executed six-case controlled suite; no model competence or whole-product acceptance.",
+      "The deadline race in this execution reached ReconciliationRequired/core_joined=true/stopped=false. The alternative deadline Cancelled branch is source-backed; it is not claimed as the observed deadline branch in this run.",
+      "Observed completion+83ms is one sample, not a restored one-second settlement SLA."
+    ]
+  },
+  "execution_receipts_reviewed_at": "2026-10-30T21:51:21+08:00"
+}

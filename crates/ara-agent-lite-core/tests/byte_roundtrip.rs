@@ -99,7 +99,7 @@ fn property_35_tool_io_bytes_roundtrip() {
     assert_eq!(disk, SAMPLE_BYTES, "sample disk bytes: {}", hex(&disk));
     assert_eq!(read, SAMPLE_BYTES, "sample read_file bytes: {}", hex(&read));
 
-    let mut runner = TestRunner::new(Config { cases: 128, failure_persistence: None, ..Config::default() });
+    let mut runner = TestRunner::new(Config { cases: 256, failure_persistence: None, ..Config::default() });
     let result = runner.run(&generated(), |input| {
         let expected = input.as_bytes();
         let (disk, read) = runtime.block_on(roundtrip(root.path(), &input));

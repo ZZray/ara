@@ -6,7 +6,7 @@ license = "MIT"
 description = "MCP tool source (Claude Code .mcp.json compatible) for ARA Agent Lite hosts"
 [workspace]
 [dependencies]
-ara-agent-lite-core = { path = "../ara-agent-lite-core" }
+ara-agent-lite-core = { version = "=0.1.1", path = "../ara-agent-lite-core" }
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
@@ -22,7 +22,7 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 [dev-dependencies]
-ara-agent-lite-harness = { path = "../ara-agent-lite-harness" }
+ara-agent-lite-harness = { version = "=0.1.0", path = "../ara-agent-lite-harness" }
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 tempfile = "3"
 [profile.dev]

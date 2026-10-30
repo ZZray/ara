@@ -136,7 +136,7 @@ fn render(form: &Form, line: usize) -> (String, Vec<(String, Class)>) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(128) })]
+    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::with_cases(256) })]
 
     #[test]
     fn scan_reports_exactly_the_non_stable_references(forms in prop::collection::vec(form(), 0..12)) {

@@ -8,7 +8,8 @@
     "date": "2026-10-29"
   },
   "updates": [
-    {"date": "2026-10-30", "commit": "ad9c0d3", "note": "references added for tests from stages 9 and 10 (including tools/lite-eval tests) and the new items harness.dependency-direction and harness.delivery-gate; existence checked, three sampled Rust references run"}
+    {"date": "2026-10-30", "commit": "ad9c0d3", "note": "references added for tests from stages 9 and 10 (including tools/lite-eval tests) and the new items harness.dependency-direction and harness.delivery-gate; existence checked, three sampled Rust references run"},
+    {"date": "2026-10-30", "commit": "4640b9f+worktree", "note": "added context-window cap references from f43064b to compaction.budget and jsonl.sidecar; function existence checked, execution awaits the task 61 gate"}
   ],
   "merge": "not merged in this phase; one side's evidence never supports the other side",
   "full_scope": ["crates/ara-agent", "crates/ara-workflow"],
@@ -252,14 +253,16 @@
         },
         {
           "id": "compaction.budget",
-          "capability": "Summary calls reserved from the same call budget; typed stop when no call is left",
+          "capability": "Summary calls reserved from the same call budget; typed stop when no call is left; Host-declared window cap determines the text budget",
           "full": {"status": "unsupported", "note": "no summary-call reservation found in ara-agent or ara-workflow (search for 'reserv' matched only 'preserve')"},
           "lite": {
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "summary_reservation", "name": "summary_needed_with_no_call_left_is_a_summary_budget_stop"},
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "summary_budget", "name": "task_budget_exhausted_before_summary_is_a_typed_budget_stop"},
-              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_compact_examples", "name": "summary_and_agent_reservations_sum_to_the_task_total"}
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_compact_examples", "name": "summary_and_agent_reservations_sum_to_the_task_total"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_compact_examples", "name": "a_context_window_cap_reaches_the_model_host_and_the_record"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_compact_examples", "name": "a_zero_context_window_cap_starts_nothing"}
             ]
           }
         },
@@ -477,13 +480,15 @@
       "items": [
         {
           "id": "jsonl.sidecar",
-          "capability": "Cross-language sidecar with Python and Node clients",
+          "capability": "Cross-language sidecar with Python and Node clients, including an explicit catalog window cap",
           "full": {"status": "unsupported", "note": "no sidecar in ara-agent or ara-workflow"},
           "lite": {
             "status": "supported",
             "tests": [
               {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_python_real_file_feedback_and_same_task_budget"},
-              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget"}
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_catalog_capped_lowers_the_declared_window_below_the_catalog_value"},
+              {"runner": "python", "file": "crates/ara-agent-lite-jsonl/tests/test_process.py", "case": "NativeProcessTest.test_catalog_capped_out_of_range_is_refused_before_any_request"}
             ]
           }
         },

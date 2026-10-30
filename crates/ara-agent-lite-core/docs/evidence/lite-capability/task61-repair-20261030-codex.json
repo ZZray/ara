@@ -1,0 +1,164 @@
+{
+  "schema": "task61-targeted-repair-v1",
+  "recorded_at": "2026-10-30T21:53:15.421632+08:00",
+  "base_head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+  "implementation_scope": [
+    "crates/ara-agent-lite-jsonl/tests/test_compaction_process.py"
+  ],
+  "test_source_sha256": "377ee03b07d0b410ab8d99638aaad049872da7d8a410bd96640e72da5fa57dcf",
+  "sidecar_sha256": "2103dbf693b6ab4a71835526351e04c7fe2e1cfc32f50b0b5ea78fa745dbf3b9",
+  "implementation": "Corrected the deadline fault fixture; production Core/Harness/client timer semantics unchanged.",
+  "contract": [
+    "15s fixture Task input remains one original absolute deadline across both admissions.",
+    "Summary must be in flight with at least 1s remaining and held until explicit fixture release.",
+    "Exact Cancelled/Task joined branch or ReconciliationRequired/Core deadline branch checked against original observations.",
+    "Three HTTP, one summary, one tool effect and one Host review; no later artifact or compact; originals and reconciliation fence retained.",
+    "No one-second join/persistence SLA claimed; watchdog triggers bounded fixture cancellation, with existing client cleanup."
+  ],
+  "final_compaction_suite": {
+    "argv": [
+      "D:\\workspace\\env\\python\\ara-lite-verification\\Scripts\\python.exe",
+      "-m",
+      "unittest",
+      "-v",
+      "test_compaction_process"
+    ],
+    "python": "D:\\workspace\\env\\python\\ara-lite-verification\\Scripts\\python.exe",
+    "sys_version": "3.13.14 (main, Jun 11 2026, 04:04:46) [MSC v.1944 64 bit (AMD64)]",
+    "started_at": "2026-10-30T21:47:14.643194+08:00",
+    "test_sha256": "377ee03b07d0b410ab8d99638aaad049872da7d8a410bd96640e72da5fa57dcf",
+    "binary_sha256": "2103dbf693b6ab4a71835526351e04c7fe2e1cfc32f50b0b5ea78fa745dbf3b9",
+    "exit": 0,
+    "seconds": 57.28697619999002,
+    "finished_at": "2026-10-30T21:48:11.930170+08:00",
+    "test_unchanged": true
+  },
+  "tests_passed": 6,
+  "tests_failed": 0,
+  "tests_ignored": 0,
+  "actual_sidecar_processes": [
+    {
+      "pid": 27380,
+      "returncode": 0
+    },
+    {
+      "pid": 45428,
+      "returncode": 0
+    },
+    {
+      "pid": 81260,
+      "returncode": 0
+    },
+    {
+      "pid": 57000,
+      "returncode": 0
+    },
+    {
+      "pid": 87900,
+      "returncode": 0
+    },
+    {
+      "pid": 67036,
+      "returncode": 0
+    },
+    {
+      "pid": 82432,
+      "returncode": 0
+    }
+  ],
+  "deadline_receipt": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\final-suite\\test_original_deadline_bounds_inflight_summary_across_runs-1793368040269449000\\inherited-deadline.json",
+  "deadline_observation": {
+    "original_task_deadline_unix_ms": 1793368055390,
+    "completed_unix_ms": 1793368055473,
+    "summary_started_unix_ms": 1793368044584,
+    "terminal_event": {
+      "task_id": "three-feedback-runs",
+      "run_id": "run-2",
+      "seq": 5,
+      "event": {
+        "type": "agent_end",
+        "status": "failed",
+        "output": "",
+        "detail": "context maintenance failed: context maintenance deadline exceeded",
+        "code": -1
+      }
+    },
+    "core_observation": {
+      "task_id": "three-feedback-runs",
+      "run_id": "run-2",
+      "observed_calls": 1,
+      "total_calls": 3,
+      "event_count": 5,
+      "events_sha256": "47b084875393375b37f09e41630edbda0573dddb53918a864ad5e7851be347b5",
+      "event_failure": false,
+      "core_joined": true,
+      "stopped": false
+    },
+    "run1_max_seconds": 14,
+    "run2_max_seconds": 11,
+    "reason": "Original Task deadline never renewed; terminal boundary and joined settlement recorded separately"
+  },
+  "deadline_outcome_stop": "ReconciliationRequired",
+  "public_web": {
+    "source_receipts": "D:/WorkSpace/tmp/ara-lite-capability/current-01a18bf7/web-readonly-codex-20261030",
+    "actual_core_test_exit": 0,
+    "actual_core_test_result": "1 passed; 0 failed; 0 ignored; 240 filtered out; 7.06s",
+    "new_live_invocations": 1,
+    "new_public_search_requests": 1,
+    "additional_public_search_requests": 0,
+    "endpoint_override": false,
+    "configured_search": false,
+    "credentials_used": false,
+    "challenge_bypassed": false,
+    "source_modified": false,
+    "cargo_invoked": false,
+    "post_run_list_exit": 0,
+    "binary_sha_matches": true,
+    "web_source_sha_matches": true,
+    "test_source_sha_matches": true,
+    "combined_output_sha256": "96cd32a672b73a92ffea15d44346a83d873a26459af7fad941c2d18c8a9725fc",
+    "prior_failed_receipt": "D:/WorkSpace/tmp/ara-lite-capability/current-01a18bf7/gates-20261030T095606Z/ignored-live-web.stdout",
+    "conclusion": "Current exact actual-Core public search and official-document fetch passed without a code or configuration change. Earlier DDG challenge failure remains retained. This establishes one bounded real-network success, not guaranteed DDG availability."
+  },
+  "public_web_identity": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "binary": "D:/workspace/env/cache/rust-target/debug/deps/ara_agent_lite_core-393ad35df49b5949.exe",
+    "binary_sha256": "edfebffbabc753c63b781eeeadde8edcfb1c1626028d9ed07f35ac7a9f520335",
+    "web_source_sha256": "fd4bd2bd9d8005be763903800544b547295605cd4648e3991b26381a52f8d856",
+    "test_source_sha256": "00f6fe3d28297f1a77d7102364ccd6e00492bf7f6d2f8e524c41a5e5664019a3",
+    "command": "web_tools::tests::live_public_web_tools_execute_receipt --exact --ignored --nocapture",
+    "started_at": "2026-10-30T21:36:15.7122906+08:00",
+    "search_requests_bound": 1,
+    "configured_search": false
+  },
+  "independent_review": "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/task61-repair-independent-20261030.json",
+  "formal_review_records": [
+    "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/task61-repair-377ee03b-886470ac-ara-git-review-20261030T135314Z.json",
+    "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/task61-repair-377ee03b-886470ac-ara-rust-core-review-20261030T135315Z.json",
+    "crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/task61-repair-377ee03b-886470ac-codex-20261030T135313Z.json"
+  ],
+  "failed_and_withdrawn_candidates": [
+    "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\focused-process.json",
+    "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\repair-deadline-20261030\\durable-focused-process.json"
+  ],
+  "historical_evidence": "crates/ara-agent-lite-core/docs/evidence/lite-capability/final-round-20261030-codex.json",
+  "remaining": [
+    "Two symlink tests still blocked by WinError1314, explicitly retained by user.",
+    "The complete gate was not rerun on this latest test/policy diff; no verified status claimed.",
+    "Real-model long-task acceptance and original checkpoint55 remain open; formal P2-f not started.",
+    "Public DDG pass is one bounded observation; previous generic unsuccessful/challenge error retained without inferring an exact HTTP status."
+  ],
+  "task61_passed": false,
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "886470acb34d96725244c43194c4fc125be289f90407d7b662fc0a8868b8f5f6",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  },
+  "ledger_entries": 62,
+  "final_notification": {
+    "timestamp": "2026-10-30T21:55:00+08:00",
+    "errcode": 0,
+    "delivered": true,
+    "elapsed_seconds": 18866
+  }
+}

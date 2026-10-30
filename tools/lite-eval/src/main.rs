@@ -1,5 +1,4 @@
-//! `lite-eval` command line. Every subcommand from the design CLI is present;
-//! the ones whose spec task has not landed fail with an explicit error.
+//! `lite-eval` command line for evaluation, independent judging and delivery gates.
 use std::{
     path::{Path, PathBuf},
     process::ExitCode,
@@ -38,7 +37,7 @@ enum Command {
     /// Append a manual Failure_Class to a Failure_Record.
     Classify(ClassifyArgs),
     /// Judge a task's artifacts with its Oracle outside the workspace.
-    Oracle(Pending),
+    Oracle(OracleArgs),
     /// Run the delivery quality gate for a module.
     Gate(GateArgs),
     /// Run cargo-deny and compare against the recorded baseline.
@@ -239,6 +238,9 @@ struct LongTrialArgs {
     // Not a doc comment: the help text is computed from `ModelCaps::budget`.
     #[arg(long, value_name = "TOKENS", help = lite_eval::long_trial::context_window_help())]
     context_window: Option<u64>,
+    /// Trial-only additional Host review rounds; zero keeps normal public-check acceptance.
+    #[arg(long, default_value_t = 0)]
+    host_review_rounds: usize,
 }
 
 /// Exit 0 passed, 1 failed or coverage insufficient, 2 nothing was started.
@@ -263,6 +265,7 @@ fn long_trial(args: LongTrialArgs) -> Result<ExitCode> {
         check_only: args.check_only.as_deref(),
         env: &env,
         context_window_cap: args.context_window,
+        host_review_rounds: args.host_review_rounds,
     }))?;
     println!("{}", report.record_path.display());
     println!("{}", serde_json::to_string(&report.record.verdict)?);
@@ -287,12 +290,83 @@ struct ForkArgs {
     #[arg(long)]
     target_b: PathBuf,
 }
-/// Arguments of a subcommand whose implementation has not landed yet.
 #[derive(Args)]
-struct Pending {
-    /// Accepted and ignored until the subcommand is implemented.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "ARGS")]
-    _args: Vec<String>,
+struct OracleArgs {
+    task_id: String,
+    /// Finished workspace; judging uses a separate copy and preserves this directory.
+    #[arg(long)]
+    artifacts: PathBuf,
+    /// New result file outside the finished workspace. Its parent must exist.
+    #[arg(long)]
+    out: PathBuf,
+    /// Final model answer; required for reverse-analysis and reasoning tasks.
+    #[arg(long)]
+    final_text: Option<PathBuf>,
+}
+
+fn oracle(args: OracleArgs) -> Result<ExitCode> {
+    use lite_eval::{
+        registry::{load, TASK_SET_PATH},
+        runner::{judge_registered, Correctness, RegisteredOracle},
+        workspace::{canonical, snapshot, Workspace},
+    };
+    let root = repo_root()?;
+    let set = load(&root.join(TASK_SET_PATH))?;
+    let entry = set
+        .tasks
+        .iter()
+        .find(|entry| entry.task_id == args.task_id)
+        .with_context(|| format!("unknown task `{}`", args.task_id))?;
+    ensure!(
+        !entry.oracle.command.is_empty(),
+        "task has no registered Oracle command; use `run` for sealed-holdout judging and isolation tracking"
+    );
+    ensure!(
+        args.final_text.is_some() || entry.kind == Some(ara_agent_lite_harness::TaskKind::Coding),
+        "task {} requires --final-text",
+        entry.task_id
+    );
+    let final_text = args.final_text.as_ref().map(std::fs::read_to_string).transpose()?.unwrap_or_default();
+    let artifacts = canonical(&args.artifacts)?;
+    ensure!(artifacts.is_dir(), "--artifacts must be a directory");
+    let name = args.out.file_name().context("--out must name a new file")?;
+    let parent = args.out.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let out = canonical(parent)?.join(name);
+    ensure!(!out.exists(), "output {} already exists", out.display());
+    ensure!(!out.starts_with(&artifacts), "--out must be outside --artifacts");
+    let task_dir = out.with_file_name(format!("{}-evidence", name.to_string_lossy()));
+    let (policy, identity) = lite_eval::policy::load_fixed(&root)?;
+    let credentials = Credentials::new(
+        ["ARA_AGENT_MODEL_TOKEN", "LITE_EVAL_MODEL_TOKEN", &policy.model.credential_env]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok()),
+    );
+    std::fs::create_dir(&task_dir)
+        .with_context(|| format!("Oracle evidence {} must not exist yet", task_dir.display()))?;
+    let workspace = Workspace { root: artifacts, private: task_dir.clone() };
+    let before = snapshot(&workspace)?;
+    let (correctness, evidence) = judge_registered(
+        &RegisteredOracle { entry, task_dir: &task_dir, repo_root: &root, policy: &policy, credentials: &credentials },
+        &workspace,
+        &final_text,
+    )?;
+    let unchanged = snapshot(&workspace)? == before;
+    let exit = match correctness {
+        Correctness::Judged { passed: true, .. } if unchanged => 0,
+        Correctness::Judged { .. } if unchanged => 1,
+        _ => 2,
+    };
+    lite_eval::common::write_json_new(
+        &out,
+        &serde_json::json!({
+            "schema": "lite-eval-independent-oracle-v1", "task_id": entry.task_id,
+            "run_policy": identity, "correctness": correctness, "evidence": evidence,
+            "artifacts": workspace.root, "artifact_sha256": before, "workspace_unchanged": unchanged,
+        }),
+        &credentials,
+    )?;
+    println!("{}", out.display());
+    Ok(ExitCode::from(exit))
 }
 
 #[derive(Subcommand)]
@@ -832,10 +906,6 @@ fn fork(args: ForkArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn not_implemented(name: &str) -> Result<ExitCode> {
-    bail!("subcommand `{name}` is not implemented yet")
-}
-
 /// Top of the git working tree containing the current directory.
 fn repo_root() -> Result<PathBuf> {
     let output = std::process::Command::new("git")
@@ -918,7 +988,7 @@ fn main() -> ExitCode {
         Command::Fork(args) => fork(args),
         Command::Compare(args) => compare(args),
         Command::Classify(args) => classify(args),
-        Command::Oracle(_) => not_implemented("oracle"),
+        Command::Oracle(args) => oracle(args),
         Command::Gate(args) => gate(args),
         Command::Deny => deny(),
         Command::ReviewRecord(args) => review_record(args),

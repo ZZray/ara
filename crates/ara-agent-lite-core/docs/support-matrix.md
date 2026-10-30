@@ -9,6 +9,7 @@
 - 状态只取“已支持”“部分支持”“不支持”。Lite 的已支持与部分支持项都附测试名；部分支持项写明缺口。Full 的“不支持”是在上述两个 crate 中检索后的结论，检索词写在说明里，没有做穷尽审计。
 - 测试名写法：Rust 单元测试为 `crate:模块路径::测试名`（`cargo test --manifest-path <crate>/Cargo.toml --lib <名称> -- --exact`），集成测试为 `crate:tests/文件.rs::测试名`；Python 为 `文件::类.方法`，这些 Python 测试需要设置 `ARA_JSONL_TEST_BINARY` 等环境变量。`lite-eval:` 前缀指 `tools/lite-eval` 的集成测试；该 crate 不在 Lite 范围内，这些测试经真实 Harness/Core 或对 Lite 产物做检查，作为对应能力项的补充证据。
 - 2026-10-30 在 `ad9c0d3` 上补入阶段 9、10 新增测试的引用，并新增 `harness.dependency-direction`、`harness.delivery-gate` 两项；核对了函数存在，抽样运行了 3 条 Rust 引用。
+- 2026-10-30 在 `4640b9f` 的工作区补入 `f43064b` 的上下文窗口上限测试，分别登记在 `compaction.budget` 与 `jsonl.sidecar`。本次核对函数存在，执行结果由任务 61 门禁记录。
 - 任务 57.2 用脚本逐条核对了 JSON 中全部引用测试（Full 证据测试与 Lite 测试）在所写文件里都有同名函数，缺失 0 条，Markdown 与 JSON 的能力 ID 列表一致。核对的只是存在性；除两个 `stability_surface` 测试外，引用的测试没有在这次运行。交付门禁按需求 30.4、30.5 在同一提交上运行它们（任务 36.2）。
 
 ## 工具
@@ -40,7 +41,7 @@
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
 | `compaction.summary` | 摘要压缩，保留工具回执与当前轮 | 已支持 | `crates/ara-agent/src/compaction.rs` `summarize_compaction_cut`；`ara-agent:tests/compaction_cut.rs::never_cuts_between_tool_call_receipt_and_final_assistant` | 已支持 | `core:context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete`；`jsonl:tests/test_compaction_process.py::CompactionProcessTest.test_two_summaries_three_runs_and_new_process_reopens_released_session` | 无 |
-| `compaction.budget` | 摘要调用占用同一调用预算，无余量时类型化停止 | 不支持 | 未找到摘要调用的预算预留（检索 `reserv` 只命中 `preserve`） | 已支持 | `core:tests/summary_reservation.rs::summary_needed_with_no_call_left_is_a_summary_budget_stop`；`harness:tests/summary_budget.rs::task_budget_exhausted_before_summary_is_a_typed_budget_stop`；`lite-eval:tests/long_compact_examples.rs::summary_and_agent_reservations_sum_to_the_task_total` | 无 |
+| `compaction.budget` | 摘要调用占用同一调用预算，无余量时类型化停止；Host 声明窗口上限决定文本预算 | 不支持 | 未找到摘要调用的预算预留（检索 `reserv` 只命中 `preserve`） | 已支持 | `core:tests/summary_reservation.rs::summary_needed_with_no_call_left_is_a_summary_budget_stop`；`harness:tests/summary_budget.rs::task_budget_exhausted_before_summary_is_a_typed_budget_stop`；`lite-eval:tests/long_compact_examples.rs::summary_and_agent_reservations_sum_to_the_task_total`；`lite-eval:tests/long_compact_examples.rs::a_context_window_cap_reaches_the_model_host_and_the_record`；`lite-eval:tests/long_compact_examples.rs::a_zero_context_window_cap_starts_nothing` | 无 |
 | `compaction.refresh` | 压缩后重新读取最近使用的文件（Compaction_Refresh，需显式开启） | 不支持 | 检索 `refresh`：0 处 | 已支持 | `core:tests/compaction_refresh.rs::refresh_follows_the_summary_with_current_disk_and_session_plan_state`；`core:tests/compaction_refresh.rs::without_the_policy_no_refresh_message_or_event_appears` | 无 |
 | `compaction.remote` | provider 侧远程压缩 | 已支持 | `crates/ara-agent/src/compaction.rs` `select_native_remote_compaction_cut` | 不支持 | 无 | Lite 只用自己的摘要调用压缩 |
 
@@ -70,7 +71,7 @@
 
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
-| `jsonl.sidecar` | 跨语言 sidecar 及 Python、Node 客户端 | 不支持 | 两个 crate 中没有 sidecar | 已支持 | `jsonl:tests/test_process.py::NativeProcessTest.test_python_real_file_feedback_and_same_task_budget`；`jsonl:tests/test_process.py::NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget` | 无 |
+| `jsonl.sidecar` | 跨语言 sidecar 及 Python、Node 客户端，含显式目录窗口上限 | 不支持 | 两个 crate 中没有 sidecar | 已支持 | `jsonl:tests/test_process.py::NativeProcessTest.test_python_real_file_feedback_and_same_task_budget`；`jsonl:tests/test_process.py::NativeProcessTest.test_node_real_public_host_feedback_uses_original_session_and_budget`；`jsonl:tests/test_process.py::NativeProcessTest.test_catalog_capped_lowers_the_declared_window_below_the_catalog_value`；`jsonl:tests/test_process.py::NativeProcessTest.test_catalog_capped_out_of_range_is_refused_before_any_request` | 无 |
 | `jsonl.resume` | start 帧 `resume` 字段与 `reconcile_request`／`reconcile_reply` 帧 | 不支持 | 无 | 部分支持 | `jsonl:tests/test_jsonl_resume.py::JsonlResumeTest.test_valid_resume_settles_once_and_continues_in_the_original_task`；`jsonl:tests/test_protocol_doc_examples.py::ProtocolDocExamplesTest.test_successful_resume_sequence` | 授权改变、预算或单 Run 上限变大时只报 `start_config_rejected`／`task_admission_rejected` 且零帧，Host 无法得知命中哪一条（任务 25.2 未完成） |
 | `jsonl.stop-review` | Length 停止复核帧（`verify_stop_request`、`prepare_stop_request`） | 不支持 | 无 | 已支持 | `jsonl:tests/test_length_stop_review.py::LengthStopReviewTest.test_needs_changes_continues_in_the_same_session_then_verifies`；`jsonl:tests/test_length_stop_review.py::LengthStopReviewTest.test_default_policy_sends_no_stop_frames` | 无 |
 | `jsonl.unknown-effects` | task 结果中的未知副作用记录与 `receipt_ref` | 不支持 | 无 | 已支持 | `jsonl:tests/test_jsonl_unknown.py::JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence` | 无 |

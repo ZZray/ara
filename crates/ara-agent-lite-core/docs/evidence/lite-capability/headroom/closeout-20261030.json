@@ -1,0 +1,73 @@
+{
+  "schema": "headroom-h0-closeout-v2",
+  "module": "M-H0-HEADROOM",
+  "state": "done",
+  "criteria_done": 6,
+  "criteria_total": 6,
+  "verified": false,
+  "upstream_sha": "17d38e5699b7d7c69ac6addcd762f39e42dd7f00",
+  "source_record": "record.json",
+  "prior_review": "review.json",
+  "approval_record": "dependency-policy-20261030.md",
+  "actual_policy_audit": "approved-policy-audit-20261030.json",
+  "independent_review": "approved-policy-review-20261030.json",
+  "historical_source_and_evidence_sha256_checked": {
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.toml": {
+      "sha256": "78bc7161c987cea8f20129cc3b8f8c2c2917e76e51b7b7f0ff7711d5b77fc11e",
+      "bytes": 244
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\Cargo.lock": {
+      "sha256": "9a21ae49d772f67c40847dea279a3fb6b0107c32329a157199031f3ab523d433",
+      "bytes": 69881
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\src\\main.rs": {
+      "sha256": "1ffed257650b0ca599098fd8780af695353be9677b870ffdab2baf15a0a2554d",
+      "bytes": 6879
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\probe\\tests\\process.rs": {
+      "sha256": "5e32ab1af9b5fe41e403c5a955119047ae73ec499134ea4c70e82e2a50b7fcd1",
+      "bytes": 2281
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\run-v2\\results.json": {
+      "sha256": "fe99d8dc4db0ae9581c51c7233dfe1301c0577e22e29996e3e7940582d06bc81",
+      "bytes": 3320
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stdout.log": {
+      "sha256": "d8ac812a715f3e84cf55447e72314f1df575fade45ab4d3360d74e05c2d88a73",
+      "bytes": 363
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\test.stderr.log": {
+      "sha256": "79ef73cb24e86a50b360675f8a4508457841a5c7e3e160c5724965131212e10b",
+      "bytes": 931
+    },
+    "D:\\WorkSpace\\tmp\\ara-headroom-20261027\\evidence\\clippy-final.stderr.log": {
+      "sha256": "b602b08d43578fb2ca68ed799a57aefdf88e13e899c58a5ca280eaa9dcd2acfe",
+      "bytes": 158
+    }
+  },
+  "missing_cached_executable": {
+    "D:\\workspace\\env\\cache\\rust-target-headroom-h0\\debug\\ara-headroom-h0.exe": {
+      "sha256": "e9b23863c6c03d37faedef85554871f38583db4744decaa4cfbf973035a00d5d",
+      "bytes": 18207744
+    }
+  },
+  "criteria": {
+    "39.1": "Fixed upstream, public API and original LICENSE/manifest/lock evidence retained in record.json.",
+    "39.2": "External prototype unchanged; no Lite/workspace code or locks changed for the prototype. Root policy amended only by explicit 2026-10-30 user approval.",
+    "39.3": "Original no-ML build/fmt/clippy and two process tests passed; source/lock/test evidence hashes still match. Cached executable is now missing, so its current hash cannot be checked. No rebuild or fresh behavior execution after policy-only change; no new binary delivered.",
+    "39.4": "Original six real-process offline cases passed; output bytes/protected lines/recovery checks retained. No provider usage or cost claim.",
+    "39.5": "Original complete Host input byte recovery, upstream marker retrieval and missing None behavior passed; no persistent restart claim.",
+    "39.6": "Costs and original rejection retained; user-approved actual root policy H0 audit exits0 with 0 errors/9 warnings; scoped independent review recorded."
+  },
+  "limits": [
+    "LNK4098 cause remains uninvestigated; original builds/tests succeeded with warning.",
+    "Original cached H0 executable is missing; only prior execution receipts and unchanged source/lock evidence reused, no newly verified binary.",
+    "Formal P2-f still depends on incomplete original checkpoint55; tasks64-66 not started.",
+    "No Lite adapter, real-model benefit, Full graph, product or release acceptance."
+  ],
+  "code_version": {
+    "head": "4640b9fa495d538c7a4fd36b18825312a6e7cdb4",
+    "diff_sha256": "96070a37ef538298118ae240110ddd84eb7951c9f98bdc8c84fee13ab68c3204",
+    "diff_rule": "lite-eval-worktree-diff-v1"
+  }
+}

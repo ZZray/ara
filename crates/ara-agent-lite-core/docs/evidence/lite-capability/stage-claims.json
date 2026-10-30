@@ -1,0 +1,101 @@
+{
+  "items": [
+    {
+      "name": "多文件 C++ 编码真实产物与独立检查",
+      "claims": [
+        {
+          "requirement": 31,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+          "verification": "real_model_trial"
+        }
+      ]
+    },
+    {
+      "name": "稳定接口与树外消费者",
+      "claims": [
+        {
+          "requirement": 31,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\current-01a18bf7\\consumer-20261030T085626Z\\result.json",
+          "verification": "real_model_trial"
+        }
+      ]
+    },
+    {
+      "name": "压缩",
+      "claims": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "多次续写",
+      "claims": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "长度截断",
+      "claims": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "进程中断",
+      "claims": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "回执核对",
+      "claims": [
+        {
+          "requirement": 35,
+          "path": "D:\\WorkSpace\\tmp\\ara-lite-capability\\long-mechanism-codex-20261030-final\\final-verification.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "独立审查",
+      "claims": [
+        {
+          "requirement": 32,
+          "path": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\reviews\\final-count-linked-01a18bf7-0a08ac7e-ara-git-review-20261030T112535Z.json",
+          "verification": "controlled_test"
+        }
+      ]
+    },
+    {
+      "name": "失败记录与未覆盖项保留",
+      "claims": [
+        {
+          "requirement": 36,
+          "path": "E:\\repos\\ara-github\\crates\\ara-agent-lite-core\\docs\\evidence\\lite-capability\\final-round-20261030-codex.json",
+          "verification": "controlled_test"
+        }
+      ]
+    }
+  ],
+  "runs": [],
+  "tasks": [
+    {
+      "task_id": "S1",
+      "host_accepted": false
+    }
+  ]
+}
