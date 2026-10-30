@@ -2,6 +2,7 @@
 //! and repeated observations produce a rule hit, one sourced correction and a
 //! NoProgress stop with exact event fields; no events without thresholds; an
 //! invalid threshold is refused before any upstream request.
+mod golden_support;
 mod support;
 
 use ara_agent_lite_core::{execute, stuck_detector::StuckPolicy};
@@ -102,6 +103,11 @@ async fn unconfigured_detector_emits_nothing_and_injects_nothing() {
     assert!(stuck_events(&events).is_empty());
     assert!(provider.bodies().iter().all(|body| !body.to_string().contains("source=stuck_detector")));
     assert!(of_type(&events, "agent_end")[0].get("stop_evidence").is_none());
+    // Requirement 18.8: same event types and Session messages as tests/golden/p2c-no-stuck/.
+    let mut normalizer = golden_support::Normalizer::new(root.path(), &provider.endpoint);
+    golden_support::check("p2c-no-stuck", "events.json", &golden_support::event_types(&events));
+    let session = golden_support::journal_entries(&root.path().join("session.json"));
+    golden_support::check("p2c-no-stuck", "session.json", &normalizer.value(&session));
 }
 
 #[tokio::test]

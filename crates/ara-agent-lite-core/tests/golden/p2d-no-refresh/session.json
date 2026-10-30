@@ -1,0 +1,223 @@
+[
+  {
+    "kind": "user",
+    "role": "user",
+    "content": "Write a.txt and b.txt, then report.",
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "w1",
+        "name": "ws_write_file",
+        "arguments": {
+          "path": "a.txt",
+          "content": "a-v1 stale"
+        }
+      },
+      {
+        "type": "toolCall",
+        "id": "w2",
+        "name": "ws_write_file",
+        "arguments": {
+          "path": "b.txt",
+          "content": "b-v1 OLD-B-CONTENT"
+        }
+      },
+      {
+        "type": "toolCall",
+        "id": "w3",
+        "name": "exec_fixture",
+        "arguments": {
+          "path": "c.txt"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "tooluse",
+    "rawStopReason": "tool_calls",
+    "timestamp": 0
+  },
+  {
+    "kind": "tool_result",
+    "role": "toolResult",
+    "toolCallId": "w1",
+    "toolName": "ws_write_file",
+    "content": [
+      {
+        "type": "text",
+        "text": "wrote %ROOT%\\a.txt"
+      }
+    ],
+    "isError": false,
+    "timestamp": 0
+  },
+  {
+    "kind": "tool_result",
+    "role": "toolResult",
+    "toolCallId": "w2",
+    "toolName": "ws_write_file",
+    "content": [
+      {
+        "type": "text",
+        "text": "wrote %ROOT%\\b.txt"
+      }
+    ],
+    "isError": false,
+    "timestamp": 0
+  },
+  {
+    "kind": "tool_result",
+    "role": "toolResult",
+    "toolCallId": "w3",
+    "toolName": "exec_fixture",
+    "content": [
+      {
+        "type": "text",
+        "text": "ran"
+      }
+    ],
+    "isError": false,
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "t1",
+        "name": "task_update",
+        "arguments": {
+          "id": "s1",
+          "title": "write a and b",
+          "status": "done",
+          "evidence": "wrote both files"
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "tooluse",
+    "rawStopReason": "tool_calls",
+    "timestamp": 0
+  },
+  {
+    "kind": "tool_result",
+    "role": "toolResult",
+    "toolCallId": "t1",
+    "toolName": "task_update",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"scope\":\"current_run\",\"items\":[{\"id\":\"s1\",\"title\":\"write a and b\",\"status\":\"done\",\"evidence\":\"wrote both files\"}]}"
+      }
+    ],
+    "isError": false,
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "%REPEAT(r,16384)%"
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "stop",
+    "rawStopReason": "stop",
+    "timestamp": 0
+  },
+  {
+    "kind": "user",
+    "role": "user",
+    "content": "Continue. %REPEAT(q,16384)%",
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "continued from disk"
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "stop",
+    "rawStopReason": "stop",
+    "timestamp": 0
+  }
+]

@@ -1,0 +1,88 @@
+[
+  {
+    "kind": "user",
+    "role": "user",
+    "content": "Use probe and answer.",
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "p1",
+        "name": "probe",
+        "arguments": {
+          "n": 1
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "tooluse",
+    "rawStopReason": "tool_calls",
+    "timestamp": 0
+  },
+  {
+    "kind": "tool_result",
+    "role": "toolResult",
+    "toolCallId": "p1",
+    "toolName": "probe",
+    "content": [
+      {
+        "type": "text",
+        "text": "fixture state"
+      }
+    ],
+    "isError": false,
+    "timestamp": 0
+  },
+  {
+    "kind": "assistant",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "answer-2"
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "ara-agent-lite",
+    "model": "core-fixture",
+    "responseId": "core",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0,
+        "total": 0.0
+      }
+    },
+    "stopReason": "stop",
+    "rawStopReason": "stop",
+    "timestamp": 0
+  }
+]

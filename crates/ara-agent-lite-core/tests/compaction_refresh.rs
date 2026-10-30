@@ -2,13 +2,16 @@
 //! Compaction_Refresh re-reads the current disk state of the files the old
 //! history touched and the plan state from the Session; the request shows
 //! the labelled summary first, then the refresh messages; the summarized
-//! raw journal is unchanged. Without the policy no refresh appears.
+//! raw journal is unchanged. Without the policy no refresh appears and the
+//! Run matches `tests/golden/p2d-no-refresh/`.
+mod golden_support;
 mod support;
 
 use std::path::Path;
 
 use ara_agent_lite_core::{
     compaction_refresh::{FileToolKind, RefreshPolicy},
+    context_memory,
     session_journal::Journal,
 };
 use serde_json::{json, Value};
@@ -53,6 +56,7 @@ struct Case {
     bodies: Vec<Value>,
     journal_before: (usize, String, Value),
     journal_after: (String, Value),
+    endpoint: String,
 }
 
 fn journal_state(session: &Path, count: usize) -> (String, Value) {
@@ -96,7 +100,8 @@ async fn compact(refresh: Option<RefreshPolicy>) -> Case {
     assert_eq!(result.code, 0, "{}", result.error);
     let journal_after = journal_state(&session, count);
     let bodies = provider.bodies();
-    Case { root, events, bodies, journal_before: (count, proof, messages), journal_after }
+    let endpoint = provider.endpoint.clone();
+    Case { root, events, bodies, journal_before: (count, proof, messages), journal_after, endpoint }
 }
 
 #[tokio::test]
@@ -158,4 +163,16 @@ async fn without_the_policy_no_refresh_message_or_event_appears() {
     let (_, proof, messages) = &case.journal_before;
     assert_eq!(&case.journal_after.0, proof);
     assert_eq!(&case.journal_after.1, messages);
+
+    // Requirement 19.7: summary text, projection and Session as tests/golden/p2d-no-refresh/.
+    let session = case.root.path().join("session.json");
+    let store: Value = serde_json::from_slice(&std::fs::read(context_memory::path(&session)).unwrap()).unwrap();
+    let agent = case.bodies.last().unwrap();
+    assert!(!is_summary(agent));
+    let mut normalizer = golden_support::Normalizer::new(case.root.path(), &case.endpoint);
+    golden_support::check("p2d-no-refresh", "summary.json", &normalizer.value(&store["summary"]["text"]));
+    golden_support::check("p2d-no-refresh", "projection.json", &normalizer.value(&agent["messages"]));
+    let journal = golden_support::journal_entries(&session);
+    golden_support::check("p2d-no-refresh", "session.json", &normalizer.value(&journal));
+    golden_support::check("p2d-no-refresh", "events.json", &golden_support::event_types(&case.events));
 }

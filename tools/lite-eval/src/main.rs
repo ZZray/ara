@@ -50,8 +50,10 @@ enum Command {
     Ledger(LedgerCommand),
     /// Send a DingTalk progress notification for the current ledger state.
     Notify(NotifyArgs),
-    /// Run the combined long-task reliability trial.
-    LongTrial(Pending),
+    /// Run the combined long-task reliability trial under `budgets.LONG-TRIAL`.
+    LongTrial(LongTrialArgs),
+    /// Run one compaction-heavy task through the Harness under `budgets.LONG-COMPACT`.
+    LongCompact(LongCompactArgs),
     /// Write the Stage_Acceptance_Record for a phase.
     Stage(StageArgs),
 }
@@ -167,6 +169,95 @@ fn run(args: RunArgs) -> Result<ExitCode> {
         "status {:?}, passed {}, failed {}, refused {}, exit {}",
         report.manifest.status, summary.passed, summary.failed, summary.refused, report.exit
     );
+    Ok(ExitCode::from(report.exit))
+}
+
+/// Task selection and output location only; the budget is always the
+/// Run_Policy `budgets.LONG-COMPACT` (requirement 25.5).
+#[derive(Args)]
+struct LongCompactArgs {
+    /// Registered task to run as the long compaction task.
+    #[arg(long, default_value = lite_eval::long_compact::DEFAULT_TASK)]
+    task: String,
+    /// The record goes to `<dir>/long-compact/<stamp>/long-compact.json`.
+    #[arg(long, default_value = EVIDENCE_ROOT)]
+    evidence_root: PathBuf,
+    /// Capability_Test_Host P2 configuration, as for `run`; omitted = v1.
+    #[arg(long)]
+    p2_through: Option<String>,
+}
+
+/// Exit 0 compaction happened and every count check holds, 1 failed or
+/// uncovered (no compaction), 2 nothing was started.
+fn long_compact(args: LongCompactArgs) -> Result<ExitCode> {
+    use lite_eval::long_compact::{run, LongCompactInputs};
+    let root = repo_root()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let env = |name: &str| std::env::var(name).ok();
+    let report = runtime.block_on(run(LongCompactInputs {
+        repo_root: &root,
+        evidence_root: &args.evidence_root,
+        task_id: &args.task,
+        executor: &lite_eval::runner::HarnessExecutor,
+        env: &env,
+        features: match &args.p2_through {
+            Some(item) => lite_eval::host::Features::through(item)?,
+            None => lite_eval::host::Features::V1,
+        },
+    }))?;
+    println!("{}", report.record_path.display());
+    println!("{}", serde_json::to_string(&report.record.check)?);
+    Ok(ExitCode::from(report.exit))
+}
+
+/// Task fixture, sidecar and output location only; the budget is always the
+/// Run_Policy `budgets.LONG-TRIAL` (requirement 35).
+#[derive(Args)]
+struct LongTrialArgs {
+    /// Registered task whose fixture the trial copies.
+    #[arg(long, default_value = lite_eval::long_trial::DEFAULT_TASK)]
+    task: String,
+    /// The trial goes to `<dir>/long-trial/<stamp>/`.
+    #[arg(long, default_value = EVIDENCE_ROOT)]
+    evidence_root: PathBuf,
+    /// `ara-agent-lite-jsonl` binary; required for a new trial.
+    #[arg(long)]
+    sidecar: Option<PathBuf>,
+    /// Public check argv as a JSON array; default: the task's registered `public_check`.
+    #[arg(long)]
+    public_check: Option<String>,
+    /// Python interpreter that runs the driver.
+    #[arg(long, default_value = "python")]
+    python: String,
+    /// Only check an existing trial directory; nothing is started.
+    #[arg(long, value_name = "DIR")]
+    check_only: Option<PathBuf>,
+}
+
+/// Exit 0 passed, 1 failed or coverage insufficient, 2 nothing was started.
+fn long_trial(args: LongTrialArgs) -> Result<ExitCode> {
+    use lite_eval::long_trial::{run, LongTrialInputs};
+    let root = repo_root()?;
+    let public_check = match &args.public_check {
+        Some(text) => {
+            Some(serde_json::from_str::<Vec<String>>(text).context("--public-check must be a JSON array of strings")?)
+        }
+        None => None,
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let env = |name: &str| std::env::var(name).ok();
+    let report = runtime.block_on(run(LongTrialInputs {
+        repo_root: &root,
+        evidence_root: &args.evidence_root,
+        task_id: &args.task,
+        sidecar: args.sidecar.as_deref(),
+        public_check,
+        python: &args.python,
+        check_only: args.check_only.as_deref(),
+        env: &env,
+    }))?;
+    println!("{}", report.record_path.display());
+    println!("{}", serde_json::to_string(&report.record.verdict)?);
     Ok(ExitCode::from(report.exit))
 }
 
@@ -825,7 +916,8 @@ fn main() -> ExitCode {
         Command::ReviewRecord(args) => review_record(args),
         Command::Ledger(command) => ledger(command),
         Command::Notify(args) => notify(args),
-        Command::LongTrial(_) => not_implemented("long-trial"),
+        Command::LongTrial(args) => long_trial(args),
+        Command::LongCompact(args) => long_compact(args),
         Command::Stage(args) => stage(args),
     };
     match result {

@@ -11,6 +11,8 @@ pub mod failure;
 pub mod gate;
 pub mod host;
 pub mod ledger;
+pub mod long_compact;
+pub mod long_trial;
 pub mod manifest;
 pub mod metrics;
 pub mod notify;
