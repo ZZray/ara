@@ -16,6 +16,7 @@
 //! mid-batch steering interrupts of interruptible tools, argument streams,
 //! transient error tool-turn recovery, pause-turn continuations.
 
+use crate::agent::AgentInput;
 use crate::event::{AgentEvent, AgentEventSink};
 use crate::tool::{AgentTool, Concurrency, ToolDecision, ToolOutput};
 use ara_ai::validation::validate_tool_arguments;
@@ -59,6 +60,15 @@ pub trait LoopHooks: Send + Sync {
     /// Consuming dequeue of follow-up messages (drained when the agent would stop).
     async fn follow_up_messages(&self) -> Vec<Message> {
         Vec::new()
+    }
+    /// Owned steering dequeue. Existing Message hooks retain their behavior;
+    /// hosts with provenance override this method instead.
+    async fn steering_inputs(&self) -> Vec<AgentInput> {
+        self.steering_messages().await.into_iter().map(AgentInput::from).collect()
+    }
+    /// Owned follow-up dequeue, adapting existing Message hooks by default.
+    async fn follow_up_inputs(&self) -> Vec<AgentInput> {
+        self.follow_up_messages().await.into_iter().map(AgentInput::from).collect()
     }
     /// Rewrite the provider request context just before each model call (OMP
     /// `transformProviderContext`). The run's own transcript is unchanged.
@@ -211,9 +221,21 @@ pub async fn agent_loop(
     cancel: &CancellationToken,
     sink: &dyn AgentEventSink,
 ) -> RunReport {
+    agent_loop_inputs(prompts.into_iter().map(AgentInput::from).collect(), context, config, cancel, sink).await
+}
+
+/// Owned input counterpart to `agent_loop`. Only model messages enter the
+/// transcript and report; input provenance reaches the awaited sink callback.
+pub async fn agent_loop_inputs(
+    prompts: Vec<AgentInput>,
+    context: &mut Vec<Message>,
+    config: &AgentConfig,
+    cancel: &CancellationToken,
+    sink: &dyn AgentEventSink,
+) -> RunReport {
     let ctl = RunControl::new(cancel, config.deadline);
-    context.extend(prompts.iter().cloned());
-    let mut new_messages = prompts.clone();
+    context.extend(prompts.iter().map(|input| input.model.clone()));
+    let mut new_messages = prompts.iter().map(|input| input.model.clone()).collect();
     sink.emit(AgentEvent::AgentStart).await;
     let end = run_loop(context, &mut new_messages, config, &ctl, sink, prompts).await;
     RunReport { messages: new_messages, end }
@@ -245,10 +267,9 @@ pub async fn agent_loop_continue(
     Ok(RunReport { messages: new_messages, end })
 }
 
-async fn emit_inputs(sink: &dyn AgentEventSink, messages: &[Message]) {
-    for m in messages {
-        sink.emit(AgentEvent::MessageStart { message: m.clone() }).await;
-        sink.emit(AgentEvent::MessageEnd { message: m.clone() }).await;
+async fn emit_inputs(sink: &dyn AgentEventSink, inputs: &[AgentInput]) {
+    for input in inputs {
+        sink.emit_input(input.clone()).await;
     }
 }
 
@@ -263,15 +284,15 @@ async fn run_loop(
     config: &AgentConfig,
     ctl: &RunControl,
     sink: &dyn AgentEventSink,
-    initial: Vec<Message>,
+    initial: Vec<AgentInput>,
 ) -> RunEnd {
     let mut to_emit = initial;
     if deadline_passed(config) {
         emit_inputs(sink, &to_emit).await;
         return end(sink, new_messages, RunEnd::Deadline).await;
     }
-    let mut pending: Vec<Message> =
-        if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_messages().await };
+    let mut pending: Vec<AgentInput> =
+        if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_inputs().await };
 
     if let Some(tail) = unpaired_tool_call_tail(context).cloned() {
         sink.emit(AgentEvent::TurnStart).await;
@@ -291,8 +312,8 @@ async fn run_loop(
             if deadline_passed(config) || config.max_model_calls.is_some_and(|max| model_calls >= max) {
                 // Commit already-dequeued messages so queued user input is never lost.
                 for m in pending.drain(..) {
-                    context.push(m.clone());
-                    new_messages.push(m.clone());
+                    context.push(m.model.clone());
+                    new_messages.push(m.model.clone());
                     to_emit.push(m);
                 }
                 emit_inputs(sink, &to_emit).await;
@@ -301,8 +322,8 @@ async fn run_loop(
             }
             let mut turn_messages = std::mem::take(&mut to_emit);
             for m in pending.drain(..) {
-                context.push(m.clone());
-                new_messages.push(m.clone());
+                context.push(m.model.clone());
+                new_messages.push(m.model.clone());
                 turn_messages.push(m);
             }
             sink.emit(AgentEvent::TurnStart).await;
@@ -366,7 +387,7 @@ async fn run_loop(
             if deadline_passed(config) {
                 return end(sink, new_messages, RunEnd::Deadline).await;
             }
-            pending = if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_messages().await };
+            pending = if ctl.is_cancelled() { Vec::new() } else { config.hooks.steering_inputs().await };
         }
         if deadline_passed(config) || ctl.deadline_fired() {
             return end(sink, new_messages, RunEnd::Deadline).await;
@@ -374,8 +395,8 @@ async fn run_loop(
         if ctl.is_cancelled() {
             return end(sink, new_messages, RunEnd::Aborted).await;
         }
-        let mut late = config.hooks.steering_messages().await;
-        late.extend(config.hooks.follow_up_messages().await);
+        let mut late = config.hooks.steering_inputs().await;
+        late.extend(config.hooks.follow_up_inputs().await);
         if late.is_empty() {
             break;
         }

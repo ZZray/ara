@@ -25,6 +25,7 @@ impl Env {
     fn new() -> Self {
         let home = tempfile::Builder::new().prefix("ara-rpc-home-").tempdir().unwrap();
         let work = tempfile::Builder::new().prefix("ara-rpc-work-").tempdir().unwrap();
+        std::fs::create_dir(work.path().join(".git")).unwrap();
         let sessions = home.path().join("sessions");
         Self { home, work, sessions }
     }
@@ -203,6 +204,10 @@ impl RpcChild {
     }
 
     fn adopt(&mut self, id: &str, frame: Value) {
+        self.adopt_commands(id, frame, json!([]));
+    }
+
+    fn adopt_commands(&mut self, id: &str, frame: Value, commands: Value) {
         let begin = self.seen.len();
         self.send(frame);
         assert_eq!(self.success(id)["data"], json!({"cancelled":false}));
@@ -212,11 +217,15 @@ impl RpcChild {
             .filter(|(_, frame)| frame["type"] == "available_commands_update")
             .collect();
         assert_eq!(updates.len(), 1, "exactly one command metadata update precedes adoption ACK");
-        assert_eq!(updates[0].1["commands"], json!([]));
+        assert_eq!(updates[0].1["commands"], commands);
         assert!(updates[0].0 < self.seen.len() - begin - 1, "metadata precedes correlated response");
     }
 
     fn ready(&mut self) {
+        self.ready_commands(json!([]));
+    }
+
+    fn ready_commands(&mut self, commands: Value) {
         let ready = self.next(WAIT);
         assert_eq!(ready["type"], "ready", "{ready}");
         assert_eq!(ready["protocolVersion"], 1);
@@ -225,7 +234,12 @@ impl RpcChild {
         assert_eq!(ready["maxReassembledFrameBytes"], 64 * 1024 * 1024);
         let metadata = self.next(WAIT);
         assert_eq!(metadata["type"], "available_commands_update");
-        assert_eq!(metadata["commands"], json!([]));
+        assert_eq!(metadata["commands"], commands);
+    }
+
+    fn commands(&mut self, id: &str) -> Value {
+        self.send(json!({"id":id,"type":"get_available_commands"}));
+        self.success(id)["data"]["commands"].clone()
     }
 
     fn errors(&self) -> String {
@@ -327,15 +341,335 @@ fn contains_text(message: &Value, expected: &str) -> bool {
         })
 }
 
+fn invocation_skill(env: &Env, source: &str, name: &str, body: &str) -> PathBuf {
+    // Keep ancestor Skills on the real developer machine out of this fixture.
+    std::fs::create_dir_all(env.work.path().join(".git")).unwrap();
+    let path = env.work.path().join(source).join(name).join("SKILL.md");
+    write_skill(&path, name, body);
+    path
+}
+
+fn write_skill(path: &Path, name: &str, body: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, format!("---\nname: {name}\ndescription: RPC invocation fixture\n---\n{body}\n")).unwrap();
+}
+
+fn command_metadata(name: &str, description: &str) -> Value {
+    json!({"name":format!("skill:{name}"),"description":description,"input":{"hint":"arguments"},"source":"skill"})
+}
+
+fn proof_commands() -> Value {
+    json!([command_metadata("proof", "RPC invocation fixture")])
+}
+
+fn metadata_skill(env: &Env, source: &str, name: &str, description: &str, flags: &str) -> PathBuf {
+    let path = invocation_skill(env, source, name, "metadata fixture body");
+    std::fs::write(&path, format!("---\nname: {name}\ndescription: {description}\n{flags}---\nmetadata body\n"))
+        .unwrap();
+    path
+}
+
+fn query_data(child: &mut RpcChild, id: &str, kind: &str) -> Value {
+    child.send(json!({"id":id,"type":kind}));
+    child.success(id)["data"].clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_native_stats_count_completed_skill_tool_turns_and_branch_queries_use_all_raw_entry_ids() {
+    let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Use the controlled write tool.");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Ordinary complete"),finish("stop"),done()]},
+        {"events":[tool_call(0,"native-stats-write","write","{\"path\":\"stats-proof.txt\",\"content\":\"native effect\\n\"}"),finish("tool_calls"),done()]},
+        {"events":[text("Skill complete"),finish("stop"),done()]}
+    ]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--tools", "write"]));
+    child.ready_commands(proof_commands());
+    let empty = query_data(&mut child, "empty-stats", "get_session_stats");
+    assert_eq!(empty["totalMessages"], 0);
+    assert_eq!(empty["tokens"], json!({"input":0,"output":0,"reasoning":0,"cacheRead":0,"cacheWrite":0,"total":0}));
+    assert_eq!(empty["cost"], 0.0);
+    assert_eq!(empty["premiumRequests"], 0);
+    child.send(json!({"id":"ordinary-native","type":"prompt","message":"ordinary α"}));
+    child.success("ordinary-native");
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.send(json!({"id":"skill-native","type":"prompt","message":"/skill:proof metadata stats"}));
+    assert_eq!(child.success("skill-native")["data"]["agentInvoked"], true);
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let state = child.state("native-query-state");
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    let before = std::fs::read(&file).unwrap();
+    let stats = query_data(&mut child, "completed-stats", "get_session_stats");
+    assert_eq!(stats["sessionId"], state["sessionId"]);
+    assert_eq!(stats["sessionFile"], state["sessionFile"]);
+    for (field, expected) in
+        [("userMessages", 1), ("assistantMessages", 3), ("toolCalls", 1), ("toolResults", 1), ("totalMessages", 6)]
+    {
+        assert_eq!(stats[field], expected, "{field}");
+    }
+    assert_eq!(
+        stats["tokens"],
+        json!({"input":null,"output":null,"reasoning":null,"cacheRead":null,"cacheWrite":null,"total":null})
+    );
+    assert!(stats["cost"].is_null() && stats["premiumRequests"].is_null(), "missing usage/pricing is unknown");
+    let entries = journal(&file);
+    let ordinary = entries.iter().find(|entry| entry["message"]["role"] == "user").unwrap().clone();
+    let expected_branch = json!([{"entryId":ordinary["id"],"text":"ordinary α"}]);
+    assert_eq!(
+        query_data(&mut child, "active-raw-entries", "get_branch_messages"),
+        json!({"messages":expected_branch})
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before, "read-only native queries do not mutate receipts");
+    assert_eq!(std::fs::read_to_string(env.work.path().join("stats-proof.txt")).unwrap(), "native effect\n");
+    child.finish(0);
+
+    let mut entries = journal(&file);
+    let mut detached = ordinary.clone();
+    detached["id"] = json!("abcdef01");
+    detached["parentId"] = Value::Null;
+    detached["message"]["content"] = json!([
+        {"type":"text","text":"left"}, {"type":"image","data":"aA==","mimeType":"image/png"}, {"type":"text","text":"right"}
+    ]);
+    let mut empty = ordinary.clone();
+    empty["id"] = json!("abcdef02");
+    empty["parentId"] = json!("abcdef01");
+    empty["message"]["content"] = json!([]);
+    let position = entries.iter().position(|entry| entry["id"] == ordinary["id"]).unwrap();
+    entries.splice(position..position, [detached, empty]);
+    std::fs::write(&file, entries.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    let edited = std::fs::read(&file).unwrap();
+    let mut resumed =
+        RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap(), "--tools", "write"]));
+    resumed.ready_commands(proof_commands());
+    assert_eq!(
+        query_data(&mut resumed, "all-raw-user-entries", "get_branch_messages"),
+        json!({"messages":[
+            {"entryId":"abcdef01","text":"leftright"}, {"entryId":ordinary["id"],"text":"ordinary α"}
+        ]})
+    );
+    assert_eq!(
+        query_data(&mut resumed, "restored-completed-stats", "get_session_stats")["totalMessages"],
+        6,
+        "off-branch messages are excluded from completed active statistics"
+    );
+    resumed.finish(0);
+    assert_eq!(std::fs::read(&file).unwrap(), edited);
+    assert_eq!(up.served(), 3, "raw branch/stat queries never call the model");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_compacted_stats_use_kept_usage_and_custom_identity_while_branch_lists_raw_users() {
+    use ara_ai::{AssistantBlock, AssistantMessage, Message, UserContent, UserMessage};
+    use ara_session::{SessionJournal, UserSkillPrompt};
+    let env = Env::new();
+    let mut native = SessionJournal::create(&env.sessions, env.work.path()).unwrap();
+    let first = native.append_message(&Message::User(UserMessage::text("Summarized raw request"))).unwrap();
+    let mut answer = AssistantMessage::empty("openai-completions", "fixture", "fake-model");
+    answer.content.push(AssistantBlock::text("Completed answer"));
+    answer.usage.input = Some(100);
+    let first_answer = native.append_message(&Message::Assistant(answer.clone())).unwrap();
+    let kept = native
+        .append_skill_prompt(&UserSkillPrompt::new(UserContent::Text("Historical Skill body".into()), None))
+        .unwrap();
+    answer.usage.input = Some(7);
+    native.append_message(&Message::Assistant(answer)).unwrap();
+    native
+        .append_compaction("Summary of the earlier complete turn", &kept, &[first.clone(), first_answer], 100)
+        .unwrap();
+    native.set_session_name("Compacted retained title", "user").unwrap();
+    let file = native.path().to_path_buf();
+    let up = upstream(json!({"responses":[]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    child.ready();
+    // Existing startup may persist the launch-selected model before ready.
+    let before = std::fs::read(&file).unwrap();
+    child.send(json!({"id":"compacted-stats","type":"get_session_stats"}));
+    let stats = child.success("compacted-stats")["data"].clone();
+    assert_eq!(stats["totalMessages"], 3);
+    assert_eq!(stats["userMessages"], 0, "summary and Skill preserve their non-user identity");
+    assert_eq!(stats["assistantMessages"], 1);
+    assert_eq!(stats["tokens"]["input"], 7, "summarized assistant usage is excluded");
+    child.send(json!({"id":"compacted-branches","type":"get_branch_messages"}));
+    assert_eq!(
+        child.success("compacted-branches")["data"],
+        json!({"messages":[{"entryId":first,"text":"Summarized raw request"}]})
+    );
+    assert_eq!(child.state("compacted-title")["sessionName"], "Compacted retained title");
+    child.finish(0);
+    assert_eq!(std::fs::read(file).unwrap(), before);
+    assert_eq!(up.served(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_session_name_during_held_run_acknowledges_before_terminal_and_restores_through_adoption() {
+    let env = Env::new();
+    let up = upstream(json!({"responses":[{"events":[text("Held while renamed")],"end":"hang"}]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready();
+    child.send(json!({"id":"rename-held","type":"prompt","message":"hold rename lifecycle"}));
+    child.success("rename-held");
+    child.until(
+        |frame| frame["type"] == "message_update" && contains_text(&frame["message"], "Held while renamed"),
+        WAIT,
+    );
+    child.send(json!({"id":"name-held","type":"set_session_name","name":"\u{feff} 标题\t🦀\u{85}新\n 名 \u{a0}"}));
+    let ack = child.until(|frame| frame["id"] == "name-held", Duration::from_secs(2));
+    assert_eq!(ack["success"], true);
+    assert!(ack.get("data").is_none());
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end"), "rename does not wait for the held Run");
+    let state = child.state("named-held-state");
+    assert_eq!(state["sessionName"], "标题 🦀 新 名");
+    assert_eq!(state["isStreaming"], true);
+    let file = PathBuf::from(state["sessionFile"].as_str().unwrap());
+    assert!(!file.exists(), "a rename during the first partial preserves lazy journal materialization");
+    for (id, name) in [
+        ("name-empty", json!("\u{feff}\t \u{a0}")),
+        ("name-control-empty", json!("\u{85}\u{7f}")),
+        ("name-type", json!(42)),
+    ] {
+        child.send(json!({"id":id,"type":"set_session_name","name":name}));
+        assert_eq!(child.response(id)["success"], false);
+        assert!(!file.exists(), "a rejected rename must not materialize the lazy Session");
+    }
+    child.send(json!({"id":"abort-renamed","type":"abort"}));
+    child.success("abort-renamed");
+    let named = std::fs::read(&file).unwrap();
+    let first_line = named.iter().position(|byte| *byte == b'\n').unwrap() + 1;
+    assert_eq!(first_line, 256, "native fixed title slot remains fixed width");
+    let entries = journal(&file);
+    assert_eq!(entries[0]["title"], "标题 🦀 新 名");
+    assert_eq!(native_header(&entries)["title"], "标题 🦀 新 名");
+    let changes: Vec<_> = entries.iter().filter(|entry| entry["type"] == "title_change").collect();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["title"], "标题 🦀 新 名");
+    assert_eq!(changes[0]["source"], "user");
+    for (id, name) in [
+        ("name-empty", json!("\u{feff}\t \u{a0}")),
+        ("name-control-empty", json!("\u{85}\u{7f}")),
+        ("name-type", json!(42)),
+    ] {
+        child.send(json!({"id":id,"type":"set_session_name","name":name}));
+        assert_eq!(child.response(id)["success"], false);
+        assert_eq!(std::fs::read(&file).unwrap(), named, "rejected name leaves title/journal unchanged");
+    }
+    child.finish(0);
+    let mut resumed = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    resumed.ready();
+    assert_eq!(resumed.state("restored-name")["sessionName"], "标题 🦀 新 名");
+    resumed.adopt("fresh-name", json!({"id":"fresh-name","type":"new_session"}));
+    assert!(resumed.state("fresh-name-state").get("sessionName").is_none());
+    resumed.adopt("old-name", json!({"id":"old-name","type":"switch_session","sessionPath":file}));
+    assert_eq!(resumed.state("switched-name")["sessionName"], "标题 🦀 新 名");
+    resumed.finish(0);
+    assert_eq!(up.served(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_ephemeral_name_and_user_entry_ids_are_stable_for_consumed_nonempty_plain_inputs() {
+    let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Ephemeral custom input");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Empty user completed"),finish("stop"),done()]},
+        {"events":[text("Plain user completed"),finish("stop"),done()]},
+        {"events":[text("Skill completed"),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--no-session"]));
+    child.ready_commands(proof_commands());
+    child.send(json!({"id":"ephemeral-name","type":"set_session_name","name":"\u{feff}  临时\t🦀 \u{a0}"}));
+    child.success("ephemeral-name");
+    assert_eq!(child.state("ephemeral-named")["sessionName"], "临时 🦀");
+    for (id, message) in
+        [("empty-user", ""), ("plain-user", "same user"), ("skill-user", "/skill:proof user entry metadata")]
+    {
+        child.send(json!({"id":id,"type":"prompt","message":message}));
+        child.success(id);
+        child.until(|frame| frame["type"] == "agent_end", WAIT);
+    }
+    let branch = query_data(&mut child, "ephemeral-entries", "get_branch_messages");
+    let entries = branch["messages"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "empty ordinary and custom Skill are not raw user entries");
+    assert_eq!(entries[0]["text"], "same user");
+    let id = entries[0]["entryId"].as_str().unwrap();
+    assert_eq!(id.len(), 8);
+    assert!(id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(query_data(&mut child, "ephemeral-entries-again", "get_branch_messages"), branch);
+    let stats = query_data(&mut child, "ephemeral-stats", "get_session_stats");
+    assert!(stats.get("sessionFile").is_none());
+    assert_eq!(stats["userMessages"], 2);
+    assert_eq!(stats["totalMessages"], 6);
+    child.adopt_commands("ephemeral-reset", json!({"id":"ephemeral-reset","type":"new_session"}), proof_commands());
+    assert!(child.state("ephemeral-reset-state").get("sessionName").is_none());
+    assert_eq!(query_data(&mut child, "ephemeral-reset-entries", "get_branch_messages"), json!({"messages":[]}));
+    child.finish(0);
+    assert_eq!(up.served(), 3);
+    assert!(env.sessions().is_empty());
+}
+
+fn skill_entries(entries: &[Value]) -> Vec<&Value> {
+    entries.iter().filter(|entry| entry["type"] == "custom_message" && entry["customType"] == "skill-prompt").collect()
+}
+
+fn completed_events(frames: &[Value]) -> Vec<Value> {
+    frames.iter().filter(|frame| frame["type"] == "message_end").map(|frame| frame["message"].clone()).collect()
+}
+
+fn assert_skill_public(message: &Value, original: &str, body: &str) {
+    assert_eq!(message["role"], "custom", "{message}");
+    assert_eq!(message["customType"], "skill-prompt");
+    assert_eq!(message["display"], true);
+    assert_eq!(message["attribution"], "user");
+    assert_eq!(message["details"]["name"], "proof");
+    assert_eq!(message["details"]["originalText"], original);
+    assert!(contains_text(message, body), "fresh body in public Skill: {message}");
+    assert!(message["timestamp"].as_i64().is_some());
+}
+
+fn assert_no_local_prompt_result(frames: &[Value], ids: &[&str]) {
+    assert!(
+        !frames.iter().any(|frame| { frame["type"] == "prompt_result" && ids.iter().any(|id| frame["id"] == *id) }),
+        "successfully invoked or queued prompts must not report a local skip: {frames:?}"
+    );
+}
+
+fn provider_users_without_reminder(messages: &[Value], cwd: &Path) -> Vec<Value> {
+    let mut users: Vec<_> = messages.iter().filter(|message| message["role"] == "user").cloned().collect();
+    let first = users.first_mut().expect("provider has a user input");
+    // The existing CliHooks intentionally prepends this one date/cwd block to
+    // the first provider user turn. Check it exactly, then compare all actual
+    // user content and image blocks without that provider-only reminder.
+    let reminder = if let Some(text) = first["content"].as_str() {
+        let (reminder, content) = text.split_once("\n\n").expect("plain first-user reminder separator");
+        let reminder = reminder.to_owned();
+        first["content"] = json!(content);
+        reminder
+    } else {
+        let content = first["content"].as_array_mut().expect("typed provider first user");
+        let reminder = content.remove(0);
+        assert_eq!(reminder["type"], "text");
+        reminder["text"].as_str().unwrap().to_owned()
+    };
+    let date = reminder.strip_prefix("<system-reminder>\nToday: ").unwrap().split_once(';').unwrap().0;
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").expect("actual child reminder date");
+    let absolute = std::fs::canonicalize(cwd).unwrap();
+    let absolute = absolute.to_string_lossy();
+    let normalized = absolute.strip_prefix("\\\\?\\").unwrap_or(&absolute).replace('\\', "/");
+    assert_eq!(
+        reminder,
+        format!(
+            "<system-reminder>\nToday: {date}; current working directory: '{normalized}'. Do not repeat this information in your reply.\n</system-reminder>"
+        )
+    );
+    users
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_protocol_recoverable_input_errors_and_explicit_unsupported_commands() {
     let env = Env::new();
-    let skill = env.work.path().join(".ara/skills/proof/SKILL.md");
-    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(skill, "---\nname: proof\ndescription: proof\n---\nDo the task.\n").unwrap();
+    let skill = invocation_skill(&env, ".ara/skills", "proof", "Do the task.");
     let up = upstream(json!({"responses":[]})).await;
     let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
-    child.ready();
+    child.ready_commands(proof_commands());
     child.send_raw("{broken\n");
     let malformed = child.until(|frame| frame["type"] == "response", WAIT);
     assert_eq!(malformed["success"], false);
@@ -357,27 +691,428 @@ async fn rpc_protocol_recoverable_input_errors_and_explicit_unsupported_commands
     assert_eq!(child.response("bad-parent")["success"], false);
     child.send(json!({"id":"bad-mode","type":"set_follow_up_mode","mode":"bogus"}));
     assert_eq!(child.response("bad-mode")["success"], false);
+    // Registered Skill admission re-reads the file before ACK. A stale
+    // snapshot must reject its deleted file rather than invoke or fall back.
+    std::fs::remove_file(&skill).unwrap();
     child.send(json!({"id":"skill","type":"prompt","message":"/skill:proof task"}));
-    assert_eq!(child.response("skill")["success"], false);
+    let missing = child.response("skill");
+    assert_eq!(missing["success"], false);
+    assert!(missing["error"].as_str().unwrap().contains("proof"));
+    assert!(missing.get("data").is_none(), "no successful invocation ACK: {missing}");
     child.send(json!({"type":"get_state"}));
     let state = child.until(|frame| frame["type"] == "response" && frame["command"] == "get_state", WAIT);
     assert_eq!(state["success"], true);
     assert!(state.get("id").is_none(), "omitted id stays omitted: {state}");
     assert_eq!(state["data"]["messageCount"], 0);
     child.finish(0);
-    assert_eq!(up.served(), 0, "protocol stdin and unsupported Skill never reach inference");
+    assert_eq!(up.served(), 0, "protocol errors and a deleted Skill never reach inference");
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_start"));
+    assert!(env.sessions().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_skill_command_metadata_preserves_registered_order_hidden_unicode_and_filters() {
+    let env = Env::new();
+    metadata_skill(&env, ".ara/skills", "Alpha", "Native duplicate winner", "");
+    metadata_skill(&env, ".agents/skills", "Alpha", "Excluded duplicate loser", "");
+    metadata_skill(&env, ".agents/skills", "beta", "Agents entry", "");
+    metadata_skill(&env, ".codex/skills", "z-hidden", "Hidden command remains invocable", "hide: true\n");
+    metadata_skill(&env, ".claude/skills", "编排🦀", "中文说明 🦀", "");
+    metadata_skill(&env, ".opencode/skills", "ghost", "Disabled source", "");
+    metadata_skill(&env, ".ara/skills", "disabled", "Disabled frontmatter", "enabled: false\n");
+    let alpha = command_metadata("Alpha", "Native duplicate winner");
+    let beta = command_metadata("beta", "Agents entry");
+    let hidden = command_metadata("z-hidden", "Hidden command remains invocable");
+    let unicode = command_metadata("编排🦀", "中文说明 🦀");
+    let up = upstream(json!({"responses":[]})).await;
+    for (args, expected) in [
+        (vec![], json!([alpha, beta, hidden, unicode])),
+        (vec!["--no-skills"], json!([])),
+        (vec!["--skill-sources", "agents"], json!([alpha, beta])),
+        (vec!["--skills", "*hidden"], json!([hidden])),
+    ] {
+        let mut child = RpcChild::spawn(env.command(&up.base_url(), &args));
+        child.ready_commands(expected.clone());
+        let id = json!({"metadata":"中文🦀","parts":[null,42]});
+        let begin = child.seen.len();
+        child.send(json!({"id":id,"type":"get_available_commands"}));
+        let reply = child.until(|frame| frame["type"] == "response" && frame["id"] == id, WAIT);
+        assert_eq!(reply["success"], true);
+        assert_eq!(reply["data"], json!({"commands":expected}));
+        assert_eq!(child.seen[begin..], [reply], "metadata query has no Agent or update effects");
+        child.finish(0);
+        assert!(env.sessions().is_empty());
+    }
+    assert!(up.requests.lock().await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_skill_command_snapshot_survives_removal_until_successful_adoption_refresh() {
+    let env = Env::new();
+    let skill = invocation_skill(&env, ".ara/skills", "proof", "Initial metadata body");
+    let up = upstream(json!({"responses":[]})).await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready_commands(proof_commands());
+    std::fs::remove_file(skill).unwrap();
+    assert_eq!(child.commands("removed-list"), proof_commands());
+    child.send(json!({"id":"removed-invoke","type":"prompt","message":"/skill:proof removed"}));
+    let failed = child.response("removed-invoke");
+    assert_eq!(failed["success"], false);
+    assert!(failed.get("data").is_none());
+    let next = metadata_skill(&env, ".agents/skills", "next", "New snapshot", "");
+    let begin = child.seen.len();
+    child.send(
+        json!({"id":"missing-adopt","type":"switch_session","sessionPath":env.home.path().join("missing.jsonl")}),
+    );
+    assert_eq!(child.response("missing-adopt")["success"], false);
+    assert_eq!(child.commands("failed-list"), proof_commands());
+    assert!(!child.seen[begin..].iter().any(|frame| frame["type"] == "available_commands_update"));
+    assert!(env.sessions().is_empty());
+    child.adopt_commands(
+        "refresh-new",
+        json!({"id":"refresh-new","type":"new_session"}),
+        json!([command_metadata("next", "New snapshot")]),
+    );
+    let file = PathBuf::from(child.state("snapshot-file")["sessionFile"].as_str().unwrap());
+    let before = std::fs::read(&file).unwrap();
+    std::fs::write(next, "---\nname: next\ndescription: Refreshed after switch\n---\nnext body\n").unwrap();
+    assert_eq!(child.commands("unchanged-before-switch"), json!([command_metadata("next", "New snapshot")]));
+    child.adopt_commands(
+        "refresh-switch",
+        json!({"id":"refresh-switch","type":"switch_session","sessionPath":file}),
+        json!([command_metadata("next", "Refreshed after switch")]),
+    );
+    assert_eq!(child.commands("switched-list"), json!([command_metadata("next", "Refreshed after switch")]));
+    assert_eq!(std::fs::read(&file).unwrap(), before, "metadata query/refresh never journals model input");
+    child.finish(0);
+    assert_eq!(up.served(), 0);
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_start"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_known_skill_uses_fresh_body_ignores_images_and_keeps_public_receipt() {
+    let env = Env::new();
+    let path = invocation_skill(&env, ".ara/skills", "proof", "Obsolete discovery body.");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Fresh Skill completed."),finish("stop"),done()]},
+        {"events":[text("Plain continuation completed."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready_commands(proof_commands());
+    write_skill(&path, "proof", "Fresh body after ready.\nSecond fresh line.");
+    let original = "prefix\u{b}/skill:proof  focus";
+    let id = json!({"request":"skill-中文-🦀","parts":[42,true,null]});
+    let begin = child.seen.len();
+    child.send(
+        json!({"id":id,"type":"prompt","message":original,"images":{"malformed":"ignored for a registered Skill"}}),
+    );
+    let ack = child.until(|frame| frame["type"] == "response" && frame["id"] == id, WAIT);
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(ack["data"], json!({"agentInvoked":true}));
+    assert!(!child.seen[begin..].iter().any(|frame| frame["type"] == "agent_start"), "ACK precedes dispatch");
+    let end = child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let completed = completed_events(&child.seen[begin..]);
+    assert_eq!(end["messages"], json!(completed));
+    assert_eq!(completed.len(), 2);
+    assert_skill_public(&completed[0], original, "Fresh body after ready.");
+    assert_eq!(completed[0]["details"]["args"], "prefix focus");
+    assert_eq!(completed[0]["details"]["lineCount"], 2);
+    assert_eq!(
+        std::fs::canonicalize(completed[0]["details"]["path"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(&path).unwrap()
+    );
+    assert!(!contains_text(&completed[0], "Obsolete discovery body."));
+    let starts: Vec<_> = child.seen[begin..]
+        .iter()
+        .filter(|frame| frame["type"] == "message_start" && frame["message"]["role"] == "custom")
+        .collect();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0]["message"], completed[0]);
+    assert_eq!(child.messages("fresh-public"), completed);
+    // A second Run's terminal contains just that Run, not a global slice which
+    // could match an equal earlier Skill message.
+    let second_begin = child.seen.len();
+    child.send(json!({"id":"plain-after-skill","type":"prompt","message":"plain after Skill"}));
+    child.success("plain-after-skill");
+    let second_end = child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let second_completed = completed_events(&child.seen[second_begin..]);
+    assert_eq!(second_end["messages"], json!(second_completed));
+    assert_eq!(second_completed.len(), 2);
+    assert_eq!(second_completed[0]["role"], "user");
+    child.finish(0);
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "prompt_result" && frame["id"] == id));
+    let entries = journal(&env.sessions()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 1);
+    for field in ["customType", "content", "details", "display", "attribution"] {
+        assert_eq!(skills[0][field], completed[0][field], "journal/public {field}");
+    }
+    assert_eq!(
+        entries.iter().filter(|entry| entry["message"]["role"] == "user").count(),
+        1,
+        "only the plain turn is an ordinary user receipt"
+    );
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let users = user_texts(&provider_users_without_reminder(
+        requests[0]["body"]["messages"].as_array().unwrap(),
+        env.work.path(),
+    ));
+    assert_eq!(users, [completed[0]["content"].as_str().unwrap()]);
+    let provider_history = requests[1]["body"]["messages"].to_string();
+    assert!(!provider_history.contains("originalText") && !provider_history.contains("customType"));
+    assert!(!provider_history.contains("malformed") && !provider_history.contains("Obsolete discovery body."));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_unknown_disabled_filtered_and_builtin_skill_text_stays_ordinary_with_images() {
+    for (case, source, args, input) in [
+        ("unknown", ".ara/skills", Vec::<&str>::new(), "/skill:missing task"),
+        ("disabled", ".ara/skills", vec!["--no-skills"], "/skill:proof task"),
+        ("filtered", ".ara/skills", vec!["--skills", "unmatched*"], "/skill:proof task"),
+        ("source-off", ".agents/skills", vec!["--skill-sources", ""], "/skill:proof task"),
+        ("builtin-args", ".ara/skills", Vec::<&str>::new(), "/help /skill:proof task"),
+    ] {
+        let env = Env::new();
+        invocation_skill(&env, source, "proof", "Must not expand this body.");
+        let up = upstream(json!({"responses":[{"events":[text("Ordinary completed."),finish("stop"),done()]}]})).await;
+        let mut child = RpcChild::spawn(env.command(&up.base_url(), &args));
+        child.ready_commands(if matches!(case, "unknown" | "builtin-args") { proof_commands() } else { json!([]) });
+        child.send(json!({"id":"bad-images","type":"prompt","message":input,"images":42}));
+        let error = child.response("bad-images");
+        assert_eq!(error["success"], false, "{case}: {error}");
+        assert!(error["error"].as_str().unwrap().contains("images"));
+        assert_eq!(child.state("before-ordinary")["messageCount"], 0, "{case}");
+        child.send(json!({"id":case,"type":"prompt","message":input,"images":[{"data":"iVBORw0KGgo=","mimeType":"image/png"}]}));
+        let ack = child.success(case);
+        assert!(ack.get("data").is_none(), "ordinary ACK has no Skill admission flag: {case}: {ack}");
+        let end = child.until(|frame| frame["type"] == "agent_end", WAIT);
+        let messages = child.messages("ordinary-public");
+        assert_eq!(messages.len(), 2, "{case}");
+        assert_eq!(end["messages"], json!(messages));
+        assert_eq!(messages[0]["role"], "user", "{case}");
+        assert_eq!(messages[0]["content"][0]["text"], input);
+        assert_eq!(messages[0]["content"][1]["type"], "image");
+        child.finish(0);
+        let entries = journal(&env.sessions()[0]);
+        assert!(skill_entries(&entries).is_empty(), "{case}");
+        assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 1, "{case}");
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 1, "{case}");
+        let users =
+            provider_users_without_reminder(requests[0]["body"]["messages"].as_array().unwrap(), env.work.path());
+        assert_eq!(users.len(), 1, "{case}");
+        assert_eq!(users[0]["content"][0]["text"], input);
+        assert_eq!(users[0]["content"][1]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgo=");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_skill_queues_preserve_custom_and_plain_order_and_eof_drain() {
+    let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Queued Skill body.");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Queue window."),{"sleep_ms":1500},finish("stop"),done()]},
+        {"events":[text("Custom steering."),finish("stop"),done()]},
+        {"events":[text("Plain steering."),finish("stop"),done()]},
+        {"events":[text("Both followups."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready_commands(proof_commands());
+    child.send(json!({"id":"follow-all","type":"set_follow_up_mode","mode":"all"}));
+    child.success("follow-all");
+    let begin = child.seen.len();
+    child.send(json!({"id":"initial","type":"prompt","message":"initial queue owner"}));
+    child.success("initial");
+    child.until(|frame| frame["type"] == "message_update" && contains_text(&frame["message"], "Queue window."), WAIT);
+    let first_original = "/skill:proof twin";
+    let second_original = " /skill:proof twin ";
+    child.send(json!({"id":"skill-steer","type":"prompt","message":first_original}));
+    assert_eq!(child.success("skill-steer")["data"], json!({"agentInvoked":true}));
+    child.send(json!({"id":"plain-steer","type":"steer","message":"plain steering input"}));
+    child.success("plain-steer");
+    child.send(json!({"id":"skill-follow","type":"prompt","message":second_original,"streamingBehavior":"followUp","images":false}));
+    assert_eq!(child.success("skill-follow")["data"], json!({"agentInvoked":true}));
+    child.send(json!({"id":"plain-follow","type":"follow_up","message":"plain followup input"}));
+    child.success("plain-follow");
+    let queued = child.state("all-four-queued");
+    assert_eq!(queued["queuedMessageCount"], 4);
+    assert_eq!(queued["steeringMode"], "one-at-a-time");
+    assert_eq!(queued["followUpMode"], "all");
+    // Close stdin before queue consumption: accepted custom envelopes must
+    // still drain using their original Session and independent provenance.
+    child.finish(0);
+    let completed = completed_events(&child.seen[begin..]);
+    let ends: Vec<_> = child.seen[begin..].iter().filter(|frame| frame["type"] == "agent_end").collect();
+    assert_eq!(ends.len(), 1);
+    assert_eq!(ends[0]["messages"], json!(completed));
+    let inputs: Vec<_> =
+        completed.iter().filter(|message| message["role"] == "custom" || message["role"] == "user").collect();
+    assert_eq!(inputs.len(), 5);
+    assert_eq!(inputs[0]["content"], "initial queue owner");
+    assert_skill_public(inputs[1], first_original, "Queued Skill body.");
+    assert_eq!(inputs[2]["content"], "plain steering input");
+    assert_skill_public(inputs[3], second_original, "Queued Skill body.");
+    assert_eq!(inputs[4]["content"], "plain followup input");
+    assert_eq!(inputs[1]["content"], inputs[3]["content"], "equal provider text keeps distinct originalText metadata");
+    let starts: Vec<_> = child.seen[begin..]
+        .iter()
+        .filter(|frame| frame["type"] == "message_start" && frame["message"]["role"] == "custom")
+        .map(|frame| &frame["message"])
+        .collect();
+    assert_eq!(starts, [inputs[1], inputs[3]]);
+    assert_no_local_prompt_result(&child.seen, &["initial", "skill-steer", "skill-follow"]);
+    let entries = journal(&env.sessions()[0]);
+    let skills = skill_entries(&entries);
+    assert_eq!(skills.len(), 2);
+    assert_eq!(skills[0]["details"], inputs[1]["details"]);
+    assert_eq!(skills[1]["details"], inputs[3]["details"]);
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 3);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    let users = |index: usize| {
+        user_texts(&provider_users_without_reminder(
+            requests[index]["body"]["messages"].as_array().unwrap(),
+            env.work.path(),
+        ))
+    };
+    assert_eq!(users(1), ["initial queue owner", inputs[1]["content"].as_str().unwrap()]);
+    assert_eq!(users(2).last().unwrap(), "plain steering input");
+    assert_eq!(users(3).last().unwrap(), "plain followup input");
+    assert_eq!(users(3).iter().filter(|text| text.as_str() == inputs[1]["content"].as_str().unwrap()).count(), 2);
+    assert!(requests.iter().all(|request| !request["body"]["messages"].to_string().contains("originalText")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_direct_queue_and_abort_prompt_keep_skill_text_and_typed_images_ordinary() {
+    let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Must not directly invoke.");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Direct queue window."),{"sleep_ms":1200},finish("stop"),done()]},
+        {"events":[text("Direct steering."),finish("stop"),done()]},
+        {"events":[text("Direct followup."),finish("stop"),done()]},
+        {"events":[text("Ordinary abort prompt."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    child.ready_commands(proof_commands());
+    child.send(json!({"id":"initial","type":"prompt","message":"ordinary initial"}));
+    child.success("initial");
+    child.until(
+        |frame| frame["type"] == "message_update" && contains_text(&frame["message"], "Direct queue window."),
+        WAIT,
+    );
+    for (id, kind) in [("direct-steer", "steer"), ("direct-follow", "follow_up")] {
+        child.send(json!({"id":format!("bad-{id}"),"type":kind,"message":"/skill:proof direct","images":{}}));
+        assert_eq!(child.response(&format!("bad-{id}"))["success"], false);
+        child.send(json!({"id":id,"type":kind,"message":format!("/skill:proof {id}"),"images":[{"data":"iVBORw0KGgo=","mimeType":"image/png"}]}));
+        assert!(child.success(id).get("data").is_none());
+    }
+    assert_eq!(child.state("direct-queued")["queuedMessageCount"], 2);
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    child.send(json!({"id":"direct-abort-prompt","type":"abort_and_prompt","message":"/skill:proof direct-abort","streamingBehavior":42,"images":[{"data":"iVBORw0KGgo=","mimeType":"image/png"}]}));
+    assert!(child.success("direct-abort-prompt").get("data").is_none());
+    child.until(|frame| frame["type"] == "agent_end", WAIT);
+    let messages = child.messages("direct-public");
+    assert!(messages.iter().all(|message| message["role"] != "custom"));
+    assert_eq!(
+        user_texts(&messages),
+        ["ordinary initial", "/skill:proof direct-steer", "/skill:proof direct-follow", "/skill:proof direct-abort"]
+    );
+    for message in messages.iter().filter(|message| message["role"] == "user").skip(1) {
+        assert_eq!(message["content"][1]["type"], "image");
+    }
+    child.finish(0);
+    let entries = journal(&env.sessions()[0]);
+    assert!(skill_entries(&entries).is_empty());
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 4);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 4);
+    let last_users: Vec<_> = requests[3]["body"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .collect();
+    for message in last_users.iter().skip(1) {
+        assert_eq!(message["content"][1]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgo=");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rpc_skill_public_identity_restores_active_branch_after_source_deletion() {
+    let env = Env::new();
+    let path = invocation_skill(&env, ".ara/skills", "proof", "Historical saved Skill body.");
+    let up = upstream(json!({"responses":[
+        {"events":[text("Saved Skill answer."),finish("stop"),done()]},
+        {"events":[text("Resumed saved identity."),finish("stop"),done()]}
+    ]}))
+    .await;
+    let mut seed = RpcChild::spawn(env.command(&up.base_url(), &[]));
+    seed.ready_commands(proof_commands());
+    seed.send(json!({"id":"seed-skill","type":"prompt","message":"/skill:proof historical args"}));
+    assert_eq!(seed.success("seed-skill")["data"], json!({"agentInvoked":true}));
+    seed.until(|frame| frame["type"] == "agent_end", WAIT);
+    let saved_public = seed.messages("saved-public");
+    seed.finish(0);
+    let file = env.sessions().pop().unwrap();
+    let mut entries = journal(&file);
+    let inactive = json!({"type":"custom_message","id":"detached-skill-fixture","parentId":null,"timestamp":"2026-09-27T00:00:00.123Z","customType":"skill-prompt","content":"Detached branch must stay invisible.","display":true,"attribution":"user","details":{"name":"proof","originalText":"/skill:proof detached"}});
+    let first_context = entries.iter().position(|entry| entry["type"] == "custom_message").unwrap();
+    entries.insert(first_context, inactive);
+    std::fs::write(&file, entries.iter().map(|entry| format!("{entry}\n")).collect::<String>()).unwrap();
+    std::fs::remove_file(path).unwrap();
+    let mut resumed = RpcChild::spawn(env.command(&up.base_url(), &["--resume", file.to_str().unwrap()]));
+    resumed.ready();
+    assert_eq!(
+        resumed.messages("restored-public"),
+        saved_public,
+        "restore recorded content/details/timestamp without reopening the deleted Skill"
+    );
+    assert_skill_public(&saved_public[0], "/skill:proof historical args", "Historical saved Skill body.");
+    let begin = resumed.seen.len();
+    resumed.send(json!({"id":"continuation","type":"prompt","message":"continue saved history"}));
+    resumed.success("continuation");
+    let end = resumed.until(|frame| frame["type"] == "agent_end", WAIT);
+    assert_eq!(end["messages"], json!(completed_events(&resumed.seen[begin..])));
+    assert_eq!(end["messages"].as_array().unwrap().len(), 2, "native history is not re-emitted as this Run");
+    let continued = resumed.messages("continued-public");
+    assert_eq!(&continued[..saved_public.len()], saved_public.as_slice());
+    resumed.adopt("blank-after-skill", json!({"id":"blank-after-skill","type":"new_session"}));
+    assert!(resumed.messages("blank-public").is_empty());
+    resumed.adopt("switch-saved-skill", json!({"id":"switch-saved-skill","type":"switch_session","sessionPath":file}));
+    assert_eq!(resumed.messages("switched-public"), continued);
+    resumed.finish(0);
+    let requests = up.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    let history = requests[1]["body"]["messages"].as_array().unwrap();
+    assert_eq!(
+        user_texts(&provider_users_without_reminder(history, env.work.path())),
+        [saved_public[0]["content"].as_str().unwrap(), "continue saved history"]
+    );
+    assert!(
+        !json!(history).to_string().contains("Detached branch") && !json!(history).to_string().contains("originalText")
+    );
+    assert_eq!(
+        skill_entries(&journal(&file)).len(),
+        2,
+        "one active and one intentionally detached receipt, no replay duplicate"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_live_partial_queries_precede_completion_and_abort_joins_the_run() {
     let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Metadata while the ordinary Run is held.");
     let up = upstream(json!({"responses":[
         {"events":[text("Held partial." )],"end":"hang"},
         {"events":[text("After abort."),finish("stop"),done()]}
     ]}))
     .await;
     let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
-    child.ready();
+    child.ready_commands(proof_commands());
     child.send(json!({"id":"held","type":"prompt","message":"hold this request"}));
     child.success("held");
     assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_start"), "ACK precedes run events");
@@ -398,6 +1133,15 @@ async fn rpc_live_partial_queries_precede_completion_and_abort_joins_the_run() {
     assert_eq!(messages["success"], true);
     assert_eq!(user_texts(messages["data"]["messages"].as_array().unwrap()), ["hold this request"]);
     assert_eq!(messages["data"]["messages"].as_array().unwrap().len(), 1, "partial remains separate");
+    let journals_before: Vec<_> = env.sessions().iter().map(|path| std::fs::read(path).unwrap()).collect();
+    let query_begin = child.seen.len();
+    child.send(json!({"id":"held-metadata","type":"get_available_commands"}));
+    let metadata = child.until(|frame| frame["id"] == "held-metadata", Duration::from_secs(2));
+    assert_eq!(metadata["success"], true);
+    assert_eq!(metadata["data"], json!({"commands":proof_commands()}));
+    assert_eq!(child.seen[query_begin..], [metadata]);
+    assert_eq!(env.sessions().iter().map(|path| std::fs::read(path).unwrap()).collect::<Vec<_>>(), journals_before);
+    assert_eq!(up.requests.lock().await.len(), 1);
     assert!(!child.seen.iter().any(|frame| frame["type"] == "agent_end"));
     child.send(json!({"id":"abort","type":"abort"}));
     child.success("abort");
@@ -527,26 +1271,38 @@ async fn rpc_late_idle_followup_runs_without_a_new_prompt_and_drains_eof() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_provider_failure_is_correlated_and_next_prompt_remains_usable() {
     let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Skill before controlled provider failure.");
     let up = upstream(json!({"responses":[
         {"status":400,"body":"{\"error\":{\"message\":\"RPC controlled failure\"}}"},
         {"events":[text("Recovered next prompt."),finish("stop"),done()]}
     ]}))
     .await;
     let mut child = RpcChild::spawn(env.command(&up.base_url(), &[]));
-    child.ready();
-    child.send(json!({"id":"failure","type":"prompt","message":"trigger failure"}));
-    child.success("failure");
-    let failure = child.until(|frame| frame["id"] == "failure" && frame["success"] == false, WAIT);
+    child.ready_commands(proof_commands());
+    let id = json!({"request":"failure-中文","parts":[false,123,null]});
+    child.send(json!({"id":id,"type":"prompt","message":"/skill:proof trigger failure"}));
+    let ack = child.until(|frame| frame["type"] == "response" && frame["id"] == id, WAIT);
+    assert_eq!(ack["success"], true);
+    assert_eq!(ack["data"], json!({"agentInvoked":true}));
+    let failure = child.until(|frame| frame["id"] == id && frame["success"] == false, WAIT);
     assert_eq!(failure["command"], "prompt");
     assert!(failure["error"].as_str().unwrap().contains("RPC controlled failure"), "{failure}");
+    let terminal = child.seen.iter().position(|frame| frame["type"] == "agent_end").unwrap();
+    let late_error = child.seen.iter().position(|frame| frame["id"] == id && frame["success"] == false).unwrap();
+    assert!(terminal < late_error, "late correlated failure follows owned Run settlement");
+    let failed_public = child.messages("failed-skill-public");
+    assert_skill_public(&failed_public[0], "/skill:proof trigger failure", "Skill before controlled provider failure.");
     child.send(json!({"id":"recovery","type":"prompt","message":"next task"}));
     child.success("recovery");
     child.until(|frame| frame["type"] == "agent_end", WAIT);
     child.finish(0);
     assert_eq!(up.served(), 2);
     let entries = journal(&env.sessions()[0]);
+    assert_eq!(skill_entries(&entries).len(), 1, "provider failure retains one admitted custom prompt");
+    assert_eq!(entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 1);
     assert!(entries.iter().any(|entry| entry["message"]["stopReason"] == "error"));
     assert!(entries.iter().any(|entry| contains_text(&entry["message"], "Recovered next prompt.")));
+    assert!(!child.seen.iter().any(|frame| frame["type"] == "prompt_result" && frame["id"] == id));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -884,6 +1640,7 @@ fn project_markers(env: &Env, label: &str) {
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues() {
     let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Original Session Skill body.");
     let up = upstream(json!({"responses":[
         {"events":[tool_call(0,"old-active","bash","{\"command\":\"printf old-effect >> old-effect.txt; printf 'old tool running\\n'; sleep 30\"}"),finish("tool_calls"),done()]},
         {"events":[tool_call(0,"new-write","write","{\"path\":\"fresh.txt\",\"content\":\"new session artifact\\n\"}"),finish("tool_calls"),done()]},
@@ -894,26 +1651,26 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     #[cfg(windows)]
     command.env("PATH", format!("C:\\Program Files\\Git\\usr\\bin;{}", std::env::var("PATH").unwrap_or_default()));
     let mut child = RpcChild::spawn(command);
-    child.ready();
+    child.ready_commands(proof_commands());
     let old = child.state("old-state");
     let old_file = PathBuf::from(old["sessionFile"].as_str().unwrap());
     child.send(json!({"id":"steering-mode","type":"set_steering_mode","mode":"all"}));
     child.success("steering-mode");
     child.send(json!({"id":"follow-mode","type":"set_follow_up_mode","mode":"all"}));
     child.success("follow-mode");
-    child.send(json!({"id":"old","type":"prompt","message":"old active task"}));
-    child.success("old");
+    child.send(json!({"id":"old","type":"prompt","message":"/skill:proof old active task"}));
+    assert_eq!(child.success("old")["data"], json!({"agentInvoked":true}));
     child.until(
         |frame| frame["type"] == "tool_execution_update" && contains_text(&frame["partialResult"], "old tool running"),
         WAIT,
     );
-    child.send(json!({"id":"steer-old","type":"steer","message":"discard old steering"}));
-    child.success("steer-old");
-    child.send(json!({"id":"follow-old","type":"follow_up","message":"discard old followup"}));
-    child.success("follow-old");
+    child.send(json!({"id":"steer-old","type":"prompt","message":"/skill:proof discard old steering"}));
+    assert_eq!(child.success("steer-old")["data"], json!({"agentInvoked":true}));
+    child.send(json!({"id":"follow-old","type":"prompt","message":"/skill:proof discard old followup","streamingBehavior":"followUp"}));
+    assert_eq!(child.success("follow-old")["data"], json!({"agentInvoked":true}));
     assert_eq!(child.state("queued-old")["queuedMessageCount"], 2);
     let parent = old_file.to_string_lossy().to_string();
-    child.adopt("new", json!({"id":"new","type":"new_session","parentSession":parent}));
+    child.adopt_commands("new", json!({"id":"new","type":"new_session","parentSession":parent}), proof_commands());
     let adopted = child.state("new-state");
     assert_ne!(adopted["sessionId"], old["sessionId"]);
     assert_eq!(adopted["messageCount"], 0);
@@ -930,6 +1687,12 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     let ack = child.seen.iter().position(|frame| frame["id"] == "new").unwrap();
     assert!(end < ack);
     let old_entries = journal(&old_file);
+    let old_skills = skill_entries(&old_entries);
+    assert_eq!(old_skills.len(), 1, "only the consumed initial Skill belongs to the old Session");
+    assert_eq!(old_skills[0]["details"]["originalText"], "/skill:proof old active task");
+    assert!(!json!(old_entries).to_string().contains("discard old"));
+    assert_eq!(old_entries.iter().filter(|entry| entry["message"]["role"] == "user").count(), 0);
+    assert_eq!(child.seen[end]["messages"], json!(completed_events(&child.seen[..=end])));
     let receipt = old_entries.iter().find(|entry| entry["message"]["toolCallId"] == "old-active").unwrap();
     assert_eq!(receipt["message"]["isError"], true);
     assert!(contains_text(&receipt["message"], "aborted"));
@@ -946,6 +1709,8 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
     assert_eq!(std::fs::read_to_string(env.work.path().join("fresh.txt")).unwrap(), "new session artifact\n");
     assert!(journal(&new_file).iter().any(|entry| entry["message"]["toolCallId"] == "new-write"));
     assert!(journal(&new_file).iter().all(|entry| entry["message"]["toolCallId"] != "old-active"));
+    assert!(skill_entries(&journal(&new_file)).is_empty(), "discarded custom queues never migrate to the new journal");
+    assert_no_local_prompt_result(&child.seen, &["old", "steer-old", "follow-old"]);
     let requests = up.requests.lock().await;
     assert_eq!(requests.len(), 3);
     let fresh = requests[1]["body"]["messages"].to_string();
@@ -957,6 +1722,8 @@ async fn rpc_new_session_joins_active_tool_preserves_modes_and_clears_old_queues
 async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_tools() {
     let original = Env::new();
     let target = Env::new();
+    invocation_skill(&original, ".ara/skills", "origin", "Original metadata snapshot");
+    invocation_skill(&target, ".ara/skills", "target", "Cancelled candidate snapshot");
     project_markers(&original, "ORIGINAL");
     project_markers(&target, "TARGET");
     let up = upstream(json!({"responses":[
@@ -969,7 +1736,7 @@ async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_t
         {"events":[text("Fresh target session settled."),finish("stop"),done()]}
     ]})).await;
     let mut seed = RpcChild::spawn(target.command(&up.base_url(), &["--tools", "write"]));
-    seed.ready();
+    seed.ready_commands(json!([command_metadata("target", "RPC invocation fixture")]));
     seed.send(json!({"id":"seed","type":"prompt","message":"target original source"}));
     seed.success("seed");
     seed.until(|frame| frame["type"] == "agent_end", WAIT);
@@ -978,7 +1745,7 @@ async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_t
     let target_file = PathBuf::from(target_state["sessionFile"].as_str().unwrap());
     let target_before = journal(&target_file);
     let mut child = RpcChild::spawn(original.command(&up.base_url(), &["--tools", "write"]));
-    child.ready();
+    child.ready_commands(json!([command_metadata("origin", "RPC invocation fixture")]));
     child.send(json!({"id":"original","type":"prompt","message":"original source must stay behind"}));
     child.success("original");
     child.until(|frame| frame["type"] == "agent_end", WAIT);
@@ -993,6 +1760,10 @@ async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_t
     assert_eq!(switched["sessionId"], original_state["sessionId"]);
     assert_eq!(switched["sessionFile"], original_state["sessionFile"]);
     assert_eq!(child.messages("switched-messages"), original_messages);
+    assert_eq!(
+        child.commands("cancelled-switch-commands"),
+        json!([command_metadata("origin", "RPC invocation fixture")])
+    );
     assert!(!child.seen[before_cancelled..].iter().any(|frame| frame["type"] == "available_commands_update"));
     child.send(json!({"id":"target-task","type":"prompt","message":"task after target switch"}));
     child.success("target-task");
@@ -1000,7 +1771,11 @@ async fn rpc_changed_cwd_switch_is_cancelled_and_new_keeps_current_context_and_t
     assert_eq!(std::fs::read_to_string(original.work.path().join("switched.txt")).unwrap(), "target cwd effect\n");
     assert!(!target.work.path().join("switched.txt").exists());
     project_markers(&original, "REFRESHED");
-    child.adopt("new-target", json!({"id":"new-target","type":"new_session"}));
+    child.adopt_commands(
+        "new-target",
+        json!({"id":"new-target","type":"new_session"}),
+        json!([command_metadata("origin", "RPC invocation fixture")]),
+    );
     let fresh = child.state("fresh-target-state");
     let fresh_file = PathBuf::from(fresh["sessionFile"].as_str().unwrap());
     assert_eq!(fresh["messageCount"], 0);
@@ -1189,15 +1964,16 @@ async fn rpc_adoption_resets_responses_state_but_unchanged_reload_preserves_it()
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_failed_switch_never_adopts_a_fallback_and_original_remains_usable() {
     let env = Env::new();
+    invocation_skill(&env, ".ara/skills", "proof", "Skill snapshot retained through failed adoption.");
     let up = upstream(json!({"responses":[
         {"events":[text("Original preserved."),finish("stop"),done()]},
         {"events":[tool_call(0,"still-original","write","{\"path\":\"original-after-failure.txt\",\"content\":\"original owner kept\\n\"}"),finish("tool_calls"),done()]},
         {"events":[text("Original task still usable."),finish("stop"),done()]}
     ]})).await;
     let mut child = RpcChild::spawn(env.command(&up.base_url(), &["--tools", "write"]));
-    child.ready();
-    child.send(json!({"id":"original","type":"prompt","message":"original before failed adoption"}));
-    child.success("original");
+    child.ready_commands(proof_commands());
+    child.send(json!({"id":"original","type":"prompt","message":"/skill:proof original before failed adoption"}));
+    assert_eq!(child.success("original")["data"], json!({"agentInvoked":true}));
     child.until(|frame| frame["type"] == "agent_end", WAIT);
     let original = child.state("before-failure");
     let messages = child.messages("before-failure-messages");
@@ -1226,19 +2002,27 @@ async fn rpc_failed_switch_never_adopts_a_fallback_and_original_remains_usable()
         }
         assert_eq!(child.state(&format!("state-{id}"))["sessionId"], original["sessionId"]);
         assert_eq!(child.messages(&format!("messages-{id}")), messages);
+        assert_eq!(child.commands(&format!("commands-{id}")), proof_commands());
         assert!(!child.seen[before_failure..].iter().any(|frame| frame["type"] == "available_commands_update"));
         assert_eq!(std::fs::read(&original_file).unwrap(), original_bytes);
         assert_eq!(std::fs::read(target).ok(), before);
         assert_eq!(env.sessions().as_slice(), std::slice::from_ref(&original_file));
     }
-    child.send(json!({"id":"still-usable","type":"prompt","message":"task on preserved original"}));
-    child.success("still-usable");
+    child.send(json!({"id":"still-usable","type":"prompt","message":"/skill:proof task on preserved original"}));
+    assert_eq!(
+        child.success("still-usable")["data"],
+        json!({"agentInvoked":true}),
+        "failed adoption keeps the original registered Skill snapshot"
+    );
     child.until(|frame| frame["type"] == "agent_end", WAIT);
     child.finish(0);
     assert_eq!(
         std::fs::read_to_string(env.work.path().join("original-after-failure.txt")).unwrap(),
         "original owner kept\n"
     );
+    let custom = journal(&original_file);
+    assert_eq!(skill_entries(&custom).len(), 2);
+    assert_eq!(custom.iter().filter(|entry| entry["message"]["role"] == "user").count(), 0);
     let requests = up.requests.lock().await;
     assert_eq!(requests.len(), 3);
     assert!(requests[1]["body"]["messages"].to_string().contains("original before failed adoption"));
@@ -1416,6 +2200,7 @@ async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_con
     seed.finish(0);
     let target_file = target.sessions().pop().unwrap();
     let target_before = std::fs::read(&target_file).unwrap();
+    let old_skill = metadata_skill(&original, ".agents/skills", "old-mcp", "Original MCP metadata snapshot", "");
     let launcher = original.home.path().join("mcp-launch.sh");
     std::fs::write(&launcher, "#!/usr/bin/env bash\nexec \"$1\" --record \"$2\"\n").unwrap();
     let configuration = original.home.path().join("mcp.json");
@@ -1447,7 +2232,7 @@ async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_con
     #[cfg(windows)]
     command.env("PATH", format!("C:\\Program Files\\Git\\usr\\bin;{}", std::env::var("PATH").unwrap_or_default()));
     let mut child = RpcChild::spawn(command);
-    child.ready();
+    child.ready_commands(json!([command_metadata("old-mcp", "Original MCP metadata snapshot")]));
     child.send(json!({"id":"original","type":"prompt","message":"original before MCP setup failure"}));
     child.success("original");
     child.until(|frame| frame["type"] == "agent_end", WAIT);
@@ -1458,6 +2243,8 @@ async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_con
     // The original launcher already exec'd the fixture. Removing only that
     // script blocks later reconnects without touching the running MCP child.
     std::fs::remove_file(&launcher).unwrap();
+    std::fs::remove_file(old_skill).unwrap();
+    metadata_skill(&original, ".agents/skills", "candidate-mcp", "Must not adopt on setup failure", "");
     for (id, command) in [
         ("mcp-new-failure", json!({"id":"mcp-new-failure","type":"new_session"})),
         ("mcp-switch-failure", json!({"id":"mcp-switch-failure","type":"switch_session","sessionPath":target_file})),
@@ -1472,6 +2259,10 @@ async fn rpc_failed_candidate_mcp_setup_keeps_original_session_and_live_tool_con
         assert_eq!(retained["sessionFile"], state["sessionFile"]);
         assert!(retained["dumpTools"].as_array().unwrap().iter().any(|tool| tool["name"] == "mcp__fixture__echo"));
         assert_eq!(child.messages(&format!("messages-{id}")), messages);
+        assert_eq!(
+            child.commands(&format!("commands-{id}")),
+            json!([command_metadata("old-mcp", "Original MCP metadata snapshot")])
+        );
         assert_eq!(std::fs::read(&file).unwrap(), before);
         assert_eq!(std::fs::read(&target_file).unwrap(), target_before);
         assert_eq!(original.sessions().as_slice(), std::slice::from_ref(&file));
