@@ -30,6 +30,10 @@
 //! A failed check or a refused resume writes a Failure_Record (35.5); too few
 //! required events without a failed check is `覆盖不足` (35.6). Nothing is
 //! deleted: the record lists every preserved artifact.
+//!
+//! When the driver times out or exits non-zero, every sidecar the trial log
+//! shows as spawned but not ended is killed before the checks run, and each
+//! kill is listed in `orphan_sidecars`.
 
 use std::{
     collections::BTreeMap,
@@ -70,6 +74,8 @@ pub const COVERAGE_INSUFFICIENT: &str = "覆盖不足";
 const DRIVER_MARGIN: Duration = Duration::from_secs(900);
 /// Largest number of problems listed per check (the count is always given).
 const PROBLEM_LIMIT: usize = 20;
+/// Time one `taskkill` / `kill -9` of an orphaned sidecar may take.
+const KILL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Required events (35.1): type, count, whether the count is exact.
 pub const REQUIRED_EVENTS: [(&str, usize, bool); 4] = [
@@ -1051,6 +1057,69 @@ pub struct LongTrialRecord {
     pub failure_record: Option<PathBuf>,
     pub failure_record_error: Option<String>,
     pub driver_error: Option<String>,
+    /// Sidecars the driver left running when it timed out or failed, and the
+    /// kill that ended each one (empty when there were none).
+    pub orphan_sidecars: Vec<OrphanKill>,
+}
+
+/// One sidecar left running by a failed driver, and its kill.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OrphanKill {
+    pub pid: u32,
+    pub command: String,
+    /// Exit code of the kill command; `None` when it did not run or finish.
+    pub exit_code: Option<i32>,
+    pub output: String,
+}
+
+/// PIDs of the trial log's `sidecar_spawned` lines that no later
+/// `sidecar_end` or `kill` line names, in spawn order. A `kill` line means
+/// the driver already terminated that process; killing it again could hit a
+/// reused PID. Lines that are not JSON (the torn last line of a killed
+/// driver) are skipped.
+pub fn orphaned_sidecars(log: &str) -> Vec<u32> {
+    let mut open: Vec<u32> = Vec::new();
+    for line in log.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+        let Some(pid) = line["pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()) else { continue };
+        match line["kind"].as_str() {
+            Some("sidecar_spawned") if !open.contains(&pid) => open.push(pid),
+            Some("sidecar_end" | "kill") => open.retain(|known| *known != pid),
+            _ => {}
+        }
+    }
+    open
+}
+
+/// Kill every sidecar of `<trial_dir>/trial-log.jsonl` that [`orphaned_sidecars`]
+/// names, with its process tree on Windows. A missing log means no sidecar
+/// was spawned.
+fn kill_orphans(trial_dir: &Path) -> Result<Vec<OrphanKill>> {
+    let path = trial_dir.join("trial-log.jsonl");
+    let log = match fs::read(&path) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error).with_context(|| format!("cannot read {}", path.display())),
+    };
+    Ok(orphaned_sidecars(&log)
+        .into_iter()
+        .map(|pid| {
+            let (program, args) = if cfg!(windows) {
+                ("taskkill", vec!["/PID".to_owned(), pid.to_string(), "/T".to_owned(), "/F".to_owned()])
+            } else {
+                ("kill", vec!["-9".to_owned(), pid.to_string()])
+            };
+            let mut command = Command::new(program);
+            command.args(&args);
+            let (exit_code, output) = match run_bounded(command, KILL_TIMEOUT) {
+                Ok(Bounded::Exited { code, stdout, stderr }) => {
+                    (code, String::from_utf8_lossy(&[stdout, stderr].concat()).trim().to_owned())
+                }
+                Ok(Bounded::TimedOut) => (None, format!("did not finish within {} s", KILL_TIMEOUT.as_secs())),
+                Err(error) => (None, format!("{error:#}")),
+            };
+            OrphanKill { pid, command: format!("{program} {}", args.join(" ")), exit_code, output }
+        })
+        .collect())
 }
 
 fn first_unused(dir: &Path, stem: &str) -> PathBuf {
@@ -1082,6 +1151,7 @@ pub fn check_trial(
     max_calls: usize,
     credentials: &Credentials,
     driver_error: Option<String>,
+    orphan_sidecars: Vec<OrphanKill>,
 ) -> Result<(LongTrialRecord, PathBuf)> {
     let trial = Trial::load(trial_dir);
     let evaluation = evaluate(&trial, max_calls);
@@ -1147,6 +1217,7 @@ pub fn check_trial(
         failure_record,
         failure_record_error,
         driver_error,
+        orphan_sidecars,
     };
     let path = first_unused(trial_dir, "long-trial");
     let value: Value = serde_json::from_str(&credentials.redact(&serde_json::to_string(&record)?))?;
@@ -1192,7 +1263,7 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
     };
     if let Some(dir) = inputs.check_only {
         ensure!(dir.join("trial.json").is_file(), "{} has no trial.json", dir.display());
-        return check_trial(dir, budget.max_calls, &credentials, None).map(finish);
+        return check_trial(dir, budget.max_calls, &credentials, None, Vec::new()).map(finish);
     }
     let set = load(&root.join(TASK_SET_PATH))?;
     let entry = set
@@ -1260,5 +1331,14 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
             (code != Some(0)).then(|| format!("driver exited with {code:?}"))
         }
     };
-    check_trial(&trial_dir, budget.max_calls, &credentials, driver_error).map(finish)
+    // Only the driver is killed at its deadline; a sidecar it spawned can
+    // outlive it. End those before the checks read the evidence.
+    let (driver_error, orphans) = match driver_error {
+        None => (None, Vec::new()),
+        Some(error) => match kill_orphans(&trial_dir) {
+            Ok(orphans) => (Some(error), orphans),
+            Err(kill) => (Some(format!("{error}; orphaned sidecars not checked: {kill:#}")), Vec::new()),
+        },
+    };
+    check_trial(&trial_dir, budget.max_calls, &credentials, driver_error, orphans).map(finish)
 }

@@ -12,7 +12,7 @@ use std::{
 use ara_agent_lite_harness::core::{context_memory, session_journal::Journal};
 use lite_eval::{
     common::{sha256_file, sha256_hex, Credentials},
-    long_trial::{check_trial, CheckStatus, LongTrialRecord, TrialVerdict, COVERAGE_INSUFFICIENT},
+    long_trial::{check_trial, orphaned_sidecars, CheckStatus, LongTrialRecord, TrialVerdict, COVERAGE_INSUFFICIENT},
 };
 use serde_json::{json, Value};
 
@@ -71,7 +71,7 @@ impl Fixture {
     }
 
     fn check(&self) -> LongTrialRecord {
-        check_trial(&self.dir, MAX_CALLS, &Credentials::default(), None).unwrap().0
+        check_trial(&self.dir, MAX_CALLS, &Credentials::default(), None, Vec::new()).unwrap().0
     }
 }
 
@@ -372,7 +372,7 @@ fn an_interrupted_run_not_charged_at_its_cap_fails() {
 #[test]
 fn a_call_count_above_max_calls_fails() {
     let fixture = passing();
-    let record = check_trial(&fixture.dir, 54, &Credentials::default(), None).unwrap().0;
+    let record = check_trial(&fixture.dir, 54, &Credentials::default(), None, Vec::new()).unwrap().0;
     failed_only(&record, "logical_calls");
 }
 
@@ -483,4 +483,30 @@ fn a_missing_trial_record_fails_without_panicking() {
     assert!(matches!(record.verdict, TrialVerdict::Failed { .. }));
     assert_eq!(status(&record, "evidence_readable"), CheckStatus::Failed);
     assert!(record.failure_record.is_some());
+}
+
+#[test]
+fn orphaned_sidecars_are_spawned_pids_without_a_later_end_or_kill() {
+    let line = |kind: &str, pid: Value| json!({"kind": kind, "process": 1, "pid": pid}).to_string();
+    let log = [
+        line("sidecar_spawned", json!(11)),
+        line("kill", json!(11)),
+        line("sidecar_end", json!(11)),
+        line("sidecar_spawned", json!(22)),
+        line("sidecar_end", json!(22)),
+        // The same PID spawned again after its end is open again.
+        line("sidecar_spawned", json!(22)),
+        line("sidecar_spawned", json!(33)),
+        line("sidecar_spawned", json!(33)),
+        line("sidecar_end", Value::Null),
+        line("host_receipt", json!(44)),
+        line("sidecar_spawned", json!(55)),
+        line("kill", json!(55)),
+        line("sidecar_spawned", json!(66)),
+        // The torn last line of a killed driver.
+        "{\"seq\": 99, \"kind\": \"sidecar_end\", \"pid\": 6".to_owned(),
+    ]
+    .join("\n");
+    assert_eq!(orphaned_sidecars(&log), vec![22, 33, 66]);
+    assert!(orphaned_sidecars("").is_empty());
 }

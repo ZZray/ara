@@ -1,0 +1,3278 @@
+{
+  "version": 1,
+  "manifest_id": "20261030T015859Z-0001",
+  "status": "baseline",
+  "run_dir": "D:/WorkSpace/tmp/ara-lite-capability\\baseline\\20261030T015859Z-0001",
+  "manifest": {
+    "path": "manifest.json",
+    "sha256": "003a87807c2544337a655e3dc969ea0e69c44fa2f79a425a57619cb7f597e317",
+    "bytes": 17357
+  },
+  "code_version": {
+    "head": "ad9c0d3a4ba36c1782250438baa9821e167b9f22",
+    "dirty": true,
+    "worktree_diff_sha256": "731ecc9d3bdc29c847a6ce7cb32359ab614f8d7a72670770f8cbb651e0b4e0a5",
+    "diff_rule": {
+      "id": "lite-eval-worktree-diff-v1",
+      "exclusions": [
+        "crates/ara-agent-lite-core/docs/evidence/lite-capability",
+        ".codebase-memory"
+      ],
+      "diff_flags": [
+        "--binary",
+        "--no-textconv",
+        "--no-ext-diff"
+      ],
+      "environment": "GIT_OPTIONAL_LOCKS=0",
+      "tracked_diff": "git -c diff.autoRefreshIndex=false diff --binary --no-textconv --no-ext-diff HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory",
+      "untracked_list": "git ls-files --others --exclude-standard -z -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory",
+      "untracked_diff": "git -c diff.autoRefreshIndex=false diff --binary --no-textconv --no-ext-diff --no-index -- /dev/null <path>",
+      "description": "lite-eval-worktree-diff-v1: raw stdout of `git -c diff.autoRefreshIndex=false diff --binary --no-textconv --no-ext-diff HEAD -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory`, followed for every path listed by `git ls-files --others --exclude-standard -z -- . :(exclude)crates/ara-agent-lite-core/docs/evidence/lite-capability :(exclude).codebase-memory` in ascending path-byte order by the raw stdout of `git -c diff.autoRefreshIndex=false diff --binary --no-textconv --no-ext-diff --no-index -- /dev/null <path>` (exit code 1 is normal); excluded from both parts: crates/ara-agent-lite-core/docs/evidence/lite-capability/, .codebase-memory/; git diff flags: --binary --no-textconv --no-ext-diff; run from the repository root with GIT_OPTIONAL_LOCKS=0 and diff.autoRefreshIndex=false; the index is never modified; an empty result is recorded as dirty=false with no SHA-256"
+    },
+    "diff_path": "D:/WorkSpace/tmp/ara-lite-capability\\baseline\\20261030T015859Z-0001\\code-version\\worktree.diff",
+    "capability_host_features": []
+  },
+  "diff_matches_manifest": true,
+  "summary": {
+    "passed": 2,
+    "failed": 4,
+    "refused": 0,
+    "failure_record_missing": 0,
+    "usage": {
+      "status": "complete",
+      "tasks": 6,
+      "tasks_with_unknown": 0,
+      "input_tokens": 861999,
+      "output_tokens": 24329
+    },
+    "cost": {
+      "status": "unknown",
+      "tasks": 6,
+      "tasks_with_unknown": 6
+    },
+    "correctness": {
+      "status": "complete",
+      "tasks": 6,
+      "tasks_with_unknown": 0
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "H2",
+      "state": "failed"
+    },
+    {
+      "task_id": "R1",
+      "state": "failed"
+    },
+    {
+      "task_id": "S1",
+      "state": "passed"
+    },
+    {
+      "task_id": "S2",
+      "state": "passed"
+    },
+    {
+      "task_id": "S3",
+      "state": "failed"
+    },
+    {
+      "task_id": "SH1",
+      "state": "failed"
+    }
+  ],
+  "missing_judgement": [],
+  "files": [
+    {
+      "path": "code-version/worktree.diff",
+      "sha256": "731ecc9d3bdc29c847a6ce7cb32359ab614f8d7a72670770f8cbb651e0b4e0a5",
+      "bytes": 109851
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "003a87807c2544337a655e3dc969ea0e69c44fa2f79a425a57619cb7f597e317",
+      "bytes": 17357
+    },
+    {
+      "path": "tasks/H2/failure.json",
+      "sha256": "11e4a8b04e295e49a89225b6d27cf3de7317f05daaa7561b01c2a2923768c85f",
+      "bytes": 1506
+    },
+    {
+      "path": "tasks/H2/final-text.txt",
+      "sha256": "36d4d74a1285889633b42ef946eb7ecd0638413b4861bd12caa8de4af72bcb64",
+      "bytes": 6220
+    },
+    {
+      "path": "tasks/H2/harness/outcome.json",
+      "sha256": "aadbfcf6c50e3daea53136928cb1de62ebdb327e299b4862f1abe44525772ffa",
+      "bytes": 8753
+    },
+    {
+      "path": "tasks/H2/harness/released.json",
+      "sha256": "7935ae69dfb02cf1f8b183bfab98ed8e876a42350daf093edf3e034947b89afe",
+      "bytes": 8557
+    },
+    {
+      "path": "tasks/H2/harness/run-1-admission.json",
+      "sha256": "34b83d01eb8366d6073d6a7492091940d58ffd57bb0d6f417b84734ed22863f2",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/H2/harness/run-1-candidate.json",
+      "sha256": "967d6ba9f01774b0eb26333ced9bd4d06f1930dd256d469409cb79b605246745",
+      "bytes": 7211
+    },
+    {
+      "path": "tasks/H2/harness/run-1-events.jsonl",
+      "sha256": "14c669da2ca0cbd967a26b90933d6ef50a0d5cda90daf882e332b446d2ffab8c",
+      "bytes": 80320
+    },
+    {
+      "path": "tasks/H2/harness/run-1-observation.json",
+      "sha256": "f5ca77e7f6d4545aa5fe0f9c135a1020357cec88e1fba0824f8d2c0cd4a69e23",
+      "bytes": 230
+    },
+    {
+      "path": "tasks/H2/harness/run-1-review.json",
+      "sha256": "7447dd94783d634e43c87af263e3b7e8d276e3ad185a9e0d579e672827da7fdf",
+      "bytes": 1080
+    },
+    {
+      "path": "tasks/H2/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/H2/harness/task.json",
+      "sha256": "f5cb45f9612b9c9d8a7f682c8bfdca866a28016e1ef4130bdee4db64afee41aa",
+      "bytes": 426
+    },
+    {
+      "path": "tasks/H2/host-private/.ara-lite-harness-48d8c98980635e28c5c16e36537c34775cb0c4bb840320e2508c9d514df1a89f.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-232312791fc62db07c23f16c/input.bin",
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e",
+      "bytes": 2560
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-232312791fc62db07c23f16c/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-232312791fc62db07c23f16c/stdout.log",
+      "sha256": "8b93e2a1ae97760babcb45b085a2f1cd7967c94a7669010acb7ba2317a4c8ad0",
+      "bytes": 7864
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-5e9ecfc6176bb657afd96c60/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-5e9ecfc6176bb657afd96c60/stdout.log",
+      "sha256": "f6b13867f52409d10f651f3efdce5c46841d0f2972de97452cfeec537d641e81",
+      "bytes": 330
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-9b2d93cf84fb1771693a6eaa/input.bin",
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e",
+      "bytes": 2560
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-9b2d93cf84fb1771693a6eaa/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-9b2d93cf84fb1771693a6eaa/stdout.log",
+      "sha256": "8b93e2a1ae97760babcb45b085a2f1cd7967c94a7669010acb7ba2317a4c8ad0",
+      "bytes": 7864
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-b5eb02a875811fcf77e5aedd/input.bin",
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e",
+      "bytes": 2560
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-b5eb02a875811fcf77e5aedd/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-b5eb02a875811fcf77e5aedd/stdout.log",
+      "sha256": "ae6dcf73ef944e645601b901f08a61a37fc0613a766bab2d570b8bb8a269c890",
+      "bytes": 2995
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-eb74db6d49667ef59b9b1772/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/analysis/analysis-eb74db6d49667ef59b9b1772/stdout.log",
+      "sha256": "152f217ea4bf04861acddb0f923625478cd15121d61af6f7a6184ddd89bca8e8",
+      "bytes": 325
+    },
+    {
+      "path": "tasks/H2/host-private/session.context.json",
+      "sha256": "d52183269c3788c9ae10d8631f239eb4ff2b2470049f62345274f91420f54a67",
+      "bytes": 706
+    },
+    {
+      "path": "tasks/H2/host-private/session.journal/head.json",
+      "sha256": "7eaf63c8cdf379cfa3f6476aac903cdb3574647c9d70711639d6eaedee813e24",
+      "bytes": 936
+    },
+    {
+      "path": "tasks/H2/host-private/session.journal/runs/eef04cbe1a57a9483762920e6db7d1ac50ff9f52d7bd832fb4991b88b4454396.json",
+      "sha256": "f7de7b00617e9a4f60a8ebee07a2d371c03f26a20447d1a9b0e424b7ed41c9ea",
+      "bytes": 39
+    },
+    {
+      "path": "tasks/H2/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "04b7ada6d608ba84ce0103dcc7ba33dd6eed58fb63d6e9b808e61b172d2ed620",
+      "bytes": 45162
+    },
+    {
+      "path": "tasks/H2/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/host-private/session.json",
+      "sha256": "4cb74d6030a22621646059ad9f3a38026c2653e41afbed0778b56d8d51b46757",
+      "bytes": 41259
+    },
+    {
+      "path": "tasks/H2/host-private/verify-run-1.json",
+      "sha256": "e074cb34d2b851636af0b54e77129bd3a031fb0e66fd3a3aef92356df9274f05",
+      "bytes": 1022
+    },
+    {
+      "path": "tasks/H2/oracle-dir/README.md",
+      "sha256": "751ed577aa4678785fadc77d29d3e644a2ee65b9127df8d5aec457132cdbbfa7",
+      "bytes": 998
+    },
+    {
+      "path": "tasks/H2/oracle-dir/sample.hex",
+      "sha256": "c6b4d9cd4ba318b448c099576876e8475b3c15fcaf0255238607a168a7c98811",
+      "bytes": 5121
+    },
+    {
+      "path": "tasks/H2/oracle-dir/specimen.exe",
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e",
+      "bytes": 2560
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/detail.json",
+      "sha256": "418d9f02b676d07dd7227c17df0897803471b7f72241b88158f3a8aaf63ffdf2",
+      "bytes": 1707
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/evaluation.json",
+      "sha256": "418d9f02b676d07dd7227c17df0897803471b7f72241b88158f3a8aaf63ffdf2",
+      "bytes": 1707
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/evaluation.stderr.native.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/evaluation.stdout.native.bin",
+      "sha256": "91cd39317712c6a0a404c18a12586e3ff5da82c081f5f0cd12bad22a74259aee",
+      "bytes": 1506
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/predictions.json",
+      "sha256": "c277ea37c8fed728f8e9b911355d2f5082c1287644f0be36977c142d5f0304f8",
+      "bytes": 65
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/recovered.py",
+      "sha256": "7c33cd750d9ed2ba64626f22dc04bae02a9bb0aa80867ae62624e79618611d67",
+      "bytes": 1317
+    },
+    {
+      "path": "tasks/H2/oracle-result-work/sealed-submission.json",
+      "sha256": "26673bc2a30bf319a084b6cf26c4f0688015a12ede39cea02ff889fb5df56d2e",
+      "bytes": 302
+    },
+    {
+      "path": "tasks/H2/oracle-result.json",
+      "sha256": "e15ffaf9b79889b37ff8db896395a877fcbe870a73b2a3581ed504ae7383510e",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/H2/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/H2/result.json",
+      "sha256": "07a5ea8714e7ccd90e3498763b476c8fee2bc0e447e4956561161fd314d281b4",
+      "bytes": 4022
+    },
+    {
+      "path": "tasks/H2/workspace/README.md",
+      "sha256": "751ed577aa4678785fadc77d29d3e644a2ee65b9127df8d5aec457132cdbbfa7",
+      "bytes": 998
+    },
+    {
+      "path": "tasks/H2/workspace/sample.hex",
+      "sha256": "c6b4d9cd4ba318b448c099576876e8475b3c15fcaf0255238607a168a7c98811",
+      "bytes": 5121
+    },
+    {
+      "path": "tasks/H2/workspace/specimen.exe",
+      "sha256": "39bf3f174c87109a8dcfff163f7e09aafd659e36b681ea6d08ed383ed707298e",
+      "bytes": 2560
+    },
+    {
+      "path": "tasks/R1/failure.json",
+      "sha256": "789133d9ee02993e58ccc2936ae2d9871c425f33eecea905fd5208174b1bf9b8",
+      "bytes": 1504
+    },
+    {
+      "path": "tasks/R1/final-text.txt",
+      "sha256": "d00969778d9de3e9048e6b1bb2cc19a5770e321f7b5a4c2a936cb5d599abd5c2",
+      "bytes": 4306
+    },
+    {
+      "path": "tasks/R1/harness/outcome.json",
+      "sha256": "4579cdf8edb079b28445ea74501f699399404039a96e948e14b81452ea0a6b83",
+      "bytes": 6833
+    },
+    {
+      "path": "tasks/R1/harness/released.json",
+      "sha256": "1b757535437a53aa99b007b4ecbd53aa26443286be6f542108c9b5219ba8d565",
+      "bytes": 6637
+    },
+    {
+      "path": "tasks/R1/harness/run-1-admission.json",
+      "sha256": "f28f16ddd92b33102a1d88b67dc17c780c78d026d38e184e3d225f7210006edd",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/R1/harness/run-1-candidate.json",
+      "sha256": "5828db1a85740abb8a193b08fc1d9e6eaed250af1f55aa196c5c19e37a2ab6c2",
+      "bytes": 5291
+    },
+    {
+      "path": "tasks/R1/harness/run-1-events.jsonl",
+      "sha256": "a064437051cac77995b0e7574381a96bfda638113db76a2b035e53b308659113",
+      "bytes": 68324
+    },
+    {
+      "path": "tasks/R1/harness/run-1-observation.json",
+      "sha256": "24fce3228edcd912494851d84cf24623dc6cc240562644e3fe4a96551c68575d",
+      "bytes": 230
+    },
+    {
+      "path": "tasks/R1/harness/run-1-review.json",
+      "sha256": "7086e6b1772ab9a374c079f6e3523fb260029ccad2bea325eda730494bd6e0c5",
+      "bytes": 1080
+    },
+    {
+      "path": "tasks/R1/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/R1/harness/task.json",
+      "sha256": "6ce815036f2dd52069dfe404e1f1c350699f7776d92f9b624316f06cecaa8710",
+      "bytes": 426
+    },
+    {
+      "path": "tasks/R1/host-private/.ara-lite-harness-8665ed2eb10b7bb5f484996c5c6ef410ed9eb0db4a360f27a1bfbc8767a5e9cb.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-192ffaacd5f5ba26305ac2f4/input.bin",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-192ffaacd5f5ba26305ac2f4/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-192ffaacd5f5ba26305ac2f4/stdout.log",
+      "sha256": "6962afae32d065c49ab561b18c9760a10cc3cc6055b3e0c6ea7eb991915672fe",
+      "bytes": 5901
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-5839b120b623f20915c211d1/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-5839b120b623f20915c211d1/stdout.log",
+      "sha256": "152f217ea4bf04861acddb0f923625478cd15121d61af6f7a6184ddd89bca8e8",
+      "bytes": 325
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-5a20536296c54d08ffea36f9/input.bin",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-5a20536296c54d08ffea36f9/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-5a20536296c54d08ffea36f9/stdout.log",
+      "sha256": "a4c09d06b534d711776c41d15f06012867a2d59e81671734ec957c6a5ab54769",
+      "bytes": 4082
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-6209b87ddff989c58eb4704d/input.bin",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-6209b87ddff989c58eb4704d/stderr.log",
+      "sha256": "eea7ea80f282e714af3a96cf2b552611bdbd5e1d35d9bd7ad284b3dcb6e12c5a",
+      "bytes": 33
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-6209b87ddff989c58eb4704d/stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-f92ce8f7faa9dccde58446f6/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-f92ce8f7faa9dccde58446f6/stdout.log",
+      "sha256": "f6b13867f52409d10f651f3efdce5c46841d0f2972de97452cfeec537d641e81",
+      "bytes": 330
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-fe80e280afd5006d69dde50f/input.bin",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-fe80e280afd5006d69dde50f/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/analysis/analysis-fe80e280afd5006d69dde50f/stdout.log",
+      "sha256": "d5d8c6db4f35f7f574b2915cd5614dc9634174a5a9b2b08cc44e6314278f36f0",
+      "bytes": 3656
+    },
+    {
+      "path": "tasks/R1/host-private/session.context.json",
+      "sha256": "68dae1c76370d4d0140878f91b1a838d7272f0ffc283b493ba4bed05079bcc80",
+      "bytes": 706
+    },
+    {
+      "path": "tasks/R1/host-private/session.journal/head.json",
+      "sha256": "78af35f2591fc968870c30e0ee5b5de7ab9db5585c2ef76f774e9adf23286689",
+      "bytes": 936
+    },
+    {
+      "path": "tasks/R1/host-private/session.journal/runs/791e52ef0f95fcae34d1fbb86dcc9168b5a300ea07f43b0a948c9fa67f5f5994.json",
+      "sha256": "413bbdb56054de59469383122c441191d9157440fb465121ae7f260c0664462c",
+      "bytes": 39
+    },
+    {
+      "path": "tasks/R1/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "fd902d406139eb780315c7200cbb7060e2a5055e71c40ffea0d49b81aba533da",
+      "bytes": 41741
+    },
+    {
+      "path": "tasks/R1/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/host-private/session.json",
+      "sha256": "b3e86d3c0b6c311899a41306a036bbdcbffb8d763ccebca4c132534eb1ac0e03",
+      "bytes": 37838
+    },
+    {
+      "path": "tasks/R1/host-private/verify-run-1.json",
+      "sha256": "f2c400572841a41012edff5548f52d240d2d83f9fd05e13e94141043ee4a8e31",
+      "bytes": 1022
+    },
+    {
+      "path": "tasks/R1/oracle-dir/README.md",
+      "sha256": "c7e97b517956d9beda7e6cfdc3d0a2a95e5f9b141cf81b90992a62b70b072680",
+      "bytes": 881
+    },
+    {
+      "path": "tasks/R1/oracle-dir/sample.hex",
+      "sha256": "9a1b82b87e758a84972167b2f6f6b218e6c725e2609709f8c74703880e471dde",
+      "bytes": 7169
+    },
+    {
+      "path": "tasks/R1/oracle-dir/specimen.exe",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/R1/oracle-result-work/detail.json",
+      "sha256": "6c722688eb6cc8725332fc6592d89652a6d941216d343591309dd26a0542085d",
+      "bytes": 865
+    },
+    {
+      "path": "tasks/R1/oracle-result-work/recovered.py",
+      "sha256": "215564605392fc511172382761699ee338ac76b6991bfea9a56651d0b155e30b",
+      "bytes": 767
+    },
+    {
+      "path": "tasks/R1/oracle-result-work/sealed-submission.json",
+      "sha256": "23c85cc4e7119ea78cc2c6e02180be8dfa3b77f6875b9beb4b803a56f81b7305",
+      "bytes": 158
+    },
+    {
+      "path": "tasks/R1/oracle-result.json",
+      "sha256": "e30739b309cd2390add679f24b5b75b3395f819dfad0832a64053ac7a4aacc3f",
+      "bytes": 474
+    },
+    {
+      "path": "tasks/R1/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/R1/result.json",
+      "sha256": "4ca80c6d9f6d6554ea2ab3cc1b064f728c16088d3e71d0b45b36846150407b00",
+      "bytes": 4020
+    },
+    {
+      "path": "tasks/R1/workspace/README.md",
+      "sha256": "c7e97b517956d9beda7e6cfdc3d0a2a95e5f9b141cf81b90992a62b70b072680",
+      "bytes": 881
+    },
+    {
+      "path": "tasks/R1/workspace/sample.hex",
+      "sha256": "9a1b82b87e758a84972167b2f6f6b218e6c725e2609709f8c74703880e471dde",
+      "bytes": 7169
+    },
+    {
+      "path": "tasks/R1/workspace/specimen.exe",
+      "sha256": "d262bf33dce3dc3e61b4efc736e570c30c29aa9cee7d5eb138e0c3deda2a5186",
+      "bytes": 3584
+    },
+    {
+      "path": "tasks/S1/final-text.txt",
+      "sha256": "ec73350520110631ad024bc83ff0cb07a0bb88b63e8867fcde5ed5055bae3c35",
+      "bytes": 2115
+    },
+    {
+      "path": "tasks/S1/harness/outcome.json",
+      "sha256": "eff58af5aa2f6f0bd42c5920d9bd05c770563c68c438be2c44568de761ba5066",
+      "bytes": 4597
+    },
+    {
+      "path": "tasks/S1/harness/released.json",
+      "sha256": "6e6e074c2e58147646484d6296759a80cf12aad8ad7a452a32b8d4193a2b291b",
+      "bytes": 4401
+    },
+    {
+      "path": "tasks/S1/harness/run-1-admission.json",
+      "sha256": "7e7b1e99ae21eff074e65fb315ebab3590f71e39dd8f85a8bc48a69c995cb49b",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/S1/harness/run-1-candidate.json",
+      "sha256": "4e95d3e87dcd3c694be4b58a39c539c07d2fa6d96cafe6fece9e8810d0663444",
+      "bytes": 3052
+    },
+    {
+      "path": "tasks/S1/harness/run-1-events.jsonl",
+      "sha256": "74458241295c635a224ce0114aeef9d181f78921fb352e7b6c81293701a50843",
+      "bytes": 50799
+    },
+    {
+      "path": "tasks/S1/harness/run-1-observation.json",
+      "sha256": "b4ca088c190890e70b9285cdc9bf13d56e71132df5edf7aba5c9448e94eb2749",
+      "bytes": 232
+    },
+    {
+      "path": "tasks/S1/harness/run-1-review.json",
+      "sha256": "e7d4e17cb275f1e246e3ce32df40fd123e6d5df0b368375d21da390590e70d66",
+      "bytes": 1082
+    },
+    {
+      "path": "tasks/S1/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/S1/harness/task.json",
+      "sha256": "415216bd635ecefac4d037753d74aa856dc36f9730fb34aa1dc3dfa456c098d0",
+      "bytes": 417
+    },
+    {
+      "path": "tasks/S1/host-private/.ara-lite-harness-49fc3b24390b8ee149e70afe1275accc7f10f2fb4fddd121d9b63c982dbe8a2c.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S1/host-private/session.context.json",
+      "sha256": "fde4a381d01b5fa229218c52acebc5d5e04a0f513102adc2bda116d53504769a",
+      "bytes": 899
+    },
+    {
+      "path": "tasks/S1/host-private/session.journal/head.json",
+      "sha256": "478ae72ef3c0f6b24a5f67e341b068e562594c8849ec2caa41c9ca80f623243c",
+      "bytes": 936
+    },
+    {
+      "path": "tasks/S1/host-private/session.journal/runs/ca2d2aea11783532c9ac23daf15a33ad333c1e327b822b54a2612b9508bba151.json",
+      "sha256": "5efed2e5575dda3ba01d57d9fbf0bae197f2f63c37efad02487ec3dbd92a8941",
+      "bytes": 39
+    },
+    {
+      "path": "tasks/S1/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "5ccf5099df2b02de78ce3c520696f565f4826aa01e1fbdfd11c34f88c7bb7f61",
+      "bytes": 35115
+    },
+    {
+      "path": "tasks/S1/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S1/host-private/session.json",
+      "sha256": "9b8a8950110dd02b8f517aeff33db73789f5fe26525db455253c5d5d8c2e4ece",
+      "bytes": 26212
+    },
+    {
+      "path": "tasks/S1/host-private/verify-run-1.json",
+      "sha256": "fba378c6be05f3e56e43b8f5263377a00a885735574ab6b6281f5a0b30573159",
+      "bytes": 1024
+    },
+    {
+      "path": "tasks/S1/oracle-dir/README.md",
+      "sha256": "7e79db45e8b033b0f491d8da5d2c00173cab2be0721d02a55cafca41bd281180",
+      "bytes": 781
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/display.hpp",
+      "sha256": "3a4cb88291ff9e825424435225fcee099ad969dbd02733257cd4acbd8dd0366f",
+      "bytes": 103
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/model.hpp",
+      "sha256": "394b4c60eb0f6c09b375f5b011cdb10a5600186024bbf5318552d43796c2a9d6",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/options.hpp",
+      "sha256": "15a7c4b1b8fb18cbea76a9b37a5a77e3d2075435785c4e90837057e832889882",
+      "bytes": 174
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/reader.hpp",
+      "sha256": "e175fb37bd71a052680bff4830d468109cc72cbf39ed9f6e2f99aefe2be8d93a",
+      "bytes": 121
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/report.hpp",
+      "sha256": "847ee4ac978588138f7d0d3ff02ef7196ea59927b8b23998921a99a7e4250e7a",
+      "bytes": 209
+    },
+    {
+      "path": "tasks/S1/oracle-dir/include/wire.hpp",
+      "sha256": "60ce0ab00db43c49a19673257b453befd3c7f7bedeacd117f4e900e55ebd0d52",
+      "bytes": 92
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/display.cpp",
+      "sha256": "627ab857c8f11dfd6df9d4a6cad96518c7751f320a00f747e8ab630db45e05fb",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/main.cpp",
+      "sha256": "23bb01ac83d595ca78c8e863b9309e1b148434bb6a0c9770cf88bc9bebff3a76",
+      "bytes": 524
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/options.cpp",
+      "sha256": "3a124b8af562334c695539fa85ad21423c97a0047ffdb26bfb0823f5b1225a17",
+      "bytes": 390
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/reader.cpp",
+      "sha256": "53cf4e3feb05096830b085de2ba765f7d193a239df890c118d1e00389fa5d9a3",
+      "bytes": 957
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/report.cpp",
+      "sha256": "94bfaae2756d49ece132b037c11d643ee10d5c9b93caea36c87b48347f44f250",
+      "bytes": 343
+    },
+    {
+      "path": "tasks/S1/oracle-dir/src/wire.cpp",
+      "sha256": "cd54609e005a7a16da7a0c016e1bd1e3b2c09ae9befde5a032a5f19deeec0a2b",
+      "bytes": 252
+    },
+    {
+      "path": "tasks/S1/oracle-result-work/candidate.exe",
+      "sha256": "98083f146d0d60e1859163c95754f4b8072814f48235be46ccc583d0a464e751",
+      "bytes": 89018
+    },
+    {
+      "path": "tasks/S1/oracle-result-work/detail.json",
+      "sha256": "dc7baf968b99f4a901db73eb187cbe9e3dabf57179282956fbd076af6df91a70",
+      "bytes": 3753
+    },
+    {
+      "path": "tasks/S1/oracle-result.json",
+      "sha256": "43a70701f289c9e862c38f418c04ddebcdee8b408874f9e6f5debf9effd1a21e",
+      "bytes": 442
+    },
+    {
+      "path": "tasks/S1/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S1/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S1/result.json",
+      "sha256": "93f277b2655164d346ecc0adddc6112ece86c45d678a2a275a5520052c54949b",
+      "bytes": 5971
+    },
+    {
+      "path": "tasks/S1/workspace/README.md",
+      "sha256": "7e79db45e8b033b0f491d8da5d2c00173cab2be0721d02a55cafca41bd281180",
+      "bytes": 781
+    },
+    {
+      "path": "tasks/S1/workspace/include/display.hpp",
+      "sha256": "3a4cb88291ff9e825424435225fcee099ad969dbd02733257cd4acbd8dd0366f",
+      "bytes": 103
+    },
+    {
+      "path": "tasks/S1/workspace/include/model.hpp",
+      "sha256": "394b4c60eb0f6c09b375f5b011cdb10a5600186024bbf5318552d43796c2a9d6",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S1/workspace/include/options.hpp",
+      "sha256": "15a7c4b1b8fb18cbea76a9b37a5a77e3d2075435785c4e90837057e832889882",
+      "bytes": 174
+    },
+    {
+      "path": "tasks/S1/workspace/include/reader.hpp",
+      "sha256": "e175fb37bd71a052680bff4830d468109cc72cbf39ed9f6e2f99aefe2be8d93a",
+      "bytes": 121
+    },
+    {
+      "path": "tasks/S1/workspace/include/report.hpp",
+      "sha256": "847ee4ac978588138f7d0d3ff02ef7196ea59927b8b23998921a99a7e4250e7a",
+      "bytes": 209
+    },
+    {
+      "path": "tasks/S1/workspace/include/wire.hpp",
+      "sha256": "60ce0ab00db43c49a19673257b453befd3c7f7bedeacd117f4e900e55ebd0d52",
+      "bytes": 92
+    },
+    {
+      "path": "tasks/S1/workspace/src/display.cpp",
+      "sha256": "627ab857c8f11dfd6df9d4a6cad96518c7751f320a00f747e8ab630db45e05fb",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S1/workspace/src/main.cpp",
+      "sha256": "23bb01ac83d595ca78c8e863b9309e1b148434bb6a0c9770cf88bc9bebff3a76",
+      "bytes": 524
+    },
+    {
+      "path": "tasks/S1/workspace/src/options.cpp",
+      "sha256": "3a124b8af562334c695539fa85ad21423c97a0047ffdb26bfb0823f5b1225a17",
+      "bytes": 390
+    },
+    {
+      "path": "tasks/S1/workspace/src/reader.cpp",
+      "sha256": "53cf4e3feb05096830b085de2ba765f7d193a239df890c118d1e00389fa5d9a3",
+      "bytes": 957
+    },
+    {
+      "path": "tasks/S1/workspace/src/report.cpp",
+      "sha256": "94bfaae2756d49ece132b037c11d643ee10d5c9b93caea36c87b48347f44f250",
+      "bytes": 343
+    },
+    {
+      "path": "tasks/S1/workspace/src/wire.cpp",
+      "sha256": "cd54609e005a7a16da7a0c016e1bd1e3b2c09ae9befde5a032a5f19deeec0a2b",
+      "bytes": 252
+    },
+    {
+      "path": "tasks/S2/final-text.txt",
+      "sha256": "1a657cc9885f69037a4916a53d8aa6ee0b715567e3625aee01f25cb523824710",
+      "bytes": 1892
+    },
+    {
+      "path": "tasks/S2/harness/outcome.json",
+      "sha256": "a3052886c5db5647b33526c41e5379c8a88ae637591551d6a72ac279d8a2c456",
+      "bytes": 4364
+    },
+    {
+      "path": "tasks/S2/harness/released.json",
+      "sha256": "1d57b7a44c0458d488fa9da19114043615c5c65b122737ea7f6cbf5627201bb4",
+      "bytes": 4168
+    },
+    {
+      "path": "tasks/S2/harness/run-1-admission.json",
+      "sha256": "53f3e4c8c887c9beffc0b73fab5cbc0fe90400c0f764fc76c5218f193cd0a8d8",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/S2/harness/run-1-candidate.json",
+      "sha256": "f96d843125f06f58382cb17ef888320ed96509c0c40ef2c1a0201c9ffa600a17",
+      "bytes": 2822
+    },
+    {
+      "path": "tasks/S2/harness/run-1-events.jsonl",
+      "sha256": "8006ca79314c01eb73d4d20ff9bc028dba3591e80482bbfe242ae21785679561",
+      "bytes": 47111
+    },
+    {
+      "path": "tasks/S2/harness/run-1-observation.json",
+      "sha256": "7cd5820681d01d0e4800288dda005123dbe29f9a4008821d7bcf3c5e6b4a38c8",
+      "bytes": 230
+    },
+    {
+      "path": "tasks/S2/harness/run-1-review.json",
+      "sha256": "7eeee120fd7a7105c817b96158de3af26d8a69e6c0b534bed2fca55234e9b3fe",
+      "bytes": 1080
+    },
+    {
+      "path": "tasks/S2/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/S2/harness/task.json",
+      "sha256": "c65e2ba477aae2216b0733d4a1c7ea2a89996635c89422d045e76459ec76d85c",
+      "bytes": 417
+    },
+    {
+      "path": "tasks/S2/host-private/.ara-lite-harness-9ab5fc15c15c1d4576851efd14a841607ffc5daf59bba0d966ef31439ce1a97b.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S2/host-private/session.context.json",
+      "sha256": "32db61d31390851b0c90cf17ca33326be947acd7bda7c484b64352d47a6ecc1e",
+      "bytes": 899
+    },
+    {
+      "path": "tasks/S2/host-private/session.journal/head.json",
+      "sha256": "ea8bb82d6b4fa0eea54cea45745071a9a0bbf0d004ae6b43d501a8794dd48fb8",
+      "bytes": 936
+    },
+    {
+      "path": "tasks/S2/host-private/session.journal/runs/a193991f8f317dc54790674622403b2e04e5e470b29d5b9ccf0a3b40115f5c68.json",
+      "sha256": "147b3656dc8debc5e903d83343bdce217a4236b5fd8a7ebcc9932daa0c929745",
+      "bytes": 39
+    },
+    {
+      "path": "tasks/S2/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "324be5dad1950368bc362d6b038449fac2a7cd1ed4ea64f3f1b5cb75a8f65faf",
+      "bytes": 33334
+    },
+    {
+      "path": "tasks/S2/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S2/host-private/session.json",
+      "sha256": "b575f453cd498f2f0a512c1bb5f49c01276ae522707af923d0b5851cfaa08cd9",
+      "bytes": 26181
+    },
+    {
+      "path": "tasks/S2/host-private/verify-run-1.json",
+      "sha256": "acc210b13de1966a4b824f0011a8d395c6e96c902985f03dc4813956fad1e8a7",
+      "bytes": 1022
+    },
+    {
+      "path": "tasks/S2/oracle-dir/README.md",
+      "sha256": "b3b75daddd69826ee4c559a775f6d89c00781249ca773167a70cf6026fe9fb36",
+      "bytes": 1022
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/display.hpp",
+      "sha256": "3a4cb88291ff9e825424435225fcee099ad969dbd02733257cd4acbd8dd0366f",
+      "bytes": 103
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/model.hpp",
+      "sha256": "394b4c60eb0f6c09b375f5b011cdb10a5600186024bbf5318552d43796c2a9d6",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/options.hpp",
+      "sha256": "15a7c4b1b8fb18cbea76a9b37a5a77e3d2075435785c4e90837057e832889882",
+      "bytes": 174
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/reader.hpp",
+      "sha256": "e175fb37bd71a052680bff4830d468109cc72cbf39ed9f6e2f99aefe2be8d93a",
+      "bytes": 121
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/report.hpp",
+      "sha256": "847ee4ac978588138f7d0d3ff02ef7196ea59927b8b23998921a99a7e4250e7a",
+      "bytes": 209
+    },
+    {
+      "path": "tasks/S2/oracle-dir/include/wire.hpp",
+      "sha256": "60ce0ab00db43c49a19673257b453befd3c7f7bedeacd117f4e900e55ebd0d52",
+      "bytes": 92
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/display.cpp",
+      "sha256": "627ab857c8f11dfd6df9d4a6cad96518c7751f320a00f747e8ab630db45e05fb",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/main.cpp",
+      "sha256": "23bb01ac83d595ca78c8e863b9309e1b148434bb6a0c9770cf88bc9bebff3a76",
+      "bytes": 524
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/options.cpp",
+      "sha256": "baf59fc703d8d763dfd01c4eca99f13b6a39ac2c94d061b736702c9ece231da3",
+      "bytes": 558
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/reader.cpp",
+      "sha256": "0c8fb864d12ea02adb209927c5014908a1d59b92c6c1911d3af0897455b6c255",
+      "bytes": 796
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/report.cpp",
+      "sha256": "b49462fc97daac83f589522594a9f3afabab822f663feaf5ae8177a040f89657",
+      "bytes": 847
+    },
+    {
+      "path": "tasks/S2/oracle-dir/src/wire.cpp",
+      "sha256": "bdae2d7c6df998ef47097143d0d4ae0ea55ec44823bb85604a26c9cba0b3c8f7",
+      "bytes": 216
+    },
+    {
+      "path": "tasks/S2/oracle-result-work/candidate.exe",
+      "sha256": "690288a6a08031fb6884817d9d5cb8a40f6954e4382f190cb29f536b89e45c03",
+      "bytes": 102540
+    },
+    {
+      "path": "tasks/S2/oracle-result-work/detail.json",
+      "sha256": "2defde19469e34c023522f9353d1e0b2069ca3df497dc3a0bca0feb44182b611",
+      "bytes": 8403
+    },
+    {
+      "path": "tasks/S2/oracle-result.json",
+      "sha256": "87cb64a55eb705b2769ee594240de2287e626cfa78fd636497267b1f03bbd695",
+      "bytes": 442
+    },
+    {
+      "path": "tasks/S2/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S2/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S2/result.json",
+      "sha256": "663eae078c94f0b60055096d0b8a02afce6419f0344c54e1f8cceda8ba9933a3",
+      "bytes": 5368
+    },
+    {
+      "path": "tasks/S2/workspace/README.md",
+      "sha256": "b3b75daddd69826ee4c559a775f6d89c00781249ca773167a70cf6026fe9fb36",
+      "bytes": 1022
+    },
+    {
+      "path": "tasks/S2/workspace/include/display.hpp",
+      "sha256": "3a4cb88291ff9e825424435225fcee099ad969dbd02733257cd4acbd8dd0366f",
+      "bytes": 103
+    },
+    {
+      "path": "tasks/S2/workspace/include/model.hpp",
+      "sha256": "394b4c60eb0f6c09b375f5b011cdb10a5600186024bbf5318552d43796c2a9d6",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S2/workspace/include/options.hpp",
+      "sha256": "15a7c4b1b8fb18cbea76a9b37a5a77e3d2075435785c4e90837057e832889882",
+      "bytes": 174
+    },
+    {
+      "path": "tasks/S2/workspace/include/reader.hpp",
+      "sha256": "e175fb37bd71a052680bff4830d468109cc72cbf39ed9f6e2f99aefe2be8d93a",
+      "bytes": 121
+    },
+    {
+      "path": "tasks/S2/workspace/include/report.hpp",
+      "sha256": "847ee4ac978588138f7d0d3ff02ef7196ea59927b8b23998921a99a7e4250e7a",
+      "bytes": 209
+    },
+    {
+      "path": "tasks/S2/workspace/include/wire.hpp",
+      "sha256": "60ce0ab00db43c49a19673257b453befd3c7f7bedeacd117f4e900e55ebd0d52",
+      "bytes": 92
+    },
+    {
+      "path": "tasks/S2/workspace/src/display.cpp",
+      "sha256": "627ab857c8f11dfd6df9d4a6cad96518c7751f320a00f747e8ab630db45e05fb",
+      "bytes": 144
+    },
+    {
+      "path": "tasks/S2/workspace/src/main.cpp",
+      "sha256": "23bb01ac83d595ca78c8e863b9309e1b148434bb6a0c9770cf88bc9bebff3a76",
+      "bytes": 524
+    },
+    {
+      "path": "tasks/S2/workspace/src/options.cpp",
+      "sha256": "baf59fc703d8d763dfd01c4eca99f13b6a39ac2c94d061b736702c9ece231da3",
+      "bytes": 558
+    },
+    {
+      "path": "tasks/S2/workspace/src/reader.cpp",
+      "sha256": "0c8fb864d12ea02adb209927c5014908a1d59b92c6c1911d3af0897455b6c255",
+      "bytes": 796
+    },
+    {
+      "path": "tasks/S2/workspace/src/report.cpp",
+      "sha256": "b49462fc97daac83f589522594a9f3afabab822f663feaf5ae8177a040f89657",
+      "bytes": 847
+    },
+    {
+      "path": "tasks/S2/workspace/src/wire.cpp",
+      "sha256": "bdae2d7c6df998ef47097143d0d4ae0ea55ec44823bb85604a26c9cba0b3c8f7",
+      "bytes": 216
+    },
+    {
+      "path": "tasks/S3/failure.json",
+      "sha256": "75f313fe017c949fc65c17707ed028b0cccb4976b74dfae102919ca02f243d96",
+      "bytes": 1564
+    },
+    {
+      "path": "tasks/S3/final-text.txt",
+      "sha256": "dd3eb9419558a230c67b84c1fbcb62f0d85a40727d2eb923f2f1f96f66987619",
+      "bytes": 2162
+    },
+    {
+      "path": "tasks/S3/harness/outcome.json",
+      "sha256": "7efe6529356db643f6547682108297459a3c42773102c1b3bc4b802c313747df",
+      "bytes": 4632
+    },
+    {
+      "path": "tasks/S3/harness/released.json",
+      "sha256": "94c9edd2b601b5c1071ee69583399a6e220d1522ff2273f9444b4ac9edbd8d65",
+      "bytes": 4436
+    },
+    {
+      "path": "tasks/S3/harness/run-1-admission.json",
+      "sha256": "66ecdd763191e165047360b045fd384b51f1fbb6b58fd221f53d9218fbb4d4bd",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/S3/harness/run-1-candidate.json",
+      "sha256": "1fabfca77165e9397d8f1afbf283499ea675495315b32496590877a1a06934a0",
+      "bytes": 3087
+    },
+    {
+      "path": "tasks/S3/harness/run-1-events.jsonl",
+      "sha256": "4a09ca345a0c161ab5a2d45184648a1ff529e7cb4b3ff98ca668324d2854bf2a",
+      "bytes": 191432
+    },
+    {
+      "path": "tasks/S3/harness/run-1-observation.json",
+      "sha256": "b12fb2e563d1698530b23c625cb22ff1967e5ad9cc8a06cbe0140534523de0f1",
+      "bytes": 232
+    },
+    {
+      "path": "tasks/S3/harness/run-1-review.json",
+      "sha256": "9703c224d76ee28e63cb8dee0c018fe782b6ce747682aa282475437bbb0f62a9",
+      "bytes": 1082
+    },
+    {
+      "path": "tasks/S3/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/S3/harness/task.json",
+      "sha256": "9f8f92e115141567b0fcf18057d218cd7a0bc80e26a65f2b88ab477c948c5fb8",
+      "bytes": 418
+    },
+    {
+      "path": "tasks/S3/host-private/.ara-lite-harness-af5931d0c55128d54db6a9064c30a2d74eb563ea9dabefade905bd60899a8b4c.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/host-private/session.context.json",
+      "sha256": "12b3055eb3c5912312b78c26b5f0d3fdb9b58964921cf3d998a380f07a68fb36",
+      "bytes": 899
+    },
+    {
+      "path": "tasks/S3/host-private/session.journal/head.json",
+      "sha256": "46f85032ec47a06306d0c609966fa311eac5068e1b6400fc1364b763343221b2",
+      "bytes": 937
+    },
+    {
+      "path": "tasks/S3/host-private/session.journal/runs/3d7523ced358c4fed38a3ba33698f0b162c4fa39385c752158015720d82a58d7.json",
+      "sha256": "5051101c508d1266827b26434b688c971510d3d5955b4add80475381966c6b17",
+      "bytes": 39
+    },
+    {
+      "path": "tasks/S3/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "c436b76049105ec3897d9f9c3d494a4ac54b2ec18966a435664302e0d549667a",
+      "bytes": 166605
+    },
+    {
+      "path": "tasks/S3/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/host-private/session.json",
+      "sha256": "19d0d647a90775ba78015a315fa67cd5d2eb6cb943ca0c523be47e0a0e4abfbc",
+      "bytes": 144702
+    },
+    {
+      "path": "tasks/S3/host-private/verify-run-1.json",
+      "sha256": "b3c147397a91ff59413e9674241b552875146242aa58a7c33528ffa86d1b0815",
+      "bytes": 1024
+    },
+    {
+      "path": "tasks/S3/oracle-dir/CMakeLists.txt",
+      "sha256": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+      "bytes": 3011
+    },
+    {
+      "path": "tasks/S3/oracle-dir/README.md",
+      "sha256": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+      "bytes": 3114
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/app/commands.hpp",
+      "sha256": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+      "bytes": 379
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/app/format.hpp",
+      "sha256": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+      "bytes": 195
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/csv/decoder.hpp",
+      "sha256": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+      "bytes": 1075
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/import/ledger.hpp",
+      "sha256": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+      "bytes": 755
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/import/pump.hpp",
+      "sha256": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+      "bytes": 504
+    },
+    {
+      "path": "tasks/S3/oracle-dir/include/stream/source.hpp",
+      "sha256": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+      "bytes": 376
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/decoder.cpp",
+      "sha256": "b01456a0a46d49c589309211a252c500ef71b1e13eaa9412898e2f43908831d2",
+      "bytes": 3343
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/follow.cpp",
+      "sha256": "1a63e8c8f70709e3463b116030e1d10a4a29d5328c0ab834d322a465432dcd03",
+      "bytes": 962
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/format.cpp",
+      "sha256": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+      "bytes": 1595
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/format_clone.cpp",
+      "sha256": "8da3e1f860e4ae646306bfd0ebf78e91a98c6c04915009993ddf04e8d564ce3e",
+      "bytes": 84
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/ledger.cpp",
+      "sha256": "3c41a4e196e37ef0380dfb88a5be2313136660a99523fe998e45af0c8c16c128",
+      "bytes": 2073
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/main.cpp",
+      "sha256": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+      "bytes": 1398
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/pump.cpp",
+      "sha256": "5916b985105364ac8f9ce302938d02c30eba27d992a90091d05cb6fc6c114253",
+      "bytes": 861
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/report.cpp",
+      "sha256": "a73ada6fedf646fea29f21e4953c85f510da1b7bec0e4dbe424c1dad4fd3604c",
+      "bytes": 535
+    },
+    {
+      "path": "tasks/S3/oracle-dir/src/source.cpp",
+      "sha256": "672272740cefb0a543789e9113eb0d01d8c4988f5f2708276e532329fa38d99e",
+      "bytes": 952
+    },
+    {
+      "path": "tasks/S3/oracle-dir/tests/cases.json",
+      "sha256": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+      "bytes": 13979
+    },
+    {
+      "path": "tasks/S3/oracle-dir/tests/check_cli.py",
+      "sha256": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719",
+      "bytes": 4071
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/detail.json",
+      "sha256": "e3efaa5433f6dde1c756bebfa368018f3508058a18dfa80a76b1ac63087060db",
+      "bytes": 6828
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/final-submission.txt",
+      "sha256": "dd3eb9419558a230c67b84c1fbcb62f0d85a40727d2eb923f2f1f96f66987619",
+      "bytes": 2162
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build.command.json",
+      "sha256": "8dc0c757ccfbcf40782464f0fe446f8716a220446d961558cf25a98de007c687",
+      "bytes": 651
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build.stderr.native.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build.stdout.native.bin",
+      "sha256": "87e9a75db7c9e2afa3ca0d7d99857dd599db3341ed0feb95ea1982740d0da687",
+      "bytes": 618
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/.ninja_deps",
+      "sha256": "8d7140707950ae89241fb97cd7a6fb833323f903a3b63415eb8b71996797037d",
+      "bytes": 41796
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/.ninja_log",
+      "sha256": "a19daa164f5fabfa6cb112e9df632cb5f5983fb95d93d2e34a0474cd0897df9e",
+      "bytes": 766
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeCache.txt",
+      "sha256": "52f54ca6a9d7ad448668d06c9601088a2ab4d9abf9ec600dcc6dce6b07f0adde",
+      "bytes": 21542
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CMakeCXXCompiler.cmake",
+      "sha256": "fc389ad020f2be083fa1403dc130ac9f88aad8aa4a5cee3a6a413a4cd97adbac",
+      "bytes": 10709
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CMakeDetermineCompilerABI_CXX.bin",
+      "sha256": "eae5b45f59f83da497ddca3f8cbb76702e4574038265a1503d301adb739b2a9f",
+      "bytes": 60708
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CMakeRCCompiler.cmake",
+      "sha256": "d1a29fef01a7794437e526bb8171453f1d0519707f08017bed50831e8fda188e",
+      "bytes": 359
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CMakeSystem.cmake",
+      "sha256": "cf05e982232c22b6fe58288ef10f11c1d5ba2af1e7e050ea9d8037095b59d948",
+      "bytes": 395
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CompilerIdCXX/CMakeCXXCompilerId.cpp",
+      "sha256": "c260f5f6368fe636da54c24d6abd310ac6fcc3acdc4bdc674d9b7223569a85eb",
+      "bytes": 30605
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/4.4.0/CompilerIdCXX/a.exe",
+      "sha256": "d7b55389d03c39ee9f0fdf6677d04c7902a2cb489938c92927312b4640a57e6d",
+      "bytes": 60760
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/CMakeConfigureLog.yaml",
+      "sha256": "1a5426f90f8ce35f9136e886be8e94793a21aecba87893b7a06b863f10bf5eab",
+      "bytes": 295334
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/CTestScript.cmake",
+      "sha256": "44ec5b76c1896f6bcb0e91a53cbb2820741774fd18d2e5fbd7e1d46b3322b355",
+      "bytes": 4847
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/InstallScripts.json",
+      "sha256": "d32e5694f53711327314e0f44a8fd0d7718b6f352d236753557b1400c543a986",
+      "bytes": 208
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/TargetDirectories.txt",
+      "sha256": "2d04f8539451d4fe4be02d0bcd0ed08c8b47106d379d22d8bf8b0e6fedc6c737",
+      "bytes": 5013
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/cmake.check_cache",
+      "sha256": "95079b44bcef481d601432c2fd3c654d7fe85b9c8386c355f2874502b47441d7",
+      "bytes": 86
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/decoder.cpp.obj",
+      "sha256": "63ef155ee90074a7e8bfc510edd5cf76692380b9a146e68fa3b901a82f7c264d",
+      "bytes": 8548
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/follow.cpp.obj",
+      "sha256": "1f02486f8d74b680518aad569fd56f1e37f3ec66a08f48924846a7fcb3fcc53d",
+      "bytes": 11077
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/format.cpp.obj",
+      "sha256": "e9170ee76a5e480edc01bdeb76937360bb7e8c3298c7ab8b41512efbade42552",
+      "bytes": 10189
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/ledger.cpp.obj",
+      "sha256": "13817923023b6752ef5ad8372488a9a2d270bd1d13097d5b3728df653f0b3009",
+      "bytes": 7284
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/main.cpp.obj",
+      "sha256": "6c5f397854264d699787e518348fa5d05f1c979d7cd25eca0052197d10fc5276",
+      "bytes": 7491
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/pump.cpp.obj",
+      "sha256": "54a6d6b7e4d39977abcd8d7b5d64f1118fadef67093d242c0ba95bbbea9bf35d",
+      "bytes": 7759
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/report.cpp.obj",
+      "sha256": "ae7dd53467b55015be8fca30399de17a109137ba2e28148b0097773c43ad7fcc",
+      "bytes": 7770
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/csv_import.dir/src/source.cpp.obj",
+      "sha256": "0dbb25ce9b136f0aa5c7eb3d93dd7fe8dae4306fe572fe895e18cdc9275c25ac",
+      "bytes": 7029
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CMakeFiles/rules.ninja",
+      "sha256": "91782d26463cb0e900e928eefbadb69369575fd165b1f5742a00853ea00f42a2",
+      "bytes": 2899
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/CTestTestfile.cmake",
+      "sha256": "5355d34c6807add634efcc57baa59943a2f1cccf96514a6aaa731725e6d5999c",
+      "bytes": 10554
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/DartConfiguration.tcl",
+      "sha256": "5ba0aeb77046ff3b50ff0f1d83c12b3dbaad32c58ccd1620445906d2d40aad24",
+      "bytes": 3383
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/Testing/Temporary/CTestCostData.txt",
+      "sha256": "f8061b0d112b915f7a9060bf189c450b5a5729bd1316ea0b41dbe59f70a2bdfa",
+      "bytes": 383
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/Testing/Temporary/LastTest.log",
+      "sha256": "805a2195a7d941e62f7f83005170406e2707fd3426ddecf60250fde14b711c1a",
+      "bytes": 28334
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/Testing/Temporary/LastTestsFailed.log",
+      "sha256": "46c41c4301b7dd822c88827f658f7e54a2124ea61df7914991992e39e858d29b",
+      "bytes": 190
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/build.ninja",
+      "sha256": "8ae0fa53b653999d798fe3388a13a60d1c3c34173977554dcedadba45f25ae66",
+      "bytes": 48611
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/cmake_install.cmake",
+      "sha256": "fdf5dafccb58d81551c029fd757f7d1d7270db684e75517bf1beb5c59ab41d1e",
+      "bytes": 2467
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/csv_import.exe",
+      "sha256": "7336c429b2fb4b25bf2a5519d3a5794698f7c3290720f55e4fb91fa626f10b07",
+      "bytes": 116725
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-filter-negative/case.json",
+      "sha256": "ccda1e989c124bfc9125a3ad818c8f5b2b9e3efe17b8bb8e45db9c52301361c2",
+      "bytes": 1537
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-filter-negative/input.csv",
+      "sha256": "c35919ef1ea25931e0b998499d0fb775962d128d69568fd5ca3dc14a54fa2892",
+      "bytes": 17
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-filter-negative/stderr.native.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-filter-negative/stdout.native.jsonl",
+      "sha256": "437dd19227d07e994d04adabdd0f7289efd797de220a8e7fc2ec39cb2e0b93a1",
+      "bytes": 189
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-complete-crlf/case.json",
+      "sha256": "e3066de78612b69392f33a321676a4b4a23051a0d8dce9bc7889e60f354d107a",
+      "bytes": 1835
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-complete-crlf/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-complete-crlf/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-complete-crlf/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-crlf-split/case.json",
+      "sha256": "70cfd368e7427f1c1cbdc6586aac05d9af8cdf4c6176974d8d42074cc3e8724d",
+      "bytes": 2271
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-crlf-split/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-crlf-split/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-crlf-split/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-empty-idle/case.json",
+      "sha256": "10d2234f4ecce6d1de1f53af7870882ab97cccdedbd6e1f45a7fa2e6b9bee82c",
+      "bytes": 1279
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-empty-idle/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-empty-idle/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-empty-idle/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-escaped-quote/case.json",
+      "sha256": "62b56e5c2f4bffe7d276791ec4433009a6ba1bddef24e3d845d42db0e9db64bc",
+      "bytes": 2280
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-escaped-quote/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-escaped-quote/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-escaped-quote/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-half-idle/case.json",
+      "sha256": "4d9e418f37c9416732cee526a5e92ec2fdd9ca5bf96a371e2d82feca49a74fda",
+      "bytes": 2270
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-half-idle/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-half-idle/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-follow-half-idle/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-plain/case.json",
+      "sha256": "85dd15a599ef899b68b4338017fbd71334f104a80a1363b9d3dab8933710db52",
+      "bytes": 1140
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-plain/input.csv",
+      "sha256": "d83c1d7de2a1d4cb260e2f91f8e1a79f302be5175d24bf5d8264761ccfc7f810",
+      "bytes": 10
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-plain/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-plain/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-quoted-comma/case.json",
+      "sha256": "a54e9e737d4a53d8b7066f32fee3bc7e18296b8b0d84695e2f300a28f134165c",
+      "bytes": 1160
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-quoted-comma/input.csv",
+      "sha256": "fbb5af478e71ec71d49b760297cb7426685cb1a3bc4ff75c097e60b83301ca07",
+      "bytes": 18
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-quoted-comma/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-quoted-comma/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-bad-quote/case.json",
+      "sha256": "1fb5da3f79864427956c5b32808e301388bea3458f0b9ccf0bbab6a140a850b6",
+      "bytes": 1125
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-bad-quote/input.csv",
+      "sha256": "32ae82abe29f94f5d0a3825c2260192830f8cd212263b01e85dd059de8c76ce9",
+      "bytes": 15
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-bad-quote/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-bad-quote/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-tail/case.json",
+      "sha256": "5807d2ededbd7ffcd5f698de795a0195361561d009550a68e3846dd4f4172073",
+      "bytes": 1150
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-tail/input.csv",
+      "sha256": "051c3e13bcdee4d444aeabad13773b8cd39ace06d00d57ca53999257bae6a214",
+      "bytes": 9
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-tail/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/build/ctest-report-tail/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/configure.command.json",
+      "sha256": "e2e83f0184343dfefe04e639aa7478bacffd1fcbb095299187cc38101222f9e2",
+      "bytes": 1350
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/configure.stderr.native.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/configure.stdout.native.bin",
+      "sha256": "884f3b6db7c0a8fb2e91b0aef7270d6eb1b8c243dec71aa3d21a718df795cbdb",
+      "bytes": 794
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/ctest.command.json",
+      "sha256": "959bd0bddc2120261fc1e47c2bb16107921c3cbbc87486dd300fafb2cd14b216",
+      "bytes": 822
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/ctest.stderr.native.bin",
+      "sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4",
+      "bytes": 27
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/ctest.stdout.native.bin",
+      "sha256": "9b6aeb867cd08af88f4dac05bf751e369a9a513976715d6485cb47dd80ca4f7d",
+      "bytes": 17016
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/ctest.xml",
+      "sha256": "c465e56cee2ee77941510b24a4ba5dba8682583b504727743a122ce8338d377e",
+      "bytes": 18106
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B01/case.json",
+      "sha256": "ff8206bf0c41f370ac63c5539ea45e47fb8edd6deb9f7f7787e648d26fa8db50",
+      "bytes": 3272
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B01/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B01/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B01/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B02/case.json",
+      "sha256": "c9515fdb0f17e7c77868e4a2be054c78ea275d0203fad0a376c4f2522e8e0e9d",
+      "bytes": 1119
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B02/input.csv",
+      "sha256": "5394f0866f560155fb4f49a9c9921f5a1eb738d3746bead9e0d4ab3e0a0e21b5",
+      "bytes": 51
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B02/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B02/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B03/case.json",
+      "sha256": "583bae1c48909e897e74caf943704f163a8c84308d0b372d6b2ef3f978e9d4b4",
+      "bytes": 3016
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B03/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B03/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B03/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B04/case.json",
+      "sha256": "fd3ab57e936c886941d6078b54555ea7e41cc9a37eaf18f6d79a955a784d1448",
+      "bytes": 1587
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B04/input.csv",
+      "sha256": "875fa8fa8d1d11e46b389f2503d830cf73c1406d2e34beee82cc68953018c8f2",
+      "bytes": 26
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B04/stderr.native.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-B04/stdout.native.jsonl",
+      "sha256": "0cf5dd17ca7c91462a2b3071987698bf73c8e081698c158858af156f32041d09",
+      "bytes": 224
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E01/case.json",
+      "sha256": "7dedf0dea3ab69255b97b7417c2dfdcdb72e7e303128f3e0acb6e6fc0b2aebaa",
+      "bytes": 3488
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E01/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E01/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E01/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E02/case.json",
+      "sha256": "7a3277e02f1c4b2273c0a64cae2b9561118e5626d0cd7d4fe14ba7532b93228e",
+      "bytes": 3331
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E02/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E02/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E02/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E03/case.json",
+      "sha256": "2dfb38670d5ff3dd8c318fea04413dc591495a60bd581139fd4a9f5333e5dd52",
+      "bytes": 3092
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E03/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E03/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E03/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E04/case.json",
+      "sha256": "bd852c6640012a114370e3f4c4dfac3fec44b8a3b9e8400b5baf7dc2720357c2",
+      "bytes": 3082
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E04/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E04/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E04/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E05/case.json",
+      "sha256": "756c685e84ddd2b3da4389df0824f0d7aea1afcd9b887521888f07c5f1bf45ab",
+      "bytes": 3312
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E05/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E05/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E05/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E06/case.json",
+      "sha256": "951d9b51d0931ce40a8f3314f3678e9c8f4b4f242ebab4e40539339e642f560a",
+      "bytes": 3331
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E06/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E06/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E06/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E07/case.json",
+      "sha256": "a0515aac3cb6a12658310ee69f862a17c4bd82a6d690751244a109bd30f30757",
+      "bytes": 1094
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E07/input.csv",
+      "sha256": "ac4953246fb098b9fc31d3d139733422142e5c7c3cf99d60c5ab88c6f9854765",
+      "bytes": 47
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E07/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E07/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E08/case.json",
+      "sha256": "d7baa3590bbb0ed4c3c50f259597d9bbacf1b6505d1f6e8636dbf2404fbdc4fd",
+      "bytes": 1090
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E08/input.csv",
+      "sha256": "3ecafb848bdb0c4f6e43aba73c0de809e387ccc1337915d7b4610703437d7bfa",
+      "bytes": 49
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E08/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E08/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E09/case.json",
+      "sha256": "c7a61937fc63996e4af07d8143261d7b1821d278f035cbef526a467527eddf70",
+      "bytes": 1096
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E09/input.csv",
+      "sha256": "f1e4d64f6d136991a744835202f5d65973e8529d331245d5d03b5751b0961508",
+      "bytes": 29
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E09/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E09/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E10/case.json",
+      "sha256": "80a56528efa05832de395659c5544254ec6607b33858338e5b8ffce24ee42247",
+      "bytes": 1086
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E10/input.csv",
+      "sha256": "7181f181d3541926d15a3e8252cc361b7b83dc42b22f77b53d86b15e140f1457",
+      "bytes": 29
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E10/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E10/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E11/case.json",
+      "sha256": "a1d88673bcbc1002cece1feca6fa5fc466cf702c68e21c39189d6b6582940226",
+      "bytes": 1086
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E11/input.csv",
+      "sha256": "c018c995cbbcf5279ebc173aef80111053668524fb51292ea0a4f338f81737aa",
+      "bytes": 48
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E11/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E11/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E12/case.json",
+      "sha256": "3e7ab1f74191a8575dc9f8b75026e831e7bef362c9403c7d526c628562c6bfd9",
+      "bytes": 1090
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E12/input.csv",
+      "sha256": "31c038fa553b28bf69d9706dcafd7345731cb4f66d64b0d640cabe8305981004",
+      "bytes": 49
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E12/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-E12/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F01/case.json",
+      "sha256": "7072471df12b16652799a95cb932649a254adec21c670c01b33c8ce4ba0e3b00",
+      "bytes": 4026
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F01/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F01/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F01/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F02/case.json",
+      "sha256": "ecb07344a4881e86ed7e9e0a890ffbd267993909e95b563bcd3ba0719f7201f0",
+      "bytes": 5362
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F02/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F02/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F02/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F03/case.json",
+      "sha256": "c587fb36b3c806fd625167a4141020fde5433565f877ebbee03b22a68a618bae",
+      "bytes": 6698
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F03/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F03/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F03/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F04/case.json",
+      "sha256": "592ccad5c21981098c67cfb46dfc5ab33a595da67b4e2ee8605bd7660295a6cd",
+      "bytes": 4027
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F04/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F04/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F04/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F05/case.json",
+      "sha256": "817ea6dcc8cb92741228c7fa0e30c42c9dbb4bc046189bc32b7a5b58ba00eea6",
+      "bytes": 5363
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F05/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F05/stderr.native.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F05/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F06/case.json",
+      "sha256": "5402317c784d9241c081639c8b024201581c5afaf5ce47cedb6b7c1715b2cad7",
+      "bytes": 6700
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F06/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F06/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F06/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F07/case.json",
+      "sha256": "c3af22f64f8d674b1b3da4a8b1c8a69bbb6b417325603bd61a20959bd023aaa8",
+      "bytes": 4027
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F07/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F07/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F07/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F08/case.json",
+      "sha256": "d5159b8fac0b468f41329fa749ee2bc4ce7c623332bb19ada35c47f0f0a1ac68",
+      "bytes": 5363
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F08/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F08/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F08/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F09/case.json",
+      "sha256": "007635b8f6a48059ab9e48c5fc1bf035a9bd6ae0cf6995ded3fb239920eaa591",
+      "bytes": 6699
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F09/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F09/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F09/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F10/case.json",
+      "sha256": "df3e8e575c57e1756e3ad813107f6fd05e3c13a61fdeee53c65d22d2bc136708",
+      "bytes": 4026
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F10/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F10/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F10/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F11/case.json",
+      "sha256": "d090b82d786d3761251e2b3f90ed6dc2ae7cb5af0e6d6bd723bf9b39cac6af25",
+      "bytes": 5365
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F11/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F11/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F11/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F12/case.json",
+      "sha256": "ca6f637e354bbce27bc701a433dc986b0e013216e7aa81e31ecfa9bee73dc6b1",
+      "bytes": 6701
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F12/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F12/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-F12/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q01/case.json",
+      "sha256": "121def124d628295ed2b12f3234efc86845015de047bec3fc43c634c5644499d",
+      "bytes": 2670
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q01/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q01/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q01/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q02/case.json",
+      "sha256": "5d9b806bd61e564af7bfd792b9d787a2f4a3ea801f9c7782a6e3a073f0fc393c",
+      "bytes": 2670
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q02/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q02/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q02/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q03/case.json",
+      "sha256": "7d7e512e9145d40b72f5df5c01350e343ca18168bcd283357b038997a084403f",
+      "bytes": 2676
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q03/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q03/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q03/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q04/case.json",
+      "sha256": "84bc6e3c138d51066552b3c7b6ed7c772d9666fc9aa80675a61ea4feda17c92a",
+      "bytes": 2675
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q04/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q04/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q04/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q05/case.json",
+      "sha256": "770cc0ef6d043d5998518351dff9210b078358e41bd6c72c5769ee0a478132a2",
+      "bytes": 2679
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q05/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q05/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q05/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q06/case.json",
+      "sha256": "ec8bd66949f33deaf71affac906a0fa030576eced9290d6c415ea4bdde513843",
+      "bytes": 2682
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q06/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q06/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q06/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q07/case.json",
+      "sha256": "48ee53166bc31dd5aef9276c4d85d6e424c44c326f5a4cd266333c648e7b8a3d",
+      "bytes": 6670
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q07/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q07/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q07/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q08/case.json",
+      "sha256": "a6b10d686d580da9d51f7fd55dd6390c087b960486f3ca15ca293f272f47e481",
+      "bytes": 6225
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q08/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q08/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q08/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q09/case.json",
+      "sha256": "26441650a68fe49f9142328a5e55daa951104d8d3a7eb606f019226cad95619c",
+      "bytes": 8452
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q09/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q09/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q09/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q10/case.json",
+      "sha256": "6d0f9bc15f76fadbe9b4952906bc8b9fa855763d8f519896a3169b731a205377",
+      "bytes": 8895
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q10/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q10/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q10/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q11/case.json",
+      "sha256": "967558031bd47b8533417e8669733b6567caf43b2d22024b6202da33413e5239",
+      "bytes": 9787
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q11/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q11/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q11/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q12/case.json",
+      "sha256": "7151c42b2647d80d3a0b5e49604a3f1ea5512a54e49b342a8de86f70e3f7a7b8",
+      "bytes": 9790
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q12/input.csv",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q12/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-Q12/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R01/case.json",
+      "sha256": "7bc84a123a33797bb7af4e213edd115c6d360ad47da4e7a6938d165b45e175cc",
+      "bytes": 1138
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R01/input.csv",
+      "sha256": "f03d68844ce9a695a182cf6fcf16ac1b000a85309cfe08bafe5cc13b9ce77ee8",
+      "bytes": 41
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R01/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R01/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R02/case.json",
+      "sha256": "82634b86c770ad239f4a7b55792d64dce986e56fb840962ff5f43efed63a6c6a",
+      "bytes": 1141
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R02/input.csv",
+      "sha256": "80ad8b1893bd20f6efd168eddf3a2f6d2d26009860f84806c738de3da908c475",
+      "bytes": 49
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R02/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R02/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R03/case.json",
+      "sha256": "4ce9c66a202d99872dac0d74dbebb95c7ec8ffcac40d4838c4bc6d7b2f63c8b6",
+      "bytes": 1139
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R03/input.csv",
+      "sha256": "ec93e8247334ee480f911580a00510315b96bad81c3d29fb53b9ca28233a8bc9",
+      "bytes": 41
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R03/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R03/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R04/case.json",
+      "sha256": "45b055634def8de9866535955a34a42b14c9daac120e6a6a21997e81602d445d",
+      "bytes": 1140
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R04/input.csv",
+      "sha256": "c201378945ced3e983d46eaf6f968a2bef5368d2de2432947294d89d9407e3df",
+      "bytes": 50
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R04/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R04/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R05/case.json",
+      "sha256": "ace7b0b1cbd3d21392c62efffcff821b07ca80f7087d3f76558273728a3a8cf6",
+      "bytes": 1139
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R05/input.csv",
+      "sha256": "a3366de189c833c0b2b759bd9f045989b9c2513794ce938159802ae972d001f5",
+      "bytes": 41
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R05/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R05/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R06/case.json",
+      "sha256": "5932f737fc49da844a696b3de12465b6bf81301b0df22f6d2808f7e59c03e31e",
+      "bytes": 1141
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R06/input.csv",
+      "sha256": "bcdc09807a8d7ace99a4496bad045d958f0a1ef6f10a3d1854d956d67f1e48c1",
+      "bytes": 49
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R06/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R06/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R07/case.json",
+      "sha256": "30ea252c75f7898ef1a54cc1ca2c83b87c7685d6e3684e1bf224c8d2fe65dd6b",
+      "bytes": 1140
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R07/input.csv",
+      "sha256": "54ed604696fb389b231ee3f766eab4f86f9f3d48df3da8aab4e6e280cd461295",
+      "bytes": 42
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R07/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R07/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R08/case.json",
+      "sha256": "5c655d1ec3cb00442bcb08e6faa33306797f92b5d7a5e8cd696f3282cb15df1e",
+      "bytes": 1140
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R08/input.csv",
+      "sha256": "eb02f296481c83bde14b37fe280494598b00334ce5ccd70a36b832c91483cfdf",
+      "bytes": 49
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R08/stderr.native.txt",
+      "sha256": "5b422c83348c22aaf0e8452ce4cd93ddace737ef428a6b1f3d48fbc8d1005742",
+      "bytes": 25
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/hidden-S3-R08/stdout.native.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/result.json",
+      "sha256": "e3efaa5433f6dde1c756bebfa368018f3508058a18dfa80a76b1ac63087060db",
+      "bytes": 6828
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/CMakeLists.txt",
+      "sha256": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+      "bytes": 3011
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/README.md",
+      "sha256": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+      "bytes": 3114
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/app/commands.hpp",
+      "sha256": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+      "bytes": 379
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/app/format.hpp",
+      "sha256": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+      "bytes": 195
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/csv/decoder.hpp",
+      "sha256": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+      "bytes": 1075
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/import/ledger.hpp",
+      "sha256": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+      "bytes": 755
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/import/pump.hpp",
+      "sha256": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+      "bytes": 504
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/include/stream/source.hpp",
+      "sha256": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+      "bytes": 376
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/decoder.cpp",
+      "sha256": "b01456a0a46d49c589309211a252c500ef71b1e13eaa9412898e2f43908831d2",
+      "bytes": 3343
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/follow.cpp",
+      "sha256": "1a63e8c8f70709e3463b116030e1d10a4a29d5328c0ab834d322a465432dcd03",
+      "bytes": 962
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/format.cpp",
+      "sha256": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+      "bytes": 1595
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/ledger.cpp",
+      "sha256": "3c41a4e196e37ef0380dfb88a5be2313136660a99523fe998e45af0c8c16c128",
+      "bytes": 2073
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/main.cpp",
+      "sha256": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+      "bytes": 1398
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/pump.cpp",
+      "sha256": "5916b985105364ac8f9ce302938d02c30eba27d992a90091d05cb6fc6c114253",
+      "bytes": 861
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/report.cpp",
+      "sha256": "a73ada6fedf646fea29f21e4953c85f510da1b7bec0e4dbe424c1dad4fd3604c",
+      "bytes": 535
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/src/source.cpp",
+      "sha256": "672272740cefb0a543789e9113eb0d01d8c4988f5f2708276e532329fa38d99e",
+      "bytes": 952
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/tests/cases.json",
+      "sha256": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+      "bytes": 13979
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/independent-evaluation/source/tests/check_cli.py",
+      "sha256": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719",
+      "bytes": 4071
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/CMakeLists.txt",
+      "sha256": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+      "bytes": 3011
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/README.md",
+      "sha256": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+      "bytes": 3114
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/app/commands.hpp",
+      "sha256": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+      "bytes": 379
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/app/format.hpp",
+      "sha256": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+      "bytes": 195
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/csv/decoder.hpp",
+      "sha256": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+      "bytes": 1075
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/import/ledger.hpp",
+      "sha256": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+      "bytes": 755
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/import/pump.hpp",
+      "sha256": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+      "bytes": 504
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/include/stream/source.hpp",
+      "sha256": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+      "bytes": 376
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/decoder.cpp",
+      "sha256": "b01456a0a46d49c589309211a252c500ef71b1e13eaa9412898e2f43908831d2",
+      "bytes": 3343
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/follow.cpp",
+      "sha256": "1a63e8c8f70709e3463b116030e1d10a4a29d5328c0ab834d322a465432dcd03",
+      "bytes": 962
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/format.cpp",
+      "sha256": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+      "bytes": 1595
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/ledger.cpp",
+      "sha256": "3c41a4e196e37ef0380dfb88a5be2313136660a99523fe998e45af0c8c16c128",
+      "bytes": 2073
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/main.cpp",
+      "sha256": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+      "bytes": 1398
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/pump.cpp",
+      "sha256": "5916b985105364ac8f9ce302938d02c30eba27d992a90091d05cb6fc6c114253",
+      "bytes": 861
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/report.cpp",
+      "sha256": "a73ada6fedf646fea29f21e4953c85f510da1b7bec0e4dbe424c1dad4fd3604c",
+      "bytes": 535
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/src/source.cpp",
+      "sha256": "672272740cefb0a543789e9113eb0d01d8c4988f5f2708276e532329fa38d99e",
+      "bytes": 952
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/tests/cases.json",
+      "sha256": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+      "bytes": 13979
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/sealed-source/tests/check_cli.py",
+      "sha256": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719",
+      "bytes": 4071
+    },
+    {
+      "path": "tasks/S3/oracle-result-work/source-seal.json",
+      "sha256": "e05d1897b93e6882ca134acb589338485faf1af06bcaf0b030331a04959a2dbe",
+      "bytes": 2932
+    },
+    {
+      "path": "tasks/S3/oracle-result.json",
+      "sha256": "a7a467644c4d1621d161d9443e33c141ba3456fec852248a79088f3b55b1ded1",
+      "bytes": 475
+    },
+    {
+      "path": "tasks/S3/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/S3/result.json",
+      "sha256": "6affa7a85223c9b40da4c524f7bff8fd62ee886e9ba63dc5f676e767933d2681",
+      "bytes": 10355
+    },
+    {
+      "path": "tasks/S3/workspace/CMakeLists.txt",
+      "sha256": "78bd4e64a63bf50fbb52e31050c7b9815a389fa3f5bbe37533e7345f296c192a",
+      "bytes": 3011
+    },
+    {
+      "path": "tasks/S3/workspace/README.md",
+      "sha256": "44c28e170e9efdd4e4b88901c60ab621744e5fa539144910f1076dd53deeee26",
+      "bytes": 3114
+    },
+    {
+      "path": "tasks/S3/workspace/include/app/commands.hpp",
+      "sha256": "4053e4a97b0cb396201d2ab68bb991f0a5a14a1f0f9671d0900c6ff455ce884e",
+      "bytes": 379
+    },
+    {
+      "path": "tasks/S3/workspace/include/app/format.hpp",
+      "sha256": "4225a97f5f9f2bebb1cb2f9a7db36ad772dfe1def3a8427caf6d06386287b98b",
+      "bytes": 195
+    },
+    {
+      "path": "tasks/S3/workspace/include/csv/decoder.hpp",
+      "sha256": "3f266f39f6eaf192d23ff2b0027d06e0cbf24d28ec7911795e4e7eb3c14987ba",
+      "bytes": 1075
+    },
+    {
+      "path": "tasks/S3/workspace/include/import/ledger.hpp",
+      "sha256": "7dfbc89e8e9fce1b9bb9c0ff773ea450233c96f4a6478b7f8d95c9f3a39547c5",
+      "bytes": 755
+    },
+    {
+      "path": "tasks/S3/workspace/include/import/pump.hpp",
+      "sha256": "1dbf4f402f3b8a2e62dba79829a0af0eb535e20592e418c95a82509358720e67",
+      "bytes": 504
+    },
+    {
+      "path": "tasks/S3/workspace/include/stream/source.hpp",
+      "sha256": "1623893b8e1d64a4a2c37e3cad61d18a47516e8f859f4ec24f5116b4b8e1d675",
+      "bytes": 376
+    },
+    {
+      "path": "tasks/S3/workspace/src/decoder.cpp",
+      "sha256": "b01456a0a46d49c589309211a252c500ef71b1e13eaa9412898e2f43908831d2",
+      "bytes": 3343
+    },
+    {
+      "path": "tasks/S3/workspace/src/follow.cpp",
+      "sha256": "1a63e8c8f70709e3463b116030e1d10a4a29d5328c0ab834d322a465432dcd03",
+      "bytes": 962
+    },
+    {
+      "path": "tasks/S3/workspace/src/format.cpp",
+      "sha256": "70d808259397c4430aceda348685bfac956c53c89cdd0b7bb24f076fd4488447",
+      "bytes": 1595
+    },
+    {
+      "path": "tasks/S3/workspace/src/format_clone.cpp",
+      "sha256": "8da3e1f860e4ae646306bfd0ebf78e91a98c6c04915009993ddf04e8d564ce3e",
+      "bytes": 84
+    },
+    {
+      "path": "tasks/S3/workspace/src/ledger.cpp",
+      "sha256": "3c41a4e196e37ef0380dfb88a5be2313136660a99523fe998e45af0c8c16c128",
+      "bytes": 2073
+    },
+    {
+      "path": "tasks/S3/workspace/src/main.cpp",
+      "sha256": "3ee744e139bc7de1809680834b26d81312ad2de3cdcd79f3a1148d267353c682",
+      "bytes": 1398
+    },
+    {
+      "path": "tasks/S3/workspace/src/pump.cpp",
+      "sha256": "5916b985105364ac8f9ce302938d02c30eba27d992a90091d05cb6fc6c114253",
+      "bytes": 861
+    },
+    {
+      "path": "tasks/S3/workspace/src/report.cpp",
+      "sha256": "a73ada6fedf646fea29f21e4953c85f510da1b7bec0e4dbe424c1dad4fd3604c",
+      "bytes": 535
+    },
+    {
+      "path": "tasks/S3/workspace/src/source.cpp",
+      "sha256": "672272740cefb0a543789e9113eb0d01d8c4988f5f2708276e532329fa38d99e",
+      "bytes": 952
+    },
+    {
+      "path": "tasks/S3/workspace/tests/cases.json",
+      "sha256": "27934426c5a78d532de29ddd656d5343bf6bc47a2837f65a7ff40603ec4804cc",
+      "bytes": 13979
+    },
+    {
+      "path": "tasks/S3/workspace/tests/check_cli.py",
+      "sha256": "da8c98507fdadbb3e03981b9b2a030318c77b279e78e6d943e1bef2c08af5719",
+      "bytes": 4071
+    },
+    {
+      "path": "tasks/SH1/failure.json",
+      "sha256": "149a7baa1d7211577dc35056ff2c1220d96854ee57389f1ddfb665f816f05a97",
+      "bytes": 1513
+    },
+    {
+      "path": "tasks/SH1/harness/outcome.json",
+      "sha256": "81c47bf963e4df96b2b33fe235d96f02b0c1bea81f2b8b900268803af2ad9ac0",
+      "bytes": 4204
+    },
+    {
+      "path": "tasks/SH1/harness/released.json",
+      "sha256": "944f90980e09622078cb86aa909effab571310833e7ff334a70e5877da569ee1",
+      "bytes": 4007
+    },
+    {
+      "path": "tasks/SH1/harness/run-1-admission.json",
+      "sha256": "64d6b462dac99ade25fa26f469ba7c75c36965c36ee902ff513f40738766e452",
+      "bytes": 479
+    },
+    {
+      "path": "tasks/SH1/harness/run-1-candidate.json",
+      "sha256": "3aa26acda47a0e39f67a422f205a785b10ae7fe1dbf859f01c2075440db66a4d",
+      "bytes": 2650
+    },
+    {
+      "path": "tasks/SH1/harness/run-1-events.jsonl",
+      "sha256": "ffc7c581aad1c888e87324d48dffaab88bbc4a7fb5de890ab301064c0ab263d8",
+      "bytes": 74788
+    },
+    {
+      "path": "tasks/SH1/harness/run-1-observation.json",
+      "sha256": "2d70cbe57f626219de329109cb9a95860f988919a9e0da33f5f7386f664a44bd",
+      "bytes": 234
+    },
+    {
+      "path": "tasks/SH1/harness/run-1-review.json",
+      "sha256": "5b2e2fb533bb3022fdf434a9a70c2fe3afa29dde5728677b963825f8a06f1f32",
+      "bytes": 1089
+    },
+    {
+      "path": "tasks/SH1/harness/task-options.json",
+      "sha256": "77bab3aed5df7d9455308e097e7c2c13cbe4c5ab287d522c92ae9a35be1b9ea7",
+      "bytes": 32
+    },
+    {
+      "path": "tasks/SH1/harness/task.json",
+      "sha256": "ccae93b07ae26b34e3f2b49fac78e3e508f84a5377c18350c0d6beee3af6152d",
+      "bytes": 420
+    },
+    {
+      "path": "tasks/SH1/host-private/.ara-lite-harness-be56ce13e681f762c52945c6477f4c7a67a35ed200d279ade9b91cb47ff6e7f5.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1.json",
+      "sha256": "15f05fa4a8c00ad6d19ea7bdc7180dd5dd2d5a0eaace46558877d8a1ba2890ff",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/README.md",
+      "sha256": "bea75072b05c861e0034d39fac8956e3d6c150683f985f1daaf7bc06bb6997d1",
+      "bytes": 3066
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/include/commands.hpp",
+      "sha256": "2df4ad31cbb1740104c88da7276c7168476c250c3d0a010dc02c767f5d6d55b8",
+      "bytes": 336
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/include/ledger.hpp",
+      "sha256": "83fb013e46f394b2ebdd3b593fb71acc6d3ae6698f3b862ef224161ef709d7e5",
+      "bytes": 1044
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/include/money.hpp",
+      "sha256": "ae72471f9c89e711641c23481530938ec1ef67bb8a0cd14c729743f28d593e55",
+      "bytes": 459
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/src/commands.cpp",
+      "sha256": "6dac5176873f9844d4b328ca633e50000b17d704d24ef2ab3d747adf661b1e92",
+      "bytes": 4922
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/src/ledger.cpp",
+      "sha256": "d5328d5e0366fe1b89b18c59339f1e192a8317b906cd0cc79b7cff52383749e4",
+      "bytes": 1960
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/src/main.cpp",
+      "sha256": "fcf78557901a62a1b3e4769bf65fae56ca3d36154049b1d965a89e9bb427d466",
+      "bytes": 659
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/src/money.cpp",
+      "sha256": "a3beade65c1878cb6b8ce58a5d38cc391cbc8827e13b5cf7809dce28945f9a5e",
+      "bytes": 1944
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/tests/public_cases.json",
+      "sha256": "a009f4fdfe1d68ef85ad8076e568089ea8db02f7b2a68dadafa15c1d94c40d93",
+      "bytes": 1451
+    },
+    {
+      "path": "tasks/SH1/host-private/public-check-1/tests/run_public.py",
+      "sha256": "841fd57c4e8f8a7e148f3a7d36be6e5a6b6e9c2f67e82a2506e4054a4ba41a24",
+      "bytes": 2044
+    },
+    {
+      "path": "tasks/SH1/host-private/session.context.json",
+      "sha256": "b54c80dc76793819dc144a68c15a4d1818b796eee5863201a0d37edb2b8c8a7c",
+      "bytes": 900
+    },
+    {
+      "path": "tasks/SH1/host-private/session.journal/head.json",
+      "sha256": "bc2803ab077e732f6bede57767aabb0a3dd8cc28029f9f776b89a0abd8bdae96",
+      "bytes": 939
+    },
+    {
+      "path": "tasks/SH1/host-private/session.journal/runs/1dc45ed95372ed0a497d6c0c62fe4e9bd66e93894661e70b7d72696ba07eb4d2.json",
+      "sha256": "21200edbe9ebb489f6a6653ecb3bf9d9868e62fd4009a6af76be62397bbc67f4",
+      "bytes": 40
+    },
+    {
+      "path": "tasks/SH1/host-private/session.journal/segment-00000000.jsonl",
+      "sha256": "adad9463ac7becc913beca40fbf1719f659010708dccc5595fa5de18c0078f0a",
+      "bytes": 60109
+    },
+    {
+      "path": "tasks/SH1/host-private/session.journal/writer.lock",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/SH1/host-private/session.json",
+      "sha256": "6f26e683444667453878e43a854b69352d6a2f4bae9da1aa616d07b1edc2f1e2",
+      "bytes": 51209
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2.json",
+      "sha256": "389737060f8b6a32d5c47370881d9d115b1084a823d6e7b39457e4eb67329b04",
+      "bytes": 476
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/README.md",
+      "sha256": "bea75072b05c861e0034d39fac8956e3d6c150683f985f1daaf7bc06bb6997d1",
+      "bytes": 3066
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/include/commands.hpp",
+      "sha256": "2df4ad31cbb1740104c88da7276c7168476c250c3d0a010dc02c767f5d6d55b8",
+      "bytes": 336
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/include/ledger.hpp",
+      "sha256": "83fb013e46f394b2ebdd3b593fb71acc6d3ae6698f3b862ef224161ef709d7e5",
+      "bytes": 1044
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/include/money.hpp",
+      "sha256": "ae72471f9c89e711641c23481530938ec1ef67bb8a0cd14c729743f28d593e55",
+      "bytes": 459
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/src/commands.cpp",
+      "sha256": "6dac5176873f9844d4b328ca633e50000b17d704d24ef2ab3d747adf661b1e92",
+      "bytes": 4922
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/src/ledger.cpp",
+      "sha256": "d5328d5e0366fe1b89b18c59339f1e192a8317b906cd0cc79b7cff52383749e4",
+      "bytes": 1960
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/src/main.cpp",
+      "sha256": "fcf78557901a62a1b3e4769bf65fae56ca3d36154049b1d965a89e9bb427d466",
+      "bytes": 659
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/src/money.cpp",
+      "sha256": "a3beade65c1878cb6b8ce58a5d38cc391cbc8827e13b5cf7809dce28945f9a5e",
+      "bytes": 1944
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/tests/public_cases.json",
+      "sha256": "a009f4fdfe1d68ef85ad8076e568089ea8db02f7b2a68dadafa15c1d94c40d93",
+      "bytes": 1451
+    },
+    {
+      "path": "tasks/SH1/host-private/verify-run-1-2/tests/run_public.py",
+      "sha256": "841fd57c4e8f8a7e148f3a7d36be6e5a6b6e9c2f67e82a2506e4054a4ba41a24",
+      "bytes": 2044
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/README.md",
+      "sha256": "bea75072b05c861e0034d39fac8956e3d6c150683f985f1daaf7bc06bb6997d1",
+      "bytes": 3066
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/include/commands.hpp",
+      "sha256": "2df4ad31cbb1740104c88da7276c7168476c250c3d0a010dc02c767f5d6d55b8",
+      "bytes": 336
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/include/ledger.hpp",
+      "sha256": "83fb013e46f394b2ebdd3b593fb71acc6d3ae6698f3b862ef224161ef709d7e5",
+      "bytes": 1044
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/include/money.hpp",
+      "sha256": "ae72471f9c89e711641c23481530938ec1ef67bb8a0cd14c729743f28d593e55",
+      "bytes": 459
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/src/commands.cpp",
+      "sha256": "6dac5176873f9844d4b328ca633e50000b17d704d24ef2ab3d747adf661b1e92",
+      "bytes": 4922
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/src/ledger.cpp",
+      "sha256": "d5328d5e0366fe1b89b18c59339f1e192a8317b906cd0cc79b7cff52383749e4",
+      "bytes": 1960
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/src/main.cpp",
+      "sha256": "fcf78557901a62a1b3e4769bf65fae56ca3d36154049b1d965a89e9bb427d466",
+      "bytes": 659
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/src/money.cpp",
+      "sha256": "a3beade65c1878cb6b8ce58a5d38cc391cbc8827e13b5cf7809dce28945f9a5e",
+      "bytes": 1944
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/tests/public_cases.json",
+      "sha256": "a009f4fdfe1d68ef85ad8076e568089ea8db02f7b2a68dadafa15c1d94c40d93",
+      "bytes": 1451
+    },
+    {
+      "path": "tasks/SH1/oracle-dir/tests/run_public.py",
+      "sha256": "841fd57c4e8f8a7e148f3a7d36be6e5a6b6e9c2f67e82a2506e4054a4ba41a24",
+      "bytes": 2044
+    },
+    {
+      "path": "tasks/SH1/oracle-result-build/build.stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/SH1/oracle-result-build/candidate.exe",
+      "sha256": "2979ae483d5f1899990f3faf98861eab6cc81964840d88d1e00952030389d2d3",
+      "bytes": 105483
+    },
+    {
+      "path": "tasks/SH1/oracle-result.json",
+      "sha256": "1d65440d934a4302fef80878d29ad661f9bdbae1d2bf84978501ef3097644cb5",
+      "bytes": 148
+    },
+    {
+      "path": "tasks/SH1/oracle.stderr.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/SH1/oracle.stdout.bin",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "tasks/SH1/result.json",
+      "sha256": "b0f9a1a33a67df5bb5cc4a70608dd837b610b82fcf41a656cf07e0e910b4a938",
+      "bytes": 4261
+    },
+    {
+      "path": "tasks/SH1/workspace/README.md",
+      "sha256": "bea75072b05c861e0034d39fac8956e3d6c150683f985f1daaf7bc06bb6997d1",
+      "bytes": 3066
+    },
+    {
+      "path": "tasks/SH1/workspace/include/commands.hpp",
+      "sha256": "2df4ad31cbb1740104c88da7276c7168476c250c3d0a010dc02c767f5d6d55b8",
+      "bytes": 336
+    },
+    {
+      "path": "tasks/SH1/workspace/include/ledger.hpp",
+      "sha256": "83fb013e46f394b2ebdd3b593fb71acc6d3ae6698f3b862ef224161ef709d7e5",
+      "bytes": 1044
+    },
+    {
+      "path": "tasks/SH1/workspace/include/money.hpp",
+      "sha256": "ae72471f9c89e711641c23481530938ec1ef67bb8a0cd14c729743f28d593e55",
+      "bytes": 459
+    },
+    {
+      "path": "tasks/SH1/workspace/src/commands.cpp",
+      "sha256": "6dac5176873f9844d4b328ca633e50000b17d704d24ef2ab3d747adf661b1e92",
+      "bytes": 4922
+    },
+    {
+      "path": "tasks/SH1/workspace/src/ledger.cpp",
+      "sha256": "d5328d5e0366fe1b89b18c59339f1e192a8317b906cd0cc79b7cff52383749e4",
+      "bytes": 1960
+    },
+    {
+      "path": "tasks/SH1/workspace/src/main.cpp",
+      "sha256": "fcf78557901a62a1b3e4769bf65fae56ca3d36154049b1d965a89e9bb427d466",
+      "bytes": 659
+    },
+    {
+      "path": "tasks/SH1/workspace/src/money.cpp",
+      "sha256": "a3beade65c1878cb6b8ce58a5d38cc391cbc8827e13b5cf7809dce28945f9a5e",
+      "bytes": 1944
+    },
+    {
+      "path": "tasks/SH1/workspace/tests/public_cases.json",
+      "sha256": "a009f4fdfe1d68ef85ad8076e568089ea8db02f7b2a68dadafa15c1d94c40d93",
+      "bytes": 1451
+    },
+    {
+      "path": "tasks/SH1/workspace/tests/run_public.py",
+      "sha256": "841fd57c4e8f8a7e148f3a7d36be6e5a6b6e9c2f67e82a2506e4054a4ba41a24",
+      "bytes": 2044
+    }
+  ]
+}

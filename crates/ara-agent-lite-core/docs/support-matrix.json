@@ -7,6 +7,9 @@
     "worktree": "Lite crate src/ identical to the commit; uncommitted test and document changes from task 57",
     "date": "2026-10-29"
   },
+  "updates": [
+    {"date": "2026-10-30", "commit": "ad9c0d3", "note": "references added for tests from stages 9 and 10 (including tools/lite-eval tests) and the new items harness.dependency-direction and harness.delivery-gate; existence checked, three sampled Rust references run"}
+  ],
   "merge": "not merged in this phase; one side's evidence never supports the other side",
   "full_scope": ["crates/ara-agent", "crates/ara-workflow"],
   "lite_scope": [
@@ -46,7 +49,9 @@
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "file_edits::tests::rejections_name_the_current_hash_and_the_failing_block"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "file_edits::tests::rejections_name_the_current_hash_and_the_failing_block"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "file_edits::tests::property_26::edit_applies_every_block_or_none"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "host_tool_schema", "name": "every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha"}
             ]
           }
         },
@@ -253,7 +258,8 @@
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "summary_reservation", "name": "summary_needed_with_no_call_left_is_a_summary_budget_stop"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "summary_budget", "name": "task_budget_exhausted_before_summary_is_a_typed_budget_stop"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "summary_budget", "name": "task_budget_exhausted_before_summary_is_a_typed_budget_stop"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_compact_examples", "name": "summary_and_agent_reservations_sum_to_the_task_total"}
             ]
           }
         },
@@ -310,7 +316,9 @@
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "run_policies", "name": "failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "completion_gate", "name": "gate_runs_once_per_ordinary_stop_and_continues_only_within_budget"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "completion_gate", "name": "gate_runs_once_per_ordinary_stop_and_continues_only_within_budget"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "completion_gate_golden", "name": "without_a_gate_the_run_matches_the_golden"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "completion_gate_accept", "name": "a_passed_gate_never_accepts_the_task"}
             ]
           }
         },
@@ -363,7 +371,9 @@
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stop_review", "name": "closed_length_stop_is_reviewed_and_verified_without_a_new_run"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stop_review", "name": "closed_length_stop_is_reviewed_and_verified_without_a_new_run"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stop_review_flow", "name": "length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stop_review_flow", "name": "policy_off_keeps_pre_feature_stops_and_length_recovery_is_unchanged"}
             ]
           }
         },
@@ -387,7 +397,8 @@
             "status": "supported",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "resume_checked_refuses_with_typed_reasons_before_any_callback"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "resume", "name": "out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "long_trial_checks", "name": "a_complete_trial_passes_with_every_event_counted"}
             ]
           }
         },
@@ -430,7 +441,32 @@
             "gap": "the stable set covers the minimal Host integration and the Run_Policy generation settings only; policies, events, resume, stop review, unknown-effect records and the MCP crate are experimental; the compile-failure demonstration after deleting a stable item (task 35.3) is not wired into the gate",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "stability_surface", "name": "stable_items_are_usable_through_public_paths"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stability_surface", "name": "stable_harness_items_are_usable_through_public_paths"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-harness/Cargo.toml", "target": "stability_surface", "name": "stable_harness_items_are_usable_through_public_paths"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "consumer_scan_props", "name": "scan_reports_exactly_the_non_stable_references"}
+            ]
+          }
+        },
+        {
+          "id": "harness.dependency-direction",
+          "capability": "Fixed Core/Harness/JSONL dependency direction checked on the locked cargo metadata graph",
+          "full": {"status": "unsupported", "note": "search for 'dependency direction' and 'cargo metadata' in ara-agent and ara-workflow: 0 hits"},
+          "lite": {
+            "status": "supported",
+            "tests": [
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "dependency_direction", "name": "real_lite_workspaces_follow_the_dependency_direction"},
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "dependency_direction", "name": "checks_report_exactly_reachable_violations_with_real_chains"}
+            ]
+          }
+        },
+        {
+          "id": "harness.delivery-gate",
+          "capability": "Delivery gate that runs every referenced Support_Matrix test and fails on any failed, skipped, zero-count or missing test",
+          "full": {"status": "unsupported", "note": "search for 'support matrix' and 'delivery gate' in ara-agent and ara-workflow: 0 hits"},
+          "lite": {
+            "status": "partial",
+            "gap": "the gate conclusion is tested with a fake command runner; no full lite-eval gate run on a delivery commit is referenced here",
+            "tests": [
+              {"runner": "cargo", "manifest": "tools/lite-eval/Cargo.toml", "target": "gate_props", "name": "gate_passes_iff_every_command_and_every_matrix_test_passes"}
             ]
           }
         }

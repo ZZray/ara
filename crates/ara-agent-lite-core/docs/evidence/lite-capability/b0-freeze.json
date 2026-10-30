@@ -1,0 +1,20 @@
+{
+    "version":  1,
+    "frozen_at":  "2026-10-30T01:58:44Z",
+    "head":  "ad9c0d3a4ba36c1782250438baa9821e167b9f22",
+    "binary":  {
+                   "path":  "D:/WorkSpace/tmp/ara-lite-capability/bin/lite-eval-b0.exe",
+                   "sha256":  "780ab5c5b81930a2603eb7225eb7288e17c2c0a0455886cd9fba4c355225f794",
+                   "built_from":  "HEAD (lite paths clean at copy time)"
+               },
+    "worktree_diff":  {
+                          "path":  "D:/WorkSpace/tmp/ara-lite-capability/bin/b0-worktree.diff",
+                          "sha256":  "f926575d960bf176d951950aab79b9feb7e0931a50adab3c344e807cd8b2568e",
+                          "note":  "diff of lite paths after the binary was copied (support-matrix docs and long_trial orphan cleanup); not in the B0 binary"
+                      },
+    "capability_host_features":  [
+
+                                 ],
+    "probe_manifest":  "D:/WorkSpace/tmp/ara-lite-capability/runs/20261030T014101Z-0001/manifest.json",
+    "deviation_38_1":  "P2 code (output_limit, completion_gate, stuck_detector, compaction_refresh) is already merged. B0 uses the v1 Capability_Test_Host (Features::V1, all P2 switches off; run --baseline refuses other features), so no P2 policy reaches Core; output ceiling None keeps the local 8192 ceiling. This substitutes the code-absence check of 38.1 and cannot prove the merged code left the off path byte-identical; the policy-off golden tests (44.5, 47.7, 50.5) cover that path."
+}

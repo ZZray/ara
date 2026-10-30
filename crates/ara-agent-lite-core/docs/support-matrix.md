@@ -7,7 +7,8 @@
 - Lite 指 `crates/ara-agent-lite-core`、`crates/ara-agent-lite-harness`、`crates/ara-agent-lite-jsonl`、`crates/ara-agent-lite-mcp`。
 - 依据版本：分支 `dev` @ `8e9b123`，四个 Lite crate 的 `src/` 与该提交相同，工作区另有任务 57 的测试与文档改动；2026-10-29 任务 57.2 定稿。
 - 状态只取“已支持”“部分支持”“不支持”。Lite 的已支持与部分支持项都附测试名；部分支持项写明缺口。Full 的“不支持”是在上述两个 crate 中检索后的结论，检索词写在说明里，没有做穷尽审计。
-- 测试名写法：Rust 单元测试为 `crate:模块路径::测试名`（`cargo test --manifest-path <crate>/Cargo.toml --lib <名称> -- --exact`），集成测试为 `crate:tests/文件.rs::测试名`；Python 为 `文件::类.方法`，这些 Python 测试需要设置 `ARA_JSONL_TEST_BINARY` 等环境变量。
+- 测试名写法：Rust 单元测试为 `crate:模块路径::测试名`（`cargo test --manifest-path <crate>/Cargo.toml --lib <名称> -- --exact`），集成测试为 `crate:tests/文件.rs::测试名`；Python 为 `文件::类.方法`，这些 Python 测试需要设置 `ARA_JSONL_TEST_BINARY` 等环境变量。`lite-eval:` 前缀指 `tools/lite-eval` 的集成测试；该 crate 不在 Lite 范围内，这些测试经真实 Harness/Core 或对 Lite 产物做检查，作为对应能力项的补充证据。
+- 2026-10-30 在 `ad9c0d3` 上补入阶段 9、10 新增测试的引用，并新增 `harness.dependency-direction`、`harness.delivery-gate` 两项；核对了函数存在，抽样运行了 3 条 Rust 引用。
 - 任务 57.2 用脚本逐条核对了 JSON 中全部引用测试（Full 证据测试与 Lite 测试）在所写文件里都有同名函数，缺失 0 条，Markdown 与 JSON 的能力 ID 列表一致。核对的只是存在性；除两个 `stability_surface` 测试外，引用的测试没有在这次运行。交付门禁按需求 30.4、30.5 在同一提交上运行它们（任务 36.2）。
 
 ## 工具
@@ -15,7 +16,7 @@
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
 | `tools.host-registered` | 宿主经 `AgentTool` 注册工具 | 已支持 | `crates/ara-agent/src/lib.rs` `tool::AgentTool`；`ara-agent:tests/live_tools.rs::standalone_tool_execution_reads_fresh_snapshot_once_without_provider_call` | 已支持 | `core:tests/host_boundary.rs::invalid_custom_names_are_rejected_before_model_state_or_tool_effects`；`harness:tests/tasks.rs::actual_file_feedback_repair_reuses_session_and_original_call_budget` | 无 |
-| `tools.builtin-files` | 内置文件读取、搜索、写入与版本化编辑 | 不支持 | 两个 crate 中没有内置文件工具；`ara-tools` 不在范围内 | 已支持 | `core:local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes`；`core:file_edits::tests::rejections_name_the_current_hash_and_the_failing_block` | 无 |
+| `tools.builtin-files` | 内置文件读取、搜索、写入与版本化编辑 | 不支持 | 两个 crate 中没有内置文件工具；`ara-tools` 不在范围内 | 已支持 | `core:local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes`；`core:file_edits::tests::rejections_name_the_current_hash_and_the_failing_block`；`core:file_edits::tests::property_26::edit_applies_every_block_or_none`；`lite-eval:tests/host_tool_schema.rs::every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha` | 无 |
 | `tools.shell-script` | Shell 与脚本执行及取消 | 不支持 | 不在两个 crate 中 | 已支持 | `core:local_tools::tests::real_shell_captures_output_and_exit`；`core:script_tools::tests::real_python_utf8_quoting_exit_cancel_timeout_cleanup` | 无 |
 | `tools.web` | 联网搜索与 URL 抓取 | 不支持 | 不在两个 crate 中 | 部分支持 | `core:web_tools::tests::tool_contract_has_only_two_read_only_tools` | 只有 `web_search`、`fetch_url` 两个只读工具，没有浏览器自动化与 computer use |
 | `tools.jobs-terminal` | 后台 Job 与交互终端 | 不支持 | 不在两个 crate 中 | 已支持 | `core:managed_jobs::tests::repeated_intent_never_replays_and_input_conflict_is_rejected`；`core:terminal_process::tests::terminal_is_tty_input_environment_and_resize` | 无 |
@@ -39,7 +40,7 @@
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
 | `compaction.summary` | 摘要压缩，保留工具回执与当前轮 | 已支持 | `crates/ara-agent/src/compaction.rs` `summarize_compaction_cut`；`ara-agent:tests/compaction_cut.rs::never_cuts_between_tool_call_receipt_and_final_assistant` | 已支持 | `core:context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete`；`jsonl:tests/test_compaction_process.py::CompactionProcessTest.test_two_summaries_three_runs_and_new_process_reopens_released_session` | 无 |
-| `compaction.budget` | 摘要调用占用同一调用预算，无余量时类型化停止 | 不支持 | 未找到摘要调用的预算预留（检索 `reserv` 只命中 `preserve`） | 已支持 | `core:tests/summary_reservation.rs::summary_needed_with_no_call_left_is_a_summary_budget_stop`；`harness:tests/summary_budget.rs::task_budget_exhausted_before_summary_is_a_typed_budget_stop` | 无 |
+| `compaction.budget` | 摘要调用占用同一调用预算，无余量时类型化停止 | 不支持 | 未找到摘要调用的预算预留（检索 `reserv` 只命中 `preserve`） | 已支持 | `core:tests/summary_reservation.rs::summary_needed_with_no_call_left_is_a_summary_budget_stop`；`harness:tests/summary_budget.rs::task_budget_exhausted_before_summary_is_a_typed_budget_stop`；`lite-eval:tests/long_compact_examples.rs::summary_and_agent_reservations_sum_to_the_task_total` | 无 |
 | `compaction.refresh` | 压缩后重新读取最近使用的文件（Compaction_Refresh，需显式开启） | 不支持 | 检索 `refresh`：0 处 | 已支持 | `core:tests/compaction_refresh.rs::refresh_follows_the_summary_with_current_disk_and_session_plan_state`；`core:tests/compaction_refresh.rs::without_the_policy_no_refresh_message_or_event_appears` | 无 |
 | `compaction.remote` | provider 侧远程压缩 | 已支持 | `crates/ara-agent/src/compaction.rs` `select_native_remote_compaction_cut` | 不支持 | 无 | Lite 只用自己的摘要调用压缩 |
 
@@ -48,7 +49,7 @@
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
 | `goal.mode` | Goal 模式：有界步骤与显式审查 | 不支持 | 检索 `goal`：0 处 | 已支持 | `core:execution::tests::goal_review_is_explicit_and_bounded` | 无 |
-| `goal.completion-gate` | 普通停止时的宿主 Completion_Gate（需显式开启） | 部分支持 | `crates/ara-agent/src/lib.rs` `final_provider_gate::FinalProviderGate`。缺口：有最终 provider 门，同一 Run 内带来源反馈的逐次续写本次未确认 | 已支持 | `core:tests/run_policies.rs::failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes`；`core:tests/completion_gate.rs::gate_runs_once_per_ordinary_stop_and_continues_only_within_budget` | 无 |
+| `goal.completion-gate` | 普通停止时的宿主 Completion_Gate（需显式开启） | 部分支持 | `crates/ara-agent/src/lib.rs` `final_provider_gate::FinalProviderGate`。缺口：有最终 provider 门，同一 Run 内带来源反馈的逐次续写本次未确认 | 已支持 | `core:tests/run_policies.rs::failed_gate_continues_the_same_run_with_sourced_feedback_then_finishes`；`core:tests/completion_gate.rs::gate_runs_once_per_ordinary_stop_and_continues_only_within_budget`；`core:tests/completion_gate_golden.rs::without_a_gate_the_run_matches_the_golden`；`harness:tests/completion_gate_accept.rs::a_passed_gate_never_accepts_the_task` | 无 |
 | `goal.stuck` | Stuck_Detector：重复调用或错误时先纠正，再以 NoProgress 停止（需显式开启） | 不支持 | 检索 `stuck`、`no_progress`：0 处 | 已支持 | `core:tests/stuck.rs::repeated_errors_hit_correct_then_stop_with_no_progress`；`core:tests/stuck.rs::unconfigured_detector_emits_nothing_and_injects_nothing` | 无 |
 
 ## Harness
@@ -56,12 +57,14 @@
 | ID | 能力 | Full | Full 依据或说明 | Lite | Lite 测试 | Lite 缺口 |
 |---|---|---|---|---|---|---|
 | `harness.bounded-review` | 有界多 Run Task：Host 复核后在同一 Session 续写 | 已支持 | `crates/ara-workflow/src/types.rs` `WorkflowHost`；`ara-workflow:tests/workflow.rs::prepared_request_budget_accumulates_across_runs` | 已支持 | `harness:tests/tasks.rs::cumulative_budget_is_not_refilled_after_needs_changes`；`harness:tests/tasks.rs::wrong_uncommitted_and_unknown_receipts_stop_without_second_run` | 无 |
-| `harness.length` | Length 停止：重规划一次与 Host 停止复核（需显式开启） | 已支持 | `crates/ara-workflow/src/types.rs` `LengthRecoveryPolicy`；`ara-workflow:tests/length_faults.rs::ordinary_start_never_calls_opt_in_length_settlement` | 已支持 | `core:agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget`；`harness:tests/stop_review.rs::closed_length_stop_is_reviewed_and_verified_without_a_new_run` | 无 |
+| `harness.length` | Length 停止：重规划一次与 Host 停止复核（需显式开启） | 已支持 | `crates/ara-workflow/src/types.rs` `LengthRecoveryPolicy`；`ara-workflow:tests/length_faults.rs::ordinary_start_never_calls_opt_in_length_settlement` | 已支持 | `core:agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget`；`harness:tests/stop_review.rs::closed_length_stop_is_reviewed_and_verified_without_a_new_run`；`harness:tests/stop_review_flow.rs::length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged`；`harness:tests/stop_review_flow.rs::policy_off_keeps_pre_feature_stops_and_length_recovery_is_unchanged` | 无 |
 | `harness.budget-snapshot` | 闭合预算停止的快照复核（需显式开启） | 不支持 | `ara-workflow` 只有 `workflow prepared-request budget exhausted` 一种预算停止（`driver.rs`），没有快照复核 | 已支持 | `harness:tests/budget_snapshots.rs::actual_file_can_be_verified_without_synthesizing_a_model_stop`；`harness:tests/budget_snapshots.rs::default_start_keeps_closed_budget_stop_out_of_ordinary_review` | 无 |
-| `harness.resume` | 恢复被 fence 的 Task，拒绝原因类型化 | 不支持 | `ara-workflow` 在进程内从 clone 恢复 fence；在新进程恢复被 fence 的 Task 本次未确认 | 已支持 | `harness:tests/resume.rs::resume_checked_refuses_with_typed_reasons_before_any_callback`；`harness:tests/resume.rs::out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing` | 无 |
+| `harness.resume` | 恢复被 fence 的 Task，拒绝原因类型化 | 不支持 | `ara-workflow` 在进程内从 clone 恢复 fence；在新进程恢复被 fence 的 Task 本次未确认 | 已支持 | `harness:tests/resume.rs::resume_checked_refuses_with_typed_reasons_before_any_callback`；`harness:tests/resume.rs::out_of_order_or_partial_settlements_are_refused_and_settled_resume_executes_nothing`；`lite-eval:tests/long_trial_checks.rs::a_complete_trial_passes_with_every_event_counted` | 无 |
 | `harness.unknown-effect-records` | `TaskOutcome` 列出未知副作用调用及回执引用 | 不支持 | 无 | 已支持 | `harness:tests/unknown_effect_list.rs::records_are_unique_ordered_and_locatable`；`harness:tests/unknown_effects_examples.rs::builtin_exec_timeout_is_unknown_through_structured_status_only` | 无 |
 | `harness.output-limit` | 单次输出上限取请求值、Host 上限与模型声明的最小值，并记录来源（Host 上限需显式设置） | 部分支持 | `crates/ara-agent/src/agent_loop.rs` `ModelExecutionSnapshot::max_tokens`。缺口：Host 设定的 `max_tokens` 随执行快照传给 provider；检索 `max_tokens` 与 `min(` 只在 `compaction.rs` 的摘要预算中命中，agent 调用与模型声明取最小值并记录来源的逻辑未找到 | 已支持 | `core:tests/output_limit_wire.rs::provider_receives_the_recorded_effective_limit`；`core:tests/output_limit_zero.rs::zero_host_ceiling_is_refused_before_any_http_request` | 无 |
-| `harness.stable-api` | 公共接口稳定级别文档，并由编译期测试核对 | 不支持 | 在两个 crate 的 `*.md` 中检索 `experimental`、`stability`、`semver`：0 处 | 部分支持 | `core:tests/stability_surface.rs::stable_items_are_usable_through_public_paths`；`harness:tests/stability_surface.rs::stable_harness_items_are_usable_through_public_paths` | stable 集合只覆盖最小 Host 集成与 Run_Policy 的生成策略；`policies`、事件枚举、resume、停止复核、未知副作用记录与 MCP crate 为 experimental；删除 stable 项后编译失败的演示（任务 35.3）未接入门禁 |
+| `harness.stable-api` | 公共接口稳定级别文档，并由编译期测试核对 | 不支持 | 在两个 crate 的 `*.md` 中检索 `experimental`、`stability`、`semver`：0 处 | 部分支持 | `core:tests/stability_surface.rs::stable_items_are_usable_through_public_paths`；`harness:tests/stability_surface.rs::stable_harness_items_are_usable_through_public_paths`；`lite-eval:tests/consumer_scan_props.rs::scan_reports_exactly_the_non_stable_references` | stable 集合只覆盖最小 Host 集成与 Run_Policy 的生成策略；`policies`、事件枚举、resume、停止复核、未知副作用记录与 MCP crate 为 experimental；删除 stable 项后编译失败的演示（任务 35.3）未接入门禁 |
+| `harness.dependency-direction` | Core、Harness、JSONL 依赖方向固定，按锁定的 `cargo metadata` 依赖图检查 | 不支持 | 检索 `dependency direction`、`cargo metadata`：0 处 | 已支持 | `lite-eval:tests/dependency_direction.rs::real_lite_workspaces_follow_the_dependency_direction`；`lite-eval:tests/dependency_direction.rs::checks_report_exactly_reachable_violations_with_real_chains` | 无 |
+| `harness.delivery-gate` | 交付门禁运行矩阵引用的全部测试，任一失败、跳过、执行数为 0 或不存在即不通过 | 不支持 | 检索 `support matrix`、`delivery gate`：0 处 | 部分支持 | `lite-eval:tests/gate_props.rs::gate_passes_iff_every_command_and_every_matrix_test_passes` | 门禁结论只用假命令执行器测试；这里没有引用在交付提交上完整运行 `lite-eval gate` 的记录 |
 
 ## JSONL
 
@@ -86,4 +89,4 @@
 
 - 本文列入 P1–P4 新增能力：resume、停止复核、未知副作用、重放来源、摘要预算、Session 分叉、Completion_Gate、Stuck_Detector、Compaction_Refresh、输出上限、事件枚举、稳定级别与 MCP。`c061062` 之后四个 Lite crate 的 `src/` 没有变化，57.2 补入的是初稿漏列的 `harness.output-limit` 与 `harness.stable-api` 两项。
 - 树外消费者 crate（`tools/lite-consumer-check`，需求 31）不在 Lite 范围内，没有列为能力项；它的检查由 `lite-eval gate --consumer`（任务 58.2）执行。
-- 门禁按矩阵运行引用测试（任务 36.2）与门禁结论属性测试（任务 36.3）在 `tools/lite-eval` 中实现，尚未接入。
+- 门禁按矩阵运行引用测试（任务 36.2）与门禁结论属性测试（任务 36.3）在 `tools/lite-eval` 中实现，见 `harness.delivery-gate`；依赖方向检查（需求 27）见 `harness.dependency-direction`。
