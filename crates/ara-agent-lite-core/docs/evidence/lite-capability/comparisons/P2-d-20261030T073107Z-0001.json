@@ -1,0 +1,571 @@
+{
+  "version": 1,
+  "item": "P2-d",
+  "included_items": [
+    "P2-a",
+    "P2-b",
+    "P2-c",
+    "P2-d"
+  ],
+  "baseline": [
+    {
+      "manifest": "D:/WorkSpace/tmp/ara-lite-capability/baseline/20261030T015859Z-0001/manifest.json",
+      "manifest_id": "20261030T015859Z-0001",
+      "sha256": "003a87807c2544337a655e3dc969ea0e69c44fa2f79a425a57619cb7f597e317"
+    }
+  ],
+  "current": [
+    {
+      "manifest": "D:/WorkSpace/tmp/ara-lite-capability/runs/20261030T073107Z-0001/manifest.json",
+      "manifest_id": "20261030T073107Z-0001",
+      "sha256": "6ec3d01561eb205db570f71dc6d1b720e946358a745a3181f7d64aaf73c06fc2"
+    }
+  ],
+  "comparability": {
+    "status": "comparable"
+  },
+  "baseline_validity": {
+    "status": "valid"
+  },
+  "conclusions": "valid",
+  "model": {
+    "baseline": [
+      "deepseek-v4.1-flash"
+    ],
+    "current": [
+      "deepseek-v4.1-flash"
+    ]
+  },
+  "task_set_version": {
+    "baseline": [
+      "5f1f391b0255f69b3d9e465fa3853fab30ba3083e142680d5bcd81727944bed5"
+    ],
+    "current": [
+      "5f1f391b0255f69b3d9e465fa3853fab30ba3083e142680d5bcd81727944bed5"
+    ]
+  },
+  "tasks": [
+    {
+      "task_id": "H2",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "hidden_passed": {
+          "baseline": 48,
+          "current": "absent",
+          "delta": "not_comparable",
+          "unknown_side": "current"
+        },
+        "logical_calls": {
+          "baseline": 7,
+          "current": 8,
+          "delta": "regressed"
+        },
+        "success": {
+          "baseline": false,
+          "current": false,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 48401,
+          "current": 72791,
+          "delta": "regressed"
+        },
+        "usage_output_tokens": {
+          "baseline": 3473,
+          "current": 3678,
+          "delta": "regressed"
+        },
+        "wall_ms": {
+          "baseline": 26277,
+          "current": 38231,
+          "delta": "regressed"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 0,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 0,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "logical_calls",
+          "baseline": 7,
+          "current": 8,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "wall_ms",
+          "baseline": 26277,
+          "current": 38231,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "usage_input_tokens",
+          "baseline": 48401,
+          "current": 72791,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "usage_output_tokens",
+          "baseline": 3473,
+          "current": 3678,
+          "failure_class": "model_gap"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "not new holdout",
+        "current": "not new holdout"
+      }
+    },
+    {
+      "task_id": "R1",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "hidden_passed": {
+          "baseline": 0,
+          "current": 28,
+          "delta": "improved"
+        },
+        "logical_calls": {
+          "baseline": 7,
+          "current": 8,
+          "delta": "regressed"
+        },
+        "success": {
+          "baseline": false,
+          "current": false,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 49961,
+          "current": 57551,
+          "delta": "regressed"
+        },
+        "usage_output_tokens": {
+          "baseline": 2418,
+          "current": 3790,
+          "delta": "regressed"
+        },
+        "wall_ms": {
+          "baseline": 21739,
+          "current": 37113,
+          "delta": "regressed"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 0,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 0,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "logical_calls",
+          "baseline": 7,
+          "current": 8,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "wall_ms",
+          "baseline": 21739,
+          "current": 37113,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "usage_input_tokens",
+          "baseline": 49961,
+          "current": 57551,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "usage_output_tokens",
+          "baseline": 2418,
+          "current": 3790,
+          "failure_class": "model_gap"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "not new holdout",
+        "current": "not new holdout"
+      }
+    },
+    {
+      "task_id": "S1",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "hidden_passed": {
+          "baseline": 13,
+          "current": 13,
+          "delta": "unchanged"
+        },
+        "logical_calls": {
+          "baseline": 12,
+          "current": 11,
+          "delta": "improved"
+        },
+        "success": {
+          "baseline": true,
+          "current": true,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 56632,
+          "current": 49523,
+          "delta": "improved"
+        },
+        "usage_output_tokens": {
+          "baseline": 2316,
+          "current": 1729,
+          "delta": "improved"
+        },
+        "wall_ms": {
+          "baseline": 28327,
+          "current": 52834,
+          "delta": "regressed"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 4,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 1,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "wall_ms",
+          "baseline": 28327,
+          "current": 52834,
+          "failure_class": "not_applicable"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "not new holdout",
+        "current": "not new holdout"
+      }
+    },
+    {
+      "task_id": "S2",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "hidden_passed": {
+          "baseline": 35,
+          "current": 35,
+          "delta": "unchanged"
+        },
+        "logical_calls": {
+          "baseline": 9,
+          "current": 7,
+          "delta": "improved"
+        },
+        "success": {
+          "baseline": true,
+          "current": true,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 38677,
+          "current": 28940,
+          "delta": "improved"
+        },
+        "usage_output_tokens": {
+          "baseline": 1673,
+          "current": 1601,
+          "delta": "improved"
+        },
+        "wall_ms": {
+          "baseline": 21904,
+          "current": 28423,
+          "delta": "regressed"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 2,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 2,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "wall_ms",
+          "baseline": 21904,
+          "current": 28423,
+          "failure_class": "not_applicable"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "not new holdout",
+        "current": "not new holdout"
+      }
+    },
+    {
+      "task_id": "S3",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "hidden_passed": {
+          "baseline": 0,
+          "current": 31,
+          "delta": "improved"
+        },
+        "logical_calls": {
+          "baseline": 30,
+          "current": 18,
+          "delta": "improved"
+        },
+        "public_passed": {
+          "baseline": 0,
+          "current": 9,
+          "delta": "improved"
+        },
+        "success": {
+          "baseline": false,
+          "current": false,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 586131,
+          "current": 263751,
+          "delta": "improved"
+        },
+        "usage_output_tokens": {
+          "baseline": 9877,
+          "current": 5368,
+          "delta": "improved"
+        },
+        "wall_ms": {
+          "baseline": 82269,
+          "current": 158404,
+          "delta": "regressed"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 13,
+            "write_new": 1,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 5,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "wall_ms",
+          "baseline": 82269,
+          "current": 158404,
+          "failure_class": "model_gap"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "not new holdout",
+        "current": "not new holdout"
+      }
+    },
+    {
+      "task_id": "SH1",
+      "presence": {
+        "status": "both"
+      },
+      "samples": {
+        "baseline": 1,
+        "current": 1
+      },
+      "single_sample": true,
+      "metrics": {
+        "cost": {
+          "baseline": "unknown",
+          "current": "unknown",
+          "delta": "not_comparable",
+          "unknown_side": "both"
+        },
+        "holdout_passed": {
+          "baseline": 45,
+          "current": 45,
+          "delta": "unchanged"
+        },
+        "logical_calls": {
+          "baseline": 10,
+          "current": 11,
+          "delta": "regressed"
+        },
+        "success": {
+          "baseline": false,
+          "current": false,
+          "delta": "unchanged"
+        },
+        "usage_input_tokens": {
+          "baseline": 82197,
+          "current": 94472,
+          "delta": "regressed"
+        },
+        "usage_output_tokens": {
+          "baseline": 4572,
+          "current": 4543,
+          "delta": "improved"
+        },
+        "wall_ms": {
+          "baseline": 76547,
+          "current": 51332,
+          "delta": "improved"
+        }
+      },
+      "write_counts": {
+        "baseline": [
+          {
+            "write_existing": 4,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ],
+        "current": [
+          {
+            "write_existing": 4,
+            "write_new": 0,
+            "edit_ok": 0,
+            "edit_rejected": 0
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "metric": "logical_calls",
+          "baseline": 10,
+          "current": 11,
+          "failure_class": "model_gap"
+        },
+        {
+          "metric": "usage_input_tokens",
+          "baseline": 82197,
+          "current": 94472,
+          "failure_class": "model_gap"
+        }
+      ],
+      "holdout_status": {
+        "baseline": "new holdout",
+        "current": "new holdout"
+      }
+    }
+  ]
+}

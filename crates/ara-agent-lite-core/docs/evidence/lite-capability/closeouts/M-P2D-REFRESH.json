@@ -1,0 +1,176 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P2D-REFRESH",
+  "task": "50.7",
+  "requirement": 19,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:38+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 9,
+  "criteria_total": 9,
+  "criteria": {
+    "19.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:compaction_refresh::refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::candidates_are_recent_successful_file_paths_deduplicated",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::candidates_are_recent_successful_file_paths_deduplicated",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::tests::plan_fits_the_byte_budget_with_windows_references_and_skips",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::candidates_are_recent_successful_file_paths_deduplicated",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::tests::candidates_are_successful_file_calls_newest_first_and_deduplicated",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::tests::plan_fits_the_byte_budget_with_windows_references_and_skips",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:compaction_refresh::refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:compaction_refresh::refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:compaction_refresh::refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:compaction_refresh::without_the_policy_no_refresh_message_or_event_appears",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::compaction_refresh::tests::plan_fits_the_byte_budget_with_windows_references_and_skips",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "19.9": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:compaction_refresh::refresh_follows_the_summary_with_current_disk_and_session_plan_state",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "黄金序列 44.1/47.1/50.1 在 P2-b/c/d 代码合入后才采集（tasks.md 阶段 10 偏差），只能发现之后的回归，不能证明合入本身没有改变未配置路径。 19.7 的判定依据是未配置时没有 compaction_refresh 消息的直接断言，不依赖黄金序列。"
+  ],
+  "in_scope_failures": []
+}

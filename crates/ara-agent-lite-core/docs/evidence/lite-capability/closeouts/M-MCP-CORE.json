@@ -1,0 +1,247 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-MCP-CORE",
+  "task": "67.7",
+  "requirement": 42,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:40+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 8,
+  "criteria_total": 9,
+  "criteria": {
+    "42.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:config_props::unsupported_transports_and_fields_are_explicit",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:config_props::invalid_http_values_never_reach_status",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:config_props::errors_name_only_servers_and_variables",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:config_props::expansion_matches_reference",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:stdio::handshake_paginates_and_names_tools",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::one_failed_server_leaves_others_and_required_fails_the_connect",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::connect_cancellation_shuts_servers_down",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::shutdown_ends_the_process_tree",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::page_bound_is_reported",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:http::unsupported_version_and_rejected_auth_fail_the_server",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:http::session_headers_json_and_sse_replies",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:names_props::root_combinators_merge_into_one_object",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:names_props::normalize_matches_reference",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:names_props::names_match_pattern_or_are_excluded_and_never_collide",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::handshake_paginates_and_names_tools",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:result_props::conversion_matches_reference",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::calls_convert_content_and_inherit_environment",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:interrupt_props::interrupted_calls_mark_unknown_effects",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::cancel_timeout_and_disconnect_mark_unknown_effects_once",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:http::timeout_and_early_stream_end_are_unknown_effects",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:harness_mcp::mcp_timeout_stops_at_reconciliation",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:stdio::resource_tools_follow_the_capability",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::server_requests_get_method_not_found",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "mcp:config_props::errors_name_only_servers_and_variables",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:config_props::invalid_http_values_never_reach_status",
+          "result": "ok",
+          "log": "mcp-test.log"
+        },
+        {
+          "id": "mcp:stdio::startup_failure_reports_a_bounded_redacted_stderr_tail",
+          "result": "ok",
+          "log": "mcp-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "42.9": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_connected_tools_join_the_task_and_status_is_reported",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_invalid_configuration_is_a_start_rejection",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_python_client_passes_the_status_to_on_event",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_required_failure_rejects_the_start_without_upstream_requests",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_without_the_field_frames_and_tools_are_unchanged",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        }
+      ],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-jsonl/docs/protocol-v1.md",
+          "lines": [
+            171,
+            184
+          ],
+          "keywords_found_at": {
+            "mcp_servers": 177
+          }
+        }
+      ],
+      "note": "JSONL 部分同时记在 M-MCP-JSONL；Node 客户端 README 没有 MCP 说明。"
+    }
+  },
+  "uncovered": {
+    "42.1": "crate 隔离与 harness_mcp 证明了普通 AgentTool 接入，但“新增第三方依赖按需求 33 登记许可证并说明原因”需 61.1 的 lite-eval deny 才能核对，本次未运行"
+  },
+  "notes": [],
+  "deviations": [
+    "README 记录的设计偏差：未知字段严格报错（Claude Code 忽略）、Windows 子进程 spawn 后才加入 Job（极短逃逸窗口）、发给模型的工具结果不做脱敏；Unix 路径只编译未运行。"
+  ],
+  "in_scope_failures": []
+}

@@ -1,0 +1,134 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P3-UNKNOWN",
+  "task": "28.8",
+  "requirement": 22,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:29+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 8,
+  "criteria_total": 8,
+  "criteria": {
+    "22.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effects::unknown_iff_structured_details",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effects_examples::builtin_exec_timeout_is_unknown_through_structured_status_only",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "core:unit:lib::effect_status::tests::builtin_phrases_on_the_first_line_of_effect_tool_errors_are_typed",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effects_examples::custom_tool_phrase_text_stays_known",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "harness:tasks::successful_tool_evidence_text_is_not_promoted_to_unknown_effect_control",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effect_list::records_are_unique_ordered_and_locatable",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:outcome_compat::outcome_round_trips_and_old_json_parses_with_defaults",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:tasks::cancellation_during_real_core_tool_waits_for_settlement_and_never_replays",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "harness:unknown_effects_examples::builtin_exec_timeout_is_unknown_through_structured_status_only",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effects_examples::non_tool_reconciliation_has_an_empty_unknown_effect_list",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "22.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:unknown_effects::unknown_iff_structured_details",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "已知行为（tasks.md 阶段 4）：sidecar 回调失败时 bridge.fail() 取消 Task，多个 Unknown 调用的结局是 Cancelled 而非 ReconciliationRequired，记录仍写出。"
+  ],
+  "in_scope_failures": []
+}

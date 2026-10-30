@@ -1,0 +1,173 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P2C-STUCK",
+  "task": "47.9",
+  "requirement": 18,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:37+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 9,
+  "criteria_total": 10,
+  "criteria": {
+    "18.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::stuck_detector::property_tests::detector_signals_match_the_reference_model",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::stuck_detector::tests::repeated_call_hits_then_stops_and_any_other_call_restarts_the_count",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::stuck_detector::property_tests::detector_signals_match_the_reference_model",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::stuck_detector::tests::repeated_errors_accumulate_without_being_consecutive",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::stuck_detector::property_tests::detector_signals_match_the_reference_model",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::stuck_detector::tests::repeated_observations_count_only_listed_tools_and_keep_the_seen_set",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:stuck::repeated_observations_count_only_listed_tools",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stuck::repeated_errors_hit_correct_then_stop_with_no_progress",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:run_policies::repeated_identical_calls_get_one_correction_then_stop_with_no_progress_evidence",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stuck::repeated_errors_hit_correct_then_stop_with_no_progress",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:run_policies::repeated_identical_calls_get_one_correction_then_stop_with_no_progress_evidence",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stuck::repeated_errors_hit_correct_then_stop_with_no_progress",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.9": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stuck::invalid_thresholds_are_refused_before_any_request",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:run_policies::invalid_stuck_threshold_is_refused_before_any_request",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::stuck_detector::property_tests::validation_accepts_exactly_thresholds_in_range",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "18.10": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "18.8": "黄金序列 44.1/47.1/50.1 在 P2-b/c/d 代码合入后才采集（tasks.md 阶段 10 偏差），只能发现之后的回归，不能证明合入本身没有改变未配置路径。 另有 stuck::unconfigured_detector_emits_nothing_and_injects_nothing 证明未配置阈值时无事件与注入，但与改动前逐项一致未证明"
+  },
+  "notes": [],
+  "deviations": [
+    "属性测试中驱动真实 agent 的用例按 DR 记录为 32 例（偏差），256 例在任务 61 恢复；本模块没有运行真实模型。"
+  ],
+  "in_scope_failures": []
+}

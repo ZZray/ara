@@ -1,0 +1,151 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P1-DOCS",
+  "task": "24.4",
+  "requirement": 13,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:27+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 6,
+  "criteria_total": 6,
+  "criteria": {
+    "13.1": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-jsonl/docs/protocol-v1.md",
+          "lines": [
+            198,
+            245
+          ],
+          "keywords_found_at": {
+            "\\| 字段 \\| JSON 类型 \\| 必填或可选 \\| 取值约束 \\| 含义 \\|": 211,
+            "`resume\\.fence_sha256`": 215,
+            "`rpc_id`": 204,
+            "`receipt\\.evidence`": 243,
+            "`resume` 字段可选。省略时": 202,
+            "`reconcile_request` 携带请求 ID": 204
+          }
+        }
+      ],
+      "note": "协议文档“恢复被 fence 的 Task”一节有三张字段表（resume、reconcile_request、reconcile_reply），表头均为 字段/JSON 类型/必填或可选/取值约束/含义，并含约束条目；人工读过第 211–243 行。"
+    },
+    "13.2": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/knowledge/host-contracts.md",
+          "lines": [
+            79,
+            102
+          ],
+          "keywords_found_at": {
+            "committed": 85,
+            "Settled": 86,
+            "证据非空": 88,
+            "ResumeRefusal": 93,
+            "HTTP 请求数为零": 95,
+            "不执行、不重放效果未知": 91
+          }
+        }
+      ],
+      "note": "五项义务与前四项违反后的结果均在 host-contracts.md 该节。"
+    },
+    "13.3": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/ai-integration.md",
+          "lines": [
+            148,
+            175
+          ],
+          "keywords_found_at": {
+            "确认 Task 处于 fence 状态": 157,
+            "启动一个新的 JSONL sidecar": 160,
+            "reconcile_request": 163,
+            "deadline_unix_ms": 166,
+            "task_accepted": 167
+          }
+        }
+      ],
+      "note": "五个步骤按序列于 ai-integration.md 3.2。"
+    },
+    "13.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_protocol_doc_examples.ProtocolDocExamplesTest.test_successful_resume_sequence",
+          "result": "ok",
+          "log": "jsonl-py-test_protocol_doc_examples.log"
+        },
+        {
+          "id": "py:test_protocol_doc_examples.ProtocolDocExamplesTest.test_invalid_resume_field_start_frame",
+          "result": "ok",
+          "log": "jsonl-py-test_protocol_doc_examples.log"
+        },
+        {
+          "id": "py:test_protocol_doc_examples.ProtocolDocExamplesTest.test_reconcile_reply_with_another_request_id",
+          "result": "ok",
+          "log": "jsonl-py-test_protocol_doc_examples.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "13.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_protocol_doc_examples.ProtocolDocExamplesTest.test_examples_use_only_documented_placeholders_and_cover_13_5",
+          "result": "ok",
+          "log": "jsonl-py-test_protocol_doc_examples.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "13.6": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/ai-integration.md",
+          "lines": [
+            176,
+            198
+          ],
+          "keywords_found_at": {
+            "resume 字段格式无效": 180,
+            "authority 哈希改变": 182,
+            "预算或单 Run 上限增大": 183,
+            "reconcile_reply 缺失或 stdin 已关闭": 184,
+            "超过 Task deadline": 185,
+            "请求 ID 不匹配": 186,
+            "reconcile_reply 字段无效": 187,
+            "committed 为 false": 188,
+            "结算为 Unknown": 189,
+            "证据为空": 190,
+            "回执与开放调用不对应": 191,
+            "不会转为新对话": 195,
+            "不会重放": 196
+          }
+        }
+      ],
+      "note": "12 个拒绝原因行与“不转新对话、不重放”声明均在 ai-integration.md 3.2 表中。"
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "两份 Core 文档（host-contracts.md、ai-integration.md）未做 humanizer 审读（tasks.md 阶段 6 记录）。"
+  ],
+  "in_scope_failures": []
+}

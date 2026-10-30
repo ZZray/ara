@@ -1,0 +1,18 @@
+{
+    "schema":  "lite-closeout-fix-v1",
+    "created_at":  "2026-10-30T16:11:47.4633843+08:00",
+    "module":  "M-P3-JSONL-UNKNOWN",
+    "supersedes":  "closeouts/M-P3-JSONL-UNKNOWN.json (open, seq 28)",
+    "fix":  "crates/ara-agent-lite-jsonl/tests/test_jsonl_unknown.py: the old clients are taken from the fixed revision d42ecc3 (parent of the stage-4 commit f0a7570) instead of the moving HEAD, and the module is registered in sys.modules before exec_module so @dataclass works on Python 3.13",
+    "run":  {
+                "command":  "python -m unittest -v test_jsonl_unknown",
+                "cwd":  "crates/ara-agent-lite-jsonl/tests",
+                "ran":  4,
+                "result":  "OK",
+                "binary_sha256":  "33328ff7addbd9a810085b343671bfd2d1194c8df7a075a1b3d959c4c4be0962",
+                "log":  "D:\\WorkSpace\\tmp\\ara-lite-capability\\closeout-runs\\jsonl-py-test_jsonl_unknown-fixed.log",
+                "log_sha256":  "752dfcd87893d6c7bc9321a29dc47bed38c931144fda5a4aa20fb59715909e3b"
+            },
+    "criterion_23_4":  "test_clients_before_this_change_still_complete_the_same_scenario passes: old Python and Node clients complete the same scenario against the current sidecar",
+    "note":  "criteria 23.1-23.3, 23.5-23.7 are unchanged from the earlier closeout record"
+}

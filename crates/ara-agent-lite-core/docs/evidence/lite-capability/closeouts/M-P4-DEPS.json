@@ -1,0 +1,127 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P4-DEPS",
+  "task": "34.5",
+  "requirement": 27,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:32+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 6,
+  "criteria_total": 6,
+  "criteria": {
+    "27.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:dependency_direction::real_lite_workspaces_follow_the_dependency_direction",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:dependency_direction::injected_core_violations_of_27_1_fail",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "27.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:dependency_direction::real_lite_workspaces_follow_the_dependency_direction",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:dependency_direction::injected_harness_violations_of_27_2_fail",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "27.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:dependency_direction::checks_report_exactly_reachable_violations_with_real_chains",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:dependency_direction::real_lite_workspaces_follow_the_dependency_direction",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "27.4": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/knowledge/host-contracts.md",
+          "lines": [
+            21,
+            78
+          ],
+          "keywords_found_at": {
+            "## 四方职责与依赖方向": 21,
+            "### Lite_Core": 39,
+            "### Harness_Lite": 48,
+            "### JSONL_Sidecar": 57,
+            "### Host": 66,
+            "每个事项只归一方负责": 23,
+            "agent loop 只在 Lite_Core 中实现": 23,
+            "Host 集成时必须自行实现": 68
+          }
+        }
+      ],
+      "note": "人工读过第 21–78 行：四节各列负责事项，agent loop 只在 Lite_Core，依赖方向图与 27.1/27.2 一致。"
+    },
+    "27.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:dependency_direction::a_workspace_whose_lock_disagrees_with_its_manifest_fails_and_is_named",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "27.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:dependency_direction::injected_core_violations_of_27_1_fail",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:dependency_direction::injected_harness_violations_of_27_2_fail",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "host-contracts.md 第 21–78 行仍写“任务 34.2 的 Dependency_Check_Test 尚未实现”，该测试现已存在并通过，文字已过期。"
+  ],
+  "in_scope_failures": []
+}

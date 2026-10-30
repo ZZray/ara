@@ -1,0 +1,162 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P2A-LENGTH",
+  "task": "41.9",
+  "requirement": 16,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:35+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 9,
+  "criteria_total": 9,
+  "criteria": {
+    "16.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review_flow::length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "py:test_length_stop_review.LengthStopReviewTest.test_raw_frame_sequence_of_a_reviewed_and_continued_length_stop",
+          "result": "ok",
+          "log": "jsonl-py-test_length_stop_review.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::length_review_needs_changes_continues_in_the_same_session",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review_flow::length_snapshot_binds_the_cut_message_and_continuation_keeps_it_unchanged",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review_flow::policy_off_keeps_pre_feature_stops_and_length_recovery_is_unchanged",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "py:test_length_stop_review.LengthStopReviewTest.test_default_policy_sends_no_stop_frames",
+          "result": "ok",
+          "log": "jsonl-py-test_length_stop_review.log"
+        },
+        {
+          "id": "py:test_length_stop_review.LengthStopReviewTest.test_raw_frames_without_the_policy_have_no_stop_frames",
+          "result": "ok",
+          "log": "jsonl-py-test_length_stop_review.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::closed_length_stop_is_reviewed_and_verified_without_a_new_run",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "py:test_length_stop_review.LengthStopReviewTest.test_verified_stop_ends_awaiting_host_acceptance",
+          "result": "ok",
+          "log": "jsonl-py-test_length_stop_review.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::default_policy_and_unsupported_hosts_keep_reconciliation_required",
+          "result": "ok",
+          "log": "harness-test.log"
+        },
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "16.9": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "harness:stop_review::property_22::stop_review_follows_the_decision_table",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "属性测试中驱动真实 agent 的用例按 DR 记录为 32 例（偏差），256 例在任务 61 恢复；本模块没有运行真实模型。",
+    "Property 22（stop_review_follows_the_decision_table）以 32 例驱动真实 Harness；有界真实模型试验（需求 16 验证方式之一）未运行。"
+  ],
+  "in_scope_failures": []
+}

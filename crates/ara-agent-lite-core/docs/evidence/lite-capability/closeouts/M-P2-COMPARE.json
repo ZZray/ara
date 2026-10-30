@@ -1,0 +1,235 @@
+{
+    "schema":  "lite-closeout-p2-compare-v1",
+    "created_at":  "2026-10-30T16:09:00.5272168+08:00",
+    "baseline_manifest":  "D:/WorkSpace/tmp/ara-lite-capability/baseline/20261030T015859Z-0001/manifest.json",
+    "binary":  "D:/WorkSpace/tmp/ara-lite-capability/bin/lite-eval-b0.exe (sha256 780ab5c5b81930a2603eb7225eb7288e17c2c0a0455886cd9fba4c355225f794, built at ad9c0d3)",
+    "runs":  {
+                 "P2-a":  "20261030T071436Z-0001",
+                 "P2-b":  "20261030T072054Z-0001",
+                 "P2-c":  "20261030T072503Z-0001",
+                 "P2-d":  "20261030T073107Z-0001",
+                 "P2-e":  "20261030T073828Z-0001"
+             },
+    "comparison_records":  [
+                               "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/P2-a-20261030T071436Z-0001.json",
+                               "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/P2-b-20261030T072054Z-0001.json",
+                               "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/P2-c-20261030T072503Z-0001.json",
+                               "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/P2-d-20261030T073107Z-0001.json",
+                               "crates/ara-agent-lite-core/docs/evidence/lite-capability/comparisons/P2-e-20261030T073828Z-0001.json"
+                           ],
+    "per_task":  [
+                     {
+                         "task":  "H2",
+                         "B0":  {
+                                    "success":  false,
+                                    "passed":  48,
+                                    "logical_calls":  7
+                                },
+                         "P2-a":  {
+                                      "success":  false,
+                                      "passed":  48,
+                                      "logical_calls":  9
+                                  },
+                         "P2-b":  {
+                                      "success":  false,
+                                      "passed":  "absent",
+                                      "logical_calls":  7
+                                  },
+                         "P2-c":  {
+                                      "success":  false,
+                                      "passed":  48,
+                                      "logical_calls":  8
+                                  },
+                         "P2-d":  {
+                                      "success":  false,
+                                      "passed":  "absent",
+                                      "logical_calls":  8
+                                  },
+                         "P2-e":  {
+                                      "success":  false,
+                                      "passed":  48,
+                                      "logical_calls":  7
+                                  }
+                     },
+                     {
+                         "task":  "R1",
+                         "B0":  {
+                                    "success":  false,
+                                    "passed":  0,
+                                    "logical_calls":  7
+                                },
+                         "P2-a":  {
+                                      "success":  false,
+                                      "passed":  28,
+                                      "logical_calls":  6
+                                  },
+                         "P2-b":  {
+                                      "success":  false,
+                                      "passed":  28,
+                                      "logical_calls":  6
+                                  },
+                         "P2-c":  {
+                                      "success":  false,
+                                      "passed":  20,
+                                      "logical_calls":  8
+                                  },
+                         "P2-d":  {
+                                      "success":  false,
+                                      "passed":  28,
+                                      "logical_calls":  8
+                                  },
+                         "P2-e":  {
+                                      "success":  false,
+                                      "passed":  0,
+                                      "logical_calls":  5
+                                  }
+                     },
+                     {
+                         "task":  "S1",
+                         "B0":  {
+                                    "success":  true,
+                                    "passed":  13,
+                                    "logical_calls":  12
+                                },
+                         "P2-a":  {
+                                      "success":  true,
+                                      "passed":  13,
+                                      "logical_calls":  9
+                                  },
+                         "P2-b":  {
+                                      "success":  true,
+                                      "passed":  13,
+                                      "logical_calls":  8
+                                  },
+                         "P2-c":  {
+                                      "success":  true,
+                                      "passed":  13,
+                                      "logical_calls":  10
+                                  },
+                         "P2-d":  {
+                                      "success":  true,
+                                      "passed":  13,
+                                      "logical_calls":  11
+                                  },
+                         "P2-e":  {
+                                      "success":  true,
+                                      "passed":  13,
+                                      "logical_calls":  11
+                                  }
+                     },
+                     {
+                         "task":  "S2",
+                         "B0":  {
+                                    "success":  true,
+                                    "passed":  35,
+                                    "logical_calls":  9
+                                },
+                         "P2-a":  {
+                                      "success":  true,
+                                      "passed":  35,
+                                      "logical_calls":  8
+                                  },
+                         "P2-b":  {
+                                      "success":  true,
+                                      "passed":  35,
+                                      "logical_calls":  8
+                                  },
+                         "P2-c":  {
+                                      "success":  true,
+                                      "passed":  35,
+                                      "logical_calls":  8
+                                  },
+                         "P2-d":  {
+                                      "success":  true,
+                                      "passed":  35,
+                                      "logical_calls":  7
+                                  },
+                         "P2-e":  {
+                                      "success":  true,
+                                      "passed":  35,
+                                      "logical_calls":  11
+                                  }
+                     },
+                     {
+                         "task":  "S3",
+                         "B0":  {
+                                    "success":  false,
+                                    "passed":  0,
+                                    "logical_calls":  30
+                                },
+                         "P2-a":  {
+                                      "success":  false,
+                                      "passed":  22,
+                                      "logical_calls":  18
+                                  },
+                         "P2-b":  {
+                                      "success":  false,
+                                      "passed":  8,
+                                      "logical_calls":  27
+                                  },
+                         "P2-c":  {
+                                      "success":  false,
+                                      "passed":  32,
+                                      "logical_calls":  18
+                                  },
+                         "P2-d":  {
+                                      "success":  false,
+                                      "passed":  31,
+                                      "logical_calls":  18
+                                  },
+                         "P2-e":  {
+                                      "success":  true,
+                                      "passed":  48,
+                                      "logical_calls":  16
+                                  }
+                     },
+                     {
+                         "task":  "SH1",
+                         "B0":  {
+                                    "success":  false,
+                                    "passed":  45,
+                                    "logical_calls":  10
+                                },
+                         "P2-a":  {
+                                      "success":  true,
+                                      "passed":  48,
+                                      "logical_calls":  13
+                                  },
+                         "P2-b":  {
+                                      "success":  false,
+                                      "passed":  45,
+                                      "logical_calls":  12
+                                  },
+                         "P2-c":  {
+                                      "success":  true,
+                                      "passed":  48,
+                                      "logical_calls":  12
+                                  },
+                         "P2-d":  {
+                                      "success":  false,
+                                      "passed":  45,
+                                      "logical_calls":  11
+                                  },
+                         "P2-e":  {
+                                      "success":  false,
+                                      "passed":  45,
+                                      "logical_calls":  13
+                                  }
+                     }
+                 ],
+    "criteria":  {
+                     "21.1":  "5 Comparison_Records, one per P2 item, same Run_Policy SHA-256, 6 tasks each, included_items recorded",
+                     "21.2":  "per-task side-by-side success, hidden/holdout counts, logical_calls, wall_ms, usage, cost, holdout_status",
+                     "21.3":  "all five Comparable; mismatch refusal covered by compare_props",
+                     "21.4":  "regressions listed per task with failure_class (model_gap)",
+                     "21.5":  "samples 1/1, single_sample=true on every conclusion",
+                     "21.6":  "cost unknown on both sides, marked not_comparable",
+                     "21.7":  "environment_unavailable path covered by compare_props (not exercised in real runs)"
+                 },
+    "caveats":  [
+                    "One sample per configuration. Outcomes flip between consecutive cumulative configurations (SH1 P2-a pass, P2-b fail, P2-c pass, P2-d and P2-e fail; S3 and R1 vary too), so run-to-run noise is as large as the observed effects. No difference is attributed to a single P2 item.",
+                    "H2 under P2-b and P2-d: Oracle FAIL with reason \"submission needs exactly one python and one json block\" and no hidden counts (model answer format), recorded as model_gap.",
+                    "The baseline B0 was produced by the build that already contains the P2 code with every P2 switch off (Features::V1), not by pre-P2 code. compare.rs judges baseline validity from the Capability_Test_Host feature list and the saved diff, so it reports valid; requirements 7.1 and 7.7 read literally ask for code without the P2 changes. See b0-freeze.json deviation_38_1.",
+                    "The whole Task_Set shares SH1 across all runs; its holdout value for later use is reduced."
+                ]
+}

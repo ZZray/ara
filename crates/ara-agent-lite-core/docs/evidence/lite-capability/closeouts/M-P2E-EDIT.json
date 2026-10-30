@@ -1,0 +1,127 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P2E-EDIT",
+  "task": "53.6",
+  "requirement": 20,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:39+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 6,
+  "criteria_total": 7,
+  "criteria": {
+    "20.1": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/evidence/lite-capability/design-records.md",
+          "lines": [
+            116,
+            137
+          ],
+          "keywords_found_at": {
+            "examples/business_host\\.rs:159": 120,
+            "local_tools\\.rs:30": 120,
+            "SHA-256": 118,
+            "证据等级": 118,
+            "推断": 118
+          }
+        }
+      ],
+      "note": "“S3 使用 write 3 次”按记录保持“推断”等级；各运行写入次数标运行确认。"
+    },
+    "20.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:host_tool_schema::registered_execute_sessions_offer_ws_edit_file_and_restrict_ws_write_file",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:host_tool_schema::every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "20.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::file_edits::tests::rejections_name_the_current_hash_and_the_failing_block",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::file_edits::tests::property_26::edit_applies_every_block_or_none",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "20.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::file_edits::tests::property_26::edit_applies_every_block_or_none",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "eval:host_tool_schema::every_model_request_lists_ws_edit_file_and_edit_results_name_the_new_sha",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "20.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:unit:lib::file_edits::tests::property_26::edit_applies_every_block_or_none",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:unit:lib::file_edits::tests::rejections_name_the_current_hash_and_the_failing_block",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "20.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:compare_props::conclusions_follow_comparability_presence_and_known_values",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "20.4": "Comparison_Record 的逐任务写入/编辑次数需要 P2-e 对比（任务 54.1，真实模型运行）；本次只验证了计数器本身（write_counter_props）"
+  },
+  "notes": [],
+  "deviations": [
+    "53.5 要求的 tests/verify_versioned_edits.py（Core tests 目录下的 Python 脚本）不在本次指定命令范围内，未运行。",
+    "write_counter_props::counters_match_the_reference_model（Property 27）通过，但只证明计数器与参考模型一致，不构成 20.4 的 Comparison_Record。"
+  ],
+  "in_scope_failures": []
+}

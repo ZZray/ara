@@ -1,0 +1,148 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P4-EVENTS",
+  "task": "56.7",
+  "requirement": 28,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:39+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 6,
+  "criteria_total": 7,
+  "criteria": {
+    "28.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_compat::every_event_type_has_samples_and_a_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "28.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_compat::sample_files_are_the_recorded_capture",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_compat::every_event_type_has_samples_and_a_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_compat::value_execute_matches_the_golden_event_shapes",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "28.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_enum::every_sample_line_round_trips_through_its_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "28.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_enum::every_sample_line_round_trips_through_its_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_compat::sample_files_are_the_recorded_capture",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_compat::every_event_type_has_samples_and_a_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "28.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_enum::an_unknown_type_keeps_the_complete_original_json",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum::unknown_fields_are_kept_on_the_named_variant",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "28.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:event_enum_errors::non_objects_and_missing_or_non_string_type_are_rejected",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum_errors::every_known_type_has_required_fields_from_the_samples",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum_errors::non_string_type_is_rejected",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum_errors::missing_type_is_rejected",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum_errors::missing_required_field_is_rejected",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:event_enum_errors::wrong_json_type_is_rejected",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "28.7": "DR-P4-1 偏差待用户确认：现有 execute 的 model_result 与同一轮 text_delta 由两个任务发出，相对顺序每次运行可能不同；event_compat 把 model_result 移到相邻 text_delta 段之前再比对，其余顺序严格比对。若要求严格顺序，需改 Core 事件发送。“顺序一致”仅在此放宽下成立，故不计入"
+  },
+  "notes": [],
+  "deviations": [
+    "DR-P4-1 事件顺序放宽（model_result 与 text_delta）尚待用户接受。",
+    "event_samples::capture_events_v1 为 #[ignore]（样本采集入口，故意不在常规测试中重采）。"
+  ],
+  "in_scope_failures": []
+}

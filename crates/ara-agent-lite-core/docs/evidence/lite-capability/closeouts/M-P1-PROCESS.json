@@ -1,0 +1,85 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P1-PROCESS",
+  "task": "25.3",
+  "requirement": 14,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:28+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 5,
+  "criteria_total": 6,
+  "criteria": {
+    "14.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_process.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "14.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_process.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "14.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_process.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "14.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_process.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "14.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_process.ResumeProcessTest.test_killed_during_a_tool_call_resumes_once_with_the_host_receipt",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_process.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "14.5": "7 种拒绝中“授权变化”与“预算或单 Run 上限变大”由 Harness 在调用 Host 前拒绝，9.4 要求 stdout 零帧、不建证据目录，宿主无法被告知命中哪一种；14.5 未完全满足（任务 25.2 因此未勾选）"
+  },
+  "notes": [],
+  "deviations": [
+    "同一个真实进程测试（kill 后 resume 与 7 种拒绝）覆盖 14.1–14.4、14.6；超时判失败的逻辑在测试内，本次未制造超时。"
+  ],
+  "in_scope_failures": []
+}

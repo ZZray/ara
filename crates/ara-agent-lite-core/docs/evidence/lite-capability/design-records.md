@@ -236,3 +236,10 @@
 - 证据等级：分级为审查决定；可用性为运行确认（2026-10-29）：Core `tests/stability_surface.rs` 3 项通过，测试经公共路径使用新增 6 项，包括覆盖两个默认方法的 `PolicyHost`、全部变体与 serde 名；Harness `tests/stability_surface.rs` 2 项通过；`tools/lite-consumer-check` 改为自带 `ModelHost`，`cargo build`、`cargo clippy -- -D warnings` 退出码 0，loopback 测试 3 项通过，其中新增的一项断言 `thinking_type_disabled` 时每个模型请求都带 `thinking: {"type": "disabled"}`。
 - 日期：2026-10-29
 - 后续动作：任务 58.2 的引用扫描以本文表格第一列为准，`ModelHost::generation_policy` 这类 trait 方法行需要扫描器把 `impl ModelHost` 中的同名方法对应到该行。任务 58.4 运行时给消费者传 Run_Policy 的 `generation_policy`、`length_recovery`、`route.binding` 与 `route.decision`。P2 对比完成后复核 `policies` 与停止复核类型能否提升；任务 25.2 完成后复核 resume 系列。
+
+## DR-P0-3 复核记录（任务 38.2，2026-10-30）
+
+- 复核方式：`lite-eval run --probe-only`（Run_Manifest `20261030T014101Z-0001`，状态 `probe_only`）。HTTP 200，738 ms，回显 `deepseek-flash`，记为 `accepted_alias_unverified`：别名与 `deepseek-v4.1-flash` 等价仍未验证。
+- 路由与授权：CAS 直连 `https://cas.ciqtek.com/v1`，协议 `openai-completions`，凭据取自环境变量 `CAS_API_KEY`；费用额度沿用用户 2026-10-29 的确认（“花费没事 额度已定”）。
+- 结论：B0（`20261030T015859Z-0001`）与 P2-a 至 P2-e 的五次运行开始前均未出现路由不可用。每次运行在 Run_Manifest 里各自带一次探测记录。
+- 证据等级：运行确认（探测响应与 manifest）。模型身份等价不属于本次复核结论。

@@ -1,0 +1,134 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P0-METRICS",
+  "task": "14.5",
+  "requirement": 4,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:22+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 8,
+  "criteria_total": 8,
+  "criteria": {
+    "4.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:metrics_examples::budget_limit_timeout_and_harness_error_record_every_metric",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:metrics_examples::reported_usage_is_summed_and_omitted_usage_is_unknown",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_props::tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:usage_props::only_positive_adapter_counts_are_known",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:metrics_examples::reported_usage_is_summed_and_omitted_usage_is_unknown",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:usage_props::task_totals_and_costs_follow_the_known_parts",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:records_props::every_path_exists_or_is_missing_with_a_reason",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:usage_props::task_totals_and_costs_follow_the_known_parts",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:usage_props::summaries_mark_incomplete_and_count_tasks_with_unknown",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:metrics_examples::an_oracle_timeout_or_unparsable_output_leaves_correctness_unknown",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "4.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:usage_props::summaries_mark_incomplete_and_count_tasks_with_unknown",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "需求 4 的验证方式含“有界真实模型试验”，指标在真实 provider 上的表现由 B0 基线运行（M-P0-BASELINE）验证，本次未运行。"
+  ],
+  "in_scope_failures": []
+}

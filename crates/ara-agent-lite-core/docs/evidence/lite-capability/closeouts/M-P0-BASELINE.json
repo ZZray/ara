@@ -1,0 +1,19 @@
+{
+    "schema":  "lite-closeout-baseline-v1",
+    "created_at":  "2026-10-30T16:09:01.0087162+08:00",
+    "baseline_index":  "crates/ara-agent-lite-core/docs/evidence/lite-capability/baseline/20261030T015859Z-0001.json",
+    "freeze":  "crates/ara-agent-lite-core/docs/evidence/lite-capability/b0-freeze.json",
+    "run_manifest":  "D:/WorkSpace/tmp/ara-lite-capability/baseline/20261030T015859Z-0001/manifest.json",
+    "results":  "S1 and S2 passed; S3, R1, H2 and SH1 failed, each with a Failure_Record classified model_gap",
+    "criteria":  {
+                     "7.2":  "manifest with per-task metrics and run count for all 6 tasks",
+                     "7.3":  "4 failed tasks each have a Failure_Record with Failure_Class",
+                     "7.4":  "638 files indexed; later runs report the baseline index intact (baseline_checks)",
+                     "7.5":  "worktree diff saved, diff_matches_manifest=true",
+                     "7.6":  "missing_judgement is empty; incomplete-baseline path covered by baseline_records"
+                 },
+    "uncovered":  {
+                      "7.1":  "The code version contains the merged P2 Core code (output_limit, completion_gate, stuck_detector, compaction_refresh). Every P2 switch was off (Features::V1, run --baseline refuses other features) so no P2 policy reached Core, but the build is not code without the P2 changes. The runner was written after the P2 Core code, so a strictly pre-P2 baseline with this runner does not exist.",
+                      "7.7":  "compare.rs reports the baseline valid because it checks the Host feature list, not the merged Core code; read literally, 7.7 would mark all conclusions invalid."
+                  }
+}

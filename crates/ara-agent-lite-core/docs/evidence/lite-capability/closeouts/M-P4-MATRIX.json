@@ -1,0 +1,98 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P4-MATRIX",
+  "task": "36.4",
+  "requirement": 30,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:33+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 4,
+  "criteria_total": 5,
+  "criteria": {
+    "30.1": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/support-matrix.json",
+          "cross_check_against_this_closeout_logs": {
+            "categories": 7,
+            "items": 39,
+            "lite_test_references": 80,
+            "referenced_tests_found_and_passed": 80,
+            "unresolved": [],
+            "failing": [],
+            "note": "由收尾脚本对照本次运行日志核对，不是 `lite-eval gate --matrix`；不记录提交标识下的逐项执行数量。"
+          }
+        }
+      ],
+      "note": "7 个类别、39 项，状态只取 supported/partial/unsupported（脚本核对）。"
+    },
+    "30.2": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/support-matrix.json",
+          "cross_check_against_this_closeout_logs": {
+            "categories": 7,
+            "items": 39,
+            "lite_test_references": 80,
+            "referenced_tests_found_and_passed": 80,
+            "unresolved": [],
+            "failing": [],
+            "note": "由收尾脚本对照本次运行日志核对，不是 `lite-eval gate --matrix`；不记录提交标识下的逐项执行数量。"
+          }
+        }
+      ],
+      "note": "每个 Lite supported/partial 项都附测试名且“partial”项有未支持说明；80 个 Lite 测试引用在本次日志中全部找到且通过。"
+    },
+    "30.3": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/support-matrix.md",
+          "lines": [
+            1,
+            12
+          ],
+          "keywords_found_at": {
+            "本阶段不合并 Full 与 Lite": 5,
+            "一方的源码位置或测试不作为另一方已支持的依据": 5
+          }
+        }
+      ],
+      "note": null
+    },
+    "30.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:gate_props::gate_passes_iff_every_command_and_every_matrix_test_passes",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:unit:lib::gate::tests::matrix_argv_and_judgement",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "30.4": "`lite-eval gate --matrix`（按提交标识逐项执行并记录执行数量）未运行，留到任务 61；本次仅用日志做了交叉核对"
+  },
+  "notes": [],
+  "deviations": [
+    "新增测试文件尚未登记进 support-matrix.json（tasks.md 阶段 10：任务 61 前补）；支持矩阵 JSON 当前引用 80 个 Lite 测试。"
+  ],
+  "in_scope_failures": []
+}

@@ -1,0 +1,109 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P3-BYTES",
+  "task": "32.4",
+  "requirement": 26,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:31+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 4,
+  "criteria_total": 6,
+  "criteria": {
+    "26.1": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/evidence/lite-capability/design-records.md",
+          "lines": [
+            138,
+            156
+          ],
+          "keywords_found_at": {
+            "header\\\\u0000": 140,
+            "68 65 61 64 65 72 00": 140,
+            "模型补丁": 140,
+            "复现步骤": 140,
+            "无效 UTF-8": 140,
+            "证据等级": 153
+          }
+        }
+      ],
+      "note": null
+    },
+    "26.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:byte_roundtrip::property_35_tool_io_bytes_roundtrip",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "26.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_byte_roundtrip.ByteRoundTripTest.test_generated_strings_round_trip_through_the_python_client",
+          "result": "ok",
+          "log": "jsonl-py-test_byte_roundtrip.log"
+        },
+        {
+          "id": "py:test_byte_roundtrip.ByteRoundTripTest.test_sample_round_trips_through_real_python_and_node_client_processes",
+          "result": "ok",
+          "log": "jsonl-py-test_byte_roundtrip.log"
+        },
+        {
+          "id": "node:generated strings round trip through the Node client and the actual sidecar",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:the sample round trips through the Node client as 17 bytes",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "26.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:byte_roundtrip::dr_p3_1_recorded_model_patch_replays_byte_for_byte",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:byte_roundtrip::dr_p3_1_patch_with_existing_replacement_char_is_kept",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:byte_roundtrip::dr_p3_1_replayed_sample_patch_writes_seventeen_bytes",
+          "result": "ok",
+          "log": "core-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "26.5": "条件不适用：DR-P3-1 结论为“模型补丁”，不是工具 I/O 或 JSONL 传输；“修复前失败、修复后通过”无法演示（dr_p3_1_tool_io_leg_preserves_sample 仅证明出口为 17 字节）",
+    "26.6": "条件不适用：DR-P3-1 结论不是“未复现”"
+  },
+  "notes": [],
+  "deviations": [
+    "准则 26.5、26.6 为条件分支，结论为模型补丁，故按未覆盖计、不按“空真”计入。"
+  ],
+  "in_scope_failures": []
+}

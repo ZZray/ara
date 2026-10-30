@@ -1,0 +1,119 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P4-STABILITY",
+  "task": "35.4",
+  "requirement": 29,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:32+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 5,
+  "criteria_total": 5,
+  "criteria": {
+    "29.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stability_surface::stability_doc_classifies_each_item_once_for_this_version",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "harness:stability_surface::harness_rows_name_this_version_and_match_the_used_stable_set",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "29.2": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/stability.md",
+          "lines": [
+            10,
+            16
+          ],
+          "keywords_found_at": {
+            "新增字段必须可选": 14,
+            "升级主版本": 14,
+            "低于 1\\.0\\.0": 14,
+            "默认值": 14
+          }
+        }
+      ],
+      "note": null
+    },
+    "29.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "core:stability_surface::stable_items_are_usable_through_public_paths",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "core:stability_surface::stable_set_in_the_document_equals_the_items_used_here",
+          "result": "ok",
+          "log": "core-test.log"
+        },
+        {
+          "id": "harness:stability_surface::stable_harness_items_are_usable_through_public_paths",
+          "result": "ok",
+          "log": "harness-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "29.4": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/stability.md",
+          "lines": [
+            10,
+            16
+          ],
+          "keywords_found_at": {
+            "experimental": 15,
+            "任意版本（含补丁版本）": 15,
+            "internal": 16,
+            "不属于外部产品可依赖": 16
+          }
+        }
+      ],
+      "note": null
+    },
+    "29.5": {
+      "status": "covered",
+      "tests": [],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/M-P4-STABILITY-stability-demo-bd7ee7cb-20261029T231024Z.json",
+          "lines": [
+            1,
+            200
+          ],
+          "keywords_found_at": {
+            "E0616|compile|stability": 17
+          }
+        }
+      ],
+      "note": "引用的是 2026-10-29 在 diff bd7ee7cb 上的 `gate --stability-demo` 真实运行记录（修改后以 E0616 编译失败）；本次收尾未重跑该演示。"
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "29.5 的证据是历史运行记录，不是本次运行；稳定项集合在 57.1 之后扩大，演示未在新集合上重跑。"
+  ],
+  "in_scope_failures": []
+}

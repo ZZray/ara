@@ -1,0 +1,66 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-MCP-JSONL",
+  "task": "68.3",
+  "requirement": 42,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:41+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 1,
+  "criteria_total": 1,
+  "criteria": {
+    "42.9": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_connected_tools_join_the_task_and_status_is_reported",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_invalid_configuration_is_a_start_rejection",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_required_failure_rejects_the_start_without_upstream_requests",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_without_the_field_frames_and_tools_are_unchanged",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        },
+        {
+          "id": "py:test_mcp_servers.McpServersTest.test_python_client_passes_the_status_to_on_event",
+          "result": "ok",
+          "log": "jsonl-py-test_mcp_servers.log"
+        }
+      ],
+      "docs": [
+        {
+          "file": "crates/ara-agent-lite-jsonl/docs/protocol-v1.md",
+          "lines": [
+            171,
+            184
+          ],
+          "keywords_found_at": {
+            "mcp_servers": 177
+          }
+        }
+      ],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [
+    "42.9 文档部分的缺口：clients/node/README.md 没有 MCP 说明（protocol-v1.md 第 171–184 行与 crate README.md 第 101、104 行有）"
+  ],
+  "deviations": [],
+  "in_scope_failures": []
+}

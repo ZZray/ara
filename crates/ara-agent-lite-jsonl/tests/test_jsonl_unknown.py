@@ -27,6 +27,9 @@ BINARY = Path(os.environ.get('ARA_JSONL_TEST_BINARY', str(TARGET / 'debug' / ('a
 TOKEN = 'controlled-unknown-no-provider-grant'
 REPO = Path(subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=HERE, capture_output=True, text=True, check=True).stdout.strip())
 CLIENTS = 'crates/ara-agent-lite-jsonl/clients'
+# The clients as they were before typed Unknown settlement (stage 4, f0a7570):
+# its parent, d42ecc3. A fixed revision, so the comparison does not move with HEAD.
+OLD_CLIENT_REV = 'd42ecc3d54d2dbdbd70fb07760ccd5afe24de545'
 
 
 def sha(path):
@@ -175,11 +178,17 @@ class JsonlUnknownTest(unittest.IsolatedAsyncioTestCase):
         old = self.root / 'old-clients'
         old.mkdir()
         for name in ('python/ara_agent_lite.py', 'node/client.mjs'):
-            source = subprocess.run(['git', 'show', f'HEAD:{CLIENTS}/{name}'], cwd=REPO, capture_output=True, check=True).stdout
+            source = subprocess.run(['git', 'show', f'{OLD_CLIENT_REV}:{CLIENTS}/{name}'], cwd=REPO, capture_output=True, check=True).stdout
             (old / Path(name).name).write_bytes(source)
         spec = importlib.util.spec_from_file_location('ara_agent_lite_head', old / 'ara_agent_lite.py')
         head = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(head)
+        # @dataclass looks the module up by name; Python 3.13 fails on an unregistered one.
+        sys.modules['ara_agent_lite_head'] = head
+        try:
+            spec.loader.exec_module(head)
+        except BaseException:
+            sys.modules.pop('ara_agent_lite_head', None)
+            raise
         with ControlledProvider([calls('old-py-1'), text('done')]) as provider:
             config = self.config(provider.endpoint, 'old-python')
             outcome = await head.run_task(BINARY, config, Host(self.root, 'Unknown'), token=TOKEN,

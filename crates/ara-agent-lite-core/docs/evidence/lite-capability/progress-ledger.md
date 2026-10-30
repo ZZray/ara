@@ -1,42 +1,42 @@
 # 进度台账摘要
 
-由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 16 条记录。
+由 `lite-eval ledger render` 从 `progress-ledger.jsonl` 生成，共 45 条记录。
 
 - 总进度：verified 检查点 0/36
-- 模块状态：verified 0，done 8，open 1，未开始 29
+- 模块状态：verified 0，done 36，open 1，未开始 6
 
 | 模块 | 阶段 | 需求 | 状态 | 完成标准 | 更新时间 | 证据 | 未覆盖 |
 |---|---|---|---|---|---|---|---|
 | M-P0-TASKSET | P0 | 1 固定评估任务集 | done | 4/7 | 2026-10-29T15:11:56+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/M-P0-TASKSET-local-20261029T150951.json | SH1 登记见任务 10；6 项完整校验见任务 11.4；1.4 逐任务 fixture SHA 复核与 1.5 Manifest 逐项记录见任务 13；完整 11 命令门禁见任务 61 |
 | M-P0-HOLDOUT | P0 | 2 新增密封 C++ holdout 任务 | open | 7/8 | 2026-10-29T21:47:11+08:00 | tools/lite-eval/tests/isolation_props.rs | 10.6 file symlink case fails: no SeCreateSymbolicLinkPrivilege, Developer Mode off (os error 1314) |
-| M-P0-RUNNER | P0 | 3 一键评估运行器与固定运行策略 | 未开始 | 0/8 | — | — | — |
-| M-P0-METRICS | P0 | 4 结果度量与未知值记录 | 未开始 | 0/8 | — | — | — |
-| M-P0-FAILURE | P0 | 5 失败记录与分类 | 未开始 | 0/7 | — | — | — |
-| M-P0-FORK | P0 | 6 同前缀 Session 分叉（可选） | 未开始 | 0/7 | — | — | — |
-| M-P0-BASELINE | P0 | 7 基线证据 | 未开始 | 0/7 | — | — | — |
+| M-P0-RUNNER | P0 | 3 一键评估运行器与固定运行策略 | done | 8/8 | 2026-10-30T16:03:22+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-RUNNER.json | 偏差：DR-P0-3 已解除阻断（CAS 直连，tasks.md 阶段 7：真实探测 1 次，HTTP 200，761 ms，回显 deepsee… / Run_Policy 增加 model.accepted_echo 字段，DR-P0-3 尚未补记；Task_Set 无 objective… / S1/S2/S3/R1/H2 没有登记 public 检查，verify 返回 Verified 并记 none_registered，只由…；详见 closeouts/M-P0-RUNNER.json |
+| M-P0-METRICS | P0 | 4 结果度量与未知值记录 | done | 8/8 | 2026-10-30T16:03:23+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-METRICS.json | 偏差：需求 4 的验证方式含“有界真实模型试验”，指标在真实 provider 上的表现由 B0 基线运行（M-P0-BASELINE）验证，本次…；详见 closeouts/M-P0-METRICS.json |
+| M-P0-FAILURE | P0 | 5 失败记录与分类 | done | 7/7 | 2026-10-30T16:03:23+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-FAILURE.json | 详见 closeouts/M-P0-FAILURE.json |
+| M-P0-FORK | P0 | 6 同前缀 Session 分叉（可选） | done | 7/7 | 2026-10-30T16:03:24+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-FORK.json | 偏差：限制：有摘要归档前缀（active_base>0）的 Session 拒绝分叉（tasks.md 阶段 5）；需求 6 整体可选。 / 测试位于 Core session_fork.rs；`lite-eval fork` 命令本身没有独立测试。；详见 closeouts/M-P0-FORK.json |
+| M-P0-BASELINE | P0 | 7 基线证据 | done | 5/7 | 2026-10-30T16:09:03+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P0-BASELINE.json | 7.1 and 7.7: B0 ran on a build that already contains the P2 Core code with every P2 switch off (not pre-P2 code); compare.rs checks the Host feature list so it reports the baseline valid; see closeouts/M-P0-BASELINE.json and b0-freeze.json |
 | M-P1-RESUME-BASE | P1 | 8 已实现基线：Core 中断 Run 结算与 Harness resume | done | 7/8 | 2026-10-29T13:32:33+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/gates/req8-start.json | resume_checked 与 ResumeRefusal 待实现（任务 19）；8.5 每次交付重跑 |
-| M-P1-JSONL-START | P1 | 9 JSONL resume 启动帧 | 未开始 | 0/4 | — | — | — |
-| M-P1-JSONL-RECONCILE | P1 | 10 JSONL 结算请求与回复帧 | 未开始 | 0/6 | — | — | — |
-| M-P1-PY | P1 | 11 Python 客户端 reconcile_resume 回调 | 未开始 | 0/5 | — | — | — |
-| M-P1-NODE | P1 | 12 Node 客户端对齐 | 未开始 | 0/5 | — | — | — |
-| M-P1-DOCS | P1 | 13 resume 协议与集成文档 | 未开始 | 0/6 | — | — | — |
-| M-P1-PROCESS | P1 | 14 真实进程中断与恢复 | 未开始 | 0/6 | — | — | — |
-| M-P2A-OUTPUT | P2 | 15 输出上限核实与 Host 策略 | 未开始 | 0/7 | — | — | — |
-| M-P2A-LENGTH | P2 | 16 任务级长度截断续写 | 未开始 | 0/9 | — | — | — |
-| M-P2B-GATE | P2 | 17 完成门 | 未开始 | 0/10 | — | — | — |
-| M-P2C-STUCK | P2 | 18 无进展检测 | 未开始 | 0/10 | — | — | — |
-| M-P2D-REFRESH | P2 | 19 压缩后刷新 | 未开始 | 0/9 | — | — | — |
-| M-P2E-EDIT | P2 | 20 能力测试 Host 使用 edit_file | 未开始 | 0/7 | — | — | — |
-| M-P2-COMPARE | P2 | 21 改动前后对比记录 | 未开始 | 0/7 | — | — | — |
-| M-P3-UNKNOWN | P3 | 22 类型化未知副作用记录 | 未开始 | 0/8 | — | — | — |
-| M-P3-JSONL-UNKNOWN | P3 | 23 JSONL Unknown 结算类型化 | 未开始 | 0/7 | — | — | — |
-| M-P3-REPLAY | P3 | 24 重放前置条件 | 未开始 | 0/7 | — | — | — |
+| M-P1-JSONL-START | P1 | 9 JSONL resume 启动帧 | done | 4/4 | 2026-10-30T16:03:25+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-JSONL-START.json | 详见 closeouts/M-P1-JSONL-START.json |
+| M-P1-JSONL-RECONCILE | P1 | 10 JSONL 结算请求与回复帧 | done | 6/6 | 2026-10-30T16:03:25+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-JSONL-RECONCILE.json | 详见 closeouts/M-P1-JSONL-RECONCILE.json |
+| M-P1-PY | P1 | 11 Python 客户端 reconcile_resume 回调 | done | 4/5 | 2026-10-30T16:03:26+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-PY.json | 11.3 “既有 Python 测试代码不修改”未证明：test_budget_snapshot.py 与 test_compaction_process.py 在阶段 4（f0a7570）被改过；test_budget_snapshot 在本次首轮并行负载下 1 个 ERROR（ReconciliationRequired），安静机器重跑 19 例通过；详见 closeouts/M-P1-PY.json |
+| M-P1-NODE | P1 | 12 Node 客户端对齐 | done | 5/5 | 2026-10-30T16:03:27+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-NODE.json | 详见 closeouts/M-P1-NODE.json |
+| M-P1-DOCS | P1 | 13 resume 协议与集成文档 | done | 6/6 | 2026-10-30T16:03:28+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-DOCS.json | 偏差：两份 Core 文档（host-contracts.md、ai-integration.md）未做 humanizer 审读（tasks.m…；详见 closeouts/M-P1-DOCS.json |
+| M-P1-PROCESS | P1 | 14 真实进程中断与恢复 | done | 5/6 | 2026-10-30T16:03:29+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P1-PROCESS.json | 14.5 7 种拒绝中“授权变化”与“预算或单 Run 上限变大”由 Harness 在调用 Host 前拒绝，9.4 要求 stdout 零帧、不建证据目录，宿主无法被告知命中哪一种；14.5 未完全满足（任务 25.2 因此未勾选）；偏差：同一个真实进程测试（kill 后 resume 与 7 种拒绝）覆盖 14.1–14.4、14.6；超时判失败的逻辑在测试内，本次未制造超时…；详见 closeouts/M-P1-PROCESS.json |
+| M-P2A-OUTPUT | P2 | 15 输出上限核实与 Host 策略 | done | 7/7 | 2026-10-30T16:03:35+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2A-OUTPUT.json | 偏差：8192 判定为历史保守值（源码支持，未对 8192 以上输出做运行确认）；真实模型前后对比属 M-P2-COMPARE，本模块未运行。；详见 closeouts/M-P2A-OUTPUT.json |
+| M-P2A-LENGTH | P2 | 16 任务级长度截断续写 | done | 9/9 | 2026-10-30T16:03:36+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2A-LENGTH.json | 偏差：属性测试中驱动真实 agent 的用例按 DR 记录为 32 例（偏差），256 例在任务 61 恢复；本模块没有运行真实模型。 / Property 22（stop_review_follows_the_decision_table）以 32 例驱动真实 Harness；…；详见 closeouts/M-P2A-LENGTH.json |
+| M-P2B-GATE | P2 | 17 完成门 | done | 9/10 | 2026-10-30T16:03:37+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2B-GATE.json | 17.7 黄金序列 44.1/47.1/50.1 在 P2-b/c/d 代码合入后才采集（tasks.md 阶段 10 偏差），只能发现之后的回归，不能证明合入本身没有改变未配置路径。 另有 run_policies::unregistered_gate_and_default_policies_add_no_events 证明未注册时无 gate 事件，但与改动前逐项一致未证明；偏差：属性测试中驱动真实 agent 的用例按 DR 记录为 32 例（偏差），256 例在任务 61 恢复；本模块没有运行真实模型。；详见 closeouts/M-P2B-GATE.json |
+| M-P2C-STUCK | P2 | 18 无进展检测 | done | 9/10 | 2026-10-30T16:03:38+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2C-STUCK.json | 18.8 黄金序列 44.1/47.1/50.1 在 P2-b/c/d 代码合入后才采集（tasks.md 阶段 10 偏差），只能发现之后的回归，不能证明合入本身没有改变未配置路径。 另有 stuck::unconfigured_detector_emits_nothing_and_injects_nothing 证明未配置阈值时无事件与注入，但与改动前逐项一致未证明；偏差：属性测试中驱动真实 agent 的用例按 DR 记录为 32 例（偏差），256 例在任务 61 恢复；本模块没有运行真实模型。；详见 closeouts/M-P2C-STUCK.json |
+| M-P2D-REFRESH | P2 | 19 压缩后刷新 | done | 9/9 | 2026-10-30T16:03:39+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2D-REFRESH.json | 偏差：黄金序列 44.1/47.1/50.1 在 P2-b/c/d 代码合入后才采集（tasks.md 阶段 10 偏差），只能发现之后的回归，不…；详见 closeouts/M-P2D-REFRESH.json |
+| M-P2E-EDIT | P2 | 20 能力测试 Host 使用 edit_file | done | 6/7 | 2026-10-30T16:03:39+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2E-EDIT.json | 20.4 Comparison_Record 的逐任务写入/编辑次数需要 P2-e 对比（任务 54.1，真实模型运行）；本次只验证了计数器本身（write_counter_props）；偏差：53.5 要求的 tests/verify_versioned_edits.py（Core tests 目录下的 Python 脚本）不在本… / write_counter_props::counters_match_the_reference_model（Property 27）通过…；详见 closeouts/M-P2E-EDIT.json |
+| M-P2-COMPARE | P2 | 21 改动前后对比记录 | done | 7/7 | 2026-10-30T16:09:04+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P2-COMPARE.json | Deviation: one sample per configuration; outcomes flip between consecutive cumulative configurations (SH1, S3, R1), so no difference is attributable to one P2 item. B0 contains merged P2 code with switches off (see M-P0-BASELINE). 21.7 is covered by compare_props only, not exercised in a real run. |
+| M-P3-UNKNOWN | P3 | 22 类型化未知副作用记录 | done | 8/8 | 2026-10-30T16:03:29+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-UNKNOWN.json | 偏差：已知行为（tasks.md 阶段 4）：sidecar 回调失败时 bridge.fail() 取消 Task，多个 Unknown 调用的…；详见 closeouts/M-P3-UNKNOWN.json |
+| M-P3-JSONL-UNKNOWN | P3 | 23 JSONL Unknown 结算类型化 | done | 7/7 | 2026-10-30T16:11:48+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-JSONL-UNKNOWN-fix.json | Deviation: the old-client comparison now pins revision d42ecc3 (parent of f0a7570), not HEAD |
+| M-P3-REPLAY | P3 | 24 重放前置条件 | done | 7/7 | 2026-10-30T16:03:31+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-REPLAY.json | 偏差：replay_provenance 的属性测试发现并修复了 arguments_sha256 随键顺序变化的缺陷；修复前写入的未排序键 No…；详见 closeouts/M-P3-REPLAY.json |
 | M-P3-SUMMARY | P3 | 25 Harness 内压缩共享 Task 预算 | 未开始 | 0/6 | — | — | — |
-| M-P3-BYTES | P3 | 26 NUL 与 Unicode 字节保留 | 未开始 | 0/6 | — | — | — |
-| M-P4-DEPS | P4 | 27 职责边界与依赖方向 | 未开始 | 0/6 | — | — | — |
-| M-P4-EVENTS | P4 | 28 版本化类型事件枚举 | 未开始 | 0/7 | — | — | — |
-| M-P4-STABILITY | P4 | 29 公共接口稳定性规则 | 未开始 | 0/5 | — | — | — |
-| M-P4-MATRIX | P4 | 30 Full/Lite 支持矩阵 | 未开始 | 0/5 | — | — | — |
+| M-P3-BYTES | P3 | 26 NUL 与 Unicode 字节保留 | done | 4/6 | 2026-10-30T16:03:31+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P3-BYTES.json | 26.5 条件不适用：DR-P3-1 结论为“模型补丁”，不是工具 I/O 或 JSONL 传输；“修复前失败、修复后通过”无法演示（dr_p3_1_tool_io_leg_preserves_sample 仅证明出口为 17 字节）；26.6 条件不适用：DR-P3-1 结论不是“未复现”；偏差：准则 26.5、26.6 为条件分支，结论为模型补丁，故按未覆盖计、不按“空真”计入。；详见 closeouts/M-P3-BYTES.json |
+| M-P4-DEPS | P4 | 27 职责边界与依赖方向 | done | 6/6 | 2026-10-30T16:03:32+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-DEPS.json | 偏差：host-contracts.md 第 21–78 行仍写“任务 34.2 的 Dependency_Check_Test 尚未实现”，该测…；详见 closeouts/M-P4-DEPS.json |
+| M-P4-EVENTS | P4 | 28 版本化类型事件枚举 | done | 6/7 | 2026-10-30T16:03:40+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-EVENTS.json | 28.7 DR-P4-1 偏差待用户确认：现有 execute 的 model_result 与同一轮 text_delta 由两个任务发出，相对顺序每次运行可能不同；event_compat 把 model_result 移到相邻 text_delta 段之前再比对，其余顺序严格比对。若要求严格顺序，需改 Core 事件发送。“顺序一致”仅在此放宽下成立，故不计入；偏差：DR-P4-1 事件顺序放宽（model_result 与 text_delta）尚待用户接受。 / event_samples::capture_events_v1 为 #[ignore]（样本采集入口，故意不在常规测试中重采）。；详见 closeouts/M-P4-EVENTS.json |
+| M-P4-STABILITY | P4 | 29 公共接口稳定性规则 | done | 5/5 | 2026-10-30T16:03:33+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-STABILITY.json | 偏差：29.5 的证据是历史运行记录，不是本次运行；稳定项集合在 57.1 之后扩大，演示未在新集合上重跑。；详见 closeouts/M-P4-STABILITY.json |
+| M-P4-MATRIX | P4 | 30 Full/Lite 支持矩阵 | done | 4/5 | 2026-10-30T16:03:34+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-P4-MATRIX.json | 30.4 `lite-eval gate --matrix`（按提交标识逐项执行并记录执行数量）未运行，留到任务 61；本次仅用日志做了交叉核对；偏差：新增测试文件尚未登记进 support-matrix.json（tasks.md 阶段 10：任务 61 前补）；支持矩阵 JSON 当前引…；详见 closeouts/M-P4-MATRIX.json |
 | M-P4-CONSUMER | P4 | 31 树外消费者 crate | 未开始 | 0/7 | — | — | — |
 | M-P5-REVIEW | P5 | 32 模块独立审查 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-P5-QUALITY | P5 | 33 交付代码质量门 | done | 4/4 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
@@ -45,6 +45,11 @@
 | M-P5-STAGE | P5 | 36 证据保留与阶段验收记录 | done | 7/7 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-X-LEDGER | 横向 | 37 进度台账 | done | 5/5 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
 | M-X-NOTIFY | 横向 | 38 钉钉进度通知 | done | 9/9 | 2026-10-29T14:11:09+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/reviews/checkpoint7-c3f6c9ec-codex-20261029T061109Z.json | 审查缺口：codex review is a recorded gap: 用户 2026-10-29 指定按技能自行审查，不调用外部 Codex；独立 Codex reviewer 未运行 |
+| M-H0-HEADROOM | 横向 | 39 固定版本 Headroom Rust 可行性 | 未开始 | 0/6 | — | — | — |
+| M-P2F-COMPRESS | 横向 | 40 Lite 模型投影压缩与原文回读 | 未开始 | 0/10 | — | — | — |
+| M-P2F-COMPARE | 横向 | 41 独立 A/B 与交付 | 未开始 | 0/6 | — | — | — |
+| M-MCP-CORE | 横向 | 42 Lite 的 MCP 工具来源 | done | 8/9 | 2026-10-30T16:03:41+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-MCP-CORE.json | 42.1 crate 隔离与 harness_mcp 证明了普通 AgentTool 接入，但“新增第三方依赖按需求 33 登记许可证并说明原因”需 61.1 的 lite-eval deny 才能核对，本次未运行；偏差：README 记录的设计偏差：未知字段严格报错（Claude Code 忽略）、Windows 子进程 spawn 后才加入 Job（极短逃…；详见 closeouts/M-MCP-CORE.json |
+| M-MCP-JSONL | 横向 | 42 JSONL 暴露 MCP（42.9） | done | 1/1 | 2026-10-30T16:03:41+08:00 | crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/M-MCP-JSONL.json | 42.9 文档部分的缺口：clients/node/README.md 没有 MCP 说明（protocol-v1.md 第 171–184 行与 crate README.md 第 101、104 行有）；详见 closeouts/M-MCP-JSONL.json |
 
 ## 未解除的阻断
 

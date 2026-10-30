@@ -1,0 +1,120 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P3-JSONL-UNKNOWN",
+  "task": "29.6",
+  "requirement": 23,
+  "state": "open",
+  "created_at": "2026-10-30T16:03:29+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 6,
+  "criteria_total": 7,
+  "criteria": {
+    "23.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_jsonl_unknown.JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence",
+          "result": "ok",
+          "log": "jsonl-py-test_jsonl_unknown.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "23.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_client_props.UnknownEffectParsingProperties.test_valid_records_keep_order_and_exact_values",
+          "result": "ok",
+          "log": "jsonl-py-test_client_props.log"
+        },
+        {
+          "id": "py:test_jsonl_unknown.JsonlUnknownTest.test_python_client_reports_host_declared_unknown",
+          "result": "ok",
+          "log": "jsonl-py-test_jsonl_unknown.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "23.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "node:valid records keep original order and exact values, frozen",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "23.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_jsonl_unknown.JsonlUnknownTest.test_n_unknown_calls_give_n_records_bound_to_existing_evidence",
+          "result": "ok",
+          "log": "jsonl-py-test_jsonl_unknown.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "23.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_jsonl_unknown.JsonlUnknownTest.test_no_unknown_leaves_the_field_absent",
+          "result": "ok",
+          "log": "jsonl-py-test_jsonl_unknown.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "23.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_client_props.UnknownEffectParsingProperties.test_invalid_record_names_its_field_and_builds_nothing",
+          "result": "ok",
+          "log": "jsonl-py-test_client_props.log"
+        },
+        {
+          "id": "node:an invalid record names its field and builds nothing",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:absent list is empty; a non-list or an extra key is refused",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {
+    "23.4": "test_clients_before_this_change_still_complete_the_same_scenario 失败（首轮与安静重跑都一样）：测试用 importlib 加载 `git show HEAD:` 的旧客户端，未登记 sys.modules，Python 3.13 下 @dataclass 抛 AttributeError（NoneType 无 __dict__）；HEAD 已含新客户端，旧客户端对照不再成立。旧客户端兼容未证明"
+  },
+  "notes": [],
+  "deviations": [],
+  "in_scope_failures": [
+    "py:test_jsonl_unknown.JsonlUnknownTest.test_clients_before_this_change_still_complete_the_same_scenario（首轮与重跑均失败）"
+  ],
+  "blocker": {
+    "reason": "tests/test_jsonl_unknown.py::test_clients_before_this_change_still_complete_the_same_scenario 失败：AttributeError(NoneType 无 __dict__)，测试用 importlib 加载 `git show HEAD:` 的旧客户端且未登记 sys.modules，Python 3.13 下 @dataclass 无法导入；HEAD 已含新客户端，旧客户端对照不再成立",
+    "attempts": [
+      "首轮 python -m unittest -v test_jsonl_unknown（与 cargo 并行） => 4 例 1 个 ERROR（AttributeError）",
+      "安静机器重跑同一模块 => 同样 1 个 ERROR，确定性失败，非负载偶发；本任务禁止改源码/测试，未修"
+    ],
+    "decision": "是否授权修正该测试（把旧客户端模块登记进 sys.modules，并改为对照改动前的固定提交而不是随 HEAD 移动的 HEAD），或接受 23.4 的旧客户端兼容证明改用其他方式"
+  }
+}

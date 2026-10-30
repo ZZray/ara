@@ -1,0 +1,158 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P0-RUNNER",
+  "task": "13.6",
+  "requirement": 3,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:20+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 8,
+  "criteria_total": 8,
+  "criteria": {
+    "3.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_props::tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:runner_examples::a_changed_fixture_refuses_only_that_task",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:unit:lib::policy::tests::missing_items_are_all_named_and_unknown_fields_refused",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:unit:lib::policy::tests::a_complete_policy_parses_and_names_missing_budgets",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [
+        {
+          "file": "tools/lite-eval/run-policy.json",
+          "git_tracked": true,
+          "uncommitted_changes": false,
+          "head": "f43064bb3a832a3fcbf6ddbcff67085f444f717c"
+        }
+      ],
+      "note": "policy 单元测试覆盖固定路径读取、缺项逐一报出、未知字段拒绝；run-policy.json 已纳入版本控制且无未提交改动（HEAD 见证据）。无命令行或环境变量覆盖入口由代码结构保证，无专门的反向测试。"
+    },
+    "3.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:probe_props::probe_classifies_every_injected_fault_with_exactly_one_request",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:runner_examples::probe_only_stops_after_a_successful_probe",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_examples::an_unavailable_environment_writes_no_task_record_and_exits_3",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_examples::an_undeterminable_code_version_exits_before_the_probe",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:runner_props::tasks_run_in_order_one_at_a_time_and_pass_only_on_an_oracle_pass",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:runner_examples::a_changed_fixture_refuses_only_that_task",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.6": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:credential_props::the_credential_occurs_nowhere_in_the_run_outputs",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.7": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_examples::start_failures_write_no_manifest",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        },
+        {
+          "id": "eval:runner_examples::an_invalid_task_set_is_recorded_and_exits_4_without_requests",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "3.8": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "eval:runner_examples::an_undeterminable_code_version_exits_before_the_probe",
+          "result": "ok",
+          "log": "lite-eval-test-nofailfast.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [
+    "DR-P0-3 已解除阻断（CAS 直连，tasks.md 阶段 7：真实探测 1 次，HTTP 200，761 ms，回显 deepseek-flash，记 accepted_alias_unverified）；本次收尾未再探测。",
+    "Run_Policy 增加 model.accepted_echo 字段，DR-P0-3 尚未补记；Task_Set 无 objective 字段，runner::objective(kind) 按任务类型给固定文案；新增 --probe-only 选项（设计 CLI 中没有）。均为实现中的决定，B0 前须复核（tasks.md 阶段 7）。",
+    "S1/S2/S3/R1/H2 没有登记 public 检查，verify 返回 Verified 并记 none_registered，只由 Oracle 判定；S3 的 cmake/ctest 公共测试未登记（任务 9.3 缺口）。"
+  ],
+  "in_scope_failures": []
+}

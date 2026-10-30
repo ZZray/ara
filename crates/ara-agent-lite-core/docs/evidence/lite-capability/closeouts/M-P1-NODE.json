@@ -1,0 +1,121 @@
+{
+  "schema": "lite-closeout-v1",
+  "module": "M-P1-NODE",
+  "task": "23.4",
+  "requirement": 12,
+  "state": "done",
+  "created_at": "2026-10-30T16:03:26+08:00",
+  "run_summary": {
+    "path": "crates/ara-agent-lite-core/docs/evidence/lite-capability/closeouts/run-summary-20261030.json",
+    "sha256": "f2e070a67047b523a43352d777a2553aaecca614453acfcf23635b27378a85d2"
+  },
+  "method": "每条准则对应到本次运行中确实通过的测试（解析自原始日志，引用不存在或未通过时脚本中止）或文档位置证据；未重新审读测试函数体，映射依据测试名、tasks.md 子任务描述与执行记录。本次未运行真实模型。属性测试中驱动真实 agent 的用例为 32 例（已记录的偏差，256 例在任务 61 恢复）。",
+  "criteria_done": 5,
+  "criteria_total": 5,
+  "criteria": {
+    "12.1": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "node:a settled receipt is written back once with the request correlation",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:a request without resume, or for a Run never started, never calls the callback",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "12.2": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "node:a thrown callback is refused without its message or the model token",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:an invalid receipt is refused and never written",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:resume without the callback fails before spawn; without resume the callback is optional",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:a thrown callback keeps neither its message nor the model token",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "12.3": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "py:test_resume_cross_language.CrossLanguageResumeTest.test_same_frames_and_stop_for_each_scenario",
+          "result": "ok",
+          "log": "jsonl-py-test_resume_cross_language.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    },
+    "12.4": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "node:resume without the callback fails before spawn; without resume the callback is optional",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:ordinary child IPC preserves exact tool correlation and validates original outcome ref",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:cancel aborts the original callback but wait remains pending until it settles",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:disconnect is delivery unknown, retains original callback receipts and does not retry",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": "git log：client.test.mjs 自初始提交 22cdea0 起未被修改，resume 工作没有改动它；工作区无未提交改动。"
+    },
+    "12.5": {
+      "status": "covered",
+      "tests": [
+        {
+          "id": "node:cancel aborts the pending callback within 1000 ms and it is not called again",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        },
+        {
+          "id": "node:deadline aborts the pending callback within 1000 ms and it is not called again",
+          "result": "ok",
+          "log": "jsonl-node-test.log"
+        }
+      ],
+      "docs": [],
+      "note": null
+    }
+  },
+  "uncovered": {},
+  "notes": [],
+  "deviations": [],
+  "in_scope_failures": []
+}

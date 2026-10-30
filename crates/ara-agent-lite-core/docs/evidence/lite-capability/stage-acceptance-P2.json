@@ -1,0 +1,101 @@
+{
+  "phase": "P2",
+  "covered": [],
+  "uncovered": [
+    {
+      "goal": 1,
+      "name": "多文件 C++ 编码真实产物与独立检查",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 1,
+      "name": "逻辑推理真实产物与独立检查",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 1,
+      "name": "逆向分析真实产物与独立检查",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 1,
+      "name": "同模型同任务同预算前后对比",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 2,
+      "name": "压缩",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 2,
+      "name": "多次续写",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 2,
+      "name": "长度截断",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 2,
+      "name": "进程中断",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 2,
+      "name": "回执核对",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 3,
+      "name": "职责边界与依赖方向",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 3,
+      "name": "稳定接口与树外消费者",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 4,
+      "name": "回归测试",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 4,
+      "name": "独立审查",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 4,
+      "name": "依赖门禁",
+      "reason": "尚无证据"
+    },
+    {
+      "goal": 4,
+      "name": "失败记录与未覆盖项保留",
+      "reason": "尚无证据"
+    }
+  ],
+  "goals": [
+    {
+      "goal": 1,
+      "overall_accepted": false
+    },
+    {
+      "goal": 2,
+      "overall_accepted": false
+    },
+    {
+      "goal": 3,
+      "overall_accepted": false
+    },
+    {
+      "goal": 4,
+      "overall_accepted": false
+    }
+  ],
+  "pending_review_runs": [],
+  "tasks": []
+}
