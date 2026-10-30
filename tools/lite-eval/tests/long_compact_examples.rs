@@ -17,6 +17,10 @@ use serde_json::json;
 const VARIABLE: &str = "LITE_EVAL_LONG_COMPACT_KEY";
 
 fn execute(repo: &TestRepo, task: &str) -> anyhow::Result<LongCompactReport> {
+    execute_capped(repo, task, None)
+}
+
+fn execute_capped(repo: &TestRepo, task: &str, cap: Option<u64>) -> anyhow::Result<LongCompactReport> {
     let env = |name: &str| (name == VARIABLE).then(|| "long-compact-key-3c9e".to_owned());
     let evidence = repo.evidence("long-compact");
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
@@ -27,6 +31,7 @@ fn execute(repo: &TestRepo, task: &str) -> anyhow::Result<LongCompactReport> {
         executor: &HarnessExecutor,
         env: &env,
         features: lite_eval::host::Features::V1,
+        context_window_cap: cap,
     }))
 }
 
@@ -56,7 +61,57 @@ fn a_task_without_compaction_is_uncovered_not_passed() {
     let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&report.record_path).unwrap()).unwrap();
     assert_eq!(written["check"]["verdict"]["status"], "uncovered");
     assert_eq!(written["budget_key"], "LONG-COMPACT");
+    assert!(written["context_window_cap"].is_null(), "no cap: the catalog window is used");
+    // The loopback catalog declares 1_000_000 tokens.
+    let limits = request_limits(&report);
+    assert_eq!(limits.len(), 2);
+    assert!(limits.iter().all(|(output, limit)| *limit == 1_000_000 - output - 4096), "{limits:?}");
     assert!(!std::fs::read_to_string(&report.record_path).unwrap().contains("long-compact-key-3c9e"));
+}
+
+/// `(effective output tokens, request byte limit)` of every agent call the
+/// Core reserved, from the Harness events files.
+fn request_limits(report: &LongCompactReport) -> Vec<(u64, u64)> {
+    report
+        .record
+        .events
+        .iter()
+        .flat_map(|path| load_events(path).lines)
+        .filter(|line| line.event["type"] == "model_call" && line.event["phase"] == "agent")
+        .filter(|line| line.event["status"] == "reserved")
+        .map(|line| {
+            let output = line.event["output_limit"]["effective"].as_u64().expect("output_limit.effective");
+            let limit = line.event["context_observation"]["request_limit_bytes"].as_u64().expect("request_limit_bytes");
+            (output, limit)
+        })
+        .collect()
+}
+
+#[test]
+fn a_context_window_cap_reaches_the_model_host_and_the_record() {
+    const CAP: u64 = 131_072;
+    let provider = Provider::standard();
+    let mut repo = TestRepo::new(&provider.endpoint, VARIABLE, &|_| "correct".into());
+    with_budget(&mut repo, 6);
+    let report = execute_capped(&repo, "S1", Some(CAP)).unwrap();
+    assert_eq!(report.record.context_window_cap, Some(CAP));
+    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&report.record_path).unwrap()).unwrap();
+    assert_eq!(written["context_window_cap"], CAP);
+    // Core derived the text budget from the capped window, not the 1_000_000 the catalog declares.
+    let limits = request_limits(&report);
+    assert_eq!(limits.len(), 2);
+    assert!(limits.iter().all(|(output, limit)| *limit == CAP - output - 4096), "{limits:?}");
+    assert_eq!(report.record.check.agent_reservations, 2, "the capped task still ran");
+}
+
+#[test]
+fn a_zero_context_window_cap_starts_nothing() {
+    let provider = Provider::standard();
+    let mut repo = TestRepo::new(&provider.endpoint, VARIABLE, &|_| "correct".into());
+    with_budget(&mut repo, 6);
+    let error = execute_capped(&repo, "S1", Some(0)).err().expect("a zero window is refused");
+    assert!(format!("{error:#}").contains("--context-window must be positive"), "{error:#}");
+    assert_eq!(provider.probe_requests.load(Ordering::SeqCst), 0);
 }
 
 #[test]

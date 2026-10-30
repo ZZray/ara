@@ -73,6 +73,8 @@ Task 证据目录及客户端操作目录必须是新目录。初始化帧包含
 - `catalog`：按 Core 的模型目录协议读取模型能力，事件来源为 `hub_model_directory`。
 - `host_declared_loopback`：产品持有的 loopback Relay 明确提供能力，事件来源为
   `host_model_configuration`。仅允许带端口的字面 loopback HTTP 地址和 `/v1` 路径。
+- `catalog_capped`（实验性）：按 `catalog` 读取能力，再把上下文窗口压低到 `context_window_cap`
+  个 token 以内，见 `docs/protocol-v1.md`。
 
 sidecar 固定初始模型、工具、路径和授权版本。`prepare` 只返回新 `run_id_next` 和
 包含实际反馈的 `objective`，不能更换 Session、授权、模型、工具或扩大预算。

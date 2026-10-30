@@ -129,7 +129,16 @@ pub struct RunConfig {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Resolution {
     Catalog,
-    HostDeclaredLoopback { capabilities: Caps },
+    HostDeclaredLoopback {
+        capabilities: Caps,
+    },
+    /// Experimental: catalog capabilities with the context window lowered to
+    /// at most `context_window_cap` tokens, so a long Task can reach compaction
+    /// on a model that declares a very large window. The range is checked at
+    /// start validation.
+    CatalogCapped {
+        context_window_cap: u64,
+    },
 }
 
 #[derive(Clone, Deserialize)]
@@ -368,5 +377,35 @@ mod tests {
         assert!(!admitted(&frame(Some(0), 1, "none")));
         assert!(admitted(&frame(Some(16), 16, "none")));
         assert!(!admitted(&frame(Some(16), 17, "none")));
+    }
+
+    fn capped(resolution: Value) -> Value {
+        let mut start = frame(None, 512, "none");
+        start["run"]["model_resolution"] = resolution;
+        start
+    }
+
+    #[test]
+    fn catalog_capped_is_admitted_only_within_the_cap_range() {
+        for cap in [1024u64, 98_304, 131_072, 10_000_000] {
+            let start = capped(json!({"kind":"catalog_capped","context_window_cap":cap}));
+            assert!(admitted(&start), "{cap}");
+        }
+        for cap in [0u64, 1, 1023, 10_000_001, u64::MAX] {
+            let start: Start =
+                serde_json::from_value(capped(json!({"kind":"catalog_capped","context_window_cap":cap}))).unwrap();
+            let error = crate::runtime::validate(&start).expect_err("out of range");
+            assert_eq!(error.to_string(), "context_window_cap_out_of_range", "{cap}");
+        }
+        // Not a schema match at all: wrong type, negative, missing, unknown fields.
+        for resolution in [
+            json!({"kind":"catalog_capped","context_window_cap":"131072"}),
+            json!({"kind":"catalog_capped","context_window_cap":-1}),
+            json!({"kind":"catalog_capped","context_window_cap":131072.5}),
+            json!({"kind":"catalog_capped"}),
+            json!({"kind":"catalog_capped","context_window_cap":131072,"extra":1}),
+        ] {
+            assert!(serde_json::from_value::<Start>(capped(resolution.clone())).is_err(), "{resolution}");
+        }
     }
 }

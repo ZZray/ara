@@ -146,6 +146,7 @@ fn escaping_tool_calls_are_rejected_and_reveal_nothing() {
                     generation: Default::default(),
                     length_recovery: Default::default(),
                     output_ceiling: None,
+                    context_window_cap: None,
                 }),
                 credential_env: "LITE_EVAL_SEALED_KEY".into(),
                 credentials,

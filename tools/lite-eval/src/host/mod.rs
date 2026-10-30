@@ -34,6 +34,7 @@ use ara_agent_lite_harness::{
         analysis_tools::{self, AnalysisConfig},
         completion_gate::{CompletionGate, GateRequest, GateVerdict, Registration},
         model::{CatalogModelHost, GenerationPolicy, LengthRecoveryPolicy, ModelHost, ModelSelection, Route},
+        model_caps::{ModelCaps, TextBudget},
         rpi_agent::{AgentError, AgentTool, AgentToolResult, ToolResultPartial},
         rpi_ai::{Schema, Tool},
         steering::SteeringBuffer,
@@ -72,12 +73,31 @@ pub struct PolicyModelHost {
     pub generation: GenerationPolicy,
     pub length_recovery: LengthRecoveryPolicy,
     pub output_ceiling: Option<u32>,
+    /// Host-declared context window ceiling in tokens (`long-compact
+    /// --context-window`); `None` keeps the catalog value. `run` never sets it.
+    pub context_window_cap: Option<u64>,
+}
+
+/// The context window a Host with ceiling `cap` declares: the smaller of
+/// the catalog value and `cap`, and `cap` when the catalog declares none.
+pub fn cap_window(declared: Option<u64>, cap: u64) -> Option<u64> {
+    Some(declared.map_or(cap, |window| window.min(cap)))
+}
+
+/// The text budget Core derives for a Host that declares `window` tokens
+/// and runs agent calls with an effective output of `output_tokens`.
+pub fn declared_budget(window: u64, output_tokens: u64) -> Result<TextBudget> {
+    ModelCaps { context_window: Some(window), max_tokens: output_tokens, input: None }.budget(output_tokens)
 }
 
 #[async_trait]
 impl ModelHost for PolicyModelHost {
     async fn resolve(&self, route: Route, endpoint: &str, token: &str, run: &str) -> Result<ModelSelection> {
-        CatalogModelHost.resolve(route, endpoint, token, run).await
+        let mut selection = CatalogModelHost.resolve(route, endpoint, token, run).await?;
+        if let Some(cap) = self.context_window_cap {
+            selection.capabilities.context_window = cap_window(selection.capabilities.context_window, cap);
+        }
+        Ok(selection)
     }
 
     fn capabilities_source(&self) -> &'static str {
@@ -616,6 +636,14 @@ mod tests {
             "diagnostic_output": "cut", "goal": null, "evidence": evidence, "truncated": null
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_context_window_cap_only_lowers_the_declared_window() {
+        assert_eq!(cap_window(Some(1_000_000), 131_072), Some(131_072));
+        assert_eq!(cap_window(Some(65_536), 131_072), Some(65_536), "a cap never raises the catalog value");
+        assert_eq!(cap_window(Some(131_072), 131_072), Some(131_072));
+        assert_eq!(cap_window(None, 131_072), Some(131_072), "an undeclared window takes the cap");
     }
 
     #[tokio::test]

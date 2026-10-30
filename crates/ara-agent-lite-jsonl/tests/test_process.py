@@ -155,6 +155,36 @@ class NativeProcessTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(capability['source'], 'host_model_configuration')
             self.assertEqual(provider.catalog_requests, 0)
 
+    async def test_catalog_capped_lowers_the_declared_window_below_the_catalog_value(self):
+        with ControlledProvider([call('one', 'write_answer', {'content': 'correct'}), text('Submitted.')]) as provider:
+            config = self.config(provider.endpoint)
+            config['run']['model_resolution'] = {'kind': 'catalog_capped', 'context_window_cap': 98304}
+            outcome = await self.invoke(config)
+            self.assertEqual(outcome['stop'], 'AwaitingHostAcceptance')
+            rows = [json.loads(row) for row in (self.root / 'harness/run-1-events.jsonl').read_bytes().splitlines()]
+            capability = next(row['event'] for row in rows if row['event']['type'] == 'model_capabilities')
+            self.assertEqual(capability['source'], 'hub_model_directory')
+            # The loopback catalog declares 1000000 tokens; max_output 512 is the effective output limit.
+            self.assertEqual(capability['declared']['context_window'], 98304)
+            self.assertEqual(capability['text_budget'], {'projection_bytes': 46848, 'request_bytes': 93696})
+            self.assertGreater(provider.catalog_requests, 0)
+
+    async def test_catalog_capped_out_of_range_is_refused_before_any_request(self):
+        with ControlledProvider([]) as provider:
+            config = self.config(provider.endpoint)
+            for cap in (1023, 10_000_001):
+                config['run']['model_resolution'] = {'kind': 'catalog_capped', 'context_window_cap': cap}
+                save(self.root / f'sent-start-{cap}.json', config)
+                options = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+                proc = await asyncio.create_subprocess_exec(str(BINARY), stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    env={**os.environ, 'ARA_AGENT_MODEL_TOKEN': 'controlled-no-provider-grant'}, **options)
+                stdout, stderr = await asyncio.wait_for(proc.communicate(encoded(config)), timeout=10)
+                self.assertEqual((proc.returncode, stdout), (2, b''), cap)
+                self.assertEqual(stderr.decode('utf-8').strip(), 'start_config_rejected', cap)
+            self.assertEqual((provider.catalog_requests, len(provider.requests)), (0, 0))
+            self.assertFalse((self.root / 'harness').exists())
+
     async def test_original_budget_never_restarts_relay_or_second_run(self):
         with ControlledProvider([call('first', 'write_answer', {'content': 'partial'}), text('Submit.')]) as provider:
             config = self.config(provider.endpoint)

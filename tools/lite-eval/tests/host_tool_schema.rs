@@ -59,6 +59,7 @@ async fn host(base: &Path, task: &TaskEntry, features: Features, endpoint: &str)
             generation: Default::default(),
             length_recovery: Default::default(),
             output_ceiling: features.output_ceiling,
+            context_window_cap: None,
         }),
         credential_env: "LITE_EVAL_SCHEMA_KEY".into(),
         credentials: Credentials::new(["schema-test-key".to_owned()]),

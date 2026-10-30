@@ -510,3 +510,27 @@ fn orphaned_sidecars_are_spawned_pids_without_a_later_end_or_kill() {
     assert_eq!(orphaned_sidecars(&log), vec![22, 33, 66]);
     assert!(orphaned_sidecars("").is_empty());
 }
+
+/// LONG-TRIAL runs with `max_output` 2048; the recommended `--context-window`
+/// leaves a 40-64 KiB projection budget and the sidecar accepts it.
+#[test]
+fn the_recommended_context_window_leaves_a_small_projection_budget() {
+    use ara_agent_lite_harness::core::model_caps::ModelCaps;
+    use lite_eval::{
+        host::{cap_window, declared_budget},
+        long_trial::{context_window_help, CONTEXT_WINDOW_CAP_RANGE, RECOMMENDED_CONTEXT_WINDOW},
+    };
+    assert!(CONTEXT_WINDOW_CAP_RANGE.contains(&RECOMMENDED_CONTEXT_WINDOW));
+    let capped = ModelCaps {
+        context_window: cap_window(Some(1_000_000), RECOMMENDED_CONTEXT_WINDOW),
+        max_tokens: 2048,
+        input: None,
+    };
+    let budget = capped.budget(2048).unwrap();
+    assert_eq!((budget.projection_bytes, budget.request_bytes), (46080, 92160));
+    assert!((40 * 1024..=64 * 1024).contains(&budget.projection_bytes));
+    assert_eq!(declared_budget(RECOMMENDED_CONTEXT_WINDOW, 2048).unwrap().projection_bytes, 46080);
+    let help = context_window_help();
+    assert!(help.contains("Recommended 98304"), "{help}");
+    assert!(help.contains("45 KiB projection / 90 KiB request"), "{help}");
+}

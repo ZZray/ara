@@ -100,6 +100,9 @@ pub fn validate(start: &Start) -> Result<Option<McpConfig>> {
             "host_caps_text_only"
         );
     }
+    if let Resolution::CatalogCapped { context_window_cap } = &run.model_resolution {
+        ensure!(CONTEXT_WINDOW_CAP_RANGE.contains(context_window_cap), "context_window_cap_out_of_range");
+    }
     let Some(servers) = &start.mcp_servers else {
         ensure!(start.mcp_options.is_none(), "mcp_options_without_servers");
         return Ok(None);
@@ -183,6 +186,29 @@ impl ModelHost for DeclaredModelHost {
     }
 }
 
+/// Accepted `catalog_capped.context_window_cap`, in tokens.
+const CONTEXT_WINDOW_CAP_RANGE: std::ops::RangeInclusive<u64> = 1024..=10_000_000;
+
+/// Catalog resolution whose declared context window is lowered to `cap`
+/// tokens (and set to `cap` when the catalog declares none). Experimental.
+struct CappedCatalogHost {
+    cap: u64,
+}
+
+#[async_trait]
+impl ModelHost for CappedCatalogHost {
+    async fn resolve(&self, route: Route, endpoint: &str, token: &str, run: &str) -> Result<ModelSelection> {
+        let mut selection = CatalogModelHost.resolve(route, endpoint, token, run).await?;
+        let declared = selection.capabilities.context_window;
+        selection.capabilities.context_window = Some(declared.map_or(self.cap, |window| window.min(self.cap)));
+        Ok(selection)
+    }
+
+    fn capabilities_source(&self) -> &'static str {
+        CatalogModelHost.capabilities_source()
+    }
+}
+
 /// One immutable Host policy for the whole Task. All model resolution and
 /// provenance still come from the selected base Host; prepare cannot replace it.
 struct TaskModelHost {
@@ -230,6 +256,9 @@ impl Template {
         let base: Arc<dyn ModelHost> = match &config.model_resolution {
             Resolution::Catalog => Arc::new(CatalogModelHost),
             Resolution::HostDeclaredLoopback { capabilities } => Arc::new(DeclaredModelHost(capabilities.model_caps())),
+            Resolution::CatalogCapped { context_window_cap } => {
+                Arc::new(CappedCatalogHost { cap: *context_window_cap })
+            }
         };
         let model_host: Arc<dyn ModelHost> = Arc::new(TaskModelHost {
             inner: base,

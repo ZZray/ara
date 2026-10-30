@@ -24,7 +24,7 @@ use serde_json::Value;
 use crate::{
     common::{new_run_dir, sha256_file, timestamp_now, write_json_new, Credentials},
     digest::tree_digest,
-    host::{session_paths, Features},
+    host::{declared_budget, session_paths, Features},
     metrics::{load_events, EventsFile},
     policy::load_fixed,
     probe::probe,
@@ -254,6 +254,8 @@ pub struct LongCompactRecord {
     pub compactions: Vec<CompactionEvent>,
     pub session: SessionReferences,
     pub task_error: Option<String>,
+    /// Host-declared context window ceiling in tokens; `None` is the catalog value.
+    pub context_window_cap: Option<u64>,
     /// `<run>/tasks/<id>/` with the Harness evidence and Oracle outputs.
     pub task_dir: PathBuf,
 }
@@ -266,6 +268,33 @@ pub struct LongCompactInputs<'a> {
     pub executor: &'a dyn TaskExecutor,
     pub env: &'a (dyn Fn(&str) -> Option<String> + Sync),
     pub features: Features,
+    /// Host-declared context window ceiling in tokens (`--context-window`);
+    /// `None` keeps the catalog value.
+    pub context_window_cap: Option<u64>,
+}
+
+/// `--context-window` value recommended for this trial: 128 Ki tokens.
+pub const RECOMMENDED_CONTEXT_WINDOW: u64 = 131_072;
+
+/// Help of `--context-window`, with the budgets `ModelCaps::budget` gives
+/// the recommended value for the two agent output limits this trial meets:
+/// 32768 tokens (the Run_Policy `generation.max_output`, effective with the
+/// P2-a Host ceiling) and 8192 (the builtin limit of the v1 configuration).
+pub fn context_window_help() -> String {
+    let window = RECOMMENDED_CONTEXT_WINDOW;
+    let kib = |output_tokens| match declared_budget(window, output_tokens) {
+        Ok(budget) => {
+            format!("{} KiB projection / {} KiB request", budget.projection_bytes / 1024, budget.request_bytes / 1024)
+        }
+        Err(error) => format!("unavailable ({error})"),
+    };
+    format!(
+        "Tokens of context window this Host declares, never above the catalog value. Not defaulted: the catalog \
+         model declares ~1M tokens, a ~4 MiB budget, and no compaction ever happens. Recommended {window}: with a \
+         32768-token output (--p2-through P2-a or later) {}; with the v1 8192-token output {}",
+        kib(32768),
+        kib(8192)
+    )
 }
 
 pub struct LongCompactReport {
@@ -280,6 +309,7 @@ pub struct LongCompactReport {
 pub async fn run(inputs: LongCompactInputs<'_>) -> Result<LongCompactReport> {
     let started_at = timestamp_now();
     let root = inputs.repo_root;
+    ensure!(inputs.context_window_cap != Some(0), "--context-window must be positive");
     let (policy, policy_identity) = load_fixed(root)?;
     let budget = *policy.budget(LONG_COMPACT_BUDGET)?;
     let set = load(&root.join(TASK_SET_PATH))?;
@@ -324,6 +354,7 @@ pub async fn run(inputs: LongCompactInputs<'_>) -> Result<LongCompactReport> {
         sealed: None,
         sealed_registration: None,
         features: inputs.features,
+        context_window_cap: inputs.context_window_cap,
     };
     let task = inputs.executor.execute(&context).await;
     let files: Vec<EventsFile> = task.events.iter().map(|path| load_events(path)).collect();
@@ -348,6 +379,7 @@ pub async fn run(inputs: LongCompactInputs<'_>) -> Result<LongCompactReport> {
         compactions: counts.compactions,
         session,
         task_error: task.error,
+        context_window_cap: inputs.context_window_cap,
         task_dir,
     };
     let record_path = run_dir.join("long-compact.json");
@@ -358,10 +390,11 @@ pub async fn run(inputs: LongCompactInputs<'_>) -> Result<LongCompactReport> {
 
 #[cfg(test)]
 mod tests {
+    use ara_agent_lite_harness::core::model_caps::ModelCaps;
     use serde_json::json;
 
     use super::*;
-    use crate::metrics::EventLine;
+    use crate::{host::cap_window, metrics::EventLine};
 
     fn file(run: usize, events: &[Value]) -> EventsFile {
         EventsFile {
@@ -392,6 +425,38 @@ mod tests {
         assert_eq!((counts.summary_reservations, counts.agent_reservations, counts.other_reservations), (1, 3, 0));
         assert_eq!(counts.compactions, vec![CompactionEvent { run: 1, seq: 5, covered_prefix: 7, raw_messages: 12 }]);
         assert_eq!(check_counts(&counts, Some(4), 80).verdict, Verdict::Passed);
+    }
+
+    #[test]
+    fn a_capped_window_leaves_a_small_projection_budget_where_the_catalog_window_never_compacts() {
+        let kib = 1024;
+        let catalog = ModelCaps { context_window: Some(1_000_000), max_tokens: 32768, input: None };
+        assert!(catalog.budget(32768).unwrap().projection_bytes > 512 * kib, "the catalog window is the problem");
+
+        // generation.max_output 32768 (effective with the P2-a ceiling) and the
+        // v1 builtin 8192 are the agent output limits this trial can meet.
+        for (output_tokens, projection, request) in [(32768, 47104, 94208), (8192, 59392, 118784)] {
+            let capped = ModelCaps {
+                context_window: cap_window(catalog.context_window, RECOMMENDED_CONTEXT_WINDOW),
+                max_tokens: 32768,
+                input: None,
+            };
+            let budget = capped.budget(output_tokens).unwrap();
+            assert_eq!((budget.projection_bytes, budget.request_bytes), (projection, request));
+            assert!((40 * kib..=64 * kib).contains(&budget.projection_bytes));
+            let direct = declared_budget(RECOMMENDED_CONTEXT_WINDOW, output_tokens).unwrap();
+            assert_eq!((direct.projection_bytes, direct.request_bytes), (projection, request));
+        }
+        // 32768 output + 4096 wire reserve must leave room: a smaller cap is refused.
+        assert!(ModelCaps { context_window: Some(36864), max_tokens: 32768, input: None }.budget(32768).is_err());
+    }
+
+    #[test]
+    fn the_help_text_states_the_computed_budgets() {
+        let help = context_window_help();
+        assert!(help.contains("Recommended 131072"), "{help}");
+        assert!(help.contains("46 KiB projection / 92 KiB request"), "{help}");
+        assert!(help.contains("58 KiB projection / 116 KiB request"), "{help}");
     }
 
     #[test]

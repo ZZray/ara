@@ -337,6 +337,14 @@ class Trial:
 
     # ----- trial ----------------------------------------------------------
 
+    def model_resolution(self) -> dict:
+        """Catalog capabilities, or with `context_window_cap` (tokens) the
+        catalog window clamped to it so compaction becomes reachable."""
+        cap = self.spec.get('context_window_cap')
+        if cap is None:
+            return {'kind': 'catalog'}
+        return {'kind': 'catalog_capped', 'context_window_cap': cap}
+
     def start_config(self, deadline_unix_ms: int) -> dict:
         model, budget = self.spec['model'], self.spec['budget']
         return {
@@ -350,7 +358,7 @@ class Trial:
                     'device_fp': 'lite-eval-long-trial', 'session_key': f'long-trial/{self.task_id}',
                     'mode': 'execute', 'endpoint': model['endpoint'], 'model': model['id'],
                     'max_calls': budget['run_max_calls'], 'max_seconds': budget['run_max_seconds'],
-                    'max_output': self.spec['max_output'], 'model_resolution': {'kind': 'catalog'},
+                    'max_output': self.spec['max_output'], 'model_resolution': self.model_resolution(),
                     'generation_policy': model['generation_policy'], 'length_recovery': model['length_recovery'],
                     'tools': TOOLS},
             'length_stop_review': 'review_closed_length',
@@ -704,6 +712,7 @@ async def run_trial(spec: dict, trial_dir: Path, token: str) -> dict:
         'operation_dirs': [str(path) for path in trial.operations if path.exists()],
         'sidecar_logs': [process['log'] for process in trial.processes],
         'fences': trial.fences, 'journal_snapshots': trial.journal_snapshots,
+        'model_resolution': trial.model_resolution(),
         'tools': [tool['name'] for tool in TOOLS], 'kill': trial.kill, 'resume': resume,
         'processes': trial.processes, 'ended_by': ended_by, 'stop': final['stop'], 'error': error,
     }
@@ -716,8 +725,19 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--input', required=True, type=Path, help='trial-input.json written by lite-eval long-trial')
     parser.add_argument('--trial-dir', required=True, type=Path, help='new trial directory (already created)')
+    parser.add_argument('--context-window', type=int, metavar='TOKENS',
+                        help='declare a context window of at most TOKENS (model_resolution catalog_capped; '
+                             'the sidecar accepts 1024..=10000000) so compaction happens; '
+                             'same as context_window_cap in --input; see `lite-eval long-trial --help` for the '
+                             'recommended value; default: the catalog value')
     args = parser.parse_args(argv)
     spec = json.loads(args.input.read_text(encoding='utf-8'))
+    if args.context_window is not None:
+        if spec.get('context_window_cap') not in (None, args.context_window):
+            print(f"--context-window {args.context_window} differs from context_window_cap "
+                  f"{spec['context_window_cap']} in {args.input}; nothing was started", file=sys.stderr)
+            return 2
+        spec['context_window_cap'] = args.context_window
     trial_dir = args.trial_dir.resolve(strict=True)
     token = os.environ.get(spec['credential_env'], '')
     if not token:

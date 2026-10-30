@@ -57,6 +57,14 @@
 `cancel_grace_ms` 为 1000 至 15000，默认 5000。`kind` 使用公共 Harness 的
 `TaskKind` 编码。凭据只来自子环境 `ARA_AGENT_MODEL_TOKEN`。
 
+实验性：`model_resolution` 还可以为 `{"kind":"catalog_capped","context_window_cap":N}`。
+它按 `catalog` 读取模型能力，再把上下文窗口压低到不超过 N 个 token（目录没有声明窗口时取 N），
+用于让声明百万级窗口的模型在较短的 Task 内触发压缩。`N` 范围为 1024 至 10000000；
+超出范围、类型不符、缺少 `context_window_cap` 或含未知字段时，stderr 写 `start_config_rejected`，
+退出码 2，stdout 零帧（范围错误的内部拒绝码为 `context_window_cap_out_of_range`）。
+`model_capabilities` 事件的 `declared.context_window` 记录压低后的值，`source` 仍为 `hub_model_directory`。
+该取值不属于 v1 稳定契约，后续版本可能调整或移除。
+
 可选 `run.length_recovery` 使用字符串 `"stop"`（默认）或 `"replan_once"`。
 后者仅允许 Execute，并由 Core 在同一 Run 最多安排一次无工具 Length 重规划。
 它不增加预算、不修改原截断消息；再次无工具 Length、未知效果、取消和持久化失败仍停止。

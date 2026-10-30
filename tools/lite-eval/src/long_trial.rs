@@ -55,6 +55,7 @@ use crate::{
     },
     digest::tree_digest,
     failure::{validate_refs, Classification, EvidenceRef, FailureClass, FailureContext, FailureRecord, OracleRecord},
+    host::declared_budget,
     metrics::{load_events, EventsFile, PathRecord},
     policy::load_fixed,
     probe::probe,
@@ -1240,6 +1241,35 @@ pub struct LongTrialInputs<'a> {
     /// Only check an existing trial directory.
     pub check_only: Option<&'a Path>,
     pub env: &'a (dyn Fn(&str) -> Option<String> + Sync),
+    /// Context window ceiling in tokens the sidecar declares
+    /// (`model_resolution` `catalog_capped`); `None` keeps the catalog value.
+    pub context_window_cap: Option<u64>,
+}
+
+/// Range the sidecar accepts for `context_window_cap`.
+pub const CONTEXT_WINDOW_CAP_RANGE: std::ops::RangeInclusive<u64> = 1024..=10_000_000;
+
+/// `--context-window` value recommended for this trial: 96 Ki tokens.
+pub const RECOMMENDED_CONTEXT_WINDOW: u64 = 98_304;
+
+/// Help of `--context-window`, with the budget `ModelCaps::budget` gives the
+/// recommended value for the trial's output limit, the `budgets.LONG-TRIAL`
+/// `max_output` of 2048 tokens.
+pub fn context_window_help() -> String {
+    let window = RECOMMENDED_CONTEXT_WINDOW;
+    let budget = match declared_budget(window, 2048) {
+        Ok(budget) => {
+            format!("{} KiB projection / {} KiB request", budget.projection_bytes / 1024, budget.request_bytes / 1024)
+        }
+        Err(error) => format!("unavailable ({error})"),
+    };
+    format!(
+        "Tokens of context window the sidecar declares, never above the catalog value (accepted: {}..={}). Not \
+         defaulted: the catalog model declares ~1M tokens, a ~4 MiB budget, and no compaction ever happens. \
+         Recommended {window}: with the 2048-token output of budgets.LONG-TRIAL {budget}",
+        CONTEXT_WINDOW_CAP_RANGE.start(),
+        CONTEXT_WINDOW_CAP_RANGE.end()
+    )
 }
 
 pub struct LongTrialReport {
@@ -1253,6 +1283,14 @@ pub struct LongTrialReport {
 /// (missing budget, task, public check, sidecar or credential; probe failed).
 pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
     let root = inputs.repo_root;
+    if let Some(cap) = inputs.context_window_cap {
+        ensure!(
+            CONTEXT_WINDOW_CAP_RANGE.contains(&cap),
+            "--context-window {cap} is outside {}..={}",
+            CONTEXT_WINDOW_CAP_RANGE.start(),
+            CONTEXT_WINDOW_CAP_RANGE.end()
+        );
+    }
     let (policy, identity) = load_fixed(root)?;
     let budget = *policy.budget(LONG_TRIAL_BUDGET)?;
     let token = (inputs.env)(&policy.model.credential_env).unwrap_or_default();
@@ -1303,6 +1341,7 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
         "run_policy": identity, "policy": policy, "budget_key": LONG_TRIAL_BUDGET, "budget": budget,
         "task_id": entry.task_id, "fixture_path": entry.fixture_path, "fixture_sha256": digest.sha256,
         "public_check": public_check, "max_output": max_output,
+        "context_window_cap": inputs.context_window_cap,
         "sidecar": {"path": sidecar, "sha256": sha256_file(sidecar)?},
         "driver": {"path": DRIVER_PATH, "sha256": sha256_file(&driver)?},
         "probe": receipt,
@@ -1317,7 +1356,7 @@ pub async fn run(inputs: LongTrialInputs<'_>) -> Result<LongTrialReport> {
         "model": {"endpoint": policy.model.route.endpoint, "id": policy.model.id,
                   "generation_policy": policy.generation.generation_policy,
                   "length_recovery": policy.generation.length_recovery},
-        "budget": budget, "max_output": max_output,
+        "budget": budget, "max_output": max_output, "context_window_cap": inputs.context_window_cap,
     });
     write_json_new(&input, &spec, &credentials)?;
     let mut command = Command::new(inputs.python);

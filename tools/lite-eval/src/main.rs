@@ -185,6 +185,9 @@ struct LongCompactArgs {
     /// Capability_Test_Host P2 configuration, as for `run`; omitted = v1.
     #[arg(long)]
     p2_through: Option<String>,
+    // Not a doc comment: the help text is computed from `ModelCaps::budget`.
+    #[arg(long, value_name = "TOKENS", help = lite_eval::long_compact::context_window_help())]
+    context_window: Option<u64>,
 }
 
 /// Exit 0 compaction happened and every count check holds, 1 failed or
@@ -204,6 +207,7 @@ fn long_compact(args: LongCompactArgs) -> Result<ExitCode> {
             Some(item) => lite_eval::host::Features::through(item)?,
             None => lite_eval::host::Features::V1,
         },
+        context_window_cap: args.context_window,
     }))?;
     println!("{}", report.record_path.display());
     println!("{}", serde_json::to_string(&report.record.check)?);
@@ -232,6 +236,9 @@ struct LongTrialArgs {
     /// Only check an existing trial directory; nothing is started.
     #[arg(long, value_name = "DIR")]
     check_only: Option<PathBuf>,
+    // Not a doc comment: the help text is computed from `ModelCaps::budget`.
+    #[arg(long, value_name = "TOKENS", help = lite_eval::long_trial::context_window_help())]
+    context_window: Option<u64>,
 }
 
 /// Exit 0 passed, 1 failed or coverage insufficient, 2 nothing was started.
@@ -255,6 +262,7 @@ fn long_trial(args: LongTrialArgs) -> Result<ExitCode> {
         python: &args.python,
         check_only: args.check_only.as_deref(),
         env: &env,
+        context_window_cap: args.context_window,
     }))?;
     println!("{}", report.record_path.display());
     println!("{}", serde_json::to_string(&report.record.verdict)?);

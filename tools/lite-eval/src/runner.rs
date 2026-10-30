@@ -244,6 +244,9 @@ pub struct TaskContext {
     pub sealed_registration: Option<PathBuf>,
     /// Capability_Test_Host P2 switches of this run.
     pub features: Features,
+    /// Host-declared context window ceiling in tokens (`long-compact
+    /// --context-window`); `None` keeps the catalog value. `run` always passes `None`.
+    pub context_window_cap: Option<u64>,
 }
 
 /// Runs one task to a terminal state. The production implementation is
@@ -523,6 +526,7 @@ pub async fn run(inputs: RunInputs<'_>) -> Result<RunReport> {
                         .flatten(),
                     sealed,
                     features: inputs.features,
+                    context_window_cap: None,
                 };
                 inputs.executor.execute(&context).await
             }
@@ -775,6 +779,7 @@ impl HarnessExecutor {
             generation: policy.generation.generation_policy,
             length_recovery: policy.generation.length_recovery,
             output_ceiling: features.output_ceiling,
+            context_window_cap: context.context_window_cap,
         });
         let host = Arc::new(
             CapabilityHost::build(HostConfig {
