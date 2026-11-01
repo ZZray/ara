@@ -1,0 +1,111 @@
+{
+  "name": "bounded_live_source_question_artifact",
+  "passed": true,
+  "model": "deepseek-v4.1-flash",
+  "endpoint_host": "118.25.103.226",
+  "task_id": "host-79e18bc754c0000ced53cd35",
+  "outcome": {
+    "task_id": "host-79e18bc754c0000ced53cd35",
+    "stop": "AwaitingHostAcceptance",
+    "runs": 1,
+    "observed_calls": 6,
+    "last_candidate": {
+      "basis": {
+        "task_id": "host-79e18bc754c0000ced53cd35",
+        "criteria_revision": "host-artifact-v1",
+        "authorization_revision": "process-grant-v1",
+        "run_id": "initial-host-79e18bc754c0000ced53cd35",
+        "run_number": 1,
+        "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\session.json",
+        "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\attempt-0\\run-1-events.jsonl",
+        "events_sha256": "49d1e967964c6de8ec1c1005081b297b1b275a9dd854fba6ac11dbba6bff4cf4",
+        "event_count": 55,
+        "run_calls": 6,
+        "total_calls": 6,
+        "journal_head_sha256": "e454f1f59533cdd3077962b98c0af1f387e8503d76261de79728b36a52904a6b",
+        "raw_start": 0,
+        "raw_end": 12,
+        "raw_proof": "journal-v1:0dfd17bbe187e2c5267068cf97579e773421514fddd686b5cafd16adba713944"
+      },
+      "output": "Task complete.\n\n- **Readiness check:** asked; operator replied \"Ready.\"\n- **Source:** `source_list` returned one registered live source — `live-source`, version 1, sha256 `73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049`.\n- **Read:** `source_read` returned offset 0, `next_offset: 2`, `bytes: 2`, `truncated: false`, text `42` — i.e. the complete 2-byte source (`\"42\"`), consistent with the reported hash.\n- **Write:** `write_result` confirmed `{\"written\":2}` to result.txt.\n\nNo other file or shell operations were performed, and execution stopped after the write. Remaining uncertainty: none identified — the source was read in full (not truncated) and the written byte count matches.",
+      "goal": null
+    },
+    "last_receipt": {
+      "basis": {
+        "task_id": "host-79e18bc754c0000ced53cd35",
+        "criteria_revision": "host-artifact-v1",
+        "authorization_revision": "process-grant-v1",
+        "run_id": "initial-host-79e18bc754c0000ced53cd35",
+        "run_number": 1,
+        "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\session.json",
+        "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\attempt-0\\run-1-events.jsonl",
+        "events_sha256": "49d1e967964c6de8ec1c1005081b297b1b275a9dd854fba6ac11dbba6bff4cf4",
+        "event_count": 55,
+        "run_calls": 6,
+        "total_calls": 6,
+        "journal_head_sha256": "e454f1f59533cdd3077962b98c0af1f387e8503d76261de79728b36a52904a6b",
+        "raw_start": 0,
+        "raw_end": 12,
+        "raw_proof": "journal-v1:0dfd17bbe187e2c5267068cf97579e773421514fddd686b5cafd16adba713944"
+      },
+      "committed": true,
+      "settlement": "Settled",
+      "verdict": "Verified",
+      "evidence": [
+        "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\attempt-0\\artifact-1.json",
+        "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\attempt-0\\host-review-1.json"
+      ]
+    },
+    "detail": "Host verification passed; business Task acceptance remains external",
+    "task_accepted": false,
+    "reconciliation_fence": null,
+    "fence_presence": "Released"
+  },
+  "native": {
+    "session": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\session.json",
+    "journal": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\live\\state\\tasks\\host-79e18bc754c0000ced53cd35\\session.journal",
+    "records": 12,
+    "tool_calls": [
+      {
+        "id": "call_00_MmRrvFN3K4GxLnTuskwY8572",
+        "name": "reference_read",
+        "arguments": {
+          "id": "ref-1",
+          "offset": 0,
+          "limit": 4096
+        }
+      },
+      {
+        "id": "call_00_nZrJ2DXBKSeKlMSVoh8t0198",
+        "name": "request_input",
+        "arguments": {
+          "question": "Ready to proceed? I will read the single registered live source and copy its exact complete text into result.txt, then stop. Please reply to confirm."
+        }
+      },
+      {
+        "id": "call_00_vPLl8BbwK6hw8Pbpitu83061",
+        "name": "source_list",
+        "arguments": {}
+      },
+      {
+        "id": "call_00_9eGZXG7wi7qbZZ5YoNFz0435",
+        "name": "source_read",
+        "arguments": {
+          "id": "live-source",
+          "version": 1,
+          "offset": 0,
+          "limit": 16384
+        }
+      },
+      {
+        "id": "call_00_nwnEkuwbpcT0YKz9dU269057",
+        "name": "write_result",
+        "arguments": {
+          "text": "42"
+        }
+      }
+    ],
+    "head_sha256": "974b39fecef95d94412de4697aa170199308f688b40884f51d4cf24ac6a59b5e"
+  },
+  "result_sha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049"
+}

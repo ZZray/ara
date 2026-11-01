@@ -134,6 +134,8 @@
 |---|---|---|
 | `ara_agent_lite_harness::start` | stable | `start(TaskSpec, RunRequest, Arc<dyn HarnessHost>) -> anyhow::Result<TaskHandle>` |
 | `ara_agent_lite_harness::TaskHandle` | stable | 方法 `cancel`、`subscribe`、`wait` |
+| `ara_agent_lite_harness::TaskHandle.try_outcome` | experimental | 无等待地查询已结算结果，不接受业务 Task |
+| `ara_agent_lite_harness::task_set::*` | experimental | 有界批次、显式任务消息投递及完成收割；不提供持久调度 |
 | `ara_agent_lite_harness::TaskSpec` | stable | 8 个字段：`task_id`、`criteria_revision`、`authorization_revision`、`kind`、`evidence_dir`、`max_runs`、`max_calls`、`deadline_unix_ms` |
 | `ara_agent_lite_harness::TaskKind` | stable | 变体 `Coding`、`Reasoning`、`ReverseAnalysis`，只作提示，不授予权限 |
 | `ara_agent_lite_harness::HarnessHost` | stable | 必需方法 `verify`、`prepare_continuation`；其余默认方法属于 experimental 的停止复核与 resume 能力 |

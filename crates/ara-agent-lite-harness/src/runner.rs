@@ -41,6 +41,15 @@ pub struct TaskHandle {
 }
 
 impl TaskHandle {
+    /// Observe a settled outcome without waiting. Task acceptance remains external.
+    pub fn try_outcome(&self) -> Option<Arc<TaskOutcome>> {
+        self.outcome.borrow().clone()
+    }
+
+    pub(crate) fn accepts_guidance(&self) -> bool {
+        !self.cancellation.is_cancelled() && self.try_outcome().is_none()
+    }
+
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }

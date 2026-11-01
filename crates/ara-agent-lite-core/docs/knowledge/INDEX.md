@@ -3,6 +3,10 @@
 这个库从 HandWave 精简端提取。完整版 ARA／OMP 继续在原 workspace 开发，
 这里的验证记录不代替完整版的功能对齐或验收。
 
+- [TaskSet 接待与后台任务](../../../ara-agent-lite-harness/docs/task-set.md)：可选的有界批次管理，保留原 Session、授权、预算和 Host 验收；[消息准入与重复判据案例](host-contracts.md#case-20261101taskset-消息准入与重复投递判据)说明排队、上下文准入及模型消费的区别。
+
+- [持久任务参考 Host](../../../../tools/ara-lite-host/README.md)：复用既有协调 Store 与 Harness，提供持久事件、人工接管、授权取源、outbox 和可选 Watchdog；[验证记录](../../../../tools/ara-lite-host/docs/evidence/durable-host-20261101.md)区分原生故障、真实模型和产品/发布缺口。
+
 - [Headroom Rust 接入计划与 H0](../evidence/lite-capability/headroom/README.md)：需求 39–41、任务 63–66 已补入 Kiro；仓外构建和离线案例通过，依赖门禁未通过，Lite 正式接入与真实任务对比尚未开始。
 
 - [来源读取与压缩续作](../evidence/context-continuity-20261025.html)：大来源分窗、命中定位、跨进程三次压缩及错误路径；受控机制通过，单次真实模型取源失败。默认 8 KiB 窗口的兼容规则见接口说明。

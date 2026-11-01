@@ -1,0 +1,27 @@
+{
+  "name": "oversized_native_stdin_discards_remainder",
+  "passed": true,
+  "input_bytes": 65552,
+  "input_sha256": "1bd14b48e11c402f98deba9ca49494675aee08ce79689bc9cdf23996f3396b39",
+  "command_errors": 1,
+  "error": {
+    "event": "command_error",
+    "error": "command exceeds 64KiB"
+  },
+  "legal_status_after_rejection": {
+    "tasks": {},
+    "execution": [],
+    "unknown_events": [],
+    "pending_events": [],
+    "rejected_events": [],
+    "pending_notices": [],
+    "unknown_notices": []
+  },
+  "stop_suffix_not_executed": true,
+  "invalid_utf8_closed_reader": true,
+  "invalid_utf8_error": {
+    "event": "command_error",
+    "error": "stream did not contain valid UTF-8"
+  },
+  "additional_model_calls": 0
+}

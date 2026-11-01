@@ -1,0 +1,56 @@
+{
+  "task_id": "background-1",
+  "stop": "AwaitingHostAcceptance",
+  "runs": 1,
+  "observed_calls": 5,
+  "last_candidate": {
+    "basis": {
+      "task_id": "background-1",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-1",
+      "run_number": 1,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-b\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-b\\harness\\run-1-events.jsonl",
+      "events_sha256": "712036b6d0fc858bf982d3f5078c910fbd7ab6fc9dc5c88c609f65242cbc3767",
+      "event_count": 85,
+      "run_calls": 5,
+      "total_calls": 5,
+      "journal_head_sha256": "489baae3526c0f8a5f68be5b5ddc9c5cc24da95b0c927ecdb07979c2c4fbe1b4",
+      "raw_start": 0,
+      "raw_end": 11,
+      "raw_proof": "journal-v1:7447db4e4f25e3f773c78cd5d64a079ec29aaa1669f68444b1a2f00451671bd8"
+    },
+    "output": "The artifact is complete and verified.\n\n**Schedule** (two identical workers, half-open intervals):\n\n| Worker | 0–1 | 1–2 | 2–3 | 3–4 | 4–5 |\n|---|---|---|---|---|---|\n| W1 | A (0–2) | | | D (4–5) | |\n| W2 | B (0–3) | | | | |\n\nExact `plan.json` contents:\n```json\n{\n  \"starts\": { \"A\": 0, \"B\": 0, \"C\": 2, \"D\": 4 },\n  \"makespan\": 5,\n  \"critical_path\": [\"A\", \"C\", \"D\"]\n}\n```\n\n**Constraint check:**\n- Durations: A=2, B=3, C=2, D=1; all starts integer in 0..8.\n- `C=2` starts exactly when A ends (2), so C is after A ✓\n- `D=4` starts after B ends (3) and after C ends (4) ✓\n- Concurrency: 0–2 → A+B (2 jobs); 2–3 → B+C (2 jobs); 3–4 → C alone; 4–5 → D alone. Never more than 2 ✓\n- No field beyond `starts`, `makespan`, `critical_path` ✓\n\n**Optimality:** Work load is 2+3+2+1 = 8 units on 2 workers → makespan ≥ 4. A makespan of 4 would require zero idle (each worker busy 0–4 exactly). D must start after C ends, and C starts after A ends, so D cannot start before 4 — hence D occupies [4,5] and the last job cannot finish by 4. Therefore makespan ≥ 5, achieved here. Critical path A→C→D = 2+2+1 = 5 ✓ matches the makespan.\n\n**Verification:** `check_candidate` returned `passed: true` with feedback \"constraints and exhaustive optimum verified\". The written file was read back and matches the submitted artifact hash (`da498462…`). No remaining uncertainty.",
+    "goal": null
+  },
+  "last_receipt": {
+    "basis": {
+      "task_id": "background-1",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-1",
+      "run_number": 1,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-b\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-b\\harness\\run-1-events.jsonl",
+      "events_sha256": "712036b6d0fc858bf982d3f5078c910fbd7ab6fc9dc5c88c609f65242cbc3767",
+      "event_count": 85,
+      "run_calls": 5,
+      "total_calls": 5,
+      "journal_head_sha256": "489baae3526c0f8a5f68be5b5ddc9c5cc24da95b0c927ecdb07979c2c4fbe1b4",
+      "raw_start": 0,
+      "raw_end": 11,
+      "raw_proof": "journal-v1:7447db4e4f25e3f773c78cd5d64a079ec29aaa1669f68444b1a2f00451671bd8"
+    },
+    "committed": true,
+    "settlement": "Settled",
+    "verdict": "Verified",
+    "evidence": [
+      "D:/workspace/env/cache/task-set-validation-20261101-01a1945d/live-b\\host\\check-2\\report.json#sha256=e830ed3de875c69d28e5239a13297bb4d0695836a38227e867d68019201d7bc4"
+    ]
+  },
+  "detail": "Host verification passed; business Task acceptance remains external",
+  "task_accepted": false,
+  "reconciliation_fence": null,
+  "fence_presence": "Released"
+}

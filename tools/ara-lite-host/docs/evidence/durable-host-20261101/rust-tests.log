@@ -1,0 +1,50 @@
+   Compiling ara-lite-host v0.1.0 (E:\repos\ara-github\tools\ara-lite-host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.10s
+     Running unittests src\lib.rs (D:/workspace/env/cache/rust-target\debug\deps\ara_lite_host-8b0e6f881d09a4b5.exe)
+
+running 9 tests
+test watchdog::tests::atomic_replace_recovers_after_a_real_windows_delete_sharing_denial ... ok
+test watchdog::tests::replacement_retry_is_bounded_and_other_errors_are_not_retried ... ok
+test watchdog::tests::heartbeat_replacement_and_invalid_config_are_explicit ... ok
+test watchdog::tests::intentional_stop_prevents_launch_and_child_exit_cannot_revive_it ... ok
+test watchdog::tests::explicit_stop_joins_only_the_supervisors_owned_child ... ok
+test watchdog::tests::failed_native_child_has_a_finite_restart_budget ... ok
+test watchdog::tests::another_pids_heartbeat_does_not_keep_owned_child_healthy ... ok
+test watchdog::tests::stale_live_child_is_reported_without_kill_or_restart ... ok
+test watchdog::tests::fresh_waiting_human_heartbeats_are_not_failures ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+
+     Running unittests src\main.rs (D:/workspace/env/cache/rust-target\debug\deps\ara_lite_host-f3a09c9dde4ad93a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\journal.rs (D:/workspace/env/cache/rust-target\debug\deps\journal-38b6af9c62f89431.exe)
+
+running 7 tests
+test invalid_events_are_rejected_before_retaining_identity ... ok
+test completion_and_result_outbox_commit_atomically_and_repeat_idempotently ... ok
+test evidence_source_changes_require_new_version_and_revoke_persistently ... ok
+test queued_and_finished_bindings_keep_their_phase_on_reopen ... ok
+test binding_terms_are_immutable_and_restart_marks_active_execution_uncertain ... ok
+test event_identity_and_content_survive_reopen_without_requeue ... ok
+test questions_answers_and_notices_are_idempotent_and_crash_does_not_resend ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\runtime.rs (D:/workspace/env/cache/rust-target\debug\deps\runtime-2e05ae10ddf56e57.exe)
+
+running 9 tests
+test versioned_source_windows_enforce_owner_access_revocation_hash_and_utf8 ... ok
+test shutdown_before_first_tick_does_not_create_a_task ... ok
+test shutdown_neither_dispatches_pending_work_nor_launches_queued_tasks ... ok
+test invalid_harness_receipt_cannot_pass_the_business_task ... ok
+test uncertain_followup_remains_unknown_after_runtime_reopen_without_replay ... ok
+test work_identity_is_durable_and_observation_does_not_execute ... ok
+test claimed_before_starting_cut_recovers_original_queued_binding ... ok
+test released_result_can_be_collected_after_execution_deadline_without_new_calls ... ok
+test human_review_is_snapshot_bound_and_changes_keep_the_original_budget ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.42s

@@ -12,6 +12,7 @@ mod runner;
 mod snapshot;
 mod stop_review;
 mod storage;
+pub mod task_set;
 mod types;
 
 pub use ara_agent_lite_core as core;

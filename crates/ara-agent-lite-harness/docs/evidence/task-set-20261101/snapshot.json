@@ -1,0 +1,31 @@
+{
+  "base": "e229fb9ab800b46313047b89b73ac41e60c9efb4",
+  "snapshot": "delivered worktree source",
+  "files": [
+    {
+      "path": "crates/ara-agent-lite-core/src/steering.rs",
+      "sha256": "4a6d0b8356df0bc03d3b43e1fcc39d4d3fd0a845c85df43ce610055cca1a41f1"
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/lib.rs",
+      "sha256": "60375faec6d7e8d76dac9be7991131cc8eb77825e1268243836d8e1b1d22bc1d"
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/runner.rs",
+      "sha256": "2eced0c66f0b4e142c353c0022bb273bb3ac5f51811929c475b5cdbcb1bad63a"
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/task_set.rs",
+      "sha256": "17d4464746c8098b2bce44354897c8628ef85e94d0b3ac6765d8df732e2db8d5"
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/examples/task_set.rs",
+      "sha256": "26d38fe1bb89f62783d9e791124961f6758f1466850adce500d8e9a958640c7e"
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/tests/task_set.rs",
+      "sha256": "36fc35724e289fd4ddd6a30d8a003ca66378f59ca855b12e2d9ae03057af01e2"
+    }
+  ],
+  "example_binary_sha256": "ca076f2c7743079977d76a04469970bc45db3edefebce402d8131d631b1b2c36"
+}

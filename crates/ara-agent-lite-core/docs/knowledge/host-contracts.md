@@ -310,3 +310,48 @@ Candidate。快照检查对同一次有界读取的 bytes 验证大小、哈希�
 
 当前受控与真实模型结果、保留的测试预期失败和未强制覆盖的组合见
 [预算停止复核记录](../../../ara-agent-lite-jsonl/docs/evidence/closed-budget-snapshot-20261025.html)。
+
+## CASE-20261101：TaskSet 消息准入与重复投递判据
+
+来源：`e229fb9ab8` 基线上的 TaskSet 工作区实现及
+[2026-11-01 验证记录](../../../ara-agent-lite-harness/docs/evidence/task-set-20261101.md)。
+
+原 Core/Harness 不自动 `finish` Host steering。补充消息可能在模型 Run 停止后、
+Host 验收尚未结束时到达；只检查 Task 是否已有 outcome 不能保证消息还会进入模型。
+TaskSet 因此只承诺 `Queued`，在原 Task 和回调结算后清理 pending，并分别返回
+`AppliedToContext`、`Unapplied` 或 `Unknown`。前者也只证明上下文准入；Host 不能据此
+宣称模型已经处理了新要求，更不能自动将它变为新 Run。各任务独立 buffer、原续作
+沿用原 Arc；长生命周期的去重和恢复由 Host 的持久协调层负责。
+
+本轮首次幂等测试用整个 wire JSON 的原文出现次数断言“只投递一次”，实际得到两次。
+回源与独立审查确认：同一 steering 既进入原生 user 消息，也成为原始来源引用；
+上下文目录会带来源 excerpt。两处可见不代表两次投递。最终测试分别检查原文 user
+消息、同 Run 的 steering 引用和终态回执各自唯一，并核对另一 Task 的请求与来源
+均不含该消息。产品契约没有放宽，Core 投影没有因此修改。
+
+受控屏障测试还覆盖 Host 验收期间入队后成为 `Unapplied`、取消完成等待后仍可收割、
+原工具结算前不能报告取消完成，以及未知副作用仍保留 fence。该证据不覆盖持久
+消息队列、跨进程去重或真实产品部署；两次真实模型排程任务不构成性能提升对照。
+
+## CASE-20261101：持久 Host 与原生恢复边界
+
+来源：`e229fb9ab8` 基线上的可选 `tools/ara-lite-host`，见
+[实现与进程验证](../../../../tools/ara-lite-host/docs/evidence/durable-host-20261101.md)。
+原 ara-lite 协调消息保留 24 小时，不能作为长期输入去重依据。Host 使用自己的持久
+事件身份与完整 payload 摘要；业务 Task、worker 和 generation 仍归原 Store，
+模型循环、Session、预算与效果结算仍归 Harness/Core。
+
+投递意图必须早于 steering 调用持久化。崩溃使 Dispatching 变为 Unknown，不能从
+内存回执缺失推断未应用，也不能重投来试。启动意图同样必须早于模型准入；否则
+模型回调已经保存 WaitingHuman/ReadyForReview 后，旧 Running 会覆盖真实阶段。
+准入后立即保留原 TaskHandle，持久化失败也不能丢失运行中的所有权。
+
+人审崩溃恢复须核对原候选、委托实物检查收据、事件 hash、闭合原生 Run 和工作区
+snapshot。审核 pass 可形成独立 recovered_human_review 业务交接，原生 fence 保留，
+不生成 Harness TaskOutcome 或 Released，也不再次启动该 Session。返工才沿原预算
+明确恢复。事件对账、通知 ACK 和业务审核是三种操作，普通 answer 不能替代它们。
+
+原生试验发现 heartbeat 与 submit 会竞争协调 version；两者必须在实际修改边界
+协调。Windows 心跳原子替换还会遇到短暂共享冲突，最终实现仅对已观察的 OS 5/32/33
+做有界重试，保留持续错误，并用真实拒绝删除句柄验证。不同平台的 rename 和锁行为
+需各自验收，不能将 Windows 通过外推为跨平台结论。

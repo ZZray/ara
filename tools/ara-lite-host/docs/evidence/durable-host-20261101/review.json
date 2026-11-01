@@ -1,0 +1,31 @@
+{
+  "reviewer": "/root/lite_architecture_check",
+  "procedure": "point-delivery-audit",
+  "decision": "APPROVE_SCOPED",
+  "scope": "tools/ara-lite-host optional Windows reference Host; existing coordinator/Core/Harness protocols and products excluded",
+  "findings": [],
+  "verified": {
+    "snapshot_source_files": 14,
+    "source_hash_mismatches": 0,
+    "exact_binary_hash_matches": true,
+    "rust_log": {"passed": 25, "failed": 0, "ignored": 0},
+    "native_scenarios": 5,
+    "scenario_receipts_match_raw": true,
+    "actual_artifacts": "workflow A/B, crash and live result.txt bytes are 42; SHA-256 matches documented value",
+    "native_tools": "actual journal tool calls/results inspected: question, cross-task source read, writes; live additionally reference_read and source_list; no tool errors in inspected closed outcomes",
+    "outcome_event_hashes": "workflow/crash/live original candidate event file hashes match",
+    "host_proofs": "original artifact/Host-review evidence files exist; coordinator readonly DB shows business passed; Harness task_accepted stays false",
+    "crash_budget": "same original Session/deadline; resume.json records consumed_calls=8; final logical 10 differs correctly from controlled HTTP count 3",
+    "review_recovery": "blocked then pass commands found; original fence JSON unchanged across recorded inspections, compact JSON content hash matches receipt; native journal head unchanged; actual fence still exists; no released.json or TaskOutcome outcome.json fabricated; recovered flags explicit",
+    "notification_recovery": "ACK-survived-restart receipt and original command/output records inspected",
+    "local_links": {"checked": 43, "missing": 0},
+    "existing_dependency_manifests_locks": "zero diff confirmed"
+  },
+  "limits": [
+    "No compiler/model/production execution rerun by reviewer; independently inspected main-agent execution receipts and actual files",
+    "Review fence SHA is compact ordered JSON serialization hash, not raw pretty-file bytes; compared using the implementation representation",
+    "New verification.json and the final operator-clarification sentence are reported by parent, not independently reread",
+    "Dependency bans/licenses/sources gates fail; product integration, deployment, release, cross-platform and long-run acceptance remain OPEN",
+    "No same-task baseline comparison establishes performance or model-capability improvement"
+  ]
+}

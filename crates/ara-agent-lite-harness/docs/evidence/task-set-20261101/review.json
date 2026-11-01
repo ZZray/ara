@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-01",
+  "reviewer": "independent Codex /root/lite_architecture_check",
+  "base": "e229fb9ab800b46313047b89b73ac41e60c9efb4",
+  "source_snapshot": "snapshot.json",
+  "pre": "approve_with_conditions",
+  "post": "approve",
+  "point_audit": "scoped_acceptance",
+  "open_code_findings": 0,
+  "verified_artifacts": [
+    "six source hashes and example binary hash",
+    "69 passed, 0 failed, 0 ignored from regression.log",
+    "four original Task outcomes, guidance receipts and plan bytes",
+    "original Host Verified and Settled review receipts",
+    "original constraints and independently checked optimum of 5",
+    "real model event counts and elapsed totals",
+    "unchanged Core and Harness manifests and lockfiles"
+  ],
+  "test_correction": "Count exact user input, source reference and receipt independently; source-directory excerpt is not a duplicate delivery",
+  "execution_owner": "root Codex executed tests and trials; reviewer inspected source and artifacts without rerunning",
+  "release_status": "open",
+  "limitations": [
+    "dependency bans, licenses and sources checks remain failed",
+    "whole-repository bootstrap has historical broken links; owned documents have none",
+    "no persistent inbox, restart deduplication, autonomous routing or Watchdog",
+    "no product deployment, cross-platform acceptance or performance A/B"
+  ]
+}

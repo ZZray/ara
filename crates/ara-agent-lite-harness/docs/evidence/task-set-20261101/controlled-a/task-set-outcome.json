@@ -1,0 +1,56 @@
+{
+  "task_id": "background-0",
+  "stop": "AwaitingHostAcceptance",
+  "runs": 2,
+  "observed_calls": 5,
+  "last_candidate": {
+    "basis": {
+      "task_id": "background-0",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-2",
+      "run_number": 2,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\controlled-a\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\controlled-a\\harness\\run-2-events.jsonl",
+      "events_sha256": "a5688f1c5d34ac6c8e3a57e5f5f81e6b4b06dbf16d33f644930f16b0b65318a5",
+      "event_count": 13,
+      "run_calls": 2,
+      "total_calls": 5,
+      "journal_head_sha256": "9843b81f9ee25e1fde2b74959b544cfc50138c5c210c63cc7a60dffb944db011",
+      "raw_start": 7,
+      "raw_end": 11,
+      "raw_proof": "journal-v1:1945fdf846d778c6a535eefd0322a4b19fc334d0bf590cfb5fafa86e8db901f5"
+    },
+    "output": "Submitted the corrected artifact in the same Session. Host verification is still required.",
+    "goal": null
+  },
+  "last_receipt": {
+    "basis": {
+      "task_id": "background-0",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-2",
+      "run_number": 2,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\controlled-a\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\controlled-a\\harness\\run-2-events.jsonl",
+      "events_sha256": "a5688f1c5d34ac6c8e3a57e5f5f81e6b4b06dbf16d33f644930f16b0b65318a5",
+      "event_count": 13,
+      "run_calls": 2,
+      "total_calls": 5,
+      "journal_head_sha256": "9843b81f9ee25e1fde2b74959b544cfc50138c5c210c63cc7a60dffb944db011",
+      "raw_start": 7,
+      "raw_end": 11,
+      "raw_proof": "journal-v1:1945fdf846d778c6a535eefd0322a4b19fc334d0bf590cfb5fafa86e8db901f5"
+    },
+    "committed": true,
+    "settlement": "Settled",
+    "verdict": "Verified",
+    "evidence": [
+      "D:/workspace/env/cache/task-set-validation-20261101-01a1945d/controlled-a\\host\\check-2\\report.json#sha256=1c7ffec997c8b96473985a63b0e0984fcba65efb351126a675e6f9844424549a"
+    ]
+  },
+  "detail": "Host verification passed; business Task acceptance remains external",
+  "task_accepted": false,
+  "reconciliation_fence": null,
+  "fence_presence": "Released"
+}

@@ -54,6 +54,45 @@ Python、Node 和 C++ 等应用可通过独立的
 它直接依赖本包，提供 Python/Node 客户端；本 crate 的公开合同仍是 Rust API，
 C ABI 尚未提供。已有产品也可以保留消息适配层，将任务推进部分接到这个公共包。
 
+## 多任务接待与后台执行（experimental）
+
+`task_set::TaskSet` 管理一批有界后台 Task。Host 可以启动任务后立即回到消息循环，
+用明确的 `task_id` 投递补充消息，再以 `next_completed` 接收任一任务的结算结果。
+它复用原 `start_with_options`、Session、steering、授权、验收和累计预算。
+任务身份与消息摘要在整批期间保留；完成项不释放批次容量。
+
+```rust,ignore
+use ara_agent_lite_harness::{task_set::TaskSet, TaskOptions};
+
+let mut tasks = TaskSet::new(4, 32)?; // 整批最多 4 个 Task，每个最多 32 条补充消息
+let handle = tasks.start(spec, initial_request, host, TaskOptions::default())?;
+let events = handle.subscribe();
+// 此处可返回 Host 消息循环；无需等待上一个任务完成才能接待下一个请求。
+tasks.guide("task-001", "source-message-002", "请同时核对所给文件的版本。")?;
+while let Some(completion) = tasks.next_completed().await {
+    // completion.outcome 保留原结果；completion.guidance 区分上下文准入与未应用。
+    // Host 保存结果并决定业务验收；task_accepted 仍为 false。
+}
+```
+
+每个 Task 必须使用独立 steering buffer；Host 续作时沿用原 Arc。
+`guide` 的 `Queued` 只表示进入队列，`AppliedToContext` 只表示保存并进入执行上下文，
+都不证明模型实际读取了消息。Host 验收期间也可能收到补充消息，若后面没有新 Run，
+收割结果会将其标为 `Unapplied`，由 Host 决定下一步，库不自动重启任务。
+相同消息 ID 和内容不会重复投递；相同 ID 改内容会报错。
+
+Host 仍负责消息来源、用户权限、任务范围和真正的暂停/恢复；此接口不会通过文本
+自动选择任务或扩大工具权限。它接管该 buffer 的投递与终态清理，外部直接写入
+buffer 不在幂等保证内。取消是请求，必须继续收割结果才能确认原工具与回调已结算。
+丢弃 TaskSet 或等待 future 都不取消已启动工作。
+
+首期不提供持久收件箱、跨进程消息去重、自动恢复、模型路由或平台连接。
+长期任务协调可接已有 `tools/ara-lite`；崩溃后仍须由 Host 核对原收据并使用 Harness
+恢复入口。不能直接重发原 `start` 或工具操作。
+
+可运行的双 Task 示例见 [task_set.rs](examples/task_set.rs)，用法与边界见
+[TaskSet 接入说明](docs/task-set.md)。
+
 ## 验收和停止
 
 `AwaitingHostAcceptance` 表示 Host 检查通过，`task_accepted` 始终为 false；

@@ -1,0 +1,56 @@
+{
+  "task_id": "background-0",
+  "stop": "AwaitingHostAcceptance",
+  "runs": 1,
+  "observed_calls": 6,
+  "last_candidate": {
+    "basis": {
+      "task_id": "background-0",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-1",
+      "run_number": 1,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-a\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-a\\harness\\run-1-events.jsonl",
+      "events_sha256": "a060abb4d25d06b5b9aed0adf51863d30abe96e10b5efd0e63bb4ebd48c8fb2e",
+      "event_count": 69,
+      "run_calls": 6,
+      "total_calls": 6,
+      "journal_head_sha256": "0ca7011401102e5d8793c01d8fb14f4d0db430c005f3bef60bc041a62db3be95",
+      "raw_start": 0,
+      "raw_end": 14,
+      "raw_proof": "journal-v1:4c534ffd1070e4fc69a21f2ee909f7329e43c34bdb49ccf11c3b90e0b041bfa3"
+    },
+    "output": "Done — the artifact is submitted and validated.\n\n**Result (`plan.json`)**\n```json\n{\"starts\":{\"A\":0,\"B\":1,\"C\":2,\"D\":4},\"makespan\":5,\"critical_path\":[\"A\",\"C\",\"D\"]}\n```\n\n**Why this is optimal**\n- Dependency chain A→C→D has total duration 2+2+1 = 5, so makespan ≥ 5.\n- The schedule achieves exactly 5: A on [0,2), C on [2,4), D on [4,5) on one worker; B on [1,4) on the other. At most two jobs run at any time (A+B, then C+B, then D alone).\n- Constraint checks: C starts at 2 ≥ A's end (2) ✓; D starts at 4 ≥ ends of B (4) and C (4) ✓; all starts are integers in 0..8 ✓.\n\n**Verification:** `check_candidate` returned `passed: true` with Host feedback \"constraints and exhaustive optimum verified\" — i.e., the JSON itself was validated, not just the reasoning. No further changes were requested, so no corrections were needed.",
+    "goal": null
+  },
+  "last_receipt": {
+    "basis": {
+      "task_id": "background-0",
+      "criteria_revision": "capability-fixtures-v1",
+      "authorization_revision": "single-candidate-no-shell-v1",
+      "run_id": "capability-run-1",
+      "run_number": 1,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-a\\state\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\task-set-validation-20261101-01a1945d\\live-a\\harness\\run-1-events.jsonl",
+      "events_sha256": "a060abb4d25d06b5b9aed0adf51863d30abe96e10b5efd0e63bb4ebd48c8fb2e",
+      "event_count": 69,
+      "run_calls": 6,
+      "total_calls": 6,
+      "journal_head_sha256": "0ca7011401102e5d8793c01d8fb14f4d0db430c005f3bef60bc041a62db3be95",
+      "raw_start": 0,
+      "raw_end": 14,
+      "raw_proof": "journal-v1:4c534ffd1070e4fc69a21f2ee909f7329e43c34bdb49ccf11c3b90e0b041bfa3"
+    },
+    "committed": true,
+    "settlement": "Settled",
+    "verdict": "Verified",
+    "evidence": [
+      "D:/workspace/env/cache/task-set-validation-20261101-01a1945d/live-a\\host\\check-2\\report.json#sha256=67c24ecbcd001cabb3a2b7ccdaee7bd782ebd89b9276ffe35431977e50b9fc66"
+    ]
+  },
+  "detail": "Host verification passed; business Task acceptance remains external",
+  "task_accepted": false,
+  "reconciliation_fence": null,
+  "fence_presence": "Released"
+}

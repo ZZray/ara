@@ -1,0 +1,61 @@
+{
+  "date": "2026-11-01",
+  "base": "e229fb9ab800b46313047b89b73ac41e60c9efb4",
+  "scope": "optional ara-lite-host reference implementation",
+  "executor": "Codex / root / 01a1945d-7a67-7ab1-b257-2400e49e5076",
+  "host_tests": {
+    "passed": 25,
+    "failed": 0,
+    "ignored": 0,
+    "log": "rust-tests.log"
+  },
+  "process_scenarios": {
+    "passed": 5,
+    "failed": 0,
+    "seconds": 88.237,
+    "receipt": "process-result.json"
+  },
+  "live": {
+    "model": "deepseek-v4.1-flash",
+    "protocol": "openai-compatible",
+    "runs": 1,
+    "calls": 6,
+    "result_bytes": "42",
+    "business_review": "passed",
+    "core_task_accepted": false
+  },
+  "static_checks": {
+    "clippy": "PASS",
+    "fmt": "PASS",
+    "tracked_diff_check": "PASS",
+    "untracked_owned_whitespace": "PASS",
+    "owned_local_links_checked": 44,
+    "owned_broken_local_links": 0
+  },
+  "snapshot": {
+    "files_verified": 14,
+    "binary_verified": true,
+    "receipt": "snapshot.json"
+  },
+  "harness_regression": {
+    "passed_on_previous_same_source_snapshot": 69,
+    "rerun_this_host_iteration": false,
+    "source_hashes_rechecked": 6
+  },
+  "release_gates": {
+    "cargo_deny_advisories_offline": "PASS",
+    "cargo_deny_bans_licenses_sources": "FAIL",
+    "bootstrap_historical_broken_links": 61
+  },
+  "product_acceptance": "OPEN",
+  "deployment": "NOT_PERFORMED",
+  "recovered_review": {
+    "native_fence_retained": true,
+    "not_a_harness_task_outcome": true
+  },
+  "independent_audit": {
+    "decision": "APPROVE_SCOPED",
+    "findings": 0,
+    "receipt": "review.json"
+  }
+}

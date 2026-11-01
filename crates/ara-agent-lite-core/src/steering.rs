@@ -44,6 +44,11 @@ impl SteeringBuffer {
     pub fn take_pending(&mut self) -> Vec<SteeringNote> {
         std::mem::take(&mut self.pending)
     }
+    /// Snapshot Host delivery receipts. `applied` means context admission, not
+    /// model consumption. This does not drain receipts owned by another observer.
+    pub fn outcomes_snapshot(&self) -> Vec<Value> {
+        self.outcomes.lock().unwrap().clone()
+    }
     pub fn complete(&self, notes: Vec<SteeringNote>, applied: bool) {
         let mut outcomes = self.outcomes.lock().unwrap();
         for note in notes {

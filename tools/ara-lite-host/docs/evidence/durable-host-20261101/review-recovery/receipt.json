@@ -1,0 +1,136 @@
+{
+  "name": "closed_native_candidate_human_review_recovery",
+  "passed": true,
+  "task_id": "host-7d6ee3ae178558306e482cc4",
+  "before": {
+    "spec": {
+      "task_id": "host-7d6ee3ae178558306e482cc4",
+      "criteria_revision": "host-artifact-v1",
+      "authorization_revision": "process-grant-v1",
+      "kind": "Reasoning",
+      "evidence_dir": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\attempt-0",
+      "max_runs": 3,
+      "max_calls": 12,
+      "deadline_unix_ms": 1793498188677
+    },
+    "options": {
+      "budget_stop_review": "reject"
+    },
+    "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+    "environment_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\environment",
+    "workspace": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\work\\review",
+    "generation": 1,
+    "phase": "ready_for_review",
+    "attempt": 0,
+    "adapter_revision": "reference-v1:6979eca75801cd0338ced296124235da5408fb3f3d13f59406406e9c50ea10a6:e66c4d1dbf7232e1c61ff493a2b8fbf0d555a2b53542219468847de4718db7a7",
+    "initial_run_id": "initial-host-7d6ee3ae178558306e482cc4"
+  },
+  "restored": {
+    "spec": {
+      "task_id": "host-7d6ee3ae178558306e482cc4",
+      "criteria_revision": "host-artifact-v1",
+      "authorization_revision": "process-grant-v1",
+      "kind": "Reasoning",
+      "evidence_dir": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\attempt-0",
+      "max_runs": 3,
+      "max_calls": 12,
+      "deadline_unix_ms": 1793498188677
+    },
+    "options": {
+      "budget_stop_review": "reject"
+    },
+    "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+    "environment_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\environment",
+    "workspace": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\work\\review",
+    "generation": 1,
+    "phase": "needs_reconciliation",
+    "attempt": 0,
+    "adapter_revision": "reference-v1:6979eca75801cd0338ced296124235da5408fb3f3d13f59406406e9c50ea10a6:e66c4d1dbf7232e1c61ff493a2b8fbf0d555a2b53542219468847de4718db7a7",
+    "initial_run_id": "initial-host-7d6ee3ae178558306e482cc4"
+  },
+  "after": {
+    "spec": {
+      "task_id": "host-7d6ee3ae178558306e482cc4",
+      "criteria_revision": "host-artifact-v1",
+      "authorization_revision": "process-grant-v1",
+      "kind": "Reasoning",
+      "evidence_dir": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\attempt-0",
+      "max_runs": 3,
+      "max_calls": 12,
+      "deadline_unix_ms": 1793498188677
+    },
+    "options": {
+      "budget_stop_review": "reject"
+    },
+    "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+    "environment_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\environment",
+    "workspace": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\work\\review",
+    "generation": 1,
+    "phase": "finished",
+    "attempt": 0,
+    "adapter_revision": "reference-v1:6979eca75801cd0338ced296124235da5408fb3f3d13f59406406e9c50ea10a6:e66c4d1dbf7232e1c61ff493a2b8fbf0d555a2b53542219468847de4718db7a7",
+    "initial_run_id": "initial-host-7d6ee3ae178558306e482cc4"
+  },
+  "handoff": {
+    "kind": "recovered_human_review",
+    "task_id": "host-7d6ee3ae178558306e482cc4",
+    "accepted_snapshot": "3cc2ef791d80769498e00ac9ae73ed655e5688e8:master:f22eb03a68bc15652cbab45672ac94d28d409213f5e61b4e33ba9ac186c47645",
+    "candidate_basis": {
+      "task_id": "host-7d6ee3ae178558306e482cc4",
+      "criteria_revision": "host-artifact-v1",
+      "authorization_revision": "process-grant-v1",
+      "run_id": "initial-host-7d6ee3ae178558306e482cc4",
+      "run_number": 1,
+      "session_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+      "events_path": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\attempt-0\\run-1-events.jsonl",
+      "events_sha256": "4cda5a5aae9535b67abf410a6e18687d4baf6376d145ffcc0b285df3fe946578",
+      "event_count": 13,
+      "run_calls": 2,
+      "total_calls": 2,
+      "journal_head_sha256": "e90055ebbf69459956c94f875600ae3e37a81357eed0f9e484353422170c9466",
+      "raw_start": 0,
+      "raw_end": 4,
+      "raw_proof": "journal-v1:c3336bc42ab414fa2520d8a881a4f63c61171e8e9024d5c9f7f3598a9c6c6b27"
+    },
+    "business_state": "passed",
+    "native_fence_retained": true,
+    "native_fence_directory": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4",
+    "not_a_harness_task_outcome": true
+  },
+  "native_before": {
+    "session": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+    "journal": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.journal",
+    "records": 4,
+    "tool_calls": [
+      {
+        "id": "review-write",
+        "name": "write_result",
+        "arguments": {
+          "text": "42"
+        }
+      }
+    ],
+    "head_sha256": "8fa88ff6b52496d2323933e90807eccb45263dc6c5575cbe57231fd464cb27e9"
+  },
+  "native_after": {
+    "session": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.json",
+    "journal": "\\\\?\\D:\\WorkSpace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery\\review-recovery\\state\\tasks\\host-7d6ee3ae178558306e482cc4\\session.journal",
+    "records": 4,
+    "tool_calls": [
+      {
+        "id": "review-write",
+        "name": "write_result",
+        "arguments": {
+          "text": "42"
+        }
+      }
+    ],
+    "head_sha256": "8fa88ff6b52496d2323933e90807eccb45263dc6c5575cbe57231fd464cb27e9"
+  },
+  "original_fence_sha256": "0e62433d5c98c4f02472e3af59b0e5e82f67af8f6737379d919e9603fd81ee95",
+  "actual_model_calls": 2,
+  "result_notice_id": "recovered-review:host-7d6ee3ae178558306e482cc4:1",
+  "ack_survived_restart": true,
+  "blocked_then_pass_same_offer": true,
+  "note": "Host business handoff accepted after explicit review; original native fence remains. This is not a completed Harness TaskOutcome."
+}

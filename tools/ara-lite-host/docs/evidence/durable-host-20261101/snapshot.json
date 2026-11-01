@@ -1,0 +1,64 @@
+{
+  "base": "e229fb9ab800b46313047b89b73ac41e60c9efb4",
+  "files": [
+    {
+      "path": "tools/ara-lite-host/Cargo.lock",
+      "sha256": "ceb273766556dde2bd2eae015566d07eeaec105c1fc3edbcaa460f84e603676a"
+    },
+    {
+      "path": "tools/ara-lite-host/Cargo.toml",
+      "sha256": "8983406214144c3bbb8b62fef3a5b9e4e514e87868ba715328a6038ac8a20cdc"
+    },
+    {
+      "path": "tools/ara-lite-host/README.md",
+      "sha256": "a04d584545d23444b757ee489f2869682a28a6beb89762990fea8bb44acbe54b"
+    },
+    {
+      "path": "tools/ara-lite-host/src/evidence.rs",
+      "sha256": "af30b2511e1a9eb069269bdd8f6d233322ba0e3ea09ef8d8193c9a2594ddf66c"
+    },
+    {
+      "path": "tools/ara-lite-host/src/journal.rs",
+      "sha256": "35c8b6058153f3870c514f1a0057767926b67342dab36b90f1d56fe7fa2bd2ca"
+    },
+    {
+      "path": "tools/ara-lite-host/src/lib.rs",
+      "sha256": "0e444f1fe34e0c5f37fa6797169092dfcbd37abba5489e04876b333522d6e0e6"
+    },
+    {
+      "path": "tools/ara-lite-host/src/main.rs",
+      "sha256": "7430c4336731b3abcfa814b3142de3a2861fbb642f2e4e6dc9def5e718546a89"
+    },
+    {
+      "path": "tools/ara-lite-host/src/reference.rs",
+      "sha256": "e102d4a62affdcb8543048241d02812f162358101314bb105dc5375f7551a894"
+    },
+    {
+      "path": "tools/ara-lite-host/src/runtime.rs",
+      "sha256": "3ed204347fc6a61d81fe137823720c10b3f36020fa695e1caac349b4115229fb"
+    },
+    {
+      "path": "tools/ara-lite-host/src/types.rs",
+      "sha256": "874bb4f2833c2bd4b5331b570074e51fd7ac18b1c2007f0973503f2f791b4f0b"
+    },
+    {
+      "path": "tools/ara-lite-host/src/watchdog.rs",
+      "sha256": "1d116cebb63c9222ed1dd4fc0020e12dccc635b08ff217350ea2ffaf41dfbce0"
+    },
+    {
+      "path": "tools/ara-lite-host/tests/journal.rs",
+      "sha256": "aa2d2b9d6c61ed34006c398cacea75bf07c4e5e08c9ad4a788959d00d484ba45"
+    },
+    {
+      "path": "tools/ara-lite-host/tests/reference_process.py",
+      "sha256": "0f6c39749b44711ca87d7e476fa4041909d34d2f11a34bd606b6aac5777de9c7"
+    },
+    {
+      "path": "tools/ara-lite-host/tests/runtime.rs",
+      "sha256": "6551606116df8cf8142d1fc778eacc04add023637bfea7eba5e42ed401a2d518"
+    }
+  ],
+  "binary_sha256": "68647b86624a891423d03fa5882bf31111476b8b758823454574f9d98663efd2",
+  "process_seconds": 88.237,
+  "raw_evidence": "D:\\workspace\\env\\cache\\lite-host-validation-20261101-01a1945d-delivery"
+}
