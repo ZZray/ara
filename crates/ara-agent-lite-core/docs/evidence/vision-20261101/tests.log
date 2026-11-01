@@ -1,0 +1,291 @@
+   Compiling ara-agent-lite-core v0.1.1 (E:\repos\ara-github\crates\ara-agent-lite-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.23s
+     Running unittests src\lib.rs (D:\workspace\env\cache\rust-target\debug\deps\ara_agent_lite_core-393ad35df49b5949.exe)
+
+running 244 tests
+test agent::length_recovery::tests::replan_requires_explicit_execute_policy_and_original_budget ... ok
+test agent::length_recovery::tests::malformed_tools_and_opaque_or_other_terminals_are_not_replanned ... ok
+test agent::tests::grant_redaction_preserves_event_structure ... ok
+test analysis_tools::tests::parses_definitions_and_rejects_malformed_records ... ok
+test agent::tests::unfinished_history_is_rejected ... ok
+test agent::runtime_observation_tests::dynamic_observation_keeps_raw_order_and_is_not_a_durable_message ... ok
+test agent::length_recovery::tests::thinking_length_is_provenance_not_a_private_thinking_continuation ... ok
+test agent::tests::summary_json_mode_is_confined_to_a_cloned_model ... ok
+test agent::tests::summary_accepts_only_final_text_and_ignores_thinking_metadata ... ok
+test agent::length_recovery::tests::known_rejection_and_successful_read_text_do_not_become_unknown_effects ... ok
+test analysis_tools::tests::partial_json_tail_is_not_a_definition ... ok
+test agent::tests::optional_run_budget_preserves_exact_full_request_at_admission_boundary ... ok
+test analysis_tools::tests::validates_vma_and_utf8_budgets ... ok
+test analysis_tools::tests::analysis_null_normalization_preserves_required_unknown_and_nonnull_fields ... ok
+test agent::runtime_observation_tests::runtime_observation_has_explicit_bound_and_no_empty_overhead ... ok
+test agent::tests::current_run_budget_is_fresh_includes_next_and_never_mutates_history ... ok
+test completion_gate::tests::decide_continues_only_with_budget_and_time_left ... ok
+test compaction_refresh::tests::candidates_are_successful_file_calls_newest_first_and_deduplicated ... ok
+test compaction_refresh::tests::plan_fits_the_byte_budget_with_windows_references_and_skips ... ok
+test context_memory::reference_window_tests::corrected_and_revoked_sources_cannot_be_retrieved_by_either_tool ... ok
+test context_memory::reference_window_tests::invalid_ranges_fail_without_rounding_offsets_or_exposing_wrong_bytes ... ok
+test context_memory::reference_window_tests::long_literal_is_not_cut_out_of_the_bounded_search_excerpt ... ok
+test context_memory::tests::cloud_body_cannot_promote_framing_or_adopt_memory ... ok
+test context_memory::tests::candidate_needs_real_adoption_and_active_source ... ok
+test context_memory::reference_window_tests::read_default_maximum_and_final_partial_window_are_explicit ... ok
+test context_memory::tests::cloud_changes_preserve_preexisting_local_accepted_memory ... ok
+test context_memory::tests::cloud_missing_or_unavailable_cuts_cached_content_and_old_sidecar_migrates ... ok
+test context_memory::tests::cloud_same_epoch_does_not_drop_history_and_body_is_never_persisted ... ok
+test context_memory::reference_window_tests::deep_unicode_match_coordinates_select_the_original_body ... ok
+test context_memory::tests::cloud_revocation_cuts_derived_summary_raw_and_candidate_without_deleting_originals ... ok
+test context_memory::tests::correction_keeps_exact_original_and_cuts_old_paraphrases ... ok
+test context_memory::tests::follow_up_drops_cloud_carrier_and_preserves_only_legacy_data ... ok
+test analysis_tools::tests::analysis_optional_nulls_reach_the_same_backend_admission_as_omission ... ok
+test context_memory::tests::cloud_carrier_is_exact_framing_bound_and_integrity_checked ... ok
+test context_memory::tests::malformed_summary_and_unknown_provenance_are_rejected ... ok
+test context_memory::tests::numeric_source_ids_cannot_replace_a_saved_summary_or_partially_add_candidates ... ok
+test analysis_tools::tests::analysis_nullable_arguments_keep_existing_prechecks ... ok
+test agent::tests::optional_experience_directory_never_displaces_context_at_the_byte_limit ... ok
+test context_memory::tests::summary_parse_failure_reports_shape_without_model_text ... ok
+test effect_status::tests::builtin_phrases_on_the_first_line_of_effect_tool_errors_are_typed ... ok
+test context_memory::tests::root_metadata_is_discarded_without_adopting_or_relaxing_proposals ... ok
+test effect_status::tests::merge_keeps_existing_details ... ok
+test effect_status::tests::other_tools_successes_and_later_lines_stay_unclassified ... ok
+test context_memory::tests::current_run_alone_cannot_be_silently_truncated ... ok
+test agent::tests::already_cancelled_memory_command_cannot_adopt_or_write_checkpoint ... ok
+test agent::length_recovery::tests::reference_save_failure_preserves_store_and_success_marks_automatic_origin ... ok
+test compaction_refresh::property_tests::candidates_are_recent_successful_file_paths_deduplicated ... ok
+test context_memory::experience_tests::invented_ids_and_model_supplied_receipts_cannot_create_candidates ... ok
+test context_memory::experience_tests::cancellation_and_save_failure_leave_store_and_original_file_unchanged ... ok
+test context_memory::experience_tests::legacy_json_without_experience_field_keeps_existing_memories ... ok
+test context_memory::tests::image_summary_offsets_survive_a_retained_window_and_prior_coverage ... ok
+test context_memory::experience_tests::proposal_is_persisted_but_candidates_are_not_retrieved_or_projected ... ok
+test context_memory::experience_tests::grant_is_redacted_in_candidate_fields_and_caller_redacted_native_receipts ... ok
+test context_memory::tests::declared_context_changes_budget_without_resetting_sources ... ok
+test context_memory::experience_tests::each_run_can_propose_at_most_once_even_after_candidate_revocation ... ok
+test context_memory::tests::one_large_old_turn_can_compact_and_current_stays_complete ... ok
+test context_memory::experience_tests::only_explicit_user_adoption_enables_retrieval_and_survives_restart ... ok
+test context_memory::experience_tests::candidates_do_not_leak_into_summary_input ... ok
+test events::tests::decode_errors_name_the_reason ... ok
+test events::tests::decode_dispatches_by_type_and_keeps_unknown_fields ... ok
+test execution::tests::checklist_arguments_are_strict_and_byte_bounded ... ok
+test execution::tests::checklist_cancellation_interrupts_a_backpressured_event ... ok
+test execution::tests::checklist_closed_event_transport_reports_local_update_and_cancels ... ok
+test execution::tests::checklist_event_fields_match_the_existing_ui_contract ... ok
+test context_memory::experience_tests::search_limits_complete_escaped_utf8_json_to_eight_kib ... ok
+test execution::tests::checklist_exact_token_is_redacted_in_event_and_complete_result ... ok
+test execution::tests::checklist_instances_do_not_share_run_items ... ok
+test execution::tests::goal_review_is_explicit_and_bounded ... ok
+test execution::tests::checklist_pre_cancellation_emits_nothing_and_keeps_no_item ... ok
+test execution::tests::plan_is_a_small_explicit_allowlist ... ok
+test experience::tests::directory_advertises_only_native_recovery_ids_usable_by_collect ... ok
+test environment_library::tests::resolves_closest_git_root_without_creating_and_respects_global_override ... ok
+test experience::tests::directory_rejects_unknown_mismatched_duplicate_and_invalid_native_ids ... ok
+test experience::tests::directory_requires_recovery_after_the_latest_allowed_failure ... ok
+test experience::tests::library_observations_use_real_successful_pairs_without_promoting_private_experience ... ok
+test experience::tests::rejects_mismatch_result_before_call_and_disallowed_tools ... ok
+test experience::tests::rejects_missing_duplicate_incomplete_and_wrong_order ... ok
+test experience::tests::rejects_only_success_only_failure_and_later_failure ... ok
+test experience::tests::utf8_excerpt_hashes_complete_output_and_multiple_blocks ... ok
+test experience::tests::valid_failure_then_success_and_json_roundtrip ... ok
+test experience::tests::validates_deserialized_shape_bounds_hash_and_status ... ok
+test agent::tests::actual_tool_and_text_history_survives_checkpoint_and_restart ... ok
+test file_discovery::tests::invalid_arguments_and_cancellation_are_errors ... ok
+test execution::tests::checklist_cap_keeps_full_originals_and_updates_existing_id ... ok
+test environment_library::tests::refuses_hardlinks ... ok
+test analysis_tools::tests::record_and_count_caps_are_explicitly_partial ... ok
+test environment_library::tests::catalog_truncates_independently_and_search_reports_partial ... ok
+test file_edits::tests::preparation_is_original_based_and_rejects_overlap_and_late_failure ... ok
+test file_edits::tests::rejections_name_the_current_hash_and_the_failing_block ... ok
+test file_edits::tests::source_bytes_limits_and_previews_are_not_normalized ... ok
+test file_edits::tests::injected_writer_failure_has_real_partial_effect_and_unknown_receipt ... ok
+test local_tools::process_capture_tests::capture_option_rejects_null_and_invalid_types_before_execution ... ok
+test context_memory::tests::image_summary_keeps_sources_and_charges_attachment_bytes ... ok
+test environment_library::tests::index_overflow_fails_before_content_publication ... ok
+test local_tools::tests::absolute_paths_and_utf8_boundaries ... ok
+test local_tools::process_capture_tests::canceled_before_process_never_creates_effects ... ok
+test file_discovery::tests::names_paths_unicode_and_binary_metadata ... ok
+test local_tools::tests::compact_output_preserves_both_ends_and_utf8_byte_budget ... ok
+test local_tools::process_capture_tests::pipe_error_retains_partial_archive_and_other_stream ... ok
+test file_discovery::tests::generated_directories_and_depth_are_explicitly_partial ... ok
+test context_memory::experience_tests::corrected_revoked_sources_and_revoked_experiences_stop_retrieval ... ok
+test local_tools::process_capture_tests::spawn_failure_retains_both_unstarted_artifact_references ... ok
+test local_tools::tests::excerpts_show_hits_and_map_unicode_lowercase_to_source ... ok
+test local_tools::tests::actual_search_long_line_returns_matching_region ... ok
+test local_tools::tests::read_file_null_normalization_is_limited_to_its_optional_fields ... ok
+test agent::tests::durable_checkpoint_replacement_and_incomplete_fence ... ok
+test environment_library::tests::failed_index_replacement_preserves_previous_index_and_unreferenced_revision ... ok
+test local_tools::tests::edit_in_place_retains_hardlinks_and_truncates_shorter_results ... ok
+test local_tools::tests::edit_block_count_and_readonly_preview_are_bounded ... ok
+test local_tools::tests::path_only_text_remains_exact_and_options_are_strict ... ok
+test agent::tests::interrupted_run_requires_exact_host_settlement_and_never_replays ... ok
+test local_tools::tests::read_file_optional_nulls_match_omission_and_preserve_conflicts ... ok
+test local_tools::tests::edit_preflight_failures_and_cancel_do_not_write_or_truncate ... ok
+test environment_library::tests::altered_managed_body_is_rejected_with_partial_search_warning_and_human_notes_are_unverified ... ok
+test environment_library::tests::canonicalized_runtime_cwd_initializes_catalogs_and_reuses_regular_notes ... ok
+test environment_library::tests::refuses_junction_traversal ... ok
+test local_tools::tests::download_checksum_validates_before_effects_and_preserves_destination_on_mismatch ... ok
+test managed_jobs::tests::old_serialized_specs_keep_exact_hash_and_default_input_closed ... ok
+test local_tools::tests::actual_chunked_scan_cancel_settles_and_leaves_files_unchanged ... ok
+test file_discovery::tests::skips_actual_windows_directory_junction ... ok
+test local_tools::tests::versioned_snapshot_and_multi_edit_preserve_legacy_and_source_bytes ... ok
+test managed_jobs::tests::lease_owner_and_path_arguments_are_host_owned ... ok
+test environment_library::tests::initialization_preserves_existing_index_and_reuses_notes_across_instances ... ok
+test environment_library::tests::shared_lock_prevents_lost_updates_and_read_paths_are_bounded ... ok
+test environment_library::tests::revoked_notes_are_not_reused_or_rediscovered_through_index_metadata ... ok
+test managed_jobs::tests::utf8_cursor_preserves_partial_codepoint_and_discloses_invalid ... ok
+test environment_library::tests::observed_requires_current_run_success_and_revoke_preserves_content ... ok
+test model::generation_policy_tests::disabled_policy_changes_only_the_fixed_thinking_field ... ok
+test model::generation_policy_tests::disabled_policy_rejects_other_resolved_protocols ... ok
+test model::generation_policy_tests::policy_json_accepts_only_the_two_explicit_variants ... ok
+test model::generation_policy_tests::provider_default_and_existing_hosts_leave_models_unchanged ... ok
+test model_caps::tests::directory_capabilities_are_conservative_and_strict ... ok
+test model::generation_policy_tests::policy_validation_preserves_the_four_route_fields ... ok
+test model_caps::tests::full_context_checks_system_schemas_and_json_escaping ... ok
+test model_caps::tests::text_budget_respects_capacity_and_local_resource_limit ... ok
+test model_caps::tests::image_admission_checks_user_tool_and_assistant_roles ... ok
+test model_telemetry::tests::compaction_receipt_uses_global_journal_indexes_after_hot_eviction ... ok
+test model_telemetry::tests::context_observation_is_content_free_and_stable ... ok
+test model_telemetry::tests::invalid_negative_inconsistent_and_overflow_usage_are_unknown ... ok
+test model_telemetry::tests::missing_or_zero_usage_is_unknown_not_free_or_cache_miss ... ok
+test model_telemetry::tests::observations_share_request_budget_and_do_not_invent_token_usage ... ok
+test model_telemetry::tests::positive_adapter_cache_counts_are_sourced_without_zero_inference ... ok
+test output_limit::tests::builtin_applies_only_without_a_host_ceiling ... ok
+test output_limit::tests::summary_and_admission_bounds ... ok
+test local_tools::tests::search_real_files_literal_case_skips_and_budget_are_explicit ... ok
+test environment_library::tests::superseded_or_unpublished_revisions_are_audit_only_even_when_human_index_links_them ... ok
+test environment_library::tests::conflict_damaged_manifest_and_cancel_leave_old_index_unchanged ... ok
+test process_output::tests::capture_never_reuses_existing_paths ... ok
+test local_tools::tests::text_prefix_utf8_output_and_search_limits_are_explicit ... ok
+test run_policies::tests::default_declares_nothing_and_validates ... ok
+test managed_jobs::tests::partial_pipe_fault_is_durable_unknown_and_blocks_replay_and_new_inputs ... ok
+test project_rules::tests::fresh_exact_content_and_explicit_invalid_rules ... ok
+test process_output::tests::read_failure_and_changed_file_are_never_complete ... ok
+test context_memory::reference_window_tests::windows_reassemble_utf8_original_and_preserve_every_source_field ... ok
+test process_output::tests::partial_write_counts_only_persisted_prefix_and_continues_observing ... ok
+test process_output::tests::raw_bytes_and_middle_output_remain_recoverable ... ok
+test local_tools::tests::snapshot_options_limits_and_invalid_utf8_are_explicit ... ok
+test environment_library::tests::stale_writer_cannot_reactivate_revoked_id_but_new_observation_id_is_allowed ... ok
+test managed_jobs::tests::pending_input_is_never_replayed_and_original_job_lease_cannot_be_extended ... ok
+test script_tools::tests::validates_limits_and_preserves_powershell_bom ... ok
+test session_journal::tests::committed_range_proof_stays_stable_after_append_and_hot_eviction ... ok
+test file_discovery::tests::bounded_results_entries_directories_output_and_time ... ok
+test session_journal::tests::history_search_twenty_match_page_does_not_skip_further_matches ... ok
+test session_journal::tests::history_utf8_short_limit_reports_nonprogress_instead_of_empty_loop ... ok
+test session_journal::tests::incomplete_legacy_import_is_never_an_admissible_session ... ok
+test compaction_refresh::property_tests::plan_respects_the_byte_budget_and_reports_each_outcome ... ok
+test script_tools::tests::missing_interpreter_is_error_and_cleans_script ... ok
+test skill_library::tests::builtin_read_only_and_paging_utf8 ... ok
+test managed_jobs::tests::repeated_intent_never_replays_and_input_conflict_is_rejected ... ok
+test skill_library::tests::installed_frontmatter_validation_and_empty_instructions ... ok
+test session_journal::tests::intent_without_head_and_committed_receipt_content_corruption_fail_closed ... ok
+test skill_library::tests::skill_catalog_is_read_only_and_has_builtin_entries ... ok
+test session_journal::tests::torn_or_unconfirmed_tail_is_preserved_and_fenced ... ok
+test skill_library::tests::skill_cancellation_before_mutation_and_lock_contention ... ok
+test file_discovery::tests::output_is_bounded_for_long_paths ... ok
+test skill_library::tests::skill_grant_redacted_and_failure_cleans_only_own_stage ... ok
+test skill_library::tests::skill_create_read_restart_and_hash_cover_all_files ... ok
+test managed_jobs::tests::lock_inventory_and_incremental_log_reads_do_not_rely_on_pid ... ok
+test skill_library::tests::skill_install_copies_license_binary_and_script_without_execution ... ok
+test steering::tests::non_object_receipts_are_rejected_without_changing_pending_or_outcomes ... ok
+test steering::tests::object_receipts_preserve_metadata_for_complete_and_finish ... ok
+test skill_library::tests::skill_rejects_escape_reserved_path_collision_and_oversize ... ok
+test managed_jobs::tests::terminal_input_service_or_log_fault_interrupts_worker_without_waiting_for_deadline ... ok
+test stuck_detector::tests::repeated_call_hits_then_stops_and_any_other_call_restarts_the_count ... ok
+test stuck_detector::tests::repeated_errors_accumulate_without_being_consecutive ... ok
+test stuck_detector::tests::repeated_observations_count_only_listed_tools_and_keep_the_seen_set ... ok
+test stuck_detector::tests::thresholds_are_validated ... ok
+test managed_jobs::tests::terminal_input_journal_crosses_metadata_limit_and_retains_admission_bounds ... ok
+test system_capabilities::tests::budgets_and_cancellation_are_explicit ... ok
+test stuck_detector::property_tests::validation_accepts_exactly_thresholds_in_range ... ok
+test terminal_emulator::tests::answers_queries_at_each_cursor_position_and_preserves_split_sequences ... ok
+test terminal_emulator::tests::bounded_responses_reject_query_floods ... ok
+test terminal_emulator::tests::osc_content_and_nonstandard_queries_do_not_generate_input ... ok
+test terminal_emulator::tests::reports_status_and_primary_secondary_device_attributes ... ok
+test system_capabilities::tests::path_budget_and_error_classes_do_not_misreport_absence ... ok
+test terminal_emulator::tests::resize_unicode_cursor_moves_and_alternate_screen_use_real_screen_state ... ok
+test terminal_emulator::tests::screen_allocation_has_a_final_bound ... ok
+test system_capabilities::tests::discovers_only_fixed_platform_candidates_without_execution ... ok
+test stuck_detector::property_tests::detector_signals_match_the_reference_model ... ok
+test skill_library::tests::skill_remove_preserves_owned_files_and_unknown_is_refused ... ok
+test terminal_process::tests::terminal_rejects_invalid_size_before_starting_child ... ok
+test termination::tests::closed_budget_wire_is_versioned_and_never_claims_a_model_final_stop ... ok
+test termination::tests::malformed_or_extended_proofs_are_not_silently_coerced ... ok
+test termination::tests::stop_evidence_wire_is_tagged_and_only_closed_rounds_are_reviewable ... ok
+test web_tools::tests::actual_fetch_preserves_long_sources_and_omits_links_whole_at_budget ... ok
+test skill_library::tests::skill_verify_requires_current_native_exec_and_exact_hash ... ok
+test web_tools::tests::address_policy_rejects_special_and_mapped_ranges_and_mixed_dns ... ok
+test web_tools::tests::actual_search_preserves_long_urls_or_omits_whole_items_and_marks_redaction ... ok
+test web_tools::tests::configured_search_parses_deduplicates_and_rejects_malformed_or_cross_origin_redirect ... ok
+test web_tools::tests::live_public_web_tools_execute_receipt ... ignored, explicit real public-network acceptance; DDG availability is not guaranteed
+test process_output::tests::quota_keeps_draining_and_reports_a_prefix ... ok
+test web_tools::tests::real_http_fetch_extracts_and_tracks_redirect_and_metadata ... ok
+test web_tools::tests::real_http_pagination_is_utf8_safe_find_is_bounded_and_hash_is_stable ... ok
+test web_tools::tests::real_http_cancel_and_deadline_cover_request_wait ... ok
+test web_tools::tests::tokenizer_handles_quoted_angles_comments_entities_rawtext_and_lite_results ... ok
+test web_tools::tests::tool_contract_has_only_two_read_only_tools ... ok
+test web_tools::tests::urls_reject_credentials_and_redact_sensitive_queries ... ok
+test web_tools::tests::real_http_size_type_bad_text_redirect_loop_and_private_redirect_are_errors ... ok
+test terminal_process::tests::terminal_ctrl_c_interrupts_foreground_program ... ok
+test skill_library::tests::skill_install_rejects_link_and_excessive_tree ... ok
+test terminal_process::tests::terminal_is_tty_input_environment_and_resize ... ok
+test terminal_process::tests::terminal_cancel_owns_descendant_tree ... ok
+test file_edits::tests::property_26::edit_applies_every_block_or_none ... ok
+test terminal_process::tests::terminal_large_output_cancel_drains_without_hanging_runtime ... ok
+test skill_library::tests::catalog_has_a_shared_aggregate_budget_across_bundles_and_scopes ... ok
+test web_tools::tests::hostile_bounded_html_and_entity_inputs_do_not_panic_or_expand_unboundedly ... ok
+test session_journal::tests::settled_run_index_survives_hot_completed_list_eviction ... ok
+test local_tools::tests::real_large_log_range_tail_and_giant_line_are_bounded ... ok
+test local_tools::tests::real_cancellation_terminates_descendant_process ... ok
+test local_tools::tests::real_shell_timeout_settles ... ok
+test local_tools::tests::real_shell_captures_output_and_exit ... ok
+test script_tools::tests::real_python_compact_output_retains_both_stream_tails ... ok
+test managed_jobs::tests::real_python_input_is_stable_private_owner_bound_and_eof_closes ... ok
+test managed_jobs::tests::per_job_input_limits_and_authentication_are_enforced_by_worker ... ok
+test managed_jobs::tests::immediate_exit_keeps_input_ack_and_slow_client_does_not_block_cancel ... ok
+test script_tools::tests::powershell_source_preserves_top_level_param_and_using ... ok
+test script_tools::tests::powershell_command_errors_and_native_exit_propagate ... ok
+test script_tools::tests::real_cmd_utf8_quoting_exit_cancel_timeout_cleanup ... ok
+test script_tools::tests::real_python_utf8_quoting_exit_cancel_timeout_cleanup ... ok
+test script_tools::tests::real_powershell_utf8_quoting_exit_cancel_timeout_cleanup ... ok
+test agent::tests::legacy_ten_mib_with_valid_summary_imports_originals_and_bounds_hot_tail ... ok
+test script_tools::tests::python_descendant_cancellation_prevents_delayed_file_effect ... ok
+test session_journal::tests::segmented_history_exceeds_old_limits_without_loading_all_raw ... ok
+test agent::interrupted_run_property_tests::reconciliation_succeeds_only_for_the_exact_open_calls_with_evidence ... ok
+
+test result: ok. 243 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.01s
+
+     Running tests\host_boundary.rs (D:\workspace\env\cache\rust-target\debug\deps\host_boundary-53a403c33511e20c.exe)
+
+running 3 tests
+test constructor_requires_explicit_local_and_worker_authority ... ok
+test invalid_custom_names_are_rejected_before_model_state_or_tool_effects ... ok
+test typed_snapshot_enforces_identity_integrity_and_whole_payload_size ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\output_limit_wire.rs (D:\workspace\env\cache\rust-target\debug\deps\output_limit_wire-2b19fc7ad1d82d20.exe)
+
+running 3 tests
+test effective_limit_is_the_minimum_of_participating_inputs ... ok
+test summary_call_carries_the_summary_limit_and_agent_call_the_effective_limit ... ok
+test provider_receives_the_recorded_effective_limit ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.56s
+
+     Running tests\stability_surface.rs (D:\workspace\env\cache\rust-target\debug\deps\stability_surface-a496d013d0b8cbe3.exe)
+
+running 3 tests
+test stable_items_are_usable_through_public_paths ... ok
+test stable_set_in_the_document_equals_the_items_used_here ... ok
+test stability_doc_classifies_each_item_once_for_this_version ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\vision_wire.rs (D:\workspace\env\cache\rust-target\debug\deps\vision_wire-49b19c37af5c1144.exe)
+
+running 6 tests
+test live_image_tool_result_is_understood_by_the_selected_model ... ignored, requires authorized LITE_VISION_ENDPOINT/MODEL/TOKEN/OUT and a real vision model
+test image_tool_result_reaches_provider_and_survives_a_new_run ... ok
+test failed_image_summary_keeps_original_evidence_and_does_not_install_a_summary ... ok
+test image_history_summary_sends_image_blocks_and_preserves_original_evidence ... ok
+test undeclared_or_conflicting_image_capability_refuses_the_next_request ... ok
+test restored_image_history_cannot_be_sent_to_a_text_or_unknown_model ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.45s
+

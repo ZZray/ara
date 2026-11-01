@@ -30,6 +30,15 @@ fn positive(row: &Value, name: &str, nested: &str) -> Result<Option<u64>> {
 }
 
 impl ModelCaps {
+    /// Missing declarations retain legacy text support, never implicit vision.
+    pub(crate) fn effective_input(&self) -> Vec<rpi_ai::InputModality> {
+        let mut input = vec![rpi_ai::InputModality::Text];
+        if self.input.as_ref().is_some_and(|values| values.iter().any(|value| value == "image")) {
+            input.push(rpi_ai::InputModality::Image);
+        }
+        input
+    }
+
     pub fn parse(row: &Value) -> Result<Self> {
         let parse_input = |value: Option<&Value>| -> Result<Option<Vec<String>>> {
             let Some(value) = value.filter(|v| !v.is_null()) else {
@@ -83,6 +92,34 @@ impl ModelCaps {
     }
 }
 
+/// Check the actual provider-facing context before reserving a model call.
+/// The pinned Chat adapter supports images in user/tool messages, not assistant messages.
+pub(crate) fn check_input(model: &rpi_ai::Model, context: &rpi_ai::Context) -> Result<()> {
+    use rpi_ai::{Content, InputModality, Message, UserContent};
+    for message in &context.messages {
+        let content = match message {
+            Message::User(user) => match &user.content {
+                UserContent::Text(_) => continue,
+                UserContent::Blocks(blocks) => blocks,
+            },
+            Message::ToolResult(result) => &result.content,
+            Message::Assistant(assistant) => {
+                ensure!(
+                    !assistant.content.iter().any(|block| matches!(block, Content::Image(_))),
+                    "assistant image content is unsupported by the selected provider adapter; original Session retained"
+                );
+                continue;
+            }
+        };
+        ensure!(
+            model.input.contains(&InputModality::Image)
+                || !content.iter().any(|block| matches!(block, Content::Image(_))),
+            "selected model does not declare image input; original Session retained"
+        );
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct TextBudget {
     pub projection_bytes: usize,
@@ -107,6 +144,40 @@ impl TextBudget {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn image_admission_checks_user_tool_and_assistant_roles() {
+        use rpi_ai::{Api, Content, Context, ImageContent, Message, Model, UserContent, UserMessage};
+        let image = Content::Image(ImageContent {
+            kind: Default::default(),
+            data: "private-image-payload".into(),
+            mime_type: "image/png".into(),
+        });
+        let user = Message::User(UserMessage::new(UserContent::Blocks(vec![image.clone()]), 0));
+        let tool: Message = serde_json::from_value(json!({
+            "role":"toolResult","toolCallId":"capture-1","toolName":"capture",
+            "content":[image.clone()],"isError":false,"timestamp":0
+        }))
+        .unwrap();
+        let mut model = Model::new("fixture", "fixture", Api::OpenaiCompletions, "fixture", "http://localhost");
+        for declaration in
+            [json!({}), json!({"input":["text"]}), json!({"input":["text","image"],"omp":{"input":["text"]}})]
+        {
+            model.input = ModelCaps::parse(&declaration).unwrap().effective_input();
+            for message in [&user, &tool] {
+                let error = check_input(&model, &Context::new(vec![message.clone()])).unwrap_err().to_string();
+                assert!(error.contains("does not declare image input"));
+                assert!(!error.contains("private-image-payload"));
+            }
+        }
+        model.input = ModelCaps::parse(&json!({"input":["text","image"]})).unwrap().effective_input();
+        assert!(check_input(&model, &Context::new(vec![user, tool])).is_ok());
+        let mut assistant = rpi_ai::AssistantMessage::empty(Api::OpenaiCompletions, "fixture", "fixture", 0);
+        assistant.content.push(image);
+        assert!(check_input(&model, &Context::new(vec![Message::Assistant(Box::new(assistant))]))
+            .unwrap_err()
+            .to_string()
+            .contains("assistant image content is unsupported"));
+    }
     #[test]
     fn directory_capabilities_are_conservative_and_strict() {
         let c =

@@ -1,0 +1,50 @@
+{
+  "base": "a8aa9f4e9086db51103ce80e0af34cb4094875b1",
+  "files_sha256": {
+    "src/agent.rs": "0ae5047f19aa2988e9502b158723d856972799469e7050e41e6d06c73acb78b1",
+    "src/model_caps.rs": "59ab3811390ae58e322e12eda0814b8bb95a29a998098c27130a7fd43cf4cb38",
+    "src/context_memory.rs": "8848ab308f025f3db079e81a24a8d6797952fc549c2314d6bf9eaa1833ae619c",
+    "tests/vision_wire.rs": "82fec0adfb617c97678d979725ccf5c15c11dbf1f106b3a3c88df931edd0cadc",
+    "docs/knowledge/host-contracts.md": "5255bde3fd57f18c9761b29fe398ee0cd64a67a4707818e993dfc05aed2f5324",
+    "docs/knowledge/INDEX.md": "6b6617334933cd581ae7f98e5c0eaad613ff8389a532c8b740e57b193e642c6e",
+    "docs/evidence/vision-20261101.md": "2029bc9bd38e4cc5ef60350736d4fd0d6a01f5cdc3520eb2a695c94dfd8139bd"
+  },
+  "independent_review": {
+    "agent": "/root/lite_cu_boundary_review",
+    "result": "no blocking findings",
+    "bound_sha256": {
+      "src/agent.rs": "0ae5047f19aa2988e9502b158723d856972799469e7050e41e6d06c73acb78b1",
+      "src/model_caps.rs": "59ab3811390ae58e322e12eda0814b8bb95a29a998098c27130a7fd43cf4cb38",
+      "src/context_memory.rs": "8848ab308f025f3db079e81a24a8d6797952fc549c2314d6bf9eaa1833ae619c",
+      "tests/vision_wire.rs": "82fec0adfb617c97678d979725ccf5c15c11dbf1f106b3a3c88df931edd0cadc",
+      "docs/knowledge/host-contracts.md": "5255bde3fd57f18c9761b29fe398ee0cd64a67a4707818e993dfc05aed2f5324",
+      "docs/knowledge/INDEX.md": "6b6617334933cd581ae7f98e5c0eaad613ff8389a532c8b740e57b193e642c6e"
+    }
+  },
+  "tests": {
+    "controlled_passed": 257,
+    "live_passed": 1,
+    "existing_public_web_ignored": 1,
+    "doc_cases": 0
+  },
+  "limits": [
+    "No full workspace or Task61 gate",
+    "No real long-task multimodal summary quality acceptance",
+    "No desktop MCP, QSpin or customer device actions"
+  ],
+  "documentation_checks": {
+    "scoped_local_links": "passed",
+    "repository_bootstrap_exit": 1,
+    "repository_broken_links": 61,
+    "changed_document_broken_links": 0
+  },
+  "artifacts_sha256": {
+    "docs\\evidence\\vision-20261101\\bootstrap.log": "7a03f8b5dc7de49f97c6a7469a8d305562f518889d283487d2c68b3f57c4c7bb",
+    "docs\\evidence\\vision-20261101\\clippy.log": "13c3264db78cda552aadd1de119fa32ab4b4581730e011bee84f2057bc2c3c33",
+    "docs\\evidence\\vision-20261101\\doc-tests.log": "c9cbfac7ab4f0a008b158bbb48c561ac6a9b91abdce594e3524302258aec5b17",
+    "docs\\evidence\\vision-20261101\\live\\fixture.png": "fc75966897d50143d883d0f9cc09b6b508989a4a6dcb03650983dba508377741",
+    "docs\\evidence\\vision-20261101\\live\\result.json": "fbf44d68bd2bdf8b49efde33405e5935eb9076abdd2d2131beab57081374e07b",
+    "docs\\evidence\\vision-20261101\\live.log": "707745f742c39f8583402cf8c6ea70fd451d6b6e288e02d609766963d4a33e97",
+    "docs\\evidence\\vision-20261101\\tests.log": "86b367a1111a2ce2e85259c61eaddaae658a3035ad14345ef85d461413d3c5de"
+  }
+}

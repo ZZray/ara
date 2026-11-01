@@ -606,6 +606,22 @@ impl Store {
         old_count: usize,
         limit: usize,
     ) -> Result<Option<(usize, String)>> {
+        self.summary_content_with_limit(messages, old_count, limit)?
+            .map(|(cut, content)| match content {
+                rpi_ai::UserContent::Text(text) => Ok((cut, text)),
+                rpi_ai::UserContent::Blocks(_) => {
+                    bail!("image history requires the multimodal summary path; original Session retained")
+                }
+            })
+            .transpose()
+    }
+
+    pub(crate) fn summary_content_with_limit(
+        &self,
+        messages: &[AgentMessage],
+        old_count: usize,
+        limit: usize,
+    ) -> Result<Option<(usize, rpi_ai::UserContent)>> {
         let projected = self.projection(messages)?;
         if serde_json::to_vec(&projected)?.len() <= limit && !crate::session_journal::hot_limit(messages)? {
             return Ok(None);
@@ -635,13 +651,50 @@ impl Store {
         // Native transcript validation is repeated at the chosen cut by the host.
         let mut closed = messages[previous..cut].to_vec();
         self.hide_unadopted(&mut closed)?;
+        // Only alter the summary projection. Original images remain in the native journal.
+        let mut attachments = Vec::new();
+        for (message_index, message) in closed.iter_mut().enumerate() {
+            let content = match message {
+                AgentMessage::User(user) => match &mut user.content {
+                    rpi_ai::UserContent::Text(_) => continue,
+                    rpi_ai::UserContent::Blocks(blocks) => blocks,
+                },
+                AgentMessage::ToolResult(result) => &mut result.content,
+                AgentMessage::Assistant(assistant) => &mut assistant.content,
+                AgentMessage::Custom(_) => continue,
+            };
+            for (content_index, block) in content.iter_mut().enumerate() {
+                if let Content::Image(image) = block {
+                    let reference = json!({"summary_image":{
+                        "message_index":self.raw_base + previous + message_index,
+                        "content_index":content_index,
+                        "mime_type":image.mime_type,
+                        "base64_sha256":format!("{:x}",Sha256::digest(image.data.as_bytes()))
+                    }})
+                    .to_string();
+                    attachments.push(Content::text(reference.clone()));
+                    attachments.push(Content::Image(image.clone()));
+                    *block = Content::text(reference);
+                }
+            }
+        }
         let text = serde_json::to_string(
             &json!({"source_directory":self.directory(),"previous_summary":self.summary,"closed_old_messages":closed}),
         )?;
-        if text.len() > limit {
+        let (content, bytes) = if attachments.is_empty() {
+            let bytes = text.len();
+            (rpi_ai::UserContent::Text(text), bytes)
+        } else {
+            let mut blocks = vec![Content::text(text)];
+            blocks.append(&mut attachments);
+            let content = rpi_ai::UserContent::Blocks(blocks);
+            let bytes = serde_json::to_vec(&content)?.len();
+            (content, bytes)
+        };
+        if bytes > limit {
             bail!("summary input exceeds context byte budget");
         }
-        Ok(Some((cut, text)))
+        Ok(Some((cut, content)))
     }
     pub fn install_summary(&mut self, text: &str, cut: usize, messages: &[AgentMessage], run: &str) -> Result<()> {
         if text.len() > 24 * 1024 {
@@ -1009,6 +1062,98 @@ mod reference_window_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_summary_offsets_survive_a_retained_window_and_prior_coverage() {
+        let mut s = store();
+        s.raw_base = 100;
+        s.watermark = 101;
+        let content = || {
+            vec![
+                Content::text("x".repeat(24 * 1024)),
+                Content::Image(rpi_ai::ImageContent {
+                    kind: Default::default(),
+                    data: "encoded-image".into(),
+                    mime_type: "image/png".into(),
+                }),
+            ]
+        };
+        let mut assistant = rpi_ai::AssistantMessage::empty(rpi_ai::Api::OpenaiCompletions, "fixture", "fixture", 0);
+        assistant.content = content();
+        let tool: rpi_ai::ToolResultMessage = serde_json::from_value(json!({
+            "role":"toolResult","toolCallId":"capture","toolName":"capture",
+            "content":content(),"isError":false,"timestamp":0
+        }))
+        .unwrap();
+        let messages = vec![
+            user("already covered".into()),
+            AgentMessage::User(UserMessage::new(rpi_ai::UserContent::Blocks(content()), 0)),
+            AgentMessage::ToolResult(Box::new(tool)),
+            AgentMessage::Assistant(Box::new(assistant)),
+            user("y".repeat(70 * 1024)),
+        ];
+        let before = messages.clone();
+        let (cut, result) = s.summary_content_with_limit(&messages, 4, 120 * 1024).unwrap().unwrap();
+        assert_eq!(cut, 4);
+        let rpi_ai::UserContent::Blocks(blocks) = result else { panic!("multimodal summary") };
+        assert_eq!(blocks.len(), 7);
+        for (index, pair) in blocks[1..].chunks_exact(2).enumerate() {
+            let Content::Text(label) = &pair[0] else { panic!("source label") };
+            let marker: Value = serde_json::from_str(&label.text).unwrap();
+            assert_eq!(marker["summary_image"]["message_index"], 101 + index);
+            assert_eq!(marker["summary_image"]["content_index"], 1);
+            assert_eq!(marker["summary_image"]["base64_sha256"], format!("{:x}", Sha256::digest(b"encoded-image")));
+            assert!(matches!(&pair[1],Content::Image(image) if image.data=="encoded-image"));
+        }
+        assert_eq!(messages, before);
+        assert_eq!(s.covered_prefix(), 101);
+    }
+
+    #[test]
+    fn image_summary_keeps_sources_and_charges_attachment_bytes() {
+        let s = store();
+        let image = Content::Image(rpi_ai::ImageContent {
+            kind: Default::default(),
+            data: "image-payload".into(),
+            mime_type: "image/png".into(),
+        });
+        let mut messages = vec![
+            AgentMessage::User(UserMessage::new(
+                rpi_ai::UserContent::Blocks(vec![Content::text("old data ".repeat(12_000)), image]),
+                0,
+            )),
+            user("current data ".repeat(6_000)),
+        ];
+        let original = messages.clone();
+        let before = serde_json::to_value(&s).unwrap();
+        let limit = 150 * 1024;
+        let (cut, content) = s.summary_content_with_limit(&messages, 1, limit).unwrap().unwrap();
+        assert_eq!(cut, 1);
+        let rpi_ai::UserContent::Blocks(blocks) = content else { panic!("image summary must use blocks") };
+        let Content::Text(text) = &blocks[0] else { panic!("summary JSON") };
+        assert!(!text.text.contains("image-payload"));
+        assert!(text.text.contains("summary_image"));
+        assert_eq!(
+            blocks[2],
+            match &original[0] {
+                AgentMessage::User(UserMessage { content: rpi_ai::UserContent::Blocks(parts), .. }) => parts[1].clone(),
+                _ => unreachable!(),
+            }
+        );
+        assert!(s.summary_input_with_limit(&messages, 1, limit).unwrap_err().to_string().contains("multimodal"));
+        assert_eq!(messages, original);
+        assert_eq!(serde_json::to_value(&s).unwrap(), before);
+        if let AgentMessage::User(UserMessage { content: rpi_ai::UserContent::Blocks(parts), .. }) = &mut messages[0] {
+            if let Content::Image(image) = &mut parts[1] {
+                image.data = "x".repeat(limit);
+            }
+        }
+        assert!(s
+            .summary_content_with_limit(&messages, 1, limit)
+            .unwrap_err()
+            .to_string()
+            .contains("summary input exceeds"));
+        assert_eq!(serde_json::to_value(&s).unwrap(), before);
+    }
     fn store() -> Store {
         Store {
             version: 1,

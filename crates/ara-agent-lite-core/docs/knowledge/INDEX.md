@@ -1,5 +1,7 @@
 # ara-agent-lite-core 项目知识
 
+- [视觉输入与图片历史摘要](host-contracts.md#case-20261101视觉输入与能力后端的边界)：图片模态准入、多模态摘要与原始证据保留；Core/Harness/Host/MCP 分工及[本轮验证](../evidence/vision-20261101.md)。
+
 这个库从 HandWave 精简端提取。完整版 ARA／OMP 继续在原 workspace 开发，
 这里的验证记录不代替完整版的功能对齐或验收。
 
