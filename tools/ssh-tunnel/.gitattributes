@@ -1,0 +1,6 @@
+*.sh text eol=lf
+*.service text eol=lf
+*.inc text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.nsi text eol=crlf

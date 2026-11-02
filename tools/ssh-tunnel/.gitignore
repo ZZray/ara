@@ -1,0 +1,7 @@
+*.exe
+/dist/
+/evidence-local/
+/state/
+*.zip
+*.key
+*.pem

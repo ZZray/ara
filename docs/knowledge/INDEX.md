@@ -1,3 +1,7 @@
+## 独立 SSH 远程支持 — 2026-11-02
+
+一次性主控/被控工具的会话边界、现场安装条件与验证陷阱见 [SSH 工具知识](ssh-tunnel.md)；[交付验证](../evidence/ssh-tunnel-20261102.md)区分受控测试与真实现场安装。
+
 ## Current declared relay acceptance — 2026-10-21
 
 Independent EXEC1d8e5f20 and point audit7b44c51d accept4original source identities

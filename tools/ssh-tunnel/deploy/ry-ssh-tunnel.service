@@ -1,0 +1,31 @@
+[Unit]
+Description=RY one-time SSH support relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ry-ssh-tunnel
+Group=ry-ssh-tunnel
+ExecStart=/opt/ry-ssh-tunnel/current/ry-ssh-tunnel hub -listen 127.0.0.1:50122
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+MemoryMax=192M
+TasksMax=128
+LimitNOFILE=2048
+
+[Install]
+WantedBy=multi-user.target
