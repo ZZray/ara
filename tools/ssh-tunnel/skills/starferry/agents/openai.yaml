@@ -1,0 +1,4 @@
+interface:
+  display_name: "星渡 Starferry"
+  short_description: "通过配对码建立远端连接，由 Agent 执行 SSH 操作并管理会话"
+  default_prompt: "使用 $starferry 连接这个配对码对应的远端电脑，并按我的要求操作。"

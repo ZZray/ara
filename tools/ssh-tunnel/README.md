@@ -6,6 +6,8 @@
 
 ## 由本机 Agent 连接
 
+从 1.1.2 起，安装包内含 `skills/starferry/` 和 `skills/INSTALL.md`。默认位置为 `%LOCALAPPDATA%\Programs\RY SSH Remote Support\skills\INSTALL.md`。将该文件交给 Codex、Cursor、Claude Code 等本地 Agent，它可按说明把技能复制到自己的目录并记录本机程序路径。安装器提供技能文件，不自动修改各 Agent 的配置。
+
 安装 `starferry` 技能后，可以直接告诉本机 Agent：
 
 > 用星渡连接，配对码是……，帮我查看远端的……

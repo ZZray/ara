@@ -1,8 +1,8 @@
 # 星渡 Starferry：使用与技能安装
 
-作者：Ray Zhang。版本：1.1.1。核验日期：2026-11-02。
+作者：Ray Zhang。版本：1.1.2。核验日期：2026-11-02。
 
-本机安装包与线上独立 hub 均为 1.1.1；线上升级后真实配对和双目标 SSH 验证通过。
+1.1.2 安装包新增内置技能和安装说明，隧道代码与协议沿用 1.1.1。线上 hub 保持已验证的 1.1.1，此次分发改动无需重新部署 hub。
 
 ## 星渡和 Reach 怎么选
 
@@ -40,7 +40,9 @@
 
 ## 主控安装会自动安装技能吗
 
-**1.1.1 安装器不会安装技能。** 当前安装器只部署程序、脚本、离线 SSH 载荷、说明和快捷方式。本机 `starferry` 技能是此次单独创建并安装的，不是安装器自动完成的。
+**1.1.2 安装包已携带技能文件，由 Agent 自行安装到其技能目录。** 安装后的入口是 `<星渡安装目录>\skills\INSTALL.md`，技能位于同目录的 `starferry` 子目录。主控和被控两种角色均包含这些文件。默认路径为 `%LOCALAPPDATA%\Programs\RY SSH Remote Support\skills\INSTALL.md`。
+
+将这句话交给 Agent：“请读取星渡安装目录下的 skills/INSTALL.md，把 starferry 技能安装到你自己的技能目录，并记录本机程序路径。”安装器不会自行覆盖 Codex、Cursor 或 Claude Code 的配置。
 
 技能应是一整个 `starferry` 文件夹，里面至少有 `SKILL.md`。将它放到所用 Agent 的用户级目录；不要只把 `SKILL.md` 直接丢在 `skills` 根目录。
 
@@ -55,9 +57,9 @@ DeepSeek 模型/API 本身不规定一个通用本地技能目录。不能仅凭
 
 本机已有兼容入口为 `C:/Users/loveu/.codex/skills/starferry`，junction 指向 `E:/doc/knowledge/skills/starferry` 正本；控制端为 `D:/Tools/Starferry/starferry.exe`。新机器建议按上表采用对应版本的官方目录，避免在同一 Agent 扫描的多个目录重复安装同名技能。
 
-本次提供的技能包是 Windows/Codex 已试用版本。复制到另一台电脑后，应核对技能中的程序和参考文件路径：安装器默认程序为 `%LOCALAPPDATA%\Programs\RY SSH Remote Support\ry-ssh-tunnel.exe`，也可保留本机使用的便携目录。技能中 `exec_command`/`write_stdin` 是本次 Codex 工具名称；其他 Agent 需要具备等价的持续标准输入/终端会话能力，并使用自己的工具接口。只有后台启动能力而不能持续写入控制端 stdin 时，不能承诺本技能可直接保持会话。
+包内技能根据本机路径记录、安装包相对位置或默认安装目录定位程序，不使用开发机的 D/E 盘路径。复制技能的 Agent 应先记录实际安装位置，再在复制后的技能目录写入 `references/local-installation.md`，保证自定义安装路径可继续使用。技能以持续标准输入/终端会话能力描述流程，`exec_command`/`write_stdin` 仅是 Codex 示例；其他 Agent 使用自身等价工具。只有后台启动能力而不能持续写入 stdin 时，不能承诺可直接保持会话。
 
-装好后在新会话确认能找到 `starferry`，再用真实配对码测试。当前只完成 Codex 显式读取技能后的实际试用；Cursor、Claude Code、DeepSeek 宿主及新聊天自动发现均未实测。未来安装器可提供 Agent 选择和自定义目录选项，本轮只给出安装说明，未实施自动安装功能。
+装好后在新会话确认能找到 `starferry`，再用真实配对码测试。此前只完成 Codex 显式读取技能后的实际连接试用；Cursor、Claude Code、DeepSeek 宿主及新聊天自动发现均未实测。本轮将技能加入安装包，未实施扫描并自动写入各 Agent 配置的功能。
 
 目录依据：[Codex 官方说明](https://learn.chatgpt.com/docs/build-skills)、[Cursor 官方说明](https://cursor.com/docs/skills)、[Claude Code 官方说明](https://code.claude.com/docs/en/skills)。
 

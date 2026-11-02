@@ -22,12 +22,12 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
-VIProductVersion "1.1.1.0"
+VIProductVersion "1.1.2.0"
 VIAddVersionKey /LANG=2052 "ProductName" "RY SSH 远程支持"
 VIAddVersionKey /LANG=2052 "FileDescription" "主控端与被控端安装程序"
 VIAddVersionKey /LANG=2052 "CompanyName" "Ray Zhang"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Ray Zhang"
-VIAddVersionKey /LANG=2052 "FileVersion" "1.1.1"
+VIAddVersionKey /LANG=2052 "FileVersion" "1.1.2"
 
 Var Role
 Var Dialog
@@ -128,7 +128,7 @@ Section "安装"
     CreateShortcut "$DESKTOP\RY SSH 远程支持.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\windows\Start-Controller.ps1"' "$INSTDIR\ry-ssh-tunnel.exe"
   ${EndIf}
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "DisplayName" "RY SSH 远程支持"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "DisplayVersion" "1.1.1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "DisplayVersion" "1.1.2"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "Publisher" "Ray Zhang"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "UninstallString" '"$INSTDIR\卸载.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RYSSHTunnel" "InstallLocation" "$INSTDIR"
