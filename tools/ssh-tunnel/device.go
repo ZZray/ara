@@ -143,7 +143,8 @@ func runDevice(ctx context.Context, server, name string, signer ssh.Signer, auth
 		}
 	})
 	// Conn.Wait is also needed while the local authorizer is waiting for PowerShell.
-	workers.Go(func() { t.Conn.Wait(); cancel() })
+	transportDone := make(chan struct{})
+	workers.Go(func() { t.Conn.Wait(); cancel(); close(transportDone) })
 	authorized := false
 	for req := range t.Requests {
 		if req.Type != "ry-authorize" || authorized {
@@ -173,10 +174,11 @@ func runDevice(ctx context.Context, server, name string, signer ssh.Signer, auth
 		}
 		log.Printf("READY: paired controller authorized; targets=%d. Closing this session removes its cloud access.", len(receipt.Targets))
 	}
-	if ctx.Err() != nil {
-		return nil
-	}
-	return errors.New("relay connection closed; this one-time session ended")
+	// SSH closes Requests before waking Conn.Wait. Wait for cancellation so
+	// transport shutdown has one result regardless of goroutine scheduling.
+	<-transportDone
+	log.Print("Control connection closed; this one-time session ended. Remote operation outcomes must be checked separately.")
+	return nil
 }
 
 func deviceCommand(ctx context.Context, server, name, dir string) error {

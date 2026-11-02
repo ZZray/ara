@@ -36,3 +36,11 @@ Pion 的 detached DataChannel 是消息接口，SSH 是字节流。适配层保�
 本次只验收本机真实 Pion/SSH 链路和受控故障，跨机器 LAN、不同公网 NAT、UDP 封锁现场与真实文件工具传输仍需分层验收。STUN 候选或 host/host 日志不能单独证明公网打洞。线上部署与安装包构建分别记录，不因生成新版二进制宣称线上已更新。
 
 验证明细和未覆盖项见 [交付记录](../evidence/ssh-tunnel-20261102.md)。
+
+## 星渡技能与退出码（1.1.1）
+
+工具对外名称为星渡 Starferry，技能名 `starferry`，与 Reach Agent 区分；内核命令和已有安装入口保留。本机 Agent 用持续终端持有 controller 的标准输入，通过独立 SSH 进程操作目标。输入管道 EOF 会结束支持会话，不能用一次性 echo 管道代替持续控制端。
+
+CASE-20261102-Starferry-device-exit：普通 device/controller 经过真实 hub 配对并完成双目标命令后，主控 quit 成功，但 device 返回 1。回读 x/crypto v0.57.0 的 SSH mux 确认：先关闭 incomingRequests，随后才唤醒 Conn.Wait。原代码在 Requests 循环结束后立即检查 ctx.Err，可能先于 Wait watcher 的 cancel，导致同一次关闭随调度返回 0 或 1。只等待进程结束、没有检查返回 error 的旧测试漏掉了该问题。
+
+修复通过完成通道等待 Wait watcher 完成取消，再统一报告会话结束。当前协议不携带结束原因，因此退出 0 只表示隧道收尾，不能证明远端命令成功；握手、注册和授权阶段仍保留原错误。独立回归在修复前复现六项失败，修复后 relay/direct × stop/owner-close/hub-close 均返回 nil 并关闭活动流，授权拒绝仍返回原错误。针对性 race 2.908s、模块 race 19.153s 通过；无人工对照耗时，未计算效率提升。普通进程复验与部署状态续记在交付记录。

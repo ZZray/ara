@@ -22,10 +22,10 @@ $previousGOOS = $env:GOOS; $previousGOARCH = $env:GOARCH; $previousCGO = $env:CG
 Push-Location $toolRoot
 try {
     $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
-    & $Go build -buildvcs=false -trimpath -ldflags '-s -w -X main.version=1.1.0' -o $binary .
+    & $Go build -buildvcs=false -trimpath -ldflags '-s -w -X main.version=1.1.1' -o $binary .
     if ($LASTEXITCODE -ne 0) { throw 'Windows Go build failed.' }
     $env:GOOS='linux'
-    & $Go build -buildvcs=false -trimpath -ldflags '-s -w -X main.version=1.1.0' -o $linuxBinary .
+    & $Go build -buildvcs=false -trimpath -ldflags '-s -w -X main.version=1.1.1' -o $linuxBinary .
     if ($LASTEXITCODE -ne 0) { throw 'Linux Go build failed.' }
     $revision = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot read source revision.' }

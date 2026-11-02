@@ -92,3 +92,13 @@ Codex `design_review` 完成实施前方案审查和实施后 `6620ad0` 到交�
 - PowerShell 首次验证误指向不存在的 OpenSSH 目录，退出 1；核对真实目录后 42 项通过。未因该环境错误修改测试或产品。
 
 版本产物和最终提交收据：`D:/Tools/远程ssh/1.1.0-20261102/`，原始日志在其 `evidence/` 下。提交后从干净源码重建，`release-receipt.json` 绑定提交、二进制/安装器哈希及实际覆盖。原 `D:/Tools/远程ssh/RY-SSH-远程支持-安装.exe` 保留。
+
+## 后续线上升级与星渡技能
+
+用户随后授权升级 hub 并创建本机 Agent 技能。线上独立 hub 已从 1.0.0 升级至提交 `121bbce` 的 1.1.0：先确认无活动连接，再替换二进制、原子切换 current、重启该服务并核验运行文件哈希。既有配置哈希及 LabSlot 服务 PID 前后不变。真实云端 `TestLiveRelay` 2.209s 通过，覆盖配对、双目标 SSH、错误主机密钥拒绝和 stop；前节“未升级”是当时状态，不代表本节完成后的状态。
+
+技能名称为星渡 Starferry / `starferry`。本机正本、发现入口和便携控制端已安装；格式验证通过。独立 `starferry_trial` Agent 按技能启动普通 controller，接收新配对码，经真实 hub 连接普通 device 和受控 SSH 夹具，选择 host/host UDP，jump/backend 的 probe 各返回 `RY fixture probe OK`、退出 0。list、quit 及主控临时密钥目录/本地监听清理通过。该结果不代表跨公网 NAT 或现场 SSH 安装验收。
+
+首次普通 device 在主控退出后返回 1，失败记录保留。1.1.1 仅修复 device 结束时 Requests 与 Conn.Wait 的调度竞态，更新客户端包版本；hub 协议不变，线上保留已验证的 1.1.0。独立 `design_review` 回读依赖、产品及测试确认修复范围；`direct_tests` 的六种结束组合修复前均失败，修复后均返回 nil 且活动流关闭，授权失败仍报错。针对性 race 2.908s；主代理 `go vet -p 8 ./...` 和模块 `go test -race -p 8 -count=1 -timeout 90s ./...` 通过，19.153s。线上测试为单独运行；本次模块默认测试仍跳过 opt-in live 项。
+
+部署、首次试用及生命周期日志：`D:/Tools/远程ssh/1.1.0-20261102/evidence/starferry-upgrade/`。1.1.1 的普通进程复验、构建及最终收据将保存到 `D:/Tools/远程ssh/1.1.1-20261102/`，最终结果以该收据为准。新补丁安装/卸载、GUI、异机 LAN、公网 NAT、真实 SCP/SFTP 与现场授权撤销仍未验收。
