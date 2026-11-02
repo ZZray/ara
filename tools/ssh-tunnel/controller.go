@@ -35,6 +35,8 @@ type controlledDevice struct {
 	workers   sync.WaitGroup
 }
 type controller struct {
+	signer    ssh.Signer
+	direct    sync.Map // device ID -> *directSession; read by concurrent forwarding workers
 	transport *transport
 	ctx       context.Context
 	devices   map[int]*controlledDevice
@@ -44,8 +46,10 @@ type controller struct {
 }
 
 func newController(ctx context.Context, server string, signer ssh.Signer, hc *http.Client, allowHTTP bool) (*controller, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	t, err := dialTransport(ctx, server, "controller", signer, hc, allowHTTP)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	go ssh.DiscardRequests(t.Requests)
@@ -54,7 +58,8 @@ func newController(ctx context.Context, server string, signer ssh.Signer, hc *ht
 			ch.Reject(ssh.Prohibited, "unsupported channel")
 		}
 	}()
-	return &controller{transport: t, ctx: ctx, devices: map[int]*controlledDevice{}, next: 1}, nil
+	go func() { t.Conn.Wait(); cancel() }()
+	return &controller{transport: t, ctx: ctx, signer: signer, devices: map[int]*controlledDevice{}, next: 1}, nil
 }
 
 func (c *controller) pair(code string) (deviceInfo, error) {
@@ -79,10 +84,29 @@ func (c *controller) stop(id string) error {
 	_, err := request(c.transport.Conn, "ry-stop", encode(struct {
 		DeviceID string `json:"device_id"`
 	}{id}), handshakeTimeout)
+	if err == nil {
+		if value, ok := c.direct.LoadAndDelete(id); ok {
+			value.(*directSession).peer.Close()
+		}
+	}
 	return err
 }
 
 func (c *controller) open(id, name string) (ssh.Channel, error) {
+	if value, ok := c.direct.Load(id); ok {
+		s := value.(*directSession)
+		select {
+		case <-s.done: // only a new stream may fall back; never replay an attempted open
+		default:
+			timer := time.AfterFunc(handshakeTimeout, func() { s.peer.Close() })
+			defer timer.Stop()
+			ch, requests, err := s.conn.OpenChannel("ry-target", []byte(name))
+			if err == nil {
+				go ssh.DiscardRequests(requests)
+			}
+			return ch, err
+		}
+	}
 	timer := time.AfterFunc(handshakeTimeout+time.Second, func() { c.transport.Close() })
 	defer timer.Stop()
 	channel, requests, err := c.transport.Conn.OpenChannel("ry-forward", encode(openRequest{DeviceID: id, Target: name}))
@@ -102,6 +126,9 @@ func (d *controlledDevice) Close() {
 }
 
 func (c *controller) expose(info deviceInfo) (int, error) {
+	if err := c.tryDirect(info); err != nil {
+		fmt.Printf("PATH device=%s relay; direct unavailable: %v\n", info.DeviceID, err)
+	}
 	ctx, cancel := context.WithCancel(c.ctx)
 	d := &controlledDevice{info: info, endpoints: map[string]*localEndpoint{}, cancel: cancel}
 	ready := false
@@ -205,6 +232,16 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''")
 func (c *controller) printDevice(n int) {
 	d := c.devices[n]
 	fmt.Printf("[%d] %s  id=%s\n", n, d.info.Name, d.info.DeviceID)
+	path := "relay (SSH/file data via hub)"
+	if value, ok := c.direct.Load(d.info.DeviceID); ok {
+		s := value.(*directSession)
+		select {
+		case <-s.done:
+		default:
+			path = s.path + " (SSH/file data bypass hub)"
+		}
+	}
+	fmt.Printf("  Path: %s\n", path)
 	for _, name := range []string{"jump", "backend"} {
 		e := d.endpoints[name]
 		if e == nil {

@@ -24,14 +24,15 @@ type peer struct {
 	streams chan struct{}
 }
 type hubDevice struct {
-	info     deviceInfo
-	peer     *peer
-	owner    *peer
-	codeHash [32]byte
-	expires  time.Time
-	ready    bool
-	expiry   *time.Timer
-	streams  chan struct{}
+	info            deviceInfo
+	peer            *peer
+	owner           *peer
+	codeHash        [32]byte
+	expires         time.Time
+	ready           bool
+	expiry          *time.Timer
+	streams         chan struct{}
+	directAttempted bool
 }
 type hub struct {
 	mu      sync.Mutex
@@ -152,13 +153,20 @@ func (h *hub) accept(w http.ResponseWriter, r *http.Request) {
 	})
 	workers.Go(func() {
 		for ch := range channels {
-			if p.role != "controller" || ch.ChannelType() != "ry-forward" {
+			if p.role != "controller" || (ch.ChannelType() != "ry-forward" && ch.ChannelType() != directProtocol) {
 				ch.Reject(ssh.Prohibited, "unsupported channel")
 				continue
 			}
 			select {
 			case p.streams <- struct{}{}:
-				workers.Go(func() { defer func() { <-p.streams }(); h.forward(ctx, p, ch) })
+				workers.Go(func() {
+					defer func() { <-p.streams }()
+					if ch.ChannelType() == directProtocol {
+						h.signal(ctx, p, ch)
+					} else {
+						h.forward(ctx, p, ch)
+					}
+				})
 			default:
 				ch.Reject(ssh.ResourceShortage, "stream limit")
 			}

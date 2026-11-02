@@ -2,7 +2,7 @@
 
 作者：Ray Zhang。范围：`tools/ssh-tunnel`，2026-11-02。
 
-该工具独立于 ARA Agent Core 和 LabSlot 业务。云端只中转 SSH 字节，使用内存保存本次配对；主控可管理多个被控，被控启动一次只接受一个主控。现场账号密码留在现场 PowerShell 进程内，安装包没有共享私钥。
+该工具独立于 ARA Agent Core 和 LabSlot 业务。云端使用内存保存本次配对；1.1.0 增加 ICE/STUN 直连协商，直连成功时只保留云端控制连接，失败时中转 SSH 字节。主控可管理多个被控，被控启动一次只接受一个主控。现场账号密码留在现场 PowerShell 进程内，安装包没有共享私钥。
 
 ## 必须保留的边界
 
@@ -24,5 +24,15 @@ Nginx reload 后旧 worker 可能短暂处理旧路由。部署验收检查健�
 ## 安装交互
 
 统一 EXE 使用标准 Windows 安装页面，只增加主控、被控两个单选项。选择决定桌面默认入口，开始菜单保留两者。没有自定义动效；安装完成与连接成功分开显示。静默参数 `/S /ROLE=controller|controlled` 只安装文件，不启动设备连接或修改 SSH 服务。
+
+## 直连协议的边界（1.1.0）
+
+配对回复的严格 JSON 结构保持不变。独立 `ry-direct-v1` SSH channel 承载一次有界 offer/answer；旧 hub/device 拒绝未知 channel 后可回退。不能用原 `request()` 做可选协商：其超时会关闭中转，SSH global request 的等待还会阻塞后续 stop/list。信令超时必须关闭自己的 channel，释放 hub 转发槽；底层未回复的 channel-open 每个设备最多一个，随会话结束收回。
+
+Pion 的 detached DataChannel 是消息接口，SSH 是字节流。适配层保存短读后剩余数据，发送分成 16 KiB 消息，启用 SCTP 阻塞写以保持背压。半关闭在 SSH 子通道层处理。实际回归覆盖小缓冲读、跨消息的大载荷、共享流上限和取消。
+
+直连 SSH 的设备公钥取自 hub 已认证的 device 身份；被控只接受原配对授权的 controller 公钥。直连与中转共用目标白名单和流上限，控制连接断开会关闭 PeerConnection、SSH 和目标 TCP。一次流已经尝试 direct open 后不转中转重试，避免重复目标拨号及未知外部操作；只有后续新流可以回退。
+
+本次只验收本机真实 Pion/SSH 链路和受控故障，跨机器 LAN、不同公网 NAT、UDP 封锁现场与真实文件工具传输仍需分层验收。STUN 候选或 host/host 日志不能单独证明公网打洞。线上部署与安装包构建分别记录，不因生成新版二进制宣称线上已更新。
 
 验证明细和未覆盖项见 [交付记录](../evidence/ssh-tunnel-20261102.md)。

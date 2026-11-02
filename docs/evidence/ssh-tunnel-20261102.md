@@ -35,3 +35,60 @@
 原始构建、测试、云端前后对照和安装回执保存在交付目录的 `evidence` 子目录。现场身份和管理入口保存在本机知识库，不包含在团队仓库。
 
 文档全仓检查 verify_bootstrap.py 未通过：当前基准已有 38 项不相关的历史断链或外部临时路径缺失，失败路径均未被本次修改。新增 SSH 文档的本地链接已核对；未扩展修复旧文档。
+
+## 1.1.0 直连与回退（2026-11-02）
+
+任务：`01a19c8e-c512-7240-82c0-7bf564b05b84`；实现基准 `6620ad0a9b94d26999b6a74a0ff0847371dac1d1`。本节独立记录本次增量，前文 1.0.0 安装及线上验收不能作为 1.1.0 已上线的证据。
+
+目标是在一次性配对后自动尝试 LAN 和公网 NAT 直连，失败保留中转，无需现场手动获取 IP。实现采用 Pion WebRTC v4.2.26：ICE host/srflx/prflx 候选、STUN、可靠有序数据通道和双方认证的 SSH；不配置 TURN。旧配对 JSON 契约、目标主机公钥校验、共享 16 流限制与会话撤销保留。Reach、ARA Core、LabSlot 业务和现场设备不变。
+
+| 文件范围 | 本次改动 |
+|---|---|
+| `direct.go`、`hub.go` | 独立有界信令、候选协商、消息到字节流适配、设备身份传递 |
+| `controller.go`、`device.go` | 直连路径选择、原授权复用、关闭及后续新流回退；已开始的流不重放 |
+| `main.go`、两个启动脚本 | 默认自动尝试、`-direct=false`/`-RelayOnly`、可选 STUN 地址与路径显示 |
+| `go.mod`、`go.sum`、许可证及第三方声明 | 固定 Pion 及相关依赖，保留 20 份新增原始许可证 |
+| `direct_test.go`、`process_test.go` | 真实 Pion/SSH、受控故障、当前及历史普通 hub 进程验证 |
+| 构建脚本、安装器、README 与知识页 | 1.1.0 版本、使用条件、兼容性、生命周期约束及验证边界 |
+
+### 最终源码验证
+
+执行环境：Windows，Go 1.26.5；Go 构建并行上限 8。独立审核修复后执行：
+
+```text
+go vet ./...
+go test -race -p 8 -v -count=1 -timeout 180s ./...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/windows/Test-WindowsScripts.ps1 -OpenSshPayload <已核验离线OpenSSH目录>
+```
+
+| 验证 | 实际结果 |
+|---|---|
+| Go 模块完整测试 | 23 个顶层测试、12 个子测试通过，17.621s，无 race 报告；`TestLiveRelay` 为 opt-in，本次跳过 |
+| 数据不经 hub | 主动占满 hub 的 relay 槽并确认 `ry-forward` 被拒绝，4 路并发各 1 MiB 请求/回复仍完整返回；选择 host/host UDP |
+| 传输与权限 | 小至 7 字节读取、16 KiB 消息分片、半关闭、共享 16 流限制、非 owner、双方错误公钥拒绝均通过 |
+| 回退 | 禁用直连、真实无响应 STUN、500ms 信令超时覆盖；中转及 stop 仍可用；直接流故障后只为新流回退 |
+| 生命周期 | stop 多设备隔离、主控控制连接关闭、hub 关闭均关闭已开始的直连流 |
+| 普通进程 | 当前普通 hub PID 15356，经受控 TLS 代理和真实 `ssh.exe`，relay/direct 两条路径的 jump/backend 均登录成功；杀 hub 后直连被撤销 |
+| 实际旧 hub | 从固定 `6620ad0` Git archive 构建旧普通 hub，PID 60880；拒绝未知直连 channel 后，真实 SSH 双目标登录与 stop 通过 |
+| Windows PowerShell 5.1 | 42 项通过；包含实际离线 sshd 配置解析、中文回执与未知结果不重放，未安装真实服务 |
+| 构建 | Windows/Linux amd64 与 NSIS 统一安装器 1.1.0 构建通过；输出到独立版本目录，旧安装包保留 |
+| 文档 | 自有文件 staged diff 空白检查通过；上游 mdns 许可证第 3 行原有尾空格按原件保留；全仓 bootstrap 文档检查仍为 38 项历史断链，本次 SSH 文件无失败 |
+
+普通进程测试中，端点函数和 TLS 代理仍在测试进程内。Windows 系统 TLS 验证没有 `SSL_CERT_FILE` 覆盖入口，本次没有为夹具修改系统证书信任或新增生产测试开关。
+
+### 独立审查及修正
+
+Codex `design_review` 完成实施前方案审查和实施后 `6620ad0` 到交付工作区的 diff 审查；应用 `ara-git-review`，OCR preview/rule 成功，默认排除的测试、依赖和安装器人工补审。两项发现均回读确认修复：构建脚本恢复 UTF-8 BOM；hub 协商等待改为可取消并释放转发槽，迟到 channel 关闭。Pion 分片、短读、背压和关闭语义与依赖源码对照；20 份许可证与模块缓存原件哈希一致。最终无未解决阻断代码缺陷。
+
+独立测试执行者为 `direct_tests` 和 `process_validation`，主代理回读关键代码、测试和最终运行日志。Rust Core、模型试验与 OMP 点位验收不适用于本独立 Go 工具；本节不增加任何 Rust/Reach 接受计数。
+
+### 未覆盖与交付位置
+
+- 未执行不同真实公网 NAT、异机 LAN、运营商 CGNAT/UDP 封锁现场验收；当前 host/host 成功不代表公网打洞通过。
+- 未执行新版普通 controller/device CLI 在两台机器上的安装后配对；未执行真实 SCP/SFTP 文件工具。大载荷测试证明字节传输，不能替代这些使用流程。
+- 旧 hub + 新端已执行；新 hub + 旧 device 仅有协议源码和未知 channel 拒绝语义支持，未运行旧 device 二进制。
+- 未更新线上 hub、重启支持会话或接触学校/仪器。新版客户端连接旧线上 hub 时继续中转；需要后续升级 hub 才能使用新增信令。
+- 1.1.0 安装器完成构建和载荷清单核对，未重做安装/卸载、GUI、高 DPI 或代码签名验收。
+- PowerShell 首次验证误指向不存在的 OpenSSH 目录，退出 1；核对真实目录后 42 项通过。未因该环境错误修改测试或产品。
+
+版本产物和最终提交收据：`D:/Tools/远程ssh/1.1.0-20261102/`，原始日志在其 `evidence/` 下。提交后从干净源码重建，`release-receipt.json` 绑定提交、二进制/安装器哈希及实际覆盖。原 `D:/Tools/远程ssh/RY-SSH-远程支持-安装.exe` 保留。

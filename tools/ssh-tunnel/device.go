@@ -86,38 +86,59 @@ func runDevice(ctx context.Context, server, name string, signer ssh.Signer, auth
 	paired(p)
 	var mu sync.Mutex
 	var targets map[string]target
+	var owner ssh.PublicKey
+	directAttempted := false
 	var workers sync.WaitGroup
 	defer func() { cancel(); t.Close(); workers.Wait() }()
 	slots := make(chan struct{}, maxStreams)
+	// Relay and direct SSH use the same target authorization and stream budget.
+	serveTarget := func(incoming ssh.NewChannel) {
+		name := string(incoming.ExtraData())
+		mu.Lock()
+		selected, ok := targets[name]
+		mu.Unlock()
+		if incoming.ChannelType() != "ry-target" || !ok {
+			incoming.Reject(ssh.Prohibited, "target not authorized")
+			return
+		}
+		select {
+		case slots <- struct{}{}:
+			workers.Go(func() {
+				defer func() { <-slots }()
+				local, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", selected.Address)
+				if err != nil {
+					incoming.Reject(ssh.ConnectionFailed, "local target unavailable")
+					return
+				}
+				defer local.Close()
+				channel, requests, err := incoming.Accept()
+				if err != nil {
+					return
+				}
+				go ssh.DiscardRequests(requests)
+				copyStreams(ctx, channel, local)
+			})
+		default:
+			incoming.Reject(ssh.ResourceShortage, "stream limit")
+		}
+	}
 	workers.Go(func() {
 		for incoming := range t.Channels {
-			name := string(incoming.ExtraData())
-			mu.Lock()
-			selected, ok := targets[name]
-			mu.Unlock()
-			if incoming.ChannelType() != "ry-target" || !ok {
-				incoming.Reject(ssh.Prohibited, "target not authorized")
-				continue
-			}
-			select {
-			case slots <- struct{}{}:
-				workers.Go(func() {
-					defer func() { <-slots }()
-					local, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", selected.Address)
-					if err != nil {
-						incoming.Reject(ssh.ConnectionFailed, "local target unavailable")
-						return
-					}
-					defer local.Close()
-					channel, requests, err := incoming.Accept()
-					if err != nil {
-						return
-					}
-					go ssh.DiscardRequests(requests)
-					copyStreams(ctx, channel, local)
-				})
-			default:
-				incoming.Reject(ssh.ResourceShortage, "stream limit")
+			if incoming.ChannelType() == directProtocol {
+				mu.Lock()
+				key := owner
+				allowed := key != nil && !directAttempted && !directSettings(ctx).disabled
+				if allowed {
+					directAttempted = true
+				}
+				mu.Unlock()
+				if !allowed {
+					incoming.Reject(ssh.Prohibited, "direct unavailable")
+					continue
+				}
+				workers.Go(func() { serveDirect(ctx, incoming, signer, key, serveTarget) })
+			} else {
+				serveTarget(incoming)
 			}
 		}
 	})
@@ -145,6 +166,7 @@ func runDevice(ctx context.Context, server, name string, signer ssh.Signer, auth
 		}
 		mu.Lock()
 		targets = receipt.Targets
+		owner = key
 		mu.Unlock()
 		if err = req.Reply(true, encode(receipt)); err != nil {
 			return err

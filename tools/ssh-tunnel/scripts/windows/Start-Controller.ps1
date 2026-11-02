@@ -1,6 +1,6 @@
 ﻿# Copyright (c) 2026 Ray Zhang.
 [CmdletBinding()]
-param([string]$Server)
+param([string]$Server, [switch]$RelayOnly)
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $packageRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 try {
@@ -17,7 +17,8 @@ try {
     $stateDir = Join-Path $env:LOCALAPPDATA ('RY\SSH-Tunnel\controller\' + [guid]::NewGuid().ToString('N'))
     Set-RYPrivateDirectory $stateDir
     Write-Host '同一窗口可添加多个被控端。stop 结束指定被控端；quit 退出并结束本窗口的连接。'
-    & $exe controller -server $Server -state-dir $stateDir
+    Write-Host '自动尝试局域网与公网 UDP 打洞；连接结果会显示 direct 或 relay。中转回退不重放已开始的 SSH 操作。'
+    & $exe controller -server $Server -state-dir $stateDir "-direct=$((-not $RelayOnly).ToString().ToLowerInvariant())"
     if ($LASTEXITCODE -ne 0) { throw ('主控端退出，状态码 ' + $LASTEXITCODE) }
 } catch {
     Write-Host ('启动失败：' + $_.Exception.Message) -ForegroundColor Red

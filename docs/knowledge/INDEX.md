@@ -1,6 +1,6 @@
 ## 独立 SSH 远程支持 — 2026-11-02
 
-一次性主控/被控工具的会话边界、现场安装条件与验证陷阱见 [SSH 工具知识](ssh-tunnel.md)；[交付验证](../evidence/ssh-tunnel-20261102.md)区分受控测试与真实现场安装。
+一次性主控/被控工具的会话边界、现场安装条件、1.1.0 ICE/STUN 直连与中转回退约束见 [SSH 工具知识](ssh-tunnel.md)；[交付验证](../evidence/ssh-tunnel-20261102.md)区分本机直连、受控故障、线上版本与真实现场验收。
 
 ## Current declared relay acceptance — 2026-10-21
 

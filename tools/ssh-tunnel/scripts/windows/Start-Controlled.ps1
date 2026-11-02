@@ -1,6 +1,6 @@
 ﻿# Copyright (c) 2026 Ray Zhang. Foreground support session, no scheduled task/service for the tunnel.
 [CmdletBinding()]
-param([string]$Server, [switch]$BackendOnly)
+param([string]$Server, [switch]$BackendOnly, [switch]$RelayOnly)
 . (Join-Path $PSScriptRoot 'Common.ps1')
 . (Join-Path $PSScriptRoot 'Remote-Endpoint.ps1')
 
@@ -9,6 +9,7 @@ if (-not (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([S
     # This is the requested interactive installation window, not a background helper.
     $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
     if ($BackendOnly) { $arguments += ' -BackendOnly' }
+    if ($RelayOnly) { $arguments += ' -RelayOnly' }
     if ($Server) { $arguments += ' -Server "' + (Get-RYCloudURL $Server) + '"' }
     Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $arguments -Wait
     exit
@@ -91,6 +92,7 @@ try {
             }
         }
         $arguments = 'device -server "' + $Server + '" -state-dir "' + $stateDir + '" -name "' + $env:COMPUTERNAME + '"'
+        $arguments += ' -direct=' + (-not $RelayOnly).ToString().ToLowerInvariant()
         $agent = Start-Process -FilePath $exe -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stateDir 'device.stdout.log') -RedirectStandardError (Join-Path $stateDir 'device.stderr.log')
         Write-RYJson (Join-Path $stateDir 'device-process.json') @{ process_id = $agent.Id; start_time = $agent.StartTime.ToUniversalTime().ToString('o'); executable = $exe }
         $pairShown = $false

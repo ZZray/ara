@@ -11,8 +11,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/pion/stun/v4"
 )
 
 var version = "development"
@@ -22,6 +25,26 @@ func run(ctx context.Context, args []string) error {
 		return errors.New("usage: ry-ssh-tunnel hub|device|controller|version")
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	var direct *bool
+	var stunServers *string
+	if args[0] == "device" || args[0] == "controller" {
+		direct = flags.Bool("direct", true, "try ICE UDP direct transport before relay")
+		stunServers = flags.String("stun", strings.Join(directSettings(ctx).stun, ","), "comma-separated STUN URLs; empty uses local candidates only")
+	}
+	configureDirect := func() error {
+		cfg := directConfig{disabled: !*direct}
+		if *stunServers != "" {
+			for _, raw := range strings.Split(*stunServers, ",") {
+				u, err := stun.ParseURI(strings.TrimSpace(raw))
+				if err != nil || u.Scheme != stun.SchemeTypeSTUN {
+					return errors.New("-stun accepts only stun: URLs; TURN relays are not used")
+				}
+				cfg.stun = append(cfg.stun, u.String())
+			}
+		}
+		ctx = context.WithValue(ctx, directConfigKey{}, cfg)
+		return nil
+	}
 	switch args[0] {
 	case "version":
 		fmt.Println("RY SSH Tunnel", version)
@@ -68,11 +91,17 @@ func run(ctx context.Context, args []string) error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
+		if err := configureDirect(); err != nil {
+			return err
+		}
 		return deviceCommand(ctx, *server, *name, *dir)
 	case "controller":
 		server := flags.String("server", defaultServer, "HTTPS relay URL")
 		dir := flags.String("state-dir", "", "parent directory for temporary keys (default: OS temp)")
 		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if err := configureDirect(); err != nil {
 			return err
 		}
 		return controllerCommand(ctx, *server, *dir)
