@@ -110,3 +110,7 @@ Codex `design_review` 完成实施前方案审查和实施后 `6620ad0` 到交�
 独立 `starferry_trial` 与 `process_validation` 复用测试夹具并领取新码，完成真实 hub 配对、host/host UDP 和 jump/backend 两个 probe。主控 quit 退出 0，被控随后自然退出 0；临时密钥目录、被控 session 目录和两个本地监听均已清理，夹具 58.95s 通过。夹具源码仍为固定 `121bbce`，被执行的普通客户端是上述 `95e1b29` 产物；二者分别记录。脱敏结果见 `evidence/agent-trial.json`、`evidence/starferry-trial-device/`。
 
 最终交付仍只有主开发工作树、`dev` 开发分支和 `main` 主线。另有 25 个原 WIP 文件哈希与合并前一致，知识 INDEX 与合并后保存件一致，均未混入补丁提交。技能在本机全局知识库维护和安装；新聊天自动发现尚未实际验证。
+
+用户随后再次明确要求部署，线上 hub 于 23:17 升至同一 1.1.1 产物。升级前核实无活动连接；只替换二进制和 current，三份配置及原 LabSlot 服务 PID 保持一致。运行进程对应 Linux 二进制 SHA-256 `f0842fdaf5c6336722dac56a3bb639c7230e4288f14461059ee07c5b5dc5ba8e`，健康响应正确。部署后真实云端 `TestLiveRelay` 再次通过，测试主体 1.05s、Go 包总计 1.679s，覆盖配对、双目标登录、错误主机密钥拒绝和 stop。证据为 1.1.1 版本目录的 `evidence/deploy.log` 和 `evidence/live-relay.log`。
+
+新增 [使用与技能安装说明](../starferry-usage.md)，核对 Reach 设计状态、QSpin 固定后端的可跳过流程、Codex/Cursor/Claude Code 官方技能目录及 DeepSeek 由宿主决定的边界。该次补充未修改产品代码或增加自动安装技能功能。
