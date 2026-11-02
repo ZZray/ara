@@ -1,0 +1,808 @@
+<!doctype html><html lang="zh-CN" class="no-js"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Reach 独立项目计划</title><script>document.documentElement.classList.replace('no-js','js')</script><style>/* ===== Tokens ===== */
+:root{
+  color-scheme:light;
+  --paper:#fffef5; --paper-2:#f7f6ea; --ink:#2c2c2c; --muted:#5b5e57; --faint:#8a8d84;
+  --red:#ff6b6b; --red-ink:#b23b3b; --teal:#4ecdc4; --teal-ink:#1d756d;
+  --yellow:#ffe66d; --yellow-ink:#7a6410; --mint:#95e1d3; --coral:#f38181; --blue-ink:#335f92;
+  --line:#2c2c2c33; --line-strong:#2c2c2c99;
+  /* 时长：按使用频率定，来自 Tick / frontend-craft */
+  --t-hover:100ms; --t-press:120ms; --t-pop:180ms; --t-enter:280ms; --t-draw:600ms;
+  --ease-out:cubic-bezier(.23,1,.32,1); --spring:cubic-bezier(.34,1.56,.64,1);
+  --header-height:96px;
+  font:16px/1.85 Arial,"Microsoft YaHei UI","PingFang SC",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:calc(var(--header-height) + 24px)}
+body{margin:0;color:var(--ink);background:var(--paper);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M0 31.5H32' stroke='%237d8f99' stroke-opacity='.10'/%3E%3C/svg%3E")}
+::selection{background:#ffe66d99}
+a{color:inherit;text-underline-offset:4px;text-decoration-color:var(--teal-ink)}
+a:focus-visible,button:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--teal-ink);outline-offset:4px}
+h2:focus,h3:focus{outline:2px dashed var(--teal-ink);outline-offset:8px}
+.num,td.n,.kpi-value{font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.skip{position:fixed;top:-100px;left:12px;z-index:100;background:var(--yellow);border:2px solid var(--ink);padding:10px 16px;min-height:44px}
+.skip:focus{top:10px}
+
+/* ===== Controls: Neo-Brutalist Playful ===== */
+button{font:inherit;color:inherit;cursor:pointer}
+.btn-neo,.copy-code,.menu-toggle,.close-menu{min-height:44px;min-width:44px;padding:6px 14px;border:2px solid var(--ink);border-radius:0;background:var(--yellow);
+  box-shadow:3px 3px 0 var(--teal);font-size:13px;font-weight:700;
+  transition:transform 300ms var(--spring),box-shadow 300ms var(--spring)}
+.btn-neo:active,.copy-code:active,.menu-toggle:active,.close-menu:active{transform:translate(3px,3px) scale(.97);box-shadow:0 0 0 var(--teal);transition-duration:var(--t-press)}
+@media(hover:hover) and (pointer:fine){
+  .btn-neo:hover,.copy-code:hover,.menu-toggle:hover,.close-menu:hover{transform:translate(-1px,-2px) rotate(-1deg);box-shadow:5px 5px 0 var(--coral)}
+}
+kbd{font:11px/1.5 Consolas,monospace;background:var(--paper-2);border:1px solid #b5bca9;border-bottom-width:2px;border-radius:2px;padding:0 5px;color:#596152}
+
+/* ===== Topbar + 分段阅读进度 ===== */
+.topbar{position:sticky;top:0;z-index:30;background:#fffef5f2;border-bottom:2px dashed var(--line-strong)}
+.topbar-row{display:flex;align-items:center;gap:16px;min-height:60px;padding:8px 28px;max-width:1440px;margin:auto}
+.brand{display:inline-flex;align-items:center;gap:10px;min-height:44px;text-decoration:none;font-weight:800;letter-spacing:-.01em;min-width:0}
+.brand-mark{flex:0 0 30px;height:30px;display:grid;place-items:center;border:2px solid var(--ink);background:var(--yellow);box-shadow:3px 3px 0 var(--teal);transform:rotate(-2deg);font-size:15px}
+.brand-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top-meta{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:12px}
+.meta-date{color:var(--muted);white-space:nowrap}
+.search-launch{min-height:44px;min-width:170px;display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1.5px solid #a8b39c;background:var(--paper);font-size:12px;color:var(--muted);transition:box-shadow var(--t-hover) ease}
+.search-launch kbd{margin-left:auto}
+@media(hover:hover){.search-launch:hover{box-shadow:3px 3px 0 var(--mint)}}
+.menu-toggle{display:none}
+.progress{display:flex;gap:4px;padding:0 28px 8px;max-width:1440px;margin:auto}
+.seg{position:relative;flex:1;min-width:0;height:18px;display:flex;align-items:center;text-decoration:none}
+.seg i{position:relative;display:block;width:100%;height:6px;border:1.5px solid var(--ink);background:var(--paper);overflow:hidden}
+.seg i:after{content:"";position:absolute;inset:0;background:var(--teal);transform-origin:left;transform:scaleX(var(--p,0));transition:transform var(--t-hover) linear}
+.seg.is-current i:after{background:var(--yellow)}
+.seg.is-done i:after{background:var(--teal)}
+.seg:hover i{box-shadow:2px 2px 0 var(--coral)}
+.seg-tip{position:absolute;top:20px;left:0;z-index:2;white-space:nowrap;font-size:11px;background:var(--paper);border:1.5px solid var(--ink);box-shadow:2px 2px 0 var(--mint);padding:1px 7px;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity var(--t-pop) var(--ease-out),transform var(--t-pop) var(--ease-out)}
+.seg:hover .seg-tip,.seg:focus-visible .seg-tip{opacity:1;transform:none}
+.seg.tip-end .seg-tip{left:auto;right:0}
+
+/* ===== Layout ===== */
+.layout{display:grid;grid-template-columns:232px minmax(0,1fr);gap:48px;max-width:1440px;margin:auto;padding:0 28px}
+.sidebar{position:sticky;top:calc(var(--header-height) + 20px);height:calc(100dvh - var(--header-height) - 40px);display:flex;flex-direction:column;padding:18px 4px 12px 0;min-height:0}
+.toc-caption{font-size:11px;font-weight:800;letter-spacing:.14em;margin:0 0 12px 12px;color:var(--muted)}
+.toc{overflow:auto;overscroll-behavior:contain;padding:4px 8px 10px 0}
+.toc-link{position:relative;display:flex;align-items:center;gap:10px;min-height:44px;padding:8px 30px 8px 12px;margin:0 0 4px;border:1.5px solid transparent;text-decoration:none;font-size:13px;line-height:1.55;transition:border-color var(--t-hover) ease,background-color var(--t-hover) ease}
+.toc-link .num{flex:0 0 20px;font-size:11px;font-weight:700;color:var(--faint);font-variant-numeric:tabular-nums}
+.toc-link:hover{border-color:var(--line-strong);border-style:dashed}
+.toc-link[aria-current=location]{font-weight:700;background:#ffe66d70;border:1.5px solid var(--ink);box-shadow:3px 3px 0 var(--teal)}
+.toc-link[aria-current=location] .num{color:var(--ink)}
+.toc-sub{padding-left:42px;font-size:12px}
+/* 已读：Tick 式小勾，读过的章节一眼可见 */
+.toc-link .read{position:absolute;right:8px;top:50%;width:16px;height:16px;margin-top:-8px;fill:none;stroke:var(--teal-ink);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.toc-link .read path{stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 240ms var(--ease-out)}
+.toc-link.is-read .read path{stroke-dashoffset:0}
+.toc-link[aria-current=location] .read{display:none}
+/* ===== 侧栏底部：阅读进度 + 设置弹层（参考 Linear/Tick 账户菜单） ===== */
+.reader-trigger{margin-top:auto;display:flex;align-items:center;gap:10px;width:100%;min-height:56px;padding:8px 10px;border:2px solid var(--ink);border-radius:0;background:var(--paper);box-shadow:3px 3px 0 var(--mint);text-align:left;transition:transform 300ms var(--spring),box-shadow 300ms var(--spring)}
+@media(hover:hover) and (pointer:fine){.reader-trigger:hover{transform:translate(-1px,-2px);box-shadow:5px 5px 0 var(--teal)}}
+.reader-trigger:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--mint);transition-duration:var(--t-press)}
+.reader-trigger[aria-expanded=true]{box-shadow:3px 3px 0 var(--yellow);background:#ffe66d33}
+.ring{flex:0 0 36px;width:36px;height:36px}
+.ring-track{fill:var(--paper);stroke:#2c2c2c26;stroke-width:3}
+.ring-fill{fill:none;stroke:var(--teal-ink);stroke-width:3;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:var(--ring,1);transition:stroke-dashoffset 400ms var(--ease-out)}
+.ring-num{font:800 11px Arial,sans-serif;fill:var(--ink);font-variant-numeric:tabular-nums}
+.rt-text{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.45}
+.rt-now{font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-chev{flex:0 0 16px;width:16px;height:16px;fill:none;stroke:var(--muted);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+.reader-panel{position:fixed;z-index:70;width:300px;max-height:calc(100dvh - 24px);overflow:auto;background:var(--paper);color:var(--ink);border:2px solid var(--ink);box-shadow:6px 6px 0 var(--teal);padding:6px 0 0;transform-origin:bottom left}
+.reader-panel:not([hidden]){animation:rp-in 180ms var(--ease-out)}
+@keyframes rp-in{from{opacity:0;transform:translateY(6px) scale(.97)}}
+.rp-head{display:grid;grid-template-columns:34px minmax(0,1fr);gap:4px 10px;align-items:start;padding:10px 14px 8px}
+.rp-mark{flex:0 0 34px;height:34px;display:grid;place-items:center;border:2px solid var(--ink);background:var(--yellow);box-shadow:2px 2px 0 var(--ink);font-weight:900;transform:rotate(-2deg)}
+.rp-id{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.45}
+.rp-id b{font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rp-meta{font:11px Consolas,"Cascadia Code",monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp-state{grid-column:2;justify-self:start;margin-top:4px}
+/* 截图里的波浪分隔，换成手绘墨线 */
+.rp-wave{height:8px;margin:4px 14px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='8'%3E%3Cpath d='M0 4 Q6 0.5 12 4 T24 4' fill='none' stroke='%232c2c2c' stroke-opacity='.45' stroke-width='1.4'/%3E%3C/svg%3E") repeat-x center/24px 8px}
+.rp-group{padding:4px 8px}
+.rp-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.06em;padding:4px 6px 2px}
+.rp-row,.rp-item{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:4px 6px;border:1.5px solid transparent;background:none;border-radius:0;text-align:left;font-size:13px;color:var(--ink)}
+.rp-item{cursor:pointer;transition:background-color var(--t-hover) ease,border-color var(--t-hover) ease}
+.rp-item:hover,.rp-item:focus-visible{background:#ffe66d44;border-color:var(--ink);outline:none;box-shadow:inset 3px 0 var(--teal-ink)}
+.rp-ic{flex:0 0 16px;width:16px;height:16px;fill:none;stroke:var(--ink);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.rp-name{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.4}
+.rp-name small{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp-item kbd{flex:0 0 auto}
+.seg-ctl{display:inline-flex;border:1.5px solid var(--ink);background:var(--paper)}
+.seg-ctl button{min-width:38px;min-height:30px;padding:0 8px;border:0;border-left:1.5px solid var(--ink);border-radius:0;background:none;font-size:12px;color:var(--muted);transition:background-color var(--t-hover) ease,color var(--t-hover) ease}
+.seg-ctl button:first-child{border-left:0}
+.seg-ctl button[aria-checked=true]{background:var(--yellow);color:var(--ink);font-weight:800}
+.seg-ctl button:focus-visible{outline:2px solid var(--teal-ink);outline-offset:-3px}
+.rp-legend{display:flex;flex-wrap:wrap;gap:6px;padding:6px 6px 2px}
+.rp-hint{font-size:11.5px;color:var(--muted);margin:4px 6px 4px;line-height:1.6}
+.rp-foot{display:flex;justify-content:space-between;gap:10px;margin-top:4px;padding:8px 14px;border-top:1.5px dashed var(--line);font-size:11px;color:var(--muted)}
+.mobile-reader{margin-top:10px;min-height:44px;border:2px solid var(--ink);background:var(--paper);box-shadow:3px 3px 0 var(--mint);font-size:13px;font-weight:700}
+/* 偏好：字号与批注 */
+html[data-fs=s]{font-size:15px}html[data-fs=l]{font-size:17.5px}
+html[data-fs=l] table{font-size:15px}html[data-fs=s] table{font-size:13px}
+html[data-notes=off] .margin-note{display:none}
+html[data-notes=off] .with-note{grid-template-columns:minmax(0,1fr)}
+
+main{min-width:0;padding:52px 0 40px;position:relative}
+main:before{content:"";position:absolute;left:-26px;top:0;bottom:0;border-left:1.5px solid #ff6b6b40;pointer-events:none}
+/* 正文行宽约 40 个汉字；图、表、代码可以更宽 */
+.prose,main p,main .steps,main ul.plain{max-width:42em}
+
+/* ===== Hero ===== */
+.hero{position:relative;margin-bottom:56px;max-width:980px}
+.eyebrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;font-weight:700}
+.hero h1{font-size:clamp(30px,3.6vw,46px);line-height:1.35;letter-spacing:-.03em;margin:18px 0 6px;font-weight:900;max-width:min(20em,calc(100% - 150px))}
+.squiggle{display:block;width:180px;height:14px;margin:0 0 18px;fill:none;stroke:var(--teal-ink);stroke-width:2.5;stroke-linecap:round}
+.lead{font-size:17px;color:var(--muted);max-width:38em;margin:0 0 22px}
+.meta-facts{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:var(--muted);margin:0 0 30px;padding:0;list-style:none}
+.meta-facts b{color:var(--ink);font-weight:700;margin-right:6px}
+.stamp{position:absolute;right:0;top:4px;border:2.5px dashed var(--red-ink);color:var(--red-ink);background:var(--paper);padding:8px 14px;transform:rotate(3deg);font-size:12px;font-weight:800;text-align:center;line-height:1.5;letter-spacing:.04em}
+.stamp b{display:block;font-size:20px;letter-spacing:.08em}
+
+/* KPI：硬阴影数据卡 */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:0;padding:0;list-style:none}
+.kpi{position:relative;border:2px solid var(--ink);background:var(--paper);padding:14px 16px 12px;box-shadow:4px 4px 0 var(--sh,var(--teal));
+  transform:rotate(var(--tilt,0deg));transition:transform 300ms var(--spring),box-shadow 300ms var(--spring)}
+.kpi:nth-child(1){--tilt:-1deg}.kpi:nth-child(2){--tilt:.6deg;--sh:var(--yellow)}.kpi:nth-child(3){--tilt:-.5deg;--sh:var(--coral)}.kpi:nth-child(4){--tilt:1deg;--sh:var(--mint)}
+@media(hover:hover) and (pointer:fine){.kpi:hover{transform:translateY(-3px) rotate(calc(var(--tilt) * -1));box-shadow:6px 6px 0 var(--ink)}}
+.kpi-label{font-size:12px;font-weight:700;color:var(--muted)}
+.kpi-value{display:block;font-size:30px;font-weight:900;line-height:1.3;letter-spacing:-.02em;margin:4px 0 2px}
+.kpi-value small{font-size:14px;font-weight:700;margin-left:3px;color:var(--muted)}
+.kpi-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+
+/* ===== Sections ===== */
+.section{padding:0 0 44px;margin:0 0 44px;border-bottom:2px dashed var(--line);max-width:980px}
+.section-tag{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--muted)}
+.section-tag:before{content:attr(data-no);width:28px;height:28px;display:grid;place-items:center;border:2px solid var(--ink);background:var(--yellow);box-shadow:2px 2px 0 var(--ink);font-size:12px;letter-spacing:0;color:var(--ink);transform:rotate(-2deg)}
+.section h2{font-size:26px;line-height:1.5;letter-spacing:-.03em;margin:12px 0 18px;font-weight:850}
+.section h3{font-size:18px;margin:30px 0 10px}
+p{margin:0 0 16px}
+.muted{color:var(--muted)}
+.hl{background:linear-gradient(var(--yellow),var(--yellow)) no-repeat 0 85%/0% 40%;padding:0 2px;transition:background-size 520ms var(--ease-out)}
+.in .hl,.no-js .hl{background-size:100% 40%}
+
+/* ===== 贴纸词汇：每种都有固定含义 ===== */
+.sticker{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;font-size:11px;font-weight:700;line-height:1.7;white-space:nowrap;border:1.5px solid var(--ink);background:var(--paper);vertical-align:.1em}
+.sticker svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* 证据等级：边框线型和颜色同时区分，黑白打印也能分清 */
+.ev-run{background:#4ecdc433;color:#164f4a}
+.ev-src{background:#95e1d340;color:#1f4d45}
+.ev-infer{border-style:dashed;background:#ffe66d55;color:#5f4e0b}
+.ev-guess{border-style:dotted;border-width:2px;background:#ff6b6b1f;color:var(--red-ink)}
+.tag-scale{background:var(--paper);border-color:var(--teal-ink);color:var(--teal-ink)}
+.tag-schematic{border-style:dashed;color:var(--muted)}
+.tag-sample{background:#f3818130;border-color:var(--red-ink);color:var(--red-ink)}
+.st-pending{border:2px dashed var(--yellow-ink);color:var(--yellow-ink);background:#ffe66d40;transform:rotate(-2deg)}
+.st-rejected{border:2px solid var(--muted);color:var(--muted);text-decoration:line-through;text-decoration-thickness:1.5px}
+.st-ok{border:2px solid var(--teal-ink);color:var(--teal-ink);background:#4ecdc41f}
+
+/* ===== 结论卡 + 胶带 ===== */
+.verdict{position:relative;border:2px solid var(--ink);background:var(--paper);padding:26px 26px 20px;box-shadow:6px 6px 0 var(--teal);margin:8px 0 26px;max-width:46em}
+.tape{position:absolute;top:-10px;left:28px;width:70px;height:18px;background:#ffe66db3;transform:rotate(-3deg);border-left:2px dotted var(--paper);border-right:2px dotted var(--paper);pointer-events:none}
+.verdict strong.lead-line{display:block;font-size:19px;line-height:1.6;margin-bottom:10px}
+.verdict p:last-child{margin-bottom:0}
+
+/* ===== 结论台账：先画圈，再落标记 ===== */
+.ledger{list-style:none;margin:0 0 8px;padding:0;max-width:52em}
+.ledger li{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:4px 14px;padding:14px 0;border-bottom:1.5px dashed var(--line);align-items:start}
+.ledger li:last-child{border-bottom:0}
+.ledger .what{font-weight:700}
+.ledger .why{grid-column:2;font-size:13px;color:var(--muted);margin:0}
+.ledger .tags{grid-column:3;grid-row:1;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.sig{width:24px;height:24px;margin-top:2px;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.sig.ok{stroke:var(--teal-ink)}.sig.err{stroke:var(--red-ink)}.sig.wait{stroke:var(--yellow-ink)}
+.sig .ring,.sig .mark{stroke-dasharray:1;stroke-dashoffset:1}
+.sig.wait .ring{stroke-dasharray:.06 .05;stroke-dashoffset:0;opacity:0}
+.in .sig .ring{animation:draw 360ms var(--ease-out) var(--d,0ms) forwards}
+.in .sig .mark{animation:draw 240ms var(--ease-out) calc(var(--d,0ms) + 300ms) forwards}
+.in .sig.ok{animation:pop 260ms cubic-bezier(.3,1.35,.5,1) calc(var(--d,0ms) + 520ms)}
+.in .sig.err .mark{animation:draw 240ms var(--ease-out) calc(var(--d,0ms) + 300ms) forwards,shake 280ms ease calc(var(--d,0ms) + 540ms)}
+.in .sig.wait .ring{animation:fade 300ms var(--ease-out) var(--d,0ms) forwards}
+.no-js .sig *{stroke-dashoffset:0}.no-js .sig.wait .ring{opacity:1}
+/* 同屏多条只错开 90ms，整组 0.8s 内结束 */
+.ledger li:nth-child(2){--d:90ms}.ledger li:nth-child(3){--d:180ms}.ledger li:nth-child(4){--d:270ms}.ledger li:nth-child(5){--d:360ms}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes pop{50%{transform:scale(1.18)}}
+@keyframes shake{25%{transform:translateX(-1.5px)}75%{transform:translateX(1.5px)}}
+@keyframes fade{to{opacity:1}}
+
+/* ===== 步骤 ===== */
+.steps{counter-reset:s;list-style:none;padding:0;margin:0}
+.steps li{counter-increment:s;position:relative;padding:10px 0 10px 46px;border-bottom:1.5px dashed var(--line)}
+.steps li:last-child{border-bottom:0}
+.steps li:before{content:counter(s);position:absolute;left:0;top:12px;width:30px;height:30px;display:grid;place-items:center;border:2px solid var(--ink);border-radius:50%;font-weight:800;font-size:13px;background:var(--paper)}
+.steps b{display:block}
+.steps span{display:block;font-size:13px;color:var(--muted)}
+
+/* ===== 因果链：手绘箭头依次画出 ===== */
+.chain{position:relative;border:1.5px dashed var(--line-strong);padding:26px 22px 18px;margin:12px 0 18px;background:var(--paper)}
+.chain-cap{font-size:12px;font-weight:800;margin:0 0 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.flow{display:grid;grid-template-columns:var(--cols,minmax(0,1fr));align-items:stretch;list-style:none;margin:0;padding:0}
+.node{border:2px solid var(--ink);background:var(--paper);padding:10px 12px;box-shadow:3px 3px 0 var(--sh,var(--mint));min-width:0}
+.node:nth-of-type(2){--sh:var(--yellow)}.node:nth-of-type(3){--sh:var(--teal)}.node:nth-of-type(4){--sh:var(--coral)}
+.node .k{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted)}
+.node b{display:block;font-size:14px;line-height:1.55;margin:3px 0 6px}
+.node p{font-size:12px;color:var(--muted);margin:0 0 6px;line-height:1.7}
+.arrow{display:grid;place-items:center}
+.arrow svg{width:44px;height:30px;fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.draw{stroke-dasharray:1;stroke-dashoffset:1}
+.in .draw{animation:draw var(--t-draw) var(--ease-out) forwards;animation-delay:var(--d,0ms)}
+.no-js .draw{stroke-dashoffset:0}
+.rejected{display:flex;align-items:flex-start;gap:12px;margin:16px 0 0 calc(25% - 10px);max-width:520px}
+.rejected svg{flex:0 0 40px;height:34px;fill:none;stroke:var(--faint);stroke-width:1.8;stroke-linecap:round;stroke-dasharray:4 4}
+.rejected .node{--sh:transparent;border-style:dashed;border-color:var(--faint);color:var(--muted)}
+.rejected .node b{text-decoration:line-through;text-decoration-color:var(--red-ink);text-decoration-thickness:2px}
+
+/* ===== 图：坐标、单位、比例贴纸、圈注 ===== */
+figure{margin:18px 0 22px}
+.figure{border:2px solid var(--ink);background:var(--paper);padding:14px 16px 10px;box-shadow:5px 5px 0 #95e1d399}
+.fig-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;font-size:13px;font-weight:700}
+.fig-head .tags{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.chart{width:100%;height:auto;display:block;font-family:Arial,"Microsoft YaHei UI",sans-serif}
+.chart .axis{stroke:var(--ink);stroke-width:1.5}
+.chart .grid{stroke:#2c2c2c22;stroke-dasharray:3 4}
+.chart .tick{font-size:11px;fill:var(--muted)}
+.chart .ttl{font-size:11.5px;fill:var(--ink);font-weight:700}
+.chart .bar{fill:#95e1d3;stroke:var(--ink);stroke-width:1.4;transform-box:fill-box;transform-origin:50% 100%}
+.chart .bar.hot{fill:#f38181}
+.js .chart .bar{transform:scaleY(0)}
+.in .chart .bar{transform:none;transition:transform 420ms var(--ease-out);transition-delay:calc(var(--i) * 30ms)}
+.chart .mean{stroke:var(--teal-ink);stroke-width:1.6;stroke-dasharray:6 5}
+.chart .mean-t{font-size:11px;fill:var(--teal-ink);font-weight:700}
+.chart .circ{fill:none;stroke:var(--red-ink);stroke-width:2.2;stroke-linecap:round}
+.chart .note-t{font-size:12px;fill:var(--red-ink);font-weight:700}
+.chart .note-s{font-size:11px;fill:var(--muted)}
+.chart-scroll{overflow-x:auto}
+.circled{position:relative;display:inline-block;padding:0 4px}
+.circled:after{content:"";position:absolute;inset:-5px -8px;border:2px solid var(--red-ink);border-radius:52% 46% 55% 44%/58% 50% 46% 52%;transform:rotate(-4deg);pointer-events:none}
+figcaption{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.75}
+.scroll-hint{display:none;font-weight:700;color:var(--ink);margin-right:6px}
+
+/* ===== 表格 ===== */
+.table-wrap{overflow:auto;max-width:100%;border:2px solid var(--ink);background:var(--paper);margin:16px 0 8px}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px;line-height:1.7}
+caption{caption-side:top;text-align:left;font-size:12px;font-weight:700;padding:8px 14px;border-bottom:1.5px dashed var(--line);color:var(--muted)}
+th,td{padding:10px 14px;border-bottom:1.5px dashed var(--line);vertical-align:top;text-align:left}
+th{font-size:12px;background:#ffe66d33;white-space:nowrap}
+th small{font-weight:400;color:var(--muted)}
+td.n,th.n{text-align:right}
+tr:last-child td{border-bottom:0}
+tr.row-hot td{background:#f3818118}
+tr.row-hot td:first-child{box-shadow:inset 4px 0 var(--coral)}
+.table-hint{font-size:12px;color:var(--muted);margin:0 0 18px}
+
+/* ===== 页边注 + 指向箭头 ===== */
+.with-note{display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:26px;align-items:start}
+.margin-note{position:relative;margin-top:var(--note-y,22px);padding:14px 14px 12px;background:#fff5bf;border:1.5px solid #b79f3c;font-size:12.5px;line-height:1.8;transform:rotate(1.2deg);box-shadow:3px 3px 0 #2c2c2c18}
+.margin-note b{display:block;font-size:13px;margin-bottom:4px}
+.margin-note .pin{position:absolute;top:-7px;left:50%;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--red);border:1.5px solid var(--ink);box-shadow:1px 2px 0 #2c2c2c33}
+.margin-note .point{position:absolute;left:-58px;top:16px;width:60px;height:40px;fill:none;stroke:var(--red-ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+
+/* ===== 公式 ===== */
+.formula{border:2px solid var(--ink);background:var(--paper-2);padding:16px 20px;margin:14px 0;max-width:46em;box-shadow:4px 4px 0 var(--yellow)}
+.formula .eq{font:17px/2 "Cambria Math","Times New Roman",serif;margin:0}
+.formula .eq i{font-style:italic}
+.formula .cond{font-size:12px;color:var(--muted);margin:6px 0 0}
+.symbols{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:4px 16px;font-size:13px;margin:12px 0 18px;max-width:46em;padding:10px 0;border-top:1.5px dashed var(--line);border-bottom:1.5px dashed var(--line)}
+.symbols dt{font:italic 15px "Cambria Math","Times New Roman",serif}
+.symbols dd{margin:0}
+.symbols .u{color:var(--muted);font-variant-numeric:tabular-nums}
+.calc{list-style:none;padding:0;margin:0;max-width:46em;font-size:14px}
+.calc li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:8px 0;border-bottom:1.5px dashed var(--line)}
+.calc li:last-child{border-bottom:0}
+.calc code{font-size:13px}
+.calc .r{font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ===== 代码 ===== */
+code{font-family:Consolas,"Cascadia Code",monospace;font-size:.9em}
+.inline-code{background:#4ecdc41c;border-bottom:1.5px dashed #38988e;padding:1px 4px;overflow-wrap:anywhere}
+.code-note{position:relative;margin:16px 0;border:2px solid var(--ink);background:var(--paper-2);box-shadow:4px 4px 0 #ffe66daa;overflow:hidden}
+.code-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 8px 6px 14px;border-bottom:1.5px dashed var(--line-strong);font-size:12px;font-weight:700;background:var(--paper)}
+.copy-code{min-height:36px;padding:3px 12px;font-size:12px}
+pre{margin:0;padding:18px 20px;overflow:auto;font:13px/1.9 Consolas,"Cascadia Code",monospace;tab-size:2;white-space:pre;max-height:480px}
+pre code{font:inherit;color:var(--ink)}
+.hljs-comment{color:#68716a}.hljs-keyword,.hljs-literal{color:#924f75}.hljs-string{color:#27736a}.hljs-number{color:#ad6540}.hljs-title,.hljs-built_in{color:#355f95}.hljs-variable,.hljs-attr{color:#9a5149}
+
+/* ===== 提示块 ===== */
+.callout{position:relative;border:2px solid var(--ink);padding:16px 18px 14px 56px;margin:16px 0;max-width:46em;background:var(--paper)}
+.callout:before{position:absolute;left:14px;top:14px;width:28px;height:28px;display:grid;place-items:center;border:2px solid var(--ink);font-weight:900;font-size:15px}
+.callout.warn{box-shadow:5px 5px 0 #ff6b6b66}.callout.warn:before{content:"!";background:var(--red);color:var(--ink)}
+.callout.note{box-shadow:5px 5px 0 #4ecdc466}.callout.note:before{content:"i";background:var(--mint);font-family:Georgia,serif}
+.callout.ok{box-shadow:5px 5px 0 #4ecdc499}.callout.ok .face{--face-bg:#95e1d380}
+.callout.pending{border-style:dashed;box-shadow:5px 5px 0 #ffe66daa}.callout.pending:before{content:"?";background:var(--yellow);border-style:dashed}
+.callout strong{display:block;margin-bottom:4px}
+.callout p{margin:0;font-size:14px}
+.not-covered{list-style:none;padding:0;margin:8px 0 0;max-width:46em}
+.not-covered li{position:relative;padding:6px 0 6px 28px;font-size:14px}
+.not-covered li:before{content:"";position:absolute;left:4px;top:13px;width:12px;height:12px;border:2px dashed var(--yellow-ink)}
+
+/* ===== 词汇表 ===== */
+.vocab td:first-child{white-space:nowrap}
+
+/* ===== 页脚、移动目录、Toast、搜索 ===== */
+.sources{font-size:13px;color:var(--muted);margin:0;padding-left:20px}
+.sources li{padding:3px 0}
+.footer{display:flex;justify-content:space-between;align-items:center;gap:20px;font-size:12px;color:var(--muted);padding-bottom:22px;max-width:980px}
+.footer a{display:inline-flex;align-items:center;min-height:44px}
+.mobile-dialog{background:var(--paper);color:var(--ink);border:2px solid var(--ink);box-shadow:6px 6px 0 var(--teal);border-radius:0;padding:18px;width:340px;max-width:calc(100vw - 36px);max-height:calc(100dvh - 50px)}
+.mobile-dialog::backdrop{background:#2c2c2c55}
+.mobile-dialog[open]{display:flex;flex-direction:column;animation:dlg 200ms var(--ease-out)}
+.mobile-dialog[data-fallback=true]{position:fixed;top:50%;left:50%;margin:0;transform:translate(-50%,-50%);z-index:80}
+.dialog-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:60;background:var(--paper);border:2px solid var(--ink);box-shadow:3px 3px 0 var(--teal);padding:8px 15px;font-size:13px;max-width:calc(100% - 32px);animation:toast 240ms var(--ease-out)}
+@keyframes toast{from{opacity:0;transform:translate(-50%,8px)}}
+@keyframes dlg{from{opacity:0;transform:scale(.98)}}
+.search-dialog{width:min(680px,calc(100% - 28px));max-height:calc(100dvh - 48px);padding:0;border:2px solid var(--ink);border-radius:0;background:var(--paper);color:var(--ink);box-shadow:7px 7px 0 var(--teal);margin:12vh auto auto;overflow:hidden;animation:dlg 200ms var(--ease-out)}
+.search-dialog::backdrop{background:#192b2444}
+.search-head{padding:10px 12px 4px 16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)}
+.search-head button{background:transparent;border:1.5px solid #c3ccb7;font:11px Consolas,monospace;min-height:44px;min-width:44px}
+.search-input-wrap{display:block;padding:2px 16px 10px}
+.search-input-wrap input{width:100%;min-height:48px;background:var(--paper);border:0;border-bottom:2px solid var(--ink);padding:8px 0;font:16px/1.7 Arial,"Microsoft YaHei UI",sans-serif;color:var(--ink);outline:none}
+#search-status{margin:0;padding:4px 16px 8px;font-size:12px;color:var(--muted);min-height:28px}
+#search-results{max-height:min(52dvh,450px);overflow-y:auto;padding:2px 8px 10px}
+.search-result{padding:10px 12px;min-height:64px;cursor:pointer;border:1.5px solid transparent;line-height:1.55}
+.search-result strong{font-size:13px;display:block}
+.search-result span{font-size:12px;color:var(--muted);display:block;margin-top:3px;overflow-wrap:anywhere}
+.search-result[aria-selected=true]{background:#ffe66d55;border-color:var(--ink);box-shadow:inset 3px 0 var(--teal-ink)}
+.search-result:hover{background:#ffe66d2a}
+.search-result mark{background:#ffe66d;color:inherit}
+.search-empty{font-size:13px;padding:20px 14px;color:var(--muted)}
+.search-footer{border-top:1.5px dashed var(--line);display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;font-size:11px;color:var(--muted)}
+.search-footer span:last-child{margin-left:auto}
+.search-hit{animation:hit 1700ms ease-out}
+@keyframes hit{0%,30%{outline:2px dashed var(--yellow-ink);outline-offset:6px;background-color:#ffe66d66}100%{outline:2px dashed transparent;outline-offset:6px;background-color:transparent}}
+
+/* ===== 悬浮反馈：只在精确指针下；颜色/阴影 100ms，卡片位移 300ms 弹簧 ===== */
+.sticker,.section-tag:before,.node,.verdict,.figure,.callout,.code-note,.formula,.margin-note,.stamp,.steps li:before,.chain{transition:transform 300ms var(--spring),box-shadow 300ms var(--spring),background-color var(--t-hover) ease,border-color var(--t-hover) ease}
+.ledger li,.steps li,tbody tr td,.calc li,.symbols dt{transition:background-color var(--t-hover) ease,box-shadow var(--t-hover) ease}
+.sticker[data-tip]{position:relative;cursor:help}
+.sticker[data-tip]:after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 8px);z-index:20;width:max-content;max-width:240px;white-space:normal;text-align:left;padding:5px 9px;font-size:12px;font-weight:500;line-height:1.6;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);box-shadow:3px 3px 0 var(--mint);text-decoration:none;opacity:0;pointer-events:none;transform:translate(-50%,4px);transition:opacity var(--t-pop) var(--ease-out),transform var(--t-pop) var(--ease-out)}
+.ledger .tags .sticker[data-tip]:after,.kpi-foot .sticker[data-tip]:after,.fig-head .tags .sticker[data-tip]:after{left:auto;right:0;transform:translateY(4px)}
+@media(hover:hover) and (pointer:fine){
+  .sticker:hover{transform:translateY(-2px) rotate(-2deg);box-shadow:2px 2px 0 var(--ink)}
+  .sticker.st-pending:hover{transform:translateY(-2px) rotate(1deg)}
+  .sticker[data-tip]:hover:after{opacity:1;transform:translate(-50%,0)}
+  .ledger .tags .sticker[data-tip]:hover:after,.kpi-foot .sticker[data-tip]:hover:after,.fig-head .tags .sticker[data-tip]:hover:after{transform:none}
+  .section:hover .section-tag:before{transform:rotate(3deg) scale(1.06);box-shadow:3px 3px 0 var(--coral)}
+  .verdict:hover{transform:translate(-2px,-2px);box-shadow:9px 9px 0 var(--teal)}
+  .verdict:hover .tape{transform:rotate(-6deg) translateY(-2px)}
+  .tape{transition:transform 300ms var(--spring)}
+  .ledger li:hover{background:#ffe66d26;box-shadow:inset 3px 0 var(--teal-ink)}
+  .ledger li:hover .sig{transform:rotate(-8deg)}
+  .sig{transition:transform 300ms var(--spring)}
+  .steps li:hover{background:#4ecdc40f}
+  .steps li:hover:before{background:var(--yellow);transform:rotate(-8deg) scale(1.08);box-shadow:2px 2px 0 var(--ink)}
+  .node:hover{transform:translate(-2px,-3px) rotate(-.6deg);box-shadow:5px 5px 0 var(--ink)}
+  .rejected .node:hover{box-shadow:4px 4px 0 var(--faint);transform:translateY(-2px)}
+  .figure:hover,.code-note:hover,.formula:hover{box-shadow:7px 7px 0 var(--sh-h,#4ecdc4aa)}
+  .code-note{--sh-h:#ffe66d}.formula{--sh-h:var(--coral)}
+  .callout:hover{transform:translate(-2px,-2px)}
+  .callout.ok:hover{box-shadow:7px 7px 0 var(--teal)}.callout.warn:hover{box-shadow:7px 7px 0 var(--red)}.callout.note:hover{box-shadow:7px 7px 0 var(--teal)}.callout.pending:hover{box-shadow:7px 7px 0 var(--yellow)}
+  .margin-note:hover{transform:rotate(-.6deg) translateY(-3px);box-shadow:5px 6px 0 #2c2c2c22}
+  .stamp:hover{transform:rotate(-2deg) scale(1.04)}
+  tbody tr:hover td{background:#ffe66d2e}
+  tr.row-hot:hover td{background:#f3818130}
+  .calc li:hover{background:#ffe66d22}
+  .symbols dt:hover{background:#ffe66d66}
+  .seg-ctl button:not([aria-checked=true]):hover{background:#ffe66d55;color:var(--ink)}
+  .chart .bar{transition:fill var(--t-hover) ease}
+  .chart .bar:hover{fill:#4ecdc4}.chart .bar.hot:hover{fill:#ff6b6b}
+}
+
+/* ===== 手绘表情：只放在有情绪含义的位置 ===== */
+.face{display:inline-block;width:var(--fz,28px);height:var(--fz,28px);fill:none;stroke:var(--ink);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;overflow:visible;vertical-align:middle;flex:0 0 auto}
+.face .skin{fill:var(--face-bg,var(--paper))}
+.face .eye{fill:var(--ink);stroke:none;transform-box:fill-box;transform-origin:center}
+.face .blush{fill:#ff6b6b55;stroke:none}
+@media(hover:hover) and (pointer:fine){
+  :is(.callout,.stamp,.margin-note,.verdict,.reader-trigger,.empty-face,.footer-face):hover .face .eye{animation:blink 260ms ease 1}
+  :is(.callout,.stamp,.margin-note,.footer-face):hover .face{animation:nod 420ms var(--spring) 1}
+}
+@keyframes blink{45%{transform:scaleY(.1)}}
+@keyframes nod{40%{transform:rotate(-10deg)}75%{transform:rotate(5deg)}}
+.callout .face{position:absolute;left:12px;top:12px;--fz:32px}
+.callout:before{display:none}
+.callout.warn .face{--face-bg:#ff6b6b55}.callout.note .face{--face-bg:#95e1d380}.callout.pending .face{--face-bg:#ffe66d99}
+.stamp .face{--fz:30px;display:block;margin:0 auto 2px;stroke:var(--red-ink)}
+.stamp .face .eye{fill:var(--red-ink)}
+.margin-note .face{float:right;--fz:30px;margin:-4px -2px 4px 8px;--face-bg:#fffbe0}
+.ring-face{opacity:0;transition:opacity 200ms var(--ease-out)}
+.reader-trigger.all-read .ring-num{opacity:0}
+.reader-trigger.all-read .ring-face{opacity:1;animation:nod 420ms var(--spring) 1}
+.ring-num{transition:opacity 200ms var(--ease-out)}
+.footer-face{display:inline-flex;align-items:center;gap:8px}
+.footer-face .face{--fz:26px;--face-bg:#ffe66d99}
+
+/* ===== 入场：每块只播一次，可打断；页面隐藏时暂停 ===== */
+/* 用独立的 translate 属性，不覆盖卡片自己的 rotate/hover transform */
+.js .reveal{opacity:0;translate:0 8px}
+.js .reveal.in{opacity:1;translate:none;transition:opacity var(--t-enter) var(--ease-out) var(--d,0ms),translate var(--t-enter) var(--ease-out) var(--d,0ms),transform 300ms var(--spring),box-shadow 300ms var(--spring)}
+html[data-idle] *,html[data-idle] *:before,html[data-idle] *:after{animation-play-state:paused!important}
+
+/* ===== 响应式 ===== */
+@media(min-width:1281px){.margin-note .point{display:block}}
+@media(max-width:1280px){
+  .with-note{grid-template-columns:minmax(0,1fr)}
+  .margin-note{transform:none;margin:4px 0 18px;max-width:46em}
+  .margin-note .point{left:24px;top:-34px;width:40px;height:32px;transform:rotate(-80deg)}
+}
+@media(max-width:1050px){
+  .layout{grid-template-columns:206px minmax(0,1fr);gap:30px;padding:0 22px}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .flow{grid-template-columns:minmax(0,1fr)}
+  .arrow{height:40px}.arrow svg{transform:rotate(90deg)}
+  .rejected{margin-left:0}
+  .stamp{position:static;display:inline-block;margin:0 0 16px}
+  .hero h1{max-width:none}
+}
+@media(max-width:760px){
+  :root{font-size:15.5px}
+  .topbar-row{padding:6px 14px;gap:8px}.progress{padding:0 14px 6px}
+  .meta-date{display:none}
+  .search-launch{min-width:44px;width:44px;justify-content:center;padding:8px}.search-launch span,.search-launch kbd{display:none}
+  .menu-toggle{display:inline-block}
+  .layout{display:block;padding:0 18px}
+  .sidebar{display:none}
+  main{padding-top:30px}main:before{display:none}
+  .hero h1{font-size:30px}
+  .kpis{gap:12px}.kpi-value{font-size:24px}
+  .ledger li{grid-template-columns:28px minmax(0,1fr)}
+  .ledger .tags{grid-column:2;grid-row:auto;justify-content:flex-start}
+  .symbols{grid-template-columns:auto minmax(0,1fr)}.symbols .u{grid-column:2}
+  .callout{padding-left:50px}
+  pre{font-size:12px;padding:14px}
+  .chart{min-width:560px}.scroll-hint{display:inline}
+  .reader-panel{left:12px!important;right:12px;bottom:12px!important;top:auto!important;width:auto;transform-origin:bottom center}
+}
+@media(prefers-contrast:more){:root{--muted:#3f423c;--line:#2c2c2c88}.tape{display:none}}
+@media print{
+  .topbar,.sidebar,.mobile-dialog,.search-dialog,.reader-panel,.copy-code,.toast,.skip{display:none!important}
+  .layout{display:block;padding:0}main{padding:0}main:before{display:none}
+  body{background:#fff}.js .reveal{opacity:1;translate:none}.draw,.sig *{stroke-dashoffset:0!important}.js .chart .bar{transform:none}.hl{background-size:100% 40%}
+  .section{break-inside:avoid-page}.table-wrap{overflow:visible}table{min-width:0}pre{white-space:pre-wrap;max-height:none}
+  .kpi,.verdict,.figure,.code-note,.formula,.callout,.node{box-shadow:none}
+}
+
+/* ===== 渲染器正文：JSON 文本里的换行按原样显示 ===== */
+.section>p,.callout p,.verdict p,.ledger .why,.node p{white-space:pre-wrap;overflow-wrap:anywhere}
+.section>ul,.section>ol{padding-left:24px;max-width:42em}.section>ul>li,.section>ol>li{padding:4px 0}
+.section blockquote{margin:20px 0}.quote cite{display:block;font-size:12px;color:var(--muted);margin-top:6px}
+.facts{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px 16px;font-size:14px;margin:16px 0;padding:12px 0;border-top:1.5px dashed var(--line);border-bottom:1.5px dashed var(--line);max-width:46em}.facts dt{font-weight:700}.facts dd{margin:0;color:var(--muted);overflow-wrap:anywhere}
+.links{padding-left:20px}
+
+.quote{margin:20px 0;max-width:46em;padding:12px 18px;border-left:4px solid var(--teal);background:#4ecdc40d}.quote p{margin:0}
+.stamp.ok{border-color:var(--teal-ink);color:var(--teal-ink)}.stamp.ok .face{stroke:var(--teal-ink)}.stamp.ok .face .eye{fill:var(--teal-ink)}
+.section-tag:empty{min-height:28px}
+.st-fail{border:2px solid var(--red-ink);color:var(--red-ink);background:#ff6b6b1f}
+</style></head><body><svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="face-calm" viewBox="0 0 28 28"><path class="skin" d="M14 3.5c5.8-.3 10.6 4.4 10.4 10.3-.2 5.8-4.9 10.4-10.6 10.2C8 23.8 3.4 19.3 3.6 13.5 3.8 7.9 8.4 3.8 14 3.5z"/><ellipse class="eye" cx="10.5" cy="12.4" rx="1.4" ry="1.8"/><ellipse class="eye" cx="17.5" cy="12.4" rx="1.4" ry="1.8"/><path d="M10 17.6c2.2 2 5.8 2 8 0"/></symbol><symbol id="face-worry" viewBox="0 0 28 28"><path class="skin" d="M14 3.5c5.8-.3 10.6 4.4 10.4 10.3-.2 5.8-4.9 10.4-10.6 10.2C8 23.8 3.4 19.3 3.6 13.5 3.8 7.9 8.4 3.8 14 3.5z"/><ellipse class="eye" cx="10.5" cy="12.4" rx="1.4" ry="1.8"/><ellipse class="eye" cx="17.5" cy="12.4" rx="1.4" ry="1.8"/><path d="M7.8 9.6l3.8-1.5M20.2 9.6l-3.8-1.5M9.5 19.3c1.5-1.2 3-1.2 4.5 0s3 1.2 4.5 0"/></symbol><symbol id="face-think" viewBox="0 0 28 28"><path class="skin" d="M14 3.5c5.8-.3 10.6 4.4 10.4 10.3-.2 5.8-4.9 10.4-10.6 10.2C8 23.8 3.4 19.3 3.6 13.5 3.8 7.9 8.4 3.8 14 3.5z"/><ellipse class="eye" cx="10.5" cy="12.4" rx="1.4" ry="1.8"/><ellipse class="eye" cx="17.5" cy="12.4" rx="1.4" ry="1.8"/><path d="M8 9.2c1.2-1.3 2.8-1.7 4-1.2M16 9.4h4M11 19.2l6.5-1.1M24.6 2.6c.5-1.5 2.9-1.3 2.9.3 0 1.2-1.4 1.3-1.5 2.5M26 7.6v.1"/></symbol><symbol id="face-wow" viewBox="0 0 28 28"><path class="skin" d="M14 3.5c5.8-.3 10.6 4.4 10.4 10.3-.2 5.8-4.9 10.4-10.6 10.2C8 23.8 3.4 19.3 3.6 13.5 3.8 7.9 8.4 3.8 14 3.5z"/><ellipse class="eye" cx="10.5" cy="12.2" rx="1.6" ry="2.2"/><ellipse class="eye" cx="17.5" cy="12.2" rx="1.6" ry="2.2"/><path d="M8 8.4l3.4-1.1M20 8.4l-3.4-1.1"/><ellipse cx="14" cy="18.6" rx="1.7" ry="2.1"/></symbol><symbol id="face-happy" viewBox="0 0 28 28"><path class="skin" d="M14 3.5c5.8-.3 10.6 4.4 10.4 10.3-.2 5.8-4.9 10.4-10.6 10.2C8 23.8 3.4 19.3 3.6 13.5 3.8 7.9 8.4 3.8 14 3.5z"/><path d="M8.4 12.6c.8-1.4 2.7-1.4 3.5 0M16.1 12.6c.8-1.4 2.7-1.4 3.5 0M9 16.4c1.6 3.7 8.4 3.7 10 0"/><ellipse class="blush" cx="7.6" cy="16" rx="1.8" ry="1.1"/><ellipse class="blush" cx="20.4" cy="16" rx="1.8" ry="1.1"/></symbol></defs></svg>
+<a class="skip" href="#main">跳到正文</a><div id="page"><header class="topbar"><div class="topbar-row"><a class="brand" href="#main"><span class="brand-mark" aria-hidden="true">R</span><span class="brand-text">RY / REACH</span></a><div class="top-meta"><button id="search-launch" class="search-launch" type="button" aria-haspopup="dialog" aria-controls="report-search" aria-expanded="false" aria-label="搜索本文"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="6.5" stroke="currentColor" stroke-width="1.6"/><path d="m15 15 5 5" stroke="currentColor" stroke-width="1.6"/></svg><span>搜索本文</span><kbd>Ctrl K</kbd></button><span class="meta-date">2026-11-01 · Asia/Taipei</span><button id="menu-toggle" class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-toc">目录</button></div></div><nav class="progress" id="progress" aria-label="章节阅读进度"></nav></header><div class="layout"><aside class="sidebar" aria-label="章节导航"><div class="toc-caption">本页目录</div><nav class="toc" aria-label="本页正文目录"><a class="toc-link" href="#goals"><span class="num" aria-hidden="true">01</span><span>项目目标与完成标准</span></a><a class="toc-link" href="#scope"><span class="num" aria-hidden="true">02</span><span>本次范围与组件职责</span></a><a class="toc-link" href="#flow"><span class="num" aria-hidden="true">03</span><span>安装与使用流程</span></a><a class="toc-link" href="#milestones"><span class="num" aria-hidden="true">04</span><span>阶段、里程碑与推进顺序</span></a><a class="toc-link" href="#p0"><span class="num" aria-hidden="true">05</span><span>P0 · 设计与合同</span></a><a class="toc-link" href="#p1"><span class="num" aria-hidden="true">06</span><span>P1 · 独立远程调用闭环</span></a><a class="toc-link" href="#p2"><span class="num" aria-hidden="true">07</span><span>P2 · 通用工具与 Windows 桌面</span></a><a class="toc-link" href="#p3"><span class="num" aria-hidden="true">08</span><span>P3 · 一键安装与更新</span></a><a class="toc-link" href="#p4"><span class="num" aria-hidden="true">09</span><span>P4 · 管理页面与统一登录</span></a><a class="toc-link" href="#p5"><span class="num" aria-hidden="true">10</span><span>P5 · 远端 Agent 委托与技能传递</span></a><a class="toc-link" href="#p6"><span class="num" aria-hidden="true">11</span><span>P6 · 可选产品与数据源集成</span></a><a class="toc-link" href="#p7"><span class="num" aria-hidden="true">12</span><span>P7 · 完整验收与内测交付</span></a><a class="toc-link" href="#workflow"><span class="num" aria-hidden="true">13</span><span>文档维护与验收流程</span></a><a class="toc-link" href="#open"><span class="num" aria-hidden="true">14</span><span>待设计事项与下一步</span></a></nav><button class="reader-trigger" id="reader-trigger" type="button" aria-haspopup="dialog" aria-controls="reader-panel" aria-expanded="false"><svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="ring-track" cx="18" cy="18" r="14"/><circle class="ring-fill" pathLength="1" cx="18" cy="18" r="14" transform="rotate(-90 18 18)"/><text class="ring-num" x="18" y="22" text-anchor="middle" id="ring-num">0</text><g class="ring-face" fill="none" stroke="#2c2c2c" stroke-width="1.6" stroke-linecap="round"><path d="M12.6 16.4c.6-1 1.9-1 2.5 0M20.9 16.4c.6-1 1.9-1 2.5 0M13 20c1.4 3 8.6 3 10 0"/></g></svg><span class="rt-text"><span class="rt-now" id="reading-now" role="status">本页正文目录</span><span class="rt-sub" id="read-sub">报告信息与阅读设置</span></span><svg class="rt-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6l3-3 3 3M5 10l3 3 3-3"/></svg></button></aside><main id="main" tabindex="-1"><header class="hero" data-date="2026-11-01 · Asia/Taipei" data-anchor="2026-11-01 迁入前计划快照 · 现归 ARA apps/reach · 功能未开始"><h1 class="reveal" style="--d:60ms">Reach 独立项目计划</h1><svg class="squiggle" viewBox="0 0 180 14" aria-hidden="true"><path class="draw" pathLength="1" style="--d:200ms" d="M2 8 C 22 2, 40 13, 60 7 S 100 2, 120 8 S 160 12, 178 5"/></svg><p class="lead reveal" style="--d:120ms">Windows 首版目标、组件职责、交付阶段与 52 项任务</p><ul class="meta-facts reveal" style="--d:160ms"><li><b>版本锚点</b><code>2026-11-01 迁入前计划快照 · 现归 ARA apps/reach · 功能未开始</code></li><li><b>作者</b>Ray Zhang（Ray）</li><li><b>命名空间</b>RY</li><li><b>来源</b>project-plan.md / task-checklist.md</li><li><b>更新</b>2026-11-01 · Asia/Taipei</li></ul><div class="stamp reveal" style="--d:240ms" role="note" data-tone="pending"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><b>待验证</b> 实施计划讨论稿。文档已形成；52 项任务全部待开始，未执行产品验收。</div><ul class="kpis"><li class="kpi reveal" style="--d:200ms"><span class="kpi-label">实施阶段</span><span class="kpi-value">8</span><span class="kpi-foot"></span></li><li class="kpi reveal" style="--d:260ms"><span class="kpi-label">计划任务</span><span class="kpi-value">52</span><span class="kpi-foot"></span></li><li class="kpi reveal" style="--d:320ms"><span class="kpi-label">已验收任务</span><span class="kpi-value">0 / 52</span><span class="kpi-foot"></span></li></ul></header><section class="section" id="goals"><div class="section-tag" data-no="01"></div><h2>项目目标与完成标准</h2><p>Reach 为本地 Codex 提供通用远程能力。本地结合源码分析，远端操作系统、桌面和可选产品工具；组织提供管理、连接和按需模型服务。首版建议以 Windows 内测版本为目标，暂称 v0.1，具体版本与技术栈由 P0 明确。</p><div class="table-wrap" tabindex="0" aria-label="可横向滚动的表格"><table><thead><tr><th scope="col">目标</th><th scope="col">能力</th><th scope="col">完成标准</th><th scope="col">验收任务</th></tr></thead><tbody><tr><td>G1</td><td>独立运行</td><td>不安装 QSpin、不接入 LabSlot，仍可登录、配对并从本地 Codex 调用远端工具。</td><td>C07、A06</td></tr><tr><td>G2</td><td>安装与再次配对</td><td>干净 Windows 双击安装后服务启动、CLI 可用；再次配对无需重装，兼容升级保留身份和配对。</td><td>I06、C04</td></tr><tr><td>G3</td><td>完全控制与现场取证</td><td>配对后直接使用首版文件、命令、进程、日志和 MCP 能力；结果附来源，断线可查询原操作。</td><td>T07、C07、V02</td></tr><tr><td>G4</td><td>真实桌面操作</td><td>通过开源后端在交互用户会话截图和操作；服务启动与桌面可操作分别验收。</td><td>T05、I06、V03</td></tr><tr><td>G5</td><td>独立管理与统一登录</td><td>管理页面提供 Agent、连接、配对和运行记录；从已登录 LabSlot 菜单进入可自动建立 Reach 会话。</td><td>A06</td></tr><tr><td>G6</td><td>远端 Agent 委托</td><td>本地 Codex 提交目标；远端复用 Lite/Harness、组织模型与技能连续取证，返回可独立核对的结果。</td><td>R07</td></tr><tr><td>G7</td><td>产品可选且可共存</td><td>无产品、单产品、多产品均可使用；QSpin 等通过既有 API/MCP 接入，资产资料引用原系统。</td><td>P05</td></tr><tr><td>G8</td><td>可复核的内测交付</td><td>最终版本有可复现构建、安装包、故障恢复记录、使用说明和实际内测试用证据。</td><td>V06</td></tr></tbody></table></div></section><section class="section" id="scope"><div class="section-tag" data-no="02"></div><h2>本次范围与组件职责</h2><p>2026-11-01 编制计划与任务清单，当时没有功能实现、安装、部署、提交或推送。2026-11-02 Reach 已迁入 ARA 的 apps/reach；当前归属与交接以 Markdown 文档为准。后续按具体任务推进。Mac/Linux 后续考虑，不建设云端聊天工作台或工具权限中心。</p><div class="table-wrap" tabindex="0" aria-label="可横向滚动的表格"><table><thead><tr><th scope="col">组件</th><th scope="col">部署位置</th><th scope="col">职责</th><th scope="col">边界</th></tr></thead><tbody><tr><td>service</td><td>组织服务器</td><td>安装登记、身份与配对、连接中转、任务事件和收据；接入组织模型配置。</td><td>Reach 维护自身身份与运行数据，外部资产只保存来源引用。</td></tr><tr><td>node</td><td>被操作的 Windows 机器</td><td>系统服务、工具宿主、按需交互会话助手、远端 Lite/Harness Host。</td><td>保存安装身份及执行现场；用户无需配置模型或开发环境。</td></tr><tr><td>controller</td><td>开发者本机</td><td>reach CLI 与供 Codex 使用的 MCP，共享目标选择、连接和结果读取。</td><td>本地 Agent 读取源码并判断整体任务；命令与 MCP 共用合同。</td></tr><tr><td>admin</td><td>组织 Web 服务</td><td>Agent、连接、配对、运行记录及证据页面。</td><td>可独立访问或由 LabSlot 挂载；不建设聊天工作台。</td></tr></tbody></table></div><p>目标机安装 Node、所需运行时、桌面会话助手、工具后端和配对 CLI；开发机安装 controller 并配置 Codex MCP；组织侧部署 service/admin。源码职责与进程数量分开设计，具体技术选型仍待完成。</p></section><section class="section" id="flow"><div class="section-tag" data-no="03"></div><h2>安装与使用流程</h2><ol class="steps"><li><b>部署组织服务</b><span>建立独立登录入口、连接服务和管理页；按需接入 LabSlot 可信身份。</span></li><li><b>双击安装</b><span>安装目标机组件、注册服务、加入 PATH、启动服务后自动退出；系统 UAC 单独说明。</span></li><li><b>命令配对</b><span>取得配对信息，使用 reach 完成首次配对；再次配对无需重装。具体参数及服务定位待 D03 明确。</span></li><li><b>本地 Codex 调用</b><span>选择目标，直接使用文件、命令、进程、日志、桌面和已接入的产品工具。配对后完全控制，无模式选择或逐次审批。</span></li><li><b>按需委托远端任务</b><span>复用 Lite/Harness 和组织模型现场取证，附证据返回，由本地结合源码判断。</span></li><li><b>查看与恢复</b><span>管理页查看连接及运行记录，断线按原操作 ID 读取收据；未知效果保留，不自动重放。</span></li></ol></section><section class="section" id="milestones"><div class="section-tag" data-no="04"></div><h2>阶段、里程碑与推进顺序</h2><div class="table-wrap" tabindex="0" aria-label="可横向滚动的表格"><table><thead><tr><th scope="col">里程碑</th><th scope="col">交付状态</th><th scope="col">所需阶段</th><th scope="col">判据</th></tr></thead><tbody><tr><td>M0</td><td>设计可实施</td><td>P0</td><td>职责、身份、接口、安装与验收合同明确；技术选型有固定版本证据。</td></tr><tr><td>M1</td><td>独立远程调用成立</td><td>P1</td><td>真实跨机调用产生实际效果；断线后查询原收据，未知动作不自动重放。</td></tr><tr><td>M2</td><td>安装后可操作系统与桌面</td><td>P2 + P3</td><td>最终安装包在干净机器完成配对、系统工具调用和交互桌面操作。</td></tr><tr><td>M3</td><td>管理、委托与产品接入齐备</td><td>P4 + P5 + P6</td><td>独立/SSO 管理、真实模型委托及可选产品集成分别通过。</td></tr><tr><td>M4</td><td>首版内测可交付</td><td>P7</td><td>最终代码与安装包的完整链路、故障场景和真实使用任务通过验收。</td></tr></tbody></table></div><p>先完成 P0 与 P1；P2–P6 按下方逐任务依赖重叠推进。M2 同时依赖通用/桌面工具与安装包，服务在线不能替代桌面可操作。P7 对最终代码与安装包统一验收。D02/D08 完成复用调查后再估算工期。</p></section><section class="section" id="p0"><div class="section-tag" data-no="05"></div><h2>P0 · 设计与合同</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 8 项待开始</strong><p>可以按同一套接口、数据归属和验收口径实施。</p></div><dl class="facts"><dt>D01 · 待开始</dt><dd>确定四组件架构与数据归属</dd><dt>交付物</dt><dd>architecture.md：service、node、controller、admin，部署关系与数据所有者</dd><dt>前置</dt><dd>无</dd><dt>验收</dt><dd>不依赖 QSpin/LabSlot 私有状态；本地分析、远端执行、组织模型的职责可逐条对应</dd></dl><dl class="facts"><dt>D02 · 待开始</dt><dd>完成复用调查与技术选型</dd><dt>交付物</dt><dd>reuse-map.md 与必要的技术 ADR；固定来源 SHA、依赖、许可及构建方案</dd><dt>前置</dt><dd>D01</dd><dt>验收</dt><dd>比较 HandWave 提取成本；固定 Lite/Harness 依赖；确定语言、构建、发行命名与 RY 命名空间用法</dd></dl><dl class="facts"><dt>D03 · 待开始</dt><dd>确定独立身份与配对流程</dd><dt>交付物</dt><dd>identity-pairing.md；独立部署首次登录、安装身份、首次/再次配对、解绑、多控制端关系</dd><dt>前置</dt><dd>D01</dd><dt>验收</dt><dd>未接 LabSlot 也能登录配对；已配对者完全控制；没有工具权限模式或逐次审批</dd></dl><dl class="facts"><dt>D04 · 待开始</dt><dd>确定工具、任务与事件合同</dd><dt>交付物</dt><dd>tools-tasks.md 及版本化合同；首版能力矩阵、请求/操作/任务 ID、文本/图片/文件与错误语义</dd><dt>前置</dt><dd>D01,D02,D03</dd><dt>验收</dt><dd>明确单次工具和委托任务的输入输出；成功、失败、取消、未知可区分；能力矩阵用于实现验收，不是权限白名单</dd></dl><dl class="facts"><dt>D05 · 待开始</dt><dd>确定安装、更新与卸载合同</dd><dt>交付物</dt><dd>installation-update.md；安装路径、服务启动类型、PATH、配对保存、版本兼容、更新失败恢复</dd><dt>前置</dt><dd>D01,D02,D03</dd><dt>验收</dt><dd>双击安装后服务启动并退出安装器；共享基础包与产品卸载关系清楚；未把开机启动类型当作用户已定要求</dd></dl><dl class="facts"><dt>D06 · 待开始</dt><dd>选定首个 Windows Computer Use 后端</dd><dt>交付物</dt><dd>固定版本的后端对照与接入方案，含运行时和许可依赖</dd><dt>前置</dt><dd>D01,D02</dd><dt>验收</dt><dd>确认可打包、可在实际交互用户会话运行，覆盖截图/控件或坐标操作；不引入另一套 Agent 循环</dd></dl><dl class="facts"><dt>D07 · 待开始</dt><dd>确定外部登录与产品集成合同</dd><dt>交付物</dt><dd>integrations.md；统一登录、页面挂载、产品能力配置、资产来源引用</dd><dt>前置</dt><dd>D01,D03,D04</dd><dt>验收</dt><dd>LabSlot 是可选集成；产品关联可为空；机器主数据只引用原系统；现有业务 API/MCP 仍由产品维护</dd></dl><dl class="facts"><dt>D08 · 待开始</dt><dd>形成首版验收矩阵与实施估算</dd><dt>交付物</dt><dd>acceptance.md；场景、判据、环境、证据模板及选型后的工作量估算</dd><dt>前置</dt><dd>D01,D02,D03,D04,D05,D06,D07</dd><dt>验收</dt><dd>覆盖本计划 G1–G8；每个里程碑有实际可观察结果；仅据复用/选型证据估算工期</dd></dl></section><section class="section" id="p1"><div class="section-tag" data-no="06"></div><h2>P1 · 独立远程调用闭环</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 7 项待开始</strong><p>两端真实进程通过 Reach 服务完成一次调用，并能恢复读取原操作结果。</p></div><dl class="facts"><dt>C01 · 待开始</dt><dd>建立可构建的最小工程</dd><dt>交付物</dt><dd>按已选技术建立组件入口、共享合同和针对性检查入口</dd><dt>前置</dt><dd>D02,D04,D08</dd><dt>验收</dt><dd>从干净检出可构建所需进程；没有复制 Lite 或导入 QSpin/LabSlot 私有代码</dd></dl><dl class="facts"><dt>C02 · 待开始</dt><dd>实现服务初始身份与安装登记</dd><dt>交付物</dt><dd>独立登录/初始接入、安装身份记录、状态查询</dd><dt>前置</dt><dd>C01,D03</dd><dt>验收</dt><dd>没有 LabSlot 或产品数据也能初始化服务并登记 Node；身份来自可信流程</dd></dl><dl class="facts"><dt>C03 · 待开始</dt><dd>实现 Node 最小运行宿主</dd><dt>交付物</dt><dd>Node 连接、安装身份保存和原生进程工具最小接线</dd><dt>前置</dt><dd>C01,D01,D03,D04</dd><dt>验收</dt><dd>运行真实子进程并取得真实退出状态；Node 重启后身份可识别，配对前不接受控制调用</dd></dl><dl class="facts"><dt>C04 · 待开始</dt><dd>实现首次配对、替换配对与解绑</dd><dt>交付物</dt><dd>CLI 配对流程及可查询的绑定记录</dd><dt>前置</dt><dd>C02,C03</dd><dt>验收</dt><dd>首次配对后直接可操作；再次配对无需重装；替换/解绑后旧连接按 D03 合同失效，无额外工具审批</dd></dl><dl class="facts"><dt>C05 · 待开始</dt><dd>实现中转、操作收据及重连查询</dd><dt>交付物</dt><dd>出站连接、稳定操作 ID、事件/收据保存、断线重连</dd><dt>前置</dt><dd>C04,D04</dd><dt>验收</dt><dd>断线后按原 ID 查回结果；未知效果明确保留；重连及重复投递不自动重放原动作</dd></dl><dl class="facts"><dt>C06 · 待开始</dt><dd>实现本地 MCP 与 CLI 控制器</dd><dt>交付物</dt><dd>登录、目标查看、能力查询、工具调用、状态/证据读取的共享客户端</dd><dt>前置</dt><dd>C05,D04</dd><dt>验收</dt><dd>本地 Codex 可加载 MCP；CLI 与 MCP 对同一目标和操作得到一致结果</dd></dl><dl class="facts"><dt>C07 · 待开始</dt><dd>验收首个独立跨机调用</dd><dt>交付物</dt><dd>真实跨机/中转试验记录、操作产物与故障收据</dd><dt>前置</dt><dd>C06,C03,C05</dd><dt>验收</dt><dd>不装 QSpin、不接 LabSlot：Codex 调远端真实命令，独立核对一次文件变化；断线查询原操作，未知路径零自动重放</dd></dl></section><section class="section" id="p2"><div class="section-tag" data-no="07"></div><h2>P2 · 通用工具与 Windows 桌面</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 7 项待开始</strong><p>首版能力矩阵中的系统、文件、进程和桌面操作均有真实效果证据。</p></div><dl class="facts"><dt>T01 · 待开始</dt><dd>接入通用文件操作与传输</dd><dt>交付物</dt><dd>目录、读取、搜索、写入及文件取回工具</dd><dt>前置</dt><dd>C07,D04</dd><dt>验收</dt><dd>按任务可直接读写目标文件；大文件可分段获取；路径、错误与实际文件内容可核对</dd></dl><dl class="facts"><dt>T02 · 待开始</dt><dd>完成命令与进程工具</dd><dt>交付物</dt><dd>任意命令执行、输出读取、进程启动/停止和取消结算</dd><dt>前置</dt><dd>C07,D04</dd><dt>验收</dt><dd>验证真实输出、退出码和进程效果；取消后明确实际存活状态，不把请求取消当作已停止</dd></dl><dl class="facts"><dt>T03 · 待开始</dt><dd>实现日志批量筛选与续读</dd><dt>交付物</dt><dd>时间/文本检索、命中窗口、统计、续读游标和轮转识别</dd><dt>前置</dt><dd>T01</dd><dt>验收</dt><dd>从真实日志返回必要片段及来源范围；无匹配、扫描未完、文件轮转、读取失败分别报告</dd></dl><dl class="facts"><dt>T04 · 待开始</dt><dd>接入现有 MCP 与能力说明</dd><dt>交付物</dt><dd>MCP/原生工具接线、工具列表、图片/结构化结果及错误映射</dd><dt>前置</dt><dd>C07,D04</dd><dt>验收</dt><dd>复用现有适配；图片不丢失；产品错误中的未知效果不被压成普通成功或文本后继续重放</dd></dl><dl class="facts"><dt>T05 · 待开始</dt><dd>接入交互用户会话与开源桌面后端</dd><dt>交付物</dt><dd>Windows 会话助手、截图及点击/输入/控件操作</dd><dt>前置</dt><dd>C03,D06</dd><dt>验收</dt><dd>在真实用户桌面观察并操作；锁屏、UAC 安全桌面和会话变化如实报告实际可用性；没有产品工具权限开关</dd></dl><dl class="facts"><dt>T06 · 待开始</dt><dd>实现证据保存与取回</dd><dt>交付物</dt><dd>文本、截图、文件的来源、时间、目标和内容标识；结果分段取回</dd><dt>前置</dt><dd>T01,T04,T05</dd><dt>验收</dt><dd>本地能核对证据属于哪次操作；保留原始结果引用；管理页和模型不必拉取整包日志</dd></dl><dl class="facts"><dt>T07 · 待开始</dt><dd>验收完全控制的通用能力</dd><dt>交付物</dt><dd>首版能力矩阵的逐项运行记录</dd><dt>前置</dt><dd>T01,T02,T03,T04,T05,T06</dd><dt>验收</dt><dd>真实文件修改、命令/进程操作和桌面动作均有独立效果核对；配对后无模式选择、逐工具开关或逐次审批</dd></dl></section><section class="section" id="p3"><div class="section-tag" data-no="08"></div><h2>P3 · 一键安装与更新</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 6 项待开始</strong><p>干净 Windows 机器无需开发环境即可安装、配对和完成桌面操作。</p></div><dl class="facts"><dt>I01 · 待开始</dt><dd>制作独立 Windows 安装包</dd><dt>交付物</dt><dd>Node、桌面后端及所需运行时、安装/卸载资源</dd><dt>前置</dt><dd>C07,D05,D06,T05</dd><dt>验收</dt><dd>在干净机器不要求用户自行安装 Python、开发工具或配置模型；组件版本与许可清单可追溯</dd></dl><dl class="facts"><dt>I02 · 待开始</dt><dd>实现无引导页安装与启动</dd><dt>交付物</dt><dd>自动注册服务、写入 PATH、启动服务并退出安装器</dd><dt>前置</dt><dd>I01</dd><dt>验收</dt><dd>双击安装后服务运行；新终端可执行 reach；无下一步/完成按钮流程，系统自身 UAC 单独记录</dd></dl><dl class="facts"><dt>I03 · 待开始</dt><dd>实现已安装检测与兼容更新</dd><dt>交付物</dt><dd>版本检查、配对与状态保留、更新切换</dd><dt>前置</dt><dd>I02,C05</dd><dt>验收</dt><dd>兼容安装不生成第二套身份/服务；更新后原配对有效；正在执行的任务按 D05 结算后切换</dd></dl><dl class="facts"><dt>I04 · 待开始</dt><dd>验证更新失败后的恢复</dd><dt>交付物</dt><dd>失败更新/中断恢复及版本查询机制</dd><dt>前置</dt><dd>I03</dd><dt>验收</dt><dd>受控安装失败后明确当前可用版本与状态；不会误报更新成功或用新身份掩盖旧任务</dd></dl><dl class="facts"><dt>I05 · 待开始</dt><dd>提供产品安装器接入方式</dd><dt>交付物</dt><dd>公共安装包调用合同、产品关联登记/移除接口约定与受控示例</dd><dt>前置</dt><dd>I02,D07</dd><dt>验收</dt><dd>受控安装器调用复用同一基础包并返回实际安装状态；重复调用不生成第二套服务；实际产品关联、解除及卸载共存效果在 P05 验收</dd></dl><dl class="facts"><dt>I06 · 待开始</dt><dd>完成干净机与升级路径验收</dd><dt>交付物</dt><dd>全新安装、已有安装、升级失败及桌面操作证据</dd><dt>前置</dt><dd>I02,I03,I04,I05,T07</dd><dt>验收</dt><dd>从最终安装包完成 pair、MCP 调用和真实桌面操作；服务启动成功与桌面实际可操作分别验证</dd></dl></section><section class="section" id="p4"><div class="section-tag" data-no="09"></div><h2>P4 · 管理页面与统一登录</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 6 项待开始</strong><p>可独立管理 Reach，也可从 LabSlot 菜单自动登录进入。</p></div><dl class="facts"><dt>A01 · 待开始</dt><dd>实现 Agent 与连接管理页</dd><dt>交付物</dt><dd>在线/离线、版本、配对及连接信息</dd><dt>前置</dt><dd>C02,C05,D07</dd><dt>验收</dt><dd>状态来自实际服务；展示最近更新时间；未安装、未配对、离线不会显示为可操作</dd></dl><dl class="facts"><dt>A02 · 待开始</dt><dd>实现配对管理操作</dd><dt>交付物</dt><dd>生成配对信息、查看绑定、替换与解绑入口</dd><dt>前置</dt><dd>A01,C04</dd><dt>验收</dt><dd>页面与 CLI 使用同一配对合同；绑定结果与 Node 实际连接一致</dd></dl><dl class="facts"><dt>A03 · 待开始</dt><dd>实现运行记录与证据查看</dd><dt>交付物</dt><dd>任务状态、操作日志、结果和证据入口</dd><dt>前置</dt><dd>A01,T06</dd><dt>验收</dt><dd>失败/取消/未知明确可见；能够回看原操作而不重执行；无聊天工作台或权限配置页</dd></dl><dl class="facts"><dt>A04 · 待开始</dt><dd>实现统一登录身份接入</dd><dt>交付物</dt><dd>按 D03/D07 接入外部身份，独立登录路径保留</dd><dt>前置</dt><dd>C02,D03,D07</dd><dt>验收</dt><dd>验证身份来源和稳定主体；外部登录可建立 Reach 会话；普通页面参数不能冒充登录身份</dd></dl><dl class="facts"><dt>A05 · 待开始</dt><dd>完成 LabSlot 菜单与页面挂载接线</dd><dt>交付物</dt><dd>身份交换与同机/异机部署接入说明及必要薄接线</dd><dt>前置</dt><dd>A04,A01</dd><dt>验收</dt><dd>LabSlot 只挂载入口与身份；Agent 状态仍归 Reach；代码不转移到 QSpin 子项目</dd></dl><dl class="facts"><dt>A06 · 待开始</dt><dd>验收独立入口与真实 LabSlot 接入</dd><dt>交付物</dt><dd>独立登录及真实已登录 LabSlot → Reach 流程证据</dd><dt>前置</dt><dd>A02,A03,A04,A05</dd><dt>验收</dt><dd>LabSlot 菜单免再次输入账号进入；没有 LabSlot 机器记录也能使用已配对 Agent；独立入口同样可用</dd></dl></section><section class="section" id="p5"><div class="section-tag" data-no="10"></div><h2>P5 · 远端 Agent 委托与技能传递</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 7 项待开始</strong><p>客户不配置模型，远端可按本地目标连续取证并返回可复核结果。</p></div><dl class="facts"><dt>R01 · 待开始</dt><dd>组装 Lite/Harness 远端 Host</dd><dt>交付物</dt><dd>固定版本依赖、Host 回调、工具注册及历史存储</dd><dt>前置</dt><dd>C07,D02,D04,T04</dd><dt>验收</dt><dd>复用单 Run 循环和跨 Run 机制；Reach 产品状态保留在 Host；不复制或重写循环</dd></dl><dl class="facts"><dt>R02 · 待开始</dt><dd>接入组织模型服务</dd><dt>交付物</dt><dd>模型路由、输入能力与连接凭据的组织侧配置</dd><dt>前置</dt><dd>R01</dd><dt>验收</dt><dd>客户机无需填写模型配置；实际模型/协议与视觉能力匹配；配置失败明确报告</dd></dl><dl class="facts"><dt>R03 · 待开始</dt><dd>实现子任务提交与结果回传</dd><dt>交付物</dt><dd>本地委托目标、上下文、状态、结果与证据合同</dd><dt>前置</dt><dd>R01,R02,T06</dd><dt>验收</dt><dd>Codex 可委托、跟进和取消；远端结果附实际证据，由本地结合源码判断整体任务</dd></dl><dl class="facts"><dt>R04 · 待开始</dt><dd>实现能力说明与技能传递</dd><dt>交付物</dt><dd>工具使用说明、技能内容/版本/来源及适用环境记录</dd><dt>前置</dt><dd>R03,D04</dd><dt>验收</dt><dd>远端按已有说明使用工具；版本不匹配或能力缺失明确返回；无需自动发现全部业务</dd></dl><dl class="facts"><dt>R05 · 待开始</dt><dd>区分任务上下文与可复用经验</dd><dt>交付物</dt><dd>临时上下文、候选技能、持久知识的存储与晋升流程</dd><dt>前置</dt><dd>R04</dd><dt>验收</dt><dd>来源和作用域可追溯；经过验证与审核才能持久复用；一次成功任务不自动改写组织知识</dd></dl><dl class="facts"><dt>R06 · 待开始</dt><dd>验证多轮任务的停止与恢复</dd><dt>交付物</dt><dd>取消、上下文维护、模型故障及未知操作的故障用例</dd><dt>前置</dt><dd>R03,R04,C05</dd><dt>验收</dt><dd>沿用 Lite/Harness 的 Run/Task 结算合同；不因换 Session 或重连重放未知动作；原证据可读取</dd></dl><dl class="facts"><dt>R07 · 待开始</dt><dd>验收真实模型委托任务</dd><dt>交付物</dt><dd>真实多轮日志取证及一次图片工具任务的结果与检查记录</dd><dt>前置</dt><dd>R02,R03,R04,R05,R06,T07</dd><dt>验收</dt><dd>现场工具实际执行，模型实际接收图片；本地独立核对结论与来源；受控故障和真实模型结果分别记录</dd></dl></section><section class="section" id="p6"><div class="section-tag" data-no="11"></div><h2>P6 · 可选产品与数据源集成</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 5 项待开始</strong><p>无产品、单产品和多产品三种场景都可运行，核心不绑定具体业务。</p></div><dl class="facts"><dt>P01 · 待开始</dt><dd>实现产品能力配置登记</dd><dt>交付物</dt><dd>产品实例、工具入口、版本与说明的登记/移除机制</dd><dt>前置</dt><dd>D07,C07,I05</dd><dt>验收</dt><dd>产品关联为空时通用工具仍可用；增加产品不会改变通用连接或引入权限模式</dd></dl><dl class="facts"><dt>P02 · 待开始</dt><dd>接入已有产品 MCP/API</dd><dt>交付物</dt><dd>复用已存在的产品接口及能力说明</dd><dt>前置</dt><dd>P01,T04</dd><dt>验收</dt><dd>不复制业务后端；产品故障通过原合同返回；业务工具的实际登录/连接需求可满足</dd></dl><dl class="facts"><dt>P03 · 待开始</dt><dd>接入资产资料的来源引用</dd><dt>交付物</dt><dd>来源系统实例、记录 ID、查询时间及必要快照</dd><dt>前置</dt><dd>P01,D07</dd><dt>验收</dt><dd>APP/LabSlot 等仍维护主数据；Reach 不双写机器资料，不以名称自动合并身份</dd></dl><dl class="facts"><dt>P04 · 待开始</dt><dd>完成 QSpin 参考集成</dd><dt>交付物</dt><dd>可选 QSpin 能力配置与接入文档，具体版本明确</dd><dt>前置</dt><dd>P02,P03</dd><dt>验收</dt><dd>只在产品适配处引用 QSpin；卸下配置后 Reach 系统/桌面能力仍可使用；真实硬件行为另按现场任务验收</dd></dl><dl class="facts"><dt>P05 · 待开始</dt><dd>验收多个产品共存与解除关联</dd><dt>交付物</dt><dd>无产品、QSpin 或其他真实产品、第二产品配置的对照记录</dd><dt>前置</dt><dd>P01,P02,P03,P04,I05</dd><dt>验收</dt><dd>同机可关联多个产品；解除或卸载其中一个产品后，共用服务、其他产品关联、通用连接及任务记录保留；测试替身与真实产品分别标注</dd></dl></section><section class="section" id="p7"><div class="section-tag" data-no="12"></div><h2>P7 · 完整验收与内测交付</h2><div class="callout pending reveal"><svg class="face" aria-hidden="true"><use href="#face-think"/></svg><strong>阶段退出条件 · 6 项待开始</strong><p>明确首版覆盖和未覆盖项，交付可安装、可复核、可维护的内测版本。</p></div><dl class="facts"><dt>V01 · 待开始</dt><dd>执行最终版本端到端验收</dd><dt>交付物</dt><dd>从最终源码和安装包执行验收矩阵</dd><dt>前置</dt><dd>I06,A06,R07,P05</dd><dt>验收</dt><dd>安装→配对→Codex 调用→桌面→委托→页面/SSO→产品接入均有真实链路证据，不借用旧版本结果</dd></dl><dl class="facts"><dt>V02 · 待开始</dt><dd>完成运行生命周期故障验收</dd><dt>交付物</dt><dd>断网、服务重启、重复请求、取消、更新中断等记录</dd><dt>前置</dt><dd>V01,C05,I04,R06</dd><dt>验收</dt><dd>可查原操作和实际结果；未知状态保留；不存在把消息送达、取消请求或模型结束当作业务成功的路径</dd></dl><dl class="facts"><dt>V03 · 待开始</dt><dd>完成 Windows 桌面环境矩阵</dd><dt>交付物</dt><dd>支持版本、不同 DPI/窗口/用户会话和不可操作状态的实际记录</dd><dt>前置</dt><dd>V01,T05</dd><dt>验收</dt><dd>所声明的环境逐项有证据；锁屏和 UAC 等限制如实说明，不把一台机器通过写成全平台通过</dd></dl><dl class="facts"><dt>V04 · 待开始</dt><dd>完成发行依赖和产物核对</dd><dt>交付物</dt><dd>固定依赖、许可/第三方声明、组件清单、版本与产物哈希</dd><dt>前置</dt><dd>D02,D06,I01,V01</dd><dt>验收</dt><dd>开源后端及其传递依赖均核对；Reach/Ray Zhang/RY 标识一致；发行包不包含凭据或客户数据</dd></dl><dl class="facts"><dt>V05 · 待开始</dt><dd>准备交付与运维入口</dd><dt>交付物</dt><dd>可复现构建、签名/制品流程、部署/升级/恢复手册与故障取证说明</dd><dt>前置</dt><dd>V02,V03,V04</dd><dt>验收</dt><dd>另一环境可按文档构建和部署；缺失签名或外部条件明确标注，不承诺不可用的发行能力</dd></dl><dl class="facts"><dt>V06 · 待开始</dt><dd>完成内测试用与发布判断</dd><dt>交付物</dt><dd>内测任务收据、独立验收结论、版本说明及已知限制</dd><dt>前置</dt><dd>V05,V01</dd><dt>验收</dt><dd>使用者完成一个真实远程协助任务；逐项核对目标后判断交付；实际提交、发布和生产部署另按用户指令执行</dd></dl></section><section class="section" id="workflow"><div class="section-tag" data-no="13"></div><h2>文档维护与验收流程</h2><ol class="steps"><li><b>开始前检查依赖</b><span>在 task-checklist.md 记录负责人、状态和目标版本，引用对应设计。</span></li><li><b>按合同实施</b><span>专项文档负责接口与行为，重要取舍按需记录 ADR。</span></li><li><b>保存实际证据</b><span>区分代码检查、替身、真实进程、桌面、模型和硬件；记录版本、环境、操作、结果及缺口。</span></li><li><b>复核后完成</b><span>填写实际复核者和证据路径后再勾选任务。Run 成功或服务在线不自动代表业务验收通过。</span></li></ol><p>Markdown 是持续维护来源。此 HTML 与输入 JSON 是日期快照，不另维护任务状态。知识库存放有来源的长期决定；临时进度进入任务清单或交接记录。</p></section><section class="section" id="open"><div class="section-tag" data-no="14"></div><h2>待设计事项与下一步</h2><p>下一步从 D01 架构与数据归属开始，随后 D02 固定复用版本与技术选型、D03 独立登录和配对；D04–D07 明确工具、安装、桌面与外部接入，D08 汇总验收和估算。</p><ul><li>服务启动类型、语言和构建方式仍待设计。</li><li>开源桌面后端须以实际 Windows 交互会话验收，记录锁屏、UAC 与 DPI 的实际边界。</li><li>LabSlot 同机/同域部署不代表单点登录已完成，必须有可信身份交换。</li><li>组织模型路由、签名条件和真实产品接口可用性均需回源确认。</li></ul><ul class="sources links"><li><a href="../../project-plan.md">持续维护的项目计划</a></li><li><a href="../../task-checklist.md">52 项任务清单</a></li><li><a href="../../product-scope.md">产品范围</a></li><li><a href="../../INDEX.md">文档索引</a></li></ul></section><footer class="footer"><span class="footer-face"><svg class="face" aria-hidden="true"><use href="#face-happy"/></svg>报告到此结束。要找某个数字，按 Ctrl K。</span><a href="#main">返回顶部 ↑</a></footer></main></div></div><dialog class="mobile-dialog" id="mobile-toc" aria-labelledby="mobile-title"><div class="dialog-head"><strong id="mobile-title">本页目录</strong><button id="close-menu" class="close-menu" type="button" aria-label="关闭目录">关闭 ×</button></div><nav class="toc" aria-label="移动端正文目录"><a class="toc-link" href="#goals"><span class="num" aria-hidden="true">01</span><span>项目目标与完成标准</span></a><a class="toc-link" href="#scope"><span class="num" aria-hidden="true">02</span><span>本次范围与组件职责</span></a><a class="toc-link" href="#flow"><span class="num" aria-hidden="true">03</span><span>安装与使用流程</span></a><a class="toc-link" href="#milestones"><span class="num" aria-hidden="true">04</span><span>阶段、里程碑与推进顺序</span></a><a class="toc-link" href="#p0"><span class="num" aria-hidden="true">05</span><span>P0 · 设计与合同</span></a><a class="toc-link" href="#p1"><span class="num" aria-hidden="true">06</span><span>P1 · 独立远程调用闭环</span></a><a class="toc-link" href="#p2"><span class="num" aria-hidden="true">07</span><span>P2 · 通用工具与 Windows 桌面</span></a><a class="toc-link" href="#p3"><span class="num" aria-hidden="true">08</span><span>P3 · 一键安装与更新</span></a><a class="toc-link" href="#p4"><span class="num" aria-hidden="true">09</span><span>P4 · 管理页面与统一登录</span></a><a class="toc-link" href="#p5"><span class="num" aria-hidden="true">10</span><span>P5 · 远端 Agent 委托与技能传递</span></a><a class="toc-link" href="#p6"><span class="num" aria-hidden="true">11</span><span>P6 · 可选产品与数据源集成</span></a><a class="toc-link" href="#p7"><span class="num" aria-hidden="true">12</span><span>P7 · 完整验收与内测交付</span></a><a class="toc-link" href="#workflow"><span class="num" aria-hidden="true">13</span><span>文档维护与验收流程</span></a><a class="toc-link" href="#open"><span class="num" aria-hidden="true">14</span><span>待设计事项与下一步</span></a></nav><button class="mobile-reader" id="mobile-reader" type="button" aria-controls="reader-panel">阅读设置与报告信息</button></dialog><div class="reader-panel" id="reader-panel" role="dialog" aria-labelledby="rp-title" hidden>
+  <div class="rp-head">
+    <span class="rp-mark" aria-hidden="true">R</span>
+    <span class="rp-id"><b id="rp-title"></b><span class="rp-meta" id="rp-meta"></span></span>
+    <span class="sticker st-pending rp-state" id="rp-state"></span>
+  </div>
+  <div class="rp-wave" aria-hidden="true"></div>
+  <div class="rp-group" role="group" aria-labelledby="rp-g1">
+    <div class="rp-label" id="rp-g1">阅读</div>
+    <div class="rp-row">
+      <svg class="rp-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13L5.5 3h1L10 13M3.3 9.5h5.4M11 13l2-5.5 2 5.5M11.7 11.4h2.6"/></svg>
+      <span class="rp-name" id="fs-label">正文字号</span>
+      <span class="seg-ctl" role="radiogroup" aria-labelledby="fs-label" data-pref="fs">
+        <button type="button" role="radio" data-v="s" aria-label="小">小</button><button type="button" role="radio" data-v="m" aria-label="标准">标准</button><button type="button" role="radio" data-v="l" aria-label="大">大</button>
+      </span>
+    </div>
+    <div class="rp-row">
+      <svg class="rp-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7l3 3v8H3zM10 2.5v3h3M5.5 8.5h5M5.5 11h3"/></svg>
+      <span class="rp-name" id="nt-label">页边批注</span>
+      <span class="seg-ctl" role="radiogroup" aria-labelledby="nt-label" data-pref="notes">
+        <button type="button" role="radio" data-v="on">显示</button><button type="button" role="radio" data-v="off">隐藏</button>
+      </span>
+    </div>
+  </div>
+  <div class="rp-wave" aria-hidden="true"></div>
+  <div class="rp-group">
+    <div class="rp-label">证据图例</div>
+    <div class="rp-legend">
+      <span class="sticker ev-run">运行确认</span><span class="sticker ev-src">源码支持</span><span class="sticker ev-infer">推断</span><span class="sticker ev-guess">猜测</span>
+    </div>
+    <p class="rp-hint">实线最可靠，虚线、点线依次减弱。黑白打印也能区分。</p>
+  </div>
+  <div class="rp-wave" aria-hidden="true"></div>
+  <div class="rp-group">
+    <button class="rp-item" type="button" data-act="search"><svg class="rp-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><span class="rp-name">搜索本文</span><kbd>Ctrl K</kbd></button>
+    <button class="rp-item" type="button" data-act="link"><svg class="rp-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5l3-3M7 4.5l1.2-1.2a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7l1.2-1.2"/></svg><span class="rp-name">复制本节链接<small id="rp-cur"></small></span></button>
+    <button class="rp-item" type="button" data-act="print"><svg class="rp-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6V2.5h7V6M4.5 11.5H2.5v-5h11v5h-2M4.5 9.5h7v4h-7z"/></svg><span class="rp-name">打印 / 存为 PDF</span><kbd>Ctrl P</kbd></button>
+  </div>
+  <div class="rp-foot"><span id="rp-date"></span><span id="rp-time">约 — 分钟读完</span></div>
+</div>
+<dialog id="report-search" class="search-dialog" aria-labelledby="search-title"><div class="search-head"><span id="search-title">搜索本文</span><button id="search-close" type="button" aria-label="关闭搜索">Esc</button></div><label class="search-input-wrap"><span class="sr-only">搜索章节、正文、参数与源码</span><input id="report-search-input" type="search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="search-results" placeholder="搜索章节、关键词、代码…" autocomplete="off" spellcheck="false"></label><p id="search-status" role="status" aria-live="polite"></p><div id="search-results" role="listbox" aria-label="搜索结果"></div><div class="search-footer"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 跳转</span><span><kbd>Esc</kbd> 关闭</span><span>全文本地搜索</span></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div><!-- highlight.js BSD license
+BSD 3-Clause License
+
+Copyright (c) 2006, Ivan Sagalaev.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--><script>(()=>{var hn=Object.create;var xe=Object.defineProperty;var bn=Object.getOwnPropertyDescriptor;var En=Object.getOwnPropertyNames;var _n=Object.getPrototypeOf,mn=Object.prototype.hasOwnProperty;var Sn=(e,n)=>()=>{try{return n||e((n={exports:{}}).exports,n),n.exports}catch(t){throw n=0,t}};var Nn=(e,n,t,r)=>{if(n&&typeof n=="object"||typeof n=="function")for(let d of En(n))!mn.call(e,d)&&d!==t&&xe(e,d,{get:()=>n[d],enumerable:!(r=bn(n,d))||r.enumerable});return e};var An=(e,n,t)=>(t=e!=null?hn(_n(e)):{},Nn(n||!e||!e.__esModule?xe(t,"default",{value:e,enumerable:!0}):t,e));var Ye=Sn((mt,qe)=>{function De(e){return e instanceof Map?e.clear=e.delete=e.set=function(){throw new Error("map is read-only")}:e instanceof Set&&(e.add=e.clear=e.delete=function(){throw new Error("set is read-only")}),Object.freeze(e),Object.getOwnPropertyNames(e).forEach(n=>{let t=e[n],r=typeof t;(r==="object"||r==="function")&&!Object.isFrozen(t)&&De(t)}),e}var ae=class{constructor(n){n.data===void 0&&(n.data={}),this.data=n.data,this.isMatchIgnored=!1}ignoreMatch(){this.isMatchIgnored=!0}};function Pe(e){return e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;")}function W(e,...n){let t=Object.create(null);for(let r in e)t[r]=e[r];return n.forEach(function(r){for(let d in r)t[d]=r[d]}),t}var yn="</span>",ve=e=>!!e.scope,Rn=(e,{prefix:n})=>{if(e.startsWith("language:"))return e.replace("language:","language-");if(e.includes(".")){let t=e.split(".");return[`${n}${t.shift()}`,...t.map((r,d)=>`${r}${"_".repeat(d+1)}`)].join(" ")}return`${n}${e}`},Ee=class{constructor(n,t){this.buffer="",this.classPrefix=t.classPrefix,n.walk(this)}addText(n){this.buffer+=Pe(n)}openNode(n){if(!ve(n))return;let t=Rn(n.scope,{prefix:this.classPrefix});this.span(t)}closeNode(n){ve(n)&&(this.buffer+=yn)}value(){return this.buffer}span(n){this.buffer+=`<span class="${n}">`}},Ce=(e={})=>{let n={children:[]};return Object.assign(n,e),n},_e=class e{constructor(){this.rootNode=Ce(),this.stack=[this.rootNode]}get top(){return this.stack[this.stack.length-1]}get root(){return this.rootNode}add(n){this.top.children.push(n)}openNode(n){let t=Ce({scope:n});this.add(t),this.stack.push(t)}closeNode(){if(this.stack.length>1)return this.stack.pop()}closeAllNodes(){for(;this.closeNode(););}toJSON(){return JSON.stringify(this.rootNode,null,4)}walk(n){return this.constructor._walk(n,this.rootNode)}static _walk(n,t){return typeof t=="string"?n.addText(t):t.children&&(n.openNode(t),t.children.forEach(r=>this._walk(n,r)),n.closeNode(t)),n}static _collapse(n){typeof n!="string"&&n.children&&(n.children.every(t=>typeof t=="string")?n.children=[n.children.join("")]:n.children.forEach(t=>{e._collapse(t)}))}},me=class extends _e{constructor(n){super(),this.options=n}addText(n){n!==""&&this.add(n)}startScope(n){this.openNode(n)}endScope(){this.closeNode()}__addSublanguage(n,t){let r=n.root;t&&(r.scope=`language:${t}`),this.add(r)}toHTML(){return new Ee(this,this.options).value()}finalize(){return this.closeAllNodes(),!0}};function ne(e){return e?typeof e=="string"?e:e.source:null}function Ue(e){return Y("(?=",e,")")}function Tn(e){return Y("(?:",e,")*")}function wn(e){return Y("(?:",e,")?")}function Y(...e){return e.map(t=>ne(t)).join("")}function On(e){let n=e[e.length-1];return typeof n=="object"&&n.constructor===Object?(e.splice(e.length-1,1),n):{}}function oe(...e){return"("+(On(e).capture?"":"?:")+e.map(r=>ne(r)).join("|")+")"}function $e(e){return new RegExp(e.toString()+"|").exec("").length-1}function Mn(e,n){let t=e&&e.exec(n);return t&&t.index===0}var xn=new RegExp(oe(/\[(?:[^\\\]]|\\.)*\]/,/\(\?<(?![=!])[^>]+>/,/\(\?'[^']+'/,/\(\??/,/\\([1-9][0-9]*)/,/\\./));function Ne(e,{joinWith:n}){let t=0;return e.map(r=>{t+=1;let d=t,_=ne(r),a="";for(;_.length>0;){let s=xn.exec(_);if(!s){a+=_;break}a+=_.substring(0,s.index),_=_.substring(s.index+s[0].length),s[0][0]==="\\"&&s[1]?a+="\\"+String(Number(s[1])+d):(a+=s[0],(s[0]==="("||/^\(\?[<']/.test(s[0]))&&t++)}return a}).map(r=>`(${r})`).join(n)}var vn=/\b\B/,He="[a-zA-Z]\\w*",Ae="[a-zA-Z_]\\w*",Fe="\\b\\d+(\\.\\d+)?",ze="(-?)(\\b0[xX][a-fA-F0-9]+|(\\b\\d+(\\.\\d*)?|\\.\\d+)([eE][-+]?\\d+)?)",Ge="\\b(0b[01]+)",Cn="!|!=|!==|%|%=|&|&&|&=|\\*|\\*=|\\+|\\+=|,|-|-=|/=|/|:|;|<<|<<=|<=|<|===|==|=|>>>=|>>=|>=|>>>|>>|>|\\?|\\[|\\{|\\(|\\^|\\^=|\\||\\|=|\\|\\||~",In=(e={})=>{let n=/^#![ ]*\//;return e.binary&&(e.begin=Y(n,/.*\b/,e.binary,/\b.*/)),W({scope:"meta",begin:n,end:/$/,relevance:0,"on:begin":(t,r)=>{t.index!==0&&r.ignoreMatch()}},e)},te={begin:"\\\\[\\s\\S]",relevance:0},kn={scope:"string",begin:"'",end:"'",illegal:"\\n",contains:[te]},Ln={scope:"string",begin:'"',end:'"',illegal:"\\n",contains:[te]},Bn={begin:/\b(a|an|the|are|I'm|isn't|don't|doesn't|won't|but|just|should|pretty|simply|enough|gonna|going|wtf|so|such|will|you|your|they|like|more)\b/},le=function(e,n,t={}){let r=W({scope:"comment",begin:e,end:n,contains:[]},t);r.contains.push({scope:"doctag",begin:"[ ]*(?=(TODO|FIXME|NOTE|BUG|OPTIMIZE|HACK|XXX):)",end:/(TODO|FIXME|NOTE|BUG|OPTIMIZE|HACK|XXX):/,excludeBegin:!0,relevance:0});let d=oe("I","a","is","so","us","to","at","if","in","it","on",/[A-Za-z]+['](d|ve|re|ll|t|s|n)/,/[A-Za-z]+[-][a-z]+/,/[A-Za-z][a-z]{2,}/);return r.contains.push({begin:Y(/[ ]+/,"(",d,/[.]?[:]?([.][ ]|[ ])/,"){3}")}),r},Dn=le("//","$"),Pn=le("/\\*","\\*/"),Un=le("#","$"),$n={scope:"number",begin:Fe,relevance:0},Hn={scope:"number",begin:ze,relevance:0},Fn={scope:"number",begin:Ge,relevance:0},zn={scope:"regexp",begin:/\/(?=[^/\n]*\/)/,end:/\/[gimuy]*/,contains:[te,{begin:/\[/,end:/\]/,relevance:0,contains:[te]}]},Gn={scope:"title",begin:He,relevance:0},Kn={scope:"title",begin:Ae,relevance:0},Wn={begin:"\\.\\s*"+Ae,relevance:0},Zn=function(e){return Object.assign(e,{"on:begin":(n,t)=>{t.data._beginMatch=n[1]},"on:end":(n,t)=>{t.data._beginMatch!==n[1]&&t.ignoreMatch()}})},re=Object.freeze({__proto__:null,APOS_STRING_MODE:kn,BACKSLASH_ESCAPE:te,BINARY_NUMBER_MODE:Fn,BINARY_NUMBER_RE:Ge,COMMENT:le,C_BLOCK_COMMENT_MODE:Pn,C_LINE_COMMENT_MODE:Dn,C_NUMBER_MODE:Hn,C_NUMBER_RE:ze,END_SAME_AS_BEGIN:Zn,HASH_COMMENT_MODE:Un,IDENT_RE:He,MATCH_NOTHING_RE:vn,METHOD_GUARD:Wn,NUMBER_MODE:$n,NUMBER_RE:Fe,PHRASAL_WORDS_MODE:Bn,QUOTE_STRING_MODE:Ln,REGEXP_MODE:zn,RE_STARTERS_RE:Cn,SHEBANG:In,TITLE_MODE:Gn,UNDERSCORE_IDENT_RE:Ae,UNDERSCORE_TITLE_MODE:Kn});function Xn(e,n){e.input[e.index-1]==="."&&n.ignoreMatch()}function qn(e,n){e.className!==void 0&&(e.scope=e.className,delete e.className)}function Yn(e,n){n&&e.beginKeywords&&(e.begin="\\b("+e.beginKeywords.split(" ").join("|")+")(?!\\.)(?=\\b|\\s)",e.__beforeBegin=Xn,e.keywords=e.keywords||e.beginKeywords,delete e.beginKeywords,e.relevance===void 0&&(e.relevance=0))}function Jn(e,n){Array.isArray(e.illegal)&&(e.illegal=oe(...e.illegal))}function Vn(e,n){if(e.match){if(e.begin||e.end)throw new Error("begin & end are not supported with match");e.begin=e.match,delete e.match}}function jn(e,n){e.relevance===void 0&&(e.relevance=1)}var Qn=(e,n)=>{if(!e.beforeMatch)return;if(e.starts)throw new Error("beforeMatch cannot be used with starts");let t=Object.assign({},e);Object.keys(e).forEach(r=>{delete e[r]}),e.keywords=t.keywords,e.begin=Y(t.beforeMatch,Ue(t.begin)),e.starts={relevance:0,contains:[Object.assign(t,{endsParent:!0})]},e.relevance=0,delete t.beforeMatch},et=["of","and","for","in","not","or","if","then","parent","list","value"],nt="keyword";function Ke(e,n,t=nt){let r=Object.create(null);return typeof e=="string"?d(t,e.split(" ")):Array.isArray(e)?d(t,e):Object.keys(e).forEach(function(_){Object.assign(r,Ke(e[_],n,_))}),r;function d(_,a){n&&(a=a.map(s=>s.toLowerCase())),a.forEach(function(s){let o=s.split("|");r[o[0]]=[_,tt(o[0],o[1])]})}}function tt(e,n){return n?Number(n):st(e)?0:1}function st(e){return et.includes(e.toLowerCase())}var Ie={},q=e=>{console.error(e)},ke=(e,...n)=>{console.log(`WARN: ${e}`,...n)},j=(e,n)=>{Ie[`${e}/${n}`]||(console.log(`Deprecated as of ${e}. ${n}`),Ie[`${e}/${n}`]=!0)},ce=new Error;function We(e,n,{key:t}){let r=0,d=e[t],_={},a={};for(let s=1;s<=n.length;s++)a[s+r]=d[s],_[s+r]=!0,r+=$e(n[s-1]);e[t]=a,e[t]._emit=_,e[t]._multi=!0}function it(e){if(Array.isArray(e.begin)){if(e.skip||e.excludeBegin||e.returnBegin)throw q("skip, excludeBegin, returnBegin not compatible with beginScope: {}"),ce;if(typeof e.beginScope!="object"||e.beginScope===null)throw q("beginScope must be object"),ce;We(e,e.begin,{key:"beginScope"}),e.begin=Ne(e.begin,{joinWith:""})}}function rt(e){if(Array.isArray(e.end)){if(e.skip||e.excludeEnd||e.returnEnd)throw q("skip, excludeEnd, returnEnd not compatible with endScope: {}"),ce;if(typeof e.endScope!="object"||e.endScope===null)throw q("endScope must be object"),ce;We(e,e.end,{key:"endScope"}),e.end=Ne(e.end,{joinWith:""})}}function at(e){e.scope&&typeof e.scope=="object"&&e.scope!==null&&(e.beginScope=e.scope,delete e.scope)}function ct(e){at(e),typeof e.beginScope=="string"&&(e.beginScope={_wrap:e.beginScope}),typeof e.endScope=="string"&&(e.endScope={_wrap:e.endScope}),it(e),rt(e)}function ot(e){function n(a,s){return new RegExp(ne(a),"m"+(e.case_insensitive?"i":"")+(e.unicodeRegex?"u":"")+(s?"g":""))}class t{constructor(){this.matchIndexes={},this.regexes=[],this.matchAt=1,this.position=0}addRule(s,o){o.position=this.position++,this.matchIndexes[this.matchAt]=o,this.regexes.push([o,s]),this.matchAt+=$e(s)+1}compile(){this.regexes.length===0&&(this.exec=()=>null);let s=this.regexes.map(o=>o[1]);this.matcherRe=n(Ne(s,{joinWith:"|"}),!0),this.lastIndex=0}exec(s){this.matcherRe.lastIndex=this.lastIndex;let o=this.matcherRe.exec(s);if(!o)return null;let p=o.findIndex((y,A)=>A>0&&y!==void 0),b=this.matchIndexes[p];return o.splice(0,p),Object.assign(o,b)}}class r{constructor(){this.rules=[],this.multiRegexes=[],this.count=0,this.lastIndex=0,this.regexIndex=0}getMatcher(s){if(this.multiRegexes[s])return this.multiRegexes[s];let o=new t;return this.rules.slice(s).forEach(([p,b])=>o.addRule(p,b)),o.compile(),this.multiRegexes[s]=o,o}resumingScanAtSamePosition(){return this.regexIndex!==0}considerAll(){this.regexIndex=0}addRule(s,o){this.rules.push([s,o]),o.type==="begin"&&this.count++}exec(s){let o=this.getMatcher(this.regexIndex);o.lastIndex=this.lastIndex;let p=o.exec(s);if(this.resumingScanAtSamePosition()&&!(p&&p.index===this.lastIndex)){let b=this.getMatcher(0);b.lastIndex=this.lastIndex+1,p=b.exec(s)}return p&&(this.regexIndex+=p.position+1,this.regexIndex===this.count&&this.considerAll()),p}}function d(a){let s=new r;return a.contains.forEach(o=>s.addRule(o.begin,{rule:o,type:"begin"})),a.terminatorEnd&&s.addRule(a.terminatorEnd,{type:"end"}),a.illegal&&s.addRule(a.illegal,{type:"illegal"}),s}function _(a,s){let o=a;if(a.isCompiled)return o;[qn,Vn,ct,Qn].forEach(b=>b(a,s)),e.compilerExtensions.forEach(b=>b(a,s)),a.__beforeBegin=null,[Yn,Jn,jn].forEach(b=>b(a,s)),a.isCompiled=!0;let p=null;return typeof a.keywords=="object"&&a.keywords.$pattern&&(a.keywords=Object.assign({},a.keywords),p=a.keywords.$pattern,delete a.keywords.$pattern),p=p||/\w+/,a.keywords&&(a.keywords=Ke(a.keywords,e.case_insensitive)),o.keywordPatternRe=n(p,!0),s&&(a.begin||(a.begin=/\B|\b/),o.beginRe=n(o.begin),!a.end&&!a.endsWithParent&&(a.end=/\B|\b/),a.end&&(o.endRe=n(o.end)),o.terminatorEnd=ne(o.end)||"",a.endsWithParent&&s.terminatorEnd&&(o.terminatorEnd+=(a.end?"|":"")+s.terminatorEnd)),a.illegal&&(o.illegalRe=n(a.illegal)),a.contains||(a.contains=[]),a.contains=[].concat(...a.contains.map(function(b){return lt(b==="self"?a:b)})),a.contains.forEach(function(b){_(b,o)}),a.starts&&_(a.starts,s),o.matcher=d(o),o}if(e.compilerExtensions||(e.compilerExtensions=[]),e.contains&&e.contains.includes("self"))throw new Error("ERR: contains `self` is not supported at the top-level of a language.  See documentation.");return e.classNameAliases=W(e.classNameAliases||{}),_(e)}function Ze(e){return e?e.endsWithParent||Ze(e.starts):!1}function lt(e){return e.variants&&!e.cachedVariants&&(e.cachedVariants=e.variants.map(function(n){return W(e,{variants:null},n)})),e.cachedVariants?e.cachedVariants:Ze(e)?W(e,{starts:e.starts?W(e.starts):null}):Object.isFrozen(e)?W(e):e}var ut="11.12.0",Se=class extends Error{constructor(n,t){super(n),this.name="HTMLInjectionError",this.html=t}},be=Pe,Le=W,Be=Symbol("nomatch"),gt=7,Xe=function(e){let n=Object.create(null),t=Object.create(null),r=[],d=!0,_="Could not find the language '{}', did you forget to load/include a language module?",a={disableAutodetect:!0,name:"Plain text",contains:[]},s={ignoreUnescapedHTML:!1,throwUnescapedHTML:!1,noHighlightRe:/^(no-?highlight)$/i,languageDetectRe:/\blang(?:uage)?-([\w-]+)\b/i,classPrefix:"hljs-",cssSelector:"pre code",languages:null,__emitter:me};function o(i){return s.noHighlightRe.test(i)}function p(i){let u=i.className+" ";u+=i.parentNode?i.parentNode.className:"";let g=s.languageDetectRe.exec(u);if(g){let E=C(g[1]);return E||(ke(_.replace("{}",g[1])),ke("Falling back to no-highlight mode for this block.",i)),E?g[1]:"no-highlight"}return u.split(/\s+/).find(E=>o(E)||C(E))}function b(i,u,g){let E="",N="";typeof u=="object"?(E=i,g=u.ignoreIllegals,N=u.language):(j("10.7.0","highlight(lang, code, ...args) has been deprecated."),j("10.7.0",`Please use highlight(code, options) instead.
+https://github.com/highlightjs/highlight.js/issues/2277`),N=i,E=u),g===void 0&&(g=!0);let M={code:E,language:N};V("before:highlight",M);let P=M.result?M.result:y(M.language,M.code,g);return P.code=M.code,V("after:highlight",P),P}function y(i,u,g,E){let N=Object.create(null);function M(c,l){return c.keywords[l]}function P(){if(!f.keywords){O.addText(S);return}let c=0;f.keywordPatternRe.lastIndex=0;let l=f.keywordPatternRe.exec(S),h="";for(;l;){h+=S.substring(c,l.index);let m=F.case_insensitive?l[0].toLowerCase():l[0],x=M(f,m);if(x){let[z,fn]=x;if(O.addText(h),h="",N[m]=(N[m]||0)+1,N[m]<=gt&&(ie+=fn),z.startsWith("_"))h+=l[0];else{let pn=F.classNameAliases[z]||z;H(l[0],pn)}}else h+=l[0];c=f.keywordPatternRe.lastIndex,l=f.keywordPatternRe.exec(S)}h+=S.substring(c),O.addText(h)}function Z(){if(S==="")return;let c=null;if(typeof f.subLanguage=="string"){if(!n[f.subLanguage]){O.addText(S);return}c=y(f.subLanguage,S,!0,Me[f.subLanguage]),Me[f.subLanguage]=c._top}else c=T(S,f.subLanguage.length?f.subLanguage:null);f.relevance>0&&(ie+=c.relevance),O.__addSublanguage(c._emitter,c.language)}function k(){f.subLanguage!=null?Z():P(),S=""}function H(c,l){c!==""&&(O.startScope(l),O.addText(c),O.endScope())}function Re(c,l){let h=1,m=l.length-1;for(;h<=m;){if(!c._emit[h]){h++;continue}let x=F.classNameAliases[c[h]]||c[h],z=l[h];x?H(z,x):(S=z,P(),S=""),h++}}function Te(c,l){return c.scope&&typeof c.scope=="string"&&O.openNode(F.classNameAliases[c.scope]||c.scope),c.beginScope&&(c.beginScope._wrap?(H(S,F.classNameAliases[c.beginScope._wrap]||c.beginScope._wrap),S=""):c.beginScope._multi&&(Re(c.beginScope,l),S="")),f=Object.create(c,{parent:{value:f}}),f}function we(c,l,h){let m=Mn(c.endRe,h);if(m){if(c["on:end"]){let x=new ae(c);c["on:end"](l,x),x.isMatchIgnored&&(m=!1)}if(m){for(;c.endsParent&&c.parent;)c=c.parent;return c}}if(c.endsWithParent)return we(c.parent,l,h)}function on(c){return f.matcher.regexIndex===0?(S+=c[0],1):(he=!0,0)}function ln(c){let l=c[0],h=c.rule,m=new ae(h),x=[h.__beforeBegin,h["on:begin"]];for(let z of x)if(z&&(z(c,m),m.isMatchIgnored))return on(l);return h.skip?S+=l:(h.excludeBegin&&(S+=l),k(),!h.returnBegin&&!h.excludeBegin&&(S=l)),Te(h,c),h.returnBegin?0:l.length}function un(c){let l=c[0],h=u.substring(c.index),m=we(f,c,h);if(!m)return Be;let x=f;f.endScope&&f.endScope._wrap?(k(),H(l,f.endScope._wrap)):f.endScope&&f.endScope._multi?(k(),Re(f.endScope,c)):x.skip?S+=l:(x.returnEnd||x.excludeEnd||(S+=l),k(),x.excludeEnd&&(S=l));do f.scope&&O.closeNode(),!f.skip&&!f.subLanguage&&(ie+=f.relevance),f=f.parent;while(f!==m.parent);return m.starts&&Te(m.starts,c),x.returnEnd?0:l.length}function gn(){let c=[];for(let l=f;l!==F;l=l.parent)l.scope&&c.unshift(l.scope);c.forEach(l=>O.openNode(l))}let se={};function Oe(c,l){let h=l&&l[0];if(S+=c,h==null)return k(),0;if(se.type==="begin"&&l.type==="end"&&se.index===l.index&&h===""){if(S+=u.slice(l.index,l.index+1),!d){let m=new Error(`0 width match regex (${i})`);throw m.languageName=i,m.badRule=se.rule,m}return 1}if(se=l,l.type==="begin")return ln(l);if(l.type==="illegal"&&!g){let m=new Error('Illegal lexeme "'+h+'" for mode "'+(f.scope||"<unnamed>")+'"');throw m.mode=f,m}else if(l.type==="end"){let m=un(l);if(m!==Be)return m}if(l.type==="illegal"&&h==="")return l.index===u.length||(S+=`
+`),1;if(pe>1e5&&pe>l.index*3)throw new Error("potential infinite loop, way more iterations than matches");return S+=h,h.length}let F=C(i);if(!F)throw q(_.replace("{}",i)),new Error('Unknown language: "'+i+'"');let dn=ot(F),fe="",f=E||dn,Me={},O=new s.__emitter(s);gn();let S="",ie=0,X=0,pe=0,he=!1;try{if(F.__emitTokens)F.__emitTokens(u,O);else{for(f.matcher.considerAll();;){pe++,he?he=!1:f.matcher.considerAll(),f.matcher.lastIndex=X;let c=f.matcher.exec(u);if(!c)break;let l=u.substring(X,c.index),h=Oe(l,c);X=c.index+h}Oe(u.substring(X))}return O.finalize(),fe=O.toHTML(),{language:i,value:fe,relevance:ie,illegal:!1,_emitter:O,_top:f}}catch(c){if(c.message&&c.message.includes("Illegal"))return{language:i,value:be(u),illegal:!0,relevance:0,_illegalBy:{message:c.message,index:X,context:u.slice(X-100,X+100),mode:c.mode,resultSoFar:fe},_emitter:O};if(d)return{language:i,value:be(u),illegal:!1,relevance:0,errorRaised:c,_emitter:O,_top:f};throw c}}function A(i){let u={value:be(i),illegal:!1,relevance:0,_top:a,_emitter:new s.__emitter(s)};return u._emitter.addText(i),u}function T(i,u){u=u||s.languages||Object.keys(n);let g=A(i),E=u.filter(C).filter(J).map(k=>y(k,i,!1));E.unshift(g);let N=E.sort((k,H)=>{if(k.relevance!==H.relevance)return H.relevance-k.relevance;if(k.language&&H.language){if(C(k.language).supersetOf===H.language)return 1;if(C(H.language).supersetOf===k.language)return-1}return 0}),[M,P]=N,Z=M;return Z.secondBest=P,Z}function w(i,u,g){let E=u&&t[u]||g;i.classList.add("hljs"),i.classList.add(`language-${E}`)}function R(i){let u=null,g=p(i);if(o(g))return;if(V("before:highlightElement",{el:i,language:g}),i.dataset.highlighted){console.log("Element previously highlighted. To highlight again, first unset `dataset.highlighted`.",i);return}if(i.children.length>0&&(s.ignoreUnescapedHTML||(console.warn("One of your code blocks includes unescaped HTML. This is a potentially serious security risk."),console.warn("https://github.com/highlightjs/highlight.js/wiki/security"),console.warn("The element with unescaped HTML:"),console.warn(i)),s.throwUnescapedHTML))throw new Se("One of your code blocks includes unescaped HTML.",i.innerHTML);u=i;let E=u.textContent,N=g?b(E,{language:g,ignoreIllegals:!0}):T(E);i.innerHTML=N.value,i.dataset.highlighted="yes",w(i,g,N.language),i.result={language:N.language,re:N.relevance,relevance:N.relevance},N.secondBest&&(i.secondBest={language:N.secondBest.language,relevance:N.secondBest.relevance}),V("after:highlightElement",{el:i,result:N,text:E})}function L(i){s=Le(s,i)}let B=()=>{v(),j("10.6.0","initHighlighting() deprecated.  Use highlightAll() now.")};function U(){v(),j("10.6.0","initHighlightingOnLoad() deprecated.  Use highlightAll() now.")}let D=!1;function v(){function i(){v()}if(document.readyState==="loading"){D||window.addEventListener("DOMContentLoaded",i,!1),D=!0;return}document.querySelectorAll(s.cssSelector).forEach(R)}function $(i,u){let g=null;try{g=u(e)}catch(E){if(q("Language definition for '{}' could not be registered.".replace("{}",i)),d)q(E);else throw E;g=a}g.name||(g.name=i),n[i]=g,g.rawDefinition=u.bind(null,e),g.aliases&&K(g.aliases,{languageName:i})}function G(i){delete n[i];for(let u of Object.keys(t))t[u]===i&&delete t[u]}function I(){return Object.keys(n)}function C(i){return i=(i||"").toLowerCase(),n[i]||n[t[i]]}function K(i,{languageName:u}){typeof i=="string"&&(i=[i]),i.forEach(g=>{t[g.toLowerCase()]=u})}function J(i){let u=C(i);return u&&!u.disableAutodetect}function ee(i){i["before:highlightBlock"]&&!i["before:highlightElement"]&&(i["before:highlightElement"]=u=>{i["before:highlightBlock"](Object.assign({block:u.el},u))}),i["after:highlightBlock"]&&!i["after:highlightElement"]&&(i["after:highlightElement"]=u=>{i["after:highlightBlock"](Object.assign({block:u.el},u))})}function ue(i){ee(i),r.push(i)}function ge(i){let u=r.indexOf(i);u!==-1&&r.splice(u,1)}function V(i,u){let g=i;r.forEach(function(E){E[g]&&E[g](u)})}function de(i){return j("10.7.0","highlightBlock will be removed entirely in v12.0"),j("10.7.0","Please use highlightElement now."),R(i)}Object.assign(e,{highlight:b,highlightAuto:T,highlightAll:v,highlightElement:R,highlightBlock:de,configure:L,initHighlighting:B,initHighlightingOnLoad:U,registerLanguage:$,unregisterLanguage:G,listLanguages:I,getLanguage:C,registerAliases:K,autoDetection:J,inherit:Le,addPlugin:ue,removePlugin:ge}),e.debugMode=function(){d=!1},e.safeMode=function(){d=!0},e.versionString=ut,e.regex={concat:Y,lookahead:Ue,either:oe,optional:wn,anyNumberOfTimes:Tn};for(let i in re)typeof re[i]=="object"&&De(re[i]);return Object.assign(e,re),e},Q=Xe({});Q.newInstance=()=>Xe({});qe.exports=Q;Q.HighlightJS=Q;Q.default=Q});var Je=An(Ye(),1);var ye=Je.default;var Ve="[A-Za-z$_][0-9A-Za-z$_]*",dt=["as","in","of","if","for","while","finally","var","new","function","do","return","void","else","break","catch","instanceof","with","throw","case","default","try","switch","continue","typeof","delete","let","yield","const","class","debugger","async","await","static","import","from","export","extends","using"],ft=["true","false","null","undefined","NaN","Infinity"],je=["Object","Function","Boolean","Symbol","Math","Date","Number","BigInt","String","RegExp","Array","Float32Array","Float64Array","Int8Array","Uint8Array","Uint8ClampedArray","Int16Array","Int32Array","Uint16Array","Uint32Array","BigInt64Array","BigUint64Array","Set","Map","WeakSet","WeakMap","ArrayBuffer","SharedArrayBuffer","Atomics","DataView","JSON","Promise","Generator","GeneratorFunction","AsyncFunction","Reflect","Proxy","Intl","WebAssembly"],Qe=["Error","EvalError","InternalError","RangeError","ReferenceError","SyntaxError","TypeError","URIError"],en=["setInterval","setTimeout","clearInterval","clearTimeout","require","exports","eval","isFinite","isNaN","parseFloat","parseInt","decodeURI","decodeURIComponent","encodeURI","encodeURIComponent","escape","unescape"],pt=["arguments","this","super","console","window","document","localStorage","sessionStorage","module","self","global"],ht=[].concat(en,je,Qe);function nn(e){let n=e.regex,t=(g,{after:E})=>{let N="</"+g[0].slice(1);return g.input.indexOf(N,E)!==-1},r=Ve,d={begin:"<>",end:"</>"},_=/<[A-Za-z0-9\\._:-]+\s*\/>/,a={begin:/<[A-Za-z0-9\\._:-]+/,end:/\/[A-Za-z0-9\\._:-]+>|\/>/,isTrulyOpeningTag:(g,E)=>{let N=g[0].length+g.index,M=g.input[N];if(M==="<"||M===","){E.ignoreMatch();return}M===">"&&(t(g,{after:N})||E.ignoreMatch());let P,Z=g.input.substring(N);if(P=Z.match(/^\s*=/)){E.ignoreMatch();return}if((P=Z.match(/^\s+extends\s+/))&&P.index===0){E.ignoreMatch();return}}},s={$pattern:Ve,keyword:dt,literal:ft,built_in:ht,"variable.language":pt},o="[0-9](_?[0-9])*",p=`\\.(${o})`,b="0|[1-9](_?[0-9])*|0[0-7]*[89][0-9]*",y={className:"number",variants:[{begin:`(\\b(${b})((${p})|\\.)?|(${p}))[eE][+-]?(${o})\\b`},{begin:`\\b(${b})\\b((${p})\\b|\\.)?|(${p})\\b`},{begin:"\\b(0|[1-9](_?[0-9])*)n\\b"},{begin:"\\b0[xX][0-9a-fA-F](_?[0-9a-fA-F])*n?\\b"},{begin:"\\b0[bB][0-1](_?[0-1])*n?\\b"},{begin:"\\b0[oO][0-7](_?[0-7])*n?\\b"},{begin:"\\b0[0-7]+n?\\b"}],relevance:0},A={className:"subst",begin:"\\$\\{",end:"\\}",keywords:s,contains:[]},T={begin:".?html`",end:"",starts:{end:"`",returnEnd:!1,contains:[e.BACKSLASH_ESCAPE,A],subLanguage:"xml"}},w={begin:".?css`",end:"",starts:{end:"`",returnEnd:!1,contains:[e.BACKSLASH_ESCAPE,A],subLanguage:"css"}},R={begin:".?gql`",end:"",starts:{end:"`",returnEnd:!1,contains:[e.BACKSLASH_ESCAPE,A],subLanguage:"graphql"}},L={className:"string",begin:"`",end:"`",contains:[e.BACKSLASH_ESCAPE,A]},U={className:"comment",variants:[e.COMMENT(/\/\*\*(?!\/)/,"\\*/",{relevance:0,contains:[{begin:"(?=@[A-Za-z]+)",relevance:0,contains:[{className:"doctag",begin:"@[A-Za-z]+"},{className:"type",begin:"\\{",end:"\\}",excludeEnd:!0,excludeBegin:!0,relevance:0},{className:"variable",begin:r+"(?=\\s*(-)|$)",endsParent:!0,relevance:0},{begin:/(?=[^\n])\s/,relevance:0}]}]}),e.C_BLOCK_COMMENT_MODE,e.C_LINE_COMMENT_MODE]},D=[e.APOS_STRING_MODE,e.QUOTE_STRING_MODE,T,w,R,L,{match:/\$\d+/},y];A.contains=D.concat({begin:/\{/,end:/\}/,keywords:s,contains:["self"].concat(D)});let v=[].concat(U,A.contains),$=v.concat([{begin:/(\s*)\(/,end:/\)/,keywords:s,contains:["self"].concat(v)}]),G={className:"params",begin:/(\s*)\(/,end:/\)/,excludeBegin:!0,excludeEnd:!0,keywords:s,contains:$},I={variants:[{match:[/class/,/\s+/,r,/\s+/,/extends/,/\s+/,n.concat(r,"(",n.concat(/\./,r),")*")],scope:{1:"keyword",3:"title.class",5:"keyword",7:"title.class.inherited"}},{match:[/class/,/\s+/,r],scope:{1:"keyword",3:"title.class"}}]},C={relevance:0,match:n.either(/\bJSON/,/\b[A-Z][a-z]+([A-Z][a-z]*|\d)*/,/\b[A-Z]{2,}([A-Z][a-z]+|\d)+([A-Z][a-z]*)*/,/\b[A-Z]{2,}[a-z]+([A-Z][a-z]+|\d)*([A-Z][a-z]*)*/),className:"title.class",keywords:{_:[...je,...Qe]}},K={label:"use_strict",className:"meta",relevance:10,begin:/^\s*['"]use (strict|asm)['"]/},J={variants:[{match:[/function/,/\s+/,r,/(?=\s*\()/]},{match:[/function/,/\s*(?=\()/]}],className:{1:"keyword",3:"title.function"},label:"func.def",contains:[G],illegal:/%/},ee={relevance:0,match:/\b[A-Z][A-Z_0-9]+\b/,className:"variable.constant"};function ue(g){return n.concat("(?!",g.join("|"),")")}let ge={match:n.concat(/\b/,ue([...en,"super","import","await"].map(g=>`${g}\\s*\\(`)),r,n.lookahead(/\s*\(/)),className:"title.function",relevance:0},V={begin:n.concat(/\./,n.lookahead(n.concat(r,/(?![0-9A-Za-z$_(])/))),end:r,excludeBegin:!0,keywords:"prototype",className:"property",relevance:0},de={match:[/get|set/,/\s+/,r,/(?=\()/],className:{1:"keyword",3:"title.function"},contains:[{begin:/\(\)/},G]},i="(\\([^()]*(\\([^()]*(\\([^()]*\\)[^()]*)*\\)[^()]*)*\\)|"+e.UNDERSCORE_IDENT_RE+")\\s*=>",u={match:[/const|var|let/,/\s+/,r,/\s*/,/=\s*/,/(async\s*)?/,n.lookahead(i)],keywords:"async",className:{1:"keyword",3:"title.function"},contains:[G]};return{name:"JavaScript",aliases:["js","jsx","mjs","cjs"],keywords:s,exports:{PARAMS_CONTAINS:$,CLASS_REFERENCE:C},illegal:/#(?![$_A-Za-z])/,contains:[e.SHEBANG({label:"shebang",binary:"node",relevance:5}),K,e.APOS_STRING_MODE,e.QUOTE_STRING_MODE,T,w,R,L,U,{match:/\$\d+/},y,C,{scope:"attr",match:r+n.lookahead(":"),relevance:0},u,{begin:"("+e.RE_STARTERS_RE+"|\\b(case|return|throw)\\b)\\s*",keywords:"return throw case",relevance:0,contains:[U,e.REGEXP_MODE,{className:"function",begin:i,returnBegin:!0,end:"\\s*=>",contains:[{className:"params",variants:[{begin:e.UNDERSCORE_IDENT_RE,relevance:0},{className:null,begin:/\(\s*\)/,skip:!0},{begin:/(\s*)\(/,end:/\)/,excludeBegin:!0,excludeEnd:!0,keywords:s,contains:$}]}]},{begin:/,/,relevance:0},{match:/\s+/,relevance:0},{variants:[{begin:d.begin,end:d.end},{match:_},{begin:a.begin,"on:begin":a.isTrulyOpeningTag,end:a.end}],subLanguage:"xml",contains:[{begin:a.begin,end:a.end,skip:!0,contains:["self"]}]}]},J,{beginKeywords:"while if switch catch for"},{begin:"\\b(?!function)"+e.UNDERSCORE_IDENT_RE+"\\([^()]*(\\([^()]*(\\([^()]*\\)[^()]*)*\\)[^()]*)*\\)\\s*\\{",returnBegin:!0,label:"func.def",contains:[G,e.inherit(e.TITLE_MODE,{begin:r,className:"title.function"})]},{match:/\.\.\./,relevance:0},V,{match:"\\$"+r,relevance:0},{match:[/\bconstructor(?=\s*\()/],className:{1:"title.function"},contains:[G]},ge,ee,I,de,{match:/\$[(.]/}]}}var bt="([-+]?)(\\b0[xX][a-fA-F0-9]+|(\\b\\d+(\\.\\d*)?|\\.\\d+)([eE][-+]?\\d+)?)|NaN|[-+]?Infinity",Et={scope:"number",match:bt,relevance:0};function tn(e){let n={className:"attr",begin:/(("(\\.|[^\\"\r\n])*")|('(\\.|[^\\'\r\n])*'))(?=\s*:)/,relevance:1.01},t={match:/[{}[\],:]/,className:"punctuation",relevance:0},r=["true","false","null"],d={scope:"literal",beginKeywords:r.join(" ")};return{name:"JSON",aliases:["jsonc","json5"],keywords:{literal:r},contains:[n,t,e.APOS_STRING_MODE,e.QUOTE_STRING_MODE,d,Et,e.C_LINE_COMMENT_MODE,e.C_BLOCK_COMMENT_MODE],illegal:"\\S"}}function sn(e){let n=["string","char","byte","int","long","bool","decimal","single","double","DateTime","xml","array","hashtable","void"],t="Add|Clear|Close|Copy|Enter|Exit|Find|Format|Get|Hide|Join|Lock|Move|New|Open|Optimize|Pop|Push|Redo|Remove|Rename|Reset|Resize|Search|Select|Set|Show|Skip|Split|Step|Switch|Undo|Unlock|Watch|Backup|Checkpoint|Compare|Compress|Convert|ConvertFrom|ConvertTo|Dismount|Edit|Expand|Export|Group|Import|Initialize|Limit|Merge|Mount|Out|Publish|Restore|Save|Sync|Unpublish|Update|Approve|Assert|Build|Complete|Confirm|Deny|Deploy|Disable|Enable|Install|Invoke|Register|Request|Restart|Resume|Start|Stop|Submit|Suspend|Uninstall|Unregister|Wait|Debug|Measure|Ping|Repair|Resolve|Test|Trace|Connect|Disconnect|Read|Receive|Send|Write|Block|Grant|Protect|Revoke|Unblock|Unprotect|Use|ForEach|Sort|Tee|Where",r="-and|-as|-band|-bnot|-bor|-bxor|-casesensitive|-ccontains|-ceq|-cge|-cgt|-cle|-clike|-clt|-cmatch|-cne|-cnotcontains|-cnotlike|-cnotmatch|-contains|-creplace|-csplit|-eq|-exact|-f|-file|-ge|-gt|-icontains|-ieq|-ige|-igt|-ile|-ilike|-ilt|-imatch|-in|-ine|-inotcontains|-inotlike|-inotmatch|-ireplace|-is|-isnot|-isplit|-join|-le|-like|-lt|-match|-ne|-not|-notcontains|-notin|-notlike|-notmatch|-or|-regex|-replace|-shl|-shr|-split|-wildcard|-xor",d={$pattern:/-?[A-z\.\-]+\b/,keyword:"if else foreach return do while until elseif begin for trap data dynamicparam end break throw param continue finally in switch exit filter try process catch hidden static parameter",built_in:"ac asnp cat cd CFS chdir clc clear clhy cli clp cls clv cnsn compare copy cp cpi cpp curl cvpa dbp del diff dir dnsn ebp echo|0 epal epcsv epsn erase etsn exsn fc fhx fl ft fw gal gbp gc gcb gci gcm gcs gdr gerr ghy gi gin gjb gl gm gmo gp gps gpv group gsn gsnp gsv gtz gu gv gwmi h history icm iex ihy ii ipal ipcsv ipmo ipsn irm ise iwmi iwr kill lp ls man md measure mi mount move mp mv nal ndr ni nmo npssc nsn nv ogv oh popd ps pushd pwd r rbp rcjb rcsn rd rdr ren ri rjb rm rmdir rmo rni rnp rp rsn rsnp rujb rv rvpa rwmi sajb sal saps sasv sbp sc scb select set shcm si sl sleep sls sort sp spjb spps spsv start stz sujb sv swmi tee trcm type wget where wjb write"},_=/\w[\w\d]*((-)[\w\d]+)*/,a={begin:"`[\\s\\S]",relevance:0},s={className:"variable",variants:[{begin:/\$\B/},{className:"keyword",begin:/\$this/},{begin:/\$[\w\d][\w\d_:]*/}]},o={className:"literal",begin:/\$(null|true|false)\b/},p={className:"string",variants:[{begin:/"/,end:/"/},{begin:/@"/,end:/^"@/}],contains:[a,s,{className:"variable",begin:/\$[A-z]/,end:/[^A-z]/}]},b={className:"string",variants:[{begin:/'/,end:/'/},{begin:/@'/,end:/^'@/}]},y={className:"doctag",variants:[{begin:/\.(synopsis|description|example|inputs|outputs|notes|link|component|role|functionality)/},{begin:/\.(parameter|forwardhelptargetname|forwardhelpcategory|remotehelprunspace|externalhelp)\s+\S+/}]},A=e.inherit(e.COMMENT(null,null),{variants:[{begin:/#/,end:/$/},{begin:/<#/,end:/#>/}],contains:[y]}),T={className:"built_in",variants:[{begin:"(".concat(t,")+(-)[\\w\\d]+")}]},w={className:"class",beginKeywords:"class enum",end:/\s*[{]/,excludeEnd:!0,relevance:0,contains:[e.TITLE_MODE]},R={className:"function",begin:/function\s+/,end:/\s*\{|$/,excludeEnd:!0,returnBegin:!0,relevance:0,contains:[{begin:"function",relevance:0,className:"keyword"},{className:"title",begin:_,relevance:0},{begin:/\(/,end:/\)/,className:"params",relevance:0,contains:[s]}]},L={begin:/using\s/,end:/$/,returnBegin:!0,contains:[p,b,{className:"keyword",begin:/(using|assembly|command|module|namespace|type)/}]},B={variants:[{className:"operator",begin:"(".concat(r,")\\b")},{className:"literal",begin:/(-){1,2}[\w\d-]+/,relevance:0}]},U={className:"selector-tag",begin:/@\B/,relevance:0},D={className:"function",begin:/\[.*\]\s*[\w]+[ ]??\(/,end:/$/,returnBegin:!0,relevance:0,contains:[{className:"keyword",begin:"(".concat(d.keyword.toString().replace(/\s/g,"|"),")\\b"),endsParent:!0,relevance:0},e.inherit(e.TITLE_MODE,{endsParent:!0})]},v=[D,A,a,e.NUMBER_MODE,p,b,T,s,o,U],$={begin:/\[/,end:/\]/,excludeBegin:!0,excludeEnd:!0,relevance:0,contains:[].concat("self",v,{begin:"("+n.join("|")+")",className:"built_in",relevance:0},{className:"type",begin:/[\.\w\d]+/,relevance:0})};return D.contains.unshift($),{name:"PowerShell",aliases:["pwsh","ps","ps1"],case_insensitive:!0,keywords:d,contains:v.concat(w,R,L,B,$)}}function rn(e){let n=e.regex,t=new RegExp("[\\p{XID_Start}_]\\p{XID_Continue}*","u"),r=["and","as","assert","async","await","break","case","class","continue","def","del","elif","else","except","finally","for","from","global","if","import","in","is","lambda","lazy","match","nonlocal|10","not","or","pass","raise","return","try","while","with","yield"],s={$pattern:/[A-Za-z]\w+|__\w+__/,keyword:r,built_in:["__import__","abs","aiter","all","anext","any","ascii","bin","bool","breakpoint","bytearray","bytes","callable","chr","classmethod","compile","complex","delattr","dict","dir","divmod","enumerate","eval","exec","filter","float","format","frozendict","frozenset","getattr","globals","hasattr","hash","help","hex","id","input","int","isinstance","issubclass","iter","len","list","locals","map","max","memoryview","min","next","object","oct","open","ord","pow","print","property","range","repr","reversed","round","sentinel","set","setattr","slice","sorted","staticmethod","str","sum","super","tuple","type","vars","zip"],literal:["__debug__","Ellipsis","False","None","NotImplemented","True"],type:["Any","Callable","Coroutine","Dict","List","Literal","Generic","Optional","Sequence","Set","Tuple","Type","Union"]},o={className:"meta",begin:/^(>>>|\.\.\.) /},p={className:"subst",begin:/\{/,end:/\}/,keywords:s,illegal:/#/},b={begin:/\{\{/,relevance:0},y={className:"string",contains:[e.BACKSLASH_ESCAPE],variants:[{begin:/([uU]|[bB]|[rR]|[bB][rR]|[rR][bB])?'''/,end:/'''/,contains:[e.BACKSLASH_ESCAPE,o],relevance:10},{begin:/([uU]|[bB]|[rR]|[bB][rR]|[rR][bB])?"""/,end:/"""/,contains:[e.BACKSLASH_ESCAPE,o],relevance:10},{begin:/([fFtT][rR]|[rR][fFtT]|[fFtT])'''/,end:/'''/,contains:[e.BACKSLASH_ESCAPE,o,b,p]},{begin:/([fFtT][rR]|[rR][fFtT]|[fFtT])"""/,end:/"""/,contains:[e.BACKSLASH_ESCAPE,o,b,p]},{begin:/([uU]|[rR])'/,end:/'/,relevance:10},{begin:/([uU]|[rR])"/,end:/"/,relevance:10},{begin:/([bB]|[bB][rR]|[rR][bB])'/,end:/'/},{begin:/([bB]|[bB][rR]|[rR][bB])"/,end:/"/},{begin:/([fFtT][rR]|[rR][fFtT]|[fFtT])'/,end:/'/,contains:[e.BACKSLASH_ESCAPE,b,p]},{begin:/([fFtT][rR]|[rR][fFtT]|[fFtT])"/,end:/"/,contains:[e.BACKSLASH_ESCAPE,b,p]},e.APOS_STRING_MODE,e.QUOTE_STRING_MODE]},A="[0-9](_?[0-9])*",T=`(\\b(${A}))?\\.(${A})|\\b(${A})\\.`,w=`\\b|${r.join("|")}`,R={className:"number",relevance:0,variants:[{begin:`(\\b(${A})|(${T}))[eE][+-]?(${A})[jJ]?(?=${w})`},{begin:`(${T})[jJ]?`},{begin:`\\b([1-9](_?[0-9])*|0+(_?0)*)[lLjJ]?(?=${w})`},{begin:`\\b0[bB](_?[01])+[lL]?(?=${w})`},{begin:`\\b0[oO](_?[0-7])+[lL]?(?=${w})`},{begin:`\\b0[xX](_?[0-9a-fA-F])+[lL]?(?=${w})`},{begin:`\\b(${A})[jJ](?=${w})`}]},L={className:"comment",begin:n.lookahead(/# type:/),end:/$/,keywords:s,contains:[{begin:/# type:/},{begin:/#/,end:/\b\B/,endsWithParent:!0}]},B={className:"params",variants:[{className:"",begin:/\(\s*\)/,skip:!0},{begin:/\(/,end:/\)/,excludeBegin:!0,excludeEnd:!0,keywords:s,contains:["self",o,R,y,e.HASH_COMMENT_MODE]}]};return p.contains=[y,R,o],{name:"Python",aliases:["py","gyp","ipython"],unicodeRegex:!0,keywords:s,illegal:/(<\/|\?)|=>/,contains:[o,R,{scope:"variable.language",match:/\bself\b/},{beginKeywords:"if",relevance:0},{match:/\bor\b/,scope:"keyword"},y,L,e.HASH_COMMENT_MODE,{match:[/\bdef/,/\s+/,t],scope:{1:"keyword",3:"title.function"},contains:[B]},{variants:[{match:[/\bclass/,/\s+/,t,/\s*/,/\(\s*/,t,/\s*\)/]},{match:[/\bclass/,/\s+/,t]}],scope:{1:"keyword",3:"title.class",6:"title.class.inherited"}},{className:"meta",begin:/^[\t ]*@/,end:/(?=#)|$/,contains:[R,B,y]}]}}function an(e){let n=e.regex,t=e.COMMENT("//","$",{contains:[{begin:/\\\n/}]}),r="decltype\\(auto\\)",d="[a-zA-Z_]\\w*::",a="(?!struct)("+r+"|"+n.optional(d)+"[a-zA-Z_]\\w*"+n.optional("<[^<>]+>")+")",s={className:"type",begin:"\\b[a-z\\d_]*_t\\b"},p={className:"string",variants:[{begin:'(u8?|U|L)?"',end:'"',illegal:"\\n",contains:[e.BACKSLASH_ESCAPE]},{begin:"(u8?|U|L)?'("+"\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4,8}|[0-7]{3}|\\S)"+"|.)",end:"'",illegal:"."},e.END_SAME_AS_BEGIN({begin:/(?:u8?|U|L)?R"([^()\\\s"]{0,16})\(/,end:/\)([^()\\\s"]{0,16})"/})]},b={className:"number",variants:[{begin:"[+-]?(?:(?:\\b[0-9](?:'?[0-9])*\\.(?:[0-9](?:'?[0-9])*)?|\\.[0-9](?:'?[0-9])*)(?:[Ee][+-]?[0-9](?:'?[0-9])*)?|\\b[0-9](?:'?[0-9])*[Ee][+-]?[0-9](?:'?[0-9])*|\\b0[Xx](?:[0-9A-Fa-f](?:'?[0-9A-Fa-f])*(?:\\.(?:[0-9A-Fa-f](?:'?[0-9A-Fa-f])*)?)?|\\.[0-9A-Fa-f](?:'?[0-9A-Fa-f])*)[Pp][+-]?[0-9](?:'?[0-9])*)(?:[Ff](?:16|32|64|128)?|(BF|bf)16|[Ll]|)"},{begin:"[+-]?\\b(?:0[Bb][01](?:'?[01])*|0[Xx][0-9A-Fa-f](?:'?[0-9A-Fa-f])*|0(?:'?[0-7])*|[1-9](?:'?[0-9])*)(?:[Uu](?:LL?|ll?)|[Uu][Zz]?|(?:LL?|ll?)[Uu]?|[Zz][Uu]|)"}],relevance:0},y={scope:"meta",begin:/#\s*include\b/,end:/$/,keywords:{keyword:"include"},contains:[{begin:/\\\n/},p,{scope:"string",begin:/<.*?>/},t,e.C_BLOCK_COMMENT_MODE]},A={className:"meta",begin:/#\s*[a-z]+\b/,end:/$/,keywords:{keyword:"if else elif endif define undef warning error line pragma _Pragma ifdef ifndef include"},contains:[{begin:/\\\n/,relevance:0},e.inherit(p,{className:"string"}),t,e.C_BLOCK_COMMENT_MODE]},T=[y,A],w={className:"title",begin:n.optional(d)+e.IDENT_RE,relevance:0},R=n.optional(d)+e.IDENT_RE+"\\s*\\(",L=12,B=["alignas","alignof","and","and_eq","asm","atomic_cancel","atomic_commit","atomic_noexcept","auto","bitand","bitor","break","case","catch","class","co_await","co_return","co_yield","compl","concept","const_cast|10","consteval","constexpr","constinit","continue","decltype","default","delete","do","dynamic_cast|10","else","enum","explicit","export","extern","false","final","for","friend","goto","if","import","inline","module","mutable","namespace","new","noexcept","not","not_eq","nullptr","operator","or","or_eq","override","private","protected","public","reflexpr","register","reinterpret_cast|10","requires","return","sizeof","static_assert","static_cast|10","struct","switch","synchronized","template","this","thread_local","throw","transaction_safe","transaction_safe_dynamic","true","try","typedef","typeid","typename","union","using","virtual","volatile","while","xor","xor_eq"],U=["bool","char","char16_t","char32_t","char8_t","double","float","int","long","short","void","wchar_t","unsigned","signed","const","static"],D=["any","auto_ptr","barrier","binary_semaphore","bitset","complex","condition_variable","condition_variable_any","counting_semaphore","deque","false_type","flat_map","flat_set","future","imaginary","initializer_list","istringstream","jthread","latch","lock_guard","multimap","multiset","mutex","optional","ostringstream","packaged_task","pair","promise","priority_queue","queue","recursive_mutex","recursive_timed_mutex","scoped_lock","set","shared_future","shared_lock","shared_mutex","shared_timed_mutex","shared_ptr","stack","string_view","stringstream","timed_mutex","thread","true_type","tuple","unique_lock","unique_ptr","unordered_map","unordered_multimap","unordered_multiset","unordered_set","variant","vector","weak_ptr","wstring","wstring_view"],v=["abort","abs","acos","apply","as_const","asin","atan","atan2","calloc","ceil","cerr","cin","clog","cos","cosh","cout","declval","endl","exchange","exit","exp","fabs","floor","fmod","forward","fprintf","fputs","free","frexp","fscanf","future","invoke","isalnum","isalpha","iscntrl","isdigit","isgraph","islower","isprint","ispunct","isspace","isupper","isxdigit","labs","launder","ldexp","log","log10","make_pair","make_shared","make_shared_for_overwrite","make_tuple","make_unique","malloc","memchr","memcmp","memcpy","memset","modf","move","pow","printf","putchar","puts","realloc","scanf","sin","sinh","snprintf","sprintf","sqrt","sscanf","std","stderr","stdin","stdout","strcat","strchr","strcmp","strcpy","strcspn","strlen","strncat","strncmp","strncpy","strpbrk","strrchr","strspn","strstr","swap","tan","tanh","terminate","to_underlying","tolower","toupper","vfprintf","visit","vprintf","vsprintf"],I={type:U,keyword:B,literal:["NULL","false","nullopt","nullptr","true"],built_in:["_Pragma"],_type_hints:D},C={className:"function.dispatch",relevance:0,keywords:{_hint:v},begin:n.concat(/\b/,`(?!${B.join("|")})`,e.IDENT_RE,n.lookahead(/(<[^<>]+>|)\s*\(/))},K=[C,...T,s,t,e.C_BLOCK_COMMENT_MODE,b,p],J={variants:[{begin:/=/,end:/;/},{begin:/\(/,end:/\)/},{beginKeywords:"new throw return else",end:/;/}],keywords:I,contains:K.concat([{begin:/\(/,end:/\)/,keywords:I,contains:K.concat(["self"]),relevance:0}]),relevance:0},ee={className:"function",begin:"("+a+"[\\*&\\s]+){1,"+L+"}"+R,returnBegin:!0,end:/[{;=]/,excludeEnd:!0,keywords:I,illegal:/[^\w\s\*&:<>.]/,contains:[{begin:r,keywords:I,relevance:0},{begin:R,returnBegin:!0,contains:[w],relevance:0},{begin:/::/,relevance:0},{begin:/:/,endsWithParent:!0,contains:[p,b]},{relevance:0,match:/,/},{className:"params",begin:/\(/,end:/\)/,keywords:I,relevance:0,contains:[t,e.C_BLOCK_COMMENT_MODE,p,b,s,{begin:/\(/,end:/\)/,keywords:I,relevance:0,contains:["self",t,e.C_BLOCK_COMMENT_MODE,p,b,s]}]},s,t,e.C_BLOCK_COMMENT_MODE,...T]};return{name:"C++",aliases:["cc","c++","h++","hpp","hh","hxx","cxx"],keywords:I,illegal:"</",classNameAliases:{"function.dispatch":"built_in"},contains:[].concat(J,ee,C,K,[...T,{begin:"\\b(deque|list|queue|priority_queue|pair|stack|vector|map|set|bitset|multiset|multimap|unordered_map|unordered_set|unordered_multiset|unordered_multimap|array|tuple|optional|variant|function|flat_map|flat_set)\\s*<(?!<)",end:">",keywords:I,contains:["self",s]},{begin:e.IDENT_RE+"::",keywords:I},{match:[/\b(?:enum(?:\s+(?:class|struct))?|class|struct|union)/,/\s+/,/\w+/],className:{1:"keyword",3:"title.class"}}])}}function cn(e){let n=e.regex,t={},r={begin:/\$\{/,end:/\}/,contains:["self",{begin:/:-/,contains:[t]}]};Object.assign(t,{className:"variable",variants:[{begin:n.concat(/\$[\w\d#@][\w\d_]*/,"(?![\\w\\d])(?![$])")},r]});let d={className:"subst",begin:/\$\(/,end:/\)/,contains:[e.BACKSLASH_ESCAPE]},_=e.inherit(e.COMMENT(),{match:[/(^|\s)/,/#.*$/],scope:{2:"comment"}}),a={begin:/<<-?\s*(?=\w+)/,starts:{contains:[e.END_SAME_AS_BEGIN({begin:/(\w+)/,end:/(\w+)/,className:"string"})]}},s={className:"string",begin:/"/,end:/"/,contains:[e.BACKSLASH_ESCAPE,t,d]};d.contains.push(s);let o={match:/\\"/},p={className:"string",begin:/'/,end:/'/},b={match:/\\'/},y={begin:/\$?\(\(/,end:/\)\)/,contains:[{begin:/\d+#[0-9a-f]+/,className:"number"},e.NUMBER_MODE,t]},A=["fish","bash","zsh","sh","csh","ksh","tcsh","dash","scsh"],T=e.SHEBANG({binary:`(${A.join("|")})`,relevance:10}),w={className:"function",begin:/\w[\w\d_]*\s*\(\s*\)\s*\{/,returnBegin:!0,contains:[e.inherit(e.TITLE_MODE,{begin:/\w[\w\d_]*/})],relevance:0},R=["if","then","else","elif","fi","time","for","while","until","in","do","done","case","esac","coproc","function","select"],L=["true","false"],B={match:/(\/[a-z._-]+)+/},U=["break","cd","continue","eval","exec","exit","export","getopts","hash","pwd","readonly","return","shift","test","times","trap","umask","unset"],D=["alias","bind","builtin","caller","command","declare","echo","enable","help","let","local","logout","mapfile","printf","read","readarray","source","sudo","type","typeset","ulimit","unalias"],v=["autoload","bg","bindkey","bye","cap","chdir","clone","comparguments","compcall","compctl","compdescribe","compfiles","compgroups","compquote","comptags","comptry","compvalues","dirs","disable","disown","echotc","echoti","emulate","fc","fg","float","functions","getcap","getln","history","integer","jobs","kill","limit","log","noglob","popd","print","pushd","pushln","rehash","sched","setcap","setopt","stat","suspend","ttyctl","unfunction","unhash","unlimit","unsetopt","vared","wait","whence","where","which","zcompile","zformat","zftp","zle","zmodload","zparseopts","zprof","zpty","zregexparse","zsocket","zstyle","ztcp"],$=["chcon","chgrp","chown","chmod","cp","dd","df","dir","dircolors","ln","ls","mkdir","mkfifo","mknod","mktemp","mv","realpath","rm","rmdir","shred","sync","touch","truncate","vdir","b2sum","base32","base64","cat","cksum","comm","csplit","cut","expand","fmt","fold","head","join","md5sum","nl","numfmt","od","paste","ptx","pr","sha1sum","sha224sum","sha256sum","sha384sum","sha512sum","shuf","sort","split","sum","tac","tail","tr","tsort","unexpand","uniq","wc","arch","basename","chroot","date","dirname","du","echo","env","expr","factor","groups","hostid","id","link","logname","nice","nohup","nproc","pathchk","pinky","printenv","printf","pwd","readlink","runcon","seq","sleep","stat","stdbuf","stty","tee","test","timeout","tty","uname","unlink","uptime","users","who","whoami","yes"];return{name:"Bash",aliases:["sh","zsh"],keywords:{$pattern:/\b[a-z][a-z0-9._-]+\b/,keyword:R,literal:L,built_in:[...U,...D,"set","shopt",...v,...$]},contains:[T,e.SHEBANG(),w,y,_,a,B,s,o,p,b,t]}}for(let[e,n]of Object.entries({javascript:nn,json:tn,powershell:sn,python:rn,cpp:an,bash:cn}))ye.registerLanguage(e,n);globalThis.ReportHighlight=ye;})();
+</script><script>(()=>{
+ 'use strict';
+ const page=document.getElementById('page'),header=document.querySelector('.topbar'),main=document.querySelector('main');
+ const menu=document.getElementById('menu-toggle'),dialog=document.getElementById('mobile-toc'),close=document.getElementById('close-menu');
+ const headings=[...main.querySelectorAll('h2,h3')],used=new Set([...document.querySelectorAll('[id]')].map(e=>e.id));
+ const entries=headings.map((heading,i)=>{
+  const section=heading.closest('section');let target;
+  if(heading.tagName==='H2'&&section?.id&&!headings.slice(0,i).some(h=>h.closest('section')===section))target=section;
+  else{target=heading;if(!target.id){let candidate='chapter-'+(i+1);while(used.has(candidate))candidate+='-x';target.id=candidate;used.add(candidate);}}
+  heading.tabIndex=-1;return {target,heading,id:target.id,label:heading.textContent.trim(),sub:heading.tagName==='H3'};
+ });
+ const entryMap=new Map(entries.map(e=>[e.id,e]));
+ document.querySelectorAll('.toc').forEach(nav=>{
+  nav.replaceChildren(...entries.map((entry,i)=>{
+   const a=document.createElement('a');a.className='toc-link'+(entry.sub?' toc-sub':'');a.href='#'+entry.id;
+   const num=document.createElement('span');num.className='num';num.setAttribute('aria-hidden','true');num.textContent=String(i+1).padStart(2,'0');
+   const label=document.createElement('span');label.textContent=entry.label;a.append(num,label);return a;
+  }));
+ });
+ const links=[...document.querySelectorAll('.toc-link')];let scheduled=false,toastTimer;
+ function headerOffset(){return Math.max(0,header.getBoundingClientRect().bottom)+24;}
+ function sizeHeader(){document.documentElement.style.setProperty('--header-height',header.getBoundingClientRect().height+'px');}
+ function decodedHash(){try{return decodeURIComponent(location.hash.slice(1));}catch{return '';}}
+ function setHash(id,push=false){try{history[push?'pushState':'replaceState'](null,'','#'+encodeURIComponent(id));}catch{if(push)location.hash=id;}}
+ function select(id){
+  links.forEach(link=>{if(link.hash==='#'+id)link.setAttribute('aria-current','location');else link.removeAttribute('aria-current');});
+  const entry=entryMap.get(id);if(entry)document.getElementById('reading-now').textContent='正在阅读 · '+entry.label;
+  const active=document.querySelector('.sidebar .toc-link[aria-current]'),nav=active?.closest('nav');
+  if(active&&nav){const r=active.getBoundingClientRect(),n=nav.getBoundingClientRect();if(r.top<n.top)nav.scrollTop-=n.top-r.top;else if(r.bottom>n.bottom)nav.scrollTop+=r.bottom-n.bottom;}
+ }
+ function sync(){
+  scheduled=false;if(!entries.length)return;const threshold=headerOffset()+14;
+  let entry=entries[0];for(const item of entries){if(item.target.getBoundingClientRect().top<=threshold)entry=item;else break;}
+  if(window.scrollY>0&&window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-3)entry=entries.at(-1);
+  select(entry.id);const hash=decodedHash();
+  if(hash&&!entryMap.has(hash)&&document.getElementById(hash))return;
+  // 页面加载完成前改写 hash，浏览器会在 load 时滚到这个新锚点，打开报告就跳过标题区
+  if(document.readyState==='complete')setHash(entry.id);
+ }
+ function schedule(){if(!scheduled){scheduled=true;requestAnimationFrame(sync);}}
+ function closeMenu(restoreFocus=true){
+  if(typeof dialog.close==='function'&&dialog.open)dialog.close();else dialog.removeAttribute('open');
+  delete dialog.dataset.fallback;page.inert=false;menu.setAttribute('aria-expanded','false');document.body.style.overflow='';if(restoreFocus)menu.focus();
+ }
+ function navigate(entry,{focus=true,push=true}={}){
+  const wasOpen=dialog.hasAttribute('open');if(wasOpen)closeMenu(false);
+  const top=Math.max(0,entry.target.getBoundingClientRect().top+window.scrollY-headerOffset());
+  if(push)setHash(entry.id,true);select(entry.id);
+  window.scrollTo({top,behavior:'smooth'});
+  if(focus)entry.heading.focus({preventScroll:true});
+ }
+ document.querySelectorAll('.toc').forEach(nav=>{
+  nav.addEventListener('click',event=>{const link=event.target.closest('.toc-link');if(!link||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;const entry=entryMap.get(link.hash.slice(1));if(entry){event.preventDefault();navigate(entry);}});
+  nav.addEventListener('keydown',event=>{
+   const visible=[...nav.querySelectorAll('.toc-link')].filter(a=>!a.hidden&&!a.closest('[hidden]'));
+   const current=event.target.closest('.toc-link'),index=visible.indexOf(current);if(index<0)return;
+   let next;if(event.key==='ArrowDown')next=Math.min(index+1,visible.length-1);else if(event.key==='ArrowUp')next=Math.max(index-1,0);else if(event.key==='Home')next=0;else if(event.key==='End')next=visible.length-1;else return;
+   event.preventDefault();visible[next].focus();
+  });
+ });
+ menu.addEventListener('click',()=>{
+  if(dialog.hasAttribute('open')){closeMenu();return;}
+  if(typeof dialog.showModal==='function')dialog.showModal();else{dialog.dataset.fallback='true';dialog.setAttribute('open','');page.inert=true;}
+  document.body.style.overflow='hidden';menu.setAttribute('aria-expanded','true');
+  (dialog.querySelector('[aria-current]')||dialog.querySelector('.toc-link')||close).focus();
+ });
+ close.addEventListener('click',()=>closeMenu());dialog.addEventListener('cancel',event=>{event.preventDefault();closeMenu();});
+ dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeMenu();}});
+ dialog.addEventListener('keydown',event=>{
+  if(event.key==='Escape'){event.preventDefault();closeMenu();return;}
+  if(event.key!=='Tab')return;const focusables=[close,...dialog.querySelectorAll('.toc-link:not([hidden]),.mobile-reader')];
+  if(event.shiftKey&&document.activeElement===focusables[0]){event.preventDefault();focusables.at(-1).focus();}
+  else if(!event.shiftKey&&document.activeElement===focusables.at(-1)){event.preventDefault();focusables[0].focus();}
+ });
+ const mobile=matchMedia('(max-width: 760px)');mobile.addEventListener?.('change',event=>{
+  if(!event.matches&&dialog.hasAttribute('open')){
+   closeMenu(false);
+   const current=document.querySelector('.sidebar .toc-link[aria-current="location"]');
+   (current||entries.find(entry=>entry.id===decodedHash())?.heading||main).focus({preventScroll:true});
+   sizeHeader();schedule();
+  }
+ });
+ function goHash(){const entry=entryMap.get(decodedHash());if(entry)navigate(entry,{focus:false,push:false});else schedule();}
+ window.addEventListener('hashchange',goHash);window.addEventListener('popstate',goHash);
+ window.addEventListener('scroll',schedule,{passive:true});window.addEventListener('resize',()=>{sizeHeader();schedule();});
+ if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>{sizeHeader();schedule();}).observe(header);
+ document.querySelectorAll('pre code').forEach(code=>{code.dataset.original=code.textContent;window.ReportHighlight?.highlightElement(code);});
+ const toast=document.getElementById('toast');
+ function tell(message){clearTimeout(toastTimer);toast.textContent=message;toast.hidden=false;toastTimer=setTimeout(()=>{toast.hidden=true;},2400);}
+ window.reportToast=tell;
+ document.querySelectorAll('.copy-code').forEach(button=>button.addEventListener('click',async()=>{
+  const code=button.closest('.code-note').querySelector('code'),text=code.dataset.original;
+  try{if(!navigator.clipboard?.writeText)throw Error('unavailable');await navigator.clipboard.writeText(text);tell('代码已复制，保留原始格式。');}
+  catch{const range=document.createRange();range.selectNodeContents(code);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);tell('已选中代码，按 Ctrl+C 复制。');}
+ }));
+ sizeHeader();const initialHash=decodedHash();requestAnimationFrame(()=>{const entry=entryMap.get(initialHash);if(entry)navigate(entry,{focus:false,push:false});else sync();});
+})();
+</script><script>(()=>{
+ 'use strict';
+ const dialog=document.getElementById('report-search'),input=document.getElementById('report-search-input'),list=document.getElementById('search-results'),status=document.getElementById('search-status'),launch=document.getElementById('search-launch'),close=document.getElementById('search-close');
+ const sections=[...document.querySelectorAll('main section.section')];
+ const records=[];let selected=0,matches=[],returnFocus=null,highlightTimer,highlighted=null;
+ const normalize=s=>s.normalize('NFKC').toLocaleLowerCase();
+ function rebuildIndex(){records.length=0;const seen=new Set();for(const section of sections){
+  const heading=section.querySelector('h2'),title=heading.textContent.trim();
+  records.push({title,text:title,normalized:normalize(title),section,node:heading,isTitle:true});
+  for(const node of section.querySelectorAll('p,li,tr,pre,summary,h3,h4,b,strong,dt,dd,cite,caption,a,svg text')){
+   if(node.parentElement?.closest('p,li,tr,pre,summary,h3,h4,b,strong'))continue;
+   const text=node.textContent.trim().replace(/\s+/g,' '),key=section.id+'\n'+normalize(text);if(!text||seen.has(key))continue;seen.add(key);
+   records.push({title,text,normalized:normalize(title+' '+text),section,node,isTitle:false});
+  }
+ }}
+ function excerpt(text,q){const n=normalize(text),at=n.indexOf(normalize(q)),start=Math.max(0,at<0?0:at-40);return(start?'…':'')+text.slice(start,start+155)+(start+155<text.length?'…':'');}
+ function writeMatch(parent,text,query){const at=text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());if(at<0||!query){parent.textContent=text;return;}parent.append(document.createTextNode(text.slice(0,at)));const mark=document.createElement('mark');mark.textContent=text.slice(at,at+query.length);parent.append(mark,document.createTextNode(text.slice(at+query.length)));}
+ function pick(n){selected=Math.max(0,Math.min(n,matches.length-1));[...list.children].forEach((row,i)=>row.setAttribute('aria-selected',String(i===selected)));if(matches.length){input.setAttribute('aria-activedescendant','search-result-'+selected);list.children[selected]?.scrollIntoView({block:'nearest'});}else input.removeAttribute('aria-activedescendant');}
+ function render(){const raw=input.value.trim(),words=normalize(raw).split(/\s+/).filter(Boolean);selected=0;list.replaceChildren();
+  let candidates=words.length?records.filter(r=>words.every(w=>r.normalized.includes(w))):records.filter(r=>r.isTitle);
+  if(words.length)candidates=candidates.map(r=>({r,rank:(r.isTitle?100:0)+(normalize(r.title).includes(normalize(raw))?40:0)+(normalize(r.text).startsWith(normalize(raw))?20:0)})).sort((a,b)=>b.rank-a.rank).map(x=>x.r);
+  matches=candidates.slice(0,40);status.textContent=words.length?`找到 ${candidates.length} 项${candidates.length>40?'，显示前40项':''}`:'选择章节，或输入参数、公式、模式名称';
+  for(const [i,r]of matches.entries()){const row=document.createElement('div');row.id='search-result-'+i;row.className='search-result';row.setAttribute('role','option');row.setAttribute('aria-selected',String(i===0));const title=document.createElement('strong');writeMatch(title,r.title,raw);const snippet=document.createElement('span');writeMatch(snippet,r.isTitle?'章节 · '+r.title:excerpt(r.text,raw),raw);row.append(title,snippet);row.addEventListener('pointerdown',e=>e.preventDefault());row.addEventListener('click',()=>activate(i));list.append(row);}
+  if(!matches.length){const empty=document.createElement('p');empty.className='search-empty';empty.textContent='没有找到。试试章节名、代码中的变量，或更短的关键词。';list.append(empty);input.removeAttribute('aria-activedescendant');}else input.setAttribute('aria-activedescendant','search-result-0');
+ }
+ function dismiss(restore=true){if(dialog.open)dialog.close();launch.setAttribute('aria-expanded','false');if(restore&&returnFocus?.isConnected)returnFocus.focus({preventScroll:true});}
+ function activate(n){const r=matches[n];if(!r)return;dismiss(false);let ancestor=r.node.parentElement;while(ancestor){if(ancestor.tagName==='DETAILS')ancestor.open=true;ancestor=ancestor.parentElement;}
+  try{history.pushState(null,'','#'+encodeURIComponent(r.section.id));}catch{}
+  r.node.tabIndex=-1;r.node.focus({preventScroll:true});r.node.scrollIntoView({block:'center',behavior:'smooth'});if(highlighted)highlighted.classList.remove('search-hit');clearTimeout(highlightTimer);highlighted=r.node;r.node.classList.add('search-hit');highlightTimer=setTimeout(()=>{r.node.classList.remove('search-hit');highlighted=null;},1800);
+ }
+ function show(){if(dialog.open){input.focus();input.select();return;}if(document.getElementById('mobile-toc')?.open)document.getElementById('close-menu').click();returnFocus=document.activeElement;rebuildIndex();dialog.showModal();launch.setAttribute('aria-expanded','true');render();input.focus();input.select();}
+ launch.addEventListener('click',show);close.addEventListener('click',()=>dismiss());dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss()});dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dismiss();}});
+ input.addEventListener('input',render);input.addEventListener('keydown',e=>{if(e.isComposing)return;if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(matches.length)pick(selected+(e.key==='ArrowDown'?1:-1));}else if(e.key==='Enter'){e.preventDefault();activate(selected);}});
+ document.addEventListener('keydown',e=>{if(e.isComposing)return;const editable=e.target instanceof Element&&(e.target.closest('input,textarea,select,[contenteditable=true]'));if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();show();}else if(e.key==='/'&&!editable&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!dialog.open){e.preventDefault();show();}});
+})();
+</script><script>(()=>{
+ 'use strict';
+ const root=document.documentElement,header=document.querySelector('.topbar'),bar=document.getElementById('progress');
+ // 手绘表情：把 <use> 展开成内联图形，CSS 才能给眼睛、脸颊上样式
+ document.querySelectorAll('svg.face > use').forEach(u=>{const sym=document.querySelector(u.getAttribute('href'));if(!sym)return;const svg=u.parentNode;svg.setAttribute('viewBox',sym.getAttribute('viewBox'));svg.replaceChildren(...[...sym.children].map(n=>n.cloneNode(true)));});
+ const sections=[...document.querySelectorAll('main section.section')];
+ const sideLinks=new Map([...document.querySelectorAll('.sidebar .toc-link')].map(a=>[a.hash.slice(1),a]));
+
+ // 目录已读勾：只给大章节加
+ document.querySelectorAll('.toc-link:not(.toc-sub)').forEach(a=>a.insertAdjacentHTML('beforeend','<svg class="read" viewBox="0 0 16 16" aria-hidden="true"><path pathLength="1" d="M3 8.5l3 3L13 4.5"/></svg>'));
+
+ // 分段阅读进度
+ const segs=sections.map((s,i)=>{
+  const a=document.createElement('a');a.className='seg'+(i>=sections.length/2?' tip-end':'');a.href='#'+s.id;
+  const title=s.querySelector('h2').textContent.trim();a.setAttribute('aria-label',`第 ${i+1} 节：${title}`);
+  a.innerHTML='<i></i><span class="seg-tip"></span>';a.querySelector('.seg-tip').textContent=String(i+1).padStart(2,'0')+' '+title;
+  a.addEventListener('click',e=>{const link=sideLinks.get(s.id);if(link&&getComputedStyle(link.closest('.sidebar')).display!=='none'){e.preventDefault();link.click();}});
+  bar.append(a);return a;
+ });
+ let queued=false,allRead=false;
+ // 贴纸悬浮说明：图例和表格里的贴纸本身就是说明，不加
+ const tips={'ev-run':'运行确认：实际跑过，看到了结果','ev-src':'源码支持：读源码得出，没有运行','ev-infer':'推断：由已有证据推出，没有直接观察到','ev-guess':'猜测：没有证据支撑，需要验证','st-ok':'已验证：有证据证明成立','st-pending':'待验证：还缺证据，结论可能改变','st-rejected':'已排除：有反证，不再考虑','tag-scale':'按比例：纵轴从 0 开始，柱高可以直接比较','tag-schematic':'示意：只表示先后和因果，长度、间距没有含义','tag-sample':'示例数据：数字为虚构，只用于演示'};
+ document.querySelectorAll('main .sticker').forEach(s=>{if(s.closest('.table-wrap'))return;const k=Object.keys(tips).find(c=>s.classList.contains(c));if(k)s.dataset.tip=tips[k];});
+ function sync(){
+  queued=false;const line=header.getBoundingClientRect().bottom+40,atEnd=scrollY>0&&scrollY+innerHeight>=document.documentElement.scrollHeight-3;
+  sections.forEach((s,i)=>{
+   const r=s.getBoundingClientRect(),p=atEnd?1:Math.min(1,Math.max(0,(line-r.top)/r.height));
+   segs[i].style.setProperty('--p',p.toFixed(3));
+   segs[i].classList.toggle('is-done',p>=.98);segs[i].classList.toggle('is-current',p>0&&p<.98);
+   if(p>=.98)document.querySelectorAll(`.toc-link[href="#${CSS.escape(s.id)}"]`).forEach(a=>a.classList.add('is-read'));
+  });
+  const done=segs.filter(a=>a.classList.contains('is-done')).length;
+  if(done===segs.length&&!allRead){
+   // 全部读完：进度环里的数字换成笑脸，提醒一次还剩什么没验证
+   allRead=true;
+   setTimeout(()=>{document.getElementById('reader-trigger').classList.add('all-read');
+    const st=document.querySelector('.stamp');tell(`${segs.length} 章都读完了。${st?'报告状态：'+st.textContent.replace(/\s+/g,' ').trim()+'。':''}`);},0);
+  }
+  ring.style.setProperty('--ring',(1-done/segs.length).toFixed(3));ringNum.textContent=done;
+  readSub.textContent=`已读 ${done} / ${segs.length} 章 · 约 ${minutes} 分钟`;
+ }
+ const queue=()=>{if(!queued){queued=true;requestAnimationFrame(sync);}};
+ // 预计阅读时间：中文约 400 字/分钟
+ const minutes=Math.max(1,Math.round(document.querySelector('main').innerText.replace(/\s/g,'').length/400));
+ const ring=document.querySelector('.ring-fill'),ringNum=document.getElementById('ring-num'),readSub=document.getElementById('read-sub');
+ document.getElementById('rp-time').textContent=`约 ${minutes} 分钟读完`;
+ addEventListener('scroll',queue,{passive:true});addEventListener('resize',queue);sync();
+
+ // 侧栏底部的阅读设置弹层
+ const panel=document.getElementById('reader-panel'),trigger=document.getElementById('reader-trigger');
+ const hero=document.querySelector('.hero'),h1=hero.querySelector('h1'),stamp=document.querySelector('.stamp');
+ document.getElementById('rp-title').textContent=h1.textContent.trim();
+ document.getElementById('rp-meta').textContent=hero.dataset.anchor||'';
+ document.getElementById('rp-date').textContent=hero.dataset.date?'更新 '+hero.dataset.date:'';
+ const rpState=document.getElementById('rp-state');
+ if(stamp){rpState.textContent=stamp.textContent.replace(/\s+/g,' ').trim();rpState.className='sticker rp-state '+({ok:'st-ok',fail:'st-fail'}[stamp.dataset.tone]||'st-pending');}else rpState.hidden=true;
+ const prefs={fs:'m',notes:'on'};
+ try{Object.assign(prefs,JSON.parse(localStorage.getItem('hdr-reader')||'{}'));}catch{}
+ function apply(){
+  root.dataset.fs=prefs.fs;root.dataset.notes=prefs.notes;
+  panel.querySelectorAll('.seg-ctl').forEach(g=>g.querySelectorAll('button').forEach(b=>{const on=b.dataset.v===prefs[g.dataset.pref];b.setAttribute('aria-checked',on);b.tabIndex=on?0:-1;}));
+ }
+ apply();
+ let opener=null;
+ function place(){
+  if(matchMedia('(max-width: 760px)').matches)return;
+  const r=trigger.getBoundingClientRect();
+  panel.style.left=r.left+'px';panel.style.top='auto';panel.style.bottom=(innerHeight-r.top+10)+'px';
+ }
+ function openPanel(from){
+  opener=from;document.getElementById('rp-cur').textContent=document.querySelector('.sidebar .toc-link[aria-current] span:not(.num)')?.textContent||'';
+  panel.hidden=false;place();trigger.setAttribute('aria-expanded','true');
+  (panel.querySelector('.seg-ctl [aria-checked=true]')||panel.querySelector('button')).focus({preventScroll:true});
+ }
+ function closePanel(restore=true){
+  if(panel.hidden)return;panel.hidden=true;trigger.setAttribute('aria-expanded','false');
+  if(restore&&opener?.isConnected&&opener.offsetParent)opener.focus({preventScroll:true});
+ }
+ trigger.addEventListener('click',()=>panel.hidden?openPanel(trigger):closePanel());
+ document.getElementById('mobile-reader').addEventListener('click',()=>{document.getElementById('close-menu').click();openPanel(document.getElementById('menu-toggle'));});
+ document.addEventListener('pointerdown',e=>{if(!panel.hidden&&!panel.contains(e.target)&&!trigger.contains(e.target))closePanel(false);});
+ addEventListener('resize',()=>{if(!panel.hidden)place();});
+ panel.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){e.preventDefault();closePanel();return;}
+  const seg=e.target.closest('.seg-ctl');
+  if(seg&&(e.key==='ArrowLeft'||e.key==='ArrowRight')){
+   e.preventDefault();const bs=[...seg.querySelectorAll('button')],i=bs.indexOf(e.target),n=bs[(i+(e.key==='ArrowRight'?1:-1)+bs.length)%bs.length];
+   prefs[seg.dataset.pref]=n.dataset.v;save();n.focus();return;
+  }
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+   // 上下键在行之间移动：每个分段控件算一行
+   e.preventDefault();const rows=[...panel.querySelectorAll('.seg-ctl [aria-checked=true],.rp-item')],i=rows.indexOf(e.target.closest('button'));
+   rows[(i+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length].focus();
+  }
+ });
+ panel.addEventListener('focusout',e=>{if(e.relatedTarget&&!panel.contains(e.relatedTarget)&&e.relatedTarget!==trigger)closePanel(false);});
+ function save(){apply();try{localStorage.setItem('hdr-reader',JSON.stringify(prefs));}catch{}queue();}
+ panel.querySelectorAll('.seg-ctl button').forEach(b=>b.addEventListener('click',()=>{prefs[b.closest('.seg-ctl').dataset.pref]=b.dataset.v;save();}));
+ const tell=m=>window.reportToast(m);
+ panel.querySelectorAll('.rp-item').forEach(b=>b.addEventListener('click',async()=>{
+  const act=b.dataset.act;closePanel(act!=='search');
+  if(act==='search')document.getElementById('search-launch').click();
+  else if(act==='print')print();
+  else if(act==='link'){
+   const url=location.href;
+   try{await navigator.clipboard.writeText(url);tell('已复制本节链接。');}catch{tell('无法写入剪贴板，链接在地址栏里。');}
+  }
+ }));
+
+ // 入场：每块只播一次
+ const blocks=document.querySelectorAll('.reveal,.chain,.figure,.ledger,.verdict');
+ if('IntersectionObserver' in window){
+  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{rootMargin:'0px 0px -8% 0px',threshold:.15});
+  blocks.forEach(b=>io.observe(b));
+  document.querySelectorAll('.squiggle').forEach(s=>s.classList.add('in'));
+ }else blocks.forEach(b=>b.classList.add('in'));
+ // 搜索跳到还没出现的块时直接显示
+ document.addEventListener('focusin',e=>{const b=e.target.closest?.('.reveal,.chain,.figure,.ledger,.verdict');if(b)b.classList.add('in');});
+
+ // 页面隐藏时暂停动画
+ document.addEventListener('visibilitychange',()=>{if(document.hidden)root.dataset.idle='';else delete root.dataset.idle;});
+})();
+</script></body></html>

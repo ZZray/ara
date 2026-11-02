@@ -40,6 +40,7 @@ See [provider trial setup](docs/testing-providers.md) for a bounded local CAS or
 
 ## Repository map
 
+- [`apps/reach/README.md`](apps/reach/README.md): Reach remote operation product, currently at the design/documentation stage; its [handoff](apps/reach/docs/handoffs/2026-11-02-ara-subproject.md) records the current scope and next steps. Reach reuses Lite/Harness and does not resume the frozen Full Rust port.
 - [`upstream/omp.lock.json`](upstream/omp.lock.json): immutable initial upstream marker and separate ported-through marker.
 - [`docs/upstream-sync.md`](docs/upstream-sync.md): old-SHA to new-SHA incremental sync procedure.
 - [`docs/roadmap.md`](docs/roadmap.md): implementation order and delivery boundaries.

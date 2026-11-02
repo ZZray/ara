@@ -1,0 +1,23 @@
+# Local configuration, credentials and runtime state
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+/local/
+/state/
+/logs/
+
+# Build outputs and installed dependencies
+**/node_modules/
+**/target/
+**/dist/
+**/build/
+
+# Local editor and operating-system files
+.idea/
+.vs/
+.DS_Store
+Thumbs.db
