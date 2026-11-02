@@ -114,3 +114,13 @@ Codex `design_review` 完成实施前方案审查和实施后 `6620ad0` 到交�
 用户随后再次明确要求部署，线上 hub 于 23:17 升至同一 1.1.1 产物。升级前核实无活动连接；只替换二进制和 current，三份配置及原 LabSlot 服务 PID 保持一致。运行进程对应 Linux 二进制 SHA-256 `f0842fdaf5c6336722dac56a3bb639c7230e4288f14461059ee07c5b5dc5ba8e`，健康响应正确。部署后真实云端 `TestLiveRelay` 再次通过，测试主体 1.05s、Go 包总计 1.679s，覆盖配对、双目标登录、错误主机密钥拒绝和 stop。证据为 1.1.1 版本目录的 `evidence/deploy.log` 和 `evidence/live-relay.log`。
 
 新增 [使用与技能安装说明](../starferry-usage.md)，核对 Reach 设计状态、QSpin 固定后端的可跳过流程、Codex/Cursor/Claude Code 官方技能目录及 DeepSeek 由宿主决定的边界。该次补充未修改产品代码或增加自动安装技能功能。
+
+## 1.1.2 安装包内置技能
+
+用户追加要求“至少安装包提供 skills，其他 agent 读取自己装”。提交 `7a5ce024f7f349f47e60c9be84c31784ec7c51f9` 在两个角色的载荷中加入 `skills/INSTALL.md`、`skills/starferry/SKILL.md` 和 `skills/starferry/agents/openai.yaml`。安装器沿用递归安装和逐文件卸载清单；版本升为 1.1.2，Go 隧道逻辑未改变，线上 hub 保持已验证的 1.1.1。
+
+分发技能采用安装包相对路径、默认安装目录及复制时写入的本机路径记录，不携带开发机 D/E 盘路径。说明要求 Agent 在复制前检查同路径和已有同名技能，保留用户修改，再安装到所用宿主的技能目录。安装器本身不修改各 Agent 配置。独立 `design_review` 指出的“先复制、后保护已有内容”顺序问题已修正并回读确认。
+
+技能格式、PowerShell 解析、diff 空白检查及 Windows/Linux/NSIS 构建通过。实际运行统一安装器，分别以 controller/controlled 静默安装到独立自定义目录：两次均退出 0，71 个载荷文件哈希匹配，三份技能文件存在，程序报告 1.1.2。复制技能及本机路径记录检查通过；两次卸载均清除包内 skills，保留另放入的用户文件，产品注册和快捷方式清理，原 SSH 服务状态保持。
+
+安装器 SHA-256：`962d03447dc9e28ff1e18a0a0dfa5b53dfb1734db6ae9b835718bb5ab01d135f`。产物及原始收据位于 `D:/Tools/远程ssh/1.1.2-20261102/`，实际安装验证为 `evidence/installed-skills.json`。本次未运行其他 Agent 宿主、技能自动发现或新的网络配对，也未重复 GUI 和现场 SSH 安装验收；既有网络验证仍对应前文版本和范围。
