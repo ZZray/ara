@@ -101,4 +101,12 @@ Codex `design_review` 完成实施前方案审查和实施后 `6620ad0` 到交�
 
 首次普通 device 在主控退出后返回 1，失败记录保留。1.1.1 仅修复 device 结束时 Requests 与 Conn.Wait 的调度竞态，更新客户端包版本；hub 协议不变，线上保留已验证的 1.1.0。独立 `design_review` 回读依赖、产品及测试确认修复范围；`direct_tests` 的六种结束组合修复前均失败，修复后均返回 nil 且活动流关闭，授权失败仍报错。针对性 race 2.908s；主代理 `go vet -p 8 ./...` 和模块 `go test -race -p 8 -count=1 -timeout 90s ./...` 通过，19.153s。线上测试为单独运行；本次模块默认测试仍跳过 opt-in live 项。
 
-部署、首次试用及生命周期日志：`D:/Tools/远程ssh/1.1.0-20261102/evidence/starferry-upgrade/`。1.1.1 的普通进程复验、构建及最终收据将保存到 `D:/Tools/远程ssh/1.1.1-20261102/`，最终结果以该收据为准。新补丁安装/卸载、GUI、异机 LAN、公网 NAT、真实 SCP/SFTP 与现场授权撤销仍未验收。
+部署、首次试用及生命周期日志：`D:/Tools/远程ssh/1.1.0-20261102/evidence/starferry-upgrade/`。1.1.1 的普通进程复验、构建及最终收据保存在 `D:/Tools/远程ssh/1.1.1-20261102/`。新补丁安装/卸载、GUI、异机 LAN、公网 NAT、真实 SCP/SFTP 与现场授权撤销仍未验收。
+
+### 1.1.1 交付复验
+
+从提交 `95e1b2959713ea8bdae7703d0d6bc58dc52d643b` 的干净工具目录生成 Windows/Linux amd64 和 NSIS 1.1.1；主控 42 个、被控 68 个载荷文件 SHA-256 全部匹配。普通 Windows 二进制 SHA-256 为 `1947722457702a7b913391580045d96046b2aa3ce3dd2bda4fcea40dd5bce300`，统一安装器为 `4e707856472c0aec6ffad7c0d57386bbfbbb3ec7a5c3778bc6fee11d7e04f0a1`。
+
+独立 `starferry_trial` 与 `process_validation` 复用测试夹具并领取新码，完成真实 hub 配对、host/host UDP 和 jump/backend 两个 probe。主控 quit 退出 0，被控随后自然退出 0；临时密钥目录、被控 session 目录和两个本地监听均已清理，夹具 58.95s 通过。夹具源码仍为固定 `121bbce`，被执行的普通客户端是上述 `95e1b29` 产物；二者分别记录。脱敏结果见 `evidence/agent-trial.json`、`evidence/starferry-trial-device/`。
+
+最终交付仍只有主开发工作树、`dev` 开发分支和 `main` 主线。另有 25 个原 WIP 文件哈希与合并前一致，知识 INDEX 与合并后保存件一致，均未混入补丁提交。技能在本机全局知识库维护和安装；新聊天自动发现尚未实际验证。
