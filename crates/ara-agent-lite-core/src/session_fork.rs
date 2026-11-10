@@ -47,11 +47,6 @@ pub fn fork_session(source: &Path, cwd: &Path, k: usize, targets: [&Path; 2]) ->
     }
     let source_cwd: PathBuf = serde_json::from_value(head.metadata["cwd"].clone()).context("source Session cwd")?;
     ensure!(source_cwd == cwd, "fork refused: source Session working directory does not match");
-    ensure!(
-        head.active_base == 0,
-        "fork refused: records before {} are archived behind a summary; only fully active histories can be forked",
-        head.active_base
-    );
     ensure!((1..=head.raw_count).contains(&k), "fork point K={k} is outside 1..={}", head.raw_count);
     let records = journal.raw_prefix(&head, k)?;
     let messages = records
@@ -60,6 +55,17 @@ pub fn fork_session(source: &Path, cwd: &Path, k: usize, targets: [&Path; 2]) ->
         .collect::<Result<Vec<_>, _>>()?;
     crate::agent::validate_transcript(&messages)
         .with_context(|| format!("fork point K={k} does not end on a complete exchange"))?;
+    ensure!(
+        messages.len() <= session_journal::CHECKPOINT_MESSAGES,
+        "fork refused: prefix has {} records; target checkpoint limit is {}",
+        messages.len(),
+        session_journal::CHECKPOINT_MESSAGES
+    );
+    ensure!(
+        session_journal::checkpoint_size(&messages)? <= session_journal::CHECKPOINT_BYTES,
+        "fork refused: prefix exceeds the target checkpoint byte limit of {}",
+        session_journal::CHECKPOINT_BYTES
+    );
 
     let source_absolute = std::path::absolute(source)?;
     let absolute = [std::path::absolute(targets[0])?, std::path::absolute(targets[1])?];

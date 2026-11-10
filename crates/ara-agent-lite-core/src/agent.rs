@@ -81,6 +81,8 @@ pub struct RunRequest {
     pub max_calls: usize,
     pub max_seconds: u64,
     pub steering: Arc<Mutex<crate::steering::SteeringBuffer>>,
+    /// Experimental Host-owned per-tool-call admission and observation hooks.
+    pub call_hooks: Option<Arc<dyn crate::call_hooks::HostCallHooks>>,
     /// Host opt-in Run policies; `Default` keeps existing behavior.
     pub policies: crate::run_policies::RunPolicies,
 }
@@ -120,6 +122,7 @@ impl RunRequest {
             max_calls: 12,
             max_seconds: 120,
             steering: Arc::new(Mutex::new(crate::steering::SteeringBuffer::default())),
+            call_hooks: None,
             policies: Default::default(),
         }
     }
@@ -1703,6 +1706,12 @@ pub async fn execute(
     let tool_duplicate = context_failure.clone();
     let replay_state = state.clone();
     let hook_plan_custom_tools = plan_custom_tools.clone();
+    let before_call_hooks = request.call_hooks.clone();
+    let after_call_hooks = request.call_hooks.clone();
+    let before_call_failure = context_failure.clone();
+    let before_call_signal = signal.clone();
+    let after_call_failure = context_failure.clone();
+    let after_call_signal = signal.clone();
     let recovery_state = state.clone();
     let recovery_store = context_store.clone();
     let recovery_path = context_path.clone();
@@ -2054,6 +2063,41 @@ pub async fn execute(
                     })
                 }) as BoxFuture<'static, Option<rpi_agent::BeforeToolCallResult>>;
             }
+            if let Some(hooks) = &before_call_hooks {
+                let decision = hooks.before_tool_call(crate::call_hooks::BeforeToolCall {
+                    call_id: context.tool_call.id.clone(),
+                    tool_name: context.tool_call.name.clone(),
+                    arguments: context.args.clone(),
+                });
+                let decision = match decision {
+                    Ok(decision) => decision,
+                    Err(error) => {
+                        let reason = format!("host before_tool_call failed: {error}");
+                        *before_call_failure.lock().unwrap() = Some(reason.clone());
+                        before_call_signal.cancel();
+                        return Box::pin(async move {
+                            Some(rpi_agent::BeforeToolCallResult {
+                                block: true,
+                                reason: Some(reason),
+                                terminate: true,
+                                ..Default::default()
+                            })
+                        })
+                            as BoxFuture<'static, Option<rpi_agent::BeforeToolCallResult>>;
+                    }
+                };
+                if !decision.allow || decision.terminate {
+                    let reason = decision.reason.unwrap_or_else(|| "host denied tool call".into());
+                    return Box::pin(async move {
+                        Some(rpi_agent::BeforeToolCallResult {
+                            block: !decision.allow,
+                            reason: (!decision.allow).then_some(reason),
+                            terminate: decision.terminate,
+                            ..Default::default()
+                        })
+                    }) as BoxFuture<'static, Option<rpi_agent::BeforeToolCallResult>>;
+                }
+            }
             let denied = !request.mode.allows(&context.tool_call.name)
                 && !hook_plan_custom_tools.contains(&context.tool_call.name);
             let expired = tool_lease.as_ref().is_some_and(|lease| lease.expires_at <= crate::goal_runtime::now());
@@ -2096,6 +2140,19 @@ pub async fn execute(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            if let Some(hooks) = &after_call_hooks {
+                if let Err(error) = hooks.after_tool_call(crate::call_hooks::AfterToolCall {
+                    call_id: context.tool_call.id.clone(),
+                    tool_name: context.tool_call.name.clone(),
+                    arguments: context.args.clone(),
+                    output: text.clone(),
+                    details: Some(context.result.details.clone()),
+                    is_error: context.is_error,
+                }) {
+                    *after_call_failure.lock().unwrap() = Some(format!("host after_tool_call failed: {error}"));
+                    after_call_signal.cancel();
+                }
+            }
             // 22.2: Core types its own builtin error contracts once, here.
             let mut extra = crate::effect_status::classify_builtin(&context.tool_call.name, context.is_error, &text)
                 .unwrap_or_default();
@@ -2803,6 +2860,7 @@ mod tests {
             max_calls: 1,
             max_seconds: 30,
             steering: Arc::new(Mutex::new(crate::steering::SteeringBuffer::default())),
+            call_hooks: None,
             policies: Default::default(),
         };
         let cancellation = CancellationToken::new();

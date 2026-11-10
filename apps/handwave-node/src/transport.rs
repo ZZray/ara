@@ -524,6 +524,8 @@ async fn session(
                                 environment_state:settings.state.clone(),global_knowledge:settings.config.knowledge_dir.clone(),
                                 brief:frame.brief.clone(),max_calls:settings.config.max_calls,max_seconds:settings.config.max_seconds.min(ttl.min(decision_budget)-10),
                                 steering:run.steering.clone(),
+                                call_hooks:None,
+                                policies:Default::default(),
                                 mode:crate::execution::RunMode::parse(&frame.execution_mode)?,goal_criteria:frame.goal_criteria.clone(),goal_id:frame.goal_id.clone(),
                                 goal_lease:lease,resume_job_lease,session_key:frame.session_key.clone(),expected_revision:frame.expected_revision,reviewed_run_id:frame.reviewed_run_id.clone(),
                             };

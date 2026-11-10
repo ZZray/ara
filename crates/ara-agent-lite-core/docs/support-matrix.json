@@ -114,7 +114,17 @@
               {"kind": "test", "file": "crates/ara-agent/tests/core_hooks.rs", "name": "group_g_request_boundary_one_preparation_provenance_stop_errors_and_abort"}
             ]
           },
-          "lite": {"status": "unsupported", "note": "Core has no Host per-call hook API; only the run-level Completion_Gate is registrable"}
+          "lite": {
+            "status": "partial",
+            "gap": "experimental owned-data DTO/trait hooks cover before deny, after success/error and hook failure; default None preserves existing behavior; async Host work and cancellation/timeout settlement remain open",
+            "tests": [
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "call_hooks", "name": "before_hook_can_deny_without_dispatching_the_tool"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "call_hooks", "name": "after_hook_observes_success_and_tool_error"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "call_hooks", "name": "after_hook_failure_stops_before_a_second_model_request"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "call_hooks", "name": "no_hook_preserves_the_existing_tool_flow"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "call_hooks", "name": "hook_failure_propagates_and_does_not_dispatch"}
+            ]
+          }
         },
         {
           "id": "tools.mcp",
@@ -191,10 +201,13 @@
           "full": {"status": "unsupported", "note": "no fork in ara-agent or ara-workflow (search for 'fork': 0 hits)"},
           "lite": {
             "status": "partial",
-            "gap": "a Session with an archived summary prefix (active_base > 0) is refused",
+            "gap": "controlled Core evidence now covers a real compacted source with active_base > 0; real Host/product acceptance and concurrent cross-process writers remain open",
             "tests": [
               {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "property_14_fork_keeps_prefix_and_source"},
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "run_on_one_fork_isolates_other_fork_and_source"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "run_on_one_fork_isolates_other_fork_and_source"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "archived_summary_prefix_can_be_forked_from_raw_journal"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "oversized_archived_prefix_refuses_before_target_creation"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "session_fork", "name": "oversized_archived_prefix_bytes_refuse_before_target_creation"}
             ]
           }
         },
@@ -222,9 +235,10 @@
           },
           "lite": {
             "status": "partial",
-            "gap": "the referenced test covers the steering buffer and its receipts only; no end-to-end injection test through execute is referenced",
+            "gap": "a controlled execute end-to-end test now proves context admission and the next model request; real sidecar/Host live-delivery acceptance remains open, and applied does not assert model consumption",
             "tests": [
-              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "steering::tests::object_receipts_preserve_metadata_for_complete_and_finish"}
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "lib", "name": "steering::tests::object_receipts_preserve_metadata_for_complete_and_finish"},
+              {"runner": "cargo", "manifest": "crates/ara-agent-lite-core/Cargo.toml", "target": "steering_execute", "name": "host_steering_is_admitted_into_the_next_execute_turn_with_a_receipt"}
             ]
           }
         }

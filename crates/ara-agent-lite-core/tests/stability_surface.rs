@@ -91,7 +91,7 @@ fn stability_doc_classifies_each_item_once_for_this_version() {
     }
 
     // Exhaustive destructuring: adding or removing a `RunRequest` field breaks
-    // this pattern, and the document must list exactly these 31 names (29.1).
+    // this pattern, and the document must list exactly these 32 names (29.1).
     let request = RunRequest::new("id", "objective", RuntimePaths::new(".", "session.json", "environment"));
     let RunRequest {
         model_host: _,
@@ -124,6 +124,7 @@ fn stability_doc_classifies_each_item_once_for_this_version() {
         max_calls: _,
         max_seconds: _,
         steering: _,
+        call_hooks: _,
         policies: _,
     } = request;
     let fields: BTreeSet<&str> = [
@@ -157,6 +158,7 @@ fn stability_doc_classifies_each_item_once_for_this_version() {
         "max_calls",
         "max_seconds",
         "steering",
+        "call_hooks",
         "policies",
     ]
     .into_iter()
@@ -165,7 +167,7 @@ fn stability_doc_classifies_each_item_once_for_this_version() {
     assert_eq!(listed_fields, fields, "RunRequest fields in stability.md");
     let reexports: BTreeSet<&str> = levels.keys().map(String::as_str).filter(|item| item.starts_with("rpi_")).collect();
     assert_eq!(reexports, BTreeSet::from(["rpi_agent", "rpi_ai"]), "crate-root rpi_* re-exports");
-    assert_eq!(listed_fields.len() + reexports.len(), 33);
+    assert_eq!(listed_fields.len() + reexports.len(), 34);
 }
 
 #[test]

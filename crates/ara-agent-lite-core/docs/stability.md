@@ -26,7 +26,7 @@
 
 ## Core：RunRequest 字段
 
-`RunRequest` 共 31 个 `pub` 字段，与 crate 根的 2 个 `rpi_*` 重导出合计 33 项（需求 29.1）。
+`RunRequest` 共 32 个 `pub` 字段，与 crate 根的 2 个 `rpi_*` 重导出合计 34 项（需求 29.1）。`call_hooks` 是本轮新增的 experimental 字段。
 
 | 项 | 级别 | 说明 |
 |---|---|---|
@@ -60,6 +60,7 @@
 | `ara_agent_lite_core::RunRequest.max_calls` | stable | 预算：调用上限，默认 12 |
 | `ara_agent_lite_core::RunRequest.max_seconds` | stable | 预算：时间上限，默认 120 秒 |
 | `ara_agent_lite_core::RunRequest.steering` | stable | 运行中插话缓冲区：`Arc<Mutex<steering::SteeringBuffer>>`；Harness 续写时核对其 Arc 身份 |
+| `ara_agent_lite_core::RunRequest.call_hooks` | experimental | 可选的 `Arc<dyn call_hooks::HostCallHooks>`；拥有数据的工具调用 before/after 回调，默认 None；不承诺异步 Host 结算 |
 | `ara_agent_lite_core::RunRequest.policies` | experimental | P2 的 Run 策略（Completion_Gate、Stuck_Detector、Compaction_Refresh、Length 停止证据），默认全部关闭；B0 基线与 P2 对比完成前不提升，见 DR-P4-3 |
 
 ## Core：crate 根重导出
@@ -98,6 +99,7 @@
 | `ara_agent_lite_core::agent::*` | experimental | 经 crate 根重导出的项以根路径计级；其余如 `InterruptedRun`、`ToolCallReconciliation`、`BUILTIN_TOOL_NAMES` |
 | `ara_agent_lite_core::model::*` | experimental | 上面单列为 stable 的项以外的部分，如 `resolve_catalog`、`resolve_catalog_with_headers`、`validate_endpoint`、`plaintext_loopback` |
 | `ara_agent_lite_core::steering::*` | experimental | `SteeringNote` 及 `SteeringBuffer` 的方法 |
+| `ara_agent_lite_core::call_hooks::*` | experimental | `HostCallHooks` 及其拥有数据的 before/after DTO；同步工具调用钩子，取消/超时 settlement 与模型调用钩子未承诺 |
 | `ara_agent_lite_core::execution::*` | experimental | Goal 与 checklist 工具 |
 | `ara_agent_lite_core::events::*` | experimental | P4 新增：`LiteEvent` 各变体、`EventDecodeError` |
 | `ara_agent_lite_core::session_fork::*` | experimental | P0 新增：`fork_session`、`ForkReceipt` |

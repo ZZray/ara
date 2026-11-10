@@ -15,6 +15,8 @@ use std::{
 
 use ara_agent_lite_core::{
     execute,
+    rpi_agent::AgentMessage,
+    rpi_ai::Content,
     session_fork::{fork_session, receipt_path, source_digest},
     session_journal::{self, Journal},
 };
@@ -240,4 +242,122 @@ fn run_on_one_fork_isolates_other_fork_and_source() {
     assert_eq!(source_digest(&b).unwrap(), b_before);
     assert!(!Journal::for_session(&source).contains_run(&run_ids[0]).unwrap());
     assert!(!Journal::for_session(&b).contains_run(&run_ids[0]).unwrap());
+}
+
+/// Archived summaries do not discard the native transcript. A fork can
+/// rebuild a complete active window from any validated raw prefix, including
+/// a prefix ending before the source Session's current active base.
+#[tokio::test]
+async fn archived_summary_prefix_can_be_forked_from_raw_journal() {
+    let root = TempDir::new();
+    let provider = Provider::with(support::ProviderConfig {
+        context_window: 60_000 + 512 + 4096,
+        max_tokens: 4096,
+        responses: vec![text(&"r".repeat(16 * 1024)), text("continued")],
+        summary_responses: vec![support::summary()],
+        on_request: Box::new(|_| {}),
+    });
+
+    let mut first = support::request(root.path(), &provider, &[], 4, "Write the first report.");
+    first.max_output = 512;
+    let (result, _) = run(first).await;
+    assert_eq!(result.code, 0, "{}", result.error);
+
+    let mut second =
+        support::request(root.path(), &provider, &[], 3, &format!("Continue the report. {}", "q".repeat(16 * 1024)));
+    second.max_output = 512;
+    let (result, _) = run(second).await;
+    assert_eq!(result.code, 0, "{}", result.error);
+
+    let source = root.path().join("session.json");
+    let source_journal = Journal::for_session(&source);
+    let head = source_journal.open().unwrap();
+    assert!(head.active_base > 0, "fixture must archive a summary prefix");
+    let k = head.active_base;
+    let source_records = raw_records(&source);
+    let before = source_digest(&source).unwrap();
+    let (a, b) = (root.path().join("archived-a.json"), root.path().join("archived-b.json"));
+
+    let receipt = fork_session(&source, root.path(), k, [&a, &b]).unwrap();
+    assert_eq!(receipt.prefix_records, k);
+    assert_eq!(source_digest(&source).unwrap(), before);
+    let b_before = source_digest(&b).unwrap();
+    for target in [&a, &b] {
+        assert_eq!(raw_records(target), source_records[..k].to_vec());
+        assert_eq!(Journal::for_session(target).open().unwrap().active_base, 0);
+    }
+    let continuation_provider = Provider::new(vec![text("continued from archived fork")]);
+    let mut continuation = support::request(root.path(), &continuation_provider, &[], 4, "Continue the archived fork.");
+    continuation.state_path = a.clone();
+    let (result, _) = run(continuation).await;
+    assert_eq!(result.code, 0, "{}", result.error);
+    assert!(raw_records(&a).len() > k);
+    assert_eq!(source_digest(&b).unwrap(), b_before);
+    assert_eq!(source_digest(&source).unwrap(), before);
+}
+
+#[test]
+fn oversized_archived_prefix_refuses_before_target_creation() {
+    let root = TempDir::new();
+    let seed = root.path().join("seed.json");
+    runs(root.path(), &seed, &["seed transcript".to_owned()]);
+    let seed_messages = Journal::for_session(&seed).read(0, 2, 1024 * 1024).unwrap();
+    assert_eq!(seed_messages.len(), 2);
+    let source = root.path().join("oversized-source.json");
+    std::fs::write(&source, b"{}").unwrap();
+    let messages: Vec<_> = (0..257).flat_map(|_| seed_messages.clone()).collect();
+    let journal = Journal::for_session(&source);
+    let metadata = json!({
+        "version": 2,
+        "cwd": root.path(),
+        "messages": [],
+        "raw_base": 0,
+        "pending_run": null,
+        "completed_runs": [],
+        "goal": null
+    });
+    journal.commit(metadata.clone(), 0, &messages[..512], &[]).unwrap();
+    let mut archived = metadata;
+    archived["raw_base"] = json!(session_journal::CHECKPOINT_MESSAGES);
+    journal
+        .commit(archived, session_journal::CHECKPOINT_MESSAGES, &messages[session_journal::CHECKPOINT_MESSAGES..], &[])
+        .unwrap();
+
+    let (a, b) = (root.path().join("oversized-a.json"), root.path().join("oversized-b.json"));
+    let error = fork_session(&source, root.path(), messages.len(), [&a, &b]).unwrap_err().to_string();
+    assert!(error.contains("target checkpoint limit"), "{error}");
+    assert_absent(&[&a, &b]);
+}
+
+#[test]
+fn oversized_archived_prefix_bytes_refuse_before_target_creation() {
+    let root = TempDir::new();
+    let seed = root.path().join("seed-bytes.json");
+    runs(root.path(), &seed, &["seed transcript".to_owned()]);
+    let mut pair = Journal::for_session(&seed).read(0, 2, 1024 * 1024).unwrap();
+    let AgentMessage::Assistant(assistant) = &mut pair[1] else { panic!("seed must end with assistant") };
+    assistant.content = vec![Content::text("x".repeat(33_000))];
+
+    let source = root.path().join("oversized-bytes-source.json");
+    std::fs::write(&source, b"{}").unwrap();
+    let messages: Vec<_> = (0..256).flat_map(|_| pair.clone()).collect();
+    let journal = Journal::for_session(&source);
+    let metadata = json!({
+        "version": 2,
+        "cwd": root.path(),
+        "messages": [],
+        "raw_base": 0,
+        "pending_run": null,
+        "completed_runs": [],
+        "goal": null
+    });
+    journal.commit(metadata.clone(), 0, &messages[..256], &[]).unwrap();
+    let mut archived = metadata;
+    archived["raw_base"] = json!(256);
+    journal.commit(archived, 256, &messages[256..], &[]).unwrap();
+
+    let (a, b) = (root.path().join("oversized-bytes-a.json"), root.path().join("oversized-bytes-b.json"));
+    let error = fork_session(&source, root.path(), messages.len(), [&a, &b]).unwrap_err().to_string();
+    assert!(error.contains("byte limit"), "{error}");
+    assert_absent(&[&a, &b]);
 }
