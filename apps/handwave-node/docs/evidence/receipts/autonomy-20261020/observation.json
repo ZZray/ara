@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-20",
+  "base_commit": "935e5493ca71260f7f60aaf46d61baf9777ef6f6",
+  "scope": "One bounded compact HandWave 0.2.8 Windows real-model project skill/knowledge observation; not full ARA/OMP",
+  "decision": "PARTIAL_OBSERVATION_ACCEPTED; COMPLETE_GATE_NOT_ACCEPTED",
+  "raw_automatic_status": "FAIL",
+  "raw_exit_code": 1,
+  "accepted_observations": [
+    "First Session native skill creation, actual script tests and exact-hash execution receipt association",
+    "Project indexed knowledge persistence with unchanged human sources",
+    "Fresh Session reads existing skill/original rule and executes unchanged saved script with correct new report"
+  ],
+  "open_gate": "Fresh Session did not retrieve the persisted indexed knowledge note body",
+  "not_accepted": [
+    "General autonomous knowledge retrieval or consolidation",
+    "Generated-record accuracy beyond independently checked claims",
+    "General script safety, environment installation or long-task reliability",
+    "Production behavior, global knowledge autonomy, self-evolution or causal cache/token/cost savings"
+  ],
+  "runtime_changed": false,
+  "production_mutated": false,
+  "committed_pushed_deployed_this_followup": false,
+  "artifact": {
+    "binary_sha256": "2abf8e84ee4107219e798dcaa420a28fe357fef33945a8992c3f866dbdb53890",
+    "binary_bytes": 5355520,
+    "hub_sha256": "70e895af913ad063317772bc7ceb3f31c11269511769aac610f42facab4389c1"
+  },
+  "model": {
+    "id": "deepseek-v4.1-flash",
+    "protocol": "openai-completions",
+    "catalog_verified": true,
+    "multimodal_declaration_only_not_exercised": true
+  },
+  "model_sample": {
+    "count": 1,
+    "retries": 0,
+    "calls": 22,
+    "elapsed_seconds": 97.532,
+    "budgets": {
+      "per_trial": {
+        "calls": 20,
+        "seconds": 180,
+        "reserved_upper_tokens": 1000000
+      },
+      "aggregate": {
+        "calls": 28,
+        "seconds": 300,
+        "reserved_upper_tokens": 1500000
+      },
+      "output_per_call": 4096
+    },
+    "conservative_reserved_upper_tokens": 1169436,
+    "denials": [],
+    "trials": [
+      {
+        "name": "create",
+        "session_key": "environment-live/create",
+        "status": "PASS",
+        "elapsed_seconds": 80.033,
+        "model_http_calls": 17
+      },
+      {
+        "name": "reuse",
+        "session_key": "environment-live/reuse",
+        "status": "FAIL",
+        "elapsed_seconds": 12.1,
+        "model_http_calls": 5
+      }
+    ],
+    "provider_usage_totals": {
+      "prompt_tokens": 266786,
+      "completion_tokens": 12148,
+      "total_tokens": 278934,
+      "prompt_cache_hit_tokens": 219136,
+      "prompt_cache_miss_tokens": 47650
+    },
+    "usage_boundary": "Provider-reported usage only; no billing verification or causal cache/token saving established"
+  },
+  "skill": {
+    "name": "jsonl-log-summary",
+    "bundle_hash": "198276ef9d8707e4bab90081c132310528170edd87a9f9a40a9d69f8e2ee1b9d",
+    "reuse_call_id": "call_00_epHyvjlVy1EDbM7pqSR51576",
+    "reuse_output_sha256": "57d8e77e6d2407d96dbe79631d6ea8a5c48ca350b008dad82e7c034863705cba",
+    "indexed_note_sha256": "c10d497b7d0925687e79ca6032a0afad2d8bdb776203d508e80e3c68c8422e9c"
+  },
+  "source_log_sha256": {
+    "first.jsonl": "54e2c7443930fea8771924a2b30577601e48015f2279b3bab92a61afd4f7c993",
+    "second.jsonl": "f451bebc950c8782d8e6bcf3b3f78e61a5fd1d79bdf53a40f5a381dd8eacf217"
+  },
+  "failed_tool_calls": [
+    {
+      "run": "create",
+      "call_id": "call_00_Rx64wNYk5eHBxrue18dt0460",
+      "tool": "task_update",
+      "status": "failed"
+    },
+    {
+      "run": "create",
+      "call_id": "call_00_krewy9ANSecSjbakiz8A3660",
+      "tool": "exec",
+      "status": "failed"
+    }
+  ],
+  "generated_record_limits": [
+    "first.jsonl has9physical lines with8nonblank; generated SKILL/record says8lines including1blank",
+    "generated record still says no automated suite despite observed4case suite",
+    "final reply calls Get-FileHash the only mistake but task_update schema failure also occurred"
+  ],
+  "offline_tests": {
+    "methods": 11,
+    "root": "PASS",
+    "independent_reviewer": "PASS",
+    "py_compile": "PASS",
+    "strict_historical_replay": "FAIL unchanged",
+    "deferred_historical_replay": "REVIEW_REQUIRED",
+    "historical_files_unchanged": 36
+  },
+  "harness_sha256": {
+    "apps/handwave-node/tests/verify_environment_live.py": "3479c2c878a78b6b2d292f9b8145bac9551e14e54fd672765fc2aaf2577150b4",
+    "apps/handwave-node/tests/test_environment_live_audit.py": "3ddf0674e427b4f2cb0802e59fe7cdaaa79e56ba3860e643f89fd7b34af03f3b"
+  },
+  "raw_evidence_directory": "D:\\WorkSpace\\tmp\\handwave-autonomy-20261020\\live-project-two-sessions",
+  "raw_pins": {
+    "result.json": "a552aa5b239a985aa5e5491291cee6ea69b8bfd26c3e1d3b99f95de0e7b98b9f",
+    "create-result.json": "2a64ef0183b74bab335907cd82451afc92981713f378d62287ef7b36f4c1030f",
+    "reuse-result.json": "0b710a10cc32ab6b9da6c68e9ce0476f0ce947929f21653478dc0453588ed7e9",
+    "create-path-evidence.json": "60de1b0b6235d5b9939c78c044034657160460a4a7bd6a8f9868107730a9e373",
+    "reuse-path-evidence.json": "68669735fba4aa398dd208ea83a3a55eddbc9e0cfb7a6e14f592ce543ed86b94",
+    "provider-requests.json": "3cfcde396b20630a3f5c6aac866f892599b15addcd8f3b72f7545eccdb9610a1",
+    "provider-sse.json": "98eb7654b098a07c858269f2525e7896b6a7fd3f0cc7c6aeea221e3004e04fd5",
+    "controller.json": "eb091a751244d66916fe4cd76a5fd3be1286ae1926862e8a4993c69f3ce6523c"
+  },
+  "independent_reviewer": "Codex /root/autonomy_acceptance_review",
+  "review_pins": {
+    "review-pre.md": "199e944f5c19ba91039cf2fde89653077c3cdc801973f61216b99c9aa41087e0",
+    "review-harness-post.md": "a153eb54157dc0ecc31b7415529ce47206b8c34ca7000cad32a8aa39d4b2d52d",
+    "review-model-post.md": "481e7c67fc296988ffe63a71840ce0bbf2faf3696a0d2672b5ef33f35a4347b7"
+  },
+  "root_inspection_sha256": "175faaf03d009096a9bbc118110f2cf3acb2c99f17e83b57fb12ed354535519d",
+  "documentation_checks": {
+    "scoped_pages": 4,
+    "local_links": 68,
+    "broken_links": 0,
+    "scoped_diff_check": "PASS",
+    "bootstrap": {
+      "status": "NOT_COMPLETED",
+      "reason": "Whole-repository traversal exceeded bounded30seconds; subprocess terminated; no PASS inferred",
+      "elapsed_seconds": 30.043
+    }
+  },
+  "isolated_node_hub_processes_remaining": 0,
+  "historical_and_current_raw_pins_rechecked_at_close": true
+}

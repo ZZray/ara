@@ -1,0 +1,13 @@
+{
+  "artifact": "design.html",
+  "sha256": "b7033197c20eba6b321575be393f0478d423d8d01dcd39937c376937fe090a6b",
+  "generator_sha256": "692dde0bbd3770a89629fad845a7c6f18be123fa52b1c366b45eb036bad916c9",
+  "sections": 15,
+  "unique_ids": 33,
+  "duplicate_ids": [],
+  "broken_local_links": [],
+  "inline_scripts_syntax_passed": 3,
+  "browser_visual": "NOT_VERIFIED: prior file protocol policy denial; no retry or workaround",
+  "product_tests": "NOT_RUN: design only; no installation, desktop action or customer API",
+  "prior_validation": "verification-extension-validation.json retained for prior 14-section snapshot"
+}

@@ -1,0 +1,254 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {renderReport} from 'file:///C:/Users/loveu/.codex/skills/hand-drawn-report/scripts/render.mjs';
+
+const dir=path.dirname(fileURLToPath(import.meta.url));
+const p=text=>({type:'paragraph',text});
+const note=(title,text,tone='note')=>({type:'callout',title,text,tone});
+const table=(columns,rows)=>({type:'table',columns,rows});
+const flow=(title,items)=>({type:'flow',title,items:items.map(([title,text])=>({title,text}))});
+const section=(id,title,blocks)=>({id,title,blocks});
+const data={title:'QSpin 远程 Agent 设计方案',subtitle:'APP 直接提供设备资料，复用 SDK/Gateway，客户机运行 Lite Agent 服务；增补 QSpin API MCP V2/V3 与 Computer Use 验证。方案稿，尚未实施。',brand:'QSpin / LabSlot',eyebrow:'DESIGN · 源码调查与实施建议',date:'2026-11-01',sections:[
+section('decision','推荐方案与范围',[
+p('直接复用 APP 数据源，不要求先把全部设备导入 LabSlot。管理页查询 APP 的设备、Gateway 安装信息和已有上报数据；LabSlot 只保存远程诊断所需的关联、权限、Agent 安装记录与任务历史。页面入口由“导入机器”改为“从 APP 选择机器并关联”。'),
+p('已有 SDK 连接与能力继续复用：对已配对、在线、获得授权的 Gateway，可以调用其实际暴露的查询接口。远程 Agent 增加的是客户机上的完整推理循环、本地日志读取和独立服务生命周期。客户不配置模型，模型路由和额度由云端管理。'),
+p('验证能力分为 QSpin API MCP V2/V3 和 Computer Use 两条工具路径。Computer Use 首期专注 Windows，优先集成开源 MCP 桌面执行后端；Mac/Linux 后续适配，不从头编写通用桌面驱动。Lite 保留 Agent 循环，Core 补视觉输入通路，Host 负责授权、用户会话与证据；现有 QSpin UI Agent 保留专用 profile 与 recipe。'),
+note('本次完成标准','给出可回查的现状、职责与数据流、服务安装生命周期、接口草案、分期与验收。本文没有把设计中的接口标为现有能力，也没有连接客户机器或修改部署。'),
+table(['保持不动','本轮交付','后续实施边界'],[
+['APP 设备主数据及现有 Gateway 注册/上报','源码调查、流程图、接口与页面设计','APP 窄接口由其维护方协作；本轮不修改'],
+['LabSlot 现有 SDK 配对与 direct/relay 选择','数据源直读与最小关联方案','不为了诊断全局切换硬件控制模式'],
+['内存整理服务、QSpin 采集及硬件流程','独立 Agent 服务安装建议','首期建议只读诊断；重启、写配置、硬件操作另列范围'],
+['Lite Core 的产品无关接口','新产品 Host 的接入设计','不把产品身份、APP 或 LabSlot 状态写进共享 Core']]),
+note('已确认与建议的区别','安装为服务、复用 Lite、客户免模型配置、LabSlot 管理页面、APP 数据源来自用户要求。只读首期、SDK 到服务的本地 IPC、具体名称和预算是本方案建议。独立 Agent 控制连接仅在既有 Gateway 生命周期或协议不能满足时评估，尚未作为实施授权。')]),
+section('reuse','数据源与 SDK 各负责什么',[
+table(['层','现有证据','本方案如何复用'],[
+['APP 数据源','Device、GatewayInstallation、DeviceGatewayBinding；外部设备详情 API','直接查询并显示；避免另一套设备主表和双向同步'],
+['SDK 会话','LabSlot createSession 创建 SDK server/client，等待 Gateway 握手并校验路由身份','复用设备会话、能力发现和已存在的查询方法'],
+['执行通道','当前 direct 为默认；云端 query 要经过 relay 准入','保持明确的通道授权；页面能看到设备不等于云端可调用'],
+['客户 Agent','现有 HandWave Rust Node 已直接使用 Lite Core','复用 Core/Harness 接口；新建 QSpin 专用 Host 和受限日志工具'],
+['Windows 常驻','现有 QSpinMaintenanceService 有 SCM 和安装闭环','复用安装流程经验；独立服务账户、状态目录和凭据']]),
+p('“拿到连接就能工作”对 SDK 已经提供的功能成立。APP 的机器记录帮助发现目标；SDK 的可信会话才承担调用。APP 的设备 ID、Gateway 安装 ID、LabSlot 路由 ID 和 Agent 安装 ID需要有明确映射，不能因为同名、同 IP 或序列号相同就自动合并授权。'),
+note('源码中的具体差异','LabSlot 当前 createSession 会创建 SDK 会话并等待 Gateway 拨入；并非从 APP 读到一个地址就完成连接。beginCloudOperation 在 direct 模式明确拒绝云端请求。已有配对和连接可复用，缺失时应显示未连接或未配对。'),
+p('首期优先用现有 SDK/Gateway 连接承载新增的 Agent 任务能力，Gateway 经本机受控 IPC 调用独立 Agent 服务。模型请求仍由 Agent worker 调用统一云端模型代理。这样复用连接、发现和配对基础，新增的任务收据、模型授权与工具权限仍须实现。'),
+note('后台诊断是待扩展能力','现有 direct 调用由浏览器持有，云端不能直接接管。推荐在既有 Gateway 连接上增加独立授权的诊断控制路由，仅接收 agent.* 命令及事件；原设备 query/command 仍遵守 direct/relay。先验证协议能否复用同一连接，再实现；不把这条新路由描述成现有 SDK 已支持。'),
+note('服务常驻与连接常驻分开验收','Agent 服务必须独立于 GUI。现有 Go Gateway 桌面部署随 QSpin 启动，所以还需验证 GUI 退出后控制连接是否持续可用。若不满足，再评估 Gateway 受服务托管，或 Agent 复用 SDK 协议建立独立受限连接；这两种均为后续设计选择，不能把 SDK 复用直接视为常驻已实现。')]),
+section('architecture','架构与数据流',[
+p('APP 与 LabSlot 部署在同一服务器是用户提供的部署事实，本轮未登录服务器核验。建议以内部只读 API 访问 APP，同机部署用于缩短链路，不作为共享数据库写权或诊断授权的依据。'),
+p('ARCHITECTURE_DIAGRAM'),
+flow('一次诊断的主流程',[
+['选机器','LabSlot 从 APP 读取目录与详情，展示 Gateway / Agent 的不同在线状态。'],
+['选证据范围','操作者填写问题、时间范围、QSpin/Server 实例；先查看已有云端上报。'],
+['下发任务','LabSlot 校验当前权限与安装身份，保存 Task，发有限预算和短期模型授权。'],
+['现场分析','Windows worker 运行完整 Lite 循环；按需检索本地日志、补读窗口，必要时调用获授权的 SDK 查询。'],
+['回传与复核','事件、结论、证据片段和缺口回传 LabSlot；Host 核对来源与任务要求，人工可继续追问。']]),
+note('网络与日志范围','无需客户入站端口、RDP 或 SSH 隧道；客户机仍须能访问云端 HTTPS/WSS。原日志默认不整份搬运，但筛选后的片段会进入云端模型和诊断结果，不能承诺日志完全不出网。')]),
+section('source','直接使用 APP 数据源',[
+p('LabSlot 增加 AppDeviceSource 适配器：目录、设备详情、Gateway 安装与绑定、遥测/事件等已有上报。浏览器只调用 LabSlot API，服务凭据留在后端。APP 继续维护名称、型号、序列号、归属及上报事实；LabSlot 维护备注、支持人员权限和诊断历史。'),
+flow('从“导入”改为“关联”',[
+['打开远程机器','直接分页读取 APP 目录；可按序列号、主机名和设备名称搜索。'],
+['预览关联','展示设备与安装身份、现有 LabSlot 关联、Agent 是否出现；无变化项直接跳过。'],
+['关联并管理','仅保存 source_instance + source_device_id / source_installation_id 与本地远程机器 ID 的映射。'],
+['后续访问','资料仍从 APP 读取；本地缓存带 fetched_at 和源版本，失败时明确显示缓存时间。']]),
+table(['问题','推荐规则'],[
+['为何还保留少量本地记录','任务、权限和安装凭据需要稳定目标；保留引用和必要历史快照，不复制整套主数据'],
+['目录接口现状','现有 GET /open/devices/:id、/by-sn/:serialNumber 可查详情；该控制器没有服务间分页目录。新增目录窄接口，或由 APP 方提供等价的授权数据源'],
+['同机数据库能否直连','技术可行。首选 API 避免 Prisma/Drizzle 表结构耦合；若必须只读视图，需固定字段、专用只读账户、版本与配额，不跨系统写表'],
+['重复关联与预览变化','唯一来源键、idempotency key 和 source revision；确认时重读。冲突行解释原因，其余逐行收据；不静默覆盖本地备注/权限'],
+['APP 暂不可用','显示带时间的缓存和来源故障，不能将缓存在线状态当当前在线；首期不发新诊断任务，既有任务依其有效租约结束'],
+['删除、注销或转移归属','标记源停用/待核对；停止新的诊断授权，保留历史。撤销或到期影响在途任务；不能只靠页面刷新处理权限'],
+['一台电脑连接多个仪器','新管理资源可关联多个 APP 设备，但保留旧 SDK 对同一 installation 与 device 配对的限制。缺安装信息时显示设备条目待关联，不用主机名猜测去重'],
+['跨系统权限','用来源实例及稳定 owner/member/device ID 显式映射；不用组织显示名或邮箱自动继承 LabSlot 权限。分页、计数、详情、任务、证据和模型上下文均过滤']]),
+note('已有上传数据能用到什么程度','DeviceReportLog.rawBody 是上报请求 JSON；设备详情还组合状态、实验、指标和网关信息。反馈附件属于另一条业务链。只有接口实际授权暴露的内容才能供 LabSlot 使用，不能把数据库存在记录等同于已经有可用的服务间读取接口。')]),
+section('service','Windows 服务、安装与更新',[
+p('建议新建 QSpinRemoteAgent 服务，一个签名 Rust EXE 提供 service 和 worker 入口。service 通过受控本机 IPC 接收 Gateway 转来的已授权任务，管理安装身份、任务收据和 SCM 状态；有任务时启动 worker，worker 直接接入 Lite Core/Harness。闲置时不保留大段模型上下文，QSpin GUI 关闭不结束服务；控制连接是否持续在线另行验收。'),
+flow('安装与首次上线',[
+['部署组件','沿用现有安装器的文件校验、SCM 创建/更新和停止等待；Agent 使用独立目录。'],
+['登记日志根','定位实际 QSpin 实例和 Server 所在机器；给服务必要只读权限，不按服务账户 AppData 猜路径。'],
+['首次绑定','服务生成安装密钥，以受信安装/升级发放的短期引导凭据证明身份；服务器校验后关联 APP 对象。'],
+['连接与自检','经既有 Gateway/SDK 通道报告服务版本、身份与日志可读能力；未联网显示等待连接，不阻断 QSpin 使用。']]),
+table(['事项','方案'],[
+['程序与状态','Program Files/CIQTEK/QSpin Remote Agent 放二进制；ProgramData/CIQTEK/QSpin/RemoteAgent 放私有凭据、任务与诊断收据'],
+['运行账户','优先评估 LocalService + service SID 与明确 ACL。其只读访问真实日志/SQLite WAL 必须实机验证，读不到不自动升为 LocalSystem'],
+['权限参照','内存服务的系统权限和 Users 可读 token 只适用于其原本地用途，不能照搬为远程 Agent 凭据'],
+['首次绑定','APP 注册资料不是持有凭据的证明。现有可信安装信息能否无感换取独立 Agent 凭据尚待接口联调；否则管理员批准一次绑定，客户仍不配置模型'],
+['升级','停止接新任务→当前任务有界收尾或记中断→确认 worker 已停→切换签名版本→健康核对；保留上一版本和原身份/收据'],
+['回退','仅在状态格式兼容时回退程序；不兼容则保留快照并停在待恢复，不让旧程序写新格式'],
+['卸载','停止任务、删除服务与程序；凭据吊销及本地诊断数据清理结果分别记录。原 QSpin/Server 日志不得随 Agent 卸载删除'],
+['资源','试点起始建议：每机器并发1、任务10分钟/30次调用；工具片段默认8KiB，上限64KiB且必须受剩余上下文预算裁剪。按游标补读；CPU/内存硬限制用worker Job Object验证，数值压测后定案']]),
+note('服务健康分层','安装成功、SCM 运行、云连接、授权有效、日志可读分别显示。HTTP 200 不能代表现场诊断通过。Windows 服务与交互桌面隔离，需要本地提示时另用受控 IPC，不让服务直接弹普通 GUI。')]),
+section('tools','日志工具与证据来源',[
+table(['来源','读取方式','结果必须说明'],[
+['APP 已上报数据','授权 API 按设备和时间查询；诊断时附带固定来源快照','上报时间、接收时间、数据类型和新鲜度；不标为本机完整日志'],
+['QSpin SQLite','只读参数化查询；探测既有 schema，短事务与按 ID 分页；不执行迁移建表','实例、数据库身份、表/行 ID、时间范围、字段缺失、来源版本'],
+['客户端 Server 缓存','兼容当前 t_server_log 和旧混表 schema','明确标记客户端缓存及缺口；QSpin 关闭后可能不再更新'],
+['本机文本日志','仅登记目录，按文件身份/代次/偏移有界读取','轮转、截断、编码、返回字节、下一游标；不能因无匹配推断无故障'],
+['SDK 当前状态/日志接口','连接后读 system.capabilities，只调用当前实际暴露且获授权的方法','连接目标、接口版本、调用时间与收据；Gateway 自身日志不等于 QSpin/Server 日志'],
+['另一台电脑的 Server','另部署服务，或验收已有只读 Server 日志接口','明确原件所在机器；前端 APP 注册不能凭空读取后端文件']]),
+p('建议工具：list_sources、search_logs、read_log_window、get_runtime_status、get_cloud_report_window。名称是新 Host 接口草案；已有 SDK 方法通过薄适配复用，不重新实现其设备协议。工具输出先做字段级脱敏再交给 Core；文件路径用 source_id 解析，不接受模型任意绝对路径或任意 SQL。'),
+note('当前 Core 的能力边界','保持 enable_local_tools=false，只注册获授权工具。现有 HandWave Node 默认打开通用本地工具，不直接复制该配置。Core 对 grant 的替换不是完整的日志脱敏方案；凭据、账号与业务敏感字段需要产品策略。'),
+p('证据片段保留 source_id、机器/实例、UTC 与原时区、行 ID 或字节区间、源版本、截断/缺口与续读游标；原始片段 hash 留现场，云端存脱敏片段 hash 和脱敏规则版本。SQLite WAL 活跃时不得只复制主 DB 冒充一致快照，也不对活动文件使用 immutable 模式。')]),
+section('protocol','任务、模型授权与恢复',[
+flow('任务状态（设计）',[
+['Queued / WaitingForAgent','任务已保存，尚未开始；排队也受原 deadline 限制。'],
+['Running','远端已接收并持久化 task_id；由一次或多次 Run 完成检索分析。'],
+['NeedsReview','Host 已检查候选和证据，等待业务接受或人工补充。'],
+['Accepted / Failed / Cancelled','接受须显式记录；失败和取消保留原因，未知结果进入 ReconciliationRequired。']]),
+table(['机制','实现要求'],[
+['身份','机器安装凭据负责连接；任务执行授权和模型 grant 分开。不得用 Agent 登录替换 APP 现有 Gateway token family'],
+['本机 IPC','命名管道ACL限定受信Gateway调用身份；Agent服务仍核验云端签发的installation/task、操作者、日志范围与期限。不能仅凭localhost或调用方自报身份接受任务；发现Gateway与普通GUI共用账户时先验专用身份/签名任务边界'],
+['云模型','LabSlot ModelHost/代理衔接现有中央模型入口；上游长期密钥只在服务器。任务 grant 绑定操作者、资源域、machine/installation、Task/Run、model/protocol、预算与 expiry'],
+['复用 HandWave','复用默认模型路由与短期授权思路，采用明确的任务绑定；旧 default grant 与 smart 路径的检查强度不同，不能原样移植后声称隔离已完成'],
+['收发','task_id + attempt/run_id + event_seq；收到任务先落收据再 ACK，重复消息返回既有状态。start/cancel/resume为command，不能套现有query瞬断自动重试；status/events按task+seq幂等读取'],
+['页面与断线','推荐任务在服务持久接收后按有限租约执行，页面关闭只停止观察；若首个原型仅用浏览器direct提交，则事件本地落盘、重开按seq补读，后台新派发/云端持续归档仍未满足'],
+['控制链路失效','正式后台诊断路由与浏览器连接分开。控制路由失效时不接新任务，已有任务仅在原执行/模型租约内运行并保存事件。云端显示状态待确认；取消在恢复后核对，不提前宣称已停止'],
+['租约与撤销','不自动续权或延长原Task截止；到期停止新调用。联网时响应撤销；离线时不能保证即时收到撤销，窗口上界为既有短租约剩余时间。首期不设无限后台任务；完全断网不能调用云模型'],
+['链路资源','SDK/Gateway共线只承载有界任务控制、摘要和分页事件，模型token流经独立HTTPS代理；限帧大小和事件速率，验证不会阻塞已有采集/控制流'],
+['resume','重启后先读收据并核对授权、Session 与开放调用；未知效果不重放，依据 Harness 的 reconcile_resume 合同决定恢复或拒绝'],
+['完成判定','Harness AwaitingHostAcceptance 不是业务 Task 已接受。验证引用可定位、输出完整性/缺口与问题范围；根因不能只靠模型自述判通过']]),
+note('能力与验收','Core/Harness 已有循环、Session、预算、取消、检查续作和受控恢复证据。任务61仍未全量通过，真实综合长任务覆盖不足。首个客户诊断试点必须独立验收，不把之前的能力试验当本产品上线证明。','warning')]),
+section('verification-capabilities','Computer Use 与 QSpin API MCP',[
+p('用户已提出把 API 与界面操作纳入验证能力。本轮将其加入设计，不启动现场验证，也不因此授予采集、换样、调参等硬件动作。具体允许的方法、目标、参数和预期后置状态，在每个验证 Task 开始前确定。'),
+table(['模块','当前源码支持','需要新增或验证'],[
+['Lite MCP','已有 stdio / Streamable HTTP、tools/list分页、工具调用、图片结果转换；经 extra_tools 注册到 Core，接口仍为 experimental','复用现有组件；Host决定安装包内的可信server配置、工具范围、凭据、脱敏和收据语义'],
+['Core 视觉模型输入','ModelCaps 已解析 input；MCP图片可进入工具结果，但 agent.rs 创建 Model 时没有设置 model.input，固定上游默认仅Text，provider因此不附图片','这是共享Core的真实接线缺口：从可信模型能力设置模态并做视觉准入，验证实际出站 image_url；文本模型不可默默丢图'],
+['QSpin V2 MCP','TS实现当前固定11项查询工具；system_capabilities只是目录查询，不会自动把所有API变成工具','先接现成查询；缺少的方法按实际SDK能力补受限适配。验证stdio纯净性：server/tools中的console.info在标准Node语义下写stdout，尚未运行复现'],
+['QSpin V3 MCP','已有stdio包，connectHttp连接统一Gateway；从当前获准且callable的目录生成工具，主动过滤ui.*；有operation受理/等待/恢复工具','复用同版SDK/MCP和durable intentStore；Host提供固定target、凭据策略。模型零配置不等于SDK身份无需配置，由安装/管理端完成'],
+['QSpin 专用 UI 路径','已有旧UI MCP和新的V3私有桌面Agent候选；后者按批准profile观察目标、截图，并执行invoke/expand recipe','保留V3受控路径；另加受限公开工具适配，不能把私有stdin协议直接作为MCP。通用Windows桌面操作由开源后端提供，两者按任务明确选择'],
+['Windows会话','SCM服务在Session0；当前V3桌面Agent要求Gateway与目标同SID、同一非0用户session及匹配桌面','后台服务调度→授权Gateway/UI接口→原用户会话内桌面Agent。不要从LocalService直接启动它或顺手把原用户态Gateway迁入Session0']]),
+note('V2、V3、UI 三条路径显式选择','根据目标实际版本与能力选择已验证适配器，记录 api_version、方法revision、target和installation。V3调用结果未知时不得自动改用V2或点击GUI重做；UI不是绕过API授权/错误的回退通道。现有V3 API MCP排除ui.*，UI桥接需要单独实现与验收。'),
+table(['接入门','最小实现要求'],[
+['目录完整性','V3默认每页8项，Lite最多32页且512工具上限，默认分页先受256项限制；超限可能仍Connected并记录excluded(*)。Host检查完整性和任务必需工具，不能静默丢末页。可缩小获准目录或调整已支持页长；当前CLI未传页长options，不能只改配置假装已生效'],
+['未知效果语义','V3 isError可包含may_have_been_sent、original_intent、operation收据；Lite通用转换会把错误降成可能截断的文本。QSpin适配边界须在该转换前保存原始收据，并将真正未知效果映射到details.effects_unknown，交Harness阻断和reconcile_resume；不是仅写提示词'],
+['可信工具分类','readOnlyHint只是server声明，不能当授权。Host按受信方法契约给出有效副作用分类并覆盖不可信hint，防止超时被误记为无效果；UI输入、start/cancel/resume等执行前检查Task grant与输入租约。列表隐藏不能替代执行端授权'],
+['图像路径','Rust Host直接AgentTool/MCP可携带图片；JSONL内置mcp_servers路径保留图片，普通外部tool_reply当前把value序列化成文本。需要截图时选择正确路径或显式扩展协议，不把文件名/base64文本当视觉输入'],
+['视觉预算','当前主要是JSON字节预算，不等同图像token预算。限制截图范围、分辨率、张数和累积字节；原图/哈希作证据，给模型受控缩略图和关联引用，测试长回合与压缩后仍能追溯'],
+['截图隐私与来源','仅采集获准目标窗口/区域，不采集其他窗口；缩略图不等于脱敏，账号等敏感区在进入Core/MCP结果和模型前遮蔽。原图/脱敏图分别hash，记录捕获时间、窗口/用户session、DPI及裁剪坐标；原图受限本地留存，任务策略规定清理期限'],
+['服务与凭据','MCP sidecar由Host以固定程序和批准配置启动；API和UI凭据与模型grant分离。禁用任意远程指定command/env/模块路径；客户无需手填模型或供应商key']]),
+p('新V3 UI Agent当前只允许 ui_only，combined 明确拒绝。它是既有未提交候选，不是已发布能力；允许的recipe需有匹配真实QSpin版本、语言和DPI的校准证据。旧UI MCP把整个action catalog暴露为工具，且部分输入有鼠标/键盘回落，不整体开放远程。锁屏、无用户桌面或进程身份不匹配应报告“UI验证不可用”；RDP断连行为本轮未验证，不能承诺无交互会话也可点击。'),
+note('优先级','先接 API 与日志验证，再接 Windows 开源后端的观察/截图，随后验收获准窗口内的点击、输入和滚动；QSpin 专用 recipe 同时保留。Mac/Linux 与原生厂商 computer-use 协议后续评估，本轮不把开源候选标为已集成。')]),
+section('windows-open-source','Windows Computer Use 开源集成',[
+p('目标是复用已有桌面执行能力，让 Lite 通过工具观察和操作 Windows。优先验证 CursorTouch/Windows-MCP，作为用户会话中的 MCP sidecar；客户仍无需配置模型。选型依据是现成 MCP 接口与 Windows 工具面，而不是另引入一套 Agent 编排。此处是技术试点推荐，尚未锁定安装包分发方案。'),
+table(['候选','官方资料支持','本方案位置'],[
+['CursorTouch/Windows-MCP','固定 7fd39b4c1551d4d9da33d55c486ac5c4c6e2cf41，包版本0.8.8；Win10/11、Python≥3.14；stdio/Streamable HTTP；截图、UI树、点击、输入、滚动和窗口操作','优先技术试点。顶层MIT；运行依赖含GPL组件，分发仍有许可门。不是安装后就完成产品接线'],
+['pywinauto','Windows Win32/UIA自动化库；0.6.0起BSD-3-Clause，提供控件查找、操作及可选截图','Python备选：需要薄MCP适配，通用控件驱动仍复用库，不从Win32/UIA底层重写'],
+['FlaUI','MIT、.NET UI Automation库，提供UIA2/UIA3封装','若Python打包/许可处理不合适，评估.NET sidecar；它本身不是现成MCP server'],
+['Microsoft UFO','MIT顶层；UFO²为Windows桌面Agent，UFO³加入跨设备编排','参考交互与验证做法；整体替换会与Lite循环、LabSlot调度重叠，首期不采用整套编排']]),
+note('固定候选的真实依赖门','Windows-MCP 的 pyproject 声明 fuzzywuzzy≥0.18.0 和 python-levenshtein≥0.27.1；上游许可分别为GPLv2及GPLv2或更新版本。不能仅凭项目MIT就判断整个客户安装包许可合格。实施时核查实际锁定依赖、分发义务与打包方式；若选择移除/替换，须验证实际调用与匹配行为。sidecar进程隔离不自动消除分发义务。本轮未安装、锁定完整依赖或批准许可例外。','warning'),
+flow('Windows 集成路径',[
+['Lite Core / Harness','继续推理、工具调度、取消和恢复；文字UI树可先用，截图判断需补通并验证视觉模型输入。'],
+['产品 Host','核对Task授权、目标窗口、输入租约和预算；接收前后证据，阻断未知效果重放。'],
+['用户会话 broker','服务经受控IPC联系授权的交互会话；会话内启动固定版本MCP sidecar，经stdio接入。该broker与跨会话接线待实施。'],
+['开源 Windows 后端','负责UIA、截图与鼠标键盘等通用操作；不配置模型。QSpin专用UI recipe仍走原受控Agent路径。'],
+['验证收据','重新观察目标、核对API/日志或文件输出；工具调用返回不直接等同任务验收通过。']]),
+table(['集成事项','明确要求'],[
+['安装与升级','固定版本、依赖锁、Python私有运行时、哈希和许可证清单随包交付；验证签名/更新/回退。客户现场不执行动态下载最新版的uvx安装；不另套上游登录计划任务导致双重托管'],
+['会话边界','服务继续常驻Session0，桌面后端在已授权用户会话；没有可交互桌面时仍可做日志/API诊断，UI报告不可用。锁屏、UAC安全桌面、RDP断连均单独验收，不承诺绕过系统限制'],
+['工具范围','上游默认全工具，首期使用明确allowlist；PowerShell、Registry、FileSystem、剪贴板等不随Computer Use自动开放。工具隐藏不是目标授权，每次执行还需Host及执行端校验'],
+['窗口与隐私','上游region是几何裁剪，不能证明返回的窗口列表、UI树或遮挡像素都属于目标。适配层必须核对PID/HWND/session，过滤文本元数据并在入Core前脱敏；不能证明范围时拒绝该采集。不是只给提示词要求别看其他窗口'],
+['输入与接管','上游有用户接管机制，但其README明确为best-effort。不当作权限隔离或完成保证；执行前核对目标与当前观察，用户介入后暂停新的输入。无充分后置证据的操作保留unknown，不换API/UI重放'],
+['遥测与资源','上游默认匿名遥测开启；产品包显式关闭并验证实际网络行为。测量空闲/截图/UI树的CPU、内存、延迟及安装体积，本轮没有性能实测'],
+['Mac / Linux','仅保留后端capability协商和平台选择，当前显示不支持；以后选对应开源后端。Windows选型不被当作跨平台支持证明']]),
+table(['试点验收','可观察结果'],[
+['桌面基础','内部Windows10/11测试机完成MCP初始化、目标窗口观察、截图、一次获准点击/输入/滚动及后置核对；先使用离线或无硬件动作页面'],
+['QSpin覆盖','实际Qt界面、中文、DPI缩放、多显示器、弹窗、窗口移动/遮挡；自绘控件UIA不足时明确视觉通路或专用recipe，不宣称控件树全覆盖'],
+['生命周期','取消、用户接管、锁屏、多用户、RDP断连、sidecar崩溃和重启；失败可解释且不自动重复可能已发生的输入'],
+['交付门','实际锁定依赖许可审计、离线安装/升级/卸载、关闭遥测、身份/范围过滤、截图入模型、API/UI原收据均通过后，才确定发布依赖']]),
+{type:'links',items:[{label:'Windows-MCP 固定版本说明',href:'https://github.com/CursorTouch/Windows-MCP/blob/7fd39b4c1551d4d9da33d55c486ac5c4c6e2cf41/README.md'},{label:'Windows-MCP 固定依赖声明',href:'https://github.com/CursorTouch/Windows-MCP/blob/7fd39b4c1551d4d9da33d55c486ac5c4c6e2cf41/pyproject.toml'},{label:'FuzzyWuzzy 许可',href:'https://github.com/seatgeek/fuzzywuzzy/blob/master/LICENSE.txt'},{label:'python-Levenshtein 许可说明',href:'https://github.com/rapidfuzz/python-Levenshtein#license'},{label:'pywinauto',href:'https://github.com/pywinauto/pywinauto'},{label:'FlaUI',href:'https://github.com/FlaUI/FlaUI'},{label:'Microsoft UFO',href:'https://github.com/microsoft/UFO'}]},
+p('官方仓库资料于2026-11-01查询；Windows-MCP README与依赖声明均回查固定提交。备选为项目级资料对照，尚未锁定版本或审计其完整依赖。以上资料证明候选接口与要求，不证明本产品已集成或已通过Windows验收。')]),
+section('verification-loop','诊断到验证的闭环',[
+flow('每次验证按同一任务留证',[
+['固定目标与判据','记录机器、安装、QSpin/Server与API/UI profile版本；提出可验证假设，确定本轮操作和通过条件。'],
+['取得基线','API读状态/数值，保存日志窗口；需要UI时读取目标窗口/控件树并截限定区域。记录各自时间与新鲜度。'],
+['执行获准步骤','优先API；需要证明界面行为时执行批准UI recipe。命令只派发一次，有operation则保存原intent与受理回执。'],
+['核对后置结果','V3等待原operation终态；UI重新观察/截图；按需求核对新日志、文件或数值，标明未覆盖或未知。'],
+['形成验证收据','Host按预先判据输出通过/失败/覆盖不足/结果待确认，附原始证据引用；模型给解释，业务Task仍待明确接受。']]),
+table(['验证层级','能证明什么','不能据此声称'],[
+['只读 API + 日志','当前状态、数值、错误和时间范围的交叉核对','历史根因必然成立，或已修复'],
+['副本/离线验证','固定样本、配置副本、文件输出与数值判据匹配','实际仪器行为或客户现场通过'],
+['UI观察/受控输入','真实目标窗口、实际操作前后状态和指定recipe结果','截图正常就代表业务/硬件完成'],
+['实机业务验证','获准设备动作的真实回执、终态、输出和领域判据','mock、MCP成功或operation accepted可替代此层']]),
+p('API 与 UI 可能读取同一缓存，二者一致不自动构成独立证明。需要验证输出时增加实际文件、数值或设备回执。当前 combined 数据绑定桥未实现，首期在Task层按时间顺序汇集证据，明确时间差，不宣称API/UI原子快照或原子联合验证。'),
+table(['实施顺序','完成门'],[
+['1 Core视觉基础','带图片的MCP结果→Core→实际provider请求包含图片；不支持视觉的模型明确拒绝视觉任务；图片过大、取消、历史恢复/压缩保留引用均有证据。受控出站检查后再做有限真实视觉模型试验'],
+['2 V2/V3 MCP消费者','各用匹配版本与真实进程验证initialize/完整工具目录/调用/错误/取消；V2协议stdout检查；V3受理≠终态、原intent恢复、unknown结构化阻断、跨目标拒绝和末页控制工具覆盖'],
+['3 Windows开源后端与QSpin专用UI桥接','先完成开源候选环境/依赖门与用户会话broker，再验收观察、截图及获准输入；QSpin专用profile/recipe仍复用原Agent。两条路径均检查窗口身份、后置状态及锁屏/多用户/取消/未知输入不重放'],
+['4 端到端诊断验证','LabSlot发起→现场日志/API/UI证据→明确判据→Host验证收据。客户无模型配置，未支持的V2/V3/UI能力直接显示缺口；不因测试失败自动扩大操作范围']]),
+note('此次只做设计','未修Core视觉接线、未修V2 stdout、未实现V3错误语义桥或UI公开适配；未执行任何客户API、截图、点击或硬件动作。新增内容的源码和独立审查记录见验证增补附件。','warning')]),
+section('ui','LabSlot 管理页面',[
+p('入口建议为“运维 → 远程机器”。沿用 LabSlot 现有主题、表格、权限和详情抽屉，不使用本报告的手绘主题作为产品 UI。列表以机器为单位，卡片下关联仪器，避免把一台电脑的多个仪器误算成多个 Agent。'),
+table(['界面','内容与动作','状态与交互'],[
+['远程机器列表','APP 来源、机器名、关联仪器、Agent 安装/版本、最近联系、诊断权限；从 APP 选择、刷新、查看详情','无关联时提供选择入口；APP 故障显示缓存时间；长标识详情可复制，不只给省略号'],
+['APP 选择/关联','实时分页目录、可关联/已关联/冲突状态、字段来源、确认关联数量','只是关联元数据，不自动安装或授权；重复提交有逐行收据；冲突行提供查看原因'],
+['机器详情','资料、来源数据、诊断、历史四个页签；将 APP 上报时间与 Agent 心跳分列','显示“已登记，Agent 尚未连接”等具体下一步，不用一个绿色在线掩盖所有层级'],
+['发起诊断','问题、时间范围、日志来源、只读范围与预算；开始、取消、补充问题','显示已检索来源/字节与阶段，不编百分比；取消待确认时保留提示'],
+['诊断结果','结论、引用片段、覆盖缺口、补读、人工接受或继续追问','区分证据与推断；没有日志/权限不足/未知结果分别显示；错误不自动消失']]),
+p('桌面采用列表加详情，窄屏切为独立详情页；表格局部横向滚动。搜索与切换即时响应，菜单/抽屉复用产品现有动效，关键状态用文字表达。键盘可完成筛选、选择、查看与取消；诊断持续运行时保留焦点，不自动滚走用户正在看的证据。')]),
+section('contracts','接口与最小数据模型草案',[
+p('以下都是拟新增或待适配接口，实际命名与现有 Nest 模块风格对齐后确定。APP 目录权限应独立于完整管理员会话；LabSlot 到 APP 的服务权限必须与当前操作者可访问资源求交集。'),
+table(['归属','建议接口/模型','用途'],[
+['APP 方','只读分页目录、增量版本/停用标记；范围化详情、指标/事件窗口','供 LabSlot 直接访问，优先复用 DeviceMasterService；禁止返回 authPasswordHash、Gateway token 等秘密'],
+['LabSlot','GET /remote-machines/source-candidates；POST /remote-machines/associations','实时预览与创建引用；只存来源键、目标关联及受控备注'],
+['LabSlot','GET /remote-machines/:id；POST /remote-machines/:id/diagnostics','合并来源资料与 Agent 状态；发起持久 Task'],
+['LabSlot','GET /diagnostics/:id/events?after=seq；POST /diagnostics/:id/cancel、/review','补事件、取消、人工接受/追问；每次读取/订阅核当前权限'],
+['Agent 能力','enroll、hello/capabilities、task.start/ack、event、cancel/receipt、reconcile','优先SDK/Gateway新增独立诊断控制路由并接本机IPC；命令带幂等键，独立能力版本，恢复按收据'],
+['LabSlot 数据','remote_machine、source_binding、agent_installation、diagnostic_task、diagnostic_event/artifact','来源映射、机器安装代次、任务状态和证据；表可按既有事件存储约定合并'],
+['客户机状态','安装身份、登记日志源、Session/checkpoint、工具与回传收据','升级保留；只存本产品需要的数据，不复制 APP 数据库']]),
+note('SDK 扩展的准入条件','采用现有 SDK 承载 Agent 任务时，要确认已配对身份、独立诊断授权、事件恢复和 GUI 退出后存活，再补 agent.* 能力。不能把当前配对转换成任意机器执行权，也不能为了 Agent 自动把现有硬件通道从 direct 改为 relay。首期不把未知支持当已有接口，不另造 SDK 已能完成的查询。')]),
+section('failures','异常与恢复矩阵',[
+table(['触发','页面结果','数据与执行影响','恢复与验收'],[
+['APP 不可达','来源不可用，显示缓存时间','不改 APP、不把缓存当当前授权','恢复后重查；测试超时/401/分页失败，确认不漏报成功'],
+['序列号重复/安装变更','关联冲突或安装待确认','不覆盖已有安装授权','核对来源键与绑定证据；测试换机/重装/一机多仪器'],
+['Agent 离线','已登记、Agent 离线；任务等待或到期','元数据可读，不声称已执行','上线以 task_id 对账；重复投递只执行一次'],
+['QSpin 退出','GUI 离线、Agent 可在线','可读已有日志；缓存不再更新需提示','真实关 GUI、重启、未登录账户分别试验'],
+['日志 ACL/库忙/轮转','具体来源不可读或覆盖缺口','不提权、不迁移日志库、不报无故障','恢复权限/等待有界重试/新游标；核对采集无阻塞'],
+['模型授权到期或额度不足','等待授权或预算耗尽','不切换为客户长期 key，不重置 Task 预算','续作须新批准并保持原收据；测试撤销与超时'],
+['网络断开或进程被杀','状态待确认，保留已回传片段','未知调用不重放，服务重启不等于任务成功','对账原 task/run/seq；测试 ACK前后与结果落盘前后中断'],
+['取消/升级停机','停止中→已取消，或结果待确认','不先报成功再后台继续','确认 worker 退出及无新模型请求，核对原任务终态'],
+['资料权限撤销','拒绝新读取与任务，关闭流','不因已有缓存/长连接继续泄露片段','测列表、详情、事件流、附件与模型代理各出口']])]),
+section('delivery','实施分期与验收',[
+table(['阶段','范围与建议落点','完成标准'],[
+['1 数据源与页面','APP维护方提供窄目录能力；LabSlot modules/remote-agent 或既有集成模块加 AppDeviceSource；Web增加远程机器页','真实授权数据源可分页、按权过滤、直接查看上报；重复关联不复制设备、不改现有 SDK 配对'],
+['2 一台内部机器闭环','ARA apps/qspin-agent（建议独立Host/workspace）；Lite固定revision；SDK/Gateway新增Agent能力与IPC；LabSlot任务/模型授权；先接SQLite日志工具','从LabSlot发起问题→既有SDK连接→服务多步查日志→可定位证据→补读/人工接受；并验证后台诊断控制路由，旧Gateway明确报不支持'],
+['3 服务与安装包','复用 maintenance 安装流程；QSpin installer独立Agent组件；日志根登记与凭据引导','未登录、GUI退出、重启、升级/回退、断网、取消、kill/resume逐项真实验证；保留原业务和数据'],
+['4 小范围现场试点','固定支持版本与客户范围，逐步启用其他日志源/已存在SDK查询','衡量诊断时长、上行字节、CPU/I/O及采集影响；真实模型多场景验证，不用单次成功概括全部'],
+['5 API与UI验证扩展','按前述四步接Core视觉、V2/V3 MCP、Windows开源后端、QSpin专用UI Agent和验证收据；Mac/Linux延期','每层分开验收；完成候选许可/环境门后再固定分发依赖，既有MCP/UI候选不等于远程产品已完成'],
+['延期','任意Shell、任意跨应用桌面控制、未经任务授权的配置/重启/硬件操作、跨客户自主巡检、全量日志长期归档','验证能力纳入设计；具体有副作用步骤按任务明确授权，不作为默认日志诊断动作']]),
+p('暂不承诺开发工期：当前最大前置是 APP 服务间目录/数据授权、安装身份引导和实际日志访问。协议确定后按阶段估工，先交付一台内部机器端到端结果，再决定推广。无需为此替换 LabSlot 现有 LangGraph 助手或恢复 Full ARA/OMP 工作。'),
+note('上线验收必须补齐','现场发布版本与本地源码可能不同；需固定 APP、LabSlot、Gateway、SDK、Agent、QSpin/Server 和安装包 SHA/版本。任务61未过的范围与本产品相关门禁分别列明。用户已选择保留的 symlink 权限阻断不在本轮改系统设置。','warning')]),
+section('evidence','调查来源与版本',[
+table(['证据','版本/路径','支持结论'],[
+['APP主仓','E:/repos/App/qspin_cloud_services main@5080ad79f333c86e50c6f4c1f0b8fded01014099；干净','schema.prisma:74/136/152/412；DeviceOpenController:12–63；device-access.service.ts:283–302'],
+['LabSlot / QSpin','E:/repos/qspin dev1@367090d213e3deb1a7d6cdf4b93834a6e02eae31；有既有WIP','schema.ts:103–150；qspin-sdk.service.ts:373–387/480–588/1406–1450；实际源回读'],
+['服务与日志','同上；QuantumSpin/tools/maintenance_service/main.cpp:18–64；app/database/database.h:246/274；LogService.cpp:58/101','SCM生命周期与SQLite日志事实；Go Gateway README:130–132为当前生命周期说明'],
+['安装器','D:/WorkSpace/build_package @55a7e5492c93c661c3cc1abe165ed63a8889bea9；有既有WIP','ui_nim_setup.nsh:188–268/615/638；本次引用该文件无差异'],
+['Core/Harness','E:/repos/ara-github dev@e229fb9ab800b46313047b89b73ac41e60c9efb4；既有13项WIP保留','host-contracts.md；Harness README；HandWave gateway.rs:9–64、transport.rs:458–525'],
+['现代HandWave Hub','E:/repos/ara @0b9cb7c（详细SHA见core-research）；有既有WIP','apps/handwave/gateway_proxy.go:166–200；default与smart授权边界不同']]),
+table(['本轮验证增补证据','源码位置','结论边界'],[
+['Lite Core视觉 / MCP','crates/ara-agent-lite-core/src/agent.rs:1277/1419；model_caps.rs:9–65；crates/ara-agent-lite-mcp/src/tool.rs:48–100/140；client.rs:21–23','MCP支持图片转换，但Core模型未设置Image；isError普通文本化与分页限额需产品接线处理'],
+['固定rpi依赖','pi-rust 8ec462672d90e62712d96074638efef89436cebe，crates/rpi-ai/src/model.rs:199–212、providers/openai_completions.rs:334–367','Model默认Text，图片进入真实请求受Image模态门控制；不是基于记忆推断'],
+['QSpin API MCP','E:/repos/qspin同367090d2；sdk/qspin-sdk-ts/v2/src/mcp/tools.ts:31、server.ts:103；v3/mcp/src/tools.mjs:15–53/107–127、cli.mjs:4–16','所引V2/V3 MCP路径无dirty；本轮只读，未跑真实消费者/现场API'],
+['QSpin桌面候选','tools/qspin_ui_sdk/qspin_ui_sdk/v3_agent/*为untracked WIP，pyproject.toml已dirty；Gateway internal/uiv3与hostv3/ui相关路径也为WIP，process_windows.go:87约束session','按实际工作区源码调查，不能将候选能力归为HEAD提交或已部署；原WIP保留']]),
+p('以上是本地当前源码支持与设计推导。本轮没有核对云端部署、客户设备、真实安装/日志ACL或模型端到端运行。图索引存在fast/排除/变更范围，关键结论已回读源码；无搜索结果未被当作不存在的证据。'),
+{type:'links',items:[{label:'APP 数据源调查',href:'cloud-research.md'},{label:'Windows 服务调查',href:'windows-research.md'},{label:'Core 与授权调查',href:'core-research.md'},{label:'Computer Use 与验证增补调查',href:'verification-extension-research.md'},{label:'Core 视觉与MCP接线核对',href:'core-extension-review.md'},{label:'Microsoft：LocalService 最小本地权限',href:'https://learn.microsoft.com/en-us/windows/win32/services/localservice-account'},{label:'Microsoft：服务与桌面交互限制',href:'https://learn.microsoft.com/en-us/windows/win32/services/interactive-services'},{label:'Microsoft：Job Object 进程资源约束',href:'https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects'}]},
+p('Microsoft 官方资料于2026-11-01查询：LocalService具有限制的本地权限；服务在Session 0运行、不直接承载交互桌面；Job Object可管理worker进程组和资源。它们支持设计选择，不证明本产品配置已经完成。')])
+]};
+
+const svg=`<div class="architecture-wrap" tabindex="0" aria-label="可横向滚动的远程诊断架构图"><svg viewBox="0 0 940 520" role="img" aria-labelledby="arch-title arch-desc"><title id="arch-title">APP 数据源、LabSlot、SDK 与远程 Agent</title><desc id="arch-desc">APP直接提供设备和上报数据，LabSlot管理诊断。现有SDK通向Gateway和QSpin，独立Windows Agent服务经云端模型运行Lite，读取现场日志。两条通道不混淆授权。</desc><defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0L8 4L0 8" fill="none" stroke="#343b3b" stroke-width="1.5"/></marker></defs>
+<rect x="12" y="12" width="916" height="220" rx="18" fill="#f1f7f5" stroke="#59968a" stroke-dasharray="7 5"/><text x="30" y="39" class="zone">云端同机部署 · 业务权限仍分别校验</text>
+<rect x="30" y="72" width="235" height="110" rx="10" class="node" fill="#fff4bc"/><text x="48" y="103" class="title">APP 服务 / 权威数据源</text><text x="48" y="132">设备 · 安装实例 · 绑定</text><text x="48" y="157">遥测 / 事件 / 已有上报</text>
+<rect x="360" y="72" width="240" height="110" rx="10" class="node" fill="#d8eee7"/><text x="380" y="103" class="title">LabSlot 远程机器页面</text><text x="380" y="132">资料引用 · 权限 · 任务收据</text><text x="380" y="157">Agent 调度 / 模型代理</text>
+<rect x="695" y="72" width="210" height="110" rx="10" class="node" fill="#fffef5"/><text x="714" y="103" class="title">中央模型入口</text><text x="714" y="132">统一模型配置与额度</text><text x="714" y="157">长期密钥留云端</text>
+<path d="M265 122L350 122" class="edge"/><text x="277" y="103">只读 API</text><path d="M600 122L685 122" class="edge"/><text x="612" y="103">模型请求</text>
+<rect x="12" y="279" width="916" height="228" rx="18" fill="#fffef5" stroke="#9a8d70" stroke-dasharray="7 5"/><text x="30" y="307" class="zone">客户电脑 · 安装包部署 · 无需配置模型</text>
+<rect x="30" y="340" width="235" height="125" rx="10" class="node" fill="#f2eee4"/><text x="48" y="371" class="title">现有 Gateway / QSpin</text><text x="48" y="400">保留 SDK 查询与设备流程</text><text x="48" y="425">调用以当前 capability 为准</text><text x="48" y="450">桌面 Gateway 有 GUI 依赖</text>
+<rect x="360" y="340" width="240" height="125" rx="10" class="node" fill="#fff4bc"/><text x="380" y="371" class="title">Remote Agent 服务</text><text x="380" y="400">Lite Core + Harness worker</text><text x="380" y="425">本地多步检索 / 分析 / 续作</text><text x="380" y="450">身份、收据、受限日志工具</text>
+<rect x="695" y="340" width="210" height="125" rx="10" class="node" fill="#fffef5"/><text x="714" y="371" class="title">本地日志来源</text><text x="714" y="400">QSpin SQLite / 文件</text><text x="714" y="425">Server 缓存或本机原件</text><text x="714" y="450">筛选与脱敏后返回片段</text>
+<path d="M480 330L480 192" class="edge dashed" marker-start="url(#arr)"/><text x="493" y="252">HTTPS 模型请求 · 短期授权</text><path d="M600 402L685 402" class="edge"/><text x="614" y="382">只读</text>
+<path d="M360 157C300 207 148 222 148 330" class="edge" marker-start="url(#arr)"/><text x="50" y="250">复用 SDK · 扩展诊断命令/事件</text><path d="M265 402L350 402" class="edge" marker-start="url(#arr)"/><text x="277" y="382">本机 IPC</text>
+</svg></div><p class="diagram-caption">推荐结构示意，非运行拓扑证明。APP直接读；SDK/Gateway连接优先复用，诊断路由与IPC待扩展。HTTPS模型请求独立授权。GUI退出后连接存活需验收，不满足时再评估Gateway托管或复用SDK协议的独立Agent连接。</p>`;
+const css=`<style>.architecture-wrap{overflow-x:auto;margin:24px 0;border:1px dashed #9a8d70;border-radius:12px;padding:8px}.architecture-wrap svg{display:block;width:100%;min-width:780px;font:15px system-ui,sans-serif;color:#2c2c2c}.architecture-wrap .node{stroke:#343b3b;stroke-width:1.7}.architecture-wrap .title{font-weight:700;font-size:18px}.architecture-wrap .zone{font-weight:600;font-size:16px}.architecture-wrap .edge{fill:none;stroke:#343b3b;stroke-width:1.7;marker-end:url(#arr)}.architecture-wrap .dashed{stroke-dasharray:6 4}.diagram-caption{font-size:14px;color:#606761}.layout{grid-template-columns:240px minmax(0,1fr)}main,.section{min-width:0}@media(max-width:800px){.layout{grid-template-columns:minmax(0,1fr)}}.section p,.section td{overflow-wrap:anywhere}</style>`;
+let html=renderReport(data).replace('<p>ARCHITECTURE_DIAGRAM</p>',svg).replace('</head>',css+'</head>');
+fs.writeFileSync(path.join(dir,'design.json'),JSON.stringify(data,null,2)+'\n');
+fs.writeFileSync(path.join(dir,'design.html'),html);
+console.log(JSON.stringify({sections:data.sections.length,bytes:Buffer.byteLength(html),output:path.join(dir,'design.html')}));

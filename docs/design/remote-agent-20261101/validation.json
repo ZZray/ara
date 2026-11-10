@@ -1,0 +1,25 @@
+{
+  "artifact": "design.html",
+  "sha256": "d15cfd2b79b0f734d6864ee471738fe1d081c148f8ee2aabe72f3a797db6c952",
+  "sections": 12,
+  "svg_elements": 2,
+  "unique_ids": 30,
+  "duplicate_ids": [],
+  "broken_local_links": [],
+  "inline_scripts": [
+    {
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "exit": 0,
+      "error": ""
+    },
+    {
+      "exit": 0,
+      "error": ""
+    }
+  ],
+  "browser_visual": "NOT_VERIFIED: file protocol blocked by browser security policy; no workaround attempted",
+  "product_tests": "NOT_RUN: design only"
+}

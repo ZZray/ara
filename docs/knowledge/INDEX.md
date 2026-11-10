@@ -235,6 +235,42 @@ with two Cargo jobs. No commit, push, deployment or installation is performed.
   cost and validity limits, and ARA budget/commit constraints. Deferred option,
   not a new task, runtime feature or accepted capability.
 
+- [Evaluation index refresh case](ai-assisted-engineering-evidence.md#case-20261027-ara-eval-index-refresh):
+  why a minimized excluded-file scenario did not establish the actual trigger;
+  native Git controls and the narrow P0 version-collection repair. Final
+  properties, regression and post-review pass; full P0 acceptance remains open.
+
+- [Headroom Rust H0 and integration plan](../../crates/ara-agent-lite-core/docs/evidence/lite-capability/headroom/README.md):
+  fixed upstream Rust builds and offline cases execute outside the worktree;
+  dependency gates remain open. Kiro requirements 39–41 and tasks 63–66 separate
+  H0 from the later Lite adapter and paired task comparison. This is not Lite,
+  Full Core, real-model or product acceptance.
+
+- [Lite output-length recovery](../../crates/ara-agent-lite-core/docs/evidence/length-recovery-20261025.html):
+  explicit Host policy, one eligible replan within the original Execute Run.
+  The original Length, Session, call counter and deadline are retained; typed
+  source provenance and automatic-control origin are recorded separately.
+  [Length recovery and serialization case](ai-assisted-engineering-evidence.md#case-20261025-lite-length-recovery-and-source-serialization)
+  explains admission and the pinned typed-message hash format.
+
+- [Shared Lite JSONL clients](../../crates/ara-agent-lite-jsonl/README.md):
+  Python and Node Host callbacks over the existing shared Harness. Native
+  process checks and a controlled historical AI Code Review repair have
+  executed; real-model coding artifact acceptance, actual LabSlot database acceptance,
+  product default migration and release remain open.
+  [Authority and artifact case](ai-assisted-engineering-evidence.md#case-20261025-jsonl-authority-and-artifacts)
+  records why control payloads cannot be redacted or partially compared.
+  [Product Host settlement case](ai-assisted-engineering-evidence.md#case-20261025-product-host-settlement-and-budgets)
+  covers known pre-invocation rejection, uncertain effects and Relay attempts.
+
+- [Shared Lite Harness integration](../../crates/ara-agent-lite-harness/README.md):
+  reusable Host-reviewed tasks over Lite Core, with fixed Session authority and
+  cumulative budgets. The 2026-10-25 evidence covers a bounded Windows Execute
+  profile, including actual C++, reasoning and stripped-object trials and an
+  independent consumer. Summary execution, product integration and release gates
+  remain open. [Continuation path identity case](ai-assisted-engineering-evidence.md#case-20261025-lite-harness-continuation-path-identity)
+  records why canonical path equality alone did not establish native continuity.
+
 - [Public workflows over Full Core](../evidence/core-workflow-20261023.html):
   `ara-workflow` reuses the caller's Agent for bounded Host-reviewed work.
   Executed mechanism checks and the small C++ integration task are separate
@@ -248,6 +284,11 @@ with two Cargo jobs. No commit, push, deployment or installation is performed.
   records persisted-source ownership, actual returned knowledge content and
   canonical Session/marker boundaries. Its two-process result accepts the
   specified text consumer, while general retrieval and native resume remain open.
+
+- [Coding and reverse-engineering capability adoption](../../crates/ara-agent-lite-core/docs/evidence/coding-reverse-enhancement-20261022.html):
+  24 source-checked Full/Lite capability mappings and the first optional process-output
+  capture change in the independent Lite workspace. Its scoped checks do not accept
+  complete reverse engineering, full OMP parity, or a product release.
 
 - [Compact HandWave Rust node](../../apps/handwave-node/docs/knowledge/INDEX.md):
   independent rpi-based product Host; separate from full OMP parity and shared

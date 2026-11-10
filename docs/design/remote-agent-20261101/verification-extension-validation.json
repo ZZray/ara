@@ -1,0 +1,17 @@
+{
+  "artifact": "design.html",
+  "sha256": "1d0abacd3dd20b0e509bc3810b053b52e98f592d96dbad6616707225cf32458f",
+  "generator_sha256": "864f84f08873ad10014ddb8aa0db793bd16482290f4839ce15d9d28d798a938e",
+  "sections": 14,
+  "unique_ids": 32,
+  "duplicate_ids": [],
+  "broken_local_links": [],
+  "inline_script_syntax_exits": [
+    0,
+    0,
+    0
+  ],
+  "browser_visual": "NOT_VERIFIED: previous file protocol denial remains; no retry or workaround",
+  "product_tests": "NOT_RUN: design extension only",
+  "previous_validation": "validation.json remains bound to earlier 12-section snapshot"
+}

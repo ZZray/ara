@@ -1,0 +1,176 @@
+{
+  "author": "Ray Zhang",
+  "date": "2026-11-02",
+  "source_commit": "90f2b1cdd138129e2d331d89a37d70852e849739",
+  "kind": "source-inspection-only",
+  "files": [
+    {
+      "path": "crates/ara-agent-lite-core/Cargo.toml",
+      "git_blob": "99c1a9b88669adafcbb3531575c73dc35ada63a3",
+      "sha256": "35d41800b3f03060cedb07d59394175f845f5e866f0be46b7303385d45ddcb8e",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/Cargo.lock",
+      "git_blob": "e300122e6d25d61091e2094521509168587dd273",
+      "sha256": "abe96e00b36ac648104844eb16f70d0feb1cc244ec68b4b15b48181478d55b96",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/src/agent.rs",
+      "git_blob": "a3812c01015c4c3849fda39782052d4f81a485b4",
+      "sha256": "0ae5047f19aa2988e9502b158723d856972799469e7050e41e6d06c73acb78b1",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/src/model.rs",
+      "git_blob": "50794cf9edcbee572ab5bf00704fad0e505d0e8b",
+      "sha256": "a3a29de54505c004bea0adf84897bff6ac70457b2061fdea817b928a03449d6f",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/src/lib.rs",
+      "git_blob": "8cdf4659fbdf2ab861c7b160ceb117a142e8c18a",
+      "sha256": "175858b5d756f0893b5d5de4eb056847af316fe4dfc3452b9789cd4b6d3d069e",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/LICENSE",
+      "git_blob": "782e56e023bee46927dab3985dab156157d29adf",
+      "sha256": "3beaf3b7a5807279adaf2003cbe6a8359d89448dc81919425c296c167b4acd3b",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-core/licenses/rpi-LICENSE",
+      "git_blob": "0a82789c8d4a4204f288fdf3325d7c4fd371581b",
+      "sha256": "0f4200057ab88da0fd0f73d48dea6f3e984b7fadf8aa441befbc578ad9ba13a4",
+      "worktree_matches": false
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/Cargo.toml",
+      "git_blob": "908334fd4a6e78017a38aad648467b8b78d9c77b",
+      "sha256": "1cdf7bbe1df2dd916bea7addba59f8a6a23d060bf2e950c65d4038455920cd0e",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/Cargo.lock",
+      "git_blob": "49cf77644379c39b269ae39aa10f7e3245b29e43",
+      "sha256": "03c402a2158d1acf787512fd91b4d39ab8eb5117d3391984e427ac8d52a044c7",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/lib.rs",
+      "git_blob": "ab5653762112e3a0a92e60244996ba277218274e",
+      "sha256": "60375faec6d7e8d76dac9be7991131cc8eb77825e1268243836d8e1b1d22bc1d",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/types.rs",
+      "git_blob": "91ee7f9780d2eb6afeea7f875982af671669de25",
+      "sha256": "27b78f95f7155db789a79fc52ed0c5d0073e7c3d99886e76d1fadc84d7d12540",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/runner.rs",
+      "git_blob": "3ec190a4ca09aaa0cfbd7ae82e835e1fc84cab3c",
+      "sha256": "2eced0c66f0b4e142c353c0022bb273bb3ac5f51811929c475b5cdbcb1bad63a",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/storage.rs",
+      "git_blob": "342b7c1970f635e5044afd87c5e9ca55ff07f2f7",
+      "sha256": "24a5d55c782785efc97cdc3c26b5df369129f430440ddf38adee403c61e3bf52",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-harness/src/stop_review.rs",
+      "git_blob": "cfc71012ce41245066f3d35b81a3244d33e115eb",
+      "sha256": "5b438fec44a8dd6c9706088274994ae1b26de2522a39a83907c9ae990e0b0aa6",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-mcp/Cargo.toml",
+      "git_blob": "620eb148657d9a76f38767eaa3635fd657b50f01",
+      "sha256": "f82cf4e3986a268d7820c7928cba9774fb1a4a0f3520cda58a125d24467101a7",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-mcp/Cargo.lock",
+      "git_blob": "dd7701aa20fc95b4da96837e173db6372fa01006",
+      "sha256": "0d2ea679377241dd077c7828b565f2197b6999c7dbcdfbbfed423d84d66a560c",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-mcp/src/lib.rs",
+      "git_blob": "b16e776cb217ea2ed90bee2082a5feb7ed8e2d5e",
+      "sha256": "8524348a753ee3be6714a3039bae17813ec24b72ad0c3558400e76255b49339e",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-mcp/src/tool.rs",
+      "git_blob": "c64d509d4d0289e20e8901bcb66c210c800902c8",
+      "sha256": "711e1386f1ad9fe01b926a7a375abcc514fc3620803ad56878f2c0982ce9c188",
+      "worktree_matches": true
+    },
+    {
+      "path": "crates/ara-agent-lite-mcp/src/client.rs",
+      "git_blob": "c72e1434db1c88a482cf28d3028112dbdc0edda6",
+      "sha256": "2a936e4fec0072a5a3f4e131e341e8a83a94a584319871330407e48fe165ff65",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/Cargo.toml",
+      "git_blob": "38ce4c10b68bd1f45cf82e44151ec20231e1071e",
+      "sha256": "05a5f27977c40d848c07dad438af45f710dad7a4f913451195cb61d5a1f06c2b",
+      "worktree_matches": false
+    },
+    {
+      "path": "apps/handwave-node/src/main.rs",
+      "git_blob": "66c671fc5e1b9d3c9928c751f0d875bdaaad4779",
+      "sha256": "268a7354e8ffa783ce080764d99b262ef8814f52c864fbad15bfc76129a7aa9b",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/config.rs",
+      "git_blob": "82a1e784086a360679463ce1105c634a3d50911d",
+      "sha256": "c9b349c878c905c6d18458372ea411157bba3e2c623a6706ce3793c55e8b2b4d",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/node_identity.rs",
+      "git_blob": "8d94240c26e0f1dccefb23607f6e87bb3a259a34",
+      "sha256": "5035fd4a428142840068517dbb5cd0c1470bda7bcf47bc22821ef69feaa7e0ad",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/connection.rs",
+      "git_blob": "00333fcd2a3f7b24216163712e9dad46962c4a5c",
+      "sha256": "c881849975680e9becf596dc81b67365ff5ea208ade10017bf50272401a837da",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/transport.rs",
+      "git_blob": "15482ed267d878fdbbbf5a13356ef3b0e92132a0",
+      "sha256": "7c4239597cb3f95ab1cb9b3fe3799296c53ff4c8f28a2f08afb591f46b6a9b0d",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/transport_security.rs",
+      "git_blob": "dbdef8c09741d9c41a18dd8db981d1a54845767d",
+      "sha256": "5ab70590923a1a5892e3016ec1a4016909ae27a348b4097d67ac19ca062c7303",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/src/operations.rs",
+      "git_blob": "e257a5d166d53209a59aa551be107b33f97a0d1c",
+      "sha256": "b5447bd14390a90bb19bb46228b2adb9d77f039d5c1658f286bcef775c7c8b99",
+      "worktree_matches": true
+    },
+    {
+      "path": "apps/handwave-node/LICENSE",
+      "git_blob": "782e56e023bee46927dab3985dab156157d29adf",
+      "sha256": "3beaf3b7a5807279adaf2003cbe6a8359d89448dc81919425c296c167b4acd3b",
+      "worktree_matches": true
+    }
+  ]
+}

@@ -226,10 +226,12 @@ def resolved_path(value, cwd):
     return (path if path.is_absolute() else cwd / path).resolve()
 
 
-def path_evidence(work, calls, events, snapshots):
+def path_evidence(work, calls, events, snapshots, current_run=None):
     """Bounded recognition of this fixture's direct Python invocations, not a shell parser."""
     successful = {event["step_id"]: event for event in events if event.get("type") == "tool_end"
-                  and event.get("status") == "completed" and event.get("step_id")}
+                  and event.get("status") == "completed" and event.get("step_id")
+                  and not event.get("is_error")
+                  and (current_run is None or event.get("task_id") == current_run)}
     resources, entries = {}, {}
     for skill in snapshots:
         directory = Path(skill["directory"])
@@ -244,7 +246,7 @@ def path_evidence(work, calls, events, snapshots):
         path = resolved_path(entry["path"], work / "docs" / "knowledge")
         if entry.get("status") == "observed" and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]:
             notes[path] = entry["sha256"]
-    reads, invocations = [], []
+    reads, invocations, candidates = [], [], []
     for call_id, call in calls.items():
         event = successful.get(call_id)
         if event is None or event.get("title") != call["name"]:
@@ -268,6 +270,14 @@ def path_evidence(work, calls, events, snapshots):
         command = args.get("cmd" if call["name"] == "exec" else "script", "")
         if not isinstance(command, str):
             continue
+        if not command.strip():
+            continue
+        candidates.append({"call_id": call_id, "tool": call["name"], "arguments": args,
+            "cwd": str(cwd), "command_or_script": command, "receipt_status": "completed",
+            "task_id": event.get("task_id"), "output": event.get("output"),
+            "output_hash": hashlib.sha256(event["output"].encode("utf-8")).hexdigest()
+                if isinstance(event.get("output"), str) else None,
+            "review_boundary": "Successful current-Run process candidate only; installed-script invocation requires exact recognition or independent source/receipt review."})
         assignments = {match[1].lower(): match[3] for match in re.finditer(r"(\$[A-Za-z_]\w*)\s*=\s*(['\"])(.*?)\2", command)}
         for statement in re.split(r"[;\r\n]", command):
             try:
@@ -290,10 +300,13 @@ def path_evidence(work, calls, events, snapshots):
                     "skill": resources[resource]["name"], "content_hash": resources[resource]["content_hash"],
                     "interpreter": executable, "command_or_script": command, "receipt_status": "completed",
                     "review_boundary": "Candidate direct Python invocation resolved to an existing current bundle script. Root/reviewer must inspect the command and actual report; this is not a general shell parser."})
-    return {"reads": reads, "invocations": invocations}
+    return {"reads": reads, "invocations": invocations,
+            "successful_execution_candidates": candidates,
+            "current_indexed_notes": [{"path": str(path), "sha256": sha} for path, sha in notes.items()]}
 
 
-def validate_trial(trial, work, state, expected, calls, events, text, before_skills):
+def validate_trial(trial, work, state, expected, calls, events, text, before_skills,
+                   defer_invocation_audit=False, audit_directory=None):
     report = work / ("first-summary.json" if trial == "create" else "second-summary.json")
     require(report.is_file(), "Actual model omitted report artifact")
     actual = json.loads(report.read_text(encoding="utf-8-sig"))
@@ -304,8 +317,13 @@ def validate_trial(trial, work, state, expected, calls, events, text, before_ski
     require(any(event.get("title") in ("exec", "run_script") for event in ended), "No successful actual process receipt")
     snapshots = skill_snapshot(work)
     require(snapshots, "No actual reusable project skill bundle")
-    audit = path_evidence(work, calls, events, snapshots)
-    (work.parent / (trial + "-path-evidence.json")).write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    current_run = "environment-live-" + trial
+    audit = path_evidence(work, calls, events, snapshots, current_run)
+    audit_root = Path(audit_directory) if audit_directory is not None else work.parent
+    audit_root.mkdir(parents=True, exist_ok=True)
+    (audit_root / (trial + "-path-evidence.json")).write_bytes(json.dumps(audit, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
+    candidates = {row["call_id"]: row for row in audit["successful_execution_candidates"]}
+    require(candidates, "No successful actual process candidate matched current Run call ID/title")
     if trial == "create":
         ordered = list(calls.values())
         rule_read = next((i for i, call in enumerate(ordered) if call["name"] in ("knowledge_read", "read_file") and "log-format.md" in json.dumps(call["arguments"])), None)
@@ -319,6 +337,7 @@ def validate_trial(trial, work, state, expected, calls, events, text, before_ski
             require("<!-- handwave-knowledge-v1:begin -->" in index, "Missing native managed knowledge index in " + scope)
             notes = list((base / "notes").glob("*.md")) if (base / "notes").exists() else []
             require(notes and any("Status: observed" in p.read_text(encoding="utf-8") for p in notes), "No observed native technical content in " + scope)
+        require(audit["current_indexed_notes"], "No current observed content matched indexed knowledge hash")
         require((work / "docs" / "knowledge" / "log-format.md").read_text(encoding="utf-8") == RULE_TEXT, "Human project source rule changed")
         require("Human-maintained index must remain intact." in (work / "docs" / "knowledge" / "INDEX.md").read_text(encoding="utf-8"), "Human project index was replaced")
     else:
@@ -327,13 +346,40 @@ def validate_trial(trial, work, state, expected, calls, events, text, before_ski
         require(any(read["kind"] == "current_indexed_note" for read in audit["reads"]), "New Session did not retrieve prior current indexed content")
         require({s["name"]: s["content_hash"] for s in snapshots} == {s["name"]: s["content_hash"] for s in before_skills}, "Reuse unexpectedly changed skill bundle content")
     exercised = list(dict.fromkeys(row["call_id"] for row in audit["invocations"]))
-    require(exercised, "No actual process invocation referenced the reusable installed bundle")
+    require(exercised or defer_invocation_audit, "No actual process invocation referenced the reusable installed bundle")
+    eligible = set(exercised) if exercised else set(candidates) if defer_invocation_audit else set()
     if trial == "create":
         require(any(skill["metadata"].get("verified_hash") == skill["content_hash"]
+                    and skill["metadata"].get("verified_run") == current_run
                     and skill["metadata"].get("evidence", {}).get("source") == "native_current_run"
-                    and any(row.get("tool_call_id") in exercised for row in skill["metadata"].get("evidence", {}).get("receipts", []))
+                    and skill["metadata"].get("evidence", {}).get("run") == current_run
+                    and any(row.get("tool_call_id") in eligible
+                            and (not exercised or any(invocation["call_id"] == row["tool_call_id"]
+                                 and invocation["skill"] == skill["name"]
+                                 and invocation["content_hash"] == skill["content_hash"]
+                                 for invocation in audit["invocations"]))
+                            and row.get("source") == "native_tool_result"
+                            and row.get("tool_name") == candidates[row["tool_call_id"]]["tool"]
+                            and row.get("is_error") is False
+                            and row.get("output_hash") is not None
+                            and row["output_hash"] == candidates[row["tool_call_id"]]["output_hash"]
+                            for row in skill["metadata"].get("evidence", {}).get("receipts", []))
                     for skill in snapshots), "Skill execution-evidence association lacks exact-hash actual invocation evidence")
-    return {"actual_report": actual, "skills": snapshots, "exercised_call_ids": exercised, "path_evidence": audit}
+    return {"status": "PASS" if exercised else "REVIEW_REQUIRED", "actual_report": actual,
+            "skills": snapshots, "exercised_call_ids": exercised, "path_evidence": audit,
+            "invocation_audit": "recognized_direct_python" if exercised else "independent_source_and_receipt_review_required"}
+
+
+def suite_status(trials, denials):
+    """Observation is not acceptance; any hard failure or prerequisite gap wins."""
+    if (denials or [row.get("name") for row in trials] != ["create", "reuse"]
+            or any(row.get("status") not in ("PASS", "REVIEW_REQUIRED") for row in trials)):
+        return "FAIL"
+    return "REVIEW_REQUIRED" if any(row["status"] == "REVIEW_REQUIRED" for row in trials) else "PASS"
+
+
+def status_exit_code(status):
+    return {"PASS": 0, "FAIL": 1, "REVIEW_REQUIRED": 2}[status]
 
 
 def main():
@@ -344,6 +390,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--ssh-alias", default="ray-dev")
     parser.add_argument("--gateway-config", default="/opt/omp-gateway/gateway.yaml")
+    parser.add_argument("--defer-invocation-audit", action="store_true",
+                        help="Collect a fresh Session after otherwise-valid unrecognized execution; requires independent audit and exits 2, never automatic PASS")
     args = parser.parse_args()
     require(hashlib.sha256(args.binary.read_bytes()).hexdigest() == args.expected_sha256.lower(), "Candidate binary SHA256 does not match delivered image")
     root = args.output.resolve()
@@ -362,6 +410,7 @@ def main():
     tunnel = hub = node = controller = gateway = watchdog = None
     transcript = []
     result = {"status": "FAIL", "model": MODEL, "protocol": PROTOCOL, "trials": [],
+        "defer_invocation_audit": args.defer_invocation_audit,
         "scope": "selected project task: actual model creates/tests a project skill and indexed project knowledge, then a fresh Session reuses both; no production authorization changes",
         "not_run": {"global_knowledge_real_model": "Not part of this representative project task; global scope is covered separately by actual controlled-host process acceptance."},
         "environment_isolation": "Node-only HOME/USERPROFILE/APPDATA/LOCALAPPDATA point to temporary directories; parent SSH environment and PATH unchanged. This is not an OS sandbox.",
@@ -441,7 +490,9 @@ def main():
                 require(not terminal.get("err") and terminal.get("code", 0) == 0, "Actual model trial did not settle successfully")
                 calls = native_calls(gateway.requests, trial_name)
                 trial["actual_native_calls"] = calls
-                trial.update(validate_trial(trial_name, work, state, expected[fixture_name], calls, events, text, before_skills))
+                validation = validate_trial(trial_name, work, state, expected[fixture_name], calls, events, text, before_skills,
+                                            defer_invocation_audit=args.defer_invocation_audit)
+                trial.update({key: value for key, value in validation.items() if key != "status"})
                 first_request = next(row["body"] for row in gateway.requests if row["trial"] == trial_name)
                 schemas = {row["function"]["name"] for row in first_request.get("tools", [])}
                 require({"skill_read", "skill_create", "skill_install", "skill_verify", "library_evidence", "knowledge_write", "knowledge_read"} <= schemas,
@@ -453,7 +504,7 @@ def main():
                     require(any(skill["name"] in serialized and skill["content_hash"] in serialized for skill in before_skills),
                             "Fresh second Session directory omitted persisted skill metadata/hash")
                     require("notes/" in serialized and "log-format.md" in serialized, "Fresh second Session omitted current indexed knowledge")
-                trial["status"] = "PASS"
+                trial["status"] = validation["status"]
             except Exception as error:
                 trial["error"] = type(error).__name__ + ": " + str(error) if isinstance(error, AssertionError) else type(error).__name__ + ": bounded trial failed; inspect receipts"
             finally:
@@ -462,19 +513,19 @@ def main():
                 trial["model_http_calls"] = sum(row["trial"] == trial_name for row in gateway.requests)
                 trial["conservative_reserved_upper_tokens"] = sum(row["reserved_upper_tokens"] for row in gateway.requests if row["trial"] == trial_name)
                 result["trials"].append(trial)
-                (root / (trial_name + "-result.json")).write_text(json.dumps(trial, ensure_ascii=False, indent=2), encoding="utf-8")
-                if trial["status"] == "PASS":
+                (root / (trial_name + "-result.json")).write_bytes(json.dumps(trial, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
+                if trial["status"] in ("PASS", "REVIEW_REQUIRED"):
                     before_skills = skill_snapshot(work)
-            if trial_name == "create" and trial["status"] != "PASS":
+            if trial_name == "create" and trial["status"] == "FAIL":
                 skipped = {"name": "reuse", "session_key": "environment-live/reuse", "status": "NOT_RUN",
                            "reason": "dependency_create_failed; no reuse task dispatched and no model call spent on a missing prerequisite"}
                 result["trials"].append(skipped)
-                (root / "reuse-result.json").write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding="utf-8")
+                (root / "reuse-result.json").write_bytes(json.dumps(skipped, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
                 break
         require(all(hashlib.sha256((work / name).read_bytes()).hexdigest() == value for name, value in source_hashes.items()), "Source logs changed")
-        require(len(result["trials"]) == 2 and all(trial["status"] == "PASS" for trial in result["trials"]), "One or both actual-model trials failed; no retry")
         require(not gateway.denials, "Budget/upstream denial occurred")
-        result["status"] = "PASS"
+        result["status"] = suite_status(result["trials"], gateway.denials)
+        require(result["status"] != "FAIL", "One or both actual-model trials failed; no retry")
     except Exception as error:
         result["error"] = type(error).__name__ + ": " + str(error) if isinstance(error, AssertionError) else type(error).__name__ + ": bounded trial failed; inspect receipts"
     finally:
@@ -488,17 +539,17 @@ def main():
             result.update(model_http_calls=len(gateway.requests), conservative_reserved_upper_tokens=gateway.reserved,
                 budget_or_upstream_denials=gateway.denials,
                 provider_usage=[packet["usage"] for response in gateway.responses for packet in response["packets"] if packet.get("usage") is not None])
-            (root / "provider-requests.json").write_text(json.dumps(gateway.requests, ensure_ascii=False, indent=2), encoding="utf-8")
-            (root / "provider-sse.json").write_text(json.dumps(gateway.responses, ensure_ascii=False, indent=2), encoding="utf-8")
+            (root / "provider-requests.json").write_bytes(json.dumps(gateway.requests, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
+            (root / "provider-sse.json").write_bytes(json.dumps(gateway.responses, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
         for log in logs:
             log.close()
         result.update(elapsed_seconds=round(time.monotonic() - started, 3), binary_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
             hub_sha256=hashlib.sha256(args.hub_binary.read_bytes()).hexdigest(), source_log_sha256=source_hashes)
-        (root / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        (root / "controller.json").write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+        (root / "result.json").write_bytes(json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
+        (root / "controller.json").write_bytes(json.dumps(transcript, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
         print(json.dumps({key: result[key] for key in ("status", "error", "model_http_calls", "conservative_reserved_upper_tokens", "elapsed_seconds") if key in result} | {"evidence": str(root)}, ensure_ascii=False, indent=2))
     if result["status"] != "PASS":
-        raise SystemExit(1)
+        raise SystemExit(status_exit_code(result["status"]))
 
 
 if __name__ == "__main__":

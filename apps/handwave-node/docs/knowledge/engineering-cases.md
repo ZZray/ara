@@ -884,6 +884,39 @@ rollback cloud switches wait for the actual expected process image, rather than
 treating systemd Type=simple startup as exec readiness. See the
 [0.2.8 release record](../evidence/stage-publication-0.2.8-20261019.md).
 
+## HWN-036 — observation deferral cannot turn missing retrieval into acceptance
+
+2026-10-20, unchanged published 0.2.8. The previous evaluator missed successful
+Python subprocess orchestration and aborted before a fresh Session. An explicit
+harness-only opt-in now records unrecognized successful current-Run invocation
+candidates as REVIEW_REQUIRED while preserving exact hash/receipt association
+and all other hard checks. Strict mode and 36 historical evidence hashes remain
+unchanged. Eleven offline test methods and independent PRE/POST cover failure
+precedence, foreign/stale receipts and deferred observation boundaries.
+
+One original-budget real-model sample created and verified a project skill,
+wrote indexed knowledge, then executed the unchanged script in a new Session
+with correct reports. However, the new Session read the skill and original
+manual rule, not the indexed knowledge body. Its reference_read returned the
+current objective; the library carrier contained only the index and metadata.
+The full suite therefore remains FAIL. This is not another invocation-parser
+false negative, and no parser expansion or relaxed knowledge gate is justified.
+
+The task's necessary facts were duplicated in the skill/manual rule. A missing
+redundant read does not establish a runtime knowledge-tool defect. A future
+knowledge-reuse trial should require a fact held in the persisted note and verify
+its actual retrieval, with a new reviewed scenario rather than repeatedly
+rerunning the same task until it passes. Raw process effects, task completion and
+complete capability acceptance have different boundaries.
+
+The model also made two tool errors and left stale line-count/suite wording in
+its generated records, despite correct actual reports and execution evidence.
+Authentic native receipts do not make every adjacent narrative claim correct;
+the generated notes were not promoted wholesale. Overall 22 model calls took
+97.532s, including 5 calls/12.100s for the distinct reuse task. There is no
+comparable efficiency baseline or established causal cache/cost saving. See the
+[actual observation and open gate](../evidence/autonomy-observation-20261020.md).
+
 ## HWN-037 — extracting a runtime also exposes its former private assumptions
 
 2026-10-21, compact Core extraction against 935e5493. HandWave now consumes

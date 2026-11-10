@@ -5,6 +5,31 @@ AI engineering evidence ledger. Runtime status belongs in linked evidence;
 these notes retain reusable investigation constraints. No case accepts an OMP
 surface or authorizes a release.
 
+## CASE-20261027-ARA-eval-index-refresh
+
+- Scope: the dirty `56d55d2` worktree's original P0 task 3.3, Git 2.55 on
+  Windows; separate from the Headroom H0 prototype and later Lite integration.
+  A 256-case property test rejects a changed `.git/index`; the first batch
+  passes the tree property but fails the worktree property after 464.60s.
+- The shrunk scenario mentions an excluded-file empty write, but the first
+  worktree diff occurs before that write. Three native per-command controls
+  show the copied clean repository's first porcelain diff refreshes index stat
+  data despite `GIT_OPTIONAL_LOCKS=0`; three controls with command-local
+  `diff.autoRefreshIndex=false` retain the bytes. Git's installed config manual
+  documents the independent automatic refresh. Do not infer the trigger from
+  a later action in a minimized scenario.
+- The narrow repair disables that refresh for diff calls and records the
+  actual argv in `DiffRule`, without changing global configuration or adding
+  an index-copy mechanism. The deterministic regression checks clean,
+  excluded and visible changes, plus unchanged diff stdout semantics.
+- Targeted regression, final fmt/lint and both final-source 256-case properties
+  pass; the final property batch has three passing functions including the
+  deterministic regression (383.24s). Independent post-review finds no new
+  defect; 27 library tests also pass. An
+  earlier batch was deliberately stopped before final formatting; it is not
+  a pass. No comparable manual baseline exists, so no efficiency gain is
+  claimed. See [P0 execution and retained failures](../../crates/ara-agent-lite-core/docs/evidence/lite-capability/p0-digest-readonly.md).
+
 ## CASE-20261023-ARA-text-continuity-admission
 
 - Scope: the dirty `56d55d2` worktree's new continuity Host/example consumer,
@@ -1602,6 +1627,205 @@ surface or authorizes a release.
   EXEC77b14236 and complete-point audit25a4e5a1 accept the full package and
   declared Windows Host dependency scope; full CTX/model/product gates remain.
   See [source, failed outputs and verification boundaries](../evidence/omp-upgrade-snapcompact-20261015.md).
+
+## Case 20261025 Lite length recovery and source serialization
+
+- Scope: Lite Core 0.1.1 and the shared JSONL candidate, Windows dirty worktree
+  on `56d55d209ecea00e80dfefecdd3e9d47fb62c47a`. The preceding real-model ACR
+  trial ends with a complete thinking-only Length response and no source patch.
+  Its input is below the recorded allocation. The failure is an output limit;
+  it does not prove an input-window failure. The old Task and fence are preserved.
+- Fixed rpi `8ec462672d90e62712d96074638efef89436cebe` already refuses every tool
+  in a Length message and continues its native loop with synthetic non-executed
+  results. A Length message without tools previously had no follow-up. The
+  new default-off `ModelHost::length_recovery_policy` uses that existing
+  follow-up seam for Execute, without replacing the loop or required RunRequest
+  fields. `ReplanOnce` permits one admission per Run, within the same counters,
+  absolute deadline, route, output cap and Session. A second tool-free Length still fails.
+- A recovery needs a closed current transcript, no detected unknown effects,
+  no cancellation or persistence/context failure, no unfinished managed Job and
+  remaining original budget. Known rejected operations are distinct from unknown
+  effects; a normal error or quoted source string is insufficient to declare
+  uncertainty. The Host retains responsibility for external-effect settlement.
+- Automatic control is saved by clone/add-reference/save/replace before it enters
+  the original loop. Its reference kind and origin identify derived runtime
+  control rather than a human instruction or execution receipt. The scheduled
+  event records the source raw index/hash, control reference hash and original
+  budget; it does not reserve a request. Cancellation/deadline/flags are checked
+  again after event delivery. Actual agent and summary reservations still use
+  the existing shared counter. JSONL prepare cannot replace the captured policy.
+- The final controlled native suite passes 13 cases, including real reference
+  commit failure, in-flight deadline/cancellation, repeated Length, known errors,
+  unknown effects and the original truncated-tool guard. The first deadline
+  fixture expires before HTTP begins and fails its intended in-flight assertion;
+  the repaired fixture allows startup, holds the actual upstream past the same
+  Run deadline, and still requires exactly one HTTP request. No Core code changed
+  for that fixture repair. Current default-behavior, Harness and Relay regressions
+  also pass. Exact commands, counts and model result belong in the linked report.
+- Root initially recomputes a different source SHA from the checkpoint dictionary.
+  This is a representation difference in the pinned serializer: `Content` has an
+  internally tagged enum and a payload `type` marker, so typed serde bytes contain
+  the same type key twice. `SessionState::save` converts through Value and normalizes
+  the duplicate. All five scheduled source hashes match when recomputed using the
+  actual typed representation. Rust verification should deserialize the original
+  Journal/checkpoint record as `AgentMessage`, then call `serde_json::to_vec`
+  directly. Typed source hash, normalized Journal chain/file hash and UTF-8 control
+  text hash are separate domains. No runtime or upstream serializer was changed.
+- This point does not accept arbitrary long-history/summary recovery, Goal/Plan
+  recovery, actual managed-Job races, product default migration, dependencies or
+  release. It cannot restore private reasoning that the provider adapter does not
+  project or guarantee that another response at the same output cap will finish.
+  See [length recovery evidence](../../crates/ara-agent-lite-core/docs/evidence/length-recovery-20261025.html).
+
+## Case 20261025 JSONL authority and artifacts
+
+- Scope: the shared `ara-agent-lite-jsonl` candidate over Lite Core 0.1.1 and
+  Harness 0.1.0, Windows dirty worktree based on `56d55d209ecea00e80dfefecdd3e9d47fb62c47a`.
+  Independent source review found that applying token redaction to an outgoing
+  control payload could change an authorized tool's arguments while retaining
+  their original hash. The adapter now refuses that payload before dispatch;
+  it does not rewrite authoritative arguments. An actual native-process test
+  confirms zero Host effects when a tool argument collides with the grant.
+- Oversized candidates use file references. Comparing only a subset of typed
+  fields would permit an artifact to differ from the actual candidate. Check
+  both the full typed object and the raw JSON value, then hash the same bytes
+  used for the reference. Native tests retain real files, byte/hash tampering
+  failures and the terminal outcome reference. Python and Node also check
+  original Task, Run, criteria revision and authorization revision before
+  invoking product verification or continuation callbacks.
+- Windows Rust canonical paths use the verbatim prefix. A Python reference
+  check originally rejected an actual in-scope terminal file because its
+  spelling differed from the ordinary evidence root. Normalize only the
+  comparison representation and keep the original path for I/O. The original
+  failed trial remains available; the repaired Python and Node native trials
+  each perform two Runs and four logical calls in the same Session.
+- The Core previously labeled every model capability event as a Hub directory
+  result, including a custom Host's declaration. A compatible default
+  `ModelHost::capabilities_source` now reports `host_model_configuration`;
+  `CatalogModelHost` reports `hub_model_directory`. Actual loopback fixtures
+  distinguish a real catalog lookup from a Host-declared Relay configuration.
+- Source review, 16 final client/native checks, 10 Node contract checks and
+  five additional native protocol checks pass on the recorded snapshot.
+  These counts cover different contracts; they are not capability tasks.
+  Frame tests observe 262144-byte acceptance and 262145-byte refusal, duplicate
+  replies and EOF after one actual Host write. Faults preserve the original
+  effect and Session fence; contender admission is refused without replay.
+  See [integration contract](../../crates/ara-agent-lite-jsonl/docs/protocol-v1.md).
+
+## Case 20261025 product Host settlement and budgets
+
+- Scope: the same shared JSONL candidate, using the current AI Code Review
+  `Workspace` against an isolated historical source fixture. The fixture uses
+  the source before `46b4c3844e6d22db3452d05ec5a6f17578c44dfb` and its seven fixed
+  regression tests. Non-UTF-8 Git text reproduces a local JSON/HTTP construction
+  failure; it is not evidence of a provider transport outage. Product source,
+  default Core pin, queue, production database and release tools remain unchanged.
+- A model first requested `run_checks` before making a patch. The original
+  Workspace rejects that precondition before starting its subprocess. The
+  initial candidate Host conservatively classified an unhandled exception as
+  unknown and retained the fence. The repaired tool path checks the actual
+  diff under the same lock, commits `known_not_started` only for the empty
+  diff case, and returns a settled tool error. Exceptions after invocation
+  remain uncertain. Verification of a submitted zero-patch candidate still
+  conservatively fails; this boundary is not claimed repaired.
+- An initial controlled repair passed all seven tests but compared LF archive
+  test bytes with the actual CRLF checkout and rejected them. Snapshot the
+  actual isolated test file before the model starts, then require those exact
+  bytes through every Run. The final controlled trial executes two Runs and
+  eight logical calls: known preflight refusal, partial patch with seven-test
+  failure, then the corrected patch with seven-test success. Raw blobs and
+  fixed tests are preserved. This deterministic provider result proves the
+  product-tool integration path, not model repair ability.
+- A separate test holds one real product `ModelRelay` across both Runs. A
+  primary HTTP 503 is charged before the configured fallback succeeds. Core
+  records four logical calls; the Relay records five actual attempts with
+  ordinals 1 through 5. The same Relay start time and deadline survive feedback.
+  Its exhausted-budget probe returns the budget error without a sixth upstream
+  request. The provider is controlled loopback; summary and production fallback
+  behavior remain outside the executed scope.
+- The second bounded real-model trial ends after one Run and ten calls with
+  `length`, reporting 4096 output tokens and an empty final answer. Its last
+  request is below the recorded input allocation. Harness correctly refuses
+  an ordinary candidate and keeps the fence. No automatic retry, budget
+  increase or new Session is performed. Real-model acceptance and safe Core
+  output-length recovery remain open. There is no comparable manual baseline
+  or measured general capability improvement.
+- Original failures, current reviews, event files, operation receipts and
+  process records are under the local evidence root
+  `product-host-adapters-v1-20261025` within the capability trial directory.
+  The shared [README](../../crates/ara-agent-lite-jsonl/README.md) describes the
+  product boundary. LabSlot's injected Todo binding has contract tests only;
+  actual TodoService/PostgreSQL execution awaits its separate build gate.
+
+## Case 20261025 Lite Harness continuation path identity
+
+- Scope: the first shared `ara-agent-lite-harness` over Lite Core 0.1.1 on
+  Windows, dirty worktree based on `56d55d209ecea00e80dfefecdd3e9d47fb62c47a`.
+  The initial actual-file feedback test writes the first candidate and commits
+  NeedsChanges, then the next Run fails before another provider request.
+  Eight of nine initial tests pass; that failure is retained.
+- The Harness normalized its initial Session path to the Windows verbatim form,
+  while the continuation factory returned the ordinary form of the same path.
+  The authority check compared canonical paths, but passed the unnormalized
+  factory value into Core. Core's context scope also depends on the actual
+  Session path string. Filesystem identity passed while native continuity failed.
+- Normalize the paths used for execution on every Run, then compare authority
+  and call Core with those same values. This changes the Harness boundary;
+  it does not rewrite native Session state. The repaired actual-file test
+  completes two Runs in the original Session and preserves the Task call budget.
+  The final scoped suite passes all 14 tests, including tool cancellation and
+  actual observation-file commit failure. Original logs and source pins remain
+  in the linked result index.
+- A separate fixture found a data/control distinction: successful tool text may
+  quote `effects_unknown:` as source material. Such text cannot declare an
+  unknown operation. The current compatibility check interprets the first
+  diagnostic line of known failed effect tools; native structured unknown
+  receipts still block acceptance. Both counterexamples have executed tests.
+- Independent Codex reviews check source and actual events, Journal proofs,
+  files and process receipts. The accepted scope is the uncompressed Windows
+  Execute profile. Summary/Goal execution, broad capability gains and release
+  are separate open gates. No comparable manual baseline was recorded, so no
+  efficiency improvement percentage is claimed. See the
+  [scoped report](../../crates/ara-agent-lite-harness/docs/evidence/lite-harness-20261025.html)
+  and [machine-readable result](../../crates/ara-agent-lite-harness/docs/evidence/lite-harness-20261025.result.json).
+
+## Case 20261025 Lite closed-budget review boundary
+
+- Scope: Lite Core, shared Harness and JSONL consumers in the dirty worktree
+  based on `56d55d209ecea00e80dfefecdd3e9d47fb62c47a`. A previous real repair
+  completed its last source replacement at the call cap. Its final artifact
+  independently passed seven tests, but no model Stop existed; its failed Task
+  and fence remain unchanged.
+- `budget_hit` alone is not a closed-round proof: stream admission failure can
+  set it, and the fixed rpi loop can also invoke the turn hook after rejecting
+  truncated tool calls. Require typed ToolUse, the actual closed-round hook,
+  the winning budget reason, a settled loop and a successful durable checkpoint.
+  The original failed Run receives optional native termination evidence.
+- Native closure does not establish external settlement. The actual JSONL
+  unknown-effect fixture has a paired native result and may carry the native
+  proof while its Host operation is unknown. A separately scheduled cancellation
+  task can win before the Harness native-unknown scan; both source branches
+  preserve the fence, actual unknown receipt and zero review/replay. The first
+  test's overly narrow status expectation failed and is retained; the revised
+  test binds each branch to its exact detail and raw evidence.
+- The Host opts in at Task admission. Separate snapshot verification and typed
+  continuation preserve the original Task calls and deadline. Check snapshot
+  size, hash and JSON using one bounded read, then recheck snapshot and Journal
+  around callbacks. Never pair a budget receipt with an earlier ordinary
+  Candidate. A trusted index binds only the current committed settled receipt.
+- The new native tests cover 19 declared cases, including opt-in Length with
+  tools, plain Length, provider 503 and context failure before reservation.
+  Another real-model historical repair finishes normally in 19 calls, corrects
+  a test failure and passes the unchanged seven tests in both the actual Host
+  and a separate fresh-copy evaluation. A supplementary check then shows its
+  helper replaces valid NUL text with U+FFFD although the original text is JSON
+  encodable. The full repair objective is not accepted; the seven-test Host
+  grader lacks that preservation case. The normal real-model Stop does not
+  exercise the budget branch or establish causal gains. The controlled actual
+  Workspace budget-path result is recorded separately in the
+  [point report](../../crates/ara-agent-lite-jsonl/docs/evidence/closed-budget-snapshot-20261025.html).
+  Product migration, production acceptance and broad coding/reverse capability
+  remain open. There is no comparable manual baseline or efficiency percentage.
 
 ## Case 20261019 ARA local ToolError display boundary
 

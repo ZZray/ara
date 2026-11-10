@@ -11,6 +11,10 @@ the root repository's fixed OMP parity ledger and shared ARA Core roadmap.
   pinned compact Core, AI integration guide, checked Windows/Linux artifacts,
   preserved cloud services and stopped local Node state.
 
+- [2026-10-20 actual-model observation](../evidence/autonomy-observation-20261020.md):
+  actual fresh-Session stored-script reuse observed; full skill-plus-indexed-note
+  retrieval gate remains FAIL / OPEN, with raw failures and independent review.
+
 - [0.2.8 publication](../evidence/stage-publication-0.2.8-20261019.md):
   pushed small efficiency increment, verified packages and Linux source build,
   installed Windows Node; authorization expiry remains unchanged.

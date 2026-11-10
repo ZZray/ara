@@ -154,3 +154,21 @@ The [bounded candidate evidence](../evidence/run-efficiency-20261019.md) records
 actual Host checks and the separate open new-Session autonomous-reuse gate.
 The later [0.2.8 publication](../evidence/stage-publication-0.2.8-20261019.md)
 records exact committed packages and deployed images separately from that gate.
+
+## Real-model reuse evidence boundary
+
+The [2026-10-20 follow-up](../evidence/autonomy-observation-20261020.md) tested the
+unchanged published 0.2.8 EXE. A real model created, exercised and verified a
+project Python skill and persisted indexed knowledge; a fresh Session read the
+skill and original rule, invoked the unchanged saved script and produced the
+correct second report. This accepts only that representative script-reuse
+observation, not general autonomous reuse or improved runtime intelligence.
+
+The automatic suite remains FAIL: the fresh Session did not read the persisted
+indexed note body. Receiving an index/manifest, reading an original manual rule,
+and loading a skill are distinct from retrieving a knowledge content page.
+The task duplicated its necessary facts across the skill and manual rule, so the
+missing note read is not proof that knowledge tools malfunction. Future knowledge
+acceptance needs a task that actually depends on its persisted content; the
+established failed gate and all historical evidence remain unchanged. Generated
+notes contained minor accuracy defects and were not promoted wholesale.
