@@ -48,16 +48,16 @@
 
 依赖：1.1–1.3、0.3。
 
-- [ ] 2.1 将 `resume_checked` 的拒绝原因稳定化：authority changed、budget enlarged、run limit enlarged、fence mismatch、settlement incomplete、evidence missing。
+- [x] 2.1 将 `resume_checked` 的拒绝原因稳定化：authority changed、budget enlarged、run limit enlarged、fence mismatch、settlement incomplete、evidence missing。
   - Requirements: R2, R7
-  - 测试：Rust Harness 受控拒绝矩阵；每类拒绝不调用 Host 工具、不新建 Session、不重放调用。
-- [ ] 2.2 将拒绝类别安全地映射到 JSONL stderr/typed frame；保持“拒绝时不发送上游请求”的协议约束，避免把秘密写入 stdout/证据。
+  - 测试：Rust Harness 受控拒绝矩阵；每类拒绝不调用 Host 工具、不新建 Session、不重放调用。证据：`docs/evidence/core-harness-jsonl-resume-20261110.md`。
+- [x] 2.2 将拒绝类别安全地映射到 JSONL stderr/typed frame；保持“拒绝时不发送上游请求”的协议约束，避免把秘密写入 stdout/证据。
   - Requirements: R7
   - 测试：Python、Node、跨语言 resume；正常恢复、未知效果、进程杀死、权限/预算变化。
-  - 退出标准：Host 能区分拒绝类别，原 Task/Session/fence/预算证据保持可追溯。
-- [ ] 2.3 核对跨 Run steering、completion gate、stop review 和 unknown-effects 的 authority hash；拒绝 authority drift。
+  - 退出标准：Host 能区分拒绝类别，原 Task/Session/fence/预算证据保持可追溯。证据：`docs/evidence/core-harness-jsonl-resume-20261110.md`。
+- [x] 2.3 核对跨 Run steering、completion gate、stop review 和 unknown-effects 的 authority hash；拒绝 authority drift。
   - Requirements: R2, R3, R7
-  - 退出标准：同一 Session、模型 Host、工具集合、steering 和授权字段才可续作；成功 Run 不自动 accepted。
+  - 退出标准：同一 Session、模型 Host、工具集合、steering 和授权字段才可续作；成功 Run 不自动 accepted。证据：`docs/evidence/core-harness-jsonl-resume-20261110.md`，并由 Harness 的 `task_set`、`tasks`、`completion_gate_accept`、`stop_review`、`unknown_effects` 测试覆盖。
 
 ## 阶段 3：Stable API 与交付门禁
 
